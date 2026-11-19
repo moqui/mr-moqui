@@ -529,6 +529,7 @@ impl ResourceFacade {
     /// `file`, `runtime`, or `component` schemes.
     pub fn write_bytes(&self, location: &str, bytes: &[u8]) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_bytes(location, bytes);
@@ -621,7 +622,7 @@ impl ResourceFacade {
         )?;
         let mut by_root: indexmap::IndexMap<String, Vec<ResourceChange>> = indexmap::IndexMap::new();
         for (location, bytes) in files {
-            let location = strip_hash(location);
+            refuse_cut_write(location)?;
             let under = location
                 .split_once("://")
                 .and_then(|(scheme, rest)| {
@@ -655,6 +656,7 @@ impl ResourceFacade {
     /// to storage, never all in memory where the storage can take it as it is read (a file, a `git://` content blob).
     pub fn write_from(&self, location: &str, input: &mut dyn std::io::Read, size: Option<u64>) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_from(location, input, size);
@@ -759,6 +761,7 @@ impl ResourceFacade {
     /// Create a directory and any missing parents.
     pub fn make_directory(&self, location: &str) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.make_directory(location);
@@ -773,6 +776,7 @@ impl ResourceFacade {
     /// Delete a file, or an empty directory. False when nothing is there.
     pub fn delete(&self, location: &str) -> Result<bool, Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, true)?;
         let deleted = self.delete_at(location)?;
         self.release_locks(location);
@@ -806,6 +810,8 @@ impl ResourceFacade {
     /// Move a file or directory to a new location of the same kind of storage.
     pub fn rename(&self, location: &str, new_location: &str) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
+        refuse_cut_write(new_location)?;
         self.check_lock(location, true)?;
         self.check_lock(new_location, false)?;
         self.rename_at(location, new_location)?;
@@ -1129,6 +1135,19 @@ pub(crate) fn split_version(location: &str) -> Option<(&str, &str)> {
         .filter(|(path, version)| !path.is_empty() && !version.is_empty())
 }
 
+/// A write, delete or move at a location that holds a `#` is refused, but on `dbresource://`, where the `#` stays part
+/// of the name. Elsewhere a reference cuts the location at its first `#` (a version suffix: [`strip_hash`]), so the
+/// write would change the file named before it, another file than the one asked for: a content root of
+/// `component://<name>/screen/App.xml#` made an upload under it replace that screen (SEC-PFS-82, SEC-BAP-82).
+pub(crate) fn refuse_cut_write(location: &str) -> Result<(), Error> {
+    if location.contains('#') && scheme_of(location) != "dbresource" {
+        return Err(Error::new(format!(
+            "a resource is not written at a location with '#' in it (only the part before the '#' would be): {location}"
+        )));
+    }
+    Ok(())
+}
+
 fn strip_hash(location: &str) -> &str {
     match location.split_once('#') {
         Some((path, _)) if !path.is_empty() => path,
@@ -1158,195 +1177,4 @@ fn join_location(parent: &str, child: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::time::Duration;
-
-    use moqui_lib::error::Error as LibError;
-    use moqui_lib::object::Value;
-
-    use super::*;
-    use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
-    use crate::entity::EntityGroup;
-    use crate::transaction::{PoolConfig, TransactionManager};
-
-    struct NoCancel;
-
-    impl DbCancel for NoCancel {
-        fn cancel(&self) -> Result<(), LibError> {
-            Ok(())
-        }
-    }
-
-    struct FakeConn;
-
-    impl DbConnection for FakeConn {
-        fn execute(&mut self, _sql: &str, _params: &[Value]) -> Result<u64, LibError> {
-            Ok(0)
-        }
-
-        fn query(&mut self, _sql: &str, _params: &[Value]) -> Result<Vec<DbRow>, LibError> {
-            Ok(Vec::new())
-        }
-
-        fn query_once(&mut self, _sql: &str, _params: &[Value]) -> Result<Vec<DbRow>, LibError> {
-            Ok(Vec::new())
-        }
-
-        fn open_stream(&mut self, _sql: &str, _params: &[Value]) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn next_row(&mut self) -> Result<Option<DbRow>, LibError> {
-            Ok(None)
-        }
-
-        fn close_stream(&mut self) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn stream_open(&self) -> bool {
-            false
-        }
-
-        fn begin(&mut self) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn commit(&mut self) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn rollback(&mut self) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn savepoint(&mut self, _name: &str) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn rollback_to_savepoint(&mut self, _name: &str) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn release_savepoint(&mut self, _name: &str) -> Result<(), LibError> {
-            Ok(())
-        }
-
-        fn canceller(&self) -> Box<dyn DbCancel> {
-            Box::new(NoCancel)
-        }
-    }
-
-    struct FakeDriver;
-
-    impl DbDriver for FakeDriver {
-        fn connect(&self) -> Result<Box<dyn DbConnection>, LibError> {
-            Ok(Box::new(FakeConn))
-        }
-    }
-
-    fn facade() -> ResourceFacade {
-        let driver: Arc<dyn DbDriver> = Arc::new(FakeDriver);
-        let transactions = TransactionManager::new(
-            driver,
-            PoolConfig {
-                min: 0,
-                max: 2,
-                reserve: 1,
-                acquire_timeout: Duration::from_secs(5),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let entity = EntityFacade::open(
-            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework"),
-            "transactional",
-            vec![EntityGroup::new("transactional", "postgres", transactions)],
-        )
-        .unwrap();
-        ResourceFacade::new(
-            PathBuf::from("/tmp/moqui-resource-test"),
-            HashMap::new(),
-            Arc::new(RwLock::new(Some(entity))),
-        )
-    }
-
-    fn empty_facade() -> ResourceFacade {
-        ResourceFacade::new(
-            PathBuf::from("/tmp/moqui-resource-test"),
-            HashMap::new(),
-            Arc::new(RwLock::new(None)),
-        )
-    }
-
-    #[test]
-    fn relative_file_children_are_read_and_written_under_the_relative_root() {
-        let root = format!("target/file-resource-{}", std::process::id());
-        let resources = empty_facade();
-        let location = format!("file:{root}/nested/value.txt");
-        resources.write_bytes(&location, b"local").unwrap();
-        let parent = resources.get(&format!("file:{root}/nested")).unwrap();
-        let children = parent.children().unwrap();
-        assert_eq!(children.len(), 1);
-        assert_eq!(children[0].location(), location);
-        assert_eq!(resources.get(&location).unwrap().read_text().unwrap(), "local");
-        assert_eq!(
-            resources.get(&location).unwrap().file_path().unwrap(),
-            std::path::Path::new(&format!("{root}/nested/value.txt"))
-        );
-        assert!(resources.get("file://remote/tmp/a").is_err());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn dbresource_without_facade_is_not_available() {
-        let err = empty_facade().get("dbresource://notes/hello.txt").unwrap_err();
-        assert!(err.to_string().contains("not available"), "{err}");
-    }
-
-    #[test]
-    fn missing_dbresource_names_the_location() {
-        let resources = facade();
-        let root = resources.get("dbresource://").unwrap();
-        assert!(root.exists());
-        assert!(root.is_directory());
-        let location = "dbresource://notes/hello.txt";
-        let err = resources.get(location).unwrap_err();
-        assert!(err.to_string().contains("resource not found"), "{err}");
-        assert!(err.to_string().contains(location), "{err}");
-    }
-
-    #[test]
-    fn db_scheme_stays_unsupported() {
-        let err = empty_facade().get("db://notes/hello.txt").unwrap_err();
-        assert!(err.to_string().contains("scheme db"), "{err}");
-        let err = facade().get("db://notes/hello.txt").unwrap_err();
-        assert!(err.to_string().contains("scheme db"), "{err}");
-    }
-
-    #[test]
-    fn a_location_splits_into_its_scheme_path_and_version() {
-        assert_eq!(scheme_of("component://a/b.xml"), "component");
-        assert_eq!(scheme_of("dbresource://x"), "dbresource");
-        // one letter is a drive, a slash before the colon is a path
-        assert_eq!(scheme_of("c:/tmp/a.txt"), "file");
-        assert_eq!(scheme_of("runtime/a:b"), "file");
-        assert_eq!(scheme_of("plain.txt"), "file");
-        assert_eq!(scheme_of("é:x"), "é");
-
-        assert_eq!(
-            split_version("dbresource://a.txt#v2"),
-            Some(("dbresource://a.txt", "v2"))
-        );
-        assert_eq!(split_version("a#b#c"), Some(("a", "b#c")));
-        assert_eq!(split_version("a.txt#"), None);
-        assert_eq!(split_version("#v2"), None);
-        assert_eq!(split_version("a.txt"), None);
-
-        assert_eq!(strip_hash("a.txt#v2"), "a.txt");
-        assert_eq!(strip_hash("a.txt#"), "a.txt");
-        assert_eq!(strip_hash("#v2"), "#v2");
-        assert_eq!(strip_hash("é#ü"), "é");
-    }
-}
+mod tests;

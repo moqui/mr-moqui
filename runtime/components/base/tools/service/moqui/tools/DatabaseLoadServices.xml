@@ -94,7 +94,10 @@ along with this software (see the LICENSE.md file). If not, see
                         if (dummyFks) edl.dummyFks(true)
                         if (useTryInsert) edl.useTryInsert(true)
                         if (onlyCreate) edl.onlyCreate(true)
+                        // as Tools' Data Load: no restricted entity, no account's password or existing account's
+                        // identity fields (SEC-TLS-81)
                         edl.restrictSensitiveEntities(true)
+                        edl.protectUserAccounts(true)
                         recordsLoaded = edl.load([])
                     }
                     loaded = !ec.message.hasError()

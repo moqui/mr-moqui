@@ -50,6 +50,7 @@ pub mod git_sync;
 pub mod graph;
 pub mod incident;
 pub mod lock;
+mod lookup;
 pub mod monitor;
 pub mod patterns;
 pub mod recovery;
@@ -1463,66 +1464,10 @@ fn configure_frame(
         if let Some(unit) = config.get("unit").and_then(Json::as_str) {
             field.unit = Some(unit.into());
         }
-        let lookup = config.get("lookup").cloned().or_else(||config.get("statusTypeId").map(|id|json!({"entityName":"moqui.basic.StatusItem","keyField":"statusId","displayField":"description","conditions":{"statusTypeId":id}}))).or_else(||config.get("enumTypeId").map(|id|json!({"entityName":"moqui.basic.Enumeration","keyField":"enumId","displayField":"description","conditions":{"enumTypeId":id}})));
-        let Some(lookup) = lookup else { continue };
-        let keys = field
-            .values
-            .iter()
-            .filter(|value| !value.is_null() && !value.is_array() && !value.is_object())
-            .map(Json::to_string)
-            .collect::<std::collections::BTreeSet<_>>();
-        if keys.len() > 1000 {
-            tracing::warn!(dataset=%dataset.id,field=%field.name,"report lookup exceeds 1000 distinct keys; keeping raw values");
-            continue;
-        }
-        if keys.is_empty() {
-            continue;
-        }
-        let resolve = || -> Result<Vec<Json>, Error> {
-            let entity = ec
-                .factory()
-                .entity()
-                .ok_or_else(|| fail("entity facade is unavailable"))?;
-            let key = text(&lookup, "keyField", "");
-            let display = text(&lookup, "displayField", "description");
-            if key.is_empty() {
-                return Err(fail("dataset lookup needs keyField"));
-            }
-            let mut find = entity
-                .find(text(&lookup, "entityName", ""))?
-                .condition(moqui_core::entity::Condition::is_in(
-                    key,
-                    keys.iter()
-                        .map(|key| {
-                            serde_json::from_str::<Json>(key)
-                                .map(|value| moqui_lib::json::from_json(&value))
-                                .map_err(fail)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-                .use_cache(true)
-                .limit(1000);
-            for (name, value) in lookup["conditions"].as_object().into_iter().flat_map(|map| map.iter()) {
-                find = find.eq(name, moqui_lib::json::from_json(value));
-            }
-            let rows = find.list()?;
-            Ok(rows.iter().filter_map(|row|row.get(key).zip(row.get(display))).map(|(key,display)|json!({"value":moqui_lib::json::to_json(key),"text":moqui_lib::object::to_plain_string(display)})).collect())
-        };
-        // The labels of ids already in the authorized frame: the dataset's read permission and row filters decided what the
-        // viewer sees, so reading the label table (StatusItem, Enumeration, Uom, a product's name) needs no grant of its own.
-        let resolved = {
-            let _authz = ec.disable_authz();
-            resolve()
-        };
-        match resolved {
-            Ok(mappings) => {
-                let existing = field.config.entry("mappings".into()).or_insert_with(|| json!([]));
-                if let Some(existing) = existing.as_array_mut() {
-                    existing.extend(mappings);
-                }
-            }
-            Err(error) => {
-                tracing::error!(dataset=%dataset.id,field=%field.name,%error,"report field lookup failed; keeping authorized raw values")
+        if let Some(mappings) = lookup::mappings(ec, &dataset.id, &field.name, config, &field.values) {
+            let existing = field.config.entry("mappings".into()).or_insert_with(|| json!([]));
+            if let Some(existing) = existing.as_array_mut() {
+                existing.extend(mappings);
             }
         }
     }

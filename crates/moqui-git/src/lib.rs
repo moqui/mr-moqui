@@ -729,6 +729,13 @@ impl GitProvider {
     }
 
     fn writable(repo: &Repo, location: &str) -> Result<(), Error> {
+        // the facade cuts a location at its first '#' (a version), so a write there would change another file
+        // (SEC-PFS-82); the facade refuses it too, and this covers a call that reaches the provider directly
+        if location.contains('#') {
+            return Err(Error::new(format!(
+                "a git file is not written at a location with '#' in it: {location}"
+            )));
+        }
         if repo.definition.kind == RepositoryKind::Remote {
             return Err(Error::new(format!(
                 "git repository {} is a read-only mirror: {location}",
@@ -1912,6 +1919,7 @@ impl moqui_core::native::ResourceProvider for GitProvider {
             )));
         }
         Self::writable(&repo, location)?;
+        Self::writable(&repo, new_location)?;
         if path.is_empty() || new_path.is_empty() {
             return Err(Error::new("cannot move the root of a repository"));
         }

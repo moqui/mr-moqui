@@ -477,6 +477,8 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
     // an alias of a telemetry index or of a business dataset's document needs the source's own grant (alias.rs)
     if kind == "dataset" {
         super::alias::check_save(ec, id, &body)?;
+        // a field's lookup reads with authorization off, so only a label entity and none of its secret fields (SEC-TLS-82)
+        super::lookup::check_field_defaults(ec, &body)?;
     }
     // a business alert rule (alert_delivery.rs): its audience in place of contact points, the delivery mode the server's
     let business_rule = kind == "alert" && super::alert_delivery::prepare(ec, &mut body)?;

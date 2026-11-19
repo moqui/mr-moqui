@@ -333,8 +333,8 @@ macro_rules! tools_js {
         const l = {};
         for (const name of ["xmlText", "csvText", "jsonText", "dummyFks", "useTryInsert", "onlyCreate",
                 "disableEntityEca", "disableAuditLog", "disableFkCreate", "disableDataFeed", "transactionTimeout",
-                "messageNoActionFiles", "restrictSensitiveEntities", "csvEntityName", "csvDelimiter", "csvCommentStart",
-                "csvQuoteChar"])
+                "messageNoActionFiles", "restrictSensitiveEntities", "protectUserAccounts", "csvEntityName",
+                "csvDelimiter", "csvCommentStart", "csvQuoteChar"])
             l[name] = (value) => { options[name] = value; return l; };
         // Java adds each location to a list; defaultValues adds to the map.
         options.locations = [];
@@ -501,6 +501,9 @@ macro_rules! tools_js {
             Object.defineProperty(ref, "children", { get: () => children ??= host.resourceEntries(ref.location),
                 enumerable: false, configurable: true });
         }
+        // a write goes to the location as it was given: a reference of `location#suffix` reads the file before the `#`,
+        // and the facade refuses a write there rather than write that other file (SEC-PFS-82)
+        const writeAt = () => ref.writeLocation || ref.location;
         Object.assign(ref, {
             getLocation: () => ref.location, getFileName: () => ref.fileName, getExists: () => ref.exists,
             isDirectory: () => ref.directory, isFile: () => ref.file, getSize: () => ref.size,
@@ -519,18 +522,18 @@ macro_rules! tools_js {
             },
             // a note (optional) is kept with the version the write makes: the commit message on git, versionNote on the
             // database tree (docs/data/Revision-Management.md, Version notes)
-            putText: (text, note) => note == null ? host.resourcePutText(ref.location, String(text))
-                : ec.resource.putContent(ref.location, String(text), note),
-            putBytes: (bytes, note) => note == null ? host.resourcePutBytes(ref.location, bytes)
-                : ec.resource.putContent(ref.location, bytes, note),
+            putText: (text, note) => note == null ? host.resourcePutText(writeAt(), String(text))
+                : ec.resource.putContent(writeAt(), String(text), note),
+            putBytes: (bytes, note) => note == null ? host.resourcePutBytes(writeAt(), bytes)
+                : ec.resource.putContent(writeAt(), bytes, note),
             // Java's `putStream(fileItem.getInputStream())` and `putStream(other.openStream())`
-            putUpload: (fileItem) => fileItem.write(ref.location),
+            putUpload: (fileItem) => fileItem.write(writeAt()),
             // `putStream(stream)`: the stream of `fileItem.getInputStream()` or `openStream()`, or the bytes of a Uint8Array.
             putStream: function (stream, note) {
                 if (stream == null) throw new Error("putStream needs a stream");
-                if (note != null) ec.resource.putContent(ref.location, stream, note);
-                else if (typeof stream.write === "function") stream.write(ref.location);
-                else host.resourcePutBytes(ref.location, stream);
+                if (note != null) ec.resource.putContent(writeAt(), stream, note);
+                else if (typeof stream.write === "function") stream.write(writeAt());
+                else host.resourcePutBytes(writeAt(), stream);
             },
             // `openStream()` and `getInputStream()`: the file's bytes as a stream; null for a file that is not there. A
             // reference of `location#versionName` streams that version (null when it is not there)
@@ -540,12 +543,12 @@ macro_rules! tools_js {
                 const info = host.resourceInfo(ref.location);
                 return info != null && info.exists && info.file ? host.resourceStream(ref.location) : null;
             },
-            copyFrom: (source) => host.resourceCopy(typeof source === "string" ? source : source.location, ref.location),
-            delete: () => host.resourceDelete(ref.location),
+            copyFrom: (source) => host.resourceCopy(typeof source === "string" ? source : source.location, writeAt()),
+            delete: () => host.resourceDelete(writeAt()),
             // nothing to move is not an error, as in Java (a page often has no matching directory)
             move: function (newLocation) {
                 const info = host.resourceInfo(ref.location);
-                if (info != null && info.exists) host.resourceMove(ref.location, String(newLocation));
+                if (info != null && info.exists) host.resourceMove(writeAt(), String(newLocation));
             },
             supportsVersion: () => host.resourceSupportsVersion(ref.location),
             getVersion: (versionName) => makeVersion(host.resourceVersion(ref.location, "named", String(versionName)), ref.location),
@@ -687,6 +690,8 @@ macro_rules! tools_js {
         const info = host.resourceInfo(location);
         const hash = location.indexOf('#');
         if (info != null && hash > 0 && hash + 1 < location.length) info.versionName = location.substring(hash + 1);
+        if (info != null && hash >= 0)
+            Object.defineProperty(info, "writeLocation", { value: location, enumerable: false, configurable: true });
         return wrap("Resource", info);
     };
     // `ResourceReference.isTextFilename(filename)` (static): the file name's content type is text
@@ -1078,7 +1083,8 @@ macro_rules! tools_js {
     };
     // Entities the generic tools (auto screens, data edit, data import) do not take from a request entity name
     wu.isRestrictedGenericEntity = host.isRestrictedGenericEntity;
-    // ... and the entities their writes refuse besides: those only their own services write
+    // ... and the entities their writes refuse besides: those only their own services write; with a field name, also a
+    // password field of the entity and an identity field of UserAccount
     wu.isGenericWriteRefused = host.isGenericWriteRefused;
 })"#
     };
@@ -1219,7 +1225,7 @@ static METHODS: &[Method] = &[
     method!(
         "tools",
         "isGenericWriteRefused",
-        [OptValue],
+        [OptValue, OptValue],
         is_generic_write_refused
     ),
     method!(
@@ -1865,7 +1871,10 @@ fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
             .ok()
             .map(std::time::Duration::from_secs),
         restrict_sensitive_entities: flag("restrictSensitiveEntities"),
-        refuse_password_fields: false,
+        // Tools' Data Load sets protectUserAccounts: a load from a request does not set an account's password, nor change
+        // an existing account's identity fields (SEC-TLS-81)
+        refuse_password_fields: flag("protectUserAccounts"),
+        refuse_account_identity: flag("protectUserAccounts"),
         refused_packages: Vec::new(),
         csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
         csv_field_names: list("csvFieldNames"),
@@ -3222,12 +3231,32 @@ fn is_restricted_generic_entity(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `isRestrictedGenericEntity`, or an entity only its own services write (the entity audit log, Monitor's recovery and
-/// ingest rows): what a generic tool's write refuses.
+/// ingest rows): what a generic tool's write refuses. With a field name, also a field no generic write takes: a
+/// password field of the entity (by name, or by origin through a view), and on `UserAccount` an identity field (its
+/// username, email address, external id, disabled flag and the rest), which REST strips too; the account screens
+/// change those with their own rules (Data Load's `storeSelected` and `load`, Browse and Record, plans/Security-Review.md
+/// SEC-TLS-81).
 fn is_generic_write_refused(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let name = text_of(call.value(0).cloned().as_ref());
+    use crate::entity::sensitive;
+    let name = text_of(call.value(0));
+    let field = text_of(call.value(1));
+    let identity = |full_name: &str| {
+        sensitive::is_user_account_entity(full_name)
+            && sensitive::USER_ACCOUNT_IDENTITY_FIELDS.contains(&field.as_str())
+    };
     Ok(Ret::from(match with_ec(|ec| ec.factory().entity())? {
-        Some(facade) => !crate::entity::sensitive::generic_access(&facade, &name).write,
-        None => crate::entity::sensitive::is_generic_write_refused(&name),
+        Some(facade) => {
+            let access = sensitive::generic_access(&facade, &name);
+            let full_name = facade
+                .with_entity(&name, |entity, _, _| Ok(entity.full_name.clone()))
+                .unwrap_or_else(|_| name.clone());
+            !access.write || (!field.is_empty() && (access.is_secret(&field) || identity(&full_name)))
+        }
+        None => {
+            sensitive::is_generic_write_refused(&name)
+                || sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field.as_str())
+                || identity(&name)
+        }
     }))
 }
 

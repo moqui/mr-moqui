@@ -275,7 +275,7 @@ helpers.recalculate(orderId)
 
 | Member | |
 |---|---|
-| `getLocationReference(location)` | A resource reference (below). `location#versionName` is a reference of that version |
+| `getLocationReference(location)` | A resource reference (below). `location#versionName` is a reference of that version; its writes (`putText`, `putBytes`, `putStream`, `putUpload`, `copyFrom`, `delete`, `move`) go to the location as given, and a write, delete or move at a location with a `#` is refused on every storage but `dbresource://`, where the `#` is part of the name |
 | `getUriReference(uri)` | The same; a URI is a location here |
 | `getLocationText(location, cacheOrCharset)` | The file's text. A second argument that is a charset name decodes the bytes in it; a cache flag is ignored |
 | `getLocationStream(location)` | The file as a stream, null for a file that is not there |
@@ -773,6 +773,7 @@ const orders = ec.entity.find("mantle.order.OrderHeader").condition(cf.makeCondi
 | `disableEntityEca(flag)`, `disableAuditLog(flag)`, `disableFkCreate(flag)`, `disableDataFeed(flag)` | Switch each off for the load |
 | `messageNoActionFiles(flag)` | With false, no message for a file that had nothing to load |
 | `restrictSensitiveEntities(flag)` | Refuse records of the entities a request may not name |
+| `protectUserAccounts(flag)` | With `restrictSensitiveEntities`, also refuse a `UserAccount` record that sets a password field (`currentPassword`, `passwordSalt` and the rest), or that changes an identity field (`username`, `emailAddress`, `disabled` and the rest) of an account that is there; a new account may set those. Tools' Data Load sets it, the seed and component loads do not |
 | `load(messages)` | Loads; the number of records. The messages are added to an array given |
 | `check()`, `check(messages)` | Compares the data with the database and writes nothing: the messages of what did not match, or with an array the fields checked |
 | `checkInfo()`, `checkInfo(diffInfoList, messages)` | A row for each record not found and each field that did not match, or with arrays the fields checked |

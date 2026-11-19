@@ -35,6 +35,11 @@ tar = { workspace = true }
 tracing = { workspace = true }
 zip = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# fs: O_NOFOLLOW, which the CI runner opens a job's reports and artifacts with (ci/runner); in the graph through
+# moqui-core with the same feature.
+rustix = { workspace = true, features = ["fs"] }
+
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open; image and xlsx for the file services' previews.
 moqui-core = { workspace = true, features = ["http", "test-support", "image", "xlsx"] }

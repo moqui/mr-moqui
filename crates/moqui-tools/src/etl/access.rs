@@ -205,6 +205,17 @@ pub fn refuse_restricted_view(
     Ok(())
 }
 
+/// An identity field of `UserAccount` (`username`, `emailAddress`, `disabled` and the rest) when `entity_name` is
+/// `UserAccount` by full name, short name or alias: an ETL target that may update an account does not take one, or an
+/// ADMIN would point another account's email at their own mailbox and take it by a reset (plans/Security-Review.md
+/// SEC-TLS-81).
+#[must_use]
+pub fn is_account_identity(entity_name: &str, field: &str) -> bool {
+    use moqui_core::entity::sensitive;
+    (sensitive::is_user_account_entity(entity_name) || entity_name == "UserAccount")
+        && sensitive::USER_ACCOUNT_IDENTITY_FIELDS.contains(&field)
+}
+
 /// A `UserAccount` password field, by name, on any entity.
 #[must_use]
 pub fn is_secret_field(name: &str) -> bool {

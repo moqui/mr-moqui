@@ -619,7 +619,11 @@ moqui ci-run poll [--token-file FILE] [--pass-env NAME,...] [--step-user USER] [
     variables and those --pass-env names, then the job's own variables; never a runner token. The
     runner token expires (the server's git-ci runner-token-days, 90); poll rotates it halfway and
     writes the new one to its token file. With --step-user the runner runs as root and each step as
-    that user, who owns the checkout and its home but cannot read the runner's token file.
+    that user, who owns the checkout and its home but cannot read the runner's token file; the
+    reports, artifacts and caches are read by a child of this program as that user (ci-run collect),
+    which poll checks the step user can run before it takes a job. One step user per runner
+    process: before it reads a job's files the runner kills that user's processes of the job, so
+    poll refuses a step user another runner holds.
 
   MOQUI_CI_SERVER_URL=https://moqui.example.com MOQUI_CI_TOKEN=... MOQUI_CI_JOB_RUN_ID=100123 moqui ci-run
   MOQUI_CI_SERVER_URL=... MOQUI_CI_POOL_TOKEN=... moqui ci-run register --name mac-mini-1 > ~/.moqui-ci-token

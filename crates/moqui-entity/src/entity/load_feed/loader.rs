@@ -475,10 +475,52 @@ fn refuse_restricted(facade: &EntityFacade, record: &Record, options: &LoadOptio
             "The password fields of {full_name} are not allowed in this data load"
         )));
     }
+    if options.refuse_account_identity && crate::entity::sensitive::is_user_account_entity(&full_name) {
+        if let Some(field) = changed_account_identity(facade, &full_name, record)? {
+            return Err(Error::new(format!(
+                "The {field} of an existing {full_name} is not allowed in this data load"
+            )));
+        }
+    }
     for child in &record.children {
         refuse_restricted(facade, child, options)?;
     }
     Ok(())
+}
+
+/// The first identity field a `UserAccount` record sets to a value other than the stored one, when the account it names
+/// is there; None for a new account, or one the record does not name.
+fn changed_account_identity(
+    facade: &EntityFacade,
+    full_name: &str,
+    record: &Record,
+) -> Result<Option<&'static str>, Error> {
+    let set: Vec<&'static str> = crate::entity::sensitive::USER_ACCOUNT_IDENTITY_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| record.fields.contains_key(*field))
+        .collect();
+    let user_id = record
+        .fields
+        .get("userId")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
+    if set.is_empty() || user_id.is_empty() {
+        return Ok(None);
+    }
+    let stored = facade
+        .find(full_name)?
+        .eq("userId", Value::string(user_id))
+        .use_cache(false)
+        .disable_authz()
+        .one()?;
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let text = |value: Option<&Value>| value.map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    Ok(set
+        .into_iter()
+        .find(|field| text(record.fields.get(*field)) != text(stored.get(field))))
 }
 
 /// `WebUtilities.isGenericWriteRefused` of an entity name, or of the noun of a `verb#noun` service name: a load writes.

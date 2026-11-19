@@ -3162,8 +3162,11 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
             <service-call name="create#moqui.resource.wiki.WikiBlog" in-map="context" out-map="context"/>
             <if condition="smallImage &amp;&amp; smallImage.size > 0">
-                <set field="filename" from="smallImage.getName()"/>
-                <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
+                <!-- the content root is a setting, never the user's preference, and the file name its base name only, so
+                    the image is written in the post's own folder -->
+                <set field="filename" from="String(smallImage.getName() || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f#?]/g, '_').trim()"/>
+                <if condition="!filename || filename === '.' || filename === '..'"><set field="filename" value="smallImage"/></if>
+                <set field="contentRoot" from="ec.factory.getConfValue('mantle@content-root') || 'dbresource://mantle/content'"/>
                 <set field="contentLocation" value="${contentRoot}/WikiBlog/${wikiBlogId}/smallImage/${filename}"/>
                 <set field="ref" from="ec.resource.getLocationReference(contentLocation)"/>
                 <script>ref.putUpload(smallImage)</script>
@@ -3194,8 +3197,11 @@ along with this software (see the LICENSE.md file). If not, see
             </if>
             <service-call name="update#moqui.resource.wiki.WikiBlog" in-map="context"/>
             <if condition="smallImage &amp;&amp; smallImage.size > 0">
-                <set field="filename" from="smallImage.getName()"/>
-                <set field="contentRoot" from="ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'"/>
+                <!-- the content root is a setting, never the user's preference, and the file name its base name only, so
+                    the image is written in the post's own folder -->
+                <set field="filename" from="String(smallImage.getName() || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f#?]/g, '_').trim()"/>
+                <if condition="!filename || filename === '.' || filename === '..'"><set field="filename" value="smallImage"/></if>
+                <set field="contentRoot" from="ec.factory.getConfValue('mantle@content-root') || 'dbresource://mantle/content'"/>
                 <set field="contentLocation" value="${contentRoot}/WikiBlog/${wikiBlogId}/smallImage/${filename}"/>
                 <set field="ref" from="ec.resource.getLocationReference(contentLocation)"/>
                 <script>ref.putUpload(smallImage)</script>

@@ -237,7 +237,7 @@ root location with an owner, members and a quota:
 
 | Kind | Root | Versions |
 |---|---|---|
-| Personal (`RdkPersonal`, made on first use by `ensure#PersonalDrive`) and folder drives (`RdkShared`, storage `folder`) | `dbresource://drive/personal/<userId>`, `dbresource://drive/shared/<driveId>`; the `moqui.drive.root` preference moves `dbresource://drive` | Each file's own, as history rows |
+| Personal (`RdkPersonal`, made on first use by `ensure#PersonalDrive`) and folder drives (`RdkShared`, storage `folder`) | `dbresource://drive/personal/<userId>`, `dbresource://drive/shared/<driveId>`; the `resource-facade@drive-root` setting moves `dbresource://drive` (a setting, not a user preference) | Each file's own, as history rows |
 | Version-controlled (storage `gitDb` or `gitLocal`) | `git://DRIVE_<driveId>/`, a `GitRepository` of kind `db` or `local` made with the drive | Commits |
 | Mirror (`RdkMirror`, storage `mirror`, admins only) | `git://DRIVE_<driveId>/` over a `remote` repository, fetched by `fetch_AllGitRepositories_frequent` | Commits; read only |
 | Records (`RdkRecords`, set up by an application) | Its record attachment tree, for example `dbresource://mantle/content` | As stored |

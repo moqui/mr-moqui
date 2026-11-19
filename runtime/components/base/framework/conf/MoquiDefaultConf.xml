@@ -675,10 +675,13 @@
         Empty, a script on a request worker is limited to the webapp's request-timeout (300 seconds by default), and
         one on a service, job or scheduler thread is not limited, as in Java. script-module-cache: a module
         ec.resource.script loads whose top level only declares (functions, constants, other modules) gives the same value
-        for the rest of the outermost script run, made once; false makes it again at each load. -->
+        for the rest of the outermost script run, made once; false makes it again at each load. drive-root: the location
+        under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made
+        (FileServices ensure#PersonalDrive, create#Drive); a setting, not a user's preference, so a user does not choose
+        where their drive is. -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
-            image-max-concurrent="2" script-timeout="" script-module-cache="true">
+            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive">
         <!-- resource reference class needs to implement the ResourceReference interface -->
         <resource-reference scheme="http" class="org.moqui.resource.UrlResourceReference"/>
         <resource-reference scheme="https" class="org.moqui.resource.UrlResourceReference"/>

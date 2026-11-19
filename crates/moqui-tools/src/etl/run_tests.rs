@@ -472,3 +472,45 @@ fn service_targets_that_delete_or_reach_restricted_entities_are_refused() {
         assert!(target(allowed.0, allowed.1).is_ok(), "{allowed:?}");
     }
 }
+
+/// A target that may update an account (a store or an update, or such an entity-auto service) does not take its
+/// identity fields, so a run does not point another account's email at its author's mailbox (plans/Security-Review.md
+/// SEC-TLS-81); a create of new accounts may set them, and the other fields of an account stay open.
+#[test]
+fn a_target_that_may_update_accounts_refuses_their_identity_fields() {
+    let target = |kind: &str, name: &str, mode: &str, field: &str| {
+        Mapping::from_map(&map(&[
+            ("targetTypeEnumId", text(kind)),
+            ("targetName", text(name)),
+            ("loadModeEnumId", text(mode)),
+            (
+                "fields",
+                Value::List(vec![Value::Map(map(&[("targetField", text(field))]))]),
+            ),
+        ]))
+        .unwrap()
+        .validate()
+    };
+    for refused in [
+        ("EtltEntity", "moqui.security.UserAccount", "EtllStore", "emailAddress"),
+        ("EtltEntity", "UserAccount", "EtllUpdate", "username"),
+        ("EtltService", "update#moqui.security.UserAccount", "", "disabled"),
+        ("EtltService", "store#moqui.security.UserAccount", "", "externalAuthId"),
+    ] {
+        let error = target(refused.0, refused.1, refused.2, refused.3)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("account screens"), "{refused:?}: {error}");
+    }
+    for allowed in [
+        ("EtltEntity", "moqui.security.UserAccount", "EtllStore", "userFullName"),
+        ("EtltEntity", "moqui.security.UserAccount", "EtllCreate", "emailAddress"),
+        ("EtltService", "create#moqui.security.UserAccount", "", "username"),
+        ("EtltEntity", "moqui.basic.Enumeration", "EtllStore", "description"),
+    ] {
+        assert!(
+            target(allowed.0, allowed.1, allowed.2, allowed.3).is_ok(),
+            "{allowed:?}"
+        );
+    }
+}

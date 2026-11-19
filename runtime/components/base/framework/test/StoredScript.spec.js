@@ -1,8 +1,9 @@
 // Records whose text runs as script where they are used need DATABASE_ADMIN to write that text (Security.eecas.xml,
 // crates/moqui-core/src/service/security_checks.rs assert_stored_template, assert_stored_expression, assert_translation;
-// plans/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12): an email template's sender or subject with ${}, an entity
-// filter's map, a subscreen row's menu title with ${}, and a translation that adds an expression to its original. Plain
-// text, a translation that keeps the original's placeholders, and a holder of DATABASE_ADMIN pass.
+// plans/Security-Review-Medium.md SEC-SCR-06, SEC-SCR-12; plans/Security-Review.md SEC-BAP-81): an email template's sender
+// or subject with ${}, an entity filter's map, a subscreen row's menu title with ${}, a translation that adds an expression to
+// its original, and a text block's body with a ${} that is not a ${name} placeholder. Plain text, a translation that keeps
+// the original's placeholders, a text block's placeholders, and a holder of DATABASE_ADMIN pass.
 // Run: ./moq test framework --spec StoredScript
 const adminId = "SPEC_SS_ADMIN"
 const dbaId = "SPEC_SS_DBA"
@@ -33,6 +34,7 @@ const cleanup = () => {
     ec.entity.find("moqui.security.EntityFilterSet").condition("entityFilterSetId", "SPEC_SS_SET").deleteAll()
     ec.entity.find("moqui.screen.SubscreensItem").condition("screenLocation", "component://spec/StoredScript.xml").deleteAll()
     ec.entity.find("moqui.basic.LocalizedMessage").condition("original", "like", "Spec stored %").deleteAll()
+    ec.entity.find("moqui.basic.email.EmailTextBlock").condition("emailTextBlockId", "like", "SPEC_SS_%").deleteAll()
     for (const userId of [adminId, dbaId]) {
         ec.entity.find("moqui.security.UserGroupMember").condition("userId", userId).deleteAll()
         ec.entity.find("moqui.security.UserAccount").condition("userId", userId).deleteAll()
@@ -79,6 +81,13 @@ feature("stored script text needs DATABASE_ADMIN; plain text and kept placeholde
                 { original: "Spec stored ${count} items", locale: "fr", localized: "Spec ${ec.factory.moquiVersion} articles" }),
             keptPlaceholder: writeAs("spec.ss.admin", "moqui.basic.LocalizedMessage",
                 { original: "Spec stored ${count} items", locale: "es", localized: "Spec ${count} artículos" }),
+            blockScript: writeAs("spec.ss.admin", "moqui.basic.email.EmailTextBlock", { emailTextBlockId: "SPEC_SS_TB1",
+                ownerUserId: adminId, title: "Spec", bodyHtml: "<p>Case ${requestId} ${ec.factory.moquiVersion}</p>" }),
+            blockPlaceholders: writeAs("spec.ss.admin", "moqui.basic.email.EmailTextBlock", { emailTextBlockId: "SPEC_SS_TB2",
+                ownerUserId: adminId, title: "Spec", bodyHtml: "<p>Case ${requestId} in ${ queueName } is open.</p>" }),
+            // a placeholder whose removal leaves an expression (the rule removes them, then looks for ${)
+            blockJoined: writeAs("spec.ss.admin", "moqui.basic.email.EmailTextBlock", { emailTextBlockId: "SPEC_SS_TB3",
+                ownerUserId: adminId, title: "Spec", bodyHtml: "<p>$${requestId}{ec.factory.moquiVersion}</p>" }),
         })
         const out = run()
         out.subject.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTemplate", {emailTemplateId: "SPEC_SS_1"}) == null
@@ -88,5 +97,8 @@ feature("stored script text needs DATABASE_ADMIN; plain text and kept placeholde
         out.menuTitle.includes("DATABASE_ADMIN")
         out.addedExpression.includes("DATABASE_ADMIN")
         out.keptPlaceholder === ""
+        out.blockScript.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB1"}) == null
+        out.blockPlaceholders === "" && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB2"}) != null
+        out.blockJoined.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB3"}) == null
     },
 })

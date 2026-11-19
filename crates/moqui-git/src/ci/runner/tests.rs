@@ -15,15 +15,18 @@
 //! The runner's own pieces, with no server: cache keys, path patterns and archives. A whole job is run against the
 //! runner REST in `server/ci_tests.rs`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::{archive, expand_key, matches};
 
+/// A directory of the test's own under the repository's `target/`.
 fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("moqui-ci-runner-{name}-{}", std::process::id()));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/test-scratch")
+        .join(format!("moqui-ci-runner-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    dir.canonicalize().unwrap()
 }
 
 fn write(dir: &std::path::Path, name: &str, text: &str) {
@@ -174,4 +177,400 @@ fn a_step_user_needs_a_root_runner_and_is_not_root() {
     assert!(step_user_of("ci", "1000\n", "1001\n", "1002\n").unwrap_err().contains("root"));
     assert!(step_user_of("nobody-here", "0\n", "", "").unwrap_err().contains("no such user"));
     assert!(step_user_of("root", "0\n", "0\n", "0\n").unwrap_err().contains("is root"));
+}
+
+/// A workspace (`<root>/src`) whose files a step made links in, beside a directory outside it (`<root>/outside`) that
+/// holds what the links point at (SEC-GIT-81): a report that is a link out, a report that is a link to a file in the
+/// workspace, a directory that is a link out (`d`), an artifact directory holding a link to a file and to a directory
+/// out, a cache key's file that is a link out; and an ordinary report and artifact.
+#[cfg(unix)]
+fn linked_workspace(workspace: &Path) {
+    use std::os::unix::fs::symlink;
+
+    let outside = workspace.parent().unwrap().join("outside");
+    write(&outside, "secret.txt", "SECRET-OUTSIDE");
+    write(&outside, "x.xml", "SECRET-X");
+    write(workspace, "reports/ok.xml", "<ok/>");
+    symlink(outside.join("secret.txt"), workspace.join("reports/out.xml")).unwrap();
+    symlink("ok.xml", workspace.join("reports/inner.xml")).unwrap();
+    symlink(&outside, workspace.join("d")).unwrap();
+    write(workspace, "real/x.xml", "<real/>");
+    write(workspace, "dist/app.bin", "binary");
+    symlink(outside.join("secret.txt"), workspace.join("dist/leak")).unwrap();
+    symlink(&outside, workspace.join("dist/sub")).unwrap();
+    symlink(outside.join("secret.txt"), workspace.join("Cargo.lock")).unwrap();
+}
+
+/// The entries of a tar.gz: each path, whether it is a link, and the bytes of the files.
+#[cfg(unix)]
+fn entries_of(archive_file: &Path) -> Vec<(String, bool, Vec<u8>)> {
+    use std::io::Read as _;
+
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(std::fs::File::open(archive_file).unwrap()));
+    tar.entries()
+        .unwrap()
+        .map(|entry| {
+            let mut entry = entry.unwrap();
+            let path = entry
+                .path()
+                .unwrap()
+                .to_string_lossy()
+                .trim_end_matches('/')
+                .to_string();
+            let link = entry.header().entry_type() == tar::EntryType::Symlink;
+            let mut bytes = Vec::new();
+            entry.read_to_end(&mut bytes).unwrap();
+            (path, link, bytes)
+        })
+        .collect()
+}
+
+/// SEC-GIT-81: a pattern keeps only what resolves inside the workspace: a report linked out, a directory linked out on
+/// the way (`d -> outside` with `d/x.xml`), and a `*` that meets a link out are left out (and said as refused); a link
+/// to a file in the workspace is kept for the caller to judge.
+#[cfg(unix)]
+#[test]
+fn patterns_never_resolve_out_of_the_workspace() {
+    let root = scratch("links-glob");
+    let workspace = root.join("src");
+    linked_workspace(&workspace);
+    let names = |pattern: &str| -> (Vec<String>, Vec<String>) {
+        let shown = |paths: Vec<PathBuf>| -> Vec<String> {
+            paths
+                .iter()
+                .map(|path| path.strip_prefix(&workspace).unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        let found = super::find(&workspace, pattern);
+        (
+            shown(found.found.into_iter().map(|(path, _)| path).collect()),
+            shown(found.refused),
+        )
+    };
+    let strings = |names: &[&str]| -> Vec<String> { names.iter().map(|name| (*name).to_string()).collect() };
+    assert_eq!(
+        names("reports/*.xml"),
+        (
+            strings(&["reports/inner.xml", "reports/ok.xml"]),
+            strings(&["reports/out.xml"])
+        )
+    );
+    assert_eq!(names("d/x.xml"), (strings(&[]), strings(&["d"])));
+    assert_eq!(names("d/*"), (strings(&[]), strings(&["d"])));
+    assert_eq!(
+        names("*/x.xml"),
+        (strings(&["real/x.xml"]), strings(&["Cargo.lock", "d"]))
+    );
+    assert_eq!(names("dist").0, ["dist"]);
+    assert!(matches(&workspace, "d").is_empty());
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// SEC-GIT-81: a report is read only when it is a regular file of the workspace, never through a link of its own name
+/// (`O_NOFOLLOW`), even one to a file of the workspace, nor through a directory linked out; a cache key's
+/// `${hash:FILE}` of a link out hashes to nothing.
+#[cfg(unix)]
+#[test]
+fn a_report_is_read_only_as_a_regular_file_in_the_workspace() {
+    let root = scratch("links-report");
+    let workspace = root.join("src");
+    linked_workspace(&workspace);
+    let read = |name: &str| -> Result<String, String> {
+        let mut out = Vec::new();
+        super::copy_regular(&workspace, &workspace.join(name), &mut out).map(|()| String::from_utf8(out).unwrap())
+    };
+    assert_eq!(read("reports/ok.xml").unwrap(), "<ok/>");
+    assert!(read("reports/out.xml").unwrap_err().contains("outside the workspace"));
+    assert!(read("reports/inner.xml").is_err());
+    assert!(super::open_regular(&workspace.join("reports/inner.xml")).is_err());
+    assert!(read("d/x.xml").unwrap_err().contains("outside the workspace"));
+    assert!(read("real").unwrap_err().contains("not a regular file"));
+    assert_eq!(expand_key("k-${hash:Cargo.lock}", &workspace), "k-");
+    // which the job's log says, as it leaves that part of the key constant; a file that is not there says nothing
+    let mut notes = Vec::new();
+    super::expand_key_noting("k-${hash:Cargo.lock}-${hash:missing}", &workspace, &mut notes);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("${hash:Cargo.lock} hashes to nothing"), "{notes:?}");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// SEC-GIT-81: an artifact directory's links are stored as links, never followed, so nothing outside the workspace is
+/// read; a named path that is, or goes through, a link out is refused; the ordinary files are packed.
+#[cfg(unix)]
+#[test]
+fn an_artifact_reads_nothing_outside_the_workspace() {
+    let root = scratch("links-pack");
+    let workspace = root.join("src");
+    linked_workspace(&workspace);
+    let archive_file = root.join("artifact.tar.gz");
+    archive::pack(&workspace, &[workspace.join("dist")], &archive_file).unwrap();
+    let mut entries = entries_of(&archive_file);
+    entries.sort();
+    assert_eq!(
+        entries,
+        [
+            ("dist".to_string(), false, Vec::new()),
+            ("dist/app.bin".to_string(), false, b"binary".to_vec()),
+            ("dist/leak".to_string(), true, Vec::new()),
+            ("dist/sub".to_string(), true, Vec::new()),
+        ]
+    );
+    for named in ["d", "d/x.xml", "dist/leak", "dist/sub", "reports/out.xml"] {
+        let refused = archive::pack(&workspace, &[workspace.join(named)], &archive_file).unwrap_err();
+        assert!(refused.contains("outside the workspace"), "{named}: {refused}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A transport with no server: the job it was made with, a checkout that makes the linked files, and what was
+/// uploaded and logged.
+#[cfg(unix)]
+struct Recorder {
+    job: serde_json::Value,
+    uploads: std::cell::RefCell<Vec<(String, Vec<u8>)>>,
+    log: std::cell::RefCell<String>,
+}
+
+#[cfg(unix)]
+impl super::Transport for Recorder {
+    fn json(
+        &self,
+        _method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, serde_json::Value), String> {
+        if path == "job" {
+            return Ok((200, self.job.clone()));
+        }
+        if path == "log" {
+            let text = body.and_then(|body| body["text"].as_str()).unwrap_or_default();
+            self.log.borrow_mut().push_str(text);
+        }
+        Ok((200, serde_json::json!({})))
+    }
+
+    fn upload(&self, path_and_query: &str, file: &Path) -> Result<(u16, serde_json::Value), String> {
+        let bytes = std::fs::read(file).map_err(|err| err.to_string())?;
+        self.uploads.borrow_mut().push((path_and_query.to_string(), bytes));
+        Ok((200, serde_json::json!({})))
+    }
+
+    fn download(&self, _path_and_query: &str, _to: &Path) -> Result<u16, String> {
+        Ok(404)
+    }
+
+    fn checkout(&self, _job: &serde_json::Value, workspace: &Path) -> Result<String, String> {
+        linked_workspace(workspace);
+        Ok(String::new())
+    }
+}
+
+/// SEC-GIT-81, a whole job: the reports and artifacts a step linked out of the workspace are not uploaded, each named
+/// in the job's log, and the ordinary report and artifact are.
+#[cfg(unix)]
+#[test]
+fn a_job_uploads_no_report_or_artifact_through_a_link() {
+    let root = scratch("links-job");
+    let transport = Recorder {
+        job: serde_json::json!({
+            "commitId": "abc123",
+            "timeoutMinutes": 1,
+            "spec": {
+                "job": "build",
+                "pipeline": "ci",
+                "steps": [],
+                "reports": ["reports/*.xml", "d/x.xml"],
+                "artifacts": [{ "name": "dist", "path": "dist" }, { "name": "leak", "path": "d/*" }],
+            },
+        }),
+        uploads: std::cell::RefCell::default(),
+        log: std::cell::RefCell::default(),
+    };
+    let options = super::Options {
+        workspace: root.join("src"),
+        ..super::Options::default()
+    };
+    assert_eq!(super::run(&transport, &options), super::EXIT_SUCCESS);
+    let log = transport.log.borrow().clone();
+    for said in [
+        "Report reports/out.xml was not uploaded: it does not resolve inside the workspace",
+        "Report reports/inner.xml was not uploaded: it is a symbolic link",
+        "Report d was not uploaded: it does not resolve inside the workspace",
+        "Artifact leak: d was left out, as it does not resolve inside the workspace",
+        "Artifact leak: nothing at d/*",
+        "Artifact dist uploaded",
+    ] {
+        assert!(log.contains(said), "{said} not in the log:\n{log}");
+    }
+    let uploads = transport.uploads.borrow();
+    let kinds: Vec<&str> = uploads
+        .iter()
+        .map(|(query, _)| query.split_once("kind=").unwrap().1.split('&').next().unwrap())
+        .collect();
+    assert_eq!(kinds, ["report", "artifact"]);
+    assert!(uploads[0].0.contains("name=ok.xml"));
+    assert_eq!(uploads[0].1, b"<ok/>");
+    let archive_file = root.join("uploaded.tar.gz");
+    std::fs::write(&archive_file, &uploads[1].1).unwrap();
+    let packed = entries_of(&archive_file);
+    assert!(packed
+        .iter()
+        .any(|(path, _, bytes)| path == "dist/app.bin" && bytes == b"binary"));
+    assert!(packed
+        .iter()
+        .all(|(_, _, bytes)| !String::from_utf8_lossy(bytes).contains("SECRET")));
+    drop(uploads);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A collect child's request: the workspace and then `items`, NUL-terminated.
+#[cfg(unix)]
+fn request_of(workspace: &Path, items: &[&str]) -> Vec<u8> {
+    let mut bytes = workspace.to_string_lossy().into_owned().into_bytes();
+    bytes.push(0);
+    for item in items {
+        bytes.extend_from_slice(item.as_bytes());
+        bytes.push(0);
+    }
+    bytes
+}
+
+/// SEC-GIT-81: what a `--step-user` runner's collect child does with its request (`collect::serve`): `find` answers
+/// what `find` does in the runner, refusals included; `report` copies a regular file and refuses a link; `pack` keeps a
+/// link as a link and refuses a path out; `probe` answers nothing; another word is refused.
+#[cfg(unix)]
+#[test]
+fn a_collect_child_finds_reads_and_packs_as_the_runner_would() {
+    use super::collect::serve;
+
+    let root = scratch("collect-serve");
+    let workspace = root.join("src");
+    linked_workspace(&workspace);
+    let ask = |kind: &str, items: &[&str]| -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        serve(kind, &mut request_of(&workspace, items).as_slice(), &mut out).map(|()| out)
+    };
+    // find: what the child writes reads back in the runner as what find answers there
+    let answer = super::collect::decode_matches(&ask("find", &["reports/*.xml"]).unwrap()).unwrap();
+    assert_eq!(answer, super::find(&workspace, "reports/*.xml"));
+    assert_eq!(
+        answer.found,
+        [
+            (workspace.join("reports/inner.xml"), super::Kind::Link),
+            (workspace.join("reports/ok.xml"), super::Kind::File),
+        ]
+    );
+    assert_eq!(answer.refused, [workspace.join("reports/out.xml")]);
+    assert!(ask("find", &["a", "b"]).unwrap_err().contains("one pattern"));
+    // report
+    let ok = workspace.join("reports/ok.xml").to_string_lossy().into_owned();
+    assert_eq!(ask("report", &[&ok]).unwrap(), b"<ok/>");
+    let inner = workspace.join("reports/inner.xml").to_string_lossy().into_owned();
+    assert!(ask("report", &[&inner]).is_err());
+    let out = workspace.join("reports/out.xml").to_string_lossy().into_owned();
+    assert!(ask("report", &[&out]).unwrap_err().contains("outside the workspace"));
+    assert!(ask("report", &[&ok, &ok]).unwrap_err().contains("one file"));
+    // pack
+    let dist = workspace.join("dist").to_string_lossy().into_owned();
+    let packed = ask("pack", &[&dist]).unwrap();
+    let archive_file = root.join("packed.tar.gz");
+    std::fs::write(&archive_file, &packed).unwrap();
+    let entries = entries_of(&archive_file);
+    assert!(entries.iter().any(|(path, link, _)| path == "dist/leak" && *link));
+    assert!(entries
+        .iter()
+        .all(|(_, _, bytes)| !String::from_utf8_lossy(bytes).contains("SECRET")));
+    let d = workspace.join("d").to_string_lossy().into_owned();
+    assert!(ask("pack", &[&d]).unwrap_err().contains("outside the workspace"));
+    // probe, and a word that is none
+    assert_eq!(ask("probe", &[]).unwrap(), b"");
+    assert!(ask("list", &[])
+        .unwrap_err()
+        .contains("is not find, report, pack or probe"));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// This process's user, as a step user: `run_as` sets its own uid and gid, which needs no root.
+#[cfg(unix)]
+fn this_user() -> super::StepUser {
+    super::StepUser {
+        name: "this-user".into(),
+        uid: super::output_of("id", &["-u"]).trim().parse().unwrap(),
+        gid: super::output_of("id", &["-g"]).trim().parse().unwrap(),
+    }
+}
+
+/// SEC-GIT-81: a collect child runs as the user with its request on its input and its answer in the runner's file; a
+/// failure answers its first error line; one past the deadline is killed; and on Linux this binary runs by
+/// `/proc/self/exe`, as the step user runs it.
+#[cfg(unix)]
+#[test]
+fn a_collect_child_runs_as_the_user_answers_in_a_file_and_is_killed_at_its_deadline() {
+    use std::time::{Duration, Instant};
+
+    use super::collect::{run_as, Collect, Collector};
+
+    let root = scratch("collect-run");
+    let user = this_user();
+    let sh = |script: &str| Collector {
+        program: PathBuf::from("/bin/sh"),
+        args: vec!["-c".into(), script.into(), "sh".into()],
+    };
+    let out = root.join("out");
+    let later = Instant::now() + Duration::from_secs(60);
+    // the input reaches the child, and what it writes is the runner's file; its last argument is what it is asked
+    run_as(
+        &user,
+        &sh("/bin/cat; echo \" $1\""),
+        Collect::Pack,
+        b"input-bytes",
+        &out,
+        &root,
+        later,
+    )
+    .unwrap();
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "input-bytes pack\n");
+    // a child that fails answers the first line it wrote on standard error
+    let failed = run_as(
+        &user,
+        &sh("echo 'it went wrong' >&2; echo more >&2; exit 2"),
+        Collect::Report,
+        b"",
+        &out,
+        &root,
+        later,
+    );
+    assert_eq!(failed.unwrap_err(), "it went wrong");
+    // one still running at the deadline is killed
+    let began = Instant::now();
+    let slow = run_as(
+        &user,
+        &sh("exec /bin/sleep 30"),
+        Collect::Find,
+        b"",
+        &out,
+        &root,
+        Instant::now() + Duration::from_millis(300),
+    );
+    assert!(slow.unwrap_err().contains("ran out of time"));
+    assert!(began.elapsed() < Duration::from_secs(10));
+    // past the deadline nothing starts
+    assert!(run_as(&user, &sh("true"), Collect::Probe, b"", &out, &root, Instant::now()).is_err());
+    // this binary by /proc/self/exe on Linux (here the test binary, which lists its tests and ends)
+    let this = Collector::this_binary().unwrap();
+    if cfg!(target_os = "linux") {
+        assert_eq!(this.program, PathBuf::from("/proc/self/exe"));
+    }
+    let listing = Collector {
+        program: this.program,
+        args: vec!["--list".into(), "--exact".into(), "no-such-test".into()],
+    };
+    run_as(&user, &listing, Collect::Probe, b"", &out, &root, later).unwrap();
+    // nothing of the child's scratch files is left beside its answer
+    let left: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, ["out"]);
+    std::fs::remove_dir_all(&root).unwrap();
 }
