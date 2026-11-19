@@ -1758,9 +1758,9 @@ impl From<SessionError> for Error {
     }
 }
 
-/// Run one SMTP session on a thread of its own, waiting for it until `deadline`. A session past it is left to end on
-/// its own (lettre's command timeout) and is an error with no SMTP answer, so its outcome is uncertain: the message
-/// may have gone.
+/// Run one SMTP session on a thread of its own, through its relay ([`SmtpSession::open`]), waiting for it until
+/// `deadline`. At the deadline the relay closes the session's sockets, so its thread ends with a failed read; a
+/// session past the deadline is an error with no SMTP answer, so its outcome is uncertain: the message may have gone.
 fn send_within(
     session: &SmtpSession,
     payload: &Arc<Payload>,

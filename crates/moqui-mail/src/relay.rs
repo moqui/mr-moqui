@@ -68,7 +68,12 @@ impl Relay {
         let mut last = None;
         let mut upstream = None;
         for address in addresses {
-            match TcpStream::connect_timeout(address, connect) {
+            // each address waits at most what is left before the deadline
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            match TcpStream::connect_timeout(address, connect.min(left)) {
                 Ok(stream) => {
                     upstream = Some(stream);
                     break;
@@ -77,7 +82,10 @@ impl Relay {
             }
         }
         let Some(upstream) = upstream else {
-            return Err(last.map_or_else(|| "no address".to_string(), |err| err.to_string()));
+            return Err(last.map_or_else(
+                || "no address answered before the deadline".to_string(),
+                |err| err.to_string(),
+            ));
         };
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|err| format!("the relay: {err}"))?;
         let local = listener.local_addr().map_err(|err| format!("the relay: {err}"))?;
@@ -178,5 +186,37 @@ fn pass(
     let _ = to_session.shutdown(Shutdown::Both);
     if let Ok(writes) = writes {
         let _ = writes.join();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The connect to each address waits at most what is left before the session's deadline, so a server that does not
+    /// answer (a blackholed address) costs the deadline, not each address's full timeout; past the deadline nothing is
+    /// tried.
+    #[test]
+    fn a_connect_waits_at_most_until_the_deadline() {
+        let blackholed: SocketAddr = "10.255.255.1:25".parse().unwrap();
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(300);
+        let refused = Relay::start(
+            &[blackholed, blackholed],
+            Duration::from_secs(30),
+            deadline,
+            MAX_REPLIES,
+            "test",
+        );
+        assert!(refused.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        let late = Relay::start(
+            &[blackholed],
+            Duration::from_secs(30),
+            Instant::now(),
+            MAX_REPLIES,
+            "test",
+        );
+        assert_eq!(late.err().as_deref(), Some("no address answered before the deadline"));
     }
 }
