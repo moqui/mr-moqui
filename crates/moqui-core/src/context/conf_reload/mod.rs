@@ -168,7 +168,10 @@ pub fn set_value(
     let originals = factory.extension(|_| Originals::default());
     let compare_key = crate::context::conf_env::compare_key(&target.path);
     let created = factory.extension(|_| Created::default());
-    let element_key = compare_key.rsplit_once('/').map_or("", |(element, _)| element).to_string();
+    let element_key = compare_key
+        .rsplit_once('/')
+        .map_or("", |(element, _)| element)
+        .to_string();
     let made_here = {
         let mut held = lock(&created.0);
         if value.is_some() && target.created {

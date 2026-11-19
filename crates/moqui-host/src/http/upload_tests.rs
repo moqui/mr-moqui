@@ -69,18 +69,27 @@ fn a_client_and_anonymous_uploads_take_only_their_share_of_the_slots() {
     let uploads = Arc::new(Uploads::default());
     let first = uploads.take(&limits, ip("203.0.113.1"), false).ok().expect("a slot");
     let _second = uploads.take(&limits, ip("203.0.113.1"), false).ok().expect("a slot");
-    assert!(matches!(uploads.take(&limits, ip("203.0.113.1"), true), Err(BodyRefused::SpoolFull)));
+    assert!(matches!(
+        uploads.take(&limits, ip("203.0.113.1"), true),
+        Err(BodyRefused::SpoolFull)
+    ));
     let _v6 = uploads.take(&limits, ip("2001:db8::1"), false).ok().expect("a slot");
     let _v6_again = uploads
         .take(&limits, ip("2001:db8::2"), true)
         .ok()
         .expect("another address of the /64 has the second slot");
-    assert!(matches!(uploads.take(&limits, ip("2001:db8::3"), true), Err(BodyRefused::SpoolFull)));
+    assert!(matches!(
+        uploads.take(&limits, ip("2001:db8::3"), true),
+        Err(BodyRefused::SpoolFull)
+    ));
     drop(first);
     // four of four arriving, then one ends: three of four arriving, an upload with no user finds no room past three quarters, one with a user does
     assert_eq!(uploads.arriving(), 3);
     assert!(!uploads.anonymous_room(&limits));
-    assert!(matches!(uploads.take(&limits, ip("203.0.113.9"), false), Err(BodyRefused::SpoolFull)));
+    assert!(matches!(
+        uploads.take(&limits, ip("203.0.113.9"), false),
+        Err(BodyRefused::SpoolFull)
+    ));
     assert!(uploads.take(&limits, ip("203.0.113.9"), true).is_ok());
 }
 
@@ -110,7 +119,12 @@ async fn a_slow_upload_is_cut_off_through_the_screen_route() {
             0 => Some((Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"--x\r\nConte")), 1)),
             1 => {
                 tokio::time::sleep(Duration::from_secs(5)).await;
-                Some((Ok(bytes::Bytes::from_static(b"nt-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--x--\r\n")), 2))
+                Some((
+                    Ok(bytes::Bytes::from_static(
+                        b"nt-Disposition: form-data; name=\"a\"\r\n\r\n1\r\n--x--\r\n",
+                    )),
+                    2,
+                ))
             }
             _ => None,
         }

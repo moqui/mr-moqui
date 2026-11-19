@@ -1245,7 +1245,11 @@ fn the_host_is_asked_for_the_path_a_request_reached_and_its_refusal_is_answered(
         assert_eq!(seen.lock().unwrap().clone(), vec![reached; 2], "{path}");
     }
     seen.lock().unwrap().clear();
-    for (method, path) in [("GET", "/fop/Form/go"), ("POST", "/Form/save/x"), ("POST", "/fop/Form/save")] {
+    for (method, path) in [
+        ("GET", "/fop/Form/go"),
+        ("POST", "/Form/save/x"),
+        ("POST", "/fop/Form/save"),
+    ] {
         let response = serve(method, path, false);
         assert_eq!(response.status, 404, "{path}: {}", response.body_text());
     }

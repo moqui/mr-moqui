@@ -182,14 +182,22 @@ impl Uploads {
         has_user: bool,
     ) -> Result<UploadSlot, BodyRefused> {
         let client = upload_client(client);
-        let cap = if has_user { limits.max_uploads } else { anonymous_cap(limits) };
-        let taken = self
-            .arriving
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |count| (count < cap).then_some(count + 1));
+        let cap = if has_user {
+            limits.max_uploads
+        } else {
+            anonymous_cap(limits)
+        };
+        let taken = self.arriving.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            (count < cap).then_some(count + 1)
+        });
         if taken.is_err() {
             tracing::warn!(
                 "an upload was refused: {cap} uploads are arriving at once (max-uploads{})",
-                if has_user { "" } else { ", the share of uploads with no user" }
+                if has_user {
+                    ""
+                } else {
+                    ", the share of uploads with no user"
+                }
             );
             return Err(BodyRefused::SpoolFull);
         }
@@ -250,7 +258,11 @@ impl Drop for UploadSlot {
 /// to when its average would fall under `upload-min-rate` once `body-timeout` (60 seconds when off) has passed; `None`
 /// for no limit. A [`BodyRefused::TimedOut`] when it has fallen under already, so a client sending a byte now and then
 /// does not hold the connection for as long as it likes (SEC-RTE-91).
-pub(crate) fn upload_wait(limits: &ListenLimits, elapsed: Duration, total: usize) -> Result<Option<Duration>, BodyRefused> {
+pub(crate) fn upload_wait(
+    limits: &ListenLimits,
+    elapsed: Duration,
+    total: usize,
+) -> Result<Option<Duration>, BodyRefused> {
     if limits.upload_min_rate == 0 {
         return Ok(limits.upload_idle);
     }
@@ -318,7 +330,6 @@ pub(crate) async fn upload_has_user(
     .await;
     matches!(found, Ok(true))
 }
-
 
 #[cfg(test)]
 #[path = "upload_tests.rs"]

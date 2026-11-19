@@ -1731,7 +1731,10 @@ fn an_account_without_a_password_confirms_by_a_code_to_its_verified_address() {
     let code = moqui_lib::object::to_plain_string(&made["code"]);
     assert!(crate::user::reauthenticate("", "000000x").is_err(), "a wrong code");
     assert_eq!(i64_field(&load_user(&facade, "sso.only"), "successiveFailedLogins"), 1);
-    assert_eq!(crate::user::reauthenticate("", &code).unwrap(), crate::user::CodeLogin::LoggedIn);
+    assert_eq!(
+        crate::user::reauthenticate("", &code).unwrap(),
+        crate::user::CodeLogin::LoggedIn
+    );
     assert!(recent_auth(300_000));
     logout_local().unwrap();
     session::reset_session();

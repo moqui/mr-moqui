@@ -319,7 +319,11 @@ fn a_table_full_of_bans_drops_a_ban_for_a_new_client() {
     assert_eq!(status(&guard, "203.0.113.32", "GET", "/"), 429);
     let banned = ["203.0.113.30", "203.0.113.31"]
         .iter()
-        .filter(|client| guard.check(ip(client), ip(client), "", "GET", "/", &HeaderMap::new()).is_err())
+        .filter(|client| {
+            guard
+                .check(ip(client), ip(client), "", "GET", "/", &HeaderMap::new())
+                .is_err()
+        })
         .count();
     assert!(banned >= 1, "one ban stays");
     // a second new client within the second goes straight to the bans

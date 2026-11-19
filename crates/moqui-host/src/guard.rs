@@ -238,7 +238,10 @@ impl Guard {
     /// Everything per client off: the global limits only.
     #[cfg(test)]
     pub(crate) fn disabled() -> Self {
-        Self::new(GuardConf::from_node(None, Arc::new(moqui_core::web::address::ClientAddressing::default())))
+        Self::new(GuardConf::from_node(
+            None,
+            Arc::new(moqui_core::web::address::ClientAddressing::default()),
+        ))
     }
 
     /// The conf in place now.
@@ -563,7 +566,9 @@ impl Guard {
         }
         let credentials = has_credentials(headers);
         self.limit(key, client, |limit| {
-            reached.iter().any(|reached| limit.applies(host, method, reached, credentials))
+            reached
+                .iter()
+                .any(|reached| limit.applies(host, method, reached, credentials))
                 && !limit.applies(host, method, &decoded, credentials)
                 && !limit.applies(host, method, &resolved, credentials)
         })

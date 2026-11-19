@@ -424,7 +424,12 @@ fn reauth_email_address(user_id: &str) -> Result<Option<String>, Error> {
     else {
         return Ok(None);
     };
-    let text = |name: &str| account.get(name).map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    let text = |name: &str| {
+        account
+            .get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
     let address = text("emailAddress");
     if !text("currentPassword").is_empty() || address.trim().is_empty() {
         return Ok(None);

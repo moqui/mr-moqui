@@ -61,10 +61,11 @@ pub fn warn_untyped_remotes(factory: &crate::context::ExecutionContextFactory) -
         return Vec::new();
     };
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let rows = match facade
-        .find(REMOTE)
-        .and_then(|find| find.disable_authz().condition(moqui_db::sql::Condition::is_null("systemMessageTypeId")).list())
-    {
+    let rows = match facade.find(REMOTE).and_then(|find| {
+        find.disable_authz()
+            .condition(moqui_db::sql::Condition::is_null("systemMessageTypeId"))
+            .list()
+    }) {
         Ok(rows) => rows,
         Err(err) => {
             tracing::error!("System message remotes could not be read for their message types: {err}");

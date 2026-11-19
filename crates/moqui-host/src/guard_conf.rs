@@ -609,4 +609,3 @@ pub(super) fn ban(element: &MNode, attr: &impl Fn(&MNode, &str) -> String) -> Op
 pub(super) fn nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
-

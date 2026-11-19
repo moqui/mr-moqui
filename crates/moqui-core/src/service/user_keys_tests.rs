@@ -305,7 +305,10 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
         crate::user::logout().unwrap();
         called.ok().is_some_and(|out| out.contains_key("loginKey")) && errors.is_empty()
     };
-    assert!(!made_by(false), "a session with no recent sign-in, a junk Authorization header beside it");
+    assert!(
+        !made_by(false),
+        "a session with no recent sign-in, a junk Authorization header beside it"
+    );
     assert!(made_by(true), "a client by its own key");
 }
 

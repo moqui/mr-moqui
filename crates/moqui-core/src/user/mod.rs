@@ -42,8 +42,9 @@ pub(crate) use authz::{
 #[cfg(test)]
 pub(crate) use factor::totp_code_now;
 pub use factor::{
-    login_with_code, random_code, random_string, reauthenticate, second_factor_required, send_login_code,
-    reauth_email_code_offered, send_reauth_code, send_reauth_email_code, single_use_hash, totp_code_step, totp_code_valid, totp_secret, totp_uri, CodeLogin, SendableFactor,
+    login_with_code, random_code, random_string, reauth_email_code_offered, reauthenticate, second_factor_required,
+    send_login_code, send_reauth_code, send_reauth_email_code, single_use_hash, totp_code_step, totp_code_valid,
+    totp_secret, totp_uri, CodeLogin, SendableFactor,
 };
 pub(crate) use factor::{CODE_NOT_VALID, FACTOR_INFO, SEND_CODE, VALIDATE_CODE};
 pub(crate) use filter::apply_view_filters;

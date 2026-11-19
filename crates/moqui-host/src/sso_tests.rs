@@ -790,7 +790,11 @@ fn a_user_info_answer_is_taken_only_for_the_id_tokens_subject() {
     *idp.user_info.lock().unwrap() = json!({"sub": "proof-user", "zoneinfo": "Europe/Oslo"}).to_string();
     let taken = idp.sign_in(&sso, &flow, es256);
     assert_eq!(
-        taken.attributes.get("zoneinfo").map(moqui_lib::object::to_plain_string).as_deref(),
+        taken
+            .attributes
+            .get("zoneinfo")
+            .map(moqui_lib::object::to_plain_string)
+            .as_deref(),
         Some("Europe/Oslo")
     );
 }
