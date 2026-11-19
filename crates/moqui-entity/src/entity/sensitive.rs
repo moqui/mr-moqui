@@ -145,6 +145,8 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "oauthflow",
     "oidcflow",
     "samlflow",
+    // a SIP trunk's stored password goes to its host: store#VoiceTrunk clears it when the endpoint changes
+    "voicetrunk",
     // ACME: a challenge row is answered on the TLS listener and a certificate row written to runtime/cert, so only an
     // order (setup#AcmeName and the renewal job) writes them
     "acmename",
@@ -661,6 +663,7 @@ mod tests {
             "moqui.security.sso.OauthFlow",
             "moqui.security.sso.OidcFlow",
             "moqui.security.sso.SamlFlow",
+            "moqui.call.VoiceTrunk",
             "moqui.basic.email.EmailOAuthProvider",
             "moqui.basic.print.NetworkPrinter",
             "moqui.server.AcmeName",
