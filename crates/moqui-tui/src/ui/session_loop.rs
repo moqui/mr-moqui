@@ -77,6 +77,12 @@ const BACKGROUND_QUERY: &[u8] = b"\x1b]11;?\x1b\\";
 /// How often the title line's spinner moves while a request runs.
 const SPIN: Duration = Duration::from_millis(100);
 
+/// The most columns, and the most rows, a session draws (SEC-FIL-81, SEC-FIL-100): a frame is a buffer of every cell,
+/// redrawn on each key, so a larger size asked by the transport (an SSH `pty-req` or `window-change`, up to 65535 a
+/// side) or by the input itself (the `CSI 8 ; rows ; cols t` report, which every transport passes on) is drawn at this
+/// size. The browser socket and `agent-apps` keep to it already.
+pub const MAX_SIDE: u16 = 500;
+
 /// Run the client on `out` until the user quits or the channel closes. `events` brings the input; `replies` is its
 /// sender, which the worker threads answer on. The loop keeps a clone of `replies` for them, so the channel never
 /// disconnects while it runs: the caller sends [`SessionEvent::Close`] when its input ends. The terminal is put back as
@@ -126,8 +132,9 @@ fn run<L: ScreenLink + 'static, W: Write>(
     let link = Arc::new(link);
     let mut view = AppView::with_session(Session::start(&options.path), Arc::clone(&link));
     view.set_theme(options.theme.clone());
-    view.session_mut().resize(options.columns, options.rows);
-    let mut screen = Screen::new(options.columns, options.rows, options.theme.depth);
+    let (columns, rows) = fit(options.columns, options.rows, options.notes);
+    view.session_mut().resize(columns, rows);
+    let mut screen = Screen::new(columns, rows, options.theme.depth);
     let mut decoder = Decoder::new();
     let pushes = replies.clone();
     let replies = replies.clone();
@@ -166,14 +173,14 @@ fn run<L: ScreenLink + 'static, W: Write>(
             match event {
                 SessionEvent::Input(bytes) => {
                     for decoded in decoder.push(&bytes) {
-                        if apply(&mut view, &mut screen, decoded) {
+                        if apply(&mut view, &mut screen, decoded, options.notes) {
                             return Ok(());
                         }
                         changed = true;
                     }
                 }
                 SessionEvent::Resize { columns, rows } => {
-                    resize(&mut view, &mut screen, columns, rows);
+                    resize(&mut view, &mut screen, columns, rows, options.notes);
                     changed = true;
                 }
                 SessionEvent::Reply(id, reply) => {
@@ -207,7 +214,7 @@ fn run<L: ScreenLink + 'static, W: Write>(
         let now = Instant::now();
         if decoder.deadline().is_some_and(|at| now >= at) {
             for decoded in decoder.flush() {
-                if apply(&mut view, &mut screen, decoded) {
+                if apply(&mut view, &mut screen, decoded, options.notes) {
                     return Ok(());
                 }
                 changed = true;
@@ -226,7 +233,12 @@ fn run<L: ScreenLink + 'static, W: Write>(
 }
 
 /// A decoded key, paste or size. Returns true when the user quit.
-fn apply<L: ScreenLink>(view: &mut AppView<Arc<L>>, screen: &mut Screen, decoded: Decoded) -> bool {
+fn apply<L: ScreenLink>(
+    view: &mut AppView<Arc<L>>,
+    screen: &mut Screen,
+    decoded: Decoded,
+    notes: Option<fn(&str)>,
+) -> bool {
     match decoded {
         Decoded::Key(press) => view.key(&press),
         Decoded::Mouse(mouse) => {
@@ -238,7 +250,7 @@ fn apply<L: ScreenLink>(view: &mut AppView<Arc<L>>, screen: &mut Screen, decoded
             false
         }
         Decoded::Resize { columns, rows } => {
-            resize(view, screen, columns, rows);
+            resize(view, screen, columns, rows, notes);
             false
         }
         Decoded::Background { dark } => {
@@ -248,12 +260,36 @@ fn apply<L: ScreenLink>(view: &mut AppView<Arc<L>>, screen: &mut Screen, decoded
     }
 }
 
-fn resize<L: ScreenLink>(view: &mut AppView<Arc<L>>, screen: &mut Screen, columns: u16, rows: u16) {
-    if columns == 0 || rows == 0 || screen.size() == (columns, rows) {
+fn resize<L: ScreenLink>(
+    view: &mut AppView<Arc<L>>,
+    screen: &mut Screen,
+    columns: u16,
+    rows: u16,
+    notes: Option<fn(&str)>,
+) {
+    if columns == 0 || rows == 0 {
+        return;
+    }
+    let (columns, rows) = fit(columns, rows, notes);
+    if screen.size() == (columns, rows) {
         return;
     }
     view.session_mut().resize(columns, rows);
     screen.resize(columns, rows);
+}
+
+/// A size asked for, at most [`MAX_SIDE`] a side; a larger one is noted for the log.
+fn fit(columns: u16, rows: u16, notes: Option<fn(&str)>) -> (u16, u16) {
+    let fitted = (columns.min(MAX_SIDE), rows.min(MAX_SIDE));
+    if fitted != (columns, rows) {
+        if let Some(log) = notes {
+            log(&format!(
+                "the terminal asked for {columns}x{rows}; drawn at {}x{} (at most {MAX_SIDE} a side)",
+                fitted.0, fitted.1
+            ));
+        }
+    }
+    fitted
 }
 
 /// After each turn: the shell data's theme, notes for the log, the mouse mode and a copy for the terminal, downloads
