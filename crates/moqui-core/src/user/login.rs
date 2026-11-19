@@ -688,16 +688,19 @@ pub fn internal_login_queued_user(username: &str) -> Result<(), Error> {
     internal_login(username, true, false).1
 }
 
-/// The sign-in of a person by an SSH key the host checked to be theirs (an active `UserSshKey`): [`internal_login_user`]
-/// as a person's sign-in, which clears the account's `hasLoggedOut` as a password or a login key does, so a sign-out
-/// elsewhere earlier does not end the sessions this sign-in starts. The operations of the session after it borrow the
-/// login ([`internal_login_user`], [`logout_local`]) and leave the flag as it is.
+/// The sign-in of a person by an SSH key the host checked to be theirs (an active `UserSshKey`), from `client_ip` (the
+/// SSH peer): [`internal_login_user`] as a person's sign-in, which clears the account's `hasLoggedOut` as a password or
+/// a login key does, so a sign-out elsewhere earlier does not end the sessions this sign-in starts. As the SSH password
+/// login, it checks the account's and its groups' `ipAllowed` against `client_ip` and is recorded in the login history
+/// (SEC-FIL-89). The operations of the session after it borrow the login ([`internal_login_user`], [`logout_local`])
+/// and leave the flag as it is.
 ///
 /// # Errors
 ///
-/// Returns an error when the account is unknown, disabled, terminated, a display account, or needs a password change.
-pub fn login_ssh_key_user(username: &str) -> Result<(), Error> {
-    internal_login(username, false, true).1
+/// Returns an error when the account is unknown, disabled, terminated, a display account, needs a password change, or
+/// may not sign in from `client_ip`.
+pub fn login_ssh_key_user(username: &str, client_ip: &str) -> Result<(), Error> {
+    with_client_ip(client_ip, || recorded_login(username, true))
 }
 
 /// Whether the account is a display account (`UserAccount.displayAccount`, shared devices): it stands for no person

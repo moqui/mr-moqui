@@ -367,11 +367,35 @@ fn an_ssh_key_sign_in_is_a_persons_and_clears_has_logged_out() {
     login_user("key.user", "Secret1!").unwrap();
     logout().unwrap();
     assert_eq!(flag(), "Y");
-    login_ssh_key_user("key.user").unwrap();
+    login_ssh_key_user("key.user", "").unwrap();
     assert_eq!(session::current_username().unwrap().as_deref(), Some("key.user"));
     assert_eq!(flag(), "N", "a key sign-in is a person's");
     logout_local().unwrap();
     assert_eq!(flag(), "N", "an operation's borrowed login ends without a sign-out");
+    session::reset_session();
+}
+
+/// SEC-FIL-89: an SSH key sign-in checks the account's ipAllowed against the SSH peer, as the SSH password login does,
+/// and is recorded in the login history.
+#[test]
+fn an_ssh_key_sign_in_checks_ip_allowed_and_is_recorded() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ssh.key", "Secret1!", |value| {
+        value.set("ipAllowed", Value::string("10.1.*.*"));
+    });
+    assert!(login_ssh_key_user("ssh.key", "192.0.2.10").is_err());
+    assert!(session::current_username().unwrap().is_none());
+    login_ssh_key_user("ssh.key", "10.1.2.3").unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("ssh.key"));
+    logout_local().unwrap();
+    let history = facade
+        .find(USER_LOGIN_HISTORY)
+        .unwrap()
+        .eq("userId", Value::string("ssh.key"))
+        .list()
+        .unwrap();
+    assert!(!history.is_empty(), "a key sign-in leaves a history row");
     session::reset_session();
 }
 
