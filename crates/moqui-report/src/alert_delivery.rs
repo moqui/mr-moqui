@@ -216,6 +216,13 @@ pub(super) fn prepare(ec: &ExecutionContext, body: &mut Json) -> Result<bool, Er
         }
     }
     let topic = name("topic")?.unwrap_or_else(|| DEFAULT_TOPIC.to_owned());
+    // the audience's notifications post under an alert topic only (SEC-TLS-106)
+    if !crate::alert::alert_topics().contains(&topic) {
+        return Err(fail(format!(
+            "ALERT_TOPIC_UNAVAILABLE: an alert audience posts under {}",
+            crate::alert::alert_topics().join(" or ")
+        )));
+    }
     if !exists(ec, "moqui.security.user.NotificationTopic", "topic", &topic)? {
         return Err(fail(format!("notification topic {topic} does not exist")));
     }

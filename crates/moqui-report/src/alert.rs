@@ -336,15 +336,90 @@ fn property_name(name: &str) -> bool {
         && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
 }
 
-/// The topic a technical rule's notification contact posts under: the alert topic. Another topic's subscribers would
-/// take the rule's message for that topic's own (a phone alert, an agent run).
+/// The topic an alert's notification posts under when it names none: the alert topic.
 pub(crate) const CONTACT_TOPIC: &str = "ReportAlert";
 
+/// The topics an alert's notification may post under (a rule's contact and a business rule's audience):
+/// `report@alert-topics`, `ReportAlert` by default; an app that has a topic of its own for alerts adds it there.
+/// Another topic's subscribers would take the rule's message for that topic's own (a phone alert, an agent run).
+pub(crate) fn alert_topics() -> Vec<String> {
+    let listed = moqui_core::context::conf_env::setting("report@alert-topics");
+    let topics: Vec<String> = listed
+        .split([',', ' ', '\n', '\t'])
+        .map(str::trim)
+        .filter(|topic| !topic.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if topics.is_empty() {
+        vec![CONTACT_TOPIC.to_owned()]
+    } else {
+        topics
+    }
+}
+
+/// Why the current user may not have `contact` post where it says, or None (SEC-TLS-106): a `topic` not one of
+/// [`alert_topics`], a `userId` other than `owner` without the group delivery grant (`delivery::GROUP_ARTIFACT`), a
+/// `userGroupId` the user may not share with (`definitions::may_share_with`).
+fn contact_refusal(contact: &Json, owner: &str) -> Result<Option<String>, Error> {
+    if text(contact, "type", "notification") != "notification" {
+        return Ok(None);
+    }
+    if let Some(topic) = contact.get("topic").filter(|topic| !topic.is_null()) {
+        if !topic.as_str().is_some_and(|topic| alert_topics().iter().any(|allowed| allowed == topic)) {
+            return Ok(Some(format!(
+                "ALERT_TOPIC_UNAVAILABLE: a notification contact posts under {}",
+                alert_topics().join(" or ")
+            )));
+        }
+    }
+    if let Some(user) = contact["userId"].as_str().filter(|user| !user.is_empty() && *user != owner) {
+        if moqui_core::user::authorize_own("AT_SERVICE", super::delivery::GROUP_ARTIFACT, "create").is_err() {
+            return Ok(Some(format!(
+                "GROUP_DELIVERY_DENIED: notifying {user} needs the group delivery grant"
+            )));
+        }
+    }
+    if let Some(group) = contact["userGroupId"].as_str().filter(|group| !group.is_empty()) {
+        if !super::definitions::may_share_with(group)? {
+            return Ok(Some(
+                "SHARE_GROUP_UNAVAILABLE: notify only a group you belong to or may share with".to_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+/// [`contact_refusal`] asked of the rule's owner `owner_id` at a send, in a context of its own: a grant or a group the
+/// owner has lost since the rule was saved stops its notifications (SEC-TLS-106).
+fn contact_refusal_as(ec: &ExecutionContext, owner_id: &str, contact: &Json) -> Option<String> {
+    if text(contact, "type", "notification") != "notification" {
+        return None;
+    }
+    let username = ec.factory().entity().and_then(|entity| {
+        let _authz = ec.disable_authz();
+        entity
+            .find("moqui.security.UserAccount")
+            .ok()?
+            .eq("userId", Value::string(owner_id))
+            .one()
+            .ok()
+            .flatten()
+            .and_then(|row| row.get("username").and_then(Value::as_str).map(str::to_owned))
+    });
+    let Some(username) = username else {
+        return Some(format!("the rule's owner {owner_id} is not a user"));
+    };
+    let context = ec.factory().new_context();
+    let _entered = context.enter();
+    if let Err(error) = moqui_core::user::internal_login_user(&username) {
+        return Some(format!("the rule's owner may not sign in: {error}"));
+    }
+    contact_refusal(contact, owner_id).unwrap_or_else(|error| Some(error.to_string()))
+}
+
 /// The notification contacts of a rule (`kind` `alert`) or a shared contact point (`contactPoint`) as the saver
-/// `saver` may name them (SEC-TLS-106): a `userId` other than the saver's own needs the group delivery grant
-/// (`delivery::GROUP_ARTIFACT`), a `userGroupId` one the saver may share with (`definitions::may_share_with`), and a
-/// `topic` is [`CONTACT_TOPIC`]. A contact kept as `previous` stored it is not asked again, so an owner who left a
-/// group still saves their rule.
+/// `saver` may name them ([`contact_refusal`]). A contact kept as `previous` stored it is not asked again, so an owner
+/// who left a group still saves their rule; each send asks again ([`contact_refusal_as`]).
 pub(super) fn authorize_contacts(kind: &str, body: &Json, previous: Option<&Json>, saver: &str) -> Result<(), Error> {
     let contacts = |body: &Json| -> Vec<Json> {
         match kind {
@@ -355,33 +430,11 @@ pub(super) fn authorize_contacts(kind: &str, body: &Json, previous: Option<&Json
     };
     let kept = previous.map(contacts).unwrap_or_default();
     for contact in contacts(body) {
-        if text(&contact, "type", "notification") != "notification" || kept.contains(&contact) {
+        if kept.contains(&contact) {
             continue;
         }
-        if contact
-            .get("topic")
-            .is_some_and(|topic| !topic.is_null() && topic.as_str() != Some(CONTACT_TOPIC))
-        {
-            return Err(fail(format!(
-                "ALERT_TOPIC_UNAVAILABLE: a notification contact posts under the {CONTACT_TOPIC} topic"
-            )));
-        }
-        if let Some(user) = contact["userId"]
-            .as_str()
-            .filter(|user| !user.is_empty() && *user != saver)
-        {
-            moqui_core::user::authorize_own("AT_SERVICE", super::delivery::GROUP_ARTIFACT, "create").map_err(|_| {
-                fail(format!(
-                    "GROUP_DELIVERY_DENIED: notifying {user} needs the group delivery grant"
-                ))
-            })?;
-        }
-        if let Some(group) = contact["userGroupId"].as_str().filter(|group| !group.is_empty()) {
-            if !super::definitions::may_share_with(group)? {
-                return Err(fail(
-                    "SHARE_GROUP_UNAVAILABLE: notify only a group you belong to or may share with",
-                ));
-            }
+        if let Some(refusal) = contact_refusal(&contact, saver)? {
+            return Err(fail(refusal));
         }
     }
     Ok(())
@@ -857,7 +910,10 @@ fn notify(
                     // (alert_delivery.rs); one who was told this state is not told again when a failed one is retried
                     let sent = match audience {
                         Some(audience) => audience.send(contact, &payload, &group, &hash, now, repeat),
-                        None => send_contact(contact, &payload),
+                        None => match contact_refusal_as(ec, text(definition, "ownerId", ""), contact) {
+                            Some(refusal) => Err(fail(refusal)),
+                            None => send_contact(contact, &payload),
+                        },
                     };
                     if let Err(error) = sent {
                         tracing::error!(rule=id,contact=%contact_id,%error,"alert delivery failed; will retry");

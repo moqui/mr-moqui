@@ -83,7 +83,7 @@
     </transition>
     <transition name="addContact" method="post">
         <actions><script>ec.resource.script('component://tools/template/ReportAlerts.js').addContact({definitionId:definitionId, contactId:contactId,
-            contactType:contactType, topic:topic, contactUserId:contactUserId, contactGroupId:contactGroupId, emailTemplateId:emailTemplateId,
+            contactType:contactType, contactUserId:contactUserId, contactGroupId:contactGroupId, emailTemplateId:emailTemplateId,
             toAddresses:toAddresses, webhookUrl:webhookUrl, groupBy:groupBy, groupWaitSeconds:groupWaitSeconds, repeatSeconds:repeatSeconds,
             matchersJson:matchersJson})</script></actions>
         <default-response url="." parameter-map="{definitionId:definitionId}"/>
@@ -427,7 +427,7 @@
                                         <field name="definitionId"><default-field><hidden/></default-field></field>
                                         <field name="contactId"><default-field title="Contact ID"><text-line/></default-field></field>
                                         <field name="contactType"><default-field title="Type"><drop-down no-current-selected-key="notification"><option key="notification" text="In-app notification"/><option key="email" text="Email"/><option key="webhook" text="Webhook"/></drop-down></default-field></field>
-                                        <field name="topic"><default-field title="Notification topic"><text-line/><visible-when field="contactType" value="notification"/></default-field></field>
+                                        <field name="topic"><default-field title="Notification topic" tooltip="An alert's notification posts under the alert topic (report@alert-topics)"><display text="ReportAlert" also-hidden="false"/><visible-when field="contactType" value="notification"/></default-field></field>
                                         <field name="contactUserId"><default-field title="Notification user" tooltip="The ID of the user notified in the app"><text-line/><visible-when field="contactType" value="notification"/></default-field></field>
                                         <field name="contactGroupId"><default-field title="Notification group" tooltip="The ID of the user group notified in the app"><text-line/><visible-when field="contactType" value="notification"/></default-field></field>
                                         <field name="emailTemplateId"><default-field title="Email template"><text-line/><visible-when field="contactType" value="email"/></default-field></field>

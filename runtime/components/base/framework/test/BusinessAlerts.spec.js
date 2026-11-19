@@ -579,3 +579,13 @@ feature(
         }
     }
 )
+
+feature("a business rule's audience posts under an alert topic only (SEC-TLS-106)", {
+    when() {
+        const saved = as("rda.next", "save#Definition", rule("rba-voice-topic", {audience: Object.assign({topic: "VoiceAlert"}, team)}))
+        return {error: saved.error || ""}
+    },
+    then({error}) {
+        error.includes("ALERT_TOPIC_UNAVAILABLE")
+    }
+})
