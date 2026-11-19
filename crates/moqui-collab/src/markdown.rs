@@ -36,6 +36,11 @@ use yrs::{Any, Doc, GetString, Out, ReadTxn, Text, Transact, TransactionMut, Xml
 /// The fragment the editor binds (Tiptap Collaboration's default `field`).
 pub const FRAGMENT: &str = "default";
 
+/// How deep quotes, lists and elements nest before the rest is written as plain text: in a page's text as it is read, and
+/// in the document as it is written out. An editor's update may nest elements to any depth, and a render that recursed
+/// once a level would overflow a worker's stack, which ends the process (plans/Security-Review-Medium.md SEC-TLS-95).
+pub const MAX_DEPTH: usize = 32;
+
 // ---------- the parsed tree ----------
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -105,10 +110,15 @@ fn heading_level(level: HeadingLevel) -> u8 {
     }
 }
 
-/// The blocks of a markdown text.
+/// The blocks of a markdown text. Quotes, lists and their items nest at most [`MAX_DEPTH`] deep, as the elements they
+/// become: one deeper is not opened, so what it holds is in the one around it, and the blocks are written and dropped in
+/// bounded stack.
 fn parse(markdown: &str) -> Vec<Block> {
     let mut stack: Vec<Open> = vec![Open::Blocks(Vec::new())];
     let mut marks = Marks::default();
+    // each quote, list and item started and not yet ended: whether it was opened
+    let mut nest: Vec<bool> = Vec::new();
+    let mut depth = 0_usize;
     // inline content a list item or a cell gets without a paragraph event (a tight list)
     let ensure_inlines = |stack: &mut Vec<Open>| {
         if !matches!(stack.last(), Some(Open::Inlines(..))) {
@@ -142,14 +152,43 @@ fn parse(markdown: &str) -> Vec<Block> {
                 Tag::Heading { level, .. } => {
                     stack.push(Open::Inlines(InlineKind::Heading(heading_level(level)), Vec::new()))
                 }
-                Tag::BlockQuote(_) => stack.push(Open::Quote(Vec::new())),
+                // a list opens with room for its items
+                Tag::BlockQuote(_) if depth >= MAX_DEPTH => {
+                    if matches!(stack.last(), Some(Open::Inlines(..))) {
+                        close_inlines(&mut stack);
+                    }
+                    nest.push(false);
+                }
+                Tag::List(_) if depth + 1 >= MAX_DEPTH => {
+                    if matches!(stack.last(), Some(Open::Inlines(..))) {
+                        close_inlines(&mut stack);
+                    }
+                    nest.push(false);
+                }
+                Tag::BlockQuote(_) => {
+                    nest.push(true);
+                    depth += 1;
+                    stack.push(Open::Quote(Vec::new()));
+                }
                 Tag::List(start) => {
                     if matches!(stack.last(), Some(Open::Inlines(..))) {
                         close_inlines(&mut stack);
                     }
+                    nest.push(true);
+                    depth += 1;
                     stack.push(Open::List(start, Vec::new()));
                 }
-                Tag::Item => stack.push(Open::Item(Vec::new())),
+                // an item of a list that was not opened is not opened either
+                Tag::Item => {
+                    let opened = nest.last().copied().unwrap_or(true);
+                    nest.push(opened);
+                    if opened {
+                        depth += 1;
+                        stack.push(Open::Item(Vec::new()));
+                    } else if matches!(stack.last(), Some(Open::Inlines(..))) {
+                        close_inlines(&mut stack);
+                    }
+                }
                 Tag::CodeBlock(kind) => {
                     let language = match kind {
                         CodeBlockKind::Fenced(info) => info
@@ -184,9 +223,17 @@ fn parse(markdown: &str) -> Vec<Block> {
                 Tag::HtmlBlock => stack.push(Open::Inlines(InlineKind::Paragraph, Vec::new())),
                 _ => {}
             },
+            Event::End(TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item) if nest.last() == Some(&false) => {
+                nest.pop();
+                if matches!(stack.last(), Some(Open::Inlines(..))) {
+                    close_inlines(&mut stack);
+                }
+            }
             Event::End(end) => match end {
                 TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::HtmlBlock => close_inlines(&mut stack),
                 TagEnd::BlockQuote(_) => {
+                    nest.pop();
+                    depth = depth.saturating_sub(1);
                     if matches!(stack.last(), Some(Open::Inlines(..))) {
                         close_inlines(&mut stack);
                     }
@@ -195,6 +242,8 @@ fn parse(markdown: &str) -> Vec<Block> {
                     }
                 }
                 TagEnd::Item => {
+                    nest.pop();
+                    depth = depth.saturating_sub(1);
                     if matches!(stack.last(), Some(Open::Inlines(..))) {
                         close_inlines(&mut stack);
                     }
@@ -209,6 +258,8 @@ fn parse(markdown: &str) -> Vec<Block> {
                     }
                 }
                 TagEnd::List(_) => {
+                    nest.pop();
+                    depth = depth.saturating_sub(1);
                     if let Some(Open::List(start, items)) = stack.pop() {
                         let block = match start {
                             Some(start) => Block::OrderedList(start, items),
@@ -537,7 +588,7 @@ pub fn render(doc: &Doc) -> String {
     let fragment = doc.get_or_insert_xml_fragment(FRAGMENT);
     let txn = doc.transact();
     let mut out = String::new();
-    render_blocks(&txn, &fragment, "", &mut out);
+    render_blocks(&txn, &fragment, "", &mut out, 0);
     let trimmed = out.trim_end_matches('\n');
     if trimmed.is_empty() {
         String::new()
@@ -568,12 +619,20 @@ fn children<T: ReadTxn>(txn: &T, node: &impl XmlFragment) -> Vec<XmlOut> {
     node.children(txn).collect()
 }
 
-/// `prefix` begins each line after the first of a block (a quote's `> `, a list item's indent).
-fn render_blocks<T: ReadTxn>(txn: &T, parent: &impl XmlFragment, prefix: &str, out: &mut String) {
-    render_blocks_in(txn, parent, prefix, out, false);
+/// `prefix` begins each line after the first of a block (a quote's `> `, a list item's indent). `depth` is how deep
+/// `parent` is (the fragment is 0); an element below [`MAX_DEPTH`] is its plain text ([`flat_text`]).
+fn render_blocks<T: ReadTxn>(txn: &T, parent: &impl XmlFragment, prefix: &str, out: &mut String, depth: usize) {
+    render_blocks_in(txn, parent, prefix, out, false, depth);
 }
 
-fn render_blocks_in<T: ReadTxn>(txn: &T, parent: &impl XmlFragment, prefix: &str, out: &mut String, in_item: bool) {
+fn render_blocks_in<T: ReadTxn>(
+    txn: &T,
+    parent: &impl XmlFragment,
+    prefix: &str,
+    out: &mut String,
+    in_item: bool,
+    depth: usize,
+) {
     let mut first = true;
     let mut previous: Option<String> = None;
     let mut alternated = false;
@@ -594,7 +653,11 @@ fn render_blocks_in<T: ReadTxn>(txn: &T, parent: &impl XmlFragment, prefix: &str
             && matches!(tag.as_str(), "bulletList" | "orderedList")
             && !alternated;
         alternated = alternate;
-        let block = render_block(txn, &node, &tag, alternate);
+        let block = if depth >= MAX_DEPTH {
+            Some(escape_text(&flat_text(txn, &node)))
+        } else {
+            render_block(txn, &node, &tag, alternate, depth + 1)
+        };
         if let Some(block) = block {
             // in a list item a nested list follows its paragraph on the next line, so the list stays tight
             let tight = in_item
@@ -645,16 +708,17 @@ fn push_block_text(out: &mut String, prefix: &str, first: &mut bool, block: &str
     out.push('\n');
 }
 
-fn render_block<T: ReadTxn>(txn: &T, node: &XmlElementRef, tag: &str, alternate: bool) -> Option<String> {
+/// One block element, `depth` deep.
+fn render_block<T: ReadTxn>(txn: &T, node: &XmlElementRef, tag: &str, alternate: bool, depth: usize) -> Option<String> {
     Some(match tag {
-        "paragraph" => render_inlines(txn, node, true),
+        "paragraph" => render_inlines(txn, node, depth),
         "heading" => {
             let level = number_attribute(txn, node, "level").unwrap_or(1.0).clamp(1.0, 6.0) as usize;
-            format!("{} {}", "#".repeat(level), render_inlines(txn, node, false))
+            format!("{} {}", "#".repeat(level), render_inlines(txn, node, depth))
         }
         "blockquote" => {
             let mut inner = String::new();
-            render_blocks(txn, node, "> ", &mut inner);
+            render_blocks(txn, node, "> ", &mut inner, depth);
             format!("> {}", inner.trim_end_matches('\n'))
         }
         "bulletList" | "orderedList" | "taskList" => {
@@ -672,7 +736,11 @@ fn render_block<T: ReadTxn>(txn: &T, node: &XmlElementRef, tag: &str, alternate:
                 number += 1;
                 let indent = " ".repeat(marker.len());
                 let mut inner = String::new();
-                render_blocks_in(txn, &item, &indent, &mut inner, true);
+                if depth >= MAX_DEPTH {
+                    inner = escape_text(&flat_text(txn, &item));
+                } else {
+                    render_blocks_in(txn, &item, &indent, &mut inner, true, depth + 1);
+                }
                 items.push(format!("{marker}{}", inner.trim_end_matches('\n')));
             }
             items.join("\n")
@@ -698,14 +766,14 @@ fn render_block<T: ReadTxn>(txn: &T, node: &XmlElementRef, tag: &str, alternate:
                 None => format!("![{}]({src})", escape_text(&alt)),
             }
         }
-        "table" => render_table(txn, node),
+        "table" => render_table(txn, node, depth),
         // a node this mapping does not know: its text, so nothing written is lost
         _ => {
             let mut inner = String::new();
-            render_blocks(txn, node, "", &mut inner);
+            render_blocks(txn, node, "", &mut inner, depth);
             let inner = inner.trim_end_matches('\n').to_string();
             if inner.is_empty() {
-                render_inlines(txn, node, true)
+                render_inlines(txn, node, depth)
             } else {
                 inner
             }
@@ -713,7 +781,7 @@ fn render_block<T: ReadTxn>(txn: &T, node: &XmlElementRef, tag: &str, alternate:
     })
 }
 
-fn render_table<T: ReadTxn>(txn: &T, node: &XmlElementRef) -> String {
+fn render_table<T: ReadTxn>(txn: &T, node: &XmlElementRef, depth: usize) -> String {
     let mut rows: Vec<(bool, Vec<String>)> = Vec::new();
     for row in children(txn, node) {
         let XmlOut::Element(row) = row else { continue };
@@ -728,7 +796,8 @@ fn render_table<T: ReadTxn>(txn: &T, node: &XmlElementRef) -> String {
                     if !text.is_empty() {
                         text.push_str("<br>");
                     }
-                    text.push_str(&render_inlines(txn, &part, false).replace('\n', " "));
+                    // a cell's part is three below the table: its row, its cell, then the part
+                    text.push_str(&render_inlines(txn, &part, depth + 3).replace('\n', " "));
                 }
             }
             cells.push(text.replace('|', "\\|"));
@@ -796,14 +865,42 @@ fn render_text<T: ReadTxn>(txn: &T, text: &yrs::XmlTextRef) -> String {
     render_runs(&runs)
 }
 
-/// The inline markdown of a block's children: texts with their marks, hard breaks as a backslash and a new line.
-fn render_inlines<T: ReadTxn>(txn: &T, node: &XmlElementRef, _paragraph: bool) -> String {
+/// The inline markdown of a block's children: texts with their marks, hard breaks as a backslash and a new line. `node`
+/// is `depth` deep; an element in it below [`MAX_DEPTH`] is its plain text.
+fn render_inlines<T: ReadTxn>(txn: &T, node: &XmlElementRef, depth: usize) -> String {
     let mut out = String::new();
     for child in children(txn, node) {
         match child {
             XmlOut::Text(text) => out.push_str(&render_text(txn, &text)),
             XmlOut::Element(element) if element.tag().as_ref() == "hardBreak" => out.push_str("\\\n"),
-            XmlOut::Element(element) => out.push_str(&render_inlines(txn, &element, false)),
+            XmlOut::Element(element) if depth >= MAX_DEPTH => out.push_str(&escape_text(&flat_text(txn, &element))),
+            XmlOut::Element(element) => out.push_str(&render_inlines(txn, &element, depth + 1)),
+            XmlOut::Fragment(_) => {}
+        }
+    }
+    out
+}
+
+/// The text of an element and of everything in it, in document order, read with a stack of its own and not by
+/// recursion, so an element nested to any depth is read in bounded stack.
+fn flat_text<T: ReadTxn>(txn: &T, node: &XmlElementRef) -> String {
+    let mut out = String::new();
+    let mut pending: Vec<XmlOut> = children(txn, node);
+    pending.reverse();
+    while let Some(next) = pending.pop() {
+        match next {
+            XmlOut::Text(text) => {
+                // the texts of two blocks are parted by a space
+                if !out.is_empty() && !out.ends_with(char::is_whitespace) {
+                    out.push(' ');
+                }
+                out.push_str(&text.get_string(txn));
+            }
+            XmlOut::Element(element) => {
+                let mut inner = children(txn, &element);
+                inner.reverse();
+                pending.extend(inner);
+            }
             XmlOut::Fragment(_) => {}
         }
     }
@@ -1036,6 +1133,79 @@ mod tests {
         let text = render(&doc);
         assert_eq!(text, "\\# not a heading, 2\\*3\\*4, \\[x](y) and 1. not a list\n");
         assert_eq!(round(&text), text);
+    }
+
+    /// A document of `levels` elements named `tag`, each in the one before, the last holding the text `deep`.
+    fn nested(tag: &str, levels: usize) -> Doc {
+        let doc = Doc::new();
+        let fragment = doc.get_or_insert_xml_fragment(FRAGMENT);
+        {
+            let mut txn = doc.transact_mut();
+            let mut node = fragment.push_back(&mut txn, XmlElementPrelim::empty(tag));
+            for _ in 1..levels {
+                node = node.push_back(&mut txn, XmlElementPrelim::empty(tag));
+            }
+            node.push_back(&mut txn, XmlTextPrelim::new("deep"));
+        }
+        doc
+    }
+
+    /// `body` on a thread with a small stack, as a worker's: a recursion once a level would overflow it.
+    fn on_small_stack<R: Send + 'static>(body: impl FnOnce() -> R + Send + 'static) -> R {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(body)
+            .expect("a thread")
+            .join()
+            .expect("no panic")
+    }
+
+    #[test]
+    fn quotes_nested_past_the_cap_are_written_as_text() {
+        // one past the cap: the innermost quote is its text, inside the quotes the cap allows
+        let doc = nested("blockquote", MAX_DEPTH + 1);
+        assert_eq!(render(&doc), format!("{}deep\n", "> ".repeat(MAX_DEPTH)));
+        // at the cap every quote is written
+        let doc = nested("blockquote", MAX_DEPTH);
+        assert_eq!(render(&doc), format!("{}deep\n", "> ".repeat(MAX_DEPTH)));
+        // inline elements in a paragraph past the cap: their text, escaped
+        let doc = nested("paragraph", MAX_DEPTH + 2);
+        assert_eq!(render(&doc), "deep\n");
+    }
+
+    #[test]
+    fn a_document_nested_far_past_the_cap_renders_in_a_small_stack() {
+        // an editor's update may nest elements to any depth; the render does not recurse past the cap
+        let text = on_small_stack(|| {
+            let quotes = render(&nested("blockquote", 50_000));
+            let unknown = render(&nested("panel", 50_000));
+            (quotes, unknown)
+        });
+        assert_eq!(text.0, format!("{}deep\n", "> ".repeat(MAX_DEPTH)));
+        assert_eq!(text.1, "deep\n");
+    }
+
+    #[test]
+    fn a_page_text_nested_past_the_cap_is_read_in_a_small_stack() {
+        // one past the cap: the innermost quote is a paragraph of the one around it
+        let text = format!("{}deep\n", "> ".repeat(MAX_DEPTH + 1));
+        assert_eq!(round(&text), format!("{}deep\n", "> ".repeat(MAX_DEPTH)));
+        // lists, each item holding the next list
+        let mut lists = String::new();
+        for level in 0..=MAX_DEPTH {
+            lists.push_str(&format!("{}- level {level}\n", "  ".repeat(level)));
+        }
+        let out = round(&lists);
+        assert!(out.contains("level 32"), "{out}");
+        // a list and its item are two levels
+        assert_eq!(
+            out.lines().filter(|line| line.trim_start().starts_with("- ")).count(),
+            MAX_DEPTH / 2,
+            "{out}"
+        );
+        // far past it
+        let deep = on_small_stack(|| round(&format!("{}deep\n", ">".repeat(20_000))));
+        assert_eq!(deep, format!("{}deep\n", "> ".repeat(MAX_DEPTH)));
     }
 
     #[test]
