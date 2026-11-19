@@ -962,6 +962,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="restrictView" type="text-indicator"/>
         <field name="restrictUpdate" type="text-indicator"/>
         <field name="allowAnyHtml" type="text-indicator"/>
+        <field name="allowScriptPages" type="text-indicator"><description>Y: a page of a script type (.fancy) renders
+            as server script for its viewers (WikiServices.render#WikiPage); otherwise it renders as text. Set only by a
+            holder of DATABASE_ADMIN (Wiki.eecas.xml, SEC-SCR-81).</description></field>
         <field name="screenThemeId" type="id"/>
         <relationship type="one" related="moqui.screen.ScreenTheme" short-alias="screenTheme"/>
         <seed-data>

@@ -2,11 +2,15 @@
 // SEC-SCR-81): md, html or txt for anyone; fancy, html.fancy, md.fancy and markdown.fancy, which the template renderers run
 // as server script for whoever views the page, only for a holder of DATABASE_ADMIN, and nothing else (a path, an extension
 // of no renderer). A user without it may not write a script page that is there either. An md page's raw HTML is cleaned as
-// an html page is, unless the space allows any HTML. The cleaning itself is moqui-lib safe_html's (clean_markdown).
+// an html page is, unless the space allows any HTML; a txt page is kept as written. render#WikiPage chooses the renderer by
+// the page's type and the space, so a file written past these services (a drive, a git push) is cleaned or shown as text,
+// and a script page runs only in a space with allowScriptPages, which only DATABASE_ADMIN sets (Wiki.eecas.xml). The
+// cleaning itself is moqui-lib safe_html's (clean_markdown).
 // Run: ./moq test framework --spec WikiPageTypes
 const W = "org.moqui.resource.WikiServices."
 const writerId = "SPEC_WT_USER"
 const dbaId = "SPEC_WT_DBA"
+const adminId = "SPEC_WT_ADMIN"
 const make = (entityName, fields) => {
     const row = ec.entity.makeValue(entityName)
     row.setFields(fields, true, null, null)
@@ -37,6 +41,26 @@ const textAt = (location) => {
     }
 }
 const page = (spaceId, file) => textAt(`dbresource://WikiSpace/${spaceId}/${file}`)
+// a file written past the wiki's services, as a drive upload or a git push writes one
+const putPage = (spaceId, file, text) => {
+    const wasDisabled = ec.artifactExecution.disableAuthz()
+    try { ec.resource.getLocationReference(`dbresource://WikiSpace/${spaceId}/${file}`).putText(text) }
+    finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+}
+// a WikiSpace row written as the user, authorized as from the System app's screens, and the error text
+const spaceAs = (username, fields) => {
+    ec.user.internalLoginUser(username)
+    let error = ""
+    try {
+        ec.artifactExecution.runAsUser("component://tools/screen/System.xml", () => make("moqui.resource.wiki.WikiSpace", fields))
+    } catch (e) {
+        error = String(e)
+    }
+    error += ec.message.errorsString
+    ec.message.clearErrors()
+    ec.user.logoutUser()
+    return error
+}
 
 spec({
     setupSpec() {
@@ -46,10 +70,16 @@ spec({
         make("moqui.security.UserGroup", {userGroupId: "SPEC_WT_DBA_GROUP", description: "Spec wiki DBA"})
         make("moqui.security.UserGroupPermission", {userGroupId: "SPEC_WT_DBA_GROUP", userPermissionId: "DATABASE_ADMIN", fromDate: ec.user.nowTimestamp})
         make("moqui.security.UserGroupMember", {userGroupId: "SPEC_WT_DBA_GROUP", userId: dbaId, fromDate: ec.user.nowTimestamp})
+        // an ADMIN without DATABASE_ADMIN, and the DBA an ADMIN too, for the space settings written as from System
+        make("moqui.security.UserAccount", {userId: adminId, username: "spec.wt.admin", userFullName: "Spec Wiki Admin"})
+        make("moqui.security.UserGroupMember", {userGroupId: "ADMIN", userId: adminId, fromDate: ec.user.nowTimestamp})
+        make("moqui.security.UserGroupMember", {userGroupId: "ADMIN", userId: dbaId, fromDate: ec.user.nowTimestamp})
         ec.artifactExecution.enableAuthz()
         const members = [{userId: dbaId, allowUpdate: "Y"}]
         invokeAs("spec.wt.user", "create#WikiSpace", {wikiSpaceId: "SPWTYP", description: "Spec page types", memberList: members})
         invokeAs("spec.wt.user", "create#WikiSpace", {wikiSpaceId: "SPWTANY", description: "Spec any HTML", allowAnyHtml: "Y"})
+        invokeAs("spec.wt.dba", "create#WikiSpace", {wikiSpaceId: "SPWTSCR", description: "Spec script pages", allowScriptPages: "Y"})
+        invokeAs("spec.wt.dba", "create#WikiSpace", {wikiSpaceId: "SPWTHID", description: "Spec hidden", restrictView: "Y"})
     }
 })
 
@@ -95,7 +125,7 @@ feature("with DATABASE_ADMIN a script page is written, and a user without it may
     }
 })
 
-feature("an md or txt page's raw HTML is cleaned unless the space allows any HTML", {
+feature("an md page's raw HTML is cleaned unless the space allows any HTML, and a txt page is kept as written", {
     when() {
         const text = "# Notes\n\n<script>alert(1)</script>\n\ntext <b onclick=\"x()\">bold</b> a < b\n"
         const save = (wikiSpaceId, pageName, wikiType) => invokeAs("spec.wt.user", "update#WikiPage",
@@ -112,7 +142,70 @@ feature("an md or txt page's raw HTML is cleaned unless the space allows any HTM
         r.errors.every((error) => error == "")
         r.md.startsWith("# Notes\n\n") && r.md.includes("<b>bold</b> a < b")
         !r.md.includes("<script") && !r.md.includes("onclick")
-        !r.txt.includes("<script") && !r.txt.includes("onclick")
+        r.txt == r.text
         r.any == r.text
+    }
+})
+
+feature("a page the user may not view gives no location or reference, as null outputs a caller's out-map takes", {
+    when() {
+        const out = invokeAs("spec.wt.user", "get#WikiPageInfo", {wikiSpaceId: "SPWTHID", pagePath: ""})
+        const rendered = invokeAs("spec.wt.user", "render#WikiPage", {wikiSpaceId: "SPWTHID", pagePath: ""})
+        return {out, keys: Object.keys(out), rendered}
+    },
+    then(r) {
+        r.out.error.includes("not found")
+        r.keys.includes("pageLocation") && r.out.pageLocation == null && r.out.pageReference == null
+        r.rendered.pageHtml == null
+    }
+})
+
+feature("render#WikiPage chooses the renderer by the page's type and the space, whoever wrote the file", {
+    when() {
+        putPage("SPWTYP", "Pushed.md", "# Pushed\n\n<script>alert(1)</script>\n\n<b onclick=\"x()\">b</b> [l](javascript:x())\n")
+        putPage("SPWTYP", "Planted.fancy", "Two is ${1 + 1} <b>")
+        putPage("SPWTYP", "Old.ftl", "<script>x</script>")
+        const render = (username, wikiSpaceId, pagePath) => invokeAs(username, "render#WikiPage", {wikiSpaceId, pagePath})
+        invokeAs("spec.wt.dba", "update#WikiPage", {wikiSpaceId: "SPWTSCR", pageName: "Live", wikiType: "fancy", pageText: "Two is ${1 + 1}"})
+        return {
+            md: render("spec.wt.user", "SPWTYP", "Pushed"),
+            planted: render("spec.wt.user", "SPWTYP", "Planted"),
+            ftl: render("spec.wt.user", "SPWTYP", "Old"),
+            txt: render("spec.wt.user", "SPWTYP", "Plain"),
+            any: render("spec.wt.user", "SPWTANY", "Notes"),
+            live: render("spec.wt.user", "SPWTSCR", "Live"),
+            savedFtl: invokeAs("spec.wt.user", "update#WikiPage", {wikiSpaceId: "SPWTYP", pageName: "Old", pageText: "kept"}).error,
+            ftlText: page("SPWTYP", "Old.ftl")
+        }
+    },
+    then(r) {
+        r.md.error == "" && r.md.renderedAs == "markdown" && r.md.pageHtml.includes("<h1>Pushed</h1>")
+        !r.md.pageHtml.includes("<script") && !r.md.pageHtml.includes("onclick") && !r.md.pageHtml.includes("javascript")
+        r.planted.renderedAs == "text" && r.planted.pageHtml.includes("${1 + 1} &lt;b&gt;")
+        r.ftl.renderedAs == "text" && r.ftl.pageHtml.includes("&lt;script&gt;")
+        r.txt.renderedAs == "text" && r.txt.pageHtml.includes("&lt;script&gt;") && r.txt.pageText.includes("<script>")
+        r.any.pageHtml.includes("<script>alert(1)</script>")
+        r.live.error == "" && r.live.renderedAs == "script" && r.live.pageHtml.includes("Two is 2")
+        r.savedFtl == "" && r.ftlText == "kept"
+    }
+})
+
+feature("a space's script and storage settings: allowScriptPages and a screen around its pages need DATABASE_ADMIN, a root outside its own place an administrator, .. never", {
+    when() {
+        const root = (id) => `dbresource://WikiSpace/${id}.md`
+        return {
+            script: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS1", rootPageLocation: root("SPWTS1"), allowScriptPages: "Y"}),
+            decorator: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS2", rootPageLocation: root("SPWTS2"),
+                decoratorScreenLocation: "component://framework/test/screen/MultiPin.xml"}),
+            dotDot: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS3", rootPageLocation: "dbresource://WikiSpace/SPWTS3/../SPWTYP.md"}),
+            elsewhere: spaceAs("spec.wt.admin", {wikiSpaceId: "SPWTS4", rootPageLocation: "dbresource://WikiSpace/Elsewhere/SPWTS4.md"}),
+            dba: spaceAs("spec.wt.dba", {wikiSpaceId: "SPWTS5", rootPageLocation: root("SPWTS5"), allowScriptPages: "Y"}),
+            types: invokeAs("spec.wt.dba", "get#WikiPageTypes", {}).wikiTypeList
+        }
+    },
+    then(r) {
+        r.script.includes("DATABASE_ADMIN") && r.decorator.includes("DATABASE_ADMIN")
+        r.dotDot.includes("own place") && r.elsewhere == "" && r.dba == ""
+        Array.from(r.types).includes("fancy")
     }
 })

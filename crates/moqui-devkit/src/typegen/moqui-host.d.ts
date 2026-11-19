@@ -693,6 +693,8 @@ interface MoquiResourceFacade {
     getLocationStream(location: string): unknown;
     getUriReference(uri: string): unknown;
     template(location: string, data?: MoquiMap | null): string;
+    /** CommonMark as HTML, not sanitized; relative links resolved against `base` when given. */
+    markdownHtml(text: string | null, base?: string | null): string;
     /** PDF bytes of an `html-print` (old name `xsl-fo`) document. `xslt` must be null and `out` is ignored. Throws when PDF is not available. */
     xslFoTransform(document: string, xslt?: null, out?: unknown, contentType?: string | null): Uint8Array;
     /** The Code 128 barcode of `text` as an inline `<svg>` sized in millimetres, for a print document. Lengths take CSS units

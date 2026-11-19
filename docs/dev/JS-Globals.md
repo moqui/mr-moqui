@@ -277,7 +277,7 @@ helper functions above are also on the class Java has them on. Sources: `script/
 | `prettyToCamelCase(text, firstUpper)` | The reverse. Characters that are not letters or digits start a new word |
 | `cleanHtml(text)` | The HTML cleaned as an `allow-html="safe"` parameter is |
 | `cleanChatHtml(text)` | The HTML cleaned for a chat message: the safe set, with an image only when its `src` is this server's `/richTextImage/<id>` |
-| `cleanMarkdown(text)` | Markdown with its raw HTML cleaned to the safe set (a block whole, an inline tag kept when it is on the list), the markdown around it as it was; what `update#WikiPage` saves for an `md` page of a space without `allowAnyHtml` |
+| `cleanMarkdown(text)` | Markdown whose rendered HTML holds nothing the safe set removes comes back as written; otherwise each piece of raw HTML that holds something it removes is cleaned to it (a block whole, an inline tag in its context), the markdown around it as it was. What `update#WikiPage` saves for an `md` page of a space without `allowAnyHtml`; `render#WikiPage` cleans again when it shows the page |
 | `encodeForXmlAttribute(text, addZeroWidthSpaces)` | Text escaped for an XML attribute, characters above ASCII as character references |
 | `decodeFromXml(text)` | `&lt;`, `&gt;`, `&quot;`, `&apos;` and `&amp;` put back. Null for null |
 | `urlEncodeIfNeeded(text)` | URL-encoded unless it is already safe. A space is `+` |
