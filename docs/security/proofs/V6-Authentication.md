@@ -44,7 +44,7 @@ table, and what a status claims, is in the [index](README.md).
 | --- | --- | --- | --- | --- | --- |
 | v5.0.0-6.4.1 | 1 | System-made initial secrets random, brief, one-time | Framework | `reset#Password`: `randomString(12)` (getrandom), argon2 in `resetPassword`, `user-facade/password@email-expire-hours` 48, taken only as `oldPassword`, cleared on change; setup secret about 99 bits, new each start (`user/setup.rs`) | `login_tests.rs` `the_old_password_of_a_change_is_behind_the_login_gate` (reset expiry); PASS: to write: black-box |
 | v5.0.0-6.4.2 | 1 | No password hints or secret questions | Framework | no flow shows or asks one; `UserAccount.passwordHint` remains a column, kept private (`script/host/user.rs` `USER_ACCOUNT_PRIVATE`), set only in demo data | V6Authentication "v5.0.0-6.4.2: no form of the sign-in page asks for a password hint or a secret question" |
-| v5.0.0-6.4.3 | 2 | Password reset keeps the second factor | Gap | factor kept: the reset password works only as `oldPassword` of `update#Password`, which then asks the code; SEC-ADM-82 open (a relay administrator receives reset mail) | - |
+| v5.0.0-6.4.3 | 2 | Password reset keeps the second factor | Gap | factor kept: the reset password works only as `oldPassword` of `update#Password`, which then asks the code; the relay reset mail goes through is changed only with the sealed `ADMIN_ACCESS_MANAGE` and a recent sign-in (SEC-ADM-82 fixed) | - |
 | v5.0.0-6.4.4 | 2 | Lost-factor recovery with identity proofing | Application | an administrator ends factors or issues codes (`invalidate#UserAuthcFactorEntry`, `create#SingleUseAuthcCodes` under `ADMIN_IDENTITY_MANAGE` and `require#RecentAuth`); no proofing step | - |
 
 ## V6.5 General Multi-factor authentication requirements
