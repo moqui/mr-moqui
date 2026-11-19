@@ -281,7 +281,7 @@
             request-pool-max="16" request-queue="64"
             empty-db-load="seed,seed-initial,install"
             on-start-load-types="none" on-start-load-components=""
-            database-audit-days="90">
+            database-audit-days="90" external-database-private-network="false">
         <!-- Native components select linked ToolFactory implementations here.
              The cache facade is built in; Java H2/JCR/SMTP factories do not run in MR. -->
         <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->

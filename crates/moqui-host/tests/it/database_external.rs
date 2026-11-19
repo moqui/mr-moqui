@@ -228,6 +228,19 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     login("john.doe");
     // the gate's server is production-purpose; external databases are a dev or test instance's
     let purpose = Purpose::set("test");
+    // SEC-TLS-101: a loopback or private address is refused unless the conf allows the private network
+    store("EXTLOOP", "127.0.0.1", 5432, Some("x"), true).unwrap();
+    let probed = call("test#DatabaseConnection", &[("connectionId", Value::string("EXTLOOP"))]).unwrap();
+    assert_eq!(probed.get("connected"), Some(&Value::Bool(false)), "{probed:?}");
+    let refused = moqui_tools::ext::open(&facade, "EXTLOOP")
+        .err()
+        .expect("a loopback address is refused");
+    assert!(
+        refused.message().contains("external-database-private-network"),
+        "{refused}"
+    );
+    let private_network = moqui_core::context::conf_env::env_name_of("tools@external-database-private-network");
+    moqui_lib::env::set_property(&private_network, "true");
 
     // a second database of the embedded cluster with a row, reached over TCP through a relay to its socket
     let data = std::fs::canonicalize(gate.cluster_dir.join("data")).unwrap();
@@ -306,6 +319,26 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     assert_eq!(reset, "This connection is read only");
     let schema = call("compare#Schema", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
     assert!(schema.contains("not offered on an external database"), "{schema}");
+    // SEC-TLS-101: a row changed with no forget here (a store on another cluster member) is not served from the old
+    // pool: its new readOnly holds at the next use
+    {
+        let _authz = context.disable_authz();
+        let mut row = facade
+            .find("moqui.database.DatabaseConnection")
+            .unwrap()
+            .eq("connectionId", Value::string("EXTSPEC"))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("readOnly", Value::string("N"));
+        row.update(&facade).unwrap();
+        assert!(!moqui_tools::ext::open(&facade, "EXTSPEC").unwrap().read_only);
+        // a stamp of its own, past the last update's millisecond
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        row.set("readOnly", Value::string("Y"));
+        row.update(&facade).unwrap();
+        assert!(moqui_tools::ext::open(&facade, "EXTSPEC").unwrap().read_only);
+    }
 
     // a read-write connection lets a confirmed change through
     store("EXTRW", "127.0.0.1", port, Some(&password), false).unwrap();

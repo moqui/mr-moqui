@@ -62,7 +62,14 @@ struct Open {
     dialect: moqui_db::dialect::Dialect,
     read_only: bool,
     last_used: Instant,
+    /// The row's `lastUpdatedStamp` the pool was made from: a row stored since (on any cluster member) is not served
+    /// from this pool (SEC-TLS-101).
+    stamp: String,
 }
+
+/// `true` lets a connection reach loopback and private addresses (a database beside this server); a link-local or
+/// metadata address is refused either way.
+const PRIVATE_NETWORK_SETTING: &str = "tools@external-database-private-network";
 
 fn pools() -> &'static Mutex<HashMap<String, Open>> {
     static POOLS: OnceLock<Mutex<HashMap<String, Open>>> = OnceLock::new();
@@ -145,16 +152,23 @@ fn row_of(facade: &EntityFacade, connection_id: &str) -> Result<Option<moqui_cor
 /// No such row, an unknown database conf, or no driver for it.
 pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error> {
     let name = format!("ext:{connection_id}");
-    // the row is read and the pool made once, under the map's lock, so two requests share one pool; a pool is
-    // forgotten when its row is stored or deleted, the only ways it changes (generic writes are refused)
+    // the row is read at each use and its pool kept by the row's lastUpdatedStamp, so a row stored or deleted on
+    // another cluster member is never served from an old pool here (forget clears this process's at once); the pool is
+    // made once, under the map's lock, so two requests share one
+    let row = row_of(facade, connection_id)?;
+    let Some(row) = row else {
+        forget(connection_id);
+        return Err(Error::new(format!("no connection {connection_id}")));
+    };
+    let stamp = row.get("lastUpdatedStamp").map(to_plain_string).unwrap_or_default();
     let (tx, dialect, read_only) = {
         let mut pools = lock(pools());
-        if let Some(open) = pools.get_mut(connection_id) {
+        if let Some(open) = pools.get_mut(connection_id).filter(|open| open.stamp == stamp) {
             open.last_used = Instant::now();
             (open.tx.clone(), open.dialect.clone(), open.read_only)
         } else {
-            let row =
-                row_of(facade, connection_id)?.ok_or_else(|| Error::new(format!("no connection {connection_id}")))?;
+            // a pool of an older row, or none: what was learned of its server goes with it
+            crate::group_db::forget_server(&name);
             let conf = conf_of(&row);
             if !DB_TYPES.contains(&conf.db_type.as_str()) {
                 return Err(Error::new(format!(
@@ -163,6 +177,7 @@ pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error
                 )));
             }
             check_host(&conf.host).map_err(Error::new)?;
+            check_address(&conf, &moqui_core::context::conf_env::setting(PRIVATE_NETWORK_SETTING))?;
             let read_only = row.get("readOnly").map(to_plain_string).as_deref() != Some("N");
             let dialect = dialect_of(facade, &conf.db_type)?;
             let driver = moqui_core::driver::conf_driver(&conf)?;
@@ -184,6 +199,7 @@ pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error
                     dialect: dialect.clone(),
                     read_only,
                     last_used: Instant::now(),
+                    stamp,
                 },
             );
             (tx, dialect, read_only)
@@ -204,6 +220,29 @@ fn check_host(host: &str) -> Result<(), &'static str> {
         return Err("host is a name or address reached over TCP, not a socket path");
     }
     Ok(())
+}
+
+/// Where a connection's host resolves: no loopback, private or link-local address unless `allow_private` (the
+/// [`PRIVATE_NETWORK_SETTING`]) is `true`, and no link-local or metadata address even then, so a holder of
+/// `DATABASE_EXTERNAL` cannot probe the server's own network with `test#DatabaseConnection` or send a stored password
+/// to whatever answers there (SEC-TLS-101). The name is looked up again by the driver when it connects.
+fn check_address(conf: &moqui_core::driver::ConfDb, allow_private: &str) -> Result<(), Error> {
+    let port = conf
+        .port
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(if conf.db_type == "postgres" { 5432 } else { 3306 });
+    let host = conf.host.trim();
+    let checked = if allow_private.trim().eq_ignore_ascii_case("true") {
+        moqui_lib::net::non_link_local_addresses(host, port)
+    } else {
+        moqui_lib::net::public_addresses(host, port)
+    };
+    checked.map(|_| ()).map_err(|err| {
+        Error::new(format!(
+            "{err}: an external database is at a public address unless {PRIVATE_NETWORK_SETTING} is true"
+        ))
+    })
 }
 
 /// A host on this machine's loopback, the only kind a connection may reach without TLS by default.

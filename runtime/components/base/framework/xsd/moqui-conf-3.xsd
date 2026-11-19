@@ -102,6 +102,10 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="database-audit-days" type="xs:string" default="90"><xs:annotation><xs:documentation>The
                 days the DatabaseAudit rows of the Tools database screens are kept, at least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="external-database-private-network" type="xs:string" default="false"><xs:annotation><xs:documentation>
+                True lets a Tools external database connection (DatabaseConnection, DATABASE_EXTERNAL) reach a
+                loopback or private address, such as a database beside this server; false, the default, takes only a
+                public address. A link-local or cloud metadata address is refused either way.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-queue" type="xs:integer"><xs:annotation><xs:documentation>
                 The maximum size of the worker queue.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
