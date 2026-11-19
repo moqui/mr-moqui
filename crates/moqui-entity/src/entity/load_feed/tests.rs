@@ -1211,7 +1211,7 @@ fn a_document_read_whole_and_a_csv_line_are_held_to_the_unit_size() {
     let mut quoted = super::csv::RecordBound::new(quoted, b'"');
     assert!(std::io::copy(&mut quoted, &mut std::io::sink()).is_err());
     // short lines, \n or \r alone, are records of their own however many there are
-    for end in [b'\n', b'\r'] {
+    for end in *b"\n\r" {
         let short = std::io::repeat(b'a').take(10).chain(std::io::repeat(end).take(1)).chain(
             std::io::Cursor::new([b'b'; 10].iter().chain(&[end]).copied().collect::<Vec<u8>>()),
         );
