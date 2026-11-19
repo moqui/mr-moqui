@@ -815,6 +815,13 @@ impl WorkDir {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Whether the runner made this directory (no `--work`), so it is removed as the runner ends: when this is dropped,
+    /// and on a signal that ends the runner.
+    #[must_use]
+    pub fn made(&self) -> bool {
+        self.made
+    }
 }
 
 impl Drop for WorkDir {
@@ -837,39 +844,56 @@ fn effective_uid() -> u32 {
     }
 }
 
+/// The effective group id of this process (on unix; 0 elsewhere).
+#[cfg(unix)]
+fn effective_gid() -> u32 {
+    rustix::process::getegid().as_raw()
+}
+
 /// That no other user can move or replace `work` through a directory above it: each existing parent is root's or this
-/// user's, and one other users may write has the sticky bit (as `/tmp` has), so only its owner renames what is in it
-/// (SEC-GIT-98).
+/// user's ([`parent_refusal`]) (SEC-GIT-98).
 fn parents_safe(work: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt as _;
-        let me = effective_uid();
+        let (me, my_group) = (effective_uid(), effective_gid());
         for parent in work.ancestors().skip(1) {
             let Ok(meta) = std::fs::metadata(parent) else {
                 continue;
             };
-            let refused = |why: String| {
-                format!(
+            if let Some(why) = parent_refusal(meta.uid(), meta.gid(), meta.mode(), me, my_group) {
+                return Err(format!(
                     "the work directory {} is under {}, which {why}: name a work directory under a directory of this user's",
                     work.display(),
                     parent.display()
-                )
-            };
-            if meta.uid() != 0 && meta.uid() != me {
-                return Err(refused(format!("is another user's (owner {})", meta.uid())));
-            }
-            if meta.mode() & 0o002 != 0 && meta.mode() & 0o1000 == 0 {
-                return Err(refused(format!(
-                    "other users may write with no sticky bit (mode {:o})",
-                    meta.mode() & 0o7777
-                )));
+                ));
             }
         }
     }
     #[cfg(not(unix))]
     let _ = work;
     Ok(())
+}
+
+/// Why a directory of owner `uid`, group `gid` and `mode` may not stand above the work directory of a runner of user
+/// `me` and group `my_group`, if it may not: it is another user's than root's or the runner's, or users other than the
+/// runner may write in it with no sticky bit (as `/tmp` has, so only an entry's owner renames it): other users, or a
+/// group other than the runner's own (a group-writable directory of the runner's own group is a umask 002 user's).
+#[cfg(unix)]
+pub(crate) fn parent_refusal(uid: u32, gid: u32, mode: u32, me: u32, my_group: u32) -> Option<String> {
+    let sticky = mode & 0o1000 != 0;
+    if uid != 0 && uid != me {
+        Some(format!("is another user's (owner {uid})"))
+    } else if mode & 0o002 != 0 && !sticky {
+        Some(format!("other users may write with no sticky bit (mode {:o})", mode & 0o7777))
+    } else if mode & 0o020 != 0 && !sticky && gid != my_group {
+        Some(format!(
+            "group {gid}, not the runner's own, may write with no sticky bit (mode {:o})",
+            mode & 0o7777
+        ))
+    } else {
+        None
+    }
 }
 
 /// That `dir` is a directory, not a link, of this user (`geteuid`), that no group or other user may write; then set to

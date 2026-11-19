@@ -211,6 +211,53 @@ fn rotate_when_due(server: &str, answer: &serde_json::Value, token: &mut String,
     }
 }
 
+/// Remove the work directory the runner made (no `--work`) when SIGINT, SIGTERM or SIGHUP ends the runner, where the
+/// directory's drop does not run (SEC-GIT-98). The handlers are registered before this returns; one that cannot be is
+/// a warning, and the runner goes on.
+#[cfg(unix)]
+fn remove_on_signal(work: &Path) {
+    use tokio::signal::unix::{signal, SignalKind};
+    let path = work.to_path_buf();
+    let not_watched = |why: &dyn std::fmt::Display| {
+        eprintln!(
+            "moqui ci-run poll: {} is not removed if a signal ends the runner: {why}",
+            work.display()
+        );
+    };
+    let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        Ok(runtime) => runtime,
+        Err(err) => return not_watched(&err),
+    };
+    let signals = {
+        let _entered = runtime.enter();
+        (
+            signal(SignalKind::interrupt()),
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+        )
+    };
+    let (mut interrupt, mut terminate, mut hangup) = match signals {
+        (Ok(interrupt), Ok(terminate), Ok(hangup)) => (interrupt, terminate, hangup),
+        (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => return not_watched(&err),
+    };
+    let started = std::thread::Builder::new()
+        .name("moqui-ci-signals".to_string())
+        .spawn(move || {
+            let status = runtime.block_on(async {
+                tokio::select! {
+                    _ = interrupt.recv() => 130,
+                    _ = terminate.recv() => 143,
+                    _ = hangup.recv() => 129,
+                }
+            });
+            let _ = std::fs::remove_dir_all(&path);
+            std::process::exit(status);
+        });
+    if let Err(err) = started {
+        not_watched(&err);
+    }
+}
+
 /// Hold the step user for this runner process alone: an exclusive lock on `moqui-ci-step-user-<uid>.lock` in `/run`
 /// (or `/var/run`), root's, kept while the process runs. Before it reads a job's files a runner kills every process of
 /// its step user that started during the job, so a second runner with the same step user would kill the first's
@@ -322,6 +369,10 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
             )
             .map_err(|why| Error::new(format!("moqui ci-run poll: {why}")))?;
             eprintln!("moqui ci-run poll: working in {}", work.path().display());
+            #[cfg(unix)]
+            if work.made() {
+                remove_on_signal(work.path());
+            }
             // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
             // once here, so a runner that could not read them takes no job
             #[cfg(unix)]

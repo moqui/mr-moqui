@@ -655,6 +655,31 @@ fn a_runner_works_only_in_a_directory_of_its_own() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// SEC-GIT-98: a directory above the work directory is root's or the runner's, and no one but the runner (other users,
+/// or a group other than its own) writes it with no sticky bit; the runner's own group may (a umask 002 user's).
+#[cfg(unix)]
+#[test]
+fn a_parent_of_the_work_directory_is_written_by_no_one_else() {
+    use super::parent_refusal;
+
+    let (me, group) = (1000, 1000);
+    let refusal = |uid, gid, mode| parent_refusal(uid, gid, mode, me, group);
+    assert_eq!(
+        refusal(me, group, 0o40775),
+        None,
+        "a umask 002 directory of the runner's"
+    );
+    assert_eq!(refusal(0, 0, 0o40755), None);
+    assert_eq!(refusal(0, 0, 0o41777), None, "/tmp");
+    assert_eq!(refusal(0, 50, 0o41775), None, "a sticky directory of a group");
+    assert!(refusal(me, 50, 0o40775)
+        .unwrap()
+        .contains("group 50, not the runner's own"));
+    assert!(refusal(0, 50, 0o40770).unwrap().contains("group 50"));
+    assert!(refusal(me, group, 0o40777).unwrap().contains("other users may write"));
+    assert!(refusal(1001, group, 0o40700).unwrap().contains("another user's"));
+}
+
 /// SEC-GIT-98: the runner's scratch and answer files are made new, never written through a file or link another user
 /// put at the name first.
 #[cfg(unix)]
