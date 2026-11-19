@@ -44,7 +44,7 @@ use super::Acme;
 /// The job that renews the names set up here (framework/data/MoquiSetupData.xml).
 pub(crate) const RENEWAL_JOB: &str = "renew_AcmeCertificates_daily";
 /// How long a challenge stays open: the authority validates within seconds of being told it is ready.
-const CHALLENGE_OPEN: Duration = Duration::from_secs(10 * 60);
+pub(crate) const CHALLENGE_OPEN: Duration = Duration::from_secs(10 * 60);
 /// A name that failed is not tried again by the job for this long.
 const RETRY_AFTER_MILLIS: i64 = 6 * 60 * 60 * 1000;
 /// With no issue date, a certificate is renewed this long before it runs out.
@@ -187,11 +187,24 @@ fn acme_error(what: &str) -> impl Fn(instant_acme::Error) -> Error + '_ {
     move |err| Error::new(format!("{what}: {err}"))
 }
 
+/// The authority's directory as a name row stores it: `https://` only, as `setup#AcmeName` takes it, so a row written
+/// another way (plans/Security-Review-Medium.md SEC-OUT-81) sends no order, account key or contact in plain text.
+pub(crate) fn directory_url(stored: &str) -> Result<String, Error> {
+    let directory = stored.trim();
+    if directory.starts_with("https://") {
+        Ok(directory.to_string())
+    } else {
+        Err(Error::new(format!(
+            "the authority's directory URL {directory} is not https; set the name up again"
+        )))
+    }
+}
+
 /// The steps of one order.
 fn issue(factory: &Arc<ExecutionContextFactory>, name: &NameRow) -> Result<Issued, Error> {
     let host = name.host.clone();
+    let directory = directory_url(&name.directory_url)?;
     let account_key = account_key(&seed()?)?;
-    let directory = name.directory_url.clone();
     let contact = name.contact_email.trim().to_string();
     let ca = directory_ca(factory);
     // the account, the order and its challenges' digests

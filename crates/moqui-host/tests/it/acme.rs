@@ -56,13 +56,32 @@ fn call(gate: &Gate, name: &str, parameters: &[(&str, Value)]) -> (BTreeMap<Stri
     (out, errors)
 }
 
-/// An open ACME challenge for `host` on `gate`, with `digest`, as an order writes it.
+/// An open ACME challenge for `host` on `gate`, with `digest`, as an order writes it: for a name set up there (a name row
+/// not renewed by the job is made when there is none), open ten minutes.
 fn open_challenge(gate: &Gate, host: &str, digest: &[u8; 32]) {
     let factory = gate.server.factory();
     let context = factory.new_context();
     let _entered = context.enter();
     let _authz = context.disable_authz();
     let facade = factory.entity().unwrap();
+    let set_up = facade
+        .find("moqui.server.AcmeName")
+        .unwrap()
+        .eq("hostName", Value::string(host))
+        .one()
+        .unwrap();
+    if set_up.is_none() {
+        let mut name = facade.make_value("moqui.server.AcmeName").unwrap();
+        for (field, value) in [
+            ("hostName", host),
+            ("directoryUrl", "https://ca.example.test/dir"),
+            ("statusId", "AcmeIssued"),
+            ("renewing", "N"),
+        ] {
+            name.set(field, Value::string(value));
+        }
+        name.create(&facade).unwrap();
+    }
     let mut row = facade.make_value("moqui.server.AcmeChallenge").unwrap();
     row.set("hostName", Value::string(host));
     let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();

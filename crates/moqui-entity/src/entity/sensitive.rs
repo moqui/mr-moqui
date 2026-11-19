@@ -111,7 +111,9 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11); and the scrape targets
 /// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03); and the
 /// mail OAuth providers, whose token endpoint is posted the client secret and every mailbox's refresh token, so a generic
-/// write could point it at another host (SEC-OUT-82): seed data, the conf and Admin's mail sign-in provider kind set them.
+/// write could point it at another host (SEC-OUT-82): seed data, the conf and Admin's mail sign-in provider kind set them;
+/// and the ACME names, challenges, certificates and order locks, which the TLS listener answers and each member writes to
+/// `runtime/cert` as an order made them (SEC-OUT-81).
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -125,6 +127,12 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "syntheticcheck",
     // the token endpoint of a mail OAuth provider receives the client secret and the refresh tokens
     "emailoauthprovider",
+    // ACME: a challenge row is answered on the TLS listener and a certificate row written to runtime/cert, so only an
+    // order (setup#AcmeName and the renewal job) writes them
+    "acmename",
+    "acmechallenge",
+    "acmecertificate",
+    "acmeorderlock",
 ];
 
 /// The text after the last `.`, in lower case.
@@ -628,6 +636,10 @@ mod tests {
         // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11, SEC-OUT-82)
         for name in [
             "moqui.basic.email.EmailOAuthProvider",
+            "moqui.server.AcmeName",
+            "moqui.server.AcmeChallenge",
+            "moqui.server.AcmeCertificate",
+            "moqui.server.AcmeOrderLock",
             "moqui.entity.EntityAuditLog",
             "moqui.monitor.RecoveryAction",
             "moqui.monitor.RecoveryAdapter",
