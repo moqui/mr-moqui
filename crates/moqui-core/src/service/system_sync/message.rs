@@ -209,9 +209,10 @@ fn refuse(reason: &str) {
 }
 
 /// The `sm` transition of `rest.xml`: `/rest/sm/{systemMessageTypeId}/{systemMessageRemoteId}/{remoteMessageId}` with
-/// the message as the request body. The remote's `messageAuthEnumId` picks the check: a logged-in user authorized for
-/// `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC header (SmatHmacSha256, SmatHmacSha512, or
-/// SmatHmacSha256Timestamp with a five minute window and a replay cache), a secret URL query parameter
+/// the message as the request body. The remote's `messageAuthEnumId` picks the check: a logged-in user who is the
+/// remote's `receiveUserId` and is authorized for `receive#IncomingSystemMessage` (SmatLogin or none set), an HMAC
+/// header (SmatHmacSha256, SmatHmacSha512, or SmatHmacSha256Timestamp with a five minute window and a replay cache), a
+/// secret URL query parameter
 /// (SmatUrlToken), or nothing (SmatNone). The reply is
 /// `{systemMessageIdList: [...]}`.
 pub(crate) fn receive_rest_message(request: &WebRequest, extra: &[String]) -> Result<bool, Error> {
@@ -274,6 +275,21 @@ fn receive_checked(
                 refuse(&format!("receive for remote system {remote_id} requires login"));
                 return Ok(());
             };
+            // The remote's own account only: any account allowed to receive could otherwise deliver as every login
+            // remote, another partner's or a bank's (SEC-BAP-96). A remote with none takes no post by login.
+            let receive_user = field(&remote, "receiveUserId");
+            if receive_user.is_empty() || receive_user != user_id {
+                refuse(&format!(
+                    "receive for remote system {remote_id} is not taken from user with ID {user_id}: the remote's \
+                     receiveUserId is {}",
+                    if receive_user.is_empty() {
+                        "not set"
+                    } else {
+                        "another user"
+                    }
+                ));
+                return Ok(());
+            }
             if let Err(err) = crate::user::authorize("AT_SERVICE", RECEIVE, "all") {
                 refuse(&format!(
                     "receive for remote system {remote_id} not authorized for user with ID {user_id}: {err}"
