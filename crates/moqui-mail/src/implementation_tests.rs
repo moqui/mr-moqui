@@ -1511,11 +1511,14 @@ fn only_an_account_hosted_here_is_signed_and_only_as_its_own_addresses() {
     assert!(!signs("M82_EXTERNAL", "ceo@hosted.example") && !signs("M82_STORED", "cfo@stored.example"));
     assert!(!signs("M82_NONE", "ann@hosted.example"));
     // the domains the node signs its own mail for are those of the accounts delivered here only
-    let hosted = super::super::auth::hosted_domains(&facade, moqui_core::edge::NodeRole::Normal).unwrap();
-    assert!(
-        hosted.contains("hosted.example") && !hosted.contains("stored.example"),
-        "{hosted:?}"
-    );
+    #[cfg(feature = "imap")]
+    {
+        let hosted = super::super::auth::hosted_domains(&facade, moqui_core::edge::NodeRole::Normal).unwrap();
+        assert!(
+            hosted.contains("hosted.example") && !hosted.contains("stored.example"),
+            "{hosted:?}"
+        );
+    }
     // a message that may not be signed is not given to the edge node, which signs for the hosted domains
     let letter = super::Letter {
         subject: "Hello".to_string(),
