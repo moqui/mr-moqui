@@ -457,6 +457,7 @@
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
+                socket-room-clients="4" socket-awareness-bytes="4096" socket-joins-per-minute="60"
             app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
@@ -702,7 +703,8 @@
         where their drive is. -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
-            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive">
+            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
+            collab-max-state-bytes="8388608">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not

@@ -126,6 +126,24 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
 }
 
 fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, client: String) {
+    // a socket's presence is bounded: its joins a minute and its clients in one room (SEC-TLS-113)
+    let caps = super::PresenceCaps::of(factory);
+    let others = lock(members())
+        .iter()
+        .filter(|member| member.slot_id == slot.id && member.room == room && member.client != client)
+        .count();
+    if others >= caps.room_clients {
+        return error(
+            slot,
+            &room,
+            &client,
+            429,
+            "this connection has as many clients in the room as it may",
+        );
+    }
+    if !super::join_allowed(slot.id, caps.joins_per_minute) {
+        return error(slot, &room, &client, 429, "too many joins; wait a minute");
+    }
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
@@ -185,11 +203,7 @@ fn select(factory: &ExecutionContextFactory, slot: &Slot, room: &str, client: &s
         .get("sheet")
         .and_then(Json::as_u64)
         .and_then(|sheet| u32::try_from(sheet).ok());
-    // a place is four numbers; anything else of the client's is not passed on
-    let area = message.get("area").map_or(Json::Null, |area| {
-        json!({"row": area["row"].as_i64(), "column": area["column"].as_i64(),
-            "width": area["width"].as_i64(), "height": area["height"].as_i64()})
-    });
+    let area = message.get("area").map_or(Json::Null, together::place_of);
     Presence::of(factory).set(&member.doc, client, &member.user_id, &member.name, sheet, area.clone());
     let frame = json!({"type": "select", "client": client, "userId": member.user_id, "name": member.name,
         "sheet": sheet, "area": area});

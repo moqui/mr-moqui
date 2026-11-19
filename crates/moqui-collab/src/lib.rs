@@ -146,6 +146,9 @@ struct Room {
     members: usize,
     /// Each member's access, by user, as last asked.
     can_edit: HashMap<String, Grant>,
+    /// The size of the document's state as last written, and of the updates applied since: what [`apply`] holds to
+    /// [`max_state_bytes`].
+    state_bytes: usize,
     /// The row's `lastUpdatedStamp` (milliseconds) as this server last read or wrote it; a row with another was written
     /// by another server since, and [`tick`] merges it. `None` when not known, which only costs a read.
     stamp: Option<i64>,
@@ -462,6 +465,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         )?
         .stamp;
     }
+    let state_bytes = doc.transact().encode_state_as_update_v1(&StateVector::default()).len();
     let room = Arc::new(Mutex::new(Room {
         doc,
         target,
@@ -471,6 +475,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         last_editor: None,
         members: 0,
         can_edit: HashMap::new(),
+        state_bytes,
         stamp,
     }));
     // another join may have loaded it meanwhile: keep the first
@@ -491,6 +496,8 @@ enum Stored {
 struct Written {
     stamp: Option<i64>,
     merged: Option<Vec<u8>>,
+    /// The size of the state written.
+    state_bytes: usize,
 }
 
 /// Write the document's state and snapshot.
@@ -523,6 +530,7 @@ fn write_row(
             .start_time_millis()
             .filter(|millis| *millis > 0);
         let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        let state_bytes = state.len();
         let snapshot = markdown::render(doc);
         let mut row = match existing {
             Some(row) => row,
@@ -559,7 +567,11 @@ fn write_row(
         } else {
             row.update(&facade)?;
         }
-        Ok(Written { stamp, merged })
+        Ok(Written {
+            stamp,
+            merged,
+            state_bytes,
+        })
     })
     .map_err(Error::from)
 }
@@ -567,6 +579,7 @@ fn write_row(
 /// Note what [`write_row`] did in the room: its stamp, and the merged update for the room's clients.
 fn wrote(key: &str, room: &mut Room, written: Written) {
     room.stamp = written.stamp;
+    room.state_bytes = written.state_bytes;
     if let Some(update) = written.merged {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
@@ -661,7 +674,14 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
         Some(_) => return Err(Refusal::new(403, "you may view this page and not change it")),
         None => return Err(Refusal::new(409, format!("{key} is not open here: join it first"))),
     }
+    // the whole state is held in memory and written again at each flush: bounded (SEC-TLS-113)
+    let max = max_state_bytes();
+    if room.state_bytes.saturating_add(update.len()) > max {
+        return Err(Refusal::new(413, format!("the document is larger than {max} bytes")));
+    }
+    let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;
+    room.state_bytes = room.state_bytes.saturating_add(size);
     room.doc
         .transact_mut()
         .apply_update(update)
@@ -671,6 +691,15 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     room.unsaved.insert(user_id.to_string());
     room.last_editor = Some(user_id.to_string());
     Ok(())
+}
+
+/// The most bytes a co-edited document's state may take: `resource-facade@collab-max-state-bytes`, 8 MiB by default.
+fn max_state_bytes() -> usize {
+    moqui_core::context::conf_env::setting("resource-facade@collab-max-state-bytes")
+        .parse::<usize>()
+        .ok()
+        .filter(|max| *max > 0)
+        .unwrap_or(8 * 1024 * 1024)
 }
 
 /// An update another server applied: into this server's room, when it has the document open. That server writes it.

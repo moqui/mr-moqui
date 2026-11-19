@@ -145,6 +145,28 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
         Err(_) => return error(slot, &doc, &client, 400, "sv is not base64"),
     };
     let awareness = message.get("awareness").cloned().unwrap_or(Json::Null);
+    // a socket's presence is bounded: its joins a minute, its clients on one page, an awareness's size (SEC-TLS-113)
+    let caps = super::PresenceCaps::of(factory);
+    if awareness.to_string().len() > caps.awareness_bytes {
+        return error(slot, &doc, &client, 413, "the awareness is too large");
+    }
+    let others = lock(members()).get(&doc).map_or(0, |list| {
+        list.iter()
+            .filter(|member| member.slot_id == slot.id && member.client != client)
+            .count()
+    });
+    if others >= caps.room_clients {
+        return error(
+            slot,
+            &doc,
+            &client,
+            429,
+            "this connection has as many clients on the page as it may",
+        );
+    }
+    if !super::join_allowed(slot.id, caps.joins_per_minute) {
+        return error(slot, &doc, &client, 429, "too many joins; wait a minute");
+    }
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
@@ -230,6 +252,13 @@ fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &st
 fn awareness(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
     if !is_member(doc, client, slot.id) {
         return;
+    }
+    // an awareness goes to every editor: held to its size (SEC-TLS-113)
+    if message
+        .get("update")
+        .is_some_and(|update| update.to_string().len() > super::PresenceCaps::of(factory).awareness_bytes)
+    {
+        return error(slot, doc, client, 413, "the awareness is too large");
     }
     let frame = json!({"topic": topic(doc), "type": "awareness", "client": client,
         "update": message.get("update").cloned().unwrap_or(Json::Null)});
@@ -421,5 +450,46 @@ mod tests {
         let small = remote_message(json!({"doc":"document", "frame":{"type":"update", "update":"AAAA"}})).unwrap();
         assert!(small.body.get("update").is_none(), "the update is carried once");
         assert_eq!(small.body["frame"]["update"], "AAAA");
+    }
+
+    /// SEC-TLS-113: a socket keeps at most four clients on one page, and an awareness over 4 KiB goes to no one; both
+    /// are refused before the room or the other editors see them.
+    #[test]
+    fn a_sockets_clients_on_a_page_and_its_awareness_are_bounded() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "editor".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let doc = "presence-bounds";
+        let member = |client: &str| Member {
+            slot: Arc::downgrade(&slot),
+            slot_id: slot.id,
+            client: client.into(),
+            user_id: "editor".into(),
+            name: "Editor".into(),
+            awareness: Json::Null,
+        };
+        lock(members()).insert(doc.into(), ["a", "b", "c", "d"].map(member).into());
+        join(&factory, &slot, doc.into(), "e".into(), &json!({"sv": ""}));
+        let refused: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(refused["code"], 429);
+        awareness(
+            &factory,
+            &slot,
+            doc,
+            "a",
+            &json!({"update": {"cursor": "x".repeat(5000)}}),
+        );
+        lock(members()).remove(doc);
+        let refused: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(refused["code"], 413);
+        assert!(rx.try_recv().is_err(), "nothing else was sent");
     }
 }

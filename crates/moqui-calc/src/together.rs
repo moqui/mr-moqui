@@ -440,6 +440,14 @@ impl Presence {
 /// The key a room's viewers are found by: its saved document, so the rooms of every scope see each other, or a
 /// scratch room's own id.
 #[must_use]
+/// A view's place as the others see it: four numbers (`row`, `column`, `width`, `height`); anything else the client
+/// sent is not kept or passed on, by the socket's `select` or by `get#CalcCells` (SEC-TLS-113).
+#[must_use]
+pub fn place_of(area: &Json) -> Json {
+    json!({"row": area["row"].as_i64(), "column": area["column"].as_i64(),
+        "width": area["width"].as_i64(), "height": area["height"].as_i64()})
+}
+
 pub fn presence_key(room: &Room) -> String {
     room.definition_id
         .clone()

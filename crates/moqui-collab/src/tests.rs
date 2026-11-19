@@ -524,3 +524,41 @@ fn an_editors_access_is_asked_again_and_a_stale_answer_takes_no_update() {
     super::tick();
     let _ = super::take_events();
 }
+
+/// SEC-TLS-113: an update that would take the document's state past resource-facade@collab-max-state-bytes is refused.
+#[test]
+fn an_update_past_the_state_limit_is_refused() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "sizer");
+    login("sizer");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("SIZER")),
+            ("description", Value::string("Sizer")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("SIZER")),
+            ("pageName", Value::string("Small")),
+            ("pageText", Value::string("Text.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    let joined = super::join(&key, "sizer", &[]).unwrap();
+    let doc = client(&joined);
+    let typed = type_paragraph(&doc, &"many words ".repeat(400));
+    let setting = moqui_core::context::conf_env::env_name_of("resource-facade@collab-max-state-bytes");
+    moqui_lib::env::set_property(&setting, "2048");
+    let refused = super::apply(&key, "sizer", &typed);
+    moqui_lib::env::clear_property(&setting);
+    assert_eq!(refused.unwrap_err().code, 413);
+    super::apply(&key, "sizer", &typed).unwrap();
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
+}

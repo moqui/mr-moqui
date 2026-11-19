@@ -188,6 +188,45 @@ enum TopicCommand {
     Unsubscribe(Vec<String>),
 }
 
+/// What one socket may hold of presence (SEC-TLS-113), from the webroot webapp: the clients it keeps in one CalcGrid
+/// room or co-edited page (`socket-room-clients`), the bytes of one awareness (`socket-awareness-bytes`), and the
+/// joins it makes a minute (`socket-joins-per-minute`).
+#[derive(Clone, Copy)]
+struct PresenceCaps {
+    room_clients: usize,
+    awareness_bytes: usize,
+    joins_per_minute: u32,
+}
+
+impl PresenceCaps {
+    fn of(factory: &ExecutionContextFactory) -> Self {
+        let number = |name: &str, default: usize| {
+            factory
+                .webapp_setting("webroot", name)
+                .parse::<usize>()
+                .ok()
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        Self {
+            room_clients: number("socket-room-clients", 4),
+            awareness_bytes: number("socket-awareness-bytes", 4096),
+            joins_per_minute: u32::try_from(number("socket-joins-per-minute", 60)).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// Whether the socket `slot_id` may join a room or a page once more this minute ([`PresenceCaps::joins_per_minute`]).
+fn join_allowed(slot_id: u64, max: u32) -> bool {
+    static JOINS: OnceLock<Mutex<HashMap<u64, (i64, u32)>>> = OnceLock::new();
+    let minute = moqui_core::user::now_millis() / 60_000;
+    let mut joins = lock(JOINS.get_or_init(|| Mutex::new(HashMap::new())));
+    joins.retain(|_, (at, _)| *at == minute);
+    let entry = joins.entry(slot_id).or_insert((minute, 0));
+    entry.1 = entry.1.saturating_add(1);
+    entry.1 <= max
+}
+
 /// Subscribe once to `notification-message`. A second boot keeps the first listener.
 pub(crate) fn install_push() -> Result<(), CoreError> {
     if PUSH.get().is_some() {
