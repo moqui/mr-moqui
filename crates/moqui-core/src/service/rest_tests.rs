@@ -329,7 +329,9 @@ fn an_account_owned_email_server_is_not_written_by_generic_rest_even_by_admin() 
 /// A `UserAccount` written through a Service REST entity resource takes none of its identity fields, an ADMIN's write
 /// included (plans/Security-Review-Medium.md SEC-ADM-81): the email address a reset is mailed to, the sign-in name, the
 /// provider link and the disabled flag are changed only through `update#UserAccount`, whose rules (another account
-/// holding more access than the caller, a recent sign-in) an entity update would pass by. The full name is still taken.
+/// holding more access than the caller, a recent sign-in) an entity update would pass by; so are the terminate date (a
+/// cleared one reopens an ended account), the display-account mark and the password hint (SEC-ADM-89). The full name is
+/// still taken.
 #[test]
 fn an_admins_entity_write_of_an_account_takes_no_identity_field() {
     let dir = std::env::temp_dir().join(format!("moqui-rest-identity-{}", std::process::id()));
@@ -371,8 +373,18 @@ fn an_admins_entity_write_of_an_account_takes_no_identity_field() {
             ("username", "idtarget"),
             ("emailAddress", "target@example.com"),
             ("disabled", "N"),
+            ("passwordHint", "the old hint"),
         ],
     );
+    {
+        let mut ended = facade.make_value("moqui.security.UserAccount").unwrap();
+        ended.set("userId", Value::string("IDTARGET"));
+        ended.set(
+            "terminateDate",
+            moqui_lib::object::basic_convert(&Value::I64(1_000_000), "Timestamp").value,
+        );
+        ended.update(&facade).unwrap();
+    }
     crate::user::internal_login_user("idadmin").unwrap();
     assert!(crate::user::is_in_group("ADMIN").unwrap());
     let changes = BTreeMap::from([
@@ -382,6 +394,9 @@ fn an_admins_entity_write_of_an_account_takes_no_identity_field() {
         ("username".to_string(), Value::string("taken")),
         ("externalUserId".to_string(), Value::string("taker-subject")),
         ("disabled".to_string(), Value::string("Y")),
+        ("terminateDate".to_string(), Value::string("")),
+        ("displayAccount".to_string(), Value::string("Y")),
+        ("passwordHint".to_string(), Value::string("taker's hint")),
     ]);
     run(&["acct", "users", "IDTARGET"], "patch", &changes).unwrap();
     let stored = facade
@@ -398,6 +413,12 @@ fn an_admins_entity_write_of_an_account_takes_no_identity_field() {
     assert_eq!(text("username").as_deref(), Some("idtarget"));
     assert_eq!(text("externalUserId"), None);
     assert_eq!(text("disabled").as_deref(), Some("N"));
+    assert!(
+        stored.get("terminateDate").is_some_and(|value| !value.is_null()),
+        "the account stays ended"
+    );
+    assert_eq!(text("displayAccount"), None);
+    assert_eq!(text("passwordHint").as_deref(), Some("the old hint"));
 
     let made = BTreeMap::from([
         ("userId".to_string(), Value::string("IDMADE")),

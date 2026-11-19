@@ -32,8 +32,9 @@ pub const USER_ACCOUNT_SECRET_FIELDS: &[&str] = &[
 
 /// `UserAccount` fields that control authentication and identity: the sign-in name, where a reset is mailed, the
 /// provider link (`externalUserId`, `externalAuthFlowId`) and the key a key sign-in is checked by (`publicKey`), the
-/// flags and the counters. No generic write takes them, a Service REST entity resource's included, an ADMIN's too:
-/// `update#UserAccount` changes them, with its rules.
+/// flags and the counters, and what ends, marks or recovers an account (`terminateDate`, which a cleared one reopens an
+/// ended account by; `displayAccount`; `passwordHint`; `resetPasswordSetDate`; SEC-ADM-89). No generic write takes them,
+/// a Service REST entity resource's included, an ADMIN's too: `update#UserAccount` changes them, with its rules.
 pub const USER_ACCOUNT_IDENTITY_FIELDS: &[&str] = &[
     "disabled",
     "username",
@@ -46,6 +47,10 @@ pub const USER_ACCOUNT_IDENTITY_FIELDS: &[&str] = &[
     "hasLoggedOut",
     "disabledDateTime",
     "successiveFailedLogins",
+    "terminateDate",
+    "displayAccount",
+    "passwordHint",
+    "resetPasswordSetDate",
 ];
 
 /// Identity-admin entities (not `UserAccount`), by simple name or short alias in lower case.

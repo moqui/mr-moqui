@@ -179,7 +179,8 @@ along with this software (see the LICENSE.md file). If not, see
         <actions>
             <if condition="!ec.user.isInGroup('ADMIN')"><script>
                 for (const name of ['disabled', 'username', 'emailAddress', 'ipAllowed', 'externalUserId', 'externalAuthFlowId',
-                        'publicKey', 'requirePasswordChange']) context.remove(name)
+                        'publicKey', 'requirePasswordChange', 'terminateDate', 'displayAccount', 'passwordHint',
+                        'resetPasswordSetDate']) context.remove(name)
             </script></if>
             <service-call name="org.moqui.impl.UserServices.update#UserAccount" in-map="context"/>
         </actions>
