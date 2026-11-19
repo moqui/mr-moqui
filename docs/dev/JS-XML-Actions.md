@@ -174,7 +174,7 @@ if (true) {
 ```
 
 ```js
-enumList_xafind = ec.entity.find("moqui.basic.Enumeration").useCache(true).orderBy("sequenceNum").condition("enumTypeId", "UserPreferenceKey");
+enumList_xafind = ec.entity.find("moqui.basic.Enumeration").useCache(true).orderBy("sequenceNum").condition("enumTypeId", "equals", "UserPreferenceKey");
 enumList = enumList_xafind.list();
 ```
 
@@ -196,7 +196,7 @@ it uses the fields of the context; `auto-field-map` may also be an expression fo
 
 | Child of a find | Becomes |
 |---|---|
-| `<econdition field-name from value/>` | `.condition("field", value)` for a plain equals. With `operator`, `ignore-case`, `ignore-if-empty`, `or-null`, `to-field-name` or `ignore`: `.condition(ec.entity.conditionFactory.makeActionConditionDirect(...))` |
+| `<econdition field-name from value/>` | `.condition("field", "equals", value)` for a plain equals: with the operator, so two econditions on one field are both ANDed, where a second `.condition("field", value)` would replace the first. With `operator`, `ignore-case`, `ignore-if-empty`, `or-null`, `to-field-name` or `ignore`: `.condition(ec.entity.conditionFactory.makeActionConditionDirect(...))` |
 | `<econditions combine>` | `.condition(ec.entity.conditionFactory.makeCondition([...], "and"))`, nested ones inside it |
 | `<econdition-object field/>` | `.condition(field)`, a condition object held in the context |
 | `<date-filter from-field-name thru-field-name valid-date ignore-if-empty ignore/>` | `.condition(ec.entity.conditionFactory.makeConditionDate(...))`. On a cached find the result is filtered: `list = list.filterByDate(...)` |

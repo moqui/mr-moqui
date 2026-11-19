@@ -56,7 +56,7 @@ A requirement met only in part takes the status of the part that is not met, and
 | [V3 Web Frontend Security](V3-Web-Frontend-Security.md) | 19 | 9 | 2 | 1 | 7 | 0 |
 | [V4 API and Web Service](V4-API-and-Web-Service.md) | 10 | 4 | 2 | 0 | 2 | 2 |
 | [V5 File Handling](V5-File-Handling.md) | 9 | 3 | 0 | 2 | 4 | 0 |
-| [V6 Authentication](V6-Authentication.md) | 35 | 15 | 3 | 2 | 14 | 1 |
+| [V6 Authentication](V6-Authentication.md) | 35 | 16 | 3 | 2 | 13 | 1 |
 | [V7 Session Management](V7-Session-Management.md) | 18 | 8 | 0 | 3 | 7 | 0 |
 | [V8 Authorization](V8-Authorization.md) | 7 | 1 | 0 | 3 | 3 | 0 |
 | [V9 Self-contained Tokens](V9-Self-contained-Tokens.md) | 7 | 6 | 0 | 0 | 1 | 0 |
@@ -68,7 +68,7 @@ A requirement met only in part takes the status of the part that is not met, and
 | [V15 Secure Coding and Architecture](V15-Secure-Coding-and-Architecture.md) | 13 | 3 | 2 | 4 | 4 | 0 |
 | [V16 Security Logging and Error Handling](V16-Security-Logging-and-Error-Handling.md) | 16 | 7 | 3 | 0 | 6 | 0 |
 | [V17 WebRTC](V17-WebRTC.md) | 7 | 3 | 0 | 0 | 4 | 0 |
-| **All** | 253 | 89 | 22 | 28 | 85 | 29 |
+| **All** | 253 | 90 | 22 | 28 | 84 | 29 |
 
 ## Running the proofs
 

@@ -916,3 +916,26 @@ fn the_sftp_tree_writes_versions_and_refuses_what_the_drive_does_not_allow() {
         "bob's writes were refused"
     );
 }
+
+/// SEC-FIL-86: a PROPFIND that names thousands of properties is answered for the first `MAX_ASKED_PROPS` of them, each
+/// once, and a multistatus past `MAX_MULTISTATUS` bytes is refused with 507 rather than held whole.
+#[test]
+fn a_propfind_answers_a_bounded_list_of_properties_in_a_bounded_body() {
+    let mut body = String::from(r#"<?xml version="1.0"?><D:propfind xmlns:D="DAV:" xmlns:X="urn:x"><D:prop>"#);
+    body.push_str("<D:getetag/><D:getetag/>");
+    for at in 0..5_000 {
+        body.push_str(&format!("<X:p{at}/>"));
+    }
+    body.push_str("</D:prop></D:propfind>");
+    let parsed = super::xml::parse(body.as_bytes()).unwrap();
+    let super::PropRequest::Some(asked) = super::PropRequest::from_propfind(parsed.as_ref()) else {
+        panic!("a prop list");
+    };
+    assert_eq!(asked.len(), super::MAX_ASKED_PROPS);
+    assert_eq!(asked[0], (super::DAV.to_string(), "getetag".to_string()));
+    assert_eq!(asked[1], ("urn:x".to_string(), "p0".to_string()));
+    let fits = super::multistatus_of(&["<D:response/>".to_string()]);
+    assert_eq!(fits.status, 207);
+    let past = super::multistatus_of(&["x".repeat(super::MAX_MULTISTATUS)]);
+    assert_eq!(past.status, 507);
+}

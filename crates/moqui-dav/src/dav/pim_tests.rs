@@ -15,7 +15,9 @@
 use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
-use super::{asked_hrefs, ical_utc_millis, multiget_matches, object_text, text_of, xml, MAX_OBJECT};
+use super::{
+    asked_hrefs, ical_utc_millis, multiget_matches, object_text, text_of, xml, MAX_MULTIGET_HREFS, MAX_OBJECT,
+};
 
 /// SEC-FIL-67: a calendar or contact object past its own limit is refused before the adapter parses it.
 #[test]
@@ -65,7 +67,7 @@ fn a_multiget_over_many_objects_answers_exactly_the_hrefs_asked() {
            </C:calendar-multiget>"#
     );
     let body = xml::parse(body.as_bytes()).unwrap().unwrap();
-    let asked = asked_hrefs(&body);
+    let asked = asked_hrefs(&body).expect("under the bound");
     assert_eq!(asked.len(), 5);
     assert_eq!(asked[1].0, format!("{base}ev7.ics"), "the scheme and host are dropped");
     assert_eq!(asked[4].1, "ev12.ics", "the name is decoded");
@@ -84,5 +86,32 @@ fn a_multiget_over_many_objects_answers_exactly_the_hrefs_asked() {
             (asked[3].0.as_str(), None),
             (asked[4].0.as_str(), Some("ev12.ics".to_string())),
         ]
+    );
+}
+
+/// SEC-FIL-86: a multiget that names one object 40,000 times asks for it once, so its data is answered once; one that
+/// names more than `MAX_MULTIGET_HREFS` objects is refused before any is read.
+#[test]
+fn a_multiget_names_each_object_once_and_a_bounded_number_of_them() {
+    let base = "/dav/calendars/john/work/";
+    let multiget = |hrefs: &str| {
+        let body = format!(
+            r#"<C:calendar-multiget xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/></D:prop>{hrefs}</C:calendar-multiget>"#
+        );
+        xml::parse(body.as_bytes()).unwrap().unwrap()
+    };
+    let repeated = format!("<D:href>{base}big.ics</D:href>").repeat(40_000);
+    let asked = asked_hrefs(&multiget(&repeated)).expect("one object");
+    assert_eq!(asked, vec![(format!("{base}big.ics"), "big.ics".to_string())]);
+    let many: String = (0..=MAX_MULTIGET_HREFS)
+        .map(|at| format!("<D:href>{base}ev{at}.ics</D:href>"))
+        .collect();
+    assert!(asked_hrefs(&multiget(&many)).is_none());
+    let most: String = (0..MAX_MULTIGET_HREFS)
+        .map(|at| format!("<D:href>{base}ev{at}.ics</D:href>"))
+        .collect();
+    assert_eq!(
+        asked_hrefs(&multiget(&most)).map(|asked| asked.len()),
+        Some(MAX_MULTIGET_HREFS)
     );
 }

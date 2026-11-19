@@ -1194,6 +1194,10 @@ impl GitProvider {
             let lock = self.lock_of(repository_id);
             let _turn = moqui_lib::sync::lock(&lock);
             lease::check(shared.as_ref())?;
+            // a mirror's URL may be a drive manager's, who is not the instance's administrator: the fetch connects
+            // only to a public address (an https host's, an ssh host's pinned), unless webhook-private-network allows
+            // internal ones, as for a push mirror or an import (SEC-BOS-90)
+            let _deny = (!mirror::private_network()).then(fs::deny_internal);
             fs::fetch(
                 &definition.path,
                 &url,

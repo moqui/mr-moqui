@@ -185,9 +185,10 @@ fn for_no_key_update_is_written_and_not_with_for_update() {
         .any(|sql| sql.ends_with(" FOR UPDATE") && !sql.contains("NO KEY")));
 }
 
-/// Java's `condition(field, value)` keeps one value per field: the second replaces the first, also inside an `AND`.
+/// Java's `condition(field, value)` keeps one value per field: called again for the field, the second value replaces the
+/// first, and it replaces a map's (`condition(context)`) too.
 #[test]
-fn a_second_equality_on_a_field_replaces_the_first() {
+fn a_second_field_value_on_a_field_replaces_the_first() {
     let (facade, _tape) = seeded();
     let found = facade
         .find("moqui.test.TestEntity")
@@ -201,21 +202,51 @@ fn a_second_equality_on_a_field_replaces_the_first() {
     let find = facade
         .find("moqui.test.TestEntity")
         .unwrap()
-        .eq("testMedium", Value::string("beta"))
-        .condition(Condition::and(vec![
-            Condition::equals("testMedium", Value::string("alpha")),
-            Condition::not_equals("testId", Value::string("B")),
-        ]))
-        .condition(Condition::not_equals("testId", Value::string("C")));
-    assert_eq!(
-        find.conditions,
-        [
-            Condition::equals("testMedium", Value::string("alpha")),
-            Condition::not_equals("testId", Value::string("B")),
-            Condition::not_equals("testId", Value::string("C")),
-        ]
-    );
+        .condition_from_map(Condition::equals("testMedium", Value::string("beta")))
+        .eq("testMedium", Value::string("alpha"));
+    let alpha = [Condition::equals("testMedium", Value::string("alpha"))];
+    assert_eq!(find.conditions, alpha);
     assert_eq!(find.list().unwrap().len(), 1);
+}
+
+/// Every condition but a second `condition(field, value)` is ANDed as written (found while fixing SEC-BOS-97): an
+/// `AND` list (`makeCondition([..], 'and')`) of two equalities on one field finds nothing, and so does an equality
+/// object beside a field value on that field, in either order, and a map after a field value. A service's own
+/// `partyId = <the user's party>` is not replaced by the caller's `partyId`.
+#[test]
+fn an_equality_on_a_field_is_anded_with_another_on_it() {
+    let (facade, _tape) = seeded();
+    let find = || facade.find("moqui.test.TestEntity").unwrap();
+    let a = || Condition::equals("testId", Value::string("A"));
+    let b = || Condition::equals("testId", Value::string("B"));
+    let count = |find: crate::entity::EntityFind| find.list().unwrap().len();
+    let none = |find: crate::entity::EntityFind, what: &str| assert_eq!(count(find), 0, "{what}");
+    let a_value = || find().eq("testId", Value::string("A"));
+    let listed = find().condition(Condition::and(vec![a(), b()]));
+    assert_eq!(listed.conditions, [a(), b()]);
+    none(listed, "an AND list");
+    none(find().condition(a()).condition(b()), "two condition objects");
+    none(
+        find().condition(b()).eq("testId", Value::string("A")),
+        "an object, then a field value",
+    );
+    none(a_value().condition(b()), "a field value, then an object");
+    none(a_value().condition_from_map(b()), "a field value, then a map");
+    none(find().condition(a()).condition_from_map(b()), "an object, then a map");
+    none(find().condition_from_map(a()).condition(b()), "a map, then an object");
+    // a find one by the whole key keeps both too
+    let one = |find: crate::entity::EntityFind| find.one().unwrap();
+    assert!(one(find().condition(a()).condition(b())).is_none());
+    assert!(one(a_value().condition(b())).is_none());
+    assert!(one(a_value().condition_from_map(b())).is_none());
+    // and a search form's equality on a field the find has already
+    let mut input = std::collections::BTreeMap::new();
+    input.insert("testId".to_string(), Value::string("B"));
+    let searched = a_value()
+        .search_form_map(&input, &std::collections::BTreeMap::new(), "", "", false)
+        .unwrap()
+        .find;
+    none(searched, "a field value, then a search form");
 }
 
 #[test]

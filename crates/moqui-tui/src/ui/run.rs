@@ -201,23 +201,7 @@ fn downloads_dir() -> PathBuf {
 pub fn save_download(body: &RawBody) -> Result<String, String> {
     let dir = downloads_dir();
     std::fs::create_dir_all(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-    let name: String = body
-        .file_name
-        .chars()
-        .map(|ch| {
-            if ch.is_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let name = if name.trim_matches(['.', '_']).is_empty() {
-        let extension = body.content_type.split(['/', ';']).nth(1).unwrap_or("bin");
-        format!("export.{}", extension.trim())
-    } else {
-        name
-    };
+    let name = download_name(&body.file_name, &body.content_type);
     let (stem, extension) = name
         .rsplit_once('.')
         .map_or((name.as_str(), ""), |(stem, ext)| (stem, ext));
@@ -234,6 +218,38 @@ pub fn save_download(body: &RawBody) -> Result<String, String> {
     }
     std::fs::write(&path, &body.bytes).map_err(|err| format!("{}: {err}", path.display()))?;
     Ok(path.display().to_string())
+}
+
+/// The most characters of an export's extension taken from its `Content-Type`.
+const MOST_EXTENSION_CHARS: usize = 10;
+
+/// The name a download is saved under: the server's file name with every character but a letter, a digit, `.`, `-` and
+/// `_` made `_`, or, with no name left, `export.` and the second part of the `Content-Type` when that is a few ASCII
+/// letters and digits, else `export.bin`. So the name is one path segment on every system: a server cannot put a
+/// separator in it, a `\` on Windows included (SEC-CLI-84).
+fn download_name(file_name: &str, content_type: &str) -> String {
+    let name: String = file_name
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if !name.trim_matches(['.', '_']).is_empty() {
+        return name;
+    }
+    let extension = content_type
+        .split(['/', ';'])
+        .nth(1)
+        .map(str::trim)
+        .filter(|ext| {
+            !ext.is_empty() && ext.len() <= MOST_EXTENSION_CHARS && ext.chars().all(|ch| ch.is_ascii_alphanumeric())
+        })
+        .unwrap_or("bin");
+    format!("export.{extension}")
 }
 
 /// Start the session's queued requests on worker threads; `done` gets each answer. Both loops use it.
@@ -290,3 +306,7 @@ pub fn from_revue(event: &KeyEvent) -> Option<KeyPress> {
         shift: event.shift,
     })
 }
+
+#[cfg(test)]
+#[path = "run_tests.rs"]
+mod tests;

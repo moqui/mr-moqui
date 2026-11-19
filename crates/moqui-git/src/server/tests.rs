@@ -1753,7 +1753,7 @@ fn a_planned_pack_holds_what_the_client_lacks() {
 }
 
 /// A commit of `branch` with one file of `text`.
-fn commit_on(store: &MemoryStore, branch: &str, text: &str) -> gix::ObjectId {
+pub(crate) fn commit_on(store: &MemoryStore, branch: &str, text: &str) -> gix::ObjectId {
     let blob = store.write(Kind::Blob, text.as_bytes()).unwrap();
     let edits = vec![Edit::Put(vec!["f.txt".into()], gix::objs::tree::EntryKind::Blob, blob)];
     let author = Author {
@@ -1835,6 +1835,97 @@ fn a_fetch_unshallows_only_commits_its_readers_read() {
     let text = String::from_utf8_lossy(&answer);
     assert!(text.contains(&format!("unshallow {tip}")), "{text}");
     assert_eq!(pack_count(&answer), 3, "{text}");
+}
+
+/// A store that counts the objects read from it.
+#[derive(Debug, Default)]
+pub(crate) struct CountedStore {
+    pub(crate) inner: MemoryStore,
+    pub(crate) reads: std::sync::atomic::AtomicUsize,
+}
+
+impl GitStore for CountedStore {
+    fn find(&self, id: &gix::ObjectId) -> Result<Option<(Kind, Vec<u8>)>, moqui_core::context::Error> {
+        self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.inner.find(id)
+    }
+    fn find_prefix(&self, prefix: &str, limit: usize) -> Result<Vec<gix::ObjectId>, moqui_core::context::Error> {
+        self.inner.find_prefix(prefix, limit)
+    }
+    fn write(&self, kind: Kind, data: &[u8]) -> Result<gix::ObjectId, moqui_core::context::Error> {
+        self.inner.write(kind, data)
+    }
+    fn read_ref(&self, name: &str) -> Result<Option<gix::ObjectId>, moqui_core::context::Error> {
+        self.inner.read_ref(name)
+    }
+    fn list_refs(&self, prefix: &str) -> Result<Vec<(String, gix::ObjectId)>, moqui_core::context::Error> {
+        self.inner.list_refs(prefix)
+    }
+    fn update_refs(
+        &self,
+        edits: &[crate::store::RefEdit],
+        atomic: bool,
+    ) -> Result<Vec<crate::store::RefOutcome>, moqui_core::context::Error> {
+        self.inner.update_refs(edits, atomic)
+    }
+}
+
+/// SEC-GIT-83: a v0 negotiation with one old common commit that the want does not reach, the want named many times,
+/// and many haves that are not common walks the want's history once, not once a have: the answer for the same common
+/// commits is kept, and the wants are taken once each. The pack is still sent.
+#[test]
+fn a_v0_negotiation_walks_history_once_for_haves_that_add_nothing() {
+    let store = CountedStore::default();
+    // the old branch's commit first, so it is the oldest common one and the walk from the want goes back to it
+    let old = commit_on(&store.inner, "old", "an unmerged branch\n");
+    let mut tip = commit_on(&store.inner, "main", "main 0\n");
+    for at in 1..60 {
+        tip = commit_on(&store.inner, "main", &format!("main {at}\n"));
+    }
+    let advertised = super::Advertised {
+        head: Some(tip),
+        branch_ref: "refs/heads/main".into(),
+        refs: ["main", "old"]
+            .into_iter()
+            .map(|name| super::AdvertisedRef {
+                name: format!("refs/heads/{name}"),
+                id: if name == "main" { tip } else { old },
+                peeled: None,
+            })
+            .collect(),
+        review: Vec::new(),
+    };
+    let wanted = |ids: &[gix::ObjectId]| -> Result<HashSet<gix::ObjectId>, moqui_core::context::Error> {
+        Ok(ids.iter().copied().collect())
+    };
+    let haves = 2_000;
+    let mut request = Vec::new();
+    super::pktline::text(&mut request, &format!("want {tip} multi_ack_detailed no-progress")).unwrap();
+    for _ in 0..50 {
+        super::pktline::text(&mut request, &format!("want {tip}")).unwrap();
+    }
+    super::pktline::flush(&mut request).unwrap();
+    super::pktline::text(&mut request, &format!("have {old}")).unwrap();
+    for at in 0..haves {
+        super::pktline::text(&mut request, &format!("have {at:040x}")).unwrap();
+    }
+    super::pktline::text(&mut request, "done").unwrap();
+    let mut answer = Vec::new();
+    super::upload::upload_v0(
+        &store,
+        &advertised,
+        &wanted,
+        &mut &request[..],
+        &mut answer,
+        true,
+        Some(1),
+    )
+    .unwrap();
+    assert!(pack_count(&answer) > 0, "{}", String::from_utf8_lossy(&answer));
+    // each have is looked up once, the history of 60 commits walked once, and the pack read; once a have, the walk
+    // would read 60 commits for each of the 2,000
+    let reads = store.reads.load(std::sync::atomic::Ordering::Relaxed);
+    assert!(reads < haves + 1_000, "{reads} objects read");
 }
 
 #[test]
@@ -2065,7 +2156,12 @@ fn mirror_fetches_and_opted_in_writes_raise_events() {
         eprintln!("skipped: a file:// fetch runs git-upload-pack, and git is not on the PATH");
         return;
     }
-    let fixture = fixture("sources");
+    // the mirrors fetch file:// URLs, which only a server that allows private networks fetches (SEC-BOS-90)
+    let fixture = fixture_with(
+        "sources",
+        std::path::PathBuf::from("."),
+        r#"<git-server webhook-private-network="true"/>"#,
+    );
     moqui_core::service::git_eca::install(
         fixture.context.factory(),
         r#"<gitecas>

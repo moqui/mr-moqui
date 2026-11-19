@@ -719,10 +719,12 @@ fn condition(call: &mut Call<'_>) -> Result<Ret, HostError> {
             return chain(call, |find| find.condition(condition));
         }
     }
+    // `condition(field, value)`: Java's simple map, where a second value for the field replaces the first; every other
+    // form, `condition(field, operator, value)` with equals too, is ANDed as written (found while fixing SEC-BOS-97)
     if call.passed(1) {
         let field = string_arg(&first)?;
         let condition = comparison(&field, "equals", call.value_or_null(1)).map_err(lib)?;
-        return chain(call, |find| find.condition(condition));
+        return chain(call, |find| find.condition_field(condition));
     }
     let entries = match &first {
         Value::List(_) => IndexMap::default(),
@@ -1106,7 +1108,8 @@ fn find_one_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
     }
     if let Some(fields) = crate::script::value_map(&call.value_or_null(3)) {
         for (field, value) in fields {
-            find = find.condition(comparison(&field, "equals", value).map_err(lib)?);
+            // a field-map replaces the auto-field-map's value for its field, as Java's `condition(field, value)`
+            find = find.condition_field(comparison(&field, "equals", value).map_err(lib)?);
         }
     }
     if let Value::List(selected) = call.value_or_null(4) {

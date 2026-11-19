@@ -212,6 +212,13 @@ pub(crate) struct Context<'a> {
 /// The largest body of a request other than `PUT` (an XML body: PROPFIND, PROPPATCH, REPORT, LOCK...).
 pub const MAX_XML_BODY: usize = 1024 * 1024;
 
+/// The most properties a PROPFIND or REPORT names that are answered; a client names a few dozen (SEC-FIL-86).
+pub(crate) const MAX_ASKED_PROPS: usize = 256;
+
+/// The largest multistatus answered, whole in memory: a folder of 10,000 files with every live property is about 6 MB
+/// (SEC-FIL-86).
+pub(crate) const MAX_MULTISTATUS: usize = 64 * 1024 * 1024;
+
 /// The answer to a request that needs no body to give: a discovery redirect, a path outside the server, `OPTIONS`,
 /// the server off, no credentials, or credentials over plain HTTP. The host asks it before it reads the body, and
 /// [`serve`] asks it again (SEC-FIL-04). Reads only the conf; nothing is looked up.
@@ -623,15 +630,26 @@ impl PropRequest {
         if body.child(DAV, "propname").is_some() {
             return Self::Names;
         }
-        match body.child(DAV, "prop") {
-            Some(prop) => Self::Some(
-                prop.children
-                    .iter()
-                    .map(|child| (child.ns.clone(), child.name.clone()))
-                    .collect(),
-            ),
-            None => Self::All,
+        let Some(prop) = body.child(DAV, "prop") else {
+            return Self::All;
+        };
+        // each named once, and at most MAX_ASKED_PROPS of them: every resource of the answer lists each one, found or
+        // not (SEC-FIL-86)
+        let mut seen: std::collections::HashSet<(&str, &str)> = std::collections::HashSet::new();
+        let mut asked: Vec<(String, String)> = Vec::new();
+        for child in &prop.children {
+            if !seen.insert((child.ns.as_str(), child.name.as_str())) {
+                continue;
+            }
+            if asked.len() == MAX_ASKED_PROPS {
+                tracing::warn!(
+                    "dav: a request names more than {MAX_ASKED_PROPS} properties; the rest are not answered"
+                );
+                break;
+            }
+            asked.push((child.ns.clone(), child.name.clone()));
         }
+        Self::Some(asked)
     }
 
     pub(crate) fn wants(&self, ns: &str, name: &str) -> bool {
@@ -691,19 +709,26 @@ pub(crate) fn status_response(href: &str, status: u16) -> String {
 }
 
 pub(crate) fn multistatus(resources: &[Resource], wanted: &PropRequest) -> DavResponse {
-    let responses: Vec<String> = resources
-        .iter()
-        .map(|resource| prop_response(resource, wanted))
-        .collect();
-    multistatus_of(&responses)
+    multistatus_from(resources.iter().map(|resource| prop_response(resource, wanted)))
 }
 
 pub(crate) fn multistatus_of(responses: &[String]) -> DavResponse {
+    multistatus_from(responses.iter())
+}
+
+/// The multistatus of `responses`, built one response at a time, or 507 once its body passes [`MAX_MULTISTATUS`]
+/// (SEC-FIL-86).
+pub(crate) fn multistatus_from<S: AsRef<str>>(responses: impl Iterator<Item = S>) -> DavResponse {
     let mut body = format!(
         r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus {}>"#,
         xml::ROOT_NAMESPACES
     );
     for response in responses {
+        let response = response.as_ref();
+        if body.len() + response.len() > MAX_MULTISTATUS {
+            tracing::warn!("dav: a multistatus answer passed {MAX_MULTISTATUS} bytes and was refused");
+            return DavResponse::status(507);
+        }
         body.push_str(response);
     }
     body.push_str("</D:multistatus>");

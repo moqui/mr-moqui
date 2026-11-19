@@ -509,6 +509,75 @@ fn an_hmac_receive_is_refused_when_the_remote_has_no_shared_secret() {
     assert_eq!(receive("SmsgSecret", "s3cret"), 200, "{}", errors(&setup.context));
 }
 
+/// SEC-BAP-96: a login remote takes a post only from its own account (`receiveUserId`): partner A's account, which may
+/// receive, does not deliver on partner B's remote, and a remote with no account (one that is only polled) takes no post
+/// by login.
+#[test]
+fn a_login_remote_takes_posts_only_from_its_own_account() {
+    let setup = setup("sm-login-bound");
+    let _entered = setup.context.enter();
+    install(&setup);
+    let facade = &setup.facade;
+    // what the receive service may do is not the point here: each account below may receive
+    let _authz = setup.context.disable_authz();
+    seed(
+        facade,
+        "moqui.service.message.SystemMessageType",
+        &[("systemMessageTypeId", "SmsgTestIn")],
+    );
+    for user in ["partner.a", "partner.b"] {
+        seed(
+            facade,
+            "moqui.security.UserAccount",
+            &[("userId", user), ("username", user)],
+        );
+    }
+    // an empty messageAuthEnumId is a login remote too
+    for (remote, auth, user) in [
+        ("SmsgPartnerA", "SmatLogin", "partner.a"),
+        ("SmsgPartnerB", "SmatLogin", "partner.b"),
+        ("SmsgPolled", "SmatLogin", ""),
+        ("SmsgPartnerBEmpty", "", "partner.b"),
+    ] {
+        seed(
+            facade,
+            "moqui.service.message.SystemMessageRemote",
+            &[
+                ("systemMessageRemoteId", remote),
+                ("messageAuthEnumId", auth),
+                ("receiveUserId", user),
+            ],
+        );
+    }
+    crate::user::internal_login_user("partner.a").unwrap();
+    let body = r#"{"note":"from partner A"}"#;
+    let receive = |remote: &str| {
+        let mut request = crate::web::WebRequest::new("POST", format!("/rest/sm/SmsgTestIn/{remote}"));
+        request.body = body.as_bytes().to_vec();
+        let _web = crate::web::install(BTreeMap::new());
+        super::message::receive_rest_message(&request, &["SmsgTestIn".to_string(), remote.to_string()]).unwrap();
+        setup.context.message().clear_errors();
+        crate::web::output_status()
+    };
+    assert_eq!(receive("SmsgPartnerB"), 403);
+    assert_eq!(receive("SmsgPolled"), 403);
+    assert_eq!(receive("SmsgPartnerBEmpty"), 403);
+    assert_eq!(receive("SmsgPartnerA"), 200);
+    let kept = facade
+        .find("moqui.service.message.SystemMessage")
+        .unwrap()
+        .list()
+        .unwrap();
+    assert_eq!(kept.len(), 1, "only partner A's own remote kept the message");
+    assert_eq!(
+        kept.iter()
+            .next()
+            .and_then(|row| row.get("systemMessageRemoteId"))
+            .and_then(Value::as_str),
+        Some("SmsgPartnerA")
+    );
+}
+
 /// SEC-RTE-13: every refused receive (an unknown type, an unknown remote, no signature header, a wrong signature) is
 /// the same 403 text, which names no type, remote or header; a receive that fails is a 500 with an error id only.
 #[test]

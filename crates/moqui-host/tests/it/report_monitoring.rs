@@ -180,6 +180,16 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
                 "components/addon/report-fixture/service/report/fixture/PolicyServices.xml",
                 policy_services,
             ),
+            // a dataset names a row-filter service that is not a registered policy only as a component ships it
+            // (SEC-TLS-91)
+            (
+                "components/addon/report-fixture/report/service-policy-dataset.json",
+                r#"{"id":"service-policy-dataset","type":"dataset","title":"Policy service","body":{"documentType":"ReportFixture","rowFilterService":"report.fixture.PolicyServices.get#Policy"}}"#,
+            ),
+            (
+                "components/addon/report-fixture/report/missing-policy-dataset.json",
+                r#"{"id":"missing-policy-dataset","type":"dataset","title":"Missing policy","body":{"documentType":"ReportFixture","rowFilterService":"report.fixture.PolicyServices.get#MissingPolicy"}}"#,
+            ),
         ],
     );
     let factory = gate.server.factory();
@@ -416,13 +426,17 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
     assert_eq!(report::documents(&context,&json!({"datasetId":"report-fixture-dataset","from":"now-1h","thru":"now+1h","query":{"field":{"name":"enumTypeId","op":"eq","value":"HIDDEN"}}})).unwrap()["total"],0,"client filters cannot replace identity constraints");
     // Administrator-authored application policies receive the authenticated identity even
     // when both request parameters and the mutable user context claim a different user.
-    let service_policy = parameters(
-        json!({"definition":{"id":"service-policy-dataset","type":"dataset","title":"Policy service","body":{"documentType":"ReportFixture","rowFilterService":"report.fixture.PolicyServices.get#Policy"}}}),
-    );
-    tx.run(TransactionAttribute::UseOrBegin, None, || {
-        report::save_definition(&context, &service(), &service_policy)
-    })
-    .unwrap();
+    // a copy of the shipped dataset saves, as it names the shipped row filter; another service is refused (SEC-TLS-91)
+    let copy = |id: &str, filter: &str| {
+        let definition = parameters(json!({"definition":{"id":id,"type":"dataset","title":id,
+            "body":{"documentType":"ReportFixture","rowFilterService":filter}}}));
+        tx.run(TransactionAttribute::UseOrBegin, None, || {
+            report::save_definition(&context, &service(), &definition)
+        })
+    };
+    copy("service-policy-copy", "report.fixture.PolicyServices.get#Policy").unwrap();
+    let refused = copy("service-policy-other", "org.moqui.impl.BasicServices.echo#Data").unwrap_err();
+    assert!(refused.to_string().contains("registered scope policy"), "{refused}");
     let service_rows = report::documents(
         &context,
         &json!({"datasetId":"service-policy-dataset","from":"now-1h","thru":"now+1h","userId":"HIDDEN"}),
@@ -430,13 +444,6 @@ fn postgres_report_authorization_cursor_counters_and_definitions() {
     .unwrap();
     assert_eq!(service_rows["total"], 1);
     assert_eq!(service_rows["hits"][0]["id"], "visible");
-    let missing_policy = parameters(
-        json!({"definition":{"id":"missing-policy-dataset","type":"dataset","title":"Missing policy","body":{"documentType":"ReportFixture","rowFilterService":"report.fixture.PolicyServices.get#MissingPolicy"}}}),
-    );
-    tx.run(TransactionAttribute::UseOrBegin, None, || {
-        report::save_definition(&context, &service(), &missing_policy)
-    })
-    .unwrap();
     assert!(
         report::documents(
             &context,

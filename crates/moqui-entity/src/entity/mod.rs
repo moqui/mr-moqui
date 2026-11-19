@@ -43,6 +43,7 @@ mod search_form;
 mod sequence;
 mod share;
 pub mod sim_step;
+pub mod sql_read_only;
 mod sim_view;
 mod sql_cache;
 mod value;

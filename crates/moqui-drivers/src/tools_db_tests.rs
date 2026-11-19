@@ -183,13 +183,18 @@ fn read_only_runs_refuse_writes_and_a_cancel_stops_a_sleep() {
             },
         )
     };
+    // a data-modifying CTE is a query by its first word: the database refuses it
+    let err = read_only(
+        "with made as (insert into test_entity (test_id) values ('RO') returning test_id) select * from made",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("read-only transaction"), "{err}");
     for sql in [
         "insert into test_entity (test_id) values ('RO')",
-        "with made as (insert into test_entity (test_id) values ('RO') returning test_id) select * from made",
         "create table ro_made (id int)",
     ] {
         let err = read_only(sql).unwrap_err();
-        assert!(err.to_string().contains("read-only transaction"), "{sql}: {err}");
+        assert!(err.to_string().contains("only a query"), "{sql}: {err}");
     }
     run(
         &facade,
@@ -359,11 +364,11 @@ fn pooled_sessions_are_renamed_kept_from_late_cancels_and_read_only_ones_closed(
     next.join().unwrap().unwrap();
     assert_eq!(session(&facade).0, pid);
 
-    // A read-only run that changes its session: the session is closed, the next run has a new one with the defaults.
+    // A read-only run, which may have changed its session: the session is closed, the next run has a new one.
     info::run_sql_with(
         &facade,
         "transactional",
-        "select set_config('search_path', 'nosuch_schema', false)",
+        "select 1",
         SqlRunOptions {
             read_only: true,
             ..SqlRunOptions::default()
@@ -372,8 +377,60 @@ fn pooled_sessions_are_renamed_kept_from_late_cancels_and_read_only_ones_closed(
     .unwrap();
     let (after, _) = session(&facade);
     assert_ne!(after, pid, "the read-only session was closed");
-    let path = run(&facade, "show search_path");
-    assert_ne!(path.records[0][0], Value::string("nosuch_schema"));
+}
+
+/// A read-only run of written SQL on the embedded cluster is the reader role's, not the bootstrap superuser's, and
+/// refuses `COPY … TO PROGRAM` and the server's file functions; it still reads the tables and the activity view, and
+/// the next ordinary run is the superuser's again (SEC-TLS-86).
+#[test]
+fn a_read_only_run_on_the_embedded_cluster_is_the_reader_roles() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let facade = facade_on(Arc::new(driver));
+    facade.check_tables(&["moqui.test.TestEntity"]).unwrap();
+    run(&facade, "insert into test_entity (test_id) values ('R1')");
+    let read_only = |sql: &str| {
+        info::run_sql_with(
+            &facade,
+            "transactional",
+            sql,
+            SqlRunOptions {
+                read_only: true,
+                ..SqlRunOptions::default()
+            },
+        )
+    };
+    let who = read_only("select current_user, session_user, current_setting('is_superuser')").unwrap();
+    assert_eq!(
+        who.records[0],
+        vec![
+            Value::string(moqui_core::entity::sql_read_only::READER_ROLE),
+            Value::string(moqui_core::entity::sql_read_only::READER_ROLE),
+            Value::string("off")
+        ]
+    );
+    assert_eq!(read_only("select test_id from test_entity").unwrap().records.len(), 1);
+    assert!(!read_only("select pid, query from pg_stat_activity")
+        .unwrap()
+        .records
+        .is_empty());
+    for sql in [
+        "copy (select 1) to program 'true'",
+        "select pg_read_file('PG_VERSION')",
+        "select set_config('session_authorization', 'postgres', true)",
+    ] {
+        assert!(read_only(sql).is_err(), "{sql}");
+    }
+    // The privilege is the database's too: a superuser-only view the list does not name is refused for the role.
+    let err = read_only("select * from pg_hba_file_rules").unwrap_err();
+    assert!(err.to_string().contains("permission denied"), "{err}");
+    let back = run(&facade, "select current_setting('is_superuser')");
+    assert_eq!(back.records[0][0], Value::string("on"));
+    // without the role a superuser's read-only run is refused, never run as the superuser
+    run(&facade, "drop role moqui_sql_reader");
+    let err = read_only("select 1").unwrap_err();
+    assert!(err.to_string().contains("needs the role moqui_sql_reader"), "{err}");
 }
 
 fn pid_of(value: &Value) -> i64 {

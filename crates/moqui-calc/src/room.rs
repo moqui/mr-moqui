@@ -53,6 +53,16 @@ const MAX_CHART_POINTS: usize = 2_000;
 const MAX_PASTE_ROWS: usize = 5_000;
 /// The most cells an edit may change: what it changes is kept to undo it.
 pub const MAX_EDIT_CELLS: i64 = 100_000;
+/// The most cells one call's edits change in all ([`Room::apply_ops`]): each edit is held to [`MAX_EDIT_CELLS`], and a
+/// call of many is held to this, with the room locked for its whole run (SEC-TLS-93).
+pub const MAX_CALL_CELLS: i64 = 2 * MAX_EDIT_CELLS;
+/// How long a member's scope, found the room's, is taken as it was before it is read again (service.rs `room_of`).
+pub const SCOPE_RECHECK: Duration = Duration::from_secs(60);
+/// The rows and columns of a sheet, as the engine has them.
+const SHEET_ROWS: i64 = 1_048_576;
+const SHEET_COLUMNS: i64 = 16_384;
+/// The edits over an area (`row`, `column`, `width`, `height`) that the engine walks cell by cell.
+const AREA_EDITS: [&str; 4] = ["clear", "clearFormatting", "style", "fill"];
 /// The newest edits a scratch room keeps for undo.
 const MAX_OWN_LOG: usize = 500;
 /// The most changed areas an evaluation tells the views of; past it they read everything again.
@@ -88,8 +98,9 @@ pub struct Room {
     pub id: String,
     /// A saved document's room, shared by the people of one scope; else one person's scratch workbook.
     pub shared: bool,
-    /// Who has the room open, with when each last used it.
-    members: HashMap<String, Instant>,
+    /// Who has the room open, with when each last used it: under a lock of its own, which the rooms map takes without
+    /// the room's.
+    members: Members,
     /// The access profile the room was opened under and is read under; none is the Tools app's own access.
     pub profile_id: Option<String>,
     /// The saved document this is, when it is one, and the version it was read or saved at.
@@ -112,7 +123,6 @@ pub struct Room {
     /// A scratch room's log, for its person's undo; a shared room's is the document's.
     own_log: Vec<LogRow>,
     model: UserModel<'static>,
-    last_used: Instant,
     /// When the data sheets were last read.
     filled_at: Instant,
     /// What the last evaluation changed, when the edits before it changed values only; None when anything may have.
@@ -161,7 +171,7 @@ impl Room {
         Ok(Self {
             id,
             shared: opening.shared.is_some(),
-            members: HashMap::from([(opening.user_id, Instant::now())]),
+            members: Arc::new(Mutex::new(HashMap::from([(opening.user_id, Member::now())]))),
             profile_id: opening.profile_id,
             definition_id: opening.definition_id,
             version: opening.version,
@@ -175,7 +185,6 @@ impl Room {
             inverses: BTreeMap::new(),
             own_log: Vec::new(),
             model: user_model(model),
-            last_used: Instant::now(),
             filled_at: Instant::now(),
             changed: None,
             values_only: true,
@@ -185,13 +194,13 @@ impl Room {
     /// Whether `user_id` has the room open.
     #[must_use]
     pub fn is_member(&self, user_id: &str) -> bool {
-        self.members.contains_key(user_id)
+        lock(&self.members).contains_key(user_id)
     }
 
     /// The people who have the room open.
     #[must_use]
     pub fn member_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self.members.keys().cloned().collect();
+        let mut ids: Vec<String> = lock(&self.members).keys().cloned().collect();
         ids.sort();
         ids
     }
@@ -423,7 +432,15 @@ impl Room {
         let mut applied = Vec::new();
         let mut parts: Vec<Vec<Json>> = Vec::new();
         let mut refused = None;
+        let mut cells: i64 = 0;
         for op in ops {
+            cells = cells.saturating_add(self.op_cells(op));
+            if cells > MAX_CALL_CELLS {
+                refused = Some(Error::new(format!(
+                    "The edits of one call change at most {MAX_CALL_CELLS} cells"
+                )));
+                break;
+            }
             match self.inverse(op).and_then(|inverse| self.apply(op).map(|()| inverse)) {
                 Ok(inverse) => {
                     applied.push(op.clone());
@@ -436,6 +453,47 @@ impl Room {
             }
         }
         (applied, parts.into_iter().rev().flatten().collect(), refused)
+    }
+
+    /// The cells `op` reads or changes, for the budget of a call ([`MAX_CALL_CELLS`]): its area, its pasted or restored
+    /// cells, and for a row, column or sheet that moves or goes, the sheet's used cells.
+    fn op_cells(&self, op: &Json) -> i64 {
+        let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
+        let sheet = u32::try_from(int("sheet", 0)).unwrap_or(u32::MAX);
+        let (row, column) = (int("row", 1), int("column", 1));
+        let (width, height) = (int("width", 1).max(1), int("height", 1).max(1));
+        let span =
+            |from: i64, size: i64, to: i64| (from.saturating_add(size - 1).max(to) - from.min(to)).saturating_add(1);
+        let grid = |cells: &Json| {
+            let rows = cells.as_array().map(Vec::as_slice).unwrap_or_default();
+            let across = rows
+                .iter()
+                .map(|row| row.as_array().map_or(0, Vec::len))
+                .max()
+                .unwrap_or(0);
+            i64::try_from(rows.len())
+                .unwrap_or(i64::MAX)
+                .saturating_mul(i64::try_from(across).unwrap_or(i64::MAX))
+        };
+        let used = || {
+            let (rows, columns) = self.used(sheet);
+            i64::from(rows.max(1)) * i64::from(columns.max(1))
+        };
+        match op["op"].as_str().unwrap_or_default() {
+            "input" => 1,
+            "clear" | "clearFormatting" | "style" => width.saturating_mul(height),
+            "fill" => match (op["toRow"].as_i64(), op["toColumn"].as_i64()) {
+                (Some(to_row), _) => width.saturating_mul(span(row, height, to_row)),
+                (None, Some(to_column)) => height.saturating_mul(span(column, width, to_column)),
+                (None, None) => width.saturating_mul(height),
+            },
+            "paste" => grid(&op["rows"]),
+            "restore" => grid(&op["cells"]),
+            "width" => span(column, 1, int("columnEnd", column)),
+            "height" => span(row, 1, int("rowEnd", row)),
+            "insertRows" | "deleteRows" | "insertColumns" | "deleteColumns" | "deleteSheet" => used(),
+            _ => 0,
+        }
     }
 
     /// Keep what the edit of row `seq` took, for its undo.
@@ -625,6 +683,7 @@ impl Room {
     ///
     /// An error for an edit that changes more than [`MAX_EDIT_CELLS`] used cells, or that the engine cannot read.
     pub fn inverse(&self, op: &Json) -> Result<Vec<Json>, Error> {
+        check_area(op)?;
         let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
         let small = |key: &str, default: i64| i32::try_from(int(key, default)).unwrap_or(i32::MAX);
         let sheet = u32::try_from(int("sheet", 0)).unwrap_or(u32::MAX);
@@ -756,6 +815,7 @@ impl Room {
     }
 
     fn apply(&mut self, op: &Json) -> Result<(), Error> {
+        check_area(op)?;
         let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
         let small = |key: &str, default: i64| i32::try_from(int(key, default)).unwrap_or(i32::MAX);
         let sheet = u32::try_from(int("sheet", 0)).unwrap_or(u32::MAX);
@@ -923,7 +983,13 @@ impl Room {
         Ok(())
     }
 
-    /// How long ago the data sheets were read.
+    /// When the data sheets were last read.
+    #[must_use]
+    pub fn filled_at(&self) -> Instant {
+        self.filled_at
+    }
+
+    /// How long ago the data sheets were last read.
     #[must_use]
     pub fn data_age(&self) -> Duration {
         self.filled_at.elapsed()
@@ -1054,13 +1120,82 @@ impl Room {
 
 /// A room as its callers hold it.
 pub type SharedRoom = Arc<Mutex<Room>>;
+/// When a member last used a room, and when their scope was last found the room's.
+#[derive(Clone, Copy)]
+struct Member {
+    used: Instant,
+    scope_checked: Instant,
+}
+
+impl Member {
+    fn now() -> Self {
+        Self {
+            used: Instant::now(),
+            scope_checked: Instant::now(),
+        }
+    }
+}
+
+/// Who has a room open, kept beside the room under a lock of its own.
+type Members = Arc<Mutex<HashMap<String, Member>>>;
+/// An open room in the map, with what the map reads of it: its members and what it is. The map's calls take these and
+/// never the room's own lock, so a room's work (an edit, a fill) holds up only its own callers (SEC-TLS-93).
+struct Held {
+    room: SharedRoom,
+    members: Members,
+    shared: bool,
+    definition_id: Option<String>,
+    profile_id: Option<String>,
+}
+
+impl Held {
+    fn of(room: Room) -> Self {
+        Self {
+            members: Arc::clone(&room.members),
+            shared: room.shared,
+            definition_id: room.definition_id.clone(),
+            profile_id: room.profile_id.clone(),
+            room: Arc::new(Mutex::new(room)),
+        }
+    }
+}
+
 /// The rooms by id.
-type RoomMap = HashMap<String, SharedRoom>;
+type RoomMap = HashMap<String, Held>;
 
 /// An answer of [`Room::apply_row`] that means the room cannot follow its document's log and is opened anew.
 pub const REOPEN: &str = "The document was reverted or changed elsewhere; open it again";
 const NOTHING_TO_UNDO: &str = "Nothing of yours to undo";
 const NOTHING_TO_REDO: &str = "Nothing of yours to redo";
+
+/// Refuse an edit over an area ([`AREA_EDITS`]) of more than [`MAX_EDIT_CELLS`] cells, or one outside the sheet: the
+/// engine walks each cell of it (a `clear` keeps each old value, a `style` makes a style for each), with the room
+/// locked, so an area past the used cells is held to the same bound as one that writes them (SEC-TLS-93).
+fn check_area(op: &Json) -> Result<(), Error> {
+    if !op["op"].as_str().is_some_and(|kind| AREA_EDITS.contains(&kind)) {
+        return Ok(());
+    }
+    let int = |key: &str, default: i64| op[key].as_i64().unwrap_or(default);
+    let (row, column) = (int("row", 1), int("column", 1));
+    let (width, height) = (int("width", 1).max(1), int("height", 1).max(1));
+    if width.saturating_mul(height) > MAX_EDIT_CELLS {
+        return Err(Error::new(format!("An edit changes at most {MAX_EDIT_CELLS} cells")));
+    }
+    let to_row = op["toRow"].as_i64().unwrap_or(row);
+    let to_column = op["toColumn"].as_i64().unwrap_or(column);
+    let rows = |at: i64| (1..=SHEET_ROWS).contains(&at);
+    let columns = |at: i64| (1..=SHEET_COLUMNS).contains(&at);
+    let inside = rows(row)
+        && rows(row.saturating_add(height - 1))
+        && rows(to_row)
+        && columns(column)
+        && columns(column.saturating_add(width - 1))
+        && columns(to_column);
+    if !inside {
+        return Err(Error::new("An edit's area is outside the sheet"));
+    }
+    Ok(())
+}
 
 /// The kind of `ops` when it is a lone undo or redo.
 #[must_use]
@@ -1113,21 +1248,21 @@ impl Rooms {
         let user_id = opening.user_id.clone();
         // built outside the lock: a fill and an evaluation take a while
         let built = Room::build(opening)?;
+        let id = built.id.clone();
         let mut rooms = lock(&self.rooms);
         Self::sweep(&mut rooms);
-        let room = match rooms.get(&built.id) {
+        let room = match rooms.get(&id) {
             Some(existing) => {
-                lock(existing).members.insert(user_id.clone(), Instant::now());
-                Arc::clone(existing)
+                lock(&existing.members).insert(user_id.clone(), Member::now());
+                Arc::clone(&existing.room)
             }
             None => {
-                let id = built.id.clone();
-                let room = Arc::new(Mutex::new(built));
-                rooms.insert(id, Arc::clone(&room));
+                let held = Held::of(built);
+                let room = Arc::clone(&held.room);
+                rooms.insert(id.clone(), held);
                 room
             }
         };
-        let id = lock(&room).id.clone();
         Self::limit(&mut rooms, &user_id, &id);
         Ok(room)
     }
@@ -1137,12 +1272,9 @@ impl Rooms {
     pub fn join(&self, user_id: &str, id: &str) -> Option<SharedRoom> {
         let mut rooms = lock(&self.rooms);
         Self::sweep(&mut rooms);
-        let room = rooms.get(id).cloned()?;
-        {
-            let mut held = lock(&room);
-            held.members.insert(user_id.to_string(), Instant::now());
-            held.last_used = Instant::now();
-        }
+        let held = rooms.get(id)?;
+        lock(&held.members).insert(user_id.to_string(), Member::now());
+        let room = Arc::clone(&held.room);
         Self::limit(&mut rooms, user_id, id);
         Some(room)
     }
@@ -1153,7 +1285,7 @@ impl Rooms {
         loop {
             let held: Vec<(String, Instant)> = rooms
                 .iter()
-                .filter_map(|(id, room)| lock(room).members.get(user_id).map(|used| (id.clone(), *used)))
+                .filter_map(|(id, held)| lock(&held.members).get(user_id).map(|member| (id.clone(), member.used)))
                 .collect();
             if held.len() <= MAX_USER_ROOMS {
                 return;
@@ -1170,10 +1302,10 @@ impl Rooms {
     }
 
     fn leave(rooms: &mut RoomMap, user_id: &str, id: &str) {
-        let empty = rooms.get(id).is_some_and(|room| {
-            let mut room = lock(room);
-            room.members.remove(user_id);
-            room.members.is_empty()
+        let empty = rooms.get(id).is_some_and(|held| {
+            let mut members = lock(&held.members);
+            members.remove(user_id);
+            members.is_empty()
         });
         if empty {
             rooms.remove(id);
@@ -1182,10 +1314,10 @@ impl Rooms {
 
     /// Drop the members not seen for [`IDLE`], and the rooms with none left.
     fn sweep(rooms: &mut RoomMap) {
-        rooms.retain(|_, room| {
-            let mut room = lock(room);
-            room.members.retain(|_, used| used.elapsed() < IDLE);
-            !room.members.is_empty()
+        rooms.retain(|_, held| {
+            let mut members = lock(&held.members);
+            members.retain(|_, member| member.used.elapsed() < IDLE);
+            !members.is_empty()
         });
     }
 
@@ -1195,14 +1327,29 @@ impl Rooms {
     pub fn get(&self, user_id: &str, id: &str) -> Option<SharedRoom> {
         let mut rooms = lock(&self.rooms);
         Self::sweep(&mut rooms);
-        let room = rooms.get(id).cloned()?;
-        {
-            let mut held = lock(&room);
-            let used = held.members.get_mut(user_id)?;
-            *used = Instant::now();
-            held.last_used = Instant::now();
+        let held = rooms.get(id)?;
+        lock(&held.members).get_mut(user_id)?.used = Instant::now();
+        Some(Arc::clone(&held.room))
+    }
+
+    /// Whether `user_id`'s scope is to be read again for the room `id` (service.rs `room_of`): when it was last found the
+    /// room's over [`SCOPE_RECHECK`] ago, or before the room's rows were last read (`filled_at`). A check that is due is
+    /// marked done now; the caller leaves the room when their scope is not its.
+    #[must_use]
+    pub fn scope_due(&self, user_id: &str, id: &str, filled_at: Instant) -> bool {
+        let rooms = lock(&self.rooms);
+        let Some(held) = rooms.get(id) else {
+            return false;
+        };
+        let mut members = lock(&held.members);
+        let Some(member) = members.get_mut(user_id) else {
+            return false;
+        };
+        let due = member.scope_checked.elapsed() >= SCOPE_RECHECK || member.scope_checked < filled_at;
+        if due {
+            member.scope_checked = Instant::now();
         }
-        Some(room)
+        due
     }
 
     /// A room `user_id` has open that is the saved document `definition_id` opened under `profile_id`, marked used now:
@@ -1211,22 +1358,17 @@ impl Rooms {
     pub fn find_document(&self, user_id: &str, definition_id: &str, profile_id: Option<&str>) -> Option<SharedRoom> {
         let mut rooms = lock(&self.rooms);
         Self::sweep(&mut rooms);
-        let found = rooms
+        rooms
             .values()
-            .find(|room| {
-                let room = lock(room);
-                room.is_member(user_id)
-                    && room.definition_id.as_deref() == Some(definition_id)
-                    && room.profile_id.as_deref() == profile_id
+            .filter(|held| {
+                held.definition_id.as_deref() == Some(definition_id) && held.profile_id.as_deref() == profile_id
             })
-            .cloned()?;
-        {
-            let mut held = lock(&found);
-            if let Some(used) = held.members.get_mut(user_id) {
-                *used = Instant::now();
-            }
-        }
-        Some(found)
+            .find_map(|held| {
+                let mut members = lock(&held.members);
+                let member = members.get_mut(user_id)?;
+                member.used = Instant::now();
+                Some(Arc::clone(&held.room))
+            })
     }
 
     /// The open rooms of the saved document `definition_id`, of every scope.
@@ -1234,29 +1376,39 @@ impl Rooms {
     pub fn document_rooms(&self, definition_id: &str) -> Vec<SharedRoom> {
         lock(&self.rooms)
             .values()
-            .filter(|room| {
-                let room = lock(room);
-                room.shared && room.definition_id.as_deref() == Some(definition_id)
-            })
-            .cloned()
+            .filter(|held| held.shared && held.definition_id.as_deref() == Some(definition_id))
+            .map(|held| Arc::clone(&held.room))
             .collect()
+    }
+
+    /// Note that the scratch room `id` is now the saved document `definition_id`, which a report finds it by.
+    pub fn set_document(&self, id: &str, definition_id: &str) {
+        if let Some(held) = lock(&self.rooms).get_mut(id) {
+            held.definition_id = Some(definition_id.to_string());
+        }
     }
 
     /// Give the scratch room `id` the id of a saved document's room once it is saved: its people go on in it, as the
     /// room the document's other readers of the scope join. A room of that id already open is dropped: its document
-    /// was saved over.
+    /// was saved over. The room's own lock is taken with the map's let go.
     pub fn make_shared(&self, id: &str, shared_id: &str, seq: i64) {
-        let mut rooms = lock(&self.rooms);
-        let Some(room) = rooms.remove(id) else { return };
-        {
+        let Some(room) = lock(&self.rooms).get(id).map(|held| Arc::clone(&held.room)) else {
+            return;
+        };
+        let definition_id = {
             let mut held = lock(&room);
             held.id = shared_id.to_string();
             held.shared = true;
             held.seq = seq;
             held.own_log.clear();
             held.inverses.clear();
-        }
-        rooms.insert(shared_id.to_string(), room);
+            held.definition_id.clone()
+        };
+        let mut rooms = lock(&self.rooms);
+        let Some(mut held) = rooms.remove(id) else { return };
+        held.shared = true;
+        held.definition_id = definition_id;
+        rooms.insert(shared_id.to_string(), held);
     }
 
     /// Drop the room `id`, whoever has it open: it cannot follow its document's log, and is opened anew.

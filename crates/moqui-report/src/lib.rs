@@ -232,6 +232,12 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
     let body = &definition["body"];
     // a business dataset is read once admitted, or by its steward (business.rs)
     business::check_admitted(ec, id, body)?;
+    // a saved dataset's services are ones a shipped dataset names, whatever path wrote its row (SEC-TLS-91)
+    if !definitions::is_shipped(ec, id) {
+        if let Some(refusal) = definitions::service_refusal(ec, body)? {
+            return Err(fail(format!("dataset {id}: {refusal}")));
+        }
+    }
     if let Some(service) = body["serviceName"].as_str() {
         moqui_core::user::authorize_own("AT_SERVICE", service, "view").map_err(fail)?;
         return Ok(Dataset {

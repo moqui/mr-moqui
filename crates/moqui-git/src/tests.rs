@@ -41,7 +41,19 @@ impl Drop for Fixture {
 }
 
 fn fixture(name: &str) -> Fixture {
-    let context = ExecutionContextFactory::test_context();
+    fixture_conf(name, None)
+}
+
+/// [`fixture`] with a conf of its own.
+fn fixture_conf(name: &str, conf: Option<&str>) -> Fixture {
+    let context = match conf {
+        None => ExecutionContextFactory::test_context(),
+        Some(conf) => ExecutionContextFactory::test_context_in(
+            conf,
+            moqui_core::service::ServicePools::idle(),
+            moqui_core::context::framework_dir(),
+        ),
+    };
     let entity = moqui_core::testing::open();
     context.factory().set_entity(entity.clone());
     crate::install(context.factory()).unwrap();
@@ -324,13 +336,68 @@ fn write_tree_writes_a_commit_of_a_db_repository() {
     assert!(provider.write_tree("nowhere", None, &fixture.dir.join("none")).is_err());
 }
 
+/// SEC-BOS-90: a mirror's fetch, a drive mirror's included, connects only to a public address: a URL that a drive's
+/// manager pointed at an internal one is refused before anything is sent, unless `git-server`
+/// `webhook-private-network` allows internal addresses, when the fetch tries to connect.
+#[test]
+fn a_mirror_fetch_connects_only_to_public_addresses_unless_private_networks_are_allowed() {
+    for (conf, refused) in [
+        ("", true),
+        (
+            r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#,
+            false,
+        ),
+    ] {
+        let context = ExecutionContextFactory::test_context_in(
+            conf,
+            moqui_core::service::ServicePools::idle(),
+            moqui_core::context::framework_dir(),
+        );
+        let entity = moqui_core::testing::open();
+        context.factory().set_entity(entity.clone());
+        crate::install(context.factory()).unwrap();
+        let dir = std::env::temp_dir().join(format!("moqui-git-mirror-internal-{refused}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let _entered = context.enter();
+        // a listener on the loopback that answers nothing: whether the fetch connected is whether one is queued
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/x.git", listener.local_addr().unwrap());
+        let mirror = dir.join("mirror.git");
+        define(&entity, "mirror", "remote", Some(&mirror), Some(&url));
+        let factory = std::sync::Arc::clone(context.factory());
+        let fetched = std::thread::scope(|scope| {
+            let fetch = scope.spawn(|| {
+                let context = factory.new_context();
+                let _entered = context.enter();
+                let provider = crate::provider(&factory).expect("git provider");
+                provider.fetch("mirror").map_err(|err| err.to_string())
+            });
+            // the client waits on the silent listener: let it connect, then close the listener's side
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            let connected = listener.accept().is_ok();
+            drop(listener);
+            (connected, fetch.join().unwrap())
+        });
+        let (connected, outcome) = fetched;
+        assert!(outcome.is_err(), "nothing was fetched");
+        assert_eq!(connected, !refused, "{outcome:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
 #[test]
 fn a_remote_repository_is_a_read_only_mirror_kept_by_fetch() {
     if git(&["--version"]).is_none() {
         eprintln!("skipped: a file:// fetch runs git-upload-pack, and git is not on the PATH");
         return;
     }
-    let fixture = fixture("remote");
+    // a file:// mirror is fetched only where private networks are allowed (SEC-BOS-90)
+    let fixture = fixture_conf(
+        "remote",
+        Some(r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#),
+    );
     let _entered = fixture.context.enter();
     let source = fixture.dir.join("source.git");
     define(&fixture.entity, "source", "local", Some(&source), None);

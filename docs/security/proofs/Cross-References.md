@@ -195,7 +195,7 @@ listed under both.
 |  | [v5.0.0-6.4.1](V6-Authentication.md) | Framework | `ResetPassword` (spec); `the_old_password_of_a_change_is_behind_the_login_gate` (`login_tests.rs`) |  |
 |  | [v5.0.0-6.4.3](V6-Authentication.md) | Gap | none |  |
 |  | [v5.0.0-6.5.2](V6-Authentication.md) | Gap | none |  |
-|  | [v5.0.0-6.6.3](V6-Authentication.md) | Gap | part, regression test: `SecurityAuthn` (wrong codes in turn) |  |
+|  | [v5.0.0-6.6.3](V6-Authentication.md) | Framework | `V6Authentication` (wrong codes at once); regression test: `SecurityAuthn` (wrong codes in turn) |  |
 |  | [v5.0.0-6.8.2](V6-Authentication.md) | Gap | part: `an_id_token_is_taken_only_when_its_signature_is_there_and_verifies` (`sso_tests.rs`) |  |
 |  | [v5.0.0-7.2.1](V7-Session-Management.md) | Framework | `V7SessionManagement`; `a_bad_mac_is_an_unknown_session` (`session_tests.rs`) |  |
 |  | [v5.0.0-7.2.4](V7-Session-Management.md) | Gap | none |  |
@@ -358,14 +358,14 @@ judge mr-moqui by ASVS; a note says where SP 800-63B-4 asks more than the ASVS r
 |  | [v5.0.0-6.5.4](V6-Authentication.md) | Framework | `random_codes_have_the_width_and_strings_are_url_safe` (`factor.rs`) |  |
 |  | [v5.0.0-6.5.5](V6-Authentication.md) | Gap | none |  |
 |  | [v5.0.0-6.6.2](V6-Authentication.md) | Gap | none |  |
-|  | [v5.0.0-6.6.3](V6-Authentication.md) | Gap | part, regression test: `SecurityAuthn` (wrong codes in turn) |  |
+|  | [v5.0.0-6.6.3](V6-Authentication.md) | Framework | `V6Authentication` (wrong codes at once); regression test: `SecurityAuthn` (wrong codes in turn) |  |
 | [3.1.3.3](https://pages.nist.gov/800-63-4/sp800-63b.html#pstnOOB) Authentication Using the Public Switched Telephone Network | [v5.0.0-6.6.1](V6-Authentication.md) | Gap | none | An unvalidated SMS factor is counted and sendable; no risk notice. |
 | [3.1.4.2](https://pages.nist.gov/800-63-4/sp800-63b.html#single-factor-otp-verifiers) Single-Factor OTP Verifiers | [v5.0.0-6.5.1](V6-Authentication.md) | Framework | `a_code_is_taken_for_a_step_after_the_last_one` (`totp.rs`) | A TOTP code is taken once, for a step after the last, and is good one step either side of its 30 seconds; 6.5.5 is a Gap for the sent codes' 24 hours. |
 |  | [v5.0.0-6.5.3](V6-Authentication.md) | Framework | `factor_seeds_and_codes_come_from_the_operating_systems_random_source` (`login_tests.rs`) |  |
 |  | [v5.0.0-6.5.5](V6-Authentication.md) | Gap | none |  |
-| [3.2.2](https://pages.nist.gov/800-63-4/sp800-63b.html#throttle) Rate Limiting (Throttling) | [v5.0.0-6.1.1](V6-Authentication.md) | Framework | document | The account lock is on by default (3 failures, 5 minutes); per-client limits need web protection. Wrong codes sent at once escape the count (6.6.3). |
+| [3.2.2](https://pages.nist.gov/800-63-4/sp800-63b.html#throttle) Rate Limiting (Throttling) | [v5.0.0-6.1.1](V6-Authentication.md) | Framework | document | The account lock is on by default (3 failures, 5 minutes); per-client limits need web protection. Wrong codes count as passwords do, those sent at once too (6.6.3). |
 |  | [v5.0.0-6.3.1](V6-Authentication.md) | Configuration | `V6Authentication` (deployment, opt-in); regression test: `SecurityAuthn` (the account lock) |  |
-|  | [v5.0.0-6.6.3](V6-Authentication.md) | Gap | part, regression test: `SecurityAuthn` (wrong codes in turn) |  |
+|  | [v5.0.0-6.6.3](V6-Authentication.md) | Framework | `V6Authentication` (wrong codes at once); regression test: `SecurityAuthn` (wrong codes in turn) |  |
 | [3.2.7](https://pages.nist.gov/800-63-4/sp800-63b.html#replay) Replay Resistance | [v5.0.0-6.5.1](V6-Authentication.md) | Framework | `a_code_is_taken_for_a_step_after_the_last_one` (`totp.rs`) |  |
 | [3.2.12](https://pages.nist.gov/800-63-4/sp800-63b.html#randomness) Random Values | [v5.0.0-6.4.1](V6-Authentication.md) | Framework | `ResetPassword` (spec); `the_old_password_of_a_change_is_behind_the_login_gate` (`login_tests.rs`) |  |
 |  | [v5.0.0-6.5.3](V6-Authentication.md) | Framework | `factor_seeds_and_codes_come_from_the_operating_systems_random_source` (`login_tests.rs`) |  |

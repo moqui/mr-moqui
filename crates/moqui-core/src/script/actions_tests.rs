@@ -196,7 +196,7 @@ fn the_ignore_attribute_is_an_expression() {
     .unwrap();
     assert!(script.contains("!!(!statusId && !strictAll)"), "{script}");
     assert!(script.contains("!!(skipDates)"), "{script}");
-    assert!(script.contains(r#".condition("partyId", partyId)"#), "{script}");
+    assert!(script.contains(r#".condition("partyId", "equals", partyId)"#), "{script}");
 }
 
 #[test]

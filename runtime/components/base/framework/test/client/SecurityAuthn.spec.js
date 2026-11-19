@@ -452,12 +452,9 @@ const factorAsked = (res) => res.status == 200 && res.json().secondFactorRequire
 // a failed sign-in of the account, as a wrong password does, and a new sign-in by password does not clear the count; on
 // the fourth failure (user-facade/login@max-failures 3) the account locks for login@disable-minutes, and then the right
 // code is refused too.
-// A regression test, not a security proof (test/proofs), while OWASP ASVS v5.0.0-6.6.3 is a Gap in the matrix: guesses
-// sent at once are not bounded today (increment#UserAccountFailedLogins reads and writes the count with no lock, and the
-// code check has no gate like the password's: twelve wrong codes at once were all checked and counted as three). It
-// moves to test/proofs when that is fixed (SEC-WEB-87). It does not show the sending (one code a factor each 30 s), a
-// per-client limit (web protection's login limit leaves /rest/verifyOtp out), or the code's entropy (six digits, eight
-// for a backup code).
+// The guesses in turn, a regression test; the guesses sent at once are the security proof test/proofs V6Authentication
+// "v5.0.0-6.6.3: wrong codes sent at once are each counted, and the account locks" (SEC-WEB-87). It does not show the
+// sending (one code a factor each 30 s), a per-client limit, or the code's entropy (six digits, eight for a backup code).
 feature("A07 wrong codes in turn lock the account across sign-ins; then the right code fails", {
     given() { needsFixtures(`the user ${CODE_USER}`) },
     when() {

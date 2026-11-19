@@ -136,14 +136,16 @@ mod cluster {
             let data_dir = dir.join("data");
             #[cfg(unix)]
             check_socket_len(&socket_dir_for(&data_dir, &std::env::temp_dir()))?;
-            if let Some(lock) = postmaster_lock(&data_dir)? {
-                if process_live(lock.pid) {
-                    return adopt(&dir, &data_dir, options, lock);
+            let started = match postmaster_lock(&data_dir)? {
+                Some(lock) if process_live(lock.pid) => adopt(&dir, &data_dir, options, lock)?,
+                _ => {
+                    let install_root = options.install_dir.clone().unwrap_or_else(|| dir.join("install"));
+                    ensure_major_can_start(&dir, &install_root, &data_dir)?;
+                    launch(&dir, &data_dir, options, None)?
                 }
-            }
-            let install_root = options.install_dir.clone().unwrap_or_else(|| dir.join("install"));
-            ensure_major_can_start(&dir, &install_root, &data_dir)?;
-            launch(&dir, &data_dir, options, None)
+            };
+            ensure_reader_role(&started.1);
+            Ok(started)
         }
 
         /// `pg_dump --format=custom` of the whole `moqui` database, including a `search` schema.
@@ -732,6 +734,25 @@ mod cluster {
         let dir = super::install_dir(runtime_dir).join(SHIPPED_VERSION);
         install(&dir)?;
         Ok(dir)
+    }
+
+    /// Make the role a superuser's read-only run of written SQL takes (`moqui_core::entity::sql_read_only`,
+    /// SEC-TLS-86). The start goes on without it, with an error: such a run then stays the superuser's, and only its
+    /// refused calls keep it from the server's files and programs.
+    fn ensure_reader_role(driver: &PostgresDriver) {
+        use moqui_core::driver::DbDriver as _;
+        use moqui_core::entity::sql_read_only::{READER_ROLE, READER_ROLE_SQL};
+        let made = driver.connect().and_then(|mut conn| {
+            READER_ROLE_SQL
+                .iter()
+                .try_for_each(|sql| conn.execute(sql, &[]).map(|_| ()))
+        });
+        if let Err(err) = made {
+            tracing::error!(
+                error = %err,
+                "Could not make the role {READER_ROLE} in the embedded cluster: a read-only SQL run stays the superuser's"
+            );
+        }
     }
 
     fn driver_for(server: &PostgreSQL, password: &str, database: &str) -> PostgresDriver {
