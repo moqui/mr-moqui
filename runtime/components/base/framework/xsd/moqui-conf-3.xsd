@@ -2500,7 +2500,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="key" type="xs:string"><xs:annotation><xs:documentation>A secret: the private key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="selector" type="xs:string" default="moqui"/>
-            <xs:attribute name="domains" type="xs:string"><xs:annotation><xs:documentation>The domains signed for, comma separated; empty for the hosted and shared accounts' domains.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="domains" type="xs:string"><xs:annotation><xs:documentation>The domains signed for, comma separated; empty for the hosted and shared accounts' domains. A paired node's mail on an edge node is signed only for that node's own domains, among these when set.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

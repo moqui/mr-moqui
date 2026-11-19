@@ -357,3 +357,22 @@ fn a_forged_mail_from_writes_no_results_of_its_own() {
         "Authentication-Results: mx; none (the MAIL FROM could not be written)\r\n"
     );
 }
+
+/// SEC-MAIL-90: with `mail-delivery/dkim@domains` set, a paired node's mail is still signed only for that node's own
+/// domains; the list narrows them, so one pairing's mail is never signed for another pairing's listed domain.
+#[test]
+fn a_paired_nodes_mail_is_signed_only_for_its_own_domains_whatever_the_list() {
+    let paired: std::collections::BTreeSet<String> = ["desk.example".to_string()].into();
+    let list = vec!["desk.example".to_string(), "other-node.example".to_string()];
+    assert!(paired_signs("desk.example", &paired, &[]));
+    assert!(paired_signs("desk.example", &paired, &list));
+    assert!(
+        !paired_signs("other-node.example", &paired, &list),
+        "another pairing's domain, though listed"
+    );
+    assert!(!paired_signs("other-node.example", &paired, &[]));
+    assert!(
+        !paired_signs("desk.example", &paired, &["other-node.example".to_string()]),
+        "the paired node's domain, not listed"
+    );
+}

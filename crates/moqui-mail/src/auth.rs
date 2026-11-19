@@ -461,6 +461,22 @@ pub fn signing_domain(raw: &[u8], hosted: impl Fn(&str) -> bool) -> Option<Strin
     signs.then_some(domain)
 }
 
+/// The domain to sign paired node mail `raw` for: its From domain when it is one of `paired` (the paired node's own,
+/// [`paired_domains`]) and, when `mail-delivery/dkim@domains` names any, also one of those. The list narrows what a
+/// paired node's mail is signed for and never widens it, so on a node with several pairings one pairing's mail is never
+/// signed for another's domain (SEC-MAIL-90).
+#[must_use]
+pub fn paired_signing_domain(raw: &[u8], paired: &std::collections::BTreeSet<String>) -> Option<String> {
+    let domain = from_domain(raw)?;
+    paired_signs(&domain, paired, &configured_domains()).then_some(domain)
+}
+
+/// Whether a paired node's mail from `domain` is signed: `domain` is the paired node's, and in `configured` when that
+/// names any.
+fn paired_signs(domain: &str, paired: &std::collections::BTreeSet<String>, configured: &[String]) -> bool {
+    paired.contains(domain) && (configured.is_empty() || configured.iter().any(|listed| listed == domain))
+}
+
 /// How long [`is_hosted_domain`] keeps the hosted accounts' domains before reading them again.
 const HOSTED_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -536,7 +552,21 @@ pub fn key_configured() -> bool {
 /// is not held for its signature.
 #[must_use]
 pub fn sign_for(raw: Vec<u8>, hosted: impl Fn(&str) -> bool) -> Vec<u8> {
-    let Some(domain) = signing_domain(&raw, hosted) else {
+    let domain = signing_domain(&raw, hosted);
+    sign_as(raw, domain)
+}
+
+/// Paired node mail `raw` signed with the node's key when its From domain is the paired node's (see
+/// [`paired_signing_domain`]), as [`sign_for`] signs the node's own.
+#[must_use]
+pub fn sign_for_paired(raw: Vec<u8>, paired: &std::collections::BTreeSet<String>) -> Vec<u8> {
+    let domain = paired_signing_domain(&raw, paired);
+    sign_as(raw, domain)
+}
+
+/// `raw` signed for `domain` with the node's key; as it is with no domain or no key, or when the key fails (logged).
+fn sign_as(raw: Vec<u8>, domain: Option<String>) -> Vec<u8> {
+    let Some(domain) = domain else {
         return raw;
     };
     let signed = key().and_then(|key| match key {
