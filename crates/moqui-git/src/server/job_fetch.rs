@@ -199,18 +199,21 @@ pub(super) fn serve(request: &GitHttpRequest, job_token: &str, body: &mut dyn Re
     // what the token reads: the commit and its ancestors within `max-fetch-depth`, the most a fetch of it gives. Only
     // the commit is wanted (`check_request`); a `have` and a client's shallow commit (a deepened fetch's) are answered
     // within that depth alone: what else the store holds is not this token's to learn (SEC-GIT-82)
-    let within: std::cell::OnceCell<HashSet<ObjectId>> = std::cell::OnceCell::new();
+    let within: std::cell::OnceCell<Result<HashSet<ObjectId>, String>> = std::cell::OnceCell::new();
     let only = |ids: &[ObjectId]| -> Result<HashSet<ObjectId>, Error> {
         if ids.iter().all(|id| *id == commit) {
             return Ok(ids.iter().copied().collect());
         }
-        if within.get().is_none() {
+        let near = within.get_or_init(|| {
             let depth = crate::ci::limits().max_fetch_depth.max(1);
-            let (boundary, inside) = super::plan::by_depth(repo.store.as_ref(), &[commit], depth)?;
-            let _ = within.set(inside.into_iter().chain(boundary).collect());
+            super::plan::by_depth(repo.store.as_ref(), &[commit], depth)
+                .map(|(boundary, inside)| inside.into_iter().chain(boundary).collect())
+                .map_err(|err| err.message().to_string())
+        });
+        match near {
+            Ok(near) => Ok(ids.iter().filter(|id| near.contains(*id)).copied().collect()),
+            Err(why) => Err(Error::new(why.clone())),
         }
-        let within = within.get().expect("set just above");
-        Ok(ids.iter().filter(|id| within.contains(*id)).copied().collect())
     };
     let v2 = wants_v2(request.git_protocol.as_deref());
     let outcome = (|| -> Result<(), Error> {
