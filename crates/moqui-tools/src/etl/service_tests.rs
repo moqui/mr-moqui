@@ -200,4 +200,73 @@ fn an_entity_source_and_a_lookup_read_no_encrypted_or_password_field() {
             "{refused}"
         );
     }
+    // a target record is found by its match fields: matching on it would tell whether a guess is its value
+    let mut matched = indexmap::IndexMap::default();
+    matched.insert("sourceTypeEnumId".to_string(), Value::string("EtlsEntity"));
+    matched.insert("sourceEntityName".to_string(), Value::string("moqui.basic.Enumeration"));
+    matched.insert("targetTypeEnumId".to_string(), Value::string("EtltEntity"));
+    matched.insert("targetName".to_string(), Value::string("moqui.llm.LlmEndpoint"));
+    matched.insert("matchFields".to_string(), Value::string("apiKey"));
+    matched.insert(
+        "fields".to_string(),
+        Value::List(vec![
+            field(&[("targetField", "description"), ("sourceColumn", "description")]),
+            field(&[("targetField", "apiKey"), ("constantValue", "guess")]),
+        ]),
+    );
+    let refused = Mapping::from_map(&matched)
+        .unwrap()
+        .validate_with(&facade)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        refused.contains("apiKey is not available as an ETL match field"),
+        "{refused}"
+    );
+
+    // a holder of the sealed ADMIN_BACKUP_DOWNLOAD reads encrypted fields, as a full export does
+    for (entity, fields) in [
+        (
+            "moqui.security.UserAccount",
+            vec![("userId", "ETL_BACKUP"), ("username", "etl.backup")],
+        ),
+        ("moqui.security.UserGroup", vec![("userGroupId", "ETL_BACKUP_GROUP")]),
+        (
+            "moqui.security.UserGroupMember",
+            vec![("userGroupId", "ETL_BACKUP_GROUP"), ("userId", "ETL_BACKUP")],
+        ),
+        (
+            "moqui.security.UserGroupPermission",
+            vec![
+                ("userGroupId", "ETL_BACKUP_GROUP"),
+                ("userPermissionId", "ADMIN_BACKUP_DOWNLOAD"),
+            ],
+        ),
+    ] {
+        let mut row = facade.make_value(entity).unwrap();
+        for (name, value) in fields {
+            row.set(name, Value::string(value));
+        }
+        if entity.ends_with("Member") || entity.ends_with("Permission") {
+            row.set("fromDate", Value::I64(1_265_184_000_000));
+        }
+        row.create(&facade).unwrap();
+    }
+    moqui_core::user::internal_login_user("etl.backup").unwrap();
+    assert!(super::access::may_read_encrypted());
+    conditioned.validate_with(&facade).unwrap();
+    let source = source::open(&facade, &plain, &SourceOptions::default()).unwrap();
+    let held = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let mut etl = SimpleEtl::from_boxes(source.extractor, Box::new(super::Collect(std::rc::Rc::clone(&held))));
+    etl.process();
+    let held = held.borrow();
+    let row = held
+        .iter()
+        .find(|row| row.get("endpointId").map(to_plain_string).as_deref() == Some("ETL_SECRET"))
+        .expect("the endpoint's row");
+    assert_eq!(
+        row.get("apiKey").map(to_plain_string).as_deref(),
+        Some("stored-api-key")
+    );
+    let _ = moqui_core::user::logout();
 }

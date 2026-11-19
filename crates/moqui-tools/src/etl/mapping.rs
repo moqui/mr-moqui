@@ -403,8 +403,8 @@ impl Mapping {
     }
 
     /// [`Self::validate`], and what only the entity definitions tell: a view over a restricted entity as the source,
-    /// the target (also an entity-auto service's) or a lookup; and a source condition or a lookup's match or result
-    /// field that is a field no mapping reads ([`super::access::hidden_fields_of`]: a password field, by name or as a
+    /// the target (also an entity-auto service's) or a lookup; and a source condition, a target's match field, or a
+    /// lookup's match or result field that is a field no mapping reads ([`super::access::hidden_fields_of`]: a password field, by name or as a
     /// view's alias of one, or an encrypted field), so neither answers one nor matches on one.
     ///
     /// # Errors
@@ -422,13 +422,25 @@ impl Mapping {
                 )));
             }
         }
-        match self.target_kind {
-            TargetKind::Entity => refuse_restricted_view(facade, &self.target_name, "target")?,
+        let target_entity = match self.target_kind {
+            TargetKind::Entity => {
+                refuse_restricted_view(facade, &self.target_name, "target")?;
+                Some(self.target_name.clone())
+            }
             TargetKind::Service => {
                 let (_, noun, entity_auto) = service_target_parts(&self.target_name);
                 if entity_auto {
                     refuse_restricted_view(facade, &noun, "target")?;
                 }
+                entity_auto.then_some(noun)
+            }
+        };
+        // a target record is found by its match fields with the condition encrypted as the field is, so a match on a
+        // field no mapping reads would tell whether a guess is its stored value
+        if let Some(entity) = &target_entity {
+            let hidden = hidden_fields_of(facade, entity);
+            if let Some(name) = self.match_fields.iter().find(|name| hidden.contains(name)) {
+                return Err(Error::new(format!("{name} is not available as an ETL match field")));
             }
         }
         for field in &self.fields {

@@ -79,7 +79,8 @@ The Tools database sections ([Database](../tools/Database.md), `crates/moqui-too
   all actions. A source is a file (the locations of the table above), a SQL source (an entity group or `ext:`, read
   only, with a `DbaSql` audit row) or an entity; there is no URL source. An entity source and a field's lookup read
   any entity that is not restricted, whole but for its password fields (by name or a view alias's origin) and its
-  encrypted fields, and a source condition or a lookup's match or result field naming one of those is refused
+  encrypted fields, and a source condition, a target's match field (`matchFields`, found with the condition encrypted) or a lookup's
+  match or result field naming one of those is refused
   (`hidden_fields_of`, `Mapping::validate_with`); a holder of the sealed `ADMIN_BACKUP_DOWNLOAD` reads the encrypted
   fields, as a full export does. `check#EtlSample` answers the rows to the browser. A target
   is an entity or any service whose verb is not `delete`, called once a row as the run's user. Only the owner or a
