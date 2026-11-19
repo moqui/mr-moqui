@@ -175,12 +175,17 @@ fn kind_of(mapping: &DocumentMapping, name: &str) -> Option<FieldKind> {
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 4);
     for ch in text.chars() {
-        if "+-=&|><!(){}[]^\"~*?:\\/ ".contains(ch) {
-            out.push('\\');
-        }
-        out.push(ch);
+        push_escaped(&mut out, ch);
     }
     out
+}
+
+/// One character of a `query_string` term, escaped when it is query syntax.
+fn push_escaped(out: &mut String, ch: char) {
+    if "+-=&|><!(){}[]^\"~*?:\\/ ".contains(ch) {
+        out.push('\\');
+    }
+    out.push(ch);
 }
 
 /// A wildcard term as `query_string` text: the parser's unescaped `*` and `?` stay wildcards, and every other character
@@ -193,11 +198,11 @@ fn escape_wildcard(terms: &str) -> String {
         match ch {
             '\\' => {
                 if let Some(literal) = chars.next() {
-                    out.push_str(&escape(&literal.to_string()));
+                    push_escaped(&mut out, literal);
                 }
             }
             '*' | '?' => out.push(ch),
-            other => out.push_str(&escape(&other.to_string())),
+            other => push_escaped(&mut out, other),
         }
     }
     out
