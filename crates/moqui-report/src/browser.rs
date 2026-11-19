@@ -149,21 +149,38 @@ impl SessionRate {
 /// The replay bytes each user sent this hour, for at most 4096 users an hour: one session cannot fill the replay index
 /// under fresh replay ids (SEC-TLS-110).
 #[derive(Default)]
-struct UserReplayBytes(Mutex<HashMap<String, (i64, u64)>>);
+struct UserReplayBytes(Mutex<HashMap<String, Spending>>);
+
+/// A user's replay bytes in one hour, and when they last sent some.
+struct Spending {
+    hour: i64,
+    bytes: u64,
+    last: i64,
+}
 
 impl UserReplayBytes {
+    /// Charge `bytes` to `user` for this hour. Past 4,096 users in an hour the one who sent least recently is let go,
+    /// so a new user is never refused for the others' number.
     fn charge(&self, user: &str, bytes: u64, max: u64) -> Result<(), Error> {
-        let hour = moqui_core::user::now_millis() / 3_600_000;
+        let now = moqui_core::user::now_millis();
+        let hour = now / 3_600_000;
         let mut entries = moqui_lib::sync::lock(&self.0);
-        entries.retain(|_, (at, _)| *at == hour);
+        entries.retain(|_, spending| spending.hour == hour);
         if entries.len() >= 4096 && !entries.contains_key(user) {
-            return Err(Error::new("too many replays are being recorded this hour"));
+            let oldest = entries
+                .iter()
+                .min_by_key(|(_, spending)| spending.last)
+                .map(|(key, _)| key.clone());
+            if let Some(oldest) = oldest {
+                entries.remove(&oldest);
+            }
         }
-        let entry = entries.entry(user.into()).or_insert((hour, 0));
-        if entry.1.saturating_add(bytes) > max {
+        let entry = entries.entry(user.into()).or_insert(Spending { hour, bytes: 0, last: now });
+        if entry.bytes.saturating_add(bytes) > max {
             return Err(Error::new("this user's replays reached their size limit for the hour"));
         }
-        entry.1 += bytes;
+        entry.bytes += bytes;
+        entry.last = now;
         Ok(())
     }
 }
@@ -177,6 +194,30 @@ fn owner_tag(owner: &str) -> String {
         .take(6)
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+/// Of seq-0 chunks, the first received of each replay id, in the order given.
+fn first_chunks(hits: &[moqui_core::search::SearchHit]) -> Vec<&moqui_core::search::SearchHit> {
+    let received = |hit: &moqui_core::search::SearchHit| match hit.body.get("received") {
+        Some(Value::I64(number)) => *number,
+        Some(Value::I32(number)) => i64::from(*number),
+        _ => 0,
+    };
+    let mut first: HashMap<String, (i64, usize)> = HashMap::new();
+    for (index, hit) in hits.iter().enumerate() {
+        let id = hit.body.get("replay_id").and_then(Value::as_str).unwrap_or_default().to_string();
+        let at = received(hit);
+        first
+            .entry(id)
+            .and_modify(|best| {
+                if at < best.0 {
+                    *best = (at, index);
+                }
+            })
+            .or_insert((at, index));
+    }
+    let kept: std::collections::HashSet<usize> = first.values().map(|(_, index)| *index).collect();
+    hits.iter().enumerate().filter(|(index, _)| kept.contains(index)).map(|(_, hit)| hit).collect()
 }
 
 /// The chunks of one replay that are its owner's: the session (user and visit) of its first chunk, by seq and then by
@@ -437,8 +478,10 @@ fn list_replays(_ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> 
         .unwrap_or(100)
         .clamp(1, 500);
     let page = search::current()?.search(&Target::Index(REPLAYS.into()), &request)?;
-    let replays = page
-        .hits
+    // a replay is listed once, as its owner's first chunk (the one first received): a seq-0 chunk another session sent
+    // under the same id is no second replay (SEC-TLS-110)
+    let firsts = first_chunks(&page.hits);
+    let replays = firsts
         .iter()
         .map(|hit| {
             let field = |name: &str| hit.body.get(name).cloned().unwrap_or(Value::Null);

@@ -94,3 +94,31 @@ fn a_users_replays_are_held_per_hour_and_another_sessions_chunks_are_left_out() 
     let kept: Vec<String> = owners_chunks(&hits).iter().map(|hit| hit.id.clone()).collect();
     assert_eq!(kept, ["0-u", "1-u"]);
 }
+
+/// SEC-TLS-110: past 4,096 users in an hour the one who sent least recently is let go, never a new user refused; and a
+/// replay is listed once, as the chunk first received.
+#[test]
+fn a_new_user_is_not_refused_for_the_others_number_and_a_replay_is_listed_once() {
+    let bytes = UserReplayBytes::default();
+    for user in 0..4096 {
+        bytes.charge(&format!("u{user}"), 1, 1000).unwrap();
+    }
+    bytes.charge("one-more", 1, 1000).unwrap();
+    assert_eq!(moqui_lib::sync::lock(&bytes.0).len(), 4096);
+    let hit = |id: &str, received: i64, user: &str| moqui_core::search::SearchHit {
+        document_id: String::new(),
+        id: format!("{id}-{user}"),
+        index: String::new(),
+        score: 0.0,
+        body: [
+            ("replay_id".to_string(), Value::string(id)),
+            ("received".to_string(), Value::I64(received)),
+        ]
+        .into_iter()
+        .collect(),
+        highlights: indexmap::IndexMap::default(),
+    };
+    let hits = [hit("r1", 20, "planted"), hit("r1", 10, "owner"), hit("r2", 5, "other")];
+    let listed: Vec<String> = first_chunks(&hits).iter().map(|hit| hit.id.clone()).collect();
+    assert_eq!(listed, ["r1-owner", "r2-other"]);
+}

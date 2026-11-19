@@ -66,7 +66,9 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
   `replay-unmask-selector`; `[data-moqui-block]`, canvas, video, iframes and `replay-block-selector` recorded as empty
   boxes; no console or network capture. Chunks go to `/rum/replay` until `replay-max-minutes` (30) or
   `replay-max-bytes` (5 MiB), which the server holds each replay to; it keeps them gzipped in `browser_replays` for
-  `replay-retention-days` (7). Replays are never a report dataset: Monitor › Replays reads them through services that
+  `replay-retention-days` (7). `replay-user-bytes-per-hour` (50 MiB) holds the event bytes one user's replays send in
+  an hour on each server, whatever replay ids the page picks. A replay is read and listed as the session of its first
+  chunk sent it; a chunk another session sends under its id is left out. Replays are never a report dataset: Monitor › Replays reads them through services that
   need `MONITOR_REPLAY` (ADMIN has it), and each one opened is logged.
   Replay JSON requests have their own `replay-body-limit` (1 MiB by default); an explicitly configured `body-limit`
   remains the replay cap unless `replay-body-limit` overrides it. Trace/log defaults stay at 256 KiB, and the webapp's
