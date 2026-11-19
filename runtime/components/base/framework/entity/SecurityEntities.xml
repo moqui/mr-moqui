@@ -419,6 +419,17 @@ along with this software (see the LICENSE.md file). If not, see
         <alias name="permissionThruDate" entity-alias="UGP" field="thruDate"/>
     </view-entity>
 
+    <entity entity-name="SignatureReplay" package="moqui.security" use="transactional" cache="never">
+        <description>The replay keys of signed requests (a system message's HMAC, a chat bridge webhook's signature),
+            seen by every cluster member: a key is taken by the insert of its hash (service/replay_store.rs,
+            SEC-DAT-90). Only that code writes the rows.</description>
+        <field name="replayHash" type="id" is-pk="true"><description>The SHA-256 of the key, its first 40 hex
+            digits.</description></field>
+        <field name="expireStamp" type="number-integer"><description>When the key may be taken again, in
+            milliseconds since the epoch.</description></field>
+        <field name="worked" type="text-indicator"><description>Y once its request was worked.</description></field>
+    </entity>
+
     <entity entity-name="UserLoginKey" package="moqui.security" use="transactional" cache="never">
         <description>A login key is an alternate way to authenticate a user, generally issued for temporary use sort of
             like a session.</description>

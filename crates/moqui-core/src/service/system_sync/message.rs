@@ -45,7 +45,6 @@ const MESSAGE: &str = "moqui.service.message.SystemMessage";
 const MESSAGE_TYPE: &str = "moqui.service.message.SystemMessageType";
 const REMOTE: &str = "moqui.service.message.SystemMessageRemote";
 const RECEIVE: &str = "org.moqui.impl.SystemMessageServices.receive#IncomingSystemMessage";
-const REPLAY_CACHE: &str = "moqui.security.hmac.replay";
 /// Clock skew allowed ahead of now for a timestamped HMAC, and how old one may be.
 const SKEW_MILLIS: i64 = 10_000;
 const MAX_AGE_MILLIS: i64 = 300_000;
@@ -557,39 +556,17 @@ fn same_text(left: &str, right: &str) -> bool {
             == 0
 }
 
-/// True the first time `key` is seen in the replay cache, which then holds it for the cache's live time.
-///
-/// A key must outlive the timestamp window, so a cache that expires entries sooner than [`MAX_AGE_MILLIS`] is an
-/// error. Its `max-elements` can still evict a key early, but only after that many validly signed messages.
+/// True the first time `key` is seen on any cluster member within twice the timestamp window: a timestamp up to
+/// [`MAX_AGE_MILLIS`] old is taken, so the key is held past it. The keys are a table's, one insert taking each, so a
+/// captured message passes once in all, not once on each member (`service::replay_store`, SEC-DAT-90).
 fn first_use(key: &str) -> Result<bool, Error> {
-    let cache = ExecutionContext::with_current(|ctx| ctx.factory().cache().get(REPLAY_CACHE))
-        .ok_or_else(|| Error::new("no execution context is entered"))??
-        .ok_or_else(|| Error::new(format!("cache {REPLAY_CACHE} is not configured")))?;
-    let info = cache.info();
-    let short = |millis: i64| millis > 0 && millis < MAX_AGE_MILLIS;
-    if short(info.expire_live_ms) || short(info.expire_idle_ms) {
-        return Err(Error::new(format!(
-            "cache {REPLAY_CACHE} expires entries before the {} second HMAC timestamp window",
-            MAX_AGE_MILLIS / 1000
-        )));
-    }
-    // One atomic check and store: two requests with the same signature cannot both see it unused.
-    Ok(cache.put_if_absent(key.to_string(), Value::Bool(true))?)
+    Ok(crate::service::replay_store::take(key, 2 * MAX_AGE_MILLIS)? == crate::service::replay_store::Taken::New)
 }
 
-/// Forget a replay key whose message was not kept; a failure to forget is logged, and the retry is then refused as a
-/// replay until the key expires.
+/// Forget a replay key whose message was not kept, so its retry goes through; a failure to forget is logged, and the
+/// retry is then refused as a replay until the key expires.
 fn give_back(key: &str) {
-    let cache = ExecutionContext::with_current(|ctx| ctx.factory().cache().get(REPLAY_CACHE));
-    match cache {
-        Some(Ok(Some(cache))) => {
-            if let Err(err) = cache.remove(&key.to_string()) {
-                tracing::error!("Could not give back the HMAC replay key of a message not kept: {err}");
-            }
-        }
-        Some(Err(err)) => tracing::error!("Could not give back the HMAC replay key of a message not kept: {err}"),
-        _ => {}
-    }
+    crate::service::replay_store::finish(key, false);
 }
 
 #[cfg(test)]

@@ -358,7 +358,8 @@
 
         <!-- this is a count of all artifact hits, expire once idle for over 15 minutes -->
         <cache name="artifact.tarpit.hits" expire-time-idle="900" max-elements="10000" value-type="ArrayList"/>
-        <!-- type=distributed shares replay keys when a real distributed factory is configured; default factory is local MCache. -->
+        <!-- Its live time bounds a chat bridge webhook's replay window and how long its key is held; the replay keys of
+            signed requests are kept in moqui.security.SignatureReplay, which every cluster member sees (SEC-DAT-90). -->
         <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
         <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
         <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>

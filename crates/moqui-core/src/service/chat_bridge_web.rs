@@ -218,34 +218,23 @@ pub(super) fn window_within(wanted_ms: i64, live_ms: i64, idle_ms: i64) -> i64 {
 ///
 /// Returns why the cache could not be read (strict: the caller refuses the request).
 pub fn replay_take(bridge_id: &str, signature: &str) -> Result<Replay, String> {
-    let cache = replay_cache()?;
-    let key = replay_key(bridge_id, signature);
-    if cache
-        .put_if_absent(key.clone(), Value::Bool(false))
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Replay::New);
-    }
-    Ok(match cache.get(&key).map_err(|error| error.to_string())? {
-        Some(Value::Bool(true)) => Replay::Done,
-        _ => Replay::Working,
+    // held as long as the replay cache would hold it, which bounds the window (replay_window_ms); the keys are a
+    // table's, so a webhook sent again to another cluster member is a replay there too (SEC-DAT-90)
+    let held = replay_cache()?.info().expire_live_ms;
+    let held = if held > 0 { held } else { 600_000 };
+    use crate::service::replay_store::{take, Taken};
+    let taken = take(&replay_key(bridge_id, signature), held).map_err(|error| error.to_string())?;
+    Ok(match taken {
+        Taken::New => Replay::New,
+        Taken::Working => Replay::Working,
+        Taken::Done => Replay::Done,
     })
 }
 
 /// The request of `signature` was worked (`true`: kept as done) or not (`false`: let go, so the network's retry goes
 /// through). A failure is logged.
 pub fn replay_finish(bridge_id: &str, signature: &str, worked: bool) {
-    let key = replay_key(bridge_id, signature);
-    let done = replay_cache().and_then(|cache| {
-        if worked {
-            cache.put(key, Value::Bool(true)).map_err(|error| error.to_string())
-        } else {
-            cache.remove(&key).map(|_| ()).map_err(|error| error.to_string())
-        }
-    });
-    if let Err(error) = done {
-        tracing::warn!("chat bridge {bridge_id}: a webhook's replay entry was not kept: {error}");
-    }
+    crate::service::replay_store::finish(&replay_key(bridge_id, signature), worked);
 }
 
 /// A file fetched from a network.
