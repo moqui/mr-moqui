@@ -85,6 +85,9 @@ feature("stored script text needs DATABASE_ADMIN; plain text and kept placeholde
                 ownerUserId: adminId, title: "Spec", bodyHtml: "<p>Case ${requestId} ${ec.factory.moquiVersion}</p>" }),
             blockPlaceholders: writeAs("spec.ss.admin", "moqui.basic.email.EmailTextBlock", { emailTextBlockId: "SPEC_SS_TB2",
                 ownerUserId: adminId, title: "Spec", bodyHtml: "<p>Case ${requestId} in ${ queueName } is open.</p>" }),
+            // a placeholder whose removal leaves an expression (the rule removes them, then looks for ${)
+            blockJoined: writeAs("spec.ss.admin", "moqui.basic.email.EmailTextBlock", { emailTextBlockId: "SPEC_SS_TB3",
+                ownerUserId: adminId, title: "Spec", bodyHtml: "<p>$${requestId}{ec.factory.moquiVersion}</p>" }),
         })
         const out = run()
         out.subject.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTemplate", {emailTemplateId: "SPEC_SS_1"}) == null
@@ -96,5 +99,6 @@ feature("stored script text needs DATABASE_ADMIN; plain text and kept placeholde
         out.keptPlaceholder === ""
         out.blockScript.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB1"}) == null
         out.blockPlaceholders === "" && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB2"}) != null
+        out.blockJoined.includes("DATABASE_ADMIN") && one("moqui.basic.email.EmailTextBlock", {emailTextBlockId: "SPEC_SS_TB3"}) == null
     },
 })
