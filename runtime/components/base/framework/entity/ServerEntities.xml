@@ -1046,6 +1046,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="hostName" type="text-medium" is-pk="true"/>
         <field name="keyAuthDigest" type="text-medium" not-null="true"/>
         <field name="expireDate" type="date-time"/>
+        <field name="probe" type="text-indicator"><description>Y: the reachability check's own challenge, with a digest
+            this node drew at random, open for a minute before the name is set up (acme/check.rs); otherwise an order's,
+            answered only for a name set up here (AcmeName)</description></field>
         <relationship type="one-nofk" related="moqui.server.AcmeName"/>
     </entity>
     <entity entity-name="AcmeCertificate" package="moqui.server" use="transactional" cache="never">

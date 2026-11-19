@@ -35,7 +35,7 @@ use super::{store, Acme, ALPN};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the check's own challenge stays open; it is closed when the check ends.
-const PROBE_OPEN: Duration = Duration::from_secs(60);
+pub(crate) const PROBE_OPEN: Duration = Duration::from_secs(60);
 /// The most the check's connections take together. It runs on the request's thread, so the screen waits for it.
 const PROBE_LIMIT: Duration = Duration::from_secs(20);
 
@@ -77,7 +77,7 @@ pub(crate) fn check(factory: &Arc<ExecutionContextFactory>, host: &str) -> Resul
         .secure_random
         .fill(&mut digest)
         .map_err(|_| Error::new("no random bytes for the check"))?;
-    store::put_challenge(factory, host, &digest, PROBE_OPEN)?;
+    store::put_challenge(factory, host, &digest, PROBE_OPEN, true)?;
     // every member reads the challenge rows again before the check connects, as before the authority's
     std::thread::sleep(super::SEEN_BY_EVERY_MEMBER);
     let probing = probe(addresses, host.to_string(), digest);

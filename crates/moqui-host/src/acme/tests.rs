@@ -259,11 +259,17 @@ fn only_an_orders_challenge_is_answered_and_only_a_names_files_are_written() {
     let now = moqui_core::user::now_millis();
     let set_up: HashSet<String> = ["shop.example.com".to_string()].into_iter().collect();
     assert_eq!(
-        store::refused_challenge("shop.example.com", now + 9 * 60_000, &set_up, now),
+        store::refused_challenge("shop.example.com", now + 9 * 60_000, false, &set_up, now),
         None
     );
-    assert!(store::refused_challenge("other.example.com", now + 60_000, &set_up, now).is_some());
-    assert!(store::refused_challenge("shop.example.com", now + DAY, &set_up, now).is_some());
+    assert!(store::refused_challenge("other.example.com", now + 60_000, false, &set_up, now).is_some());
+    assert!(store::refused_challenge("shop.example.com", now + DAY, false, &set_up, now).is_some());
+    // the reachability check's own, before the name is set up: for its minute only
+    assert_eq!(
+        store::refused_challenge("new.example.com", now + 60_000, true, &set_up, now),
+        None
+    );
+    assert!(store::refused_challenge("new.example.com", now + 9 * 60_000, true, &set_up, now).is_some());
 
     let dir = crate::tls::tests::temp_dir("acme-names").join("cert");
     std::fs::create_dir_all(&dir).unwrap();

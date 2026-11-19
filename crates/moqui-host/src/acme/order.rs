@@ -246,7 +246,7 @@ fn issue(factory: &Arc<ExecutionContextFactory>, name: &NameRow) -> Result<Issue
         }
     })?;
     for digest in &digests {
-        store::put_challenge(factory, &host, digest, CHALLENGE_OPEN)?;
+        store::put_challenge(factory, &host, digest, CHALLENGE_OPEN, false)?;
     }
     // every member reads the challenge rows again before the authority looks
     std::thread::sleep(super::SEEN_BY_EVERY_MEMBER);
