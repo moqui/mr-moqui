@@ -310,6 +310,11 @@ fn start(link: FakeLink, path: &str, columns: u16, rows: u16) -> Running {
 }
 
 fn start_with(link: FakeLink, path: &str, columns: u16, rows: u16, log: bool) -> Running {
+    start_noted(link, path, (columns, rows), log, None)
+}
+
+fn start_noted(link: FakeLink, path: &str, size: (u16, u16), log: bool, notes: Option<fn(&str)>) -> Running {
+    let (columns, rows) = size;
     let (tx, rx) = mpsc::channel();
     let replies = tx.clone();
     let out = Shared::default();
@@ -319,7 +324,7 @@ fn start_with(link: FakeLink, path: &str, columns: u16, rows: u16, log: bool) ->
         theme: Theme::default(),
         columns,
         rows,
-        notes: None,
+        notes,
         log,
         login_name: None,
     };
@@ -378,8 +383,20 @@ fn a_session_runs_keys_answers_sizes_and_the_close_over_a_channel() {
 /// size of `MAX_SIDE` itself is drawn whole.
 #[test]
 fn a_size_past_the_limit_is_drawn_at_the_limit() {
+    static NOTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn note(text: &str) {
+        if text.contains("drawn at") {
+            NOTED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
     let side = MAX_SIDE;
-    let running = start(gallery_link(), GALLERY_LIST_PATH, u16::MAX, side + 1);
+    let running = start_noted(
+        gallery_link(),
+        GALLERY_LIST_PATH,
+        (u16::MAX, side + 1),
+        false,
+        Some(note),
+    );
     let shown = running.out.wait_for("Open detail", side, side);
     assert_eq!(shown.lines().count(), usize::from(side), "the last row is drawn");
     let redrawn = |before: usize| {
@@ -402,8 +419,19 @@ fn a_size_past_the_limit_is_drawn_at_the_limit() {
     redrawn(before);
     let shown = running.out.wait_for("Open detail", side, side);
     assert_eq!(shown.lines().count(), usize::from(side));
+    // the same size again and again is drawn at the limit and noted for the log once a session
+    for _ in 0..20 {
+        running
+            .tx
+            .send(SessionEvent::Resize {
+                columns: u16::MAX,
+                rows: u16::MAX,
+            })
+            .unwrap();
+    }
     running.tx.send(SessionEvent::Close).unwrap();
     running.done.join().unwrap().unwrap();
+    assert_eq!(NOTED.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]

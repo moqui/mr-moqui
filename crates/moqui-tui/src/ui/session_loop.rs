@@ -132,7 +132,11 @@ fn run<L: ScreenLink + 'static, W: Write>(
     let link = Arc::new(link);
     let mut view = AppView::with_session(Session::start(&options.path), Arc::clone(&link));
     view.set_theme(options.theme.clone());
-    let (columns, rows) = fit(options.columns, options.rows, options.notes);
+    let mut notes = Notes {
+        log: options.notes,
+        size_noted: false,
+    };
+    let (columns, rows) = fit(options.columns, options.rows, &mut notes);
     view.session_mut().resize(columns, rows);
     let mut screen = Screen::new(columns, rows, options.theme.depth);
     let mut decoder = Decoder::new();
@@ -173,14 +177,14 @@ fn run<L: ScreenLink + 'static, W: Write>(
             match event {
                 SessionEvent::Input(bytes) => {
                     for decoded in decoder.push(&bytes) {
-                        if apply(&mut view, &mut screen, decoded, options.notes) {
+                        if apply(&mut view, &mut screen, decoded, &mut notes) {
                             return Ok(());
                         }
                         changed = true;
                     }
                 }
                 SessionEvent::Resize { columns, rows } => {
-                    resize(&mut view, &mut screen, columns, rows, options.notes);
+                    resize(&mut view, &mut screen, columns, rows, &mut notes);
                     changed = true;
                 }
                 SessionEvent::Reply(id, reply) => {
@@ -221,7 +225,7 @@ fn run<L: ScreenLink + 'static, W: Write>(
         let now = Instant::now();
         if decoder.deadline().is_some_and(|at| now >= at) {
             for decoded in decoder.flush() {
-                if apply(&mut view, &mut screen, decoded, options.notes) {
+                if apply(&mut view, &mut screen, decoded, &mut notes) {
                     return Ok(());
                 }
                 changed = true;
@@ -240,12 +244,7 @@ fn run<L: ScreenLink + 'static, W: Write>(
 }
 
 /// A decoded key, paste or size. Returns true when the user quit.
-fn apply<L: ScreenLink>(
-    view: &mut AppView<Arc<L>>,
-    screen: &mut Screen,
-    decoded: Decoded,
-    notes: Option<fn(&str)>,
-) -> bool {
+fn apply<L: ScreenLink>(view: &mut AppView<Arc<L>>, screen: &mut Screen, decoded: Decoded, notes: &mut Notes) -> bool {
     match decoded {
         Decoded::Key(press) => view.key(&press),
         Decoded::Mouse(mouse) => {
@@ -267,13 +266,7 @@ fn apply<L: ScreenLink>(
     }
 }
 
-fn resize<L: ScreenLink>(
-    view: &mut AppView<Arc<L>>,
-    screen: &mut Screen,
-    columns: u16,
-    rows: u16,
-    notes: Option<fn(&str)>,
-) {
+fn resize<L: ScreenLink>(view: &mut AppView<Arc<L>>, screen: &mut Screen, columns: u16, rows: u16, notes: &mut Notes) {
     if columns == 0 || rows == 0 {
         return;
     }
@@ -285,11 +278,18 @@ fn resize<L: ScreenLink>(
     screen.resize(columns, rows);
 }
 
-/// A size asked for, at most [`MAX_SIDE`] a side; a larger one is noted for the log.
-fn fit(columns: u16, rows: u16, notes: Option<fn(&str)>) -> (u16, u16) {
+/// The caller's log, and whether a size past [`MAX_SIDE`] was noted in it yet.
+struct Notes {
+    log: Option<fn(&str)>,
+    size_noted: bool,
+}
+
+/// A size asked for, at most [`MAX_SIDE`] a side; a larger one is noted for the log, once a session, as the input may
+/// ask for it again and again.
+fn fit(columns: u16, rows: u16, notes: &mut Notes) -> (u16, u16) {
     let fitted = (columns.min(MAX_SIDE), rows.min(MAX_SIDE));
-    if fitted != (columns, rows) {
-        if let Some(log) = notes {
+    if fitted != (columns, rows) && !std::mem::replace(&mut notes.size_noted, true) {
+        if let Some(log) = notes.log {
             log(&format!(
                 "the terminal asked for {columns}x{rows}; drawn at {}x{} (at most {MAX_SIDE} a side)",
                 fitted.0, fitted.1
