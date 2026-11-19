@@ -227,3 +227,25 @@ fn a_limit_and_a_rule_apply_to_the_path_a_request_reached() {
     let (status, _, body) = send("POST", "/fop/Login/login", "203.0.113.72");
     assert_eq!(status, 404, "{body}");
 }
+
+/// SEC-WEB-91: behind a trusted proxy that appends to `X-Forwarded-Proto`, the request's scheme is the proxy's value,
+/// read from the client address's hop, not the first one a client sent: a plain-http client that names `https` itself
+/// gets the plain session cookie, and one the proxy says came over https gets the secure one.
+#[test]
+fn a_forwarded_scheme_is_the_proxys_not_one_the_client_sent_first() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = start_with_conf("web-protection-forwarded", CONF, &[]);
+    let address = gate.server.address();
+    let cookie_of = |proto: &str| {
+        let headers = [("X-Forwarded-For", "203.0.113.90"), ("X-Forwarded-Proto", proto)];
+        let (status, headers, body) = exchange(address, &http_request("GET", "/Login", &headers, ""));
+        assert_eq!(status, 200, "{body}");
+        header(&headers, "set-cookie").unwrap_or_default()
+    };
+    let spoofed = cookie_of("https, http");
+    assert!(spoofed.starts_with("moqui.session="), "{spoofed}");
+    let secure = cookie_of("https");
+    assert!(secure.starts_with("__Host-moqui.session="), "{secure}");
+}
