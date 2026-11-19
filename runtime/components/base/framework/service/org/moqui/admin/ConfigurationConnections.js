@@ -393,6 +393,17 @@ function engine(def) {
                     secretWrites.push({entry, value: null})
                     secretCleared = true
                 }
+        // a connection's endpoint or secret changes, whatever its kind, only after the administrator signed in or
+        // confirmed who they are in the last five minutes (SEC-ADM-87); a kind that carries the sign-in mail asked
+        // before anything (staleSignIn)
+        if (!creating && !def.recentAuth?.(parts) && (endpointChanged || secretWrites.some(row => row.value !== null))) {
+            const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
+            if (!recent)
+                return refused("reauthRequired", "Confirm it is you: this change repoints the connection or replaces its credentials", {
+                    connectionKey,
+                    revision
+                })
+        }
         for (const row of secretWrites) changes[partOf(row.entry)][columnOf(row.entry)] = row.value
         const after = Object.fromEntries(
             partNames.map(name => [name, parts[name] ? Object.assign({}, parts[name], changes[name]) : null])

@@ -29,7 +29,7 @@ use axum::extract::{ConnectInfo, Query, Request, State};
 use axum::response::Response;
 use moqui_llm::ui::vue_sfc;
 
-use crate::http::{forwarded_https, plain, HttpState, TlsConnection};
+use crate::http::{forwarded, forwarded_https, plain, HttpState, TlsConnection};
 
 /// The origin of the page that frames the document: the scheme and the `Host` header, or `None` for a host that is
 /// not a plain name and port.
@@ -128,8 +128,15 @@ fn public_host(state: &HttpState, peer: SocketAddr, request: &Request) -> (Strin
     let https = over_tls || forwarded_https(request.headers(), peer.ip(), state.guard.conf().addressing());
     let header = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
     let believed = state.guard.conf().addressing().believes(peer.ip());
+    // a believed proxy's own value, from the hop the client address is read from (SEC-WEB-91)
+    let forwarded_host = forwarded(
+        request.headers(),
+        peer.ip(),
+        state.guard.conf().addressing(),
+        "x-forwarded-host",
+    );
     let host = frame_host(
-        header("x-forwarded-host"),
+        forwarded_host.as_deref(),
         header("host"),
         believed,
         (

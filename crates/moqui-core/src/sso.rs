@@ -59,6 +59,9 @@ pub struct OauthConfig {
     pub token_url: String,
     pub user_info_url: String,
     pub scope: String,
+    /// `reauthPrompts` Y: the provider asks the user to sign in on every authorization, so a re-authentication's round
+    /// trip counts as a recent sign-in (SEC-WEB-84).
+    pub reauth_prompts: bool,
 }
 
 impl fmt::Debug for OidcConfig {
@@ -88,6 +91,7 @@ impl fmt::Debug for OauthConfig {
             .field("token_url", &self.token_url)
             .field("user_info_url", &self.user_info_url)
             .field("scope", &self.scope)
+            .field("reauth_prompts", &self.reauth_prompts)
             .finish()
     }
 }

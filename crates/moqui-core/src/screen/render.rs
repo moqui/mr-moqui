@@ -863,6 +863,34 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         info = ScreenUrlInfo::parse(factory, job.root, job.path, 1)?;
     }
     check_web_settings(&info)?;
+    if job.enforce_request_checks {
+        // a transition runs only at its own path: not through the FOP servlet, which renders screens to PDF, and not
+        // with names after it that it declares no path-parameter for, but a read-only one and one under a screen that
+        // takes extra path, as the REST and menu-data transitions do (SEC-WEB-81)
+        if let Some(reason) = refused_transition_path(job, &info) {
+            web::send_json_error(404, reason);
+            return Ok(());
+        }
+        // the host's path rules and rate limits for the path the request reached, where that is not the path it was
+        // sent with: the FOP prefix, a search path, an alias, a token route's base, the extra path after a transition
+        if let Some(refused) = web::reached::refused(&reached_paths(&facade, &info)) {
+            let text = if refused.status == 429 {
+                "too many requests"
+            } else {
+                "not found"
+            };
+            web::send_json_error(refused.status, text);
+            if let Some(seconds) = refused.retry_after {
+                web::add_header("Retry-After", seconds.to_string());
+            }
+            return Ok(());
+        }
+        if let Some(allow) = refused_method(job.method, &info) {
+            web::send_json_error(405, &format!("Method {} is not supported", job.method));
+            web::add_header("Allow", allow.join(", "));
+            return Ok(());
+        }
+    }
     // a shared device opens only its route group, before anything of the target runs (user/device.rs)
     user::device::check_route(&info)?;
     if job.enforce_request_checks && (redirect_to_https(factory, job, &info) || redirect_to_login(factory, job, &info)?)
@@ -1809,6 +1837,82 @@ impl Drop for Frames {
 enum Step {
     Sent,
     Respond(ResponseDef),
+}
+
+/// Why a request to a transition is refused at its path, or `None` (SEC-WEB-81): through the FOP servlet (`/fop`), whose
+/// renders are screens, or with extra path names that a transition with no `path-parameter` would ignore, which paths a
+/// rule or a limit of the host's web protection would not match. A read-only transition (the REST and menu-data ones,
+/// which read the extra path as their own resource path) and one under a screen with `allow-extra-path` keep it.
+fn refused_transition_path(job: &Job<'_>, info: &ScreenUrlInfo) -> Option<&'static str> {
+    info.target_transition_name.as_ref()?;
+    if job.render_mode == Some("xsl-fo") {
+        return Some("a transition does not run through the FOP servlet");
+    }
+    if info.extra_path.is_empty() || info.target_screen.allow_extra_path {
+        return None;
+    }
+    let transition = info.transition(Some(job.method))?;
+    (!transition.read_only && transition.path_parameters.is_empty()).then_some("screen path not found")
+}
+
+/// The paths the host's web protection is asked about for a request that reached `info` (SEC-WEB-81): its reached path
+/// ([`ScreenUrlInfo::reached_path`]) under the link prefix of the render (a token route's `/<name>/<token>`, whose screen
+/// is the root), and after a transition that path with its extra path too, the last name's render-mode extension taken
+/// off, so a limit on a REST resource (`/rest/s1/...`) matches it through the FOP servlet or with an extension.
+fn reached_paths(facade: &ScreenFacade, info: &ScreenUrlInfo) -> Vec<String> {
+    let prefix = web::link_prefix();
+    let reached = info.reached_path();
+    let reached = if prefix.is_empty() {
+        reached
+    } else {
+        format!("{prefix}{}", reached.trim_end_matches('/'))
+    };
+    let mut paths = vec![reached.clone()];
+    if info.target_transition_name.is_some() && !info.extra_path.is_empty() {
+        let mut extra = info.extra_path.clone();
+        if let Some(last) = extra.last_mut() {
+            if let Some((before, mode)) = last.rsplit_once('.') {
+                if !before.is_empty() && facade.is_render_mode_valid(mode) {
+                    *last = before.to_string();
+                }
+            }
+        }
+        paths.push(format!("{}/{}", reached.trim_end_matches('/'), extra.join("/")));
+    }
+    paths
+}
+
+/// The methods a screen renders for.
+const SCREEN_METHODS: &[&str] = &["GET", "HEAD", "POST", "OPTIONS"];
+/// The methods a transition of method `any` runs for: a REST transition dispatches the others itself.
+const TRANSITION_METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
+/// The `Allow` list of a request whose method the screen or transition it reached does not take, whatever web
+/// protection's `methods` list says (SEC-WEB-89): a screen renders for GET, HEAD, POST and OPTIONS, and a transition of
+/// method `any` runs for those and PUT, PATCH and DELETE, so TRACE or a made-up method neither renders a page nor runs
+/// a transition. A transition of the method itself takes it, and one with none for the method is answered by
+/// [`run_transition`]; a file is answered by its own rules.
+fn refused_method(method: &str, info: &ScreenUrlInfo) -> Option<&'static [&'static str]> {
+    if info.file_resource.is_some() {
+        return None;
+    }
+    let takes = |allowed: &[&str]| allowed.iter().any(|name| name.eq_ignore_ascii_case(method));
+    let Some(name) = info.target_transition_name.as_deref() else {
+        return (!takes(SCREEN_METHODS)).then_some(SCREEN_METHODS);
+    };
+    let any = info
+        .target_screen
+        .transitions
+        .iter()
+        .filter(|item| item.name == name)
+        .fold(None, |any, item| {
+            if item.method.eq_ignore_ascii_case(method) {
+                Some(false)
+            } else {
+                any.or((item.method == "any").then_some(true))
+            }
+        });
+    (any == Some(true) && !takes(TRANSITION_METHODS)).then_some(TRANSITION_METHODS)
 }
 
 fn run_transition(

@@ -53,6 +53,7 @@ mod misconfig;
 pub mod multipart;
 pub mod origin;
 pub mod protection_view;
+pub mod reached;
 pub mod reserved;
 pub mod servlet;
 pub mod stream;
@@ -2022,22 +2023,23 @@ pub fn body_limit_for(factory: Option<&crate::context::ExecutionContextFactory>,
     }
 }
 
-/// The cap on a `multipart/form-data` body sent with no user (no session signed in, no key, no Basic credentials that
-/// hold): `max-body`, when that is below the request's [`body_limit_for`] and the path is not one that takes uploads
-/// without a user (`web-protection` `requests` `anonymous-upload-paths`: path prefixes, comma separated, such as a
-/// public share's file drop). None when no
-/// such cap applies. The host asks who sent the request only when the body may be larger, so an anonymous request
-/// cannot have the server spool up to `max-upload` before anything is checked (SEC-RTE-07).
+/// The cap on a body sent with no user (no session signed in, no key, no Basic credentials that hold): `max-body`,
+/// when that is below the request's [`body_limit_for`] (a `multipart/form-data` body's `max-upload`, or the larger
+/// `max-body` of a servlet such as the search proxies), but for an upload to a path that takes uploads without a user
+/// (`web-protection` `requests` `anonymous-upload-paths`: path prefixes, comma separated, such as a public share's file
+/// drop). None when no such cap applies. The host asks who sent the request only when the body may be larger, so an
+/// anonymous request cannot have the server spool up to `max-upload` (SEC-RTE-07), or hold a servlet's larger body in
+/// memory (SEC-RTE-84), before anything is checked.
 pub fn anonymous_upload_limit(
     factory: Option<&crate::context::ExecutionContextFactory>,
     request: &WebRequest,
 ) -> Option<usize> {
-    if !is_multipart(request) {
-        return None;
-    }
     let anonymous = parse_size(&protection_setting(factory, "requests", "max-body")).unwrap_or(DEFAULT_MAX_BODY);
     if body_limit_for(factory, request) <= anonymous {
         return None;
+    }
+    if !is_multipart(request) {
+        return Some(anonymous);
     }
     let paths = protection_setting(factory, "requests", "anonymous-upload-paths");
     (!open_upload_path(&paths, &request.path)).then_some(anonymous)

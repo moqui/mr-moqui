@@ -660,6 +660,29 @@ fn an_anonymous_upload_stops_at_the_body_limit_but_on_the_open_paths() {
     assert!(!open_upload_path("", "/s/abc/upload"));
 }
 
+/// SEC-RTE-84: any body, not only an upload, that a servlet's larger `max-body` lets past `max-body` has the anonymous
+/// cap of `max-body`.
+#[test]
+fn an_anonymous_body_stops_at_the_body_limit_whatever_its_servlet_takes() {
+    use super::{anonymous_upload_limit, DEFAULT_MAX_BODY};
+    let context = crate::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><webapp-list><webapp name="webroot">
+            <servlet name="Screens" class="org.moqui.impl.webapp.MoquiServlet"><url-pattern>/*</url-pattern></servlet>
+            <servlet name="Search" location="component://webroot/script/ProxyServlet.js" max-body="100m">
+                <init-param name="prefix" value="/search"/><url-pattern>/search/*</url-pattern></servlet>
+        </webapp></webapp-list></moqui-conf>"#,
+    );
+    let mut bulk = super::WebRequest::new("POST", "/search/_bulk");
+    bulk.set_header("content-type", "application/x-ndjson");
+    assert_eq!(
+        anonymous_upload_limit(Some(context.factory()), &bulk),
+        Some(DEFAULT_MAX_BODY)
+    );
+    let mut form = super::WebRequest::new("POST", "/apps/x");
+    form.set_header("content-type", "application/json");
+    assert_eq!(anonymous_upload_limit(Some(context.factory()), &form), None);
+}
+
 /// SEC-WEB-04: a request another site started is told by `Sec-Fetch-Site`, else by a `Referer` of another host; a
 /// request with neither, as a client that is not a browser sends, is not.
 #[test]

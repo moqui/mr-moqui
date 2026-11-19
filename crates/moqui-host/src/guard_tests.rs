@@ -272,8 +272,10 @@ fn ipv6_clients_share_their_prefix() {
     assert_eq!(status(&guard, "2001:db8:1:3::10", "GET", "/"), 200);
 }
 
+/// SEC-WEB-83: a new client takes the place of an idle one when the table is full, so it is still limited; with no
+/// idle client to drop (each has a connection or a ban) it is refused, never served without the limits.
 #[test]
-fn a_full_table_serves_new_clients_untracked() {
+fn a_full_table_drops_an_idle_client_and_refuses_when_none_is_idle() {
     let guard = guard(
         r#"<web-protection enabled="true" max-tracked-clients="1">
                 <rate-limit name="all" requests="1" seconds="60" burst="1"/>
@@ -281,10 +283,52 @@ fn a_full_table_serves_new_clients_untracked() {
         "",
     );
     assert_eq!(status(&guard, "203.0.113.5", "GET", "/"), 200);
-    for _ in 0..3 {
-        assert_eq!(status(&guard, "203.0.113.6", "GET", "/"), 200);
-    }
-    assert!(guard.metrics().contains("edge_untracked 3\n"), "{}", guard.metrics());
+    assert_eq!(status(&guard, "203.0.113.6", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.6", "GET", "/"), 429);
+    // 203.0.113.6 is idle, so the next new client takes its place and is limited in turn
+    let slot = guard.admit(ip("203.0.113.7")).expect("admitted");
+    assert_eq!(status(&guard, "203.0.113.7", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.7", "GET", "/"), 429);
+    // 203.0.113.7 holds a connection: no client is idle, so a new one is refused
+    assert_eq!(status(&guard, "203.0.113.8", "GET", "/"), 503);
+    assert!(guard.admit(ip("203.0.113.8")).is_none());
+    assert!(guard.metrics().contains("edge_untracked 2\n"), "{}", guard.metrics());
+    drop(slot);
+    assert_eq!(status(&guard, "203.0.113.8", "GET", "/"), 200);
+}
+
+/// SEC-WEB-83: a table full of bans makes room for a new client by a ban (the one that ends soonest in the first shard
+/// that has one), so bans of many addresses do not refuse every other client; the new client is limited as any is.
+#[test]
+fn a_table_full_of_bans_drops_a_ban_for_a_new_client() {
+    let guard = guard(
+        r#"<web-protection enabled="true" max-tracked-clients="2">
+                <rate-limit name="all" requests="1" seconds="60" burst="1"/>
+                <ban name="auth-failure" events="auth-failure" threshold="1" seconds="600" duration="900"/>
+                <ban name="denied" events="denied" threshold="1" seconds="600" duration="60"/>
+            </web-protection>"#,
+        "",
+    );
+    // 203.0.113.30 is banned for 900 seconds, 203.0.113.31 for 60: the table holds only bans
+    guard.record(ip("203.0.113.30"), Event::AuthFailure);
+    guard.record(ip("203.0.113.31"), Event::Denied);
+    assert_eq!(status(&guard, "203.0.113.30", "GET", "/"), 403);
+    assert_eq!(status(&guard, "203.0.113.31", "GET", "/"), 403);
+    // a new client is served, limited, in the place of one ban; the other stays
+    assert_eq!(status(&guard, "203.0.113.32", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.32", "GET", "/"), 429);
+    let banned = ["203.0.113.30", "203.0.113.31"]
+        .iter()
+        .filter(|client| {
+            guard
+                .check(ip(client), ip(client), "", "GET", "/", &HeaderMap::new())
+                .is_err()
+        })
+        .count();
+    assert!(banned >= 1, "one ban stays");
+    // a second new client within the second goes straight to the bans
+    assert!(guard.admit(ip("203.0.113.33")).is_some());
+    assert!(guard.metrics().contains("edge_untracked 0\n"), "{}", guard.metrics());
 }
 
 #[test]
@@ -349,7 +393,10 @@ fn the_default_conf_is_off_until_there_are_trusted_proxies() {
     };
     assert!(denied("/.env"));
     assert!(!denied("/apps/system"));
-    assert_eq!(on.methods.len(), 7);
+    // the standard methods and those /dav serves (SEC-WEB-89)
+    assert_eq!(on.methods.len(), 15);
+    assert!(on.methods.iter().any(|method| method == "PROPFIND"));
+    assert!(!on.methods.iter().any(|method| method == "TRACE"));
     assert_eq!(on.max_per_client, 64);
     assert_eq!(on.queue_timeout, Some(std::time::Duration::from_secs(10)));
     assert_eq!(on.retry_after, 5);

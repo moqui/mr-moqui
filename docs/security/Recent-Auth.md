@@ -60,7 +60,7 @@ refused: without a recent sign-in its account steps wait for an identity operato
 
 ## In the browser
 
-`/ReAuth/check`, `/ReAuth/password` and `/ReAuth/sendCode` (webroot `ReAuth.xml`) serve `js/WebrootReAuth.js`
+`/ReAuth/check`, `/ReAuth/password`, `/ReAuth/sendCode` and `/ReAuth/sendEmailCode` (webroot `ReAuth.xml`) serve `js/WebrootReAuth.js`
 (`moqui.reauth`, loaded for a signed-in user):
 
 - `ensure()` checks first and asks only when needed;
@@ -70,10 +70,24 @@ refused: without a recent sign-in its account steps wait for an identity operato
 A form (`m-form`, `WebrootVue.qvt.js` `submitGo`) whose answer carries `X-Moqui-Reauth` calls `moqui.reauth.confirm()`
 and sends the form once more; a cancel shows the refusal.
 
-An SSO-only account goes to `/sso/login?authFlowId=…&reauth=true&returnTo=<this page>` (a same-origin `returnTo` only). An
-OpenID provider is asked to sign the user in again (`prompt=login&max_age=0`) and returns to the page, where the user does
-the action again. The callback counts it only when the ID token's `auth_time` is after the request (a minute of clock skew
-allowed), so a provider that ignores the request gives no recent sign-in.
+An SSO-only account (no password) confirms one of two ways:
+
+- **A code to its verified address.** When the account's `emailAddress` has a `VerifiedAddress` row (the provider verified
+  it under a verified-email link rule, or the registration's mail link did), `check#RecentAuth` answers `emailCode`, and
+  `confirm()` offers it: `/ReAuth/sendEmailCode` (`send#ReauthEmailCode`, one a half minute in a session, and at most
+  `login@reauth-email-codes-per-hour` (5) to the address in an hour, whoever asks) mails a single-use code good for ten
+  minutes, and `/ReAuth/password` takes it as `{code}` alone (`reauthenticate#User`). A wrong code counts as a failed
+  login.
+  This does not depend on the provider.
+- **A fresh sign-in at its provider.** A POST of `/sso/reauth` with `authFlowId`, a same-origin `returnTo` and the session
+  token (SEC-WEB-84); `/sso/login` is always a plain sign-in, so a link or another site cannot start a re-authentication.
+  An OpenID provider is asked to sign the user in again (`prompt=login&max_age=0`) and returns to the page, where the user
+  does the action again. The callback counts it only when the ID token's `auth_time` is after the request (a minute of
+  clock skew allowed), so a provider that ignores the request gives no recent sign-in. An OAuth 2 provider has no
+  `auth_time`, so its round trip counts only when the flow's `OauthFlow.reauthPrompts` is Y: set it (Admin's provider
+  detail, "Confirms a sign-in", which a holder of `ADMIN_CONNECTION_MANAGE` changes after a recent sign-in) only for a
+  provider that asks the user to sign in on every authorization. `check#RecentAuth` lists only the flows that can answer it
+  (OpenID Connect, and OAuth with `reauthPrompts` Y).
 
 In the terminal, BasicComms Settings, My devices has a "Confirm it is you" form (password and code).
 

@@ -308,6 +308,66 @@ fn discovery_uri(config: &OidcConfig) -> Result<String, Error> {
     }
 }
 
+/// An OpenID user info answer is taken only for the ID token's subject: its `sub` there and equal to the ID token's
+/// (OpenID Connect Core 5.3.2), else its claims (the email, the username, the roles) could be another user's (SEC-WEB-86).
+fn same_subject(auth_flow_id: &str, id_token_sub: Option<&Json>, user_info_sub: Option<&Json>) -> Result<(), Error> {
+    match (
+        id_token_sub.and_then(Json::as_str),
+        user_info_sub.and_then(Json::as_str),
+    ) {
+        (Some(token), Some(info)) if token == info => Ok(()),
+        _ => Err(Error::new(format!(
+            "SSO flow {auth_flow_id}: the user info answer is not for the ID token's subject"
+        ))),
+    }
+}
+
+/// The ID token algorithms a flow takes when its row names none: the asymmetric ones huskarl verifies, so whoever
+/// writes the discovery document cannot widen them, and a symmetric one never borrows the client secret.
+const ID_TOKEN_ALGORITHMS: [&str; 9] = [
+    "RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "EdDSA",
+];
+
+/// An `https` URL, or `http` only to this machine on an instance that is not production (a provider run beside a
+/// development server), as the Admin provider screen takes a `discoveryUri` (`ConfigurationLib.js` `urlText`): the
+/// discovery document, and the keys and endpoints it names, are never fetched in clear across a network (SEC-WEB-93).
+fn secure_url(url: &str, what: &str) -> Result<(), Error> {
+    let parsed = reqwest::Url::parse(url).map_err(|err| Error::new(format!("the {what} {url} is not a URL: {err}")))?;
+    match parsed.scheme() {
+        "https" => Ok(()),
+        "http" if parsed.host_str().is_some_and(moqui_lib::net::loopback_host) && !moqui_core::web::is_production() => {
+            Ok(())
+        }
+        _ => Err(Error::new(format!("the {what} {url} must be https"))),
+    }
+}
+
+/// The ID token algorithms a flow takes: the row's `preferredJwsAlgorithmEnumId` alone when it names one, else those
+/// of the document's `id_token_signing_alg_values_supported` among [`ID_TOKEN_ALGORITHMS`] (all of them when it lists
+/// none), so the provider's document never chooses an algorithm the deployer did not allow (SEC-WEB-93).
+fn id_token_algorithms(config: &OidcConfig, listed: Option<&[String]>) -> Result<Vec<String>, Error> {
+    if !config.preferred_jws_algorithm.is_empty() {
+        return Ok(vec![config.preferred_jws_algorithm.clone()]);
+    }
+    let Some(listed) = listed.filter(|listed| !listed.is_empty()) else {
+        return Ok(ID_TOKEN_ALGORITHMS.iter().map(ToString::to_string).collect());
+    };
+    let taken: Vec<String> = listed
+        .iter()
+        .filter(|alg| ID_TOKEN_ALGORITHMS.contains(&alg.as_str()))
+        .cloned()
+        .collect();
+    if taken.is_empty() {
+        return Err(Error::new(format!(
+            "the provider lists no ID token algorithm this server takes ({}); set the flow's preferred algorithm or use \
+             one of {}",
+            listed.join(", "),
+            ID_TOKEN_ALGORITHMS.join(", ")
+        )));
+    }
+    Ok(taken)
+}
+
 fn endpoint(url: &str, what: &str) -> Result<EndpointUrl, Error> {
     url.parse::<EndpointUrl>()
         .map_err(|err| Error::new(format!("the {what} URL {url} is not valid: {err}")))
@@ -375,6 +435,7 @@ impl Inner {
         let built = match &flow.kind {
             FlowKind::Oidc(config) => {
                 let discovery = discovery_uri(config)?;
+                secure_url(&discovery, "discovery document")?;
                 let response = transport
                     .send(
                         http::Request::get(discovery.as_str())
@@ -389,22 +450,43 @@ impl Inner {
                 }
                 // The reason is the kind of error and where, never the parser's text, which quotes a value of the
                 // body: a test of a provider (`check#Flow`) shows this message, and the URL is its administrator's.
-                let metadata: AuthorizationServerMetadata = serde_json::from_slice(&response.body).map_err(|err| {
-                    let what = match err.classify() {
-                        serde_json::error::Category::Data => "its JSON is not that of an OpenID provider",
-                        _ => "it is not JSON",
-                    };
-                    Error::new(format!(
-                        "{discovery} is not a discovery document: {what} (line {}, column {})",
-                        err.line(),
-                        err.column()
-                    ))
-                })?;
+                let mut metadata: AuthorizationServerMetadata =
+                    serde_json::from_slice(&response.body).map_err(|err| {
+                        let what = match err.classify() {
+                            serde_json::error::Category::Data => "its JSON is not that of an OpenID provider",
+                            _ => "it is not JSON",
+                        };
+                        Error::new(format!(
+                            "{discovery} is not a discovery document: {what} (line {}, column {})",
+                            err.line(),
+                            err.column()
+                        ))
+                    })?;
                 if !config.preferred_jws_algorithm.is_empty() && config.preferred_jws_algorithm == "ES512" {
                     return Err(Error::new(
                         "ES512 ID tokens are not supported; choose ES256, ES384, RS*, PS* or EdDSA",
                     ));
                 }
+                // the keys and the endpoints the server fetches, and the one the browser is sent to, are https
+                let named = [
+                    ("authorization endpoint", metadata.authorization_endpoint.as_ref()),
+                    ("token endpoint", Some(&metadata.token_endpoint)),
+                    (
+                        "pushed authorization endpoint",
+                        metadata.pushed_authorization_request_endpoint.as_ref(),
+                    ),
+                    ("user info endpoint", metadata.userinfo_endpoint.as_ref()),
+                    ("jwks_uri", metadata.jwks_uri.as_ref()),
+                ];
+                for (what, url) in named {
+                    if let Some(url) = url {
+                        secure_url(&url.to_string(), &format!("{what} of {discovery}"))?;
+                    }
+                }
+                metadata.id_token_signing_alg_values_supported = Some(id_token_algorithms(
+                    config,
+                    metadata.id_token_signing_alg_values_supported.as_deref(),
+                )?);
                 let secret = if config.client_type == "OctApple" {
                     apple_client_secret(config)?
                 } else {
@@ -452,6 +534,17 @@ impl Inner {
                         "SSO flow {}: an OAuth 2 flow needs authorizeUrl and tokenUrl",
                         flow.auth_flow_id
                     )));
+                }
+                // the endpoints are https as an OpenID provider's are, this machine on an instance that is not
+                // production aside (SEC-WEB-93)
+                for (url, what) in [
+                    (&authorize, "authorization endpoint"),
+                    (&token, "token endpoint"),
+                    (&user_info, "user info endpoint"),
+                ] {
+                    if !url.is_empty() {
+                        secure_url(url, what)?;
+                    }
                 }
                 let grant = AuthorizationCodeGrant::builder()
                     .authorization_endpoint(endpoint(&authorize, "authorize")?)
@@ -559,6 +652,9 @@ impl Inner {
             let info = self
                 .user_info(user_info, &access_token, post, flow.deny_internal)
                 .await?;
+            if matches!(flow.kind, FlowKind::Oidc(_)) {
+                same_subject(&flow.auth_flow_id, attributes.get("sub"), info.get("sub"))?;
+            }
             for (name, value) in info {
                 attributes.entry(name).or_insert(value);
             }

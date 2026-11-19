@@ -367,11 +367,35 @@ fn an_ssh_key_sign_in_is_a_persons_and_clears_has_logged_out() {
     login_user("key.user", "Secret1!").unwrap();
     logout().unwrap();
     assert_eq!(flag(), "Y");
-    login_ssh_key_user("key.user").unwrap();
+    login_ssh_key_user("key.user", "").unwrap();
     assert_eq!(session::current_username().unwrap().as_deref(), Some("key.user"));
     assert_eq!(flag(), "N", "a key sign-in is a person's");
     logout_local().unwrap();
     assert_eq!(flag(), "N", "an operation's borrowed login ends without a sign-out");
+    session::reset_session();
+}
+
+/// SEC-FIL-89: an SSH key sign-in checks the account's ipAllowed against the SSH peer, as the SSH password login does,
+/// and is recorded in the login history.
+#[test]
+fn an_ssh_key_sign_in_checks_ip_allowed_and_is_recorded() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ssh.key", "Secret1!", |value| {
+        value.set("ipAllowed", Value::string("10.1.*.*"));
+    });
+    assert!(login_ssh_key_user("ssh.key", "192.0.2.10").is_err());
+    assert!(session::current_username().unwrap().is_none());
+    login_ssh_key_user("ssh.key", "10.1.2.3").unwrap();
+    assert_eq!(session::current_username().unwrap().as_deref(), Some("ssh.key"));
+    logout_local().unwrap();
+    let history = facade
+        .find(USER_LOGIN_HISTORY)
+        .unwrap()
+        .eq("userId", Value::string("ssh.key"))
+        .list()
+        .unwrap();
+    assert!(!history.is_empty(), "a key sign-in leaves a history row");
     session::reset_session();
 }
 
@@ -714,9 +738,33 @@ fn a_login_once_the_account_is_known_leaves_one_history_row_a_minute() {
     assert_eq!(text(row, "successfulLogin"), "N");
     // The password tried is never stored: the entity has no field for it.
     assert!(row.get("passwordUsed").is_none());
-    // A second login within the minute is not kept.
+    // SEC-WEB-85: a success claims a minute of its own, so a wrong password first does not keep it out (nor the
+    // new-device notice its row starts); a second success of the same visit within the minute is not kept.
     login_user("ada", "Secret1!").unwrap();
-    assert_eq!(history("ada").len(), 1);
+    let rows = history("ada");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| text(row, "successfulLogin") == "Y"));
+    logout().unwrap();
+    login_user("ada", "Secret1!").unwrap();
+    assert_eq!(history("ada").len(), 2);
+    logout().unwrap();
+    // SEC-WEB-85: the sign-in a second factor finishes is recorded as a success
+    let mut group = facade.make_value("moqui.security.UserGroup").unwrap();
+    group.set("userGroupId", Value::string("FACTOR"));
+    group.set("requireAuthcFactor", Value::string("Y"));
+    group.create(&facade).unwrap();
+    create_user(&facade, "fay", "Secret1!", |_| {});
+    let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userGroupId", Value::string("FACTOR"));
+    member.set("userId", Value::string("fay"));
+    member.set("fromDate", stamp(1));
+    member.create(&facade).unwrap();
+    login_user("fay", "Secret1!").unwrap();
+    assert!(session::current_username().unwrap().is_none());
+    internal_login_user("fay").unwrap();
+    let rows = history("fay");
+    assert_eq!(rows.len(), 2, "the password step and the factor's finish");
+    assert!(rows.iter().any(|row| text(row, "successfulLogin") == "Y"));
     logout().unwrap();
 
     create_user(&facade, "bob", "Secret1!", |_| {});
@@ -973,7 +1021,7 @@ fn a_verified_app_password_sign_in_checks_ip_allowed_and_is_recorded() {
     assert!(history.iter().any(|row| text(row, "successfulLogin") == "Y"));
 
     let refused = with_client_ip("192.0.2.10", || login_verified_app_password("xmpp", Some("AP_XMPP")));
-    assert!(refused.unwrap_err().to_string().contains("not in allowed list"));
+    assert_eq!(refused.unwrap_err().to_string(), INVALID_LOGIN);
     assert!(session::current_username().unwrap().is_none());
 
     assert_eq!(
@@ -1239,10 +1287,13 @@ fn ip_allowed_on_the_account_or_a_group_refuses_another_client_ip() {
     assert_eq!(session::current_username().unwrap().as_deref(), Some("ada"));
     logout().unwrap();
     from("192.168.0.4");
+    // SEC-WEB-90: refused before the password is compared, with the invalid login error, so the right password and a
+    // wrong one get the same answer there and neither names the address
     let refused = login_user("ada", "Secret1!").unwrap_err().to_string();
-    assert!(refused.contains("not in allowed list"), "{refused}");
+    assert_eq!(refused, INVALID_LOGIN);
+    assert_eq!(login_user("ada", "Wrong1!!").unwrap_err().to_string(), INVALID_LOGIN);
     assert!(session::current_username().unwrap().is_none());
-    // Not a failed password: the count is not raised.
+    // No password was compared: the count is not raised.
     assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 0);
     // The internal login after a second-factor code is checked as well.
     assert!(internal_login_user("ada").is_err());
@@ -1618,4 +1669,102 @@ fn a_password_stays_valid_with_change_weeks_zero_and_the_shipped_default_rotates
         Ok(()),
         "younger than the shipped default"
     );
+}
+
+/// SEC-WEB-84: an account with no password (it signs in through an identity provider) confirms who it is by a code to
+/// its verified address, whatever its provider does: the code alone is a recent sign-in, a wrong one counts as a failed
+/// login, and an account with a password or without a verified address is offered none.
+#[test]
+fn an_account_without_a_password_confirms_by_a_code_to_its_verified_address() {
+    session::reset_session();
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::bounded(2, 16),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    {
+        let _authz = ctx.disable_authz();
+        crate::service::load_definitions().unwrap();
+    }
+    create_user(&facade, "sso.only", "unused", |value| {
+        value.set("currentPassword", Value::Null);
+        value.set("emailAddress", Value::string("sso.only@example.com"));
+    });
+    create_user(&facade, "unverified", "unused", |value| {
+        value.set("currentPassword", Value::Null);
+        value.set("emailAddress", Value::string("unverified@example.com"));
+    });
+    create_user(&facade, "with.password", "Secret1!", |value| {
+        value.set("emailAddress", Value::string("with.password@example.com"));
+    });
+    for user in ["sso.only", "with.password"] {
+        let mut verified = facade.make_value("moqui.security.public.VerifiedAddress").unwrap();
+        verified.set("userId", Value::string(user));
+        verified.set("emailAddress", Value::string(format!("{user}@example.com")));
+        verified.set("verifiedAt", stamp(1));
+        verified.create(&facade).unwrap();
+    }
+    assert!(crate::user::reauth_email_code_offered("sso.only").unwrap());
+    assert!(!crate::user::reauth_email_code_offered("unverified").unwrap());
+    assert!(!crate::user::reauth_email_code_offered("with.password").unwrap());
+
+    internal_login_user("unverified").unwrap();
+    assert!(crate::user::send_reauth_email_code().is_err(), "no verified address");
+    logout_local().unwrap();
+
+    internal_login_user("sso.only").unwrap();
+    assert!(!recent_auth(300_000));
+    let made = {
+        let _authz = ctx.disable_authz();
+        crate::service::sync(
+            "org.moqui.impl.UserServices.create#SingleUseAuthcFactor",
+            &BTreeMap::from([
+                ("userId".to_string(), Value::string("sso.only")),
+                ("fromFactorId".to_string(), Value::string("UserAccountEmail")),
+            ]),
+        )
+        .unwrap()
+    };
+    let code = moqui_lib::object::to_plain_string(&made["code"]);
+    assert!(crate::user::reauthenticate("", "000000x").is_err(), "a wrong code");
+    assert_eq!(i64_field(&load_user(&facade, "sso.only"), "successiveFailedLogins"), 1);
+    assert_eq!(
+        crate::user::reauthenticate("", &code).unwrap(),
+        crate::user::CodeLogin::LoggedIn
+    );
+    assert!(recent_auth(300_000));
+
+    // a mailed code is good for ten minutes, and at most five go to the address in an hour, whatever the session
+    let codes = || {
+        facade
+            .find("moqui.security.UserAuthcFactor")
+            .unwrap()
+            .eq("userId", Value::string("sso.only"))
+            .eq("fromFactorId", Value::string("UserAccountEmail"))
+            .list()
+            .unwrap()
+    };
+    let before = codes().len();
+    crate::user::send_reauth_email_code().unwrap();
+    let rows = codes();
+    assert_eq!(rows.len(), before + 1);
+    let newest = rows
+        .iter()
+        .max_by_key(|row| moqui_lib::object::to_plain_string(row.get("fromDate").unwrap()))
+        .unwrap();
+    let millis = |name: &str| field_millis(newest, name).unwrap_or_default();
+    let good_for = millis("thruDate") - millis("fromDate");
+    assert!((9 * 60_000..=10 * 60_000 + 5_000).contains(&good_for), "{good_for}");
+    for _ in 0..3 {
+        session::set_session_attribute("moquiReauthCodeSent", None);
+        crate::user::send_reauth_email_code().unwrap();
+    }
+    session::set_session_attribute("moquiReauthCodeSent", None);
+    let refused = crate::user::send_reauth_email_code().unwrap_err();
+    assert!(refused.to_string().contains("too many times"), "{refused}");
+    logout_local().unwrap();
+    session::reset_session();
 }
