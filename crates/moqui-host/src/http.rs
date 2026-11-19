@@ -1826,20 +1826,23 @@ pub(crate) fn forwarded_https(
     peer: IpAddr,
     addressing: &moqui_core::web::address::ClientAddressing,
 ) -> bool {
-    if !addressing.believes(peer) {
-        return false;
-    }
-    headers
-        .get("x-forwarded-proto")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(',')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .eq_ignore_ascii_case("https")
-        })
+    forwarded(headers, peer, addressing, "x-forwarded-proto").is_some_and(|proto| proto.eq_ignore_ascii_case("https"))
+}
+
+/// A believed proxy's forwarding header `name` (`x-forwarded-proto`, `-host`, `-port`) of a request from `peer`, read
+/// from the hop the client address is read from, never a value the client sent ahead of a proxy that appends
+/// (`ClientAddressing::forwarded_value`, SEC-WEB-91); `None` when the peer is not believed.
+pub(crate) fn forwarded(
+    headers: &axum::http::HeaderMap,
+    peer: IpAddr,
+    addressing: &moqui_core::web::address::ClientAddressing,
+    name: &str,
+) -> Option<String> {
+    let header = |name: &str| headers.get(name).and_then(|value| value.to_str().ok());
+    let client = (!addressing.header().is_empty())
+        .then(|| header(addressing.header()))
+        .flatten();
+    addressing.forwarded_value(peer, client, header(name))
 }
 
 /// Whether credentials may be taken over a request's transport: the listener's TLS, a believed proxy's

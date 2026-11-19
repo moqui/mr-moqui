@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 
 use crate::channel_body::{ChannelBody, Chunk};
 use crate::guard::Event;
-use crate::http::{forwarded_https, plain, read_body, secure_request, ClientAddr, HttpState, TlsConnection};
+use crate::http::{forwarded, forwarded_https, plain, read_body, secure_request, ClientAddr, HttpState, TlsConnection};
 
 /// The largest request body.
 const MAX_BODY: usize = 4 * 1024 * 1024;
@@ -147,9 +147,10 @@ pub(crate) fn origin_of(state: &HttpState, headers: &HeaderMap, over_tls: bool, 
         https: over_tls || forwarded_https(headers, peer.ip(), state.guard.conf().addressing()),
         believed: state.guard.conf().addressing().believes(peer.ip()),
         host: header(headers, "host"),
-        forwarded_proto: header(headers, "x-forwarded-proto"),
-        forwarded_host: header(headers, "x-forwarded-host"),
-        forwarded_port: header(headers, "x-forwarded-port"),
+        // a believed proxy's own values, from the hop the client address is read from (SEC-WEB-91)
+        forwarded_proto: forwarded(headers, peer.ip(), state.guard.conf().addressing(), "x-forwarded-proto"),
+        forwarded_host: forwarded(headers, peer.ip(), state.guard.conf().addressing(), "x-forwarded-host"),
+        forwarded_port: forwarded(headers, peer.ip(), state.guard.conf().addressing(), "x-forwarded-port"),
     }
 }
 
