@@ -51,24 +51,49 @@ impl Component {
     }
 }
 
+/// The deepest components nest in a file read (SEC-FIL-82). iCalendar needs four (VCALENDAR, VEVENT, VALARM, and
+/// RFC 9073's VLOCATION in a PARTICIPANT); a component deeper than this is left out with all it holds. A component's
+/// drop recurses once for each level it holds, so an unbounded depth would overflow the stack and end the process.
+const MAX_DEPTH: usize = 8;
+/// The most components a file read holds; the rest of a file past them is left out (logged).
+pub(crate) const MAX_COMPONENTS: usize = 100_000;
+
 fn components(text: &str) -> Vec<Component> {
     let mut top = Vec::new();
     let mut stack: Vec<Component> = Vec::new();
+    // components open past MAX_DEPTH, left out
+    let mut skipped = 0usize;
+    let mut count = 0usize;
     for logical in line::unfold(text) {
         let Some(property) = line::parse_line(&logical) else {
             continue;
         };
         match property.name.as_str() {
-            "BEGIN" => stack.push(Component {
-                name: property.value.trim().to_ascii_uppercase(),
-                ..Default::default()
-            }),
+            "BEGIN" if stack.len() >= MAX_DEPTH || skipped > 0 => {
+                if skipped == 0 {
+                    tracing::warn!("a calendar component nested deeper than {MAX_DEPTH} levels was left out");
+                }
+                skipped += 1;
+            }
+            "BEGIN" => {
+                count += 1;
+                if count > MAX_COMPONENTS {
+                    tracing::warn!("a calendar file has more than {MAX_COMPONENTS} components; the rest was left out");
+                    break;
+                }
+                stack.push(Component {
+                    name: property.value.trim().to_ascii_uppercase(),
+                    ..Default::default()
+                });
+            }
             "END" => {
                 let name = property.value.trim().to_ascii_uppercase();
                 // an END without its BEGIN is left out; one that closes an outer component closes those inside too
                 if !stack.iter().any(|component| component.name == name) {
+                    skipped = skipped.saturating_sub(1);
                     continue;
                 }
+                skipped = 0;
                 while let Some(component) = stack.pop() {
                     let done = component.name == name;
                     match stack.last_mut() {
@@ -80,6 +105,7 @@ fn components(text: &str) -> Vec<Component> {
                     }
                 }
             }
+            _ if skipped > 0 => {}
             _ => {
                 if let Some(component) = stack.last_mut() {
                     component.properties.push(property);
