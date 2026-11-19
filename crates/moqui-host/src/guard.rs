@@ -56,6 +56,8 @@ const SHARDS: usize = 32;
 const DEFAULT_MAX_PER_CLIENT: usize = 64;
 const DEFAULT_MAX_TRACKED: usize = 100_000;
 const DEFAULT_RETRY_AFTER: u64 = 5;
+/// How long a scan of a full client table that found no idle client is believed ([`Guard::evict_idle`]).
+const NO_IDLE_FOR: Duration = Duration::from_secs(1);
 /// How often a full client table logs that it refuses new clients.
 const UNTRACKED_LOG_EVERY: Duration = Duration::from_secs(60);
 const DEFAULT_QUEUE_TIMEOUT: u64 = 10;
@@ -716,6 +718,8 @@ pub(crate) struct Guard {
     ci_keys: std::hash::RandomState,
     /// The shard [`Self::evict_idle`] looks in first, turned by one each time.
     evict_from: AtomicUsize,
+    /// Until when, nanoseconds after [`Self::epoch`], a scan found no idle client ([`Self::evict_idle`]).
+    no_idle_until: AtomicU64,
     /// When a full table last logged a refused client, nanoseconds after [`Self::epoch`]; 0 for never.
     untracked_logged: AtomicU64,
 }
@@ -753,6 +757,7 @@ impl Guard {
             ci_keys: std::hash::RandomState::new(),
             evict_from: AtomicUsize::new(0),
             untracked_logged: AtomicU64::new(0),
+            no_idle_until: AtomicU64::new(0),
         }
     }
 
@@ -877,7 +882,7 @@ impl Guard {
                     .is_ok()
             {
                 tracing::warn!(
-                    "web protection: the client table is full ({} clients, none idle) and new clients are refused; \
+                    "web protection: the client table is full ({} clients, each holding a connection) and new clients are refused; \
                      {} so far (max-tracked-clients)",
                     self.conf().max_tracked,
                     self.counts.untracked.load(Ordering::Relaxed)
@@ -904,21 +909,42 @@ impl Guard {
         Some(body(client, now))
     }
 
-    /// Drop the client seen longest ago that has no connection and no ban, from the first shard after the last one
-    /// that gave one up which has such a client: one shard's scan, not the table's, for each new client while it is
-    /// full. False when no shard has one.
+    /// Make room for a new client in a full table: drop the client seen longest ago that has no connection and no ban,
+    /// from the first shard after the last one that gave one up which has such a client; when none is idle, the banned
+    /// one without a connection whose ban ends soonest, from the first such shard, so a table filled with bans (a /47
+    /// of IPv6 /64s, each banned) does not refuse every new client (SEC-WEB-83). A scan that found no idle client is
+    /// remembered for [`NO_IDLE_FOR`], in which a new client goes straight to the bans: one shard's scan, not the
+    /// table's, for each. False when every client holds a connection.
     fn evict_idle(&self, now: u64) -> bool {
         let start = self.evict_from.fetch_add(1, Ordering::Relaxed);
+        if now >= self.no_idle_until.load(Ordering::Relaxed) {
+            for offset in 0..SHARDS {
+                let mut shard = moqui_lib::sync::lock(&self.shards[(start + offset) % SHARDS]);
+                let oldest = shard
+                    .iter()
+                    .filter(|(_, client)| client.connections == 0 && client.banned_until <= now)
+                    .min_by_key(|(_, client)| client.seen)
+                    .map(|(key, _)| *key);
+                if let Some(oldest) = oldest {
+                    shard.remove(&oldest);
+                    self.tracked.fetch_sub(1, Ordering::Relaxed);
+                    return true;
+                }
+            }
+            self.no_idle_until
+                .store(now.saturating_add(nanos(NO_IDLE_FOR)), Ordering::Relaxed);
+        }
         for offset in 0..SHARDS {
             let mut shard = moqui_lib::sync::lock(&self.shards[(start + offset) % SHARDS]);
-            let oldest = shard
+            let soonest = shard
                 .iter()
-                .filter(|(_, client)| client.connections == 0 && client.banned_until <= now)
-                .min_by_key(|(_, client)| client.seen)
+                .filter(|(_, client)| client.connections == 0)
+                .min_by_key(|(_, client)| client.banned_until)
                 .map(|(key, _)| *key);
-            if let Some(oldest) = oldest {
-                shard.remove(&oldest);
+            if let Some(soonest) = soonest {
+                shard.remove(&soonest);
                 self.tracked.fetch_sub(1, Ordering::Relaxed);
+                tracing::debug!("web protection: the client table is full of bans; the ban of {soonest} that ends soonest made room");
                 return true;
             }
         }
@@ -1125,7 +1151,7 @@ impl Guard {
     }
 
     /// Count a request of `client` against each rate limit `applies` picks: a 429 past one's burst (which then takes
-    /// nothing from the others), and a 503 when the table is full with no idle client to drop.
+    /// nothing from the others), and a 503 when the table is full with every client holding a connection.
     fn limit(&self, key: IpAddr, client: IpAddr, applies: impl Fn(&RateLimit) -> bool) -> Result<(), Refused> {
         let limits = &self.conf().rate_limits;
         let waited = self.with_client(key, |client_state, now| {
@@ -1152,7 +1178,7 @@ impl Guard {
             None
         });
         let Some(waited) = waited else {
-            // a full table with no idle client to drop: refused, not served without the limits
+            // a full table with every client holding a connection: refused, not served without the limits
             return Err(Refused {
                 response: Box::new(self.unavailable("the server is busy; try again")),
             });

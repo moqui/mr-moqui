@@ -297,6 +297,36 @@ fn a_full_table_drops_an_idle_client_and_refuses_when_none_is_idle() {
     assert_eq!(status(&guard, "203.0.113.8", "GET", "/"), 200);
 }
 
+/// SEC-WEB-83: a table full of bans makes room for a new client by a ban (the one that ends soonest in the first shard
+/// that has one), so bans of many addresses do not refuse every other client; the new client is limited as any is.
+#[test]
+fn a_table_full_of_bans_drops_a_ban_for_a_new_client() {
+    let guard = guard(
+        r#"<web-protection enabled="true" max-tracked-clients="2">
+                <rate-limit name="all" requests="1" seconds="60" burst="1"/>
+                <ban name="auth-failure" events="auth-failure" threshold="1" seconds="600" duration="900"/>
+                <ban name="denied" events="denied" threshold="1" seconds="600" duration="60"/>
+            </web-protection>"#,
+        "",
+    );
+    // 203.0.113.30 is banned for 900 seconds, 203.0.113.31 for 60: the table holds only bans
+    guard.record(ip("203.0.113.30"), Event::AuthFailure);
+    guard.record(ip("203.0.113.31"), Event::Denied);
+    assert_eq!(status(&guard, "203.0.113.30", "GET", "/"), 403);
+    assert_eq!(status(&guard, "203.0.113.31", "GET", "/"), 403);
+    // a new client is served, limited, in the place of one ban; the other stays
+    assert_eq!(status(&guard, "203.0.113.32", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.32", "GET", "/"), 429);
+    let banned = ["203.0.113.30", "203.0.113.31"]
+        .iter()
+        .filter(|client| guard.check(ip(client), ip(client), "", "GET", "/", &HeaderMap::new()).is_err())
+        .count();
+    assert!(banned >= 1, "one ban stays");
+    // a second new client within the second goes straight to the bans
+    assert!(guard.admit(ip("203.0.113.33")).is_some());
+    assert!(guard.metrics().contains("edge_untracked 0\n"), "{}", guard.metrics());
+}
+
 #[test]
 fn the_default_conf_is_off_until_there_are_trusted_proxies() {
     let text = std::fs::read_to_string(concat!(
