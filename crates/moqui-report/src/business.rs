@@ -80,6 +80,31 @@ fn reads_document(ec: &ExecutionContext, document: &str) -> Result<bool, Error> 
     Ok(reads)
 }
 
+/// Refused unless every group that reads `document` (its `DataDocumentUserGroup` rows) is one of the caller's own: a
+/// field of a related entity added to the document is read by all of them (SEC-TLS-92).
+fn check_readers_own(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
+    let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
+        .map_err(fail)?;
+    let rows = metadata(ec, || {
+        entity(ec)?
+            .find(DOCUMENT_GROUP)?
+            .eq("dataDocumentId", Value::string(document))
+            .list()
+    })?;
+    let others = rows
+        .iter()
+        .filter_map(|row| row.get("userGroupId").and_then(Value::as_str))
+        .filter(|group| !groups.contains(*group))
+        .count();
+    if others > 0 {
+        return Err(fail(format!(
+            "document {document} is read by {others} group(s) you are not in; a field of a related entity would widen \
+             what they read, so it is added by a steward in every group that reads the document"
+        )));
+    }
+    Ok(())
+}
+
 /// The steward's check before dataset `id` is made over its document, changes it or builds its index (SEC-TLS-92): the
 /// document is one a group of theirs reads; and for a change of its fields or conditions (`changes`), every other
 /// dataset over it, shipped or saved, business or not (by its document, its own id, or its document's index), is one
@@ -979,6 +1004,11 @@ pub fn store_business_dataset_fields(
             (None, Some(old)) => old.to_owned(),
             (None, None) => return Err(fail("a new field needs a field path")),
         };
+        // a field of a related entity is read from the index by every reader group of the document: the steward adds
+        // one only where those groups are all their own, so no other group's reads widen (SEC-TLS-92)
+        if path.contains(':') && old_path != Some(path.as_str()) {
+            check_readers_own(ec, &document)?;
+        }
         let alias = change["fieldNameAlias"].as_str().unwrap_or("");
         if !alias.is_empty() && !plain_name(alias) {
             return Err(fail(format!("field name {alias} must be letters, digits or _")));

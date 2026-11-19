@@ -834,3 +834,21 @@ feature("a steward changes a document only when it is theirs: one their groups r
         inherited.includes("was not added by dataset bds-left")
     }
 })
+
+feature("a field of a related entity is added only by a steward in every group that reads the document (SEC-TLS-92)", {
+    when() {
+        // a group the steward is not in reads the document too
+        sys(() => {
+            make("moqui.security.UserGroup", {userGroupId: "BDS_OTHER_READERS", description: "Business datasets spec"})
+            make("moqui.entity.document.DataDocumentUserGroup", {dataDocumentId: types.fed, userGroupId: "BDS_OTHER_READERS"})
+        })
+        const related = asSteward(R + "store#BusinessDatasetFields", {
+            datasetId: "bds-sales",
+            fields: [{fieldPath: "type:description", fieldNameAlias: "typeName"}]
+        })
+        return {related: related.error || ""}
+    },
+    then({related}) {
+        related.includes("group(s) you are not in")
+    }
+})
