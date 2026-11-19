@@ -355,8 +355,7 @@ pub fn reauthenticate(password: &str, code: &str) -> Result<CodeLogin, Error> {
         )?;
         if !validated.get("verified").is_some_and(truthy) {
             // a refused code leaves the password checked, so the user may try another code; it counted as a failed
-            // login (validate#UserAuthcFactorCode) and is noted for the web protection as a wrong password is
-            crate::web::note_auth_failure();
+            // login and was noted for the web protection as a wrong password is (login.rs check_counted_code)
             return code_needed(true);
         }
     }

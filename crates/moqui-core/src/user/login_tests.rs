@@ -84,6 +84,103 @@ fn concurrent_logins_of_one_user_leave_one_history_row() {
     assert_eq!(rows.len(), 1);
 }
 
+/// SEC-WEB-87: a second factor's code that counts as a login is compared behind the password's gate. With one failure
+/// left and that place held, even the right code is counted and not compared, and locks the account. Codes sent at
+/// once lock the account.
+#[test]
+fn codes_sent_at_once_are_gated_and_each_counted() {
+    session::reset_session();
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::bounded(2, 16),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    {
+        let _authz = ctx.disable_authz();
+        crate::service::load_definitions().unwrap();
+    }
+    create_user(&facade, "codes", "Secret1!", |value| {
+        value.set("successiveFailedLogins", Value::I64(policy::max_failures()));
+    });
+    let mut factor = facade.make_value("moqui.security.UserAuthcFactor").unwrap();
+    factor.set("factorId", Value::string("CODES_1"));
+    factor.set("userId", Value::string("codes"));
+    factor.set("factorTypeEnumId", Value::string("UafSingleUse"));
+    factor.set(
+        "factorOption",
+        Value::string(super::super::factor::single_use_hash("70316001").unwrap()),
+    );
+    factor.set("fromDate", stamp(now_millis() - 60_000));
+    factor.create(&facade).unwrap();
+    let factory = Arc::clone(ctx.factory());
+    // a code of the pre-authenticated user, as `/rest/verifyOtp` and `Login/login` send it
+    let send = move |code: &'static str| {
+        let factory = Arc::clone(&factory);
+        std::thread::spawn(move || {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _web = crate::web::install(BTreeMap::new());
+            session::set_session_attribute(PRE_AUTHC_USERNAME, Some("codes"));
+            let parameters = BTreeMap::from([("code".to_string(), Value::string(code))]);
+            let out = crate::service::sync(super::super::factor::VALIDATE_CODE, &parameters).unwrap();
+            let errors = context.message().errors().join("; ");
+            assert!(errors.is_empty(), "{errors}");
+            out.get("verified") == Some(&Value::Bool(true))
+        })
+    };
+
+    // the one place held by a code being checked: the right code past it is counted and not compared, which locks
+    let held = LoginCheck::enter("codes", 1).expect("the one place");
+    assert!(
+        !send("70316001").join().unwrap(),
+        "a code past the failures left is not compared"
+    );
+    drop(held);
+    let account = load_user(&facade, "codes");
+    assert_eq!(
+        i64_field(&account, "successiveFailedLogins"),
+        policy::max_failures() + 1
+    );
+    assert_eq!(
+        text(&account, "disabled"),
+        "Y",
+        "the code past the failures left locked the account"
+    );
+
+    // unlocked, twelve codes at once, the right one among them: each refused one counted once, and the account locked
+    update_user(
+        &facade,
+        "codes",
+        &[
+            ("successiveFailedLogins", Value::I64(0)),
+            ("disabled", Value::string("N")),
+            ("disabledDateTime", Value::Null),
+        ],
+    )
+    .unwrap();
+    let mut burst: Vec<_> = (0..11).map(|_| send("22222222")).collect();
+    burst.push(send("70316001"));
+    let verified = burst
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .filter(|verified| *verified)
+        .count();
+    let account = load_user(&facade, "codes");
+    let counted = i64_field(&account, "successiveFailedLogins");
+    // The test database's transactions each work on a snapshot with no row lock, so two counts committed together can
+    // still keep one; on Postgres the update waits for the other and counts again (write_failed_increment), which the
+    // security proof V6Authentication 6.6.3 shows. Here: no more than the failures left were compared, and it locked.
+    assert_eq!(
+        text(&account, "disabled"),
+        "Y",
+        "counted {counted}, verified {verified}"
+    );
+    assert!(counted > policy::max_failures(), "counted {counted}");
+}
+
 #[test]
 fn concurrent_logins_of_one_user_all_succeed() {
     let (ctx, facade) = open_ctx();

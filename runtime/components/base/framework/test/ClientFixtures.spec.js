@@ -7,8 +7,8 @@
 // (ipAllowed only; login is not tried here), sec.key.http (a known login key), sec.mfa.totp (a single-use factor;
 // password login is not tried here) and sec.tap.user (a service tarpit and the setPreference transition), plus the
 // SEC_SMT_TEST system-message remotes. The security proofs (test/proofs) also get sec.pw.proof and sec.pw.long, whose
-// passwords they change, and sec.mfa.proof (two single-use codes), which they lock with wrong codes, so these are set
-// again on every run. moqui test-client framework --serve runs this spec on
+// passwords they change, and sec.mfa.proof (two single-use codes) and sec.mfa.burst (one), which they lock with wrong
+// codes, so these are set again on every run. moqui test-client framework --serve runs this spec on
 // its server's scratch database; for another server run it on that server's database:
 //     moqui test framework --spec ClientFixtures --db existing
 // Each row is made only when it is missing, so a database kept between runs takes it again. These users are not demo
@@ -189,6 +189,10 @@ spec({
             const mfaProofId = ensureUser({ username: "sec.mfa.proof", password: "SecMfaProof1!!", group: "SEC_NONE_GROUP" })
             for (const [factorId, code] of Object.entries(MFA_PROOF_CODES)) ensureMfa(mfaProofId, factorId, code)
             updateAccount({ userId: mfaProofId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
+            // the burst proof (6.6.3) locks it with wrong codes sent at once: unlocked on every run
+            const mfaBurstId = ensureUser({ username: "sec.mfa.burst", password: "SecMfaBurst1!!", group: "SEC_NONE_GROUP" })
+            ensureMfa(mfaBurstId, "SEC_MFA_BURST", "70316003")
+            updateAccount({ userId: mfaBurstId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
 
             ensure("moqui.service.message.SystemMessageType", { systemMessageTypeId: "SEC_SMT_TEST" },
                 { description: "Security test message type" })

@@ -590,9 +590,10 @@
                 <overload queue-timeout="10" retry-after="5"/>
 
                 <rate-limit name="all" requests="50" seconds="1" burst="500"/>
-                <!-- the password and code checks; with PASS sign-in (public/Account.js startSession, completeSession) at
+                <!-- the password and code checks (a second factor's code at /rest/verifyOtp, and its sending, too:
+                    SEC-WEB-87); with PASS sign-in (public/Account.js startSession, completeSession) at
                     its servlet path -->
-                <rate-limit name="login" path="/Login/**,/rest/login,/rest/login/**,/SecondFactor/**,/ChangePassword/**,/rest/s1/pass/v1/sites/*/account/session,/rest/s1/pass/v1/sites/*/account/challenge" methods="POST"
+                <rate-limit name="login" path="/Login/**,/rest/login,/rest/login/**,/rest/verifyOtp,/rest/sendOtp,/SecondFactor/**,/ChangePassword/**,/rest/s1/pass/v1/sites/*/account/session,/rest/s1/pass/v1/sites/*/account/challenge" methods="POST"
                         requests="10" seconds="60" burst="10"/>
                 <!-- git with no credentials (a clone or fetch of a public repository, its LFS files; a clone is three or
                     more requests), under /git/ and at a page's URL on a public-site host. A signed-in client is not

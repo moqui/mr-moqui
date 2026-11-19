@@ -185,17 +185,24 @@ fn gate_password(
             password::burn_verify(password);
             return Err(Error::new(INVALID_LOGIN));
         };
-        if let Err(err) = gate_account(facade, &account, now, true) {
-            password::burn_verify(password);
-            return Err(err);
+        match gate_once(facade, &account, now) {
+            Err(err) => {
+                password::burn_verify(password);
+                return Err(err);
+            }
+            Ok(Some(checking)) => return Ok((account, checking)),
+            Ok(None) => LoginCheck::wait(&text_field(&account, "userId")),
         }
-        let left = policy::max_failures() + 1 - field_i64(&account, "successiveFailedLogins").unwrap_or(0);
-        let user_id = text_field(&account, "userId");
-        if let Some(checking) = LoginCheck::enter(&user_id, left) {
-            return Ok((account, checking));
-        }
-        LoginCheck::wait(&user_id);
     }
+}
+
+/// One pass of the gate in front of a credential that counts as a login when wrong (a password, a second factor's
+/// code): [`gate_account`], then a place among the user's checks running now, `None` when the failures the account has
+/// left are all taken.
+fn gate_once(facade: &EntityFacade, account: &EntityValue, now: i64) -> Result<Option<LoginCheck>, Error> {
+    gate_account(facade, account, now, true)?;
+    let left = policy::max_failures() + 1 - field_i64(account, "successiveFailedLogins").unwrap_or(0);
+    Ok(LoginCheck::enter(&text_field(account, "userId"), left))
 }
 
 /// The old password of a password change (`update#Password`, `ec.user.checkOldPassword`), behind the gate of a password
@@ -239,6 +246,78 @@ fn old_password_ok(user_id: &str, old_password: &str) -> Result<bool, Error> {
     }
     increment_failed(&facade, &text_field(&account, "userId"))?;
     Ok(false)
+}
+
+/// Count a failed login of `user_id` (`increment#UserAccountFailedLogins`, `ec.user.countFailedLogin`), as a wrong
+/// password is counted ([`increment_failed`]): committed at once, and each of failures counted at once counted.
+///
+/// # Errors
+///
+/// Returns a storage error, and an error when there is no such account.
+pub fn count_failed_login(user_id: &str) -> Result<(), Error> {
+    let _authz = without_authz();
+    increment_failed(&entity_facade()?, user_id)
+}
+
+/// The service that compares a code with the user's factors, with no count (`UserServices.xml`).
+const COMPARE_CODE: &str = "org.moqui.impl.UserServices.compare#UserAuthcFactorCode";
+
+/// A second factor's code that stands in for a login (`validate#UserAuthcFactorCode` with `countFailure`,
+/// `ec.user.checkCountedCode`), behind the gate of a password login ([`gate_once`]): an unknown or terminated account
+/// is refused, one still disabled is counted and refused with its code unchecked, no more of the user's codes are
+/// compared at once than the failures the account has left, and a wrong code counts as a failed login by the password's
+/// compare-and-set ([`increment_failed`]). A code past the failures left is counted and refused unchecked rather than
+/// kept waiting, as a password is: a code is checked inside its caller's transaction, whose connection a wait would
+/// hold. So codes sent at once are bounded by the lock as passwords are (SEC-WEB-87). A refusal and a wrong code are
+/// noted for the web protection. The factor the code was for, or `None`.
+///
+/// # Errors
+///
+/// Returns a storage error when the account cannot be read or the failure cannot be counted, and the compare
+/// service's errors.
+pub fn check_counted_code(user_id: &str, code: &str) -> Result<Option<String>, Error> {
+    if user_id.is_empty() {
+        crate::web::note_auth_failure();
+        return Ok(None);
+    }
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let Some(account) = find_user_id(&facade, user_id)? else {
+        crate::web::note_auth_failure();
+        return Ok(None);
+    };
+    let _checking = match gate_once(&facade, &account, now_millis()) {
+        Ok(Some(checking)) => checking,
+        Ok(None) => {
+            tracing::warn!("A second factor code of user {user_id} came past the failures left; counted, not checked");
+            increment_failed(&facade, user_id)?;
+            crate::web::note_auth_failure();
+            return Ok(None);
+        }
+        Err(err) if err.message() == INVALID_LOGIN => {
+            crate::web::note_auth_failure();
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let parameters = [("userId", user_id), ("code", code)]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), Value::string(value)))
+        .collect();
+    let compared = crate::service::sync(COMPARE_CODE, &parameters)?;
+    let verified = matches!(compared.get("verified"), Some(Value::Bool(true)))
+        || matches!(compared.get("verified"), Some(Value::String(text)) if text == "true");
+    let factor_id = verified.then(|| {
+        compared
+            .get("factorId")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    });
+    if factor_id.is_none() {
+        increment_failed(&facade, user_id)?;
+        crate::web::note_auth_failure();
+    }
+    Ok(factor_id)
 }
 
 /// Whether `plain` is the account's reset password (`reset#Password`, always argon2) and that is still in date; a

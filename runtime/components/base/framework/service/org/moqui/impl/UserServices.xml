@@ -187,22 +187,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="increment" noun="UserAccountFailedLogins" authenticate="anonymous-all" allow-remote="false">
         <in-parameters><parameter name="userId" required="true"/></in-parameters>
         <actions>
-            <entity-find-one entity-name="moqui.security.UserAccount" value-field="userAccount"/>
-            <script>userAccount.set("successiveFailedLogins", userAccount.get("successiveFailedLogins") ? userAccount.get("successiveFailedLogins") + 1 : 1)</script>
-            <set field="maxFailures" from="ec.user.loginRules.maxFailures"/>
-            <!-- if successiveFailedLogins is greater than max in conf then disable account, and after a lock window
-                 ended the next failure starts a new one. An attempt during a lock window counts but does not restart
-                 it, so attempts that go on cannot keep the account locked (SEC-WEB-03, as login.rs
-                 write_failed_increment). An account disabled for good (disabled with no disabledDateTime) stays so: a
-                 lock time would end by itself (SEC-WEB-01). -->
-            <set field="disabledForGood" from="userAccount.get('disabled') == 'Y' &amp;&amp; !userAccount.get('disabledDateTime')"/>
-            <set field="inLockWindow" from="userAccount.get('disabled') == 'Y' &amp;&amp; userAccount.get('disabledDateTime') &amp;&amp;
-                ec.user.timestampMillis(userAccount.get('disabledDateTime')) + ec.user.loginRules.disableMinutes * 60000 &gt; ec.user.timestampMillis(ec.user.nowTimestamp)"/>
-            <if condition="userAccount.get('successiveFailedLogins') > maxFailures &amp;&amp; !disabledForGood &amp;&amp; !inLockWindow">
-                <script>userAccount.set("disabled", "Y"); userAccount.set("disabledDateTime", ec.user.nowTimestamp)</script>
-            </if>
-            <log level="warn" message="User ${userId} failed logins [${userAccount.get('successiveFailedLogins')}], maxFailures [${maxFailures}], disabled [${userAccount.get('disabled')}]"/>
-            <entity-update value-field="userAccount"/>
+            <!-- The password's count (login.rs increment_failed): the update applies only to the count it read, so
+                 failures counted at once are each counted (SEC-WEB-87). Past max-failures the account locks for
+                 disable-minutes, and after a lock window ended the next failure starts a new one. An attempt during a
+                 lock window counts but does not restart it (SEC-WEB-03); an account disabled for good (disabled with no
+                 disabledDateTime) stays so, as a lock time would end by itself (SEC-WEB-01). -->
+            <script>ec.user.countFailedLogin(userId)</script>
+            <log level="warn" message="User ${userId} failed login counted"/>
         </actions>
     </service>
 
@@ -844,18 +835,36 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!accountActionOut.allowed"><return/></if>
 
             <if condition="countFailure">
-                <entity-find-one entity-name="moqui.security.UserAccount" value-field="codeAccount"/>
-                <if condition="codeAccount != null &amp;&amp; codeAccount.get('disabled') == 'Y' &amp;&amp; (!codeAccount.get('disabledDateTime') ||
-                        ec.user.timestampMillis(codeAccount.get('disabledDateTime')) + ec.user.loginRules.disableMinutes * 60000 &gt;
-                        ec.user.timestampMillis(ec.user.nowTimestamp))">
-                    <!-- still disabled: counted and not checked, as a login to a disabled account is -->
-                    <service-call name="org.moqui.impl.UserServices.increment#UserAccountFailedLogins"
-                            in-map="{userId: userId}" transaction="force-new"/>
-                    <return/>
-                </if>
+                <!-- Behind the gate of a password login (login.rs check_counted_code): an account still disabled is counted
+                    and its code not checked, no more of the user's codes are compared at once than the failures the
+                    account has left (one past them is counted and not compared), and a wrong code is counted by the
+                    password's compare-and-set, so codes sent at once cannot all be checked before the first is counted
+                    (SEC-WEB-87). -->
+                <set field="factorId" from="ec.user.checkCountedCode(userId, code)"/>
+                <set field="verified" from="factorId != null"/>
+                <return/>
             </if>
-
+            <service-call name="org.moqui.impl.UserServices.compare#UserAuthcFactorCode" in-map="{userId: userId, code: code}"
+                    out-map="context"/>
+        </actions>
+    </service>
+    <service verb="compare" noun="UserAuthcFactorCode" authenticate="anonymous-all" allow-remote="false" transaction="force-new">
+        <description>Whether a code is one of the user's factors' now, which it then takes (a single-use code ends, a TOTP
+            factor keeps the step); nothing is counted. validate#UserAuthcFactorCode calls it, through
+            ec.user.checkCountedCode when a wrong code counts as a failed login. In a transaction of its own, so a code
+            taken is committed before the next of the user's codes is compared.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="code" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="verified" type="Boolean"/>
+            <parameter name="factorId"/>
+        </out-parameters>
+        <actions>
+            <set field="verified" from="false"/>
             <!-- TOTP codes are checked as the samstevens verifier did: SHA1, 6 digits, 30 seconds, one period of drift. -->
+
 
             <entity-find entity-name="moqui.security.UserAuthcFactor" list="userAuthcFactorList">
                 <date-filter/>
@@ -889,9 +898,6 @@ along with this software (see the LICENSE.md file). If not, see
                     </else-if>
                 </if>
             </iterate>
-            <if condition="countFailure &amp;&amp; !verified">
-                <service-call name="org.moqui.impl.UserServices.increment#UserAccountFailedLogins"
-                        in-map="{userId: userId}" transaction="force-new"/></if>
         </actions>
     </service>
 

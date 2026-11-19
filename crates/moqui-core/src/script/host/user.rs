@@ -69,6 +69,14 @@ pub(super) static USER: HostClass = HostClass {
         ),
         method!(
             "ec.user",
+            "checkCountedCode",
+            [OptNullableText, OptNullableText],
+            None,
+            check_counted_code
+        ),
+        method!("ec.user", "countFailedLogin", [Text], None, count_failed_login),
+        method!(
+            "ec.user",
             "initialAdminAllowed",
             [OptNullableText],
             None,
@@ -552,6 +560,22 @@ fn check_old_password(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let old_password = call.text_or_empty(1);
     crate::user::check_old_password(&user_id, &old_password)
         .map(Ret::from)
+        .map_err(|err| user_error(&err))
+}
+
+/// `ec.user.checkCountedCode(userId, code)`: a second factor's code that stands in for a login, behind the login gate
+/// and counted when wrong ([`crate::user::check_counted_code`]): the id of the factor it verified, else null.
+fn check_counted_code(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let user_id = call.text_or_empty(0);
+    let code = call.text_or_empty(1);
+    text_or_null(crate::user::check_counted_code(&user_id, &code))
+}
+
+/// `ec.user.countFailedLogin(userId)`: count a failed login of the account as a wrong password is counted
+/// ([`crate::user::count_failed_login`]).
+fn count_failed_login(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::user::count_failed_login(&call.text_or_empty(0))
+        .map(|()| Ret::Undefined)
         .map_err(|err| user_error(&err))
 }
 
