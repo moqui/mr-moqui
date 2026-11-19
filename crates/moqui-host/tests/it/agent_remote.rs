@@ -511,6 +511,44 @@ fn a_local_run_delegates_and_calls_mcp_tools_of_a_second_server_over_loopback() 
         assert!(catalog.get("a2a__blocked").is_none());
         assert!(catalog.get("a2a__assist").is_some() && catalog.get("mcp__remote__find_enums").is_some());
     }
+    // a remote moved to another origin keeps no stored credential not given again (SEC-OUT-82): another path at the same
+    // origin keeps it
+    let auth_of = |entity: &str, field: &str, id: &str| text(&rows(&local_factory, entity, field, id)[0], "authJson");
+    let other = format!("http://127.0.0.2:{}", remote_address.port());
+    let same = admin_call(
+        &local_factory,
+        "org.moqui.agent.RemoteAgentServices.store#AgentMcpServer",
+        &[("mcpServerId", "remote"), ("url", &format!("{base}/mcp/"))],
+    )
+    .unwrap();
+    assert_eq!(text_of_out(&same, "credentialCleared"), "false");
+    assert!(!auth_of("moqui.agent.AgentMcpServer", "mcpServerId", "remote").is_empty());
+    for (service, entity, field, id, url) in [
+        (
+            "store#AgentMcpServer",
+            "moqui.agent.AgentMcpServer",
+            "mcpServerId",
+            "remote",
+            "url",
+        ),
+        (
+            "store#AgentRemoteA2a",
+            "moqui.agent.AgentRemoteA2a",
+            "remoteId",
+            "assist",
+            "cardUrl",
+        ),
+    ] {
+        let moved = admin_call(
+            &local_factory,
+            &format!("org.moqui.agent.RemoteAgentServices.{service}"),
+            &[(field, id), (url, &format!("{other}/moved"))],
+        )
+        .unwrap();
+        assert_eq!(text_of_out(&moved, "credentialCleared"), "true", "{service}");
+        assert!(auth_of(entity, field, id).is_empty(), "{service}");
+    }
+
     drop(remote);
 }
 

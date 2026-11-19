@@ -836,7 +836,9 @@ fn auth_of(parameters: &Parameters) -> Result<Option<Auth>, String> {
 }
 
 /// Store a row of `entity` keyed by `key_field`: the fields given (an empty one clears it), the URL checked, the
-/// credential set only when given.
+/// credential set only when given. A URL moved to another origin keeps no stored credential not given again in the same
+/// change, nor (an MCP server's) the users' own tokens, which would otherwise be sent to the new origin
+/// (`credentialCleared`; as `store#GitRepositoryMirror`; plans/Security-Review-Medium.md SEC-OUT-82).
 fn store_row(
     facade: &EntityFacade,
     parameters: &Parameters,
@@ -897,21 +899,42 @@ fn store_row(
             }
         }
     }
-    if let Some(auth) = auth {
-        row.set(
+    let moved = existing.as_ref().is_some_and(|stored| {
+        text_of(stored, url_field).and_then(|old| origin_of(&old)) != url.as_deref().and_then(origin_of)
+    });
+    let mut cleared = false;
+    match auth {
+        Some(auth) => row.set(
             "authJson",
             match auth {
                 Auth::None => Value::Null,
                 auth => Value::string(auth.to_json().to_string()),
             },
-        );
+        ),
+        None if moved && text_of(&row, "authJson").is_some() => {
+            row.set("authJson", Value::Null);
+            cleared = true;
+        }
+        None => {}
     }
     if existing.is_some() {
         row.update(facade)?;
     } else {
         row.create(facade)?;
     }
-    Ok([(key_field.to_string(), Value::string(&id))].into_iter().collect())
+    if moved && entity == MCP_SERVER {
+        let tokens = facade.find(MCP_USER_TOKEN)?.eq(key_field, Value::string(&id)).list()?;
+        cleared |= !tokens.is_empty();
+        for token in tokens.iter() {
+            token.delete(facade)?;
+        }
+    }
+    Ok([
+        (key_field.to_string(), Value::string(&id)),
+        ("credentialCleared".to_string(), Value::Bool(cleared)),
+    ]
+    .into_iter()
+    .collect())
 }
 
 /// `store#AgentRemoteA2a` (AgentAdmin): a remote A2A agent. The card URL is checked as a call would check it; the
