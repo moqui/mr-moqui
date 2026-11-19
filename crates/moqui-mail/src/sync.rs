@@ -440,15 +440,26 @@ fn raw_line(stream: &mut TcpStream) -> Result<String, SyncFailure> {
     Ok(String::from_utf8_lossy(&line).trim_end().to_string())
 }
 
-/// A command on a raw connection: the lines up to its tagged answer, which must be OK.
+/// The most bytes of the answer to a command on a raw connection (CAPABILITY, STARTTLS), its lines together.
+const MAX_RAW_ANSWER: usize = 64 * 1024;
+
+/// A command on a raw connection: the lines up to its tagged answer, which must be OK, at most [`MAX_RAW_ANSWER`]
+/// bytes of them.
 fn raw_command(stream: &mut TcpStream, tag: &str, command: &str) -> Result<Vec<String>, SyncFailure> {
     stream
         .write_all(format!("{tag} {command}\r\n").as_bytes())
         .and_then(|()| stream.flush())
         .map_err(|err| SyncFailure::Connect(format!("writing to the mail server: {err}")))?;
     let mut lines = Vec::new();
+    let mut bytes = 0usize;
     loop {
         let line = raw_line(stream)?;
+        bytes = bytes.saturating_add(line.len() + 2);
+        if bytes > MAX_RAW_ANSWER {
+            return Err(SyncFailure::Connect(format!(
+                "{command}: the mail server's answer is larger than {MAX_RAW_ANSWER} bytes"
+            )));
+        }
         if let Some(rest) = line.strip_prefix(&format!("{tag} ")) {
             if rest.to_ascii_uppercase().starts_with("OK") {
                 return Ok(lines);
@@ -504,7 +515,7 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
                     server.host
                 );
             }
-            Net::Plain(tcp)
+            Net::plain(tcp)
         } else {
             return Err(SyncFailure::Connect(plain_refused("IMAP", &server.host, "STARTTLS")));
         };
@@ -2410,6 +2421,9 @@ fn sync_folder(
     // The lowest UID whose store failed this session and was not skipped, which the next session starts from, with
     // the sessions it failed in and why.
     let mut failed: Option<(u32, u32, String)> = None;
+    // a message larger than this, by the size the server gives, is skipped: its answer would pass the connection's
+    // limit (`inbound::Net`) and fail every session
+    let max_message = super::inbound::max_message();
     for chunk in wanted.chunks(HEADER_CHUNK) {
         session.lease.keep(session.facade)?;
         let heads = conn.session.uid_fetch(
@@ -2452,6 +2466,17 @@ fn sync_folder(
                     size,
                     existing,
                 }),
+                Decision::Store if size.is_some_and(|size| u64::try_from(size).unwrap_or(0) > max_message) => {
+                    tracing::warn!(
+                        account = %session.account.id,
+                        "Email UID {uid} of folder {} of account {} is {} bytes, over email-client \
+                        max-message-size ({max_message}); skipped",
+                        folder.path,
+                        session.account.id,
+                        size.unwrap_or(0)
+                    );
+                    report.skipped_messages += 1;
+                }
                 Decision::Store => to_fetch.push((uid, flags, internal, size)),
             }
         }
@@ -3119,7 +3144,21 @@ fn pop_sync(
     unknown.truncate(usize::try_from(property_number("sync-batch", 500)).unwrap_or(500));
     progress.new_mail(unknown.len(), pending, known.len());
     let mut new_ids = Vec::new();
+    let max_message = super::inbound::max_message();
     for (number, uidl) in unknown {
+        let size = pop
+            .size(number)
+            .map_err(|err| SyncFailure::Connect(format!("POP3 LIST {number} on {}: {}", server.host, err.message())))?;
+        if let Some(size) = size.filter(|size| *size > max_message) {
+            tracing::warn!(
+                account = %account.id,
+                "POP3 message {uidl} of account {} is {size} bytes, over email-client max-message-size \
+                ({max_message}); skipped",
+                account.id
+            );
+            report.skipped_messages += 1;
+            continue;
+        }
         let raw = match pop.retrieve(number) {
             Ok(raw) => raw,
             Err(err) => {

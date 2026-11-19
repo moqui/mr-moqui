@@ -785,6 +785,12 @@ impl Pop3 {
             .collect())
     }
 
+    /// `LIST n`: the size the server gives for one message, None when it gives none.
+    pub(super) fn size(&mut self, number: u32) -> Result<Option<u64>, Error> {
+        let answer = self.command(&format!("LIST {number}"))?;
+        Ok(answer.split_whitespace().nth(2).and_then(|size| size.parse().ok()))
+    }
+
     /// `RETR`: one message as it is on the server.
     pub(super) fn retrieve(&mut self, number: u32) -> Result<Vec<u8>, Error> {
         self.command(&format!("RETR {number}"))?;
@@ -926,7 +932,7 @@ fn pop_start_tls(mut reader: BufReader<Net>, settings: &StoreSettings) -> Result
     if capabilities.lines().any(|line| line.trim() == "STLS") {
         expect_ok(&pop_exchange(&mut reader, "STLS")?)?;
         // the server sends nothing more before the handshake, so the buffer holds nothing
-        let Net::Plain(tcp) = reader.into_inner() else {
+        let Some(tcp) = reader.into_inner().into_plain() else {
             return Err(Error::new("POP3 STLS on a connection already in TLS"));
         };
         return Ok(BufReader::new(wrap_tls(tcp, &settings.host)?));
@@ -992,32 +998,99 @@ impl Drop for Pop3 {
     }
 }
 
-pub(super) enum Net {
+/// A connection to an IMAP or POP3 server. What the server sends in answer to one command, counted from the client's
+/// last write, is at most [`answer_limit`] bytes (SEC-MAIL-85): the IMAP client holds a whole response, a literal
+/// included, and the POP3 client a whole line and a whole multi-line answer, so a server that sends without end would
+/// otherwise grow the process's memory until it fails. Past the limit a read fails, and the connection with it.
+pub(super) struct Net {
+    stream: Stream,
+    /// The bytes read since the last write.
+    read: u64,
+    limit: u64,
+}
+
+enum Stream {
     Plain(TcpStream),
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
 }
 
+/// Room for what an answer holds beside a message of `email-client` `max-message-size`: a batch of the sync's body
+/// fetches is at most 8 MiB by the sizes the server gave, a flag listing of a large folder some MiB.
+const ANSWER_MARGIN: u64 = 16 * 1024 * 1024;
+
+/// The largest message read from an IMAP or POP3 server: `email-client` `max-message-size`. A larger one, by the size
+/// the server gives, is skipped.
+pub(super) fn max_message() -> u64 {
+    u64::try_from(super::sync::property_number("max-message-size", 64 * 1024 * 1024)).unwrap_or(u64::MAX)
+}
+
+/// The most bytes one answer of a mail server may be: [`max_message`] and [`ANSWER_MARGIN`].
+fn answer_limit() -> u64 {
+    max_message().saturating_add(ANSWER_MARGIN)
+}
+
+impl Net {
+    pub(super) fn plain(tcp: TcpStream) -> Net {
+        Net::over(Stream::Plain(tcp))
+    }
+
+    fn over(stream: Stream) -> Net {
+        Net {
+            stream,
+            read: 0,
+            limit: answer_limit(),
+        }
+    }
+
+    /// The TCP connection, when no TLS is on it yet (for STARTTLS).
+    pub(super) fn into_plain(self) -> Option<TcpStream> {
+        match self.stream {
+            Stream::Plain(tcp) => Some(tcp),
+            Stream::Tls(_) => None,
+        }
+    }
+}
+
 impl Read for Net {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match self {
-            Net::Plain(stream) => stream.read(buf),
-            Net::Tls(stream) => stream.read(buf),
+        let left = self.limit.saturating_sub(self.read);
+        if left == 0 {
+            tracing::warn!(
+                "a mail server sent more than {} bytes in answer to one command; the connection is closed",
+                self.limit
+            );
+            return Err(std::io::Error::other(format!(
+                "the mail server's answer is larger than {} bytes (email-client max-message-size)",
+                self.limit
+            )));
         }
+        let room = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+        let read = match &mut self.stream {
+            Stream::Plain(stream) => stream.read(&mut buf[..room]),
+            Stream::Tls(stream) => stream.read(&mut buf[..room]),
+        }?;
+        self.read = self.read.saturating_add(read as u64);
+        Ok(read)
     }
 }
 
 impl Write for Net {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self {
-            Net::Plain(stream) => stream.write(buf),
-            Net::Tls(stream) => stream.write(buf),
+        let written = match &mut self.stream {
+            Stream::Plain(stream) => stream.write(buf),
+            Stream::Tls(stream) => stream.write(buf),
+        }?;
+        if written > 0 {
+            // a command (or a literal of one): what comes next is its answer
+            self.read = 0;
         }
+        Ok(written)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        match self {
-            Net::Plain(stream) => stream.flush(),
-            Net::Tls(stream) => stream.flush(),
+        match &mut self.stream {
+            Stream::Plain(stream) => stream.flush(),
+            Stream::Tls(stream) => stream.flush(),
         }
     }
 }
@@ -1025,7 +1098,7 @@ impl Write for Net {
 fn connect_net(host: &str, port: u16, tls: bool, deny_internal: bool) -> Result<Net, Error> {
     let tcp = connect_tcp(host, port, deny_internal)?;
     if !tls {
-        return Ok(Net::Plain(tcp));
+        return Ok(Net::plain(tcp));
     }
     wrap_tls(tcp, host)
 }
@@ -1078,15 +1151,15 @@ pub(super) fn wrap_tls(tcp: TcpStream, host: &str) -> Result<Net, Error> {
         .map_err(|_| Error::new(format!("email host {host} is not a DNS name")))?;
     let config = tls_config()?;
     let conn = rustls::ClientConnection::new(config, name).map_err(|err| Error::new(err.to_string()))?;
-    Ok(Net::Tls(Box::new(rustls::StreamOwned::new(conn, tcp))))
+    Ok(Net::over(Stream::Tls(Box::new(rustls::StreamOwned::new(conn, tcp)))))
 }
 
 impl Net {
     /// The TCP connection under the stream, for its timeouts.
     pub(super) fn socket(&self) -> &TcpStream {
-        match self {
-            Net::Plain(stream) => stream,
-            Net::Tls(stream) => &stream.sock,
+        match &self.stream {
+            Stream::Plain(stream) => stream,
+            Stream::Tls(stream) => &stream.sock,
         }
     }
 }

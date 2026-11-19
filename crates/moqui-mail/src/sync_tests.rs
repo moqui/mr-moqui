@@ -1387,6 +1387,98 @@ fn pop3_fetches_by_uidl_and_deletes_only_when_told() {
     assert_eq!(pop.uidls(), vec!["u1".to_string(), "u2".to_string()]);
 }
 
+/// SEC-MAIL-85: a message over `email-client` `max-message-size`, by the size the server gives (IMAP RFC822.SIZE, POP3
+/// `LIST n`), is skipped and counted, and not read again; one under it is stored.
+#[test]
+fn a_message_over_the_largest_size_is_skipped_on_imap_and_pop3() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client max-message-size="2000"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let small = mail(
+        "<small@example.com>",
+        "x@example.com",
+        "alice@example.com",
+        "Small",
+        "",
+        "s",
+    );
+    assert!(small.len() < 2000);
+    let large = mail(
+        "<large@example.com>",
+        "x@example.com",
+        "alice@example.com",
+        "Large",
+        "",
+        &"l".repeat(3000),
+    );
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    imap.add("INBOX", &large, &[]);
+    imap.add("INBOX", &small, &[]);
+    let account = imap_account(imap.port, "app-password");
+    let out = sync(&account);
+    assert_eq!(out_number(&out, "newCount"), 1, "{out:?}");
+    assert_eq!(out_number(&out, "skippedCount"), 1, "{out:?}");
+    assert!(by_message_id(&facade, &account, "<small@example.com>").is_some());
+    assert!(by_message_id(&facade, &account, "<large@example.com>").is_none());
+    assert_eq!(out_number(&sync(&account), "skippedCount"), 0, "not read again");
+
+    let pop = FakePop::start();
+    pop.add("big", &large);
+    pop.add("little", &small);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice.pop@example.com")),
+                ("storeHost", text("127.0.0.1")),
+                ("storePort", text(&pop.port.to_string())),
+                ("storeProtocol", text("pop3")),
+                ("mailUsername", text("alice")),
+                ("mailPassword", text("pop-password")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let out = sync(&account);
+    assert_eq!(out_number(&out, "newCount"), 1, "{out:?}");
+    assert_eq!(out_number(&out, "skippedCount"), 1, "{out:?}");
+    assert!(!pop_log_has(&pop, "RETR 1"), "the large message is not read");
+    assert!(pop_log_has(&pop, "RETR 2"));
+}
+
+/// SEC-MAIL-85: what a mail server sends in answer to one command is at most `max-message-size` and the margin: a
+/// line that never ends fails the read there, instead of growing without end; an answer under it is read, and a
+/// write starts the count again.
+#[test]
+fn a_mail_server_answer_past_its_limit_fails_the_read() {
+    use std::io::{BufReader, Write};
+    let (ctx, _facade) = setup_with(r#"<moqui-conf><email-client max-message-size="1024"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut line = vec![b'a'; 1024 * 1024];
+        line.push(b'\n');
+        let _ = stream.write_all(&line);
+        // then 40 MiB with no line end, past the 16 MiB and 1 KiB of the limit
+        let chunk = vec![b'a'; 64 * 1024];
+        for _ in 0..640 {
+            if stream.write_all(&chunk).is_err() {
+                break;
+            }
+        }
+    });
+    let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut reader = BufReader::new(crate::inbound::Net::plain(tcp));
+    let first = crate::inbound::read_line_bytes(&mut reader).unwrap();
+    assert_eq!(first.len(), 1024 * 1024, "an answer under the limit is read");
+    let refused = crate::inbound::read_line_bytes(&mut reader).unwrap_err();
+    assert!(refused.message().contains("larger than"), "{}", refused.message());
+}
+
 pub(super) fn pop_log_has(pop: &FakePop, line: &str) -> bool {
     moqui_lib::sync::lock(&pop.log).iter().any(|known| known == line)
 }
