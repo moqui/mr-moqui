@@ -429,11 +429,13 @@ pub(super) fn inherit_pk_fields(
 }
 
 pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record: Record) -> Result<u64, Error> {
-    if super::check::checking() {
-        return super::check::check_record(facade, &record);
-    }
+    // before a check or a list too: a check answers the stored values of the record the data names
+    // (plans/Security-Review-Medium.md SEC-TLS-84)
     if options.restrict_sensitive_entities {
         refuse_restricted(facade, &record, options)?;
+    }
+    if super::check::checking() {
+        return super::check::check_record(facade, &record);
     }
     // Inside an outer transaction a failed record marks it rollback-only and gives back its join, so the
     // owner's rollback still ends the frame.
@@ -572,11 +574,11 @@ fn write_tree(facade: &EntityFacade, options: &LoadOptions, record: Record, ance
 /// `createOrUpdate`d. There is no entity-auto `fromDate` default, secondary sequence or status-flow check, which
 /// Java's CSV path does not run either.
 pub(super) fn store_value(facade: &EntityFacade, options: &LoadOptions, record: Record) -> Result<u64, Error> {
-    if super::check::checking() {
-        return super::check::check_record(facade, &record);
-    }
     if options.restrict_sensitive_entities {
         refuse_restricted(facade, &record, options)?;
+    }
+    if super::check::checking() {
+        return super::check::check_record(facade, &record);
     }
     let Record { entity, fields, .. } = record;
     let entity = entity.as_str();

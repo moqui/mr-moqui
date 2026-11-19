@@ -689,6 +689,67 @@ fn an_admin_group_member_is_not_stored_while_entity_eca_runs() {
     assert_eq!(admin_member_count(&facade), 0);
 }
 
+// A check (Tools › Data › Load's Check Data) answers the stored value of each field the data gives that differs, so it
+// takes no entity a generic read refuses and compares no password or encrypted field (plans/Security-Review-Medium.md
+// SEC-TLS-84).
+#[test]
+fn a_check_answers_no_password_or_encrypted_value_and_refuses_the_restricted_entities() {
+    use crate::entity::load_feed::check_info_with;
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    load_entity_xml_text(
+        &facade,
+        "xmlText",
+        r#"<entity-facade-xml>
+            <moqui.security.UserAccount userId="SEC_CHECK" username="sec.check" userFullName="Stored Name"
+                currentPassword="stored-hash" passwordSalt="stored-salt" passwordHashType="SHA-256"/>
+            <moqui.llm.LlmEndpoint endpointId="SEC_CHECK" description="Stored" apiKey="stored-api-key"/>
+            <moqui.security.UserGroup userGroupId="SEC_CHECK" description="Check group"/>
+            <moqui.security.UserGroupMember userGroupId="SEC_CHECK" userId="SEC_CHECK" fromDate="2001-02-03 04:05:06.0"/>
+        </entity-facade-xml>"#,
+        &LoadOptions::default(),
+    )
+    .unwrap();
+    let restricted = LoadOptions {
+        restrict_sensitive_entities: true,
+        ..LoadOptions::default()
+    };
+    let check = |text: &str| {
+        check_info_with(|| load_entity_xml_text(&facade, "xmlText", text, &restricted)).map(|(_, result)| result)
+    };
+    let checked = check(
+        r#"<entity-facade-xml>
+            <moqui.security.UserAccount userId="SEC_CHECK" userFullName="Other Name" currentPassword="guess"
+                passwordSalt="guess" passwordHashType="NONE"/>
+            <moqui.llm.LlmEndpoint endpointId="SEC_CHECK" description="Other" apiKey="guess"/>
+        </entity-facade-xml>"#,
+    )
+    .unwrap();
+    let text = |row: &moqui_lib::object::ValueMap, name: &str| {
+        row.get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    let fields: Vec<String> = checked.diff_info.iter().map(|row| text(row, "field")).collect();
+    assert_eq!(fields, ["userFullName", "description"], "{:?}", checked.diff_info);
+    let stored: Vec<String> = checked.diff_info.iter().map(|row| text(row, "dbValue")).collect();
+    assert_eq!(stored, ["Stored Name", "Stored"]);
+    // a restricted entity is refused, as a load refuses it, and its stored values are not read
+    let err = check(
+        r#"<entity-facade-xml><moqui.security.UserGroupMember userGroupId="SEC_CHECK" userId="SEC_CHECK"
+            fromDate="2001-02-03 04:05:06.0" thruDate="2001-02-04 00:00:00.0"/></entity-facade-xml>"#,
+    )
+    .unwrap_err();
+    assert!(
+        error_chain(&err).contains("is not allowed in this data load"),
+        "{}",
+        error_chain(&err)
+    );
+}
+
 // A load's own switch is this thread's and ends with its scope, nested or not; it leaves the security checks
 // (plans/Security-Review-Medium.md SEC-DAT-83).
 #[test]
