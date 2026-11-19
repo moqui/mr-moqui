@@ -738,9 +738,33 @@ fn a_login_once_the_account_is_known_leaves_one_history_row_a_minute() {
     assert_eq!(text(row, "successfulLogin"), "N");
     // The password tried is never stored: the entity has no field for it.
     assert!(row.get("passwordUsed").is_none());
-    // A second login within the minute is not kept.
+    // SEC-WEB-85: a success claims a minute of its own, so a wrong password first does not keep it out (nor the
+    // new-device notice its row starts); a second success of the same visit within the minute is not kept.
     login_user("ada", "Secret1!").unwrap();
-    assert_eq!(history("ada").len(), 1);
+    let rows = history("ada");
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().any(|row| text(row, "successfulLogin") == "Y"));
+    logout().unwrap();
+    login_user("ada", "Secret1!").unwrap();
+    assert_eq!(history("ada").len(), 2);
+    logout().unwrap();
+    // SEC-WEB-85: the sign-in a second factor finishes is recorded as a success
+    let mut group = facade.make_value("moqui.security.UserGroup").unwrap();
+    group.set("userGroupId", Value::string("FACTOR"));
+    group.set("requireAuthcFactor", Value::string("Y"));
+    group.create(&facade).unwrap();
+    create_user(&facade, "fay", "Secret1!", |_| {});
+    let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+    member.set("userGroupId", Value::string("FACTOR"));
+    member.set("userId", Value::string("fay"));
+    member.set("fromDate", stamp(1));
+    member.create(&facade).unwrap();
+    login_user("fay", "Secret1!").unwrap();
+    assert!(session::current_username().unwrap().is_none());
+    internal_login_user("fay").unwrap();
+    let rows = history("fay");
+    assert_eq!(rows.len(), 2, "the password step and the factor's finish");
+    assert!(rows.iter().any(|row| text(row, "successfulLogin") == "Y"));
     logout().unwrap();
 
     create_user(&facade, "bob", "Secret1!", |_| {});
