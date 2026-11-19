@@ -30,6 +30,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::call_media::store_voicemail_file",
         "moqui_core::service::call_media::transcribe_caption_audio",
         "moqui_core::service::chat_keys::derive_store_key",
+        "moqui_core::service::protocol_admin::get_own_host_names",
         "moqui_core::service::protocol_admin::get_protocol_facts",
         "moqui_core::service::protocol_admin::probe_protocol_target",
         "moqui_core::service::recent_auth::check_recent_auth",

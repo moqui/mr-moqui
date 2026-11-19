@@ -58,9 +58,7 @@ const defaultDays = 14
 // Sign-in mail (a reset password, a code, a verification link) holds a credential of its moment and is asked for again by the
 // person it is for: it is never sent again from here, only closed.
 const signInTemplates = () =>
-    ["PASSWORD_RESET", "SINGLE_USE_CODE", "ADDED_EMAIL_AUTHC_FACTOR", "EMAIL_AUTHC_FACTOR_SENT", "ACCOUNT_SIGN_IN"].concat(
-        [text(ec.factory.getConfValue("pass-authority@verification-template"))].filter(Boolean)
-    )
+    ec.resource.script("component://framework/service/org/moqui/mail/RelayRules.js").signInTemplates()
 
 const states = {
     retryable: {text: "Not sent", next: "Nothing was sent. It can be sent again."},

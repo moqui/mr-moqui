@@ -26,6 +26,7 @@
 // A refusal a person can act on is answered (applied false, reasonCode, reason), never written; a missing permission or a
 // malformed request is an error. No dependency on Mantle or an app.
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/ConfigurationLib.js")
+const relayRules = ec.resource.script("component://framework/service/org/moqui/mail/RelayRules.js")
 const {find, one, rows, map, iso, stamp, text, refused, plainText, urlText, write} = lib
 
 const ADAPTER = "moqui.server.ConnectionAdapter"
@@ -87,30 +88,13 @@ function hostOf(url) {
     const parts = /^[a-z][a-z0-9+.-]*:\/\/(?:[^\/?#@]*@)?(\[[^\]]+\]|[^\/?#:]+)/i.exec(text(url))
     return parts ? parts[1].toLowerCase() : ""
 }
-// The names this instance answers by: the webroot webapp's http-host and https-host and its allowed-hosts (without a
-// port), and on an instance that is not production this machine's own names.
-function ownHosts() {
-    const conf = name => text(ec.factory.getConfValue("webapp-list/webapp[webroot]@" + name))
-    const found = [conf("http-host"), conf("https-host")]
-        .concat(conf("allowed-hosts").split(","))
-        .map(host => text(host).toLowerCase().replace(/:\d+$/, ""))
-        .filter(host => host)
-    if (!production()) found.push("localhost", "127.0.0.1", "[::1]")
-    return Array.from(new Set(found))
-}
 // A relay's link base URL (the start of every link in the mail it sends, a password reset's and an invitation's among
-// them): an http(s) URL on one of the instance's own names, so a delegated administrator does not send the links of
-// system mail to another host (plans/Security-Review-Medium.md SEC-ADM-83). Another host is an instance administrator's to
-// set, in Tools.
+// them): an http(s) URL on one of the instance's own names (RelayRules.js linkBaseRefusal, as update#RelayServer holds it
+// too; plans/Security-Review-Medium.md SEC-ADM-83).
 function linkBaseText(value, what) {
     const found = urlText(value, what)
-    if (found && !ownHosts().includes(hostOf(found)))
-        throw new Error(
-            what +
-                " is on one of this instance's own names (" +
-                (ownHosts().join(", ") || "none is configured") +
-                "): an instance administrator sets another host in Tools"
-        )
+    const refusal = relayRules.linkBaseRefusal(found)
+    if (refusal) throw new Error(refusal)
     return found
 }
 // A URL as a read shows it: without the user and password an instance administrator may have written into it (Tools).
@@ -879,18 +863,9 @@ const accountOwned = emailServerId => count(MAIL_ACCOUNT, {emailServerId, ownsEm
 // the new-device notice. Whoever points the relay it goes through at a server of theirs reads any account's reset password
 // and codes, so that relay (and SYSTEM, the framework's own) is the access administrator's, as a sign-in provider's role
 // mappings and enabling are (ConfigurationProviders.js): started, changed and tested only with ADMIN_ACCESS_MANAGE, which is
-// sealed, and a recent sign-in (plans/Security-Review-Medium.md SEC-ADM-82). For a holder of only ADMIN_CONNECTION_MANAGE
-// it is read only here.
-const SIGN_IN_TEMPLATES = [
-    "PASSWORD_RESET",
-    "SINGLE_USE_CODE",
-    "ADDED_EMAIL_AUTHC_FACTOR",
-    "EMAIL_AUTHC_FACTOR_SENT",
-    "ACCOUNT_SIGN_IN"
-]
-const signInRelay = emailServerId =>
-    text(emailServerId) === "SYSTEM" ||
-    SIGN_IN_TEMPLATES.some(emailTemplateId => count("moqui.basic.email.EmailTemplate", {emailTemplateId, emailServerId}) > 0)
+// sealed, and a recent sign-in (RelayRules.js signInRelay, which update#RelayServer holds too;
+// plans/Security-Review-Medium.md SEC-ADM-82). For a holder of only ADMIN_CONNECTION_MANAGE it is read only here.
+const signInRelay = emailServerId => relayRules.signInRelay(emailServerId)
 const smtpUserOf = server => text(server.smtpUsername) || text(server.mailUsername)
 const relayDefinition = {
     adapterKey: "relay",
@@ -986,9 +961,8 @@ const relayDefinition = {
     incomplete: parts => {
         const server = parts.main
         if (!text(server.smtpHost)) return "Give the SMTP host"
-        const password = text(server.smtpUsername)
-            ? text(server.smtpPassword) || text(server.mailPassword)
-            : text(server.mailPassword)
+        // with an SMTP user of its own, only its own password (implementation.rs smtp_password)
+        const password = text(server.smtpUsername) ? text(server.smtpPassword) : text(server.mailPassword)
         return smtpUserOf(server) && !password ? "Give the password of the user the relay signs in" : null
     },
     check: after => {
