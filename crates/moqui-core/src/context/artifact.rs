@@ -82,10 +82,12 @@ impl Default for HitDetail {
 pub(super) struct ArtifactStack {
     frames: Vec<Frame>,
     authz_depth: Rc<Cell<u32>>,
-    /// Java's `entityEcaDisabled` of the `ArtifactExecutionFacade`: entity ECA rules do not run for this context.
-    entity_eca_disabled: Cell<bool>,
+    /// Java's `entityEcaDisabled` of the `ArtifactExecutionFacade`: entity ECA rules do not run for this context. Shared
+    /// with each [`AuthzScope`], which puts it back.
+    entity_eca_disabled: Rc<Cell<bool>>,
     /// Java's `tarpitDisabled` of the `ArtifactExecutionFacade`: no frame of this context is counted against a tarpit.
-    tarpit_disabled: Cell<bool>,
+    /// Shared with each [`AuthzScope`], which puts it back.
+    tarpit_disabled: Rc<Cell<bool>>,
     /// The first frame an authorization decision sees: frames below it belong to the render an isolated check runs in.
     check_base: usize,
     /// How many isolated checks are open: their frames ask whether the user may, they are not a use.
@@ -439,9 +441,10 @@ impl ArtifactStack {
         self.authz_depth.get() > 0
     }
 
-    /// The authorization state here, set aside until the guard drops: the disabled depth, and the guard of a script's
-    /// `disableAuthz()` in `script` (taken out, so what runs inside starts with none of its own). With `require`,
-    /// authorization is checked until then whatever an outer `disable_authz` holds; without it, the depth stays.
+    /// The authorization state here, set aside until the guard drops: the disabled depth, the guard of a script's
+    /// `disableAuthz()` in `script` (taken out, so what runs inside starts with none of its own), and whether entity ECA
+    /// rules and tarpit counting are disabled. With `require`, authorization is checked until then whatever an outer
+    /// `disable_authz` holds; without it, the depth stays.
     pub(super) fn scope_authz(&self, require: bool, script: &Rc<RefCell<Option<AuthzGuard>>>) -> AuthzScope {
         let saved = if require {
             self.authz_depth.replace(0)
@@ -453,6 +456,10 @@ impl ArtifactStack {
             saved,
             outer_script: script.borrow_mut().take(),
             script: Rc::clone(script),
+            entity_eca: Rc::clone(&self.entity_eca_disabled),
+            saved_entity_eca: self.entity_eca_disabled.get(),
+            tarpit: Rc::clone(&self.tarpit_disabled),
+            saved_tarpit: self.tarpit_disabled.get(),
         }
     }
 }
@@ -460,13 +467,18 @@ impl ArtifactStack {
 /// The caller's authorization state, put back when dropped ([`super::ExecutionContext::require_authz`],
 /// [`super::ExecutionContext::keep_authz`]), however the scope ends: a return, an error or a panic that unwinds
 /// through it. What runs inside cannot change it: a script's `disableAuthz()` left held inside is dropped, and the
-/// caller's own is set aside until then, so no script inside replaces it or enables it.
+/// caller's own is set aside until then, so no script inside replaces it or enables it. Whether entity ECA rules and
+/// tarpit counting are disabled comes back too, so a `disableEntityEca()` or `disableTarpit()` inside ends with it.
 #[must_use = "dropping the guard restores the caller's authorization state"]
 pub struct AuthzScope {
     depth: Rc<Cell<u32>>,
     saved: u32,
     script: Rc<RefCell<Option<AuthzGuard>>>,
     outer_script: Option<AuthzGuard>,
+    entity_eca: Rc<Cell<bool>>,
+    saved_entity_eca: bool,
+    tarpit: Rc<Cell<bool>>,
+    saved_tarpit: bool,
 }
 
 impl Drop for AuthzScope {
@@ -476,6 +488,8 @@ impl Drop for AuthzScope {
         drop(left);
         self.depth.set(self.saved);
         *self.script.borrow_mut() = self.outer_script.take();
+        self.entity_eca.set(self.saved_entity_eca);
+        self.tarpit.set(self.saved_tarpit);
     }
 }
 
