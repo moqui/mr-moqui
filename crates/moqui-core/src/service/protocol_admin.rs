@@ -178,7 +178,99 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, get_protocol_facts)?;
     rust_service!(map, probe_protocol_target)?;
+    rust_service!(map, get_own_host_names)?;
     Ok(())
+}
+
+/// `get#OwnHostNames`: the names this instance answers by ([`own_host_names`]), for a link it sends in mail.
+pub(in crate::service) fn get_own_host_names(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(factory) = ExecutionContext::with_current(|ctx| ctx.factory().clone()) else {
+        return Err(LibError::new("no execution context is entered"));
+    };
+    let names = own_host_names(&factory, facade, crate::web::is_production());
+    Ok(BTreeMap::from([(
+        "hostNameList".to_string(),
+        Value::List(names.into_iter().map(Value::String).collect()),
+    )]))
+}
+
+/// A host name as a URL's authority gives it, for comparing: lower case, no trailing dot, no port, an IPv6 address in
+/// brackets.
+pub(crate) fn normal_host(host: &str) -> String {
+    let host = host.trim().to_ascii_lowercase();
+    if let Some(rest) = host.strip_prefix('[') {
+        return format!("[{}]", rest.split(']').next().unwrap_or(""));
+    }
+    if host.parse::<std::net::Ipv6Addr>().is_ok() {
+        return format!("[{host}]");
+    }
+    let bare = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()) => name,
+        _ => host.as_str(),
+    };
+    bare.trim_end_matches('.').to_string()
+}
+
+/// The names this instance answers by, for a link it sends (a relay's link base URL, plans/Security-Review-Medium.md
+/// SEC-ADM-83): the webroot webapp's `http-host`, `https-host` and `allowed-hosts`, the public sites' hosts and the names
+/// set up with ACME (System › Certificates); and on an instance that is not production this machine's own names too:
+/// `localhost`, the loopback addresses, its host name and the addresses that name has. Sorted, each once, as
+/// [`normal_host`] gives it.
+pub(crate) fn own_host_names(
+    factory: &crate::context::ExecutionContextFactory,
+    facade: &EntityFacade,
+    production: bool,
+) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    let setting = |name: &str| crate::context::conf_env::setting(&format!("webapp-list/webapp[webroot]@{name}"));
+    let mut add = |host: &str| {
+        let host = normal_host(host);
+        if !host.is_empty() && host != "[]" {
+            names.insert(host);
+        }
+    };
+    add(&setting("http-host"));
+    add(&setting("https-host"));
+    for host in setting("allowed-hosts").split(',') {
+        add(host);
+    }
+    for host in crate::screen::public_site_hosts(factory) {
+        add(&host);
+    }
+    let acme = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find("moqui.server.AcmeName")
+            .and_then(|find| find.select_field("hostName").list())
+    };
+    match acme {
+        Ok(rows) => {
+            for row in rows.iter() {
+                add(&row
+                    .get("hostName")
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default());
+            }
+        }
+        Err(err) => tracing::error!("The names set up with ACME could not be read: {err}"),
+    }
+    if !production {
+        for host in ["localhost", "127.0.0.1", "::1"] {
+            add(host);
+        }
+        let (address, name) = crate::context::identity::server_address();
+        add(name);
+        add(address);
+        if let Ok(found) = (name.as_str(), 0).to_socket_addrs() {
+            for address in found {
+                add(&address.ip().to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 
 fn require_any(permissions: &[&str]) -> Result<(), LibError> {
@@ -405,8 +497,46 @@ fn probe_protocol_target(
 
 #[cfg(test)]
 mod tests {
-    use super::{failure_kind, state_parts, ATTRIBUTES, ENTRIES, TARGETS};
+    use super::{failure_kind, normal_host, own_host_names, state_parts, ATTRIBUTES, ENTRIES, TARGETS};
     use crate::startup::State;
+
+    /// The names a relay's link base URL may name (plans/Security-Review-Medium.md SEC-ADM-83): the names set up with ACME
+    /// on every instance, and on one that is not production this machine's own (localhost, its host name and addresses);
+    /// a name compares in any case, with no port or trailing dot.
+    #[test]
+    fn the_own_names_are_the_instances_and_on_dev_the_machines() {
+        assert_eq!(normal_host(" Shop.Example.COM.:8443 "), "shop.example.com");
+        assert_eq!(normal_host("[::1]:8080"), "[::1]");
+        assert_eq!(normal_host("::1"), "[::1]");
+        let facade = crate::testing::open();
+        facade.set_disable_fk_create(true);
+        let ctx = crate::context::ExecutionContextFactory::test_context();
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        {
+            let _authz = ctx.disable_authz();
+            let mut name = facade.make_value("moqui.server.AcmeName").unwrap();
+            name.set("hostName", moqui_lib::object::Value::string("shop.example.com"));
+            name.create(&facade).unwrap();
+        }
+        let has = |names: &[String], name: &str| names.iter().any(|found| found == name);
+        let dev = own_host_names(ctx.factory(), &facade, false);
+        let (address, machine) = crate::context::identity::server_address();
+        assert!(
+            has(&dev, "shop.example.com") && has(&dev, "localhost") && has(&dev, "[::1]"),
+            "{dev:?}"
+        );
+        assert!(
+            has(&dev, &normal_host(machine)) && has(&dev, &normal_host(address)),
+            "{dev:?}"
+        );
+        let production = own_host_names(ctx.factory(), &facade, true);
+        assert!(has(&production, "shop.example.com"), "{production:?}");
+        assert!(
+            !has(&production, "localhost") && !has(&production, &normal_host(machine)),
+            "{production:?}"
+        );
+    }
 
     #[test]
     fn the_lists_name_no_secret_and_each_key_once() {

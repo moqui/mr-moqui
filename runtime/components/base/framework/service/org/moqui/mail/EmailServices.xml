@@ -237,7 +237,11 @@ along with this software (see the LICENSE.md file). If not, see
             each stored password not given again in the same change, saves the relay disabled with its test mark cleared and
             waiting for a test (moqui.server.ConnectionCheck, adapter relay), so a passing test in Admin's Connections enables
             it, and on a production instance sets allowPrivateNetwork N unless the change gives it; such a change asking
-            disabled N is refused. Nothing is answered, a secret least of all.</description>
+            disabled N is refused, and so is disabled N for a relay whose connection check waits for a test (only a passing
+            test enables it). Admin's other rules for a relay hold here too (RelayRules.js): the relay the sign-in mail goes
+            through (SYSTEM, or one a reset or code template names) is changed only by a holder of ADMIN_ACCESS_MANAGE
+            after a sign-in in the last five minutes, and webBaseUrl is on one of the instance's own names
+            (plans/Security-Review-Medium.md SEC-ADM-82, SEC-ADM-83). Nothing is answered, a secret least of all.</description>
         <in-parameters>
             <parameter name="emailServerId" required="true"/>
             <parameter name="smtpHost"/><parameter name="smtpPort"/><parameter name="smtpStartTls"/><parameter name="smtpSsl"/>
@@ -271,6 +275,17 @@ along with this software (see the LICENSE.md file). If not, see
             if (given.includes('authTypeEnumId') && authTypeEnumId === 'EatOAuth2') {
                 ec.message.addError('A server signs in with OAuth only through its account sign-in'); return }
             if (!given.length) return
+            const rules = ec.resource.script('component://framework/service/org/moqui/mail/RelayRules.js')
+            // the relay the sign-in mail goes through: an access administrator's, after a recent sign-in
+            const signIn = rules.signInRelayRefusal(emailServerId)
+            if (signIn) {
+                if (signIn.reasonCode !== 'reauthRequired') refuse('Unauthorized', signIn.reason)
+                return
+            }
+            if (given.includes('webBaseUrl') && String(webBaseUrl ?? '').trim() !== String(row.webBaseUrl ?? '').trim()) {
+                const refusal = rules.linkBaseRefusal(webBaseUrl)
+                if (refusal) { ec.message.addError(refusal); return }
+            }
             // the endpoint-change rule, as Admin's Connections: a password is never sent to an endpoint it was not entered for
             const ENDPOINT = ['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl', 'storeHost', 'storePort', 'storeProtocol',
                 'mailUsername', 'smtpUsername', 'authTypeEnumId']
@@ -280,6 +295,13 @@ along with this software (see the LICENSE.md file). If not, see
             if (endpointChanged && given.includes('disabled') && disabled !== 'Y') {
                 ec.message.addError('The server changed: test it as it is now in Admin Connections, and the test enables it'); return }
             const wasEnabled = row.disabled !== 'Y'
+            // a relay that waits for a test (repointed, or a stored secret cleared) is enabled only by a passing test
+            if (!endpointChanged && !wasEnabled && given.includes('disabled') && disabled !== 'Y') {
+                const waiting = ec.entity.find('moqui.server.ConnectionCheck').condition({adapterKey: 'relay', connectionKey: emailServerId})
+                        .useCache(false).disableAuthz().one()
+                if (waiting?.pendingTest === 'Y' || waiting?.secretCleared === 'Y') {
+                    ec.message.addError('The server waits for a test: test it as it is now in Admin Connections, and the test enables it'); return }
+            }
             for (const name of given) row.set(name, context.get(name))
             let secretCleared = false
             if (endpointChanged) {

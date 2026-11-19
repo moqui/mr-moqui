@@ -495,7 +495,7 @@ fn a_target_that_may_update_accounts_refuses_their_identity_fields() {
         ("EtltEntity", "moqui.security.UserAccount", "EtllStore", "emailAddress"),
         ("EtltEntity", "UserAccount", "EtllUpdate", "username"),
         ("EtltService", "update#moqui.security.UserAccount", "", "disabled"),
-        ("EtltService", "store#moqui.security.UserAccount", "", "externalAuthId"),
+        ("EtltService", "store#moqui.security.UserAccount", "", "externalUserId"),
     ] {
         let error = target(refused.0, refused.1, refused.2, refused.3)
             .unwrap_err()

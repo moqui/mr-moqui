@@ -132,10 +132,12 @@ along with this software (see the LICENSE.md file). If not, see
             <!-- A change to another account's sign-in fields (its username, email address, which a reset mails, flags,
                 dates, addresses, provider link) is refused when that account holds access the caller lacks
                 (check#AccountAction bounded, Identity.js heldBeyond; SEC-ADM-05): the caller could take it over. Its name,
-                locale, time zone and currency are anyone's to change whom the service lets in. -->
+                locale, time zone and currency are anyone's to change whom the service lets in. An empty value clears the field
+                (the entity-auto update writes it as null), so it is a change when a value is stored: clearing disabled or
+                ipAllowed re-enables an account or lifts its address rule. -->
             <set field="signInChanged" from="Object.keys(userAccount.getMap ? userAccount.getMap() : userAccount).some(name =&gt;
                     !['userId', 'userFullName', 'locale', 'timeZone', 'currencyUomId', 'lastUpdatedStamp'].includes(name) &amp;&amp;
-                    context[name] != null &amp;&amp; context[name] !== '' &amp;&amp; String(context[name]) != String(userAccount.get(name) ?? ''))"/>
+                    context[name] != null &amp;&amp; String(context[name]) != String(userAccount.get(name) ?? ''))"/>
             <!-- The email address (where reset#Password mails) and the provider link (externalUserId: who signs in through SSO)
                 recover or take over the account: a session changes them, on its own account or as an administrator on
                 another's, only after signing in, or confirming who it is, in the last five minutes (check#AccountAction

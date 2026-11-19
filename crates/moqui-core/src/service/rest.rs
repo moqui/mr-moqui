@@ -649,8 +649,8 @@ fn run_entity(
     anonymous.apply_anonymous(auth)?;
     let facade = current_facade()?;
     // As Java's `RestApi`, identity-admin entities are never readable here; secret-config reads are allowed on a
-    // declared resource and writes need ADMIN. `UserAccount` writes lose the password fields, and the identity
-    // fields unless the caller is ADMIN. Results never carry the password fields.
+    // declared resource and writes need ADMIN. `UserAccount` writes lose the password and the identity fields, whoever
+    // the caller. Results never carry the password fields.
     let full_name = facade
         .with_entity(name, |entity, _, _| Ok(entity.full_name.clone()))
         .unwrap_or_else(|_| name.to_string());
@@ -682,12 +682,14 @@ fn run_entity(
             if sensitive::account_owned_email_server(&facade, &full_name, params)? {
                 return refused("writable");
             }
+            // a `UserAccount` write takes neither the password fields nor the identity fields, an ADMIN's included: those
+            // are changed through `update#UserAccount` and the password services, whose rules (another account that holds
+            // more access than the caller, a recent sign-in for the email address) an entity write would pass by
+            // (plans/Security-Review-Medium.md SEC-ADM-81)
             let mut parms = params.clone();
             if operation != "delete" && sensitive::is_user_account_entity(&full_name) {
                 sensitive::remove_user_account_secrets(&mut parms);
-                if !crate::user::is_in_group("ADMIN")? {
-                    sensitive::remove_user_account_identity(&mut parms);
-                }
+                sensitive::remove_user_account_identity(&mut parms);
             }
             let service = format!("{operation}#{name}");
             Ok(value_map(call::sync(&service, &parms)?))

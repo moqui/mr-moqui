@@ -18,6 +18,85 @@ use std::path::PathBuf;
 use moqui_lib::object::Value;
 
 use super::{backup_dir, mirror_options, paused_for, MirrorOptions, Transport};
+use crate::context::ExecutionContextFactory;
+
+/// Where a whole-database archive goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): a caller without
+/// ADMIN_BACKUP_DOWNLOAD who names a directory or a mirror other than a backup job's is refused before anything is
+/// dumped; the job's own destination, the default one and a call with authorization disabled pass.
+#[test]
+fn a_destination_other_than_a_jobs_needs_the_download_permission() {
+    let facade = crate::testing::open();
+    facade.set_disable_fk_create(true);
+    let ctx = ExecutionContextFactory::test_context();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let text = |value: &str| Value::string(value);
+    {
+        let _authz = ctx.disable_authz();
+        let mut job = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+        job.set("jobName", text("spec_backup"));
+        job.set(
+            "serviceName",
+            text("org.moqui.impl.ServerServices.backup#EmbeddedDatabase"),
+        );
+        job.create(&facade).unwrap();
+        let mut parameter = facade.make_value("moqui.service.job.ServiceJobParameter").unwrap();
+        parameter.set("jobName", text("spec_backup"));
+        parameter.set("parameterName", text("systemMessageRemoteId"));
+        parameter.set("parameterValue", text("JobMirror"));
+        parameter.create(&facade).unwrap();
+        let mut account = facade.make_value("moqui.security.UserAccount").unwrap();
+        account.set("userId", text("BKOPERATOR"));
+        account.set("username", text("bkoperator"));
+        account.create(&facade).unwrap();
+    }
+    crate::user::internal_login_user("bkoperator").unwrap();
+    let call = |pairs: &[(&str, &str)]| {
+        ctx.message().clear();
+        let parameters: BTreeMap<String, Value> = pairs
+            .iter()
+            .map(|(name, value)| ((*name).to_string(), text(value)))
+            .collect();
+        super::backup_embedded_database(&parameters, &facade).unwrap();
+        ctx.message().errors().join("\n")
+    };
+    let refused = |errors: String| errors.contains("ADMIN_BACKUP_DOWNLOAD");
+    assert!(refused(call(&[("systemMessageRemoteId", "TakerMirror")])));
+    assert!(refused(call(&[("backupDir", "/srv/www/static")])));
+    // the job's own mirror, but sent plain to another recipient's key or with another transport: not the job's
+    assert!(refused(call(&[
+        ("systemMessageRemoteId", "JobMirror"),
+        ("mirrorTransport", "s3")
+    ])));
+    assert!(!refused(call(&[("systemMessageRemoteId", "JobMirror")])));
+    assert!(!refused(call(&[])));
+    {
+        let _authz = ctx.disable_authz();
+        assert!(!refused(call(&[("systemMessageRemoteId", "TakerMirror")])));
+    }
+    crate::user::logout().unwrap();
+}
+
+#[test]
+fn a_destination_reads_the_flags_and_the_transport_as_the_service_does() {
+    let params = |pairs: &[(&str, Value)]| -> BTreeMap<String, Value> {
+        pairs.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()
+    };
+    assert_eq!(
+        super::destination(&params(&[("mirrorEncrypt", Value::Bool(false))])),
+        super::destination(&params(&[]))
+    );
+    assert_eq!(
+        super::destination(&params(&[
+            ("mirrorTransport", Value::string(" S3 ")),
+            ("mirrorEncrypt", Value::string("true"))
+        ])),
+        super::destination(&params(&[
+            ("mirrorTransport", Value::string("s3")),
+            ("mirrorEncrypt", Value::Bool(true))
+        ]))
+    );
+}
 
 #[test]
 fn the_call_names_the_directory_before_the_property() {

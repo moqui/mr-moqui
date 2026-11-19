@@ -564,6 +564,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="confMap" type="Map"/>
         </out-parameters>
     </service>
+    <service verb="get" noun="OwnHostNames" type="rust" location="moqui_core::service::protocol_admin::get_own_host_names"
+            allow-remote="false">
+        <description>The names this instance answers by, lower case with no port: the webroot webapp's http-host,
+            https-host and allowed-hosts, the public sites' hosts, the names set up with ACME, and on an instance that is
+            not production this machine's own (localhost, the loopback addresses, its host name and that name's
+            addresses); an IPv6 address in brackets. A relay's link base URL is held to them (RelayRules.js,
+            plans/Security-Review-Medium.md SEC-ADM-83). Internal: callers disable authorization.</description>
+        <out-parameters><parameter name="hostNameList" type="List"/></out-parameters>
+    </service>
     <service verb="probe" noun="ProtocolTarget" type="rust" location="moqui_core::service::protocol_admin::probe_protocol_target"
             allow-remote="false" transaction="ignore">
         <description>One TCP connection, closed as soon as it is made, to a target of the server's fixed list by its key

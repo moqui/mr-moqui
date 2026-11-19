@@ -250,6 +250,46 @@ fn the_certificate_is_written_where_the_listener_reads_it() {
     let _ = std::fs::remove_dir_all(dir.parent().unwrap());
 }
 
+/// Only an order's challenge is answered and only a DNS name's files are written (plans/Security-Review-Medium.md
+/// SEC-OUT-81): a challenge row of a name not set up here, or one open longer than an order keeps one, is left out; a
+/// certificate under `default`, `localhost` or a path is not written, and an authority's directory is https only.
+#[test]
+fn only_an_orders_challenge_is_answered_and_only_a_names_files_are_written() {
+    use std::collections::HashSet;
+    let now = moqui_core::user::now_millis();
+    let set_up: HashSet<String> = ["shop.example.com".to_string()].into_iter().collect();
+    assert_eq!(
+        store::refused_challenge("shop.example.com", now + 9 * 60_000, false, &set_up, now),
+        None
+    );
+    assert!(store::refused_challenge("other.example.com", now + 60_000, false, &set_up, now).is_some());
+    assert!(store::refused_challenge("shop.example.com", now + DAY, false, &set_up, now).is_some());
+    // the reachability check's own, before the name is set up: for its minute only
+    assert_eq!(
+        store::refused_challenge("new.example.com", now + 60_000, true, &set_up, now),
+        None
+    );
+    assert!(store::refused_challenge("new.example.com", now + 9 * 60_000, true, &set_up, now).is_some());
+
+    let dir = crate::tls::tests::temp_dir("acme-names").join("cert");
+    std::fs::create_dir_all(&dir).unwrap();
+    for host in [
+        "default",
+        "localhost",
+        "_wildcard.example.com",
+        "../outside",
+        "a/b.example.com",
+    ] {
+        assert!(store::write_files(&dir, host, "chain", "key").is_err(), "{host}");
+        assert!(!dir.join(host).exists(), "{host}");
+    }
+    assert!(!dir.parent().unwrap().join("outside").exists());
+    let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+
+    assert!(super::order::directory_url("https://acme.example.test/directory").is_ok());
+    assert!(super::order::directory_url("http://acme.example.test/directory").is_err());
+}
+
 #[test]
 fn a_host_name_is_a_dns_name_an_authority_issues_for() {
     use super::services::valid_host;

@@ -179,6 +179,64 @@ fn a_disabled_printer_takes_only_its_connection_test() {
     crate::print::clear_print_client();
 }
 
+/// `print#ResourceDocument` prints a stored document only (plans/Security-Review-Medium.md SEC-RTE-83): a `dbresource://`
+/// or `content://` location, never a file, the runtime directory, a component's file or a URL, which would send what
+/// the server can read to the printer's server.
+#[test]
+fn a_resource_document_is_printed_only_from_the_document_stores() {
+    let _print = crate::print::print_test_lock();
+    let (facade, context) = setup();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    install(&["impl/PrintServices.xml"]);
+    let printer = std::sync::Arc::new(FakePrinter {
+        printed: std::sync::Mutex::new(Vec::new()),
+    });
+    crate::print::install_print_client(printer.clone());
+    crate::service::sync(
+        "create#moqui.basic.print.NetworkPrinter",
+        &params(&[
+            ("networkPrinterId", "RES_PRINTER"),
+            ("serverHost", "localhost"),
+            ("printerName", "gate"),
+        ]),
+    )
+    .unwrap();
+    let file = std::env::temp_dir().join(format!("moqui-print-resource-{}.txt", std::process::id()));
+    std::fs::write(&file, "a file the server reads").unwrap();
+    let print = |location: &str| {
+        context.message().clear();
+        crate::service::sync(
+            "org.moqui.impl.PrintServices.print#ResourceDocument",
+            &params(&[("networkPrinterId", "RES_PRINTER"), ("resourceLocation", location)]),
+        )
+        .unwrap();
+        errors(&context)
+    };
+    for refused in [
+        format!("file:{}", file.display()),
+        file.display().to_string(),
+        "runtime://conf/MoquiDevConf.xml".to_string(),
+        "component://framework/service/org/moqui/impl/PrintServices.xml".to_string(),
+        "https://example.com/page.txt".to_string(),
+        "dbresource://print/../secret.txt".to_string(),
+    ] {
+        assert!(print(&refused).contains("only a stored document"), "{refused}");
+    }
+    assert!(printer.printed.lock().unwrap().is_empty());
+    let _ = std::fs::remove_file(&file);
+
+    let stored = "dbresource://print-test/page.txt";
+    facade.assume_db_tables();
+    facade.write_db_resource(stored, b"a stored page").unwrap();
+    assert_eq!(print(stored), "");
+    assert_eq!(
+        printer.printed.lock().unwrap().last().map(|sent| sent.bytes.clone()),
+        Some(b"a stored page".to_vec())
+    );
+    crate::print::clear_print_client();
+}
+
 #[test]
 fn a_print_job_is_sent_through_the_print_client_and_its_status_follows_the_server() {
     let _print = crate::print::print_test_lock();
@@ -339,6 +397,24 @@ fn a_print_job_is_sent_through_the_print_client_and_its_status_follows_the_serve
     )
     .unwrap();
     assert_eq!(printers.get("networkPrinterIdList"), again.get("networkPrinterIdList"));
+    // the printer made waits for a test print, as one started in Admin's Connections does (SEC-RTE-83)
+    let made = facade
+        .find("moqui.basic.print.NetworkPrinter")
+        .unwrap()
+        .eq("serverHost", Value::string("otherhost"))
+        .one()
+        .unwrap()
+        .expect("the printer made");
+    assert_eq!(made.get("disabled").map(to_plain_string).as_deref(), Some("Y"));
+    let check = facade
+        .find("moqui.server.ConnectionCheck")
+        .unwrap()
+        .eq("adapterKey", Value::string("printer"))
+        .eq("connectionKey", made.get("networkPrinterId").cloned().unwrap())
+        .one()
+        .unwrap()
+        .expect("its connection check");
+    assert_eq!(check.get("pendingTest").map(to_plain_string).as_deref(), Some("Y"));
     crate::print::clear_print_client();
 
     // No document at all is the Java message.

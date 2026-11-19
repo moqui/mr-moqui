@@ -1,7 +1,10 @@
 // The Service REST email/servers resource (tools moqui.rest.xml; org.moqui.mail.EmailServices find#RelayServers and
 // get#RelayServer, SEC-MAIL-04): a mail server that a mail client account owns (ownsEmailServer Y) is neither listed nor
 // answered, and no answer carries an encrypted field, only whether it is set.
-// PATCH email/servers/{id} (update#RelayServer) and its poll (poll#EmailServer) refuse such a server the same way.
+// PATCH email/servers/{id} (update#RelayServer) and its poll (poll#EmailServer) refuse such a server the same way. The PATCH
+// holds Admin's rules for a relay too (RelayRules.js): the sign-in mail's relay needs ADMIN_ACCESS_MANAGE and a recent
+// sign-in, a link base URL is on one of the instance's own names, and a relay waiting for a test is not enabled by it
+// (plans/Security-Review-Medium.md SEC-ADM-82, SEC-ADM-83).
 // Run: ./moq test framework --spec RelayServers
 const RELAY = "SPEC_RELAY_SHARED"
 const OWNED = "SPEC_RELAY_OWNED"
@@ -117,3 +120,33 @@ feature("a relay repointed by PATCH is disabled until a test, and its password i
     },
 })
 
+
+// PATCH /rest/s1/moqui/email/servers/{id} as the signed-in user: the status and the answer's text with its errors
+function patch(emailServerId, body) {
+    const out = screenTest("rest").render("s1/moqui/email/servers/" + emailServerId, body, "patch")
+    ec.message.clearAll()
+    return {status: out.status, errors: String(out.output || "") + " " + Array.from(out.errorMessages || []).join(" ")}
+}
+
+feature("a PATCH holds the sign-in mail relay to an access administrator's recent sign-in, a link base to the instance's names, and a test before enabling", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const read = (id) => sys(() => ec.entity.find("moqui.basic.email.EmailServer").condition("emailServerId", id).useCache(false).one())
+        const systemBefore = read("SYSTEM")?.allowedToDomains ?? null
+        // signed in by an internal login: not a recent sign-in
+        const system = patch("SYSTEM", {allowedToDomains: "taker.example.net"})
+        const linkBase = patch(RELAY, {webBaseUrl: "https://taker.example.net/app"})
+        // the relay the feature before repointed waits for its test
+        const enabled = patch(RELAY, {disabled: "N"})
+        return {system, systemBefore, systemAfter: read("SYSTEM")?.allowedToDomains ?? null, linkBase, enabled, relay: read(RELAY)}
+    },
+    then({system, systemBefore, systemAfter, linkBase, enabled, relay}) {
+        system.status != 200
+        system.errors.includes("Confirm")
+        systemAfter == systemBefore
+        linkBase.errors.includes("own names")
+        relay.webBaseUrl == null
+        enabled.errors.includes("test")
+        relay.disabled == "Y"
+    },
+})

@@ -2774,7 +2774,7 @@ fn store_test(account: &str) -> Vec<(String, String, String)> {
 }
 
 /// With the loopback exception off, a plain imap or pop3 server offering no STARTTLS or STLS is refused before the
-/// password is sent, and test#EmailAccount says why; storeAllowPlain lets it sign in. A pop3 server whose CAPA lists
+/// password is sent, and test#EmailAccount says why; storeAllowPlain, with the password entered again, lets it sign in. A pop3 server whose CAPA lists
 /// STLS is sent STLS and the connection goes to TLS before USER (the fake server has no TLS, so the handshake fails).
 #[test]
 fn a_plain_store_signs_in_only_with_tls_or_when_allowed() {
@@ -2801,9 +2801,14 @@ fn a_plain_store_signs_in_only_with_tls_or_when_allowed() {
             "{:?}",
             imap.commands()
         );
+        // allowing plain text changes how the password is sent: it is entered again with it (SEC-MAIL-84)
         ok(
             "update#EmailAccount",
-            &[("emailAccountId", text(&account)), ("storeAllowPlain", text("Y"))],
+            &[
+                ("emailAccountId", text(&account)),
+                ("storeAllowPlain", text("Y")),
+                ("mailPassword", text("app-password")),
+            ],
         );
         let steps = store_test(&account);
         assert_eq!(
@@ -2849,7 +2854,11 @@ fn a_plain_store_signs_in_only_with_tls_or_when_allowed() {
         assert!(!pop_log_has(&pop, "USER alice"));
         ok(
             "update#EmailAccount",
-            &[("emailAccountId", text(&plain)), ("storeAllowPlain", text("Y"))],
+            &[
+                ("emailAccountId", text(&plain)),
+                ("storeAllowPlain", text("Y")),
+                ("mailPassword", text("pop-password")),
+            ],
         );
         let steps = store_test(&plain);
         assert_eq!(

@@ -26,6 +26,7 @@
 // A refusal a person can act on is answered (applied false, reasonCode, reason), never written; a missing permission or a
 // malformed request is an error. No dependency on Mantle or an app.
 const lib = ec.resource.script("component://framework/service/org/moqui/admin/ConfigurationLib.js")
+const relayRules = ec.resource.script("component://framework/service/org/moqui/mail/RelayRules.js")
 const {find, one, rows, map, iso, stamp, text, refused, plainText, urlText, write} = lib
 
 const ADAPTER = "moqui.server.ConnectionAdapter"
@@ -34,6 +35,7 @@ const CHECK = "moqui.server.ConnectionCheck"
 const ACCOUNT = "moqui.security.UserAccount"
 const VIEW = "ADMIN_CONNECTION_VIEW"
 const MANAGE = "ADMIN_CONNECTION_MANAGE"
+const ACCESS_MANAGE = "ADMIN_ACCESS_MANAGE"
 const has = permission => ec.user.hasPermission(permission)
 const yes = value => value === true || value === "true" || value === "Y"
 const no = value => value === false || value === "false" || value === "N"
@@ -85,6 +87,15 @@ const enumOptions = enumTypeId =>
 function hostOf(url) {
     const parts = /^[a-z][a-z0-9+.-]*:\/\/(?:[^\/?#@]*@)?(\[[^\]]+\]|[^\/?#:]+)/i.exec(text(url))
     return parts ? parts[1].toLowerCase() : ""
+}
+// A relay's link base URL (the start of every link in the mail it sends, a password reset's and an invitation's among
+// them): an http(s) URL on one of the instance's own names (RelayRules.js linkBaseRefusal, as update#RelayServer holds it
+// too; plans/Security-Review-Medium.md SEC-ADM-83).
+function linkBaseText(value, what) {
+    const found = urlText(value, what)
+    const refusal = relayRules.linkBaseRefusal(found)
+    if (refusal) throw new Error(refusal)
+    return found
 }
 // A URL as a read shows it: without the user and password an instance administrator may have written into it (Tools).
 const shownUrl = url => text(url).replace(/^([a-z][a-z0-9+.-]*:\/\/)[^\/?#@]*@/i, "$1(credentials)@")
@@ -279,6 +290,18 @@ function engine(def) {
         return {connection}
     }
 
+    // A connection whose kind says a change of it takes over accounts (def.recentAuth: the relay the sign-in mail goes
+    // through) is changed and tested only after the administrator signed in, or confirmed who they are, in the last five
+    // minutes (require#RecentAuth: its error and the X-Moqui-Reauth header, which a browser form answers by asking and
+    // sending again). The refusal, or null.
+    function staleSignIn(parts, connectionKey) {
+        if (!def.recentAuth?.(parts)) return null
+        const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
+        return recent
+            ? null
+            : refused("reauthRequired", "Confirm it is you: this connection carries the sign-in mail", {connectionKey})
+    }
+
     // ----- store -----
     function writeCheck(connectionKey, fields) {
         const key = {adapterKey: def.adapterKey, connectionKey}
@@ -304,6 +327,8 @@ function engine(def) {
             const readOnly = def.readOnly?.(parts)
             if (readOnly) return refused("READ_ONLY", readOnly, {connectionKey})
         }
+        const stale = staleSignIn(parts, connectionKey)
+        if (stale) return stale
         const revision = creating ? "" : revisionOf(parts)
         if (!creating && text(p.expectedRevision) !== revision)
             return refused(
@@ -524,6 +549,8 @@ function engine(def) {
         if (hidden) return Object.assign({passed: false}, hidden)
         const readOnly = def.readOnly?.(parts)
         if (readOnly) return refused("READ_ONLY", readOnly, {passed: false, connectionKey})
+        const stale = staleSignIn(parts, connectionKey)
+        if (stale) return Object.assign({passed: false}, stale)
         const check = checkOf(connectionKey)
         const found = []
         const add = (name, ok, okText, failedText) => {
@@ -832,6 +859,13 @@ const remoteDefinition = (() => {
 // A relay is an EmailServer no EmailAccount owns (design §9): the server of a mail account carries the account's password
 // and token and is the account's, refused here on every path.
 const accountOwned = emailServerId => count(MAIL_ACCOUNT, {emailServerId, ownsEmailServer: "Y"}) > 0
+// The mail that signs an account in or takes it over: a reset password (reset#Password), a sign-in code, a factor added,
+// the new-device notice. Whoever points the relay it goes through at a server of theirs reads any account's reset password
+// and codes, so that relay (and SYSTEM, the framework's own) is the access administrator's, as a sign-in provider's role
+// mappings and enabling are (ConfigurationProviders.js): started, changed and tested only with ADMIN_ACCESS_MANAGE, which is
+// sealed, and a recent sign-in (RelayRules.js signInRelay, which update#RelayServer holds too;
+// plans/Security-Review-Medium.md SEC-ADM-82). For a holder of only ADMIN_CONNECTION_MANAGE it is read only here.
+const signInRelay = emailServerId => relayRules.signInRelay(emailServerId)
 const smtpUserOf = server => text(server.smtpUsername) || text(server.mailUsername)
 const relayDefinition = {
     adapterKey: "relay",
@@ -885,7 +919,8 @@ const relayDefinition = {
             label: "Link base URL",
             kind: "url",
             audited: true,
-            help: "The base of links in mail sent through this relay"
+            validate: value => linkBaseText(value, "The link base URL"),
+            help: "The base of links in mail sent through this relay: an address of this instance; empty for its own"
         },
         {
             name: "authTypeName",
@@ -919,13 +954,15 @@ const relayDefinition = {
             ? "Mail goes out through the edge node: its setup changes this relay"
             : parts.main.authTypeEnumId === "EatOAuth2"
               ? "This server signs in with OAuth: it is set up where its account signs in"
-              : null,
+              : !has(ACCESS_MANAGE) && signInRelay(parts.main.emailServerId)
+                ? "This relay sends the sign-in mail (password resets, sign-in codes): an access administrator changes it"
+                : null,
+    recentAuth: parts => signInRelay(parts.main.emailServerId),
     incomplete: parts => {
         const server = parts.main
         if (!text(server.smtpHost)) return "Give the SMTP host"
-        const password = text(server.smtpUsername)
-            ? text(server.smtpPassword) || text(server.mailPassword)
-            : text(server.mailPassword)
+        // with an SMTP user of its own, only its own password (implementation.rs smtp_password)
+        const password = text(server.smtpUsername) ? text(server.smtpPassword) : text(server.mailPassword)
         return smtpUserOf(server) && !password ? "Give the password of the user the relay signs in" : null
     },
     check: after => {
@@ -971,6 +1008,9 @@ const relayDefinition = {
         const emailServerId = text(values.connectionId)
         if (!/^[A-Za-z][A-Za-z0-9_]{2,39}$/.test(emailServerId))
             throw new Error("A relay's id is 3 to 40 letters, digits or underscores, starting with a letter")
+        // a relay the sign-in mail names before it exists is the access administrator's to start, as to change
+        if (!has(ACCESS_MANAGE) && signInRelay(emailServerId))
+            return refused("READ_ONLY", "The sign-in mail goes through this relay: an access administrator starts it")
         return {connectionKey: emailServerId, parts: {main: {emailServerId, authTypeEnumId: "EatPassword"}}}
     },
     consumers: (parts, key) => {

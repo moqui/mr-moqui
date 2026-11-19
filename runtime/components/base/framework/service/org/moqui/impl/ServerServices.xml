@@ -97,6 +97,18 @@ along with this software (see the LICENSE.md file). If not, see
         </script></actions>
     </service>
 
+    <service verb="get" noun="BackupDestination" type="rust" location="moqui_core::service::backup::get_backup_destination"
+            allow-remote="false">
+        <description>The parameters of backup#EmbeddedDatabase that say where its archives go (parameterNameList), that
+            service's name and the permission that sets them (ADMIN_BACKUP_DOWNLOAD), kept once in Rust for the security
+            rules on the job and remote rows (Security.eecas.xml BackupDestination*, BackupDestination.js;
+            plans/Security-Review-Medium.md SEC-TLS-83).</description>
+        <out-parameters>
+            <parameter name="parameterNameList" type="List"/>
+            <parameter name="serviceName"/>
+            <parameter name="permissionId"/>
+        </out-parameters>
+    </service>
     <service verb="backup" noun="EmbeddedDatabase" type="rust"
             location="moqui_core::service::backup::backup_embedded_database"
             authenticate="false" transaction="ignore">
