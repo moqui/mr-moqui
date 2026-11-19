@@ -578,7 +578,7 @@ fn log_in_with_a_code_and_from_an_address(factory: &Arc<ExecutionContextFactory>
         .from_address("127.0.0.1")
         .login("ip.user", "moqui", "");
     match refused {
-        Err(LinkError::Remote(text)) => assert!(text.contains("not in allowed list"), "{text}"),
+        Err(LinkError::Remote(text)) => assert!(text.contains("The username or password is not valid"), "{text}"),
         other => panic!("refused from another address: {other:?}"),
     }
     HostLink::new(factory)

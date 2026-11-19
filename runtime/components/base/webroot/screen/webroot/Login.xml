@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
       - change user after pre-auth
     -->
 
-    <transition name="login" require-session-token="false">
+    <transition name="login" method="post" require-session-token="false">
         <!-- Optional for second-factor continuation, where the username is already in the session. -->
         <parameter name="username"/>
         <parameter name="password"/>
@@ -97,12 +97,12 @@ along with this software (see the LICENSE.md file). If not, see
         </script></actions>
         <default-response url="."/>
     </transition>
-    <transition name="resetPassword">
+    <transition name="resetPassword" method="post">
         <parameter name="username" from="ec.web?.sessionAttributes?.moquiPreAuthcUsername || username"/>
         <service-call name="org.moqui.impl.UserServices.reset#Password" in-map="{username:username}"/>
         <default-response url="."/>
     </transition>
-    <transition name="changePassword">
+    <transition name="changePassword" method="post">
         <parameter name="username" from="ec.web?.sessionAttributes?.moquiPreAuthcUsername || username"/>
         <service-call name="org.moqui.impl.UserServices.update#Password"/>
         <actions>
@@ -113,7 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
         <conditional-response type="screen-last"><condition><expression>updateSuccessful</expression></condition></conditional-response>
         <default-response url="." parameter-map="{initialTab:'#change'}"/>
     </transition>
-    <transition name="createInitialAdminAccount">
+    <transition name="createInitialAdminAccount" method="post">
         <service-call name="org.moqui.impl.UserServices.create#InitialAdminAccount"/>
         <default-response url="../Login"/>
         <error-response url="."/>
@@ -136,7 +136,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
         <default-response type="none"/>
     </transition>
-    <transition name="sendOtp">
+    <transition name="sendOtp" method="post">
         <service-call name="org.moqui.impl.UserServices.send#ExternalAuthcCode" in-map="{factorId:factorId}"/>
         <default-response url="."/>
     </transition>

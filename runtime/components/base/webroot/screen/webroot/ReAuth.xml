@@ -3,8 +3,10 @@
 <!-- The recent sign-in check for the signed-in browser (org.moqui.sso.RecentAuthServices; js/WebrootReAuth.js,
     moqui.reauth): /ReAuth/check answers check#RecentAuth (recent, method, secondFactor, authFlowId, authFlowList);
     /ReAuth/password takes {password, code} (reauthenticate#User: reauthenticated, or codeNeeded with codeText and
-    sendableFactors); /ReAuth/sendCode takes {factorId} (send#ReauthCode). An account without a password signs in again
-    at /sso/login with reauth=true and a returnTo. Each answers JSON ({errors} on a refusal); without a user it is 401.
+    sendableFactors); /ReAuth/sendCode takes {factorId} (send#ReauthCode); /ReAuth/sendEmailCode mails a code to the
+    verified address of an account without a password, which /ReAuth/password takes as {code} alone (emailCode in check).
+    An account without a password otherwise signs in again
+    by a POST of /sso/reauth (with the session token) and a returnTo. Each answers JSON ({errors} on a refusal); without a user it is 401.
     Posts need the session's CSRF token. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
@@ -17,7 +19,8 @@
                 const errors = ec.message.hasError() ? ec.message.errorsString : null
                 ec.message.clearErrors()
                 ec.web.sendJsonResponse({errors, recent: !!out.recent, authAgeSeconds: out.authAgeSeconds ?? null, method: out.method || null,
-                    secondFactor: !!out.secondFactor, authFlowId: out.authFlowId || null, authFlowList: out.authFlowList || []})
+                    secondFactor: !!out.secondFactor, authFlowId: out.authFlowId || null, authFlowList: out.authFlowList || [],
+                    emailCode: !!out.emailCode})
             }
         ]]></script></actions>
         <default-response type="none"/>
@@ -45,6 +48,21 @@
             } else {
                 const out = ec.service.sync().name('org.moqui.sso.RecentAuthServices.send#ReauthCode')
                     .parameters({factorId: ec.web.parameters.factorId || ''}).requireNewTransaction(true).disableAuthz().call() || {}
+                const errors = ec.message.hasError() ? ec.message.errorsString : null
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors, sent: !!out.sent})
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- an account without a password: a code to its verified address, which /ReAuth/password then takes alone -->
+    <transition name="sendEmailCode" method="post" begin-transaction="false">
+        <actions><script><![CDATA[
+            if (!ec.user.userId) {
+                ec.web.sendJsonError(401, 'Authentication required')
+            } else {
+                const out = ec.service.sync().name('org.moqui.sso.RecentAuthServices.send#ReauthEmailCode')
+                    .requireNewTransaction(true).disableAuthz().call() || {}
                 const errors = ec.message.hasError() ? ec.message.errorsString : null
                 ec.message.clearErrors()
                 ec.web.sendJsonResponse({errors, sent: !!out.sent})

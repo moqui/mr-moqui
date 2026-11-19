@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use crate::common::{exchange, http_request, merge_cookies, start_with_data};
+use crate::common::{exchange, http_request, merge_cookies, start_with_files_and_links, Gate};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect};
@@ -210,6 +210,12 @@ fn start_idp() -> (SocketAddr, Shared) {
     (rx.recv().unwrap(), shared)
 }
 
+/// A gate on a dev instance: the mock provider is plain http on this machine, which only an instance that is not
+/// production takes (SEC-WEB-93).
+fn start_dev(label: &str, data: &str) -> Gate {
+    start_with_files_and_links(label, Some(data), &[("moqui_conf__instance__purpose", "dev")], &[], &[])
+}
+
 fn data(idp: SocketAddr) -> String {
     format!(
         r#"<entity-facade-xml type="seed">
@@ -235,12 +241,14 @@ fn location(headers: &[(String, String)]) -> String {
 
 /// One browser login through the server and the provider; returns the cookie after the callback and its response.
 fn sso_login(server: SocketAddr, return_to: &str, tamper: bool) -> (String, u16, Vec<(String, String)>, String) {
-    sso_login_with(server, return_to, tamper, "")
+    sso_login_with(server, "/sso/login", return_to, tamper, "")
 }
 
-/// [`sso_login`] with more form parameters (`extra`, as `&name=value`).
+/// [`sso_login`] at `path` (`/sso/reauth` for a re-authentication) with more form parameters (`extra`, as
+/// `&name=value`).
 fn sso_login_with(
     server: SocketAddr,
+    path: &str,
     return_to: &str,
     tamper: bool,
     extra: &str,
@@ -250,7 +258,7 @@ fn sso_login_with(
         server,
         &http_request(
             "POST",
-            "/sso/login",
+            path,
             &[("Content-Type", "application/x-www-form-urlencoded")],
             &body,
         ),
@@ -290,7 +298,7 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
     }
     let (idp, provider) = start_idp();
     provider.lock().unwrap().roles = vec!["staff".to_string(), "unmapped".to_string()];
-    let gate = start_with_data("sso", &data(idp));
+    let gate = start_dev("sso", &data(idp));
     let server = gate.server.address();
 
     // The login page offers the enabled flow, not the disabled one.
@@ -374,7 +382,11 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
         !recent(&silent),
         "a sign-in the provider answered from its session an hour old is not recent"
     );
-    let (ignored, status, _, text) = sso_login_with(server, "/qapps", false, "&reauth=true");
+    // SEC-WEB-84: a plain login is no re-authentication, whatever its parameters say; only /sso/reauth starts one
+    let (_, status, _, text) = sso_login_with(server, "/sso/login", "/qapps", false, "&reauth=true");
+    assert_eq!(status, 302, "{text}");
+    assert!(!provider.lock().unwrap().authorize_query.contains_key("prompt"));
+    let (ignored, status, _, text) = sso_login_with(server, "/sso/reauth", "/qapps", false, "");
     assert_eq!(status, 302, "{text}");
     let query = provider.lock().unwrap().authorize_query.clone();
     assert_eq!(query.get("prompt").map(String::as_str), Some("login"), "{query:?}");
@@ -384,7 +396,7 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
         "a re-authentication the provider did not do is not recent"
     );
     provider.lock().unwrap().auth_age = 0;
-    let (reauthenticated, status, _, text) = sso_login_with(server, "/qapps", false, "&reauth=true");
+    let (reauthenticated, status, _, text) = sso_login_with(server, "/sso/reauth", "/qapps", false, "");
     assert_eq!(status, 302, "{text}");
     assert!(
         recent(&reauthenticated),
@@ -428,7 +440,7 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
         return;
     }
     let (idp, _provider) = start_idp();
-    let gate = start_with_data("sso-app", &data(idp));
+    let gate = start_dev("sso-app", &data(idp));
     let server = gate.server.address();
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";

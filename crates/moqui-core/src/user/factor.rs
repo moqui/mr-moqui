@@ -339,6 +339,21 @@ fn code_needed(wrong: bool) -> Result<CodeLogin, Error> {
 /// password (it signs in through an identity provider), and the factor services' errors.
 pub fn reauthenticate(password: &str, code: &str) -> Result<CodeLogin, Error> {
     let user_id = signed_in()?;
+    // an account with no password (it signs in through an identity provider) confirms by the code mailed to its
+    // verified address (send_reauth_email_code), whatever its provider does (SEC-WEB-84); a wrong code counts as a
+    // failed login
+    if password.is_empty() && !code.is_empty() && reauth_email_address(&user_id)?.is_some() {
+        let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+        let validated = factor_service(
+            VALIDATE_USER_CODE,
+            &[("userId", &user_id), ("code", code), ("countFailure", "true")],
+        )?;
+        if !validated.get("verified").is_some_and(truthy) {
+            return Err(Error::new(CODE_NOT_VALID));
+        }
+        super::login::note_recent_auth(&user_id);
+        return Ok(CodeLogin::LoggedIn);
+    }
     if !password.is_empty() || !super::login::reauth_password_checked(&user_id) {
         super::login::check_reauth_password(&user_id, password)?;
     }
@@ -390,6 +405,119 @@ fn signed_in() -> Result<String, Error> {
     super::login::current_user()
 }
 
+/// The address a code for a re-authentication of `user_id` goes to, when the account has no password (it signs in only
+/// through an identity provider): its `emailAddress`, when a `VerifiedAddress` row says that address was verified (by
+/// the provider under a verified-email rule, or by the registration's mail link). `None` for an account with a
+/// password, which confirms by it, and for one without a verified address.
+///
+/// # Errors
+///
+/// Returns a storage error.
+fn reauth_email_address(user_id: &str) -> Result<Option<String>, Error> {
+    let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+    let facade = entity_facade()?;
+    let Some(account) = facade
+        .find("moqui.security.UserAccount")?
+        .eq("userId", Value::string(user_id))
+        .use_cache(false)
+        .one()?
+    else {
+        return Ok(None);
+    };
+    let text = |name: &str| {
+        account
+            .get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    let address = text("emailAddress");
+    if !text("currentPassword").is_empty() || address.trim().is_empty() {
+        return Ok(None);
+    }
+    let verified = facade
+        .find("moqui.security.public.VerifiedAddress")?
+        .eq("userId", Value::string(user_id))
+        .eq("emailAddress", Value::string(&address))
+        .one()?
+        .is_some_and(|row| row.get("verifiedAt").is_some_and(|at| !moqui_lib::object::is_empty(at)));
+    Ok(verified.then_some(address))
+}
+
+/// Whether [`send_reauth_email_code`] serves `user_id`: an account with no password and a verified address.
+///
+/// # Errors
+///
+/// Returns a storage error.
+pub fn reauth_email_code_offered(user_id: &str) -> Result<bool, Error> {
+    Ok(reauth_email_address(user_id)?.is_some())
+}
+
+/// Mail a code to the signed-in account's verified address for [`reauthenticate`], for an account with no password:
+/// it confirms who it is without its identity provider, which may answer from a session of its own (SEC-WEB-84). One
+/// send per half minute in a session, as [`send_reauth_code`].
+///
+/// # Errors
+///
+/// Returns an error with nobody signed in, for an account with a password or no verified address, within the gap, and
+/// the service's errors.
+pub fn send_reauth_email_code() -> Result<(), Error> {
+    let user_id = signed_in()?;
+    if reauth_email_address(&user_id)?.is_none() {
+        return Err(Error::new(
+            "This account has no verified email address to send a code to: sign in again through its provider",
+        ));
+    }
+    let now = super::login::now_millis();
+    let last = super::session::session_attribute(REAUTH_CODE_SENT).and_then(|text| text.parse::<i64>().ok());
+    if last.is_some_and(|at| (0..REAUTH_CODE_GAP_MILLIS).contains(&(now - at))) {
+        return Err(Error::new(
+            "A code was sent a moment ago: wait half a minute before asking for another",
+        ));
+    }
+    let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
+    // a mailbox is not flooded however many sessions ask: codes to the account's address in the last hour, whoever
+    // asked, at most `login@reauth-email-codes-per-hour`
+    let cap = super::policy::reauth_email_codes_per_hour();
+    let sent = super::login::entity_facade()?
+        .find("moqui.security.UserAuthcFactor")?
+        .eq("userId", Value::string(&user_id))
+        .eq("fromFactorId", Value::string(ACCOUNT_EMAIL_FACTOR))
+        .eq("factorTypeEnumId", Value::string("UafSingleUse"))
+        .condition(Condition::greater(
+            "fromDate",
+            super::login::stamp_value(now - HOUR_MILLIS),
+        ))
+        .count()?;
+    if sent >= cap {
+        tracing::warn!(
+            "A re-authentication code to the address of {user_id} was refused: {sent} were sent in the last hour"
+        );
+        return Err(Error::new(
+            "Codes were sent to your email address too many times in the last hour: try again later",
+        ));
+    }
+    super::session::set_session_attribute(REAUTH_CODE_SENT, Some(&now.to_string()));
+    let username = super::current_username()?.unwrap_or_default();
+    // a code for a re-authentication is good for minutes, not the day a sign-in's code is
+    let parameters = std::collections::BTreeMap::from([
+        ("username".to_string(), Value::string(username)),
+        (
+            "thruDate".to_string(),
+            super::login::stamp_value(now + REAUTH_EMAIL_CODE_MILLIS),
+        ),
+    ]);
+    factor_service_with(SEND_ACCOUNT_EMAIL_CODE, &parameters).map(|_| ())
+}
+
+/// The factor id a code to the account's own `emailAddress` comes from (`send#AuthcCodeUserAccountEmail`).
+const ACCOUNT_EMAIL_FACTOR: &str = "UserAccountEmail";
+/// How long a re-authentication's mailed code is good for: ten minutes.
+const REAUTH_EMAIL_CODE_MILLIS: i64 = 10 * 60 * 1000;
+const HOUR_MILLIS: i64 = 60 * 60 * 1000;
+
+/// The service that mails a single-use code to an account's `emailAddress` (`UserServices.xml`).
+const SEND_ACCOUNT_EMAIL_CODE: &str = "org.moqui.impl.UserServices.send#AuthcCodeUserAccountEmail";
+
 /// Send a code to `factor_id` for a login the password starts here, as `/rest/login` then `sendOtp` do in one
 /// session.
 ///
@@ -410,7 +538,15 @@ fn factor_service(name: &str, pairs: &[(&str, &str)]) -> Result<std::collections
         .iter()
         .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
         .collect();
-    let result = crate::service::sync(name, &parameters);
+    factor_service_with(name, &parameters)
+}
+
+/// [`factor_service`] with parameters of any type.
+fn factor_service_with(
+    name: &str,
+    parameters: &std::collections::BTreeMap<String, Value>,
+) -> Result<std::collections::BTreeMap<String, Value>, Error> {
+    let result = crate::service::sync(name, parameters);
     let errors = ExecutionContext::with_current(|ec| {
         let text = ec.message().errors_text();
         ec.message().clear_errors();

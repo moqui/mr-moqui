@@ -1019,14 +1019,16 @@ impl russh::server::Handler for Connection {
         }
         let fingerprint = public_key.fingerprint(HashAlg::Sha256).to_string();
         let username = user.to_string();
+        let client_ip = self.peer.ip().to_string();
         let checked = on_pool(&self.shared.factory, move |factory| {
             if !key_belongs_to(factory, &fingerprint, &username)? {
                 return Err(CoreError::new(format!(
                     "no active UserSshKey {fingerprint} for {username}"
                 )));
             }
-            // a person's sign-in, as a password's: it clears a sign-out elsewhere (hasLoggedOut)
-            moqui_core::user::login_ssh_key_user(&username)?;
+            // a person's sign-in, as a password's: it clears a sign-out elsewhere (hasLoggedOut), checks ipAllowed
+            // against the peer and is recorded in the login history
+            moqui_core::user::login_ssh_key_user(&username, &client_ip)?;
             ssh_permissions()
         })
         .await;

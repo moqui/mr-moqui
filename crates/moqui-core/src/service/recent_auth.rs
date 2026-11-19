@@ -57,6 +57,7 @@ pub(in crate::service) fn register(
     rust_service!(map, check_recent_auth)?;
     rust_service!(map, reauthenticate_user)?;
     rust_service!(map, send_reauth_code)?;
+    rust_service!(map, send_reauth_email_code)?;
     rust_service!(map, require_recent_auth_service)?;
     Ok(())
 }
@@ -165,6 +166,27 @@ fn check_recent_auth(
             .list()?
             .iter()
             .filter(|flow| field(flow, "disabled") != "Y" && field(flow, "inbound") != "Y")
+            // only a flow whose round trip can answer the check: OpenID Connect, or an OAuth provider that asks the user
+            // to sign in every time (SEC-WEB-84)
+            .filter(|flow| match field(flow, "authFlowTypeEnumId").as_str() {
+                "AftOidc" => true,
+                "AftOauth" => match facade.find("moqui.security.sso.OauthFlow").and_then(|find| {
+                    find.disable_authz()
+                        .eq("authFlowId", Value::string(field(flow, "authFlowId")))
+                        .one()
+                }) {
+                    Ok(row) => row.is_some_and(|row| field(&row, "reauthPrompts") == "Y"),
+                    // a flow whose row cannot be read is not offered; the reason is logged
+                    Err(err) => {
+                        tracing::error!(
+                            "OauthFlow {} could not be read for the recent sign-in check: {err}",
+                            field(flow, "authFlowId")
+                        );
+                        false
+                    }
+                },
+                _ => false,
+            })
             .map(|flow| {
                 let id = field(flow, "authFlowId");
                 let description = field(flow, "description");
@@ -198,6 +220,10 @@ fn check_recent_auth(
         crate::user::session::session_attribute(SSO_FLOW_ID).map_or(Value::Null, Value::String),
     );
     out.insert("authFlowList".to_string(), Value::List(flows));
+    // an account without a password confirms by a code to its verified address too, whatever its provider does
+    let email_code = !has_password
+        && crate::user::reauth_email_code_offered(&user_id).map_err(|err| LibError::new(err.message()))?;
+    out.insert("emailCode".to_string(), Value::Bool(email_code));
     if !recent && truthy(parameters, "required") {
         add_error(localized(REAUTH_TEXT));
     }
@@ -244,6 +270,21 @@ fn reauthenticate_user(
         }
     }
     Ok(out)
+}
+
+/// `send#ReauthEmailCode`: a code to the verified address of an account without a password (SEC-WEB-84).
+fn send_reauth_email_code(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let sent = match crate::user::send_reauth_email_code() {
+        Ok(()) => true,
+        Err(err) => {
+            add_error(localized(err.message()));
+            false
+        }
+    };
+    Ok([("sent".to_string(), Value::Bool(sent))].into_iter().collect())
 }
 
 /// `send#ReauthCode`: a code to the factor `factorId`, after `reauthenticate#User` checked the password.
