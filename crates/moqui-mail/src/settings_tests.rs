@@ -318,6 +318,149 @@ fn a_separate_smtp_sign_in_is_used_tried_and_cleared() {
     assert_eq!(auths().last().map(String::as_str), Some("PLAIN alice-smtp ok"));
 }
 
+/// The endpoint-change rule of an account's own server (plans/Security-Review-Medium.md SEC-MAIL-84): a manager who points
+/// the server elsewhere (a host, a port, a TLS setting, a user, storeAllowPlain) without entering the password again
+/// clears the stored passwords and marks the account EasAuthFailed, so the next test, sync or send gives the new host
+/// nothing; a change that gives the password keeps it, and a form posting the settings back as they are changes nothing.
+/// A server that signs in with OAuth takes only its provider's hosts.
+#[test]
+fn an_endpoint_change_without_the_password_clears_the_stored_sign_in() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install_with(None);
+    alice(&facade);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("storeHost", text("imap.example.com")),
+                ("storePort", text("993")),
+                ("storeProtocol", text("imaps")),
+                ("smtpHost", text("smtp.example.com")),
+                ("smtpPort", text("587")),
+                ("smtpStartTls", text("Y")),
+                ("mailUsername", text("alice")),
+                ("mailPassword", text("app-password")),
+                ("smtpUsername", text("alice-smtp")),
+                ("smtpPassword", text("smtp-secret")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let server = server_of(&facade, &account);
+    let stored = |name: &str| field(&one(&facade, SERVER, "emailServerId", &server), name);
+    let status = || field(&one(&facade, ACCOUNT, "emailAccountId", &account), "statusId");
+    // the settings posted back as they are (a host in capitals, the flags as the form sends them): nothing is cleared
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&account)),
+            ("storeHost", text("IMAP.example.com")),
+            ("storePort", text("993")),
+            ("smtpStartTls", text("Y")),
+            ("smtpSsl", text("N")),
+            ("mailUsername", text("alice")),
+        ],
+    );
+    assert_eq!(stored("mailPassword"), "app-password");
+    assert_eq!(stored("smtpPassword"), "smtp-secret");
+    // another store host with its password given again: kept, and SMTP's own password with it
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&account)),
+            ("storeHost", text("imap.other.example.com")),
+            ("mailPassword", text("new-password")),
+        ],
+    );
+    assert_eq!(stored("mailPassword"), "new-password");
+    assert_eq!(stored("smtpPassword"), "smtp-secret");
+    assert_ne!(status(), "EasAuthFailed");
+    // another SMTP host without its password: nothing stored is left for the new host, and the account waits for its
+    // sign-in; the store's password stays for the store
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&account)),
+            ("smtpHost", text("taker.example.net")),
+        ],
+    );
+    assert_eq!(stored("smtpHost"), "taker.example.net");
+    assert_eq!(stored("smtpPassword"), "");
+    assert_eq!(stored("mailPassword"), "new-password");
+    assert_eq!(status(), "EasAuthFailed");
+    // with no SMTP user of its own, SMTP signs in with the store's password: an SMTP change clears that one too
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&account)), ("smtpUsername", text(""))],
+    );
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&account)), ("smtpPort", text("2525"))],
+    );
+    assert_eq!(stored("mailPassword"), "");
+    // plain text allowed is a change of how the password is sent
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&account)), ("mailPassword", text("again"))],
+    );
+    ok(
+        "update#EmailAccount",
+        &[("emailAccountId", text(&account)), ("storeAllowPlain", text("Y"))],
+    );
+    assert_eq!(stored("mailPassword"), "");
+
+    // an OAuth server: its provider's hosts or those under its host suffixes, never another
+    row(
+        &facade,
+        "moqui.basic.email.EmailOAuthProvider",
+        &[
+            ("oauthProviderEnumId", text("EopSpec84")),
+            ("storeHost", text("imap.provider.example")),
+            ("smtpHost", text("smtp.provider.example")),
+            ("hostSuffixes", text("mail.provider.example")),
+        ],
+    );
+    let oauth = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@provider.example")),
+                ("storeHost", text("imap.provider.example")),
+                ("smtpHost", text("smtp.provider.example")),
+                ("mailUsername", text("alice@provider.example")),
+                ("authTypeEnumId", text("EatOAuth2")),
+                ("oauthProviderEnumId", text("EopSpec84")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    refused(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&oauth)),
+            ("storeHost", text("imap.taker.example")),
+        ],
+        "not a server of the account's sign-in provider",
+    );
+    ok(
+        "update#EmailAccount",
+        &[
+            ("emailAccountId", text(&oauth)),
+            ("storeHost", text("eu.mail.provider.example")),
+        ],
+    );
+    assert_eq!(
+        field(
+            &one(&facade, SERVER, "emailServerId", &server_of(&facade, &oauth)),
+            "storeHost"
+        ),
+        "eu.mail.provider.example"
+    );
+}
+
 fn kind_and_filing(facade: &EntityFacade, account: &str) -> (String, String) {
     let row = one(facade, ACCOUNT, "emailAccountId", account);
     (field(&row, "accountKindEnumId"), field(&row, "recordFilingEnumId"))

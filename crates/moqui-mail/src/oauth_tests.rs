@@ -697,6 +697,43 @@ fn a_new_account_from_a_sign_in_starts_paused_with_a_sync_window() {
     assert!(errors().contains("Active or Paused"));
 }
 
+/// A token goes only to the provider's own mail servers (plans/Security-Review-Medium.md SEC-MAIL-84): a server row pointed
+/// at another host, as a generic write could leave it, gets no token, kept or refreshed, and the provider is not asked.
+#[test]
+fn no_token_is_made_for_a_server_on_another_host() {
+    let _serial = serial();
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let _properties = Properties::set();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    user(&facade, "alice");
+    login("alice");
+    let fake = FakeProvider::start(CLIENT, SECRET, REDIRECT);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    lock(&imap.state).user = "alice@gmail.test".to_string();
+    provider_row(&facade, "EopTest", &fake, (imap.port, 2525), true);
+    let done = sign_in(&fake, "alice@gmail.test", None);
+    assert_eq!(out_text(&done, "status"), "success", "{done:?}");
+    let account_id = out_text(&done, "emailAccountId");
+    let server_id = field(&one(&facade, ACCOUNT, "emailAccountId", &account_id), "emailServerId");
+    super::oauth::access_token(&facade, &server_id, None).unwrap();
+    let refreshes = lock(&fake.state).count("/token", "refresh_token");
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let mut server = facade.make_value(SERVER).unwrap();
+        server.set("emailServerId", text(&server_id));
+        server.set("storeHost", text("imap.taker.example"));
+        server.update(&facade).unwrap();
+    }
+    for _ in 0..2 {
+        let refused = super::oauth::access_token(&facade, &server_id, None).unwrap_err();
+        assert!(refused.to_string().contains("imap.taker.example"), "{refused}");
+        super::oauth::forget(&facade, &server_id);
+    }
+    assert_eq!(lock(&fake.state).count("/token", "refresh_token"), refreshes);
+}
+
 /// The refresh: once at a time for concurrent callers, again when the token is about to expire, a rotated refresh token
 /// kept; a refresh token the provider refuses marks only its account, which the job then leaves while it syncs the
 /// others, and a new sign-in makes it active again.

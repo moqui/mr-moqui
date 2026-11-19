@@ -235,6 +235,17 @@ impl Provider {
         !self.revoke_url.is_empty()
     }
 
+    /// Whether `host` is one of this provider's mail servers: its store, POP or SMTP host, or a host under one of its
+    /// host suffixes. An empty host names none and passes.
+    pub(super) fn serves(&self, host: &str) -> bool {
+        let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        host.is_empty()
+            || [&self.store_host, &self.pop_host, &self.smtp_host]
+                .iter()
+                .any(|own| own.trim().eq_ignore_ascii_case(&host))
+            || self.host_suffixes.iter().any(|suffix| host_under(&host, suffix))
+    }
+
     /// The scopes asked for: with `pop` (the account reads its mail over POP3) the POP scopes too.
     fn scope_for(&self, pop: bool) -> String {
         join_scopes(&self.scope, pop.then_some(self.pop_scope.as_str()))
@@ -639,6 +650,25 @@ pub(super) fn access_token(
             .ok_or_else(|| TokenError::Unavailable(format!("Email server {server_id} not found")))
     };
     let server = read()?;
+    // a token goes only to the provider's own mail servers: a server row pointed at another host (by a generic write, or
+    // one written before update#EmailAccount held its hosts to the provider's) gets none (plans/Security-Review-Medium.md
+    // SEC-MAIL-84)
+    let provider_id = field_text(&server, "oauthProviderEnumId");
+    let provider = load_provider(facade, &provider_id)
+        .map_err(|err| TokenError::Unavailable(format!("OAuth provider {provider_id}: {err}")))?
+        .ok_or_else(|| TokenError::Unavailable(format!("Email server {server_id} names no OAuth provider")))?;
+    for name in ["storeHost", "smtpHost"] {
+        let host = field_text(&server, name);
+        if !provider.serves(&host) {
+            tracing::error!(
+                "Email server {server_id}: {name} {host} is not a mail server of the OAuth provider {provider_id}; no token is sent to it"
+            );
+            return Err(TokenError::Unavailable(format!(
+                "{host} is not a mail server of {}: sign in again on the provider's own servers",
+                provider.name
+            )));
+        }
+    }
     let refresh = field_text(&server, "oauthRefreshToken");
     if !refresh.is_empty() && refresh != DECRYPT_FAILED {
         if let Some(token) =
@@ -652,10 +682,6 @@ pub(super) fn access_token(
     // another thread may have refreshed while this one waited
     let server = read()?;
     let refresh = field_text(&server, "oauthRefreshToken");
-    let provider_id = field_text(&server, "oauthProviderEnumId");
-    let provider = load_provider(facade, &provider_id)
-        .map_err(|err| TokenError::Unavailable(format!("OAuth provider {provider_id}: {err}")))?
-        .ok_or_else(|| TokenError::Unavailable(format!("Email server {server_id} names no OAuth provider")))?;
     if refresh.is_empty() {
         let text = format!("Not signed in with {}; sign in to sync this account", provider.name);
         mark_sign_in_needed(facade, server_id, &text, "no refresh token is stored");

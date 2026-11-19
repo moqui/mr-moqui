@@ -319,6 +319,14 @@ along with this software (see the LICENSE.md file). If not, see
             in as the store does again (its smtpPassword is cleared). statusId may be set to EasActive or EasPaused. The
             Internal account takes only its name, color and sequence.
 
+            The endpoint-change rule, as a relay's (update#RelayServer, Admin's Connections): a change of where or how the
+            stored sign-in is sent (a host, a port, a TLS setting, the store protocol, storeAllowPlain, a user, the sign-in
+            kind or the OAuth provider) clears each stored password not given again in the same change, and revokes and
+            clears the OAuth refresh token, so a manager who is not the mailbox's owner cannot point its server at a host of
+            theirs and receive the mailbox's password or a token for it; the account is then marked EasAuthFailed until its
+            sign-in is entered again (plans/Security-Review-Medium.md SEC-MAIL-84). A server that signs in with OAuth takes
+            only the provider's own hosts (its storeHost, popHost and smtpHost) or a host under its hostSuffixes.
+
             accountKindEnumId changes the kind among hosted, external (personal) and shared: to shared at any time (the
             owner stays, managing it), from shared only when one person is left on it (the owner and no other current
             member; with no owner, the one member left becomes the owner). The filing policy follows the new kind's
@@ -457,18 +465,62 @@ along with this software (see the LICENSE.md file). If not, see
                     server.setFields({smtpStartTls: 'Y', smtpSsl: 'N', storeDelete: 'N', storeMarkSeen: 'N', storeSkipSeen: 'N',
                         authTypeEnumId: 'EatPassword', mailUsername: account.emailAddress}, false, null, null)
                 }
-                // back to a password: the provider sign-in is revoked there and deleted here
-                if (!creating && server.authTypeEnumId === 'EatOAuth2' && given(authTypeEnumId) && authTypeEnumId !== 'EatOAuth2') {
+                // a server field as this change leaves it
+                const after = (name) => given(serverFields[name]) ? blank(serverFields[name]) : server.get(name)
+                // an OAuth server signs in only at its provider's own hosts: a token is never sent to another
+                const signInMoved = ['storeHost', 'smtpHost', 'authTypeEnumId', 'oauthProviderEnumId'].some((name) => given(serverFields[name]))
+                if (signInMoved && after('authTypeEnumId') === 'EatOAuth2' && after('oauthProviderEnumId')) {
+                    const provider = ec.entity.find('moqui.basic.email.EmailOAuthProvider')
+                            .condition('oauthProviderEnumId', after('oauthProviderEnumId')).disableAuthz().one()
+                    const own = provider ? [provider.storeHost, provider.popHost, provider.smtpHost]
+                            .map((host) => String(host ?? '').trim().toLowerCase()).filter((host) => host) : []
+                    const suffixes = provider ? String(provider.hostSuffixes ?? '').split(',')
+                            .map((suffix) => suffix.trim().toLowerCase()).filter((suffix) => suffix) : []
+                    const providers = (host) => own.includes(host) || suffixes.some((suffix) => host === suffix || host.endsWith('.' + suffix))
+                    for (const name of ['storeHost', 'smtpHost']) {
+                        const host = String(after(name) ?? '').trim().toLowerCase()
+                        if (host && !providers(host)) {
+                            ec.message.addError(host + " is not a server of the account's sign-in provider: an account that signs in with it uses the provider's own servers")
+                            return
+                        }
+                    }
+                }
+                // the endpoint-change rule: what the stored sign-in is sent to or over, compared as the sender reads it (a
+                // flag Y or not, a host in any case), so a form that posts every setting back changes nothing. Each side
+                // has its own: the store's (mailPassword) and SMTP's (smtpPassword, or mailPassword when SMTP signs in as
+                // the store does); the sign-in kind and the provider are both sides'.
+                const FLAGS = ['smtpStartTls', 'smtpSsl', 'storeAllowPlain']
+                const endpointOf = (name, value) => FLAGS.includes(name) ? (value === 'Y' || value === true ? 'Y' : 'N')
+                        : String(value ?? '').trim().toLowerCase()
+                const moved = (names) => !creating && serverGiven.some((name) => names.includes(name)
+                        && endpointOf(name, blank(serverFields[name])) !== endpointOf(name, server.get(name)))
+                const bothMoved = moved(['authTypeEnumId', 'oauthProviderEnumId'])
+                const storeMoved = bothMoved || moved(['storeHost', 'storePort', 'storeProtocol', 'storeAllowPlain', 'mailUsername'])
+                const smtpHostMoved = bothMoved || moved(['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl'])
+                const smtpMoved = smtpHostMoved || moved(['smtpUsername'])
+                const endpointChanged = storeMoved || smtpMoved
+                const hadToken = !creating && !!server.oauthRefreshToken
+                // back to a password, or the endpoint changed: the provider sign-in is revoked there and deleted here
+                const leavingOAuth = server.authTypeEnumId === 'EatOAuth2' && given(authTypeEnumId) && authTypeEnumId !== 'EatOAuth2'
+                if (!creating && (leavingOAuth || (endpointChanged && hadToken))) {
                     // a host without the mail client has nothing to revoke
                     if (ec.factory.hasFeature('imap')) ec.service.sync().name('org.moqui.mail.EmailClientServices.revoke#OAuthToken')
                             .parameter('emailServerId', emailServerId).disableAuthz().call()
                     server.set('oauthRefreshToken', null)
                 }
+                let secretCleared = endpointChanged && hadToken && !leavingOAuth
                 for (const name of serverGiven) {
                     if (name === 'mailPassword' && !mailPassword) continue
                     if (name === 'smtpPassword' && !smtpPassword) continue
                     server.set(name, blank(serverFields[name]))
                 }
+                // a password is never sent to an endpoint it was not entered for
+                const clear = (name) => {
+                    if (!serverFields[name] && server.get(name)) { server.set(name, null); secretCleared = true }
+                }
+                if (storeMoved || (smtpHostMoved && !server.smtpUsername)) clear('mailPassword')
+                // with no SMTP user of its own the SMTP password is not used, and is dropped below
+                if (smtpMoved && server.smtpUsername) clear('smtpPassword')
                 // no SMTP user of its own: SMTP signs in as the store does, and no other password is kept for it
                 if (!server.smtpUsername) server.set('smtpPassword', null)
                 if (creating) {
@@ -479,8 +531,12 @@ along with this software (see the LICENSE.md file). If not, see
                 } else {
                     server.update()
                 }
-                // new settings are worth a try: a sign-in that failed, or a server that could not be reached, is tried again
-                if (!given(statusId) && ['EasAuthFailed', 'EasError'].includes(account.statusId)) {
+                // a sign-in the endpoint change cleared is entered again before anything is sent; otherwise new settings are
+                // worth a try: a sign-in that failed, or a server that could not be reached, is tried again
+                if (secretCleared) {
+                    account.set('statusId', 'EasAuthFailed')
+                    account.set('lastSyncError', ec.l10n.localize('The server changed: enter the password again, or sign in with the provider again'))
+                } else if (!given(statusId) && ['EasAuthFailed', 'EasError'].includes(account.statusId)) {
                     account.set('statusId', 'EasActive')
                     account.set('lastSyncError', null)
                 }
