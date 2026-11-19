@@ -8,7 +8,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-6.1.1 | 1 | Brute-force defenses and lockout abuse documented | Framework | `Attack-Surface-Web.md` "Login lockout and passwords", "Web protection": `user-facade/login@max-failures`, `@disable-minutes`, the `web-protection` rules and how they turn on; attempts do not extend a lock window (lockout abuse only implied, not named) | doc review (no test) |
+| v5.0.0-6.1.1 | 1 | Brute-force defenses and lockout abuse documented | Framework | `Attack-Surface-Web.md` "Login lockout and passwords", "Web protection": `user-facade/login@max-failures`, `@disable-minutes`, the `web-protection` rules and how they turn on; attempts do not extend a lock window; lockout abuse named, with its bounds and its trade-off | the document (a documentation requirement): `Attack-Surface-Web.md` "Login lockout and passwords" (lockout abuse) and "Web protection" |
 | v5.0.0-6.1.2 | 2 | Documented list of banned context words | Application | none: the framework keeps no word list | - |
 | v5.0.0-6.1.3 | 2 | All sign-in pathways documented with their strength | Gap | pathways spread over the maps (Web, Admin, SSH, Git, Comms, Files, AI); no one list with the strength each must hold | doc review (no test) |
 

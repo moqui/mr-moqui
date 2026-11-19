@@ -95,6 +95,8 @@ What other systems, devices and clients reach, and what Moqui calls.
 | [Shared-Devices.md](security/Shared-Devices.md) | A browser registered as a device for one route group, with no person signed in |
 | [Recent-Auth.md](security/Recent-Auth.md) | Actions that need a sign-in a moment ago: what counts as one, and the check a sensitive action uses |
 | [proofs/README.md](security/proofs/README.md) | The framework against OWASP ASVS 5.0.0, requirement by requirement at levels 1 and 2: what it meets by default, what the deployment or the application must meet, what is a gap, and the proofs that show it |
+| [proofs/Certifier-Guide.md](security/proofs/Certifier-Guide.md) | How a builder or a certifier checks a deployment with the proofs: the account and parameters a run takes, the opt-in proofs, reading `proofs.md`, the settings each Configuration row asks for, and what the proofs do not cover |
+| [proofs/Cross-References.md](security/proofs/Cross-References.md) | The OWASP Top 10, the API and LLM Top 10s, NIST SP 800-63B and the CWE Top 25, each item mapped to the ASVS rows of the matrix with their status and proofs |
 | [Proof-Tests.md](security/Proof-Tests.md) | The named HTTP security proofs and how to run them with `moqui test-client` |
 
 ## dev: Developing on MR Moqui

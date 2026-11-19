@@ -213,8 +213,22 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   12.3.2); the documentation rows 6.1.3 and 7.1.3 are not tests; 16.2.2, 16.4.2 and 16.4.3 are Inherited. 3.4.3 stays a
   Gap (`base-uri 'self'`). The findings of P4 and P5 are in the register (SEC-WEB-87 to 93 and the others its status
   paragraph names), and the matrix rows cite them.
-- **P6.** Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST 800-63B for
-  authentication, the CWE Top 25), the certifier's guide; then BOSS and the clients (MASVS).
+- **P6** (done, 2026-11-18). Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST
+  800-63B for authentication, the CWE Top 25) and the certifier's guide. As done: `docs/security/proofs/Cross-References.md`
+  maps each item of the five standards to the matrix rows with their status and proofs, ids and names only;
+  `Certifier-Guide.md` says how a builder or certifier runs the proofs against a deployment (the account, the
+  parameters, the opt-in proofs, reading `proofs.md`, the settings each Configuration row asks for, the in-process
+  proofs from a checkout, what is not covered). The documentation rows (6.1.1; PASS's 6.1.1, 6.1.3, 7.1.3, 8.1.1)
+  cite the document that meets them, and `Attack-Surface-Web.md` now names lockout abuse, which 6.1.1 asks for.
+- **P7, BOSS.** The business applications (mr-boss, with the Mantle services behind them) through the same steps as
+  PASS: a matrix at levels 1 and 2 in mr-boss `docs/` (statuses Inherited, BOSS, Configuration, Gap, N/A; most rows
+  inherit the framework's), round 3's BOSS units and the Apps-BOSS map as its evidence, then proofs in mr-boss
+  `test/proofs` for the rows BOSS meets with its own code (its staff access walks, the record files, the payroll and
+  bank changes, the share links), black-box where a client can show it.
+- **P8, the clients.** The desktop and mobile apps and the Tauri client (`crates/moqui-desktop`, `moqui-mobile`,
+  `moqui-client-tauri`, with `moqui-client`) against OWASP MASVS 2.x (CC BY-SA 4.0, ids and links only): storage,
+  cryptography, authentication, network, platform, code, resilience and privacy. A matrix of its own, since MASVS is a
+  standard of its own; proofs as Rust tests and the clients' own test harnesses, as these are not served pages.
 
 ## Decisions
 

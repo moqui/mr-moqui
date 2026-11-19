@@ -7,9 +7,14 @@ Status 2026-11-18: the responsibility matrix (phase P1) is written for levels 1 
 proofs (P2) is built, the framework's security client specs that prove a requirement are moved into proofs (P3), and
 every level 1 row that can take a proof has one (P4), and so does every level 2 Framework and Configuration row (P5):
 73 features under 48 requirements in fourteen chapter files, and in-process proofs (Rust tests and framework specs)
-where a client cannot see the claim.
+where a client cannot see the claim. The cross-references to five other standards and the certifier's guide are
+written (P6); BOSS and the clients are the plan's next phases.
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
+
+To check a deployment, start with the [certifier's guide](Certifier-Guide.md). To find where mr-moqui stands from
+another standard (the OWASP Top 10, the API and LLM Top 10s, NIST SP 800-63B, the CWE Top 25), see the
+[cross-references](Cross-References.md).
 
 ## Who this is for
 
