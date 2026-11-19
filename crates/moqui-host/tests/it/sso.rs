@@ -24,7 +24,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use crate::common::{exchange, http_request, merge_cookies, start_with_data};
+use crate::common::{exchange, http_request, merge_cookies, start_with_files_and_links, Gate};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect};
@@ -210,6 +210,12 @@ fn start_idp() -> (SocketAddr, Shared) {
     (rx.recv().unwrap(), shared)
 }
 
+/// A gate on a dev instance: the mock provider is plain http on this machine, which only an instance that is not
+/// production takes (SEC-WEB-93).
+fn start_dev(label: &str, data: &str) -> Gate {
+    start_with_files_and_links(label, Some(data), &[("moqui_conf__instance__purpose", "dev")], &[], &[])
+}
+
 fn data(idp: SocketAddr) -> String {
     format!(
         r#"<entity-facade-xml type="seed">
@@ -292,7 +298,7 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
     }
     let (idp, provider) = start_idp();
     provider.lock().unwrap().roles = vec!["staff".to_string(), "unmapped".to_string()];
-    let gate = start_with_data("sso", &data(idp));
+    let gate = start_dev("sso", &data(idp));
     let server = gate.server.address();
 
     // The login page offers the enabled flow, not the disabled one.
@@ -434,7 +440,7 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
         return;
     }
     let (idp, _provider) = start_idp();
-    let gate = start_with_data("sso-app", &data(idp));
+    let gate = start_dev("sso-app", &data(idp));
     let server = gate.server.address();
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
     let challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
