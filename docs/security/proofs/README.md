@@ -4,8 +4,9 @@ The framework's standing against the OWASP Application Security Verification Sta
 requirement, and the proofs that show it. The plan is [Proofs-Initial](../../../plans/Proofs-Initial.md).
 
 Status 2026-11-18: the responsibility matrix (phase P1) is written for levels 1 and 2, the harness that runs the
-proofs (P2) is built, and the framework's security client specs that prove a requirement are moved into proofs (P3):
-42 features under 20 requirements, in eleven chapter files.
+proofs (P2) is built, the framework's security client specs that prove a requirement are moved into proofs (P3), and
+the first new proofs for level 1 are written (P4): 51 features under 29 requirements, in twelve chapter files, and an
+in-process proof of the TLS versions (12.1.1).
 A status is one reading of the code at mr-moqui `bf7034ec9`, mr-pass `d2dfa67` and mr-mantle `dff2c9fe`. A Framework
 status is a claim until a proof shows it, and a Gap closes when its fix lands and a proof shows it.
 

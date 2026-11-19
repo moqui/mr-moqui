@@ -8,7 +8,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-12.1.1 | 1 | Only TLS 1.2 and 1.3, newest preferred | Framework | every server and client rustls config takes `with_safe_default_protocol_versions` (`tls.rs` `server_config`, `cluster_edge/mod.rs`, `edge_link/accept.rs`, `pg_tls.rs`); rustls has nothing below 1.2 and prefers 1.3; no OpenSSL or native-tls in `Cargo.lock` | to write: black-box |
+| v5.0.0-12.1.1 | 1 | Only TLS 1.2 and 1.3, newest preferred | Framework | every server and client rustls config takes `with_safe_default_protocol_versions` (`tls.rs` `server_config`, `cluster_edge/mod.rs`, `edge_link/accept.rs`, `pg_tls.rs`); rustls has nothing below 1.2 and prefers 1.3; no OpenSSL or native-tls in `Cargo.lock` | `tls_tests.rs` `the_https_listener_speaks_tls_13_and_12_only_preferring_13` (in-process) |
 | v5.0.0-12.1.2 | 2 | Recommended cipher suites, strongest preferred | Framework | `aws_lc_rs::default_provider()` suites only: AES-GCM and ChaCha20-Poly1305 with ECDHE (`tls.rs` `server_config`) | to write: black-box |
 | v5.0.0-12.1.3 | 2 | mTLS client certificates checked before identity use | Framework | cluster listener: client certificate mandatory, SHA-256 pin of `cluster-member@tls-cert` and handshake signature checked (`moqui-host/src/tls_pin.rs` `verify_client_cert`); edge link: key must match an active `EdgeClient` (`edge_link/accept.rs`) (map); validity dates not checked; related: SEC-CLU-81 (member key admitted on first use, Low, open) | `a_member_without_the_cluster_certificate_is_refused` (`moqui-host/src/cluster_edge/tests.rs`) |
 

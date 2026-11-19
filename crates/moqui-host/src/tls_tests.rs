@@ -237,3 +237,51 @@ fn the_expiry_of_each_pair_is_read_from_its_certificate() {
     assert_eq!(found[0].not_after, 1_930_780_800);
     assert!(certificate_expiries(&dir.join("none")).is_empty());
 }
+
+/// The security proof of OWASP ASVS 5.0.0 v5.0.0-12.1.1 (docs/security/proofs/V12-Secure-Communication.md), in-process:
+/// the HTTPS listener's own settings ([`server_config`]) speak TLS 1.3 to a client that offers it and TLS 1.2 to a
+/// client that offers only 1.2. Nothing older can be offered: rustls implements no version before 1.2.
+#[test]
+fn the_https_listener_speaks_tls_13_and_12_only_preferring_13() {
+    let dir = temp_dir("versions");
+    write_pair(&dir, "localhost");
+    let server = Arc::new(server_config(CertStore::new(dir.clone())).unwrap());
+    let handshake = |versions: &[&'static rustls::SupportedProtocolVersion]| {
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in CertificateDer::pem_file_iter(dir.join("localhost.crt")).unwrap() {
+            roots.add(cert.unwrap()).unwrap();
+        }
+        let config = rustls::ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+            .with_protocol_versions(versions)
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let mut client = rustls::ClientConnection::new(Arc::new(config), name).unwrap();
+        let mut listener = rustls::ServerConnection::new(server.clone()).unwrap();
+        while client.is_handshaking() || listener.is_handshaking() {
+            let mut sent = Vec::new();
+            client.write_tls(&mut sent).unwrap();
+            listener.read_tls(&mut sent.as_slice()).unwrap();
+            listener.process_new_packets().unwrap();
+            let mut answered = Vec::new();
+            listener.write_tls(&mut answered).unwrap();
+            client.read_tls(&mut answered.as_slice()).unwrap();
+            client.process_new_packets().unwrap();
+        }
+        (client.protocol_version(), listener.protocol_version())
+    };
+    let tls13 = Some(rustls::ProtocolVersion::TLSv1_3);
+    let tls12 = Some(rustls::ProtocolVersion::TLSv1_2);
+    assert_eq!(
+        handshake(rustls::ALL_VERSIONS),
+        (tls13, tls13),
+        "a client offering both gets 1.3"
+    );
+    assert_eq!(
+        handshake(&[&rustls::version::TLS12]),
+        (tls12, tls12),
+        "a client offering 1.2 alone gets it"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}

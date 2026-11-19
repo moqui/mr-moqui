@@ -1,6 +1,6 @@
 # Security proofs: the initial plan
 
-Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built; phase P3 moved the security client specs that prove a requirement into the framework's `test/proofs/` (42 features under 20 requirements).
+Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built; phase P3 moved the security client specs that prove a requirement into the framework's `test/proofs/` (42 features under 20 requirements); phase P4 is under way (51 features under 29 requirements).
 
 This plan is for a public library of security proofs: executable tests that show mr-moqui meets a published security
 standard's requirements. The library is organized by a standard, as the OWASP lists are. Its readers are the project,
@@ -180,7 +180,12 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   refusals a control. Every proof that signs in takes the deployment's account or calls `needsFixtures`. The
   framework's `test/budget` split its client budget, its total kept: `client = 3.5`, `proofs = 2.5`. The matrix rows
   for the findings fixed since P1 (SEC-PFS-82, SEC-TLS-81, SEC-TLS-82) were corrected, PASS's V5.3.1 to Inherited.
-- **P4.** New proofs for the level 1 requirements with none: the framework's, then PASS's.
+- **P4.** New proofs for the level 1 requirements with none: the framework's, then PASS's. First batch (2026-11-18):
+  nine black-box proofs, 2.2.2 (`V2Validation`), 3.5.2, 6.2.2, 6.2.3, 6.2.8, 6.4.2, 7.2.1, 7.2.2 and 7.2.3, on a new
+  fixture user `sec.pw.proof` whose password ClientFixtures sets again on each run, and an in-process proof of 12.1.1
+  (`tls_tests.rs`). Left at level 1 for the framework: 9.1.2 and 9.1.3 (the OIDC client's token checks, in-process
+  against a mocked provider), 6.4.1 (a reset password's randomness and single use), 6.1.1 (a document, not a test),
+  and the generator half of 7.2.3.
 - **P5.** The same for level 2.
 - **P6.** Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST 800-63B for
   authentication, the CWE Top 25), the certifier's guide; then BOSS and the clients (MASVS).

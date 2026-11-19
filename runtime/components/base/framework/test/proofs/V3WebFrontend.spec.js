@@ -147,6 +147,28 @@ feature("v5.0.0-3.5.1: an entity REST POST without the session token is refused 
     },
 })
 
+// A form POST is a simple request, sent by a browser with no preflight; the server refuses a foreign Origin before it
+// reads the form, so a site cannot submit the sign-in, or any form, from another origin.
+// Does not prove: a request with no Origin header from a browser that sends none, which the session token covers (3.5.1).
+feature("v5.0.0-3.5.2: a form POST from a foreign origin is refused before it is read, the own origin's is not", {
+    when() {
+        const { username, password } = account()
+        const post = (origin) => {
+            const s = session()
+            s.get("/Login")
+            return s.post("/Login/login", { form: { username, password }, headers: { Origin: origin } })
+        }
+        return { foreign: post(EVIL_ORIGIN), own: post(OWN_ORIGIN) }
+    },
+    then({ foreign, own }) {
+        foreign.status == 401
+        foreign.header("Access-Control-Allow-Origin") == null
+        // the control: the same POST from the server's own origin signs in
+        own.status == 302
+        !(own.location ?? "").includes("/Login")
+    },
+})
+
 // test_a01_redirect.py: test_login_returnTo_does_not_redirect_offsite, test_login_returnTo_same_origin_path_is_allowed
 // Does not prove: redirects an application builds itself, nor the return targets of SSO.
 feature("v5.0.0-3.7.2: the sign-in follows a returnTo on the site and never one off it", {

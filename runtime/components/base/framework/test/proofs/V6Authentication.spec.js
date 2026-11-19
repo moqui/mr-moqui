@@ -21,6 +21,15 @@ const requireFixture = (username, password) => {
     return res
 }
 
+const PW_USER = "sec.pw.proof"
+const PW = "SecPwProof1!!"
+// A password change through the sign-in page's form; no sign-in first, as the form needs none.
+const changePassword = (form) => {
+    const s = session()
+    s.get("/Login")
+    return s.post("/Login/changePassword", { form, accept: "json" })
+}
+
 // test_a07_more.py: test_short_password_is_rejected_over_http. sec.all.only has AUTHZA_ALL, which the password-change
 // transition needs; "short" is under the length rule.
 // Does not prove: the deployment's own minimum beyond one five-character try, nor the admin and REST password paths.
@@ -41,6 +50,47 @@ feature("v5.0.0-6.2.1: a new password shorter than the minimum length is refused
         res.text.toLowerCase().includes("shorter")
         !res.text.toLowerCase().includes("password updated")
         loggedIn(still)
+    },
+})
+
+// Does not prove: the change of a password by a password administrator (ADMIN_PASSWORD), which needs no old password.
+feature("v5.0.0-6.2.3: a password change needs the current password, and a wrong one is refused", {
+    given() { needsFixtures(`the user ${PW_USER}`) },
+    when() {
+        const form = { username: PW_USER, newPassword: "SecPwOther2!!", newPasswordVerify: "SecPwOther2!!" }
+        const without = changePassword(form)
+        const wrong = changePassword(Object.assign({ oldPassword: "NotTheOld1!!" }, form))
+        // a wrong old password counts as a failed sign-in; this one clears the count
+        return { without, wrong, still: restLogin(PW_USER, PW) }
+    },
+    then({ without, wrong, still }) {
+        !without.text.toLowerCase().includes("password updated")
+        !wrong.text.toLowerCase().includes("password updated")
+        // the control: the old password still signs in, so neither changed it
+        loggedIn(still)
+    },
+})
+
+// Does not prove: how the password is compared inside (argon2, in-process); it shows only that no variant is taken.
+feature("v5.0.0-6.2.8: a password is taken only exactly as it was set", {
+    given() { needsFixtures(`the user ${PW_USER}`) },
+    when() {
+        // each wrong try counts as a failed sign-in, and each exact one clears the count, so the account never locks
+        const spaced = restLogin(PW_USER, PW + " ")
+        const exact1 = restLogin(PW_USER, PW)
+        const cased = restLogin(PW_USER, PW.toLowerCase())
+        const exact2 = restLogin(PW_USER, PW)
+        const cut = restLogin(PW_USER, PW.slice(0, -1))
+        const exact3 = restLogin(PW_USER, PW)
+        return { spaced, cased, cut, exact1, exact2, exact3 }
+    },
+    then({ spaced, cased, cut, exact1, exact2, exact3 }) {
+        spaced.status == 401
+        cased.status == 401
+        cut.status == 401
+        loggedIn(exact1)
+        loggedIn(exact2)
+        loggedIn(exact3)
     },
 })
 
@@ -104,5 +154,38 @@ feature("v5.0.0-6.3.2: no initial administrator can be created over HTTP once ac
         res.text.includes(ADMIN_ERROR)
         probe.status == 401
         !loggedIn(probe)
+    },
+})
+
+// A password hint or a secret question would be a second, weaker secret. The sign-in page's forms (sign in, reset,
+// change) ask for none; a reset asks only for the account and sends a temporary password.
+// Does not prove: an application's own registration or account forms.
+feature("v5.0.0-6.4.2: no form of the sign-in page asks for a password hint or a secret question", {
+    when() {
+        const res = session().get("/Login")
+        return { res, names: (res.text.match(/<input\b[^>]*>/g) ?? []).map((tag) => attribute(tag, "name") ?? "") }
+    },
+    then({ res, names }) {
+        res.status == 200
+        // the control: the forms are there
+        names.includes("password") && names.includes("newPassword")
+        !names.some((name) => /hint|question|answer|secret/i.test(name))
+        !/password hint|security question|secret question/i.test(res.text)
+    },
+})
+
+// Last in the file: it changes sec.pw.proof's password, which ClientFixtures sets again on the next run.
+// Does not prove: the change in an application's own account screens, which call the same service.
+feature("v5.0.0-6.2.2: a user changes their password, and only the new one signs in after", {
+    given() { needsFixtures(`the user ${PW_USER}`) },
+    when() {
+        const fresh = `SecPw${Date.now() % 1000000}!a`
+        const res = changePassword({ username: PW_USER, oldPassword: PW, newPassword: fresh, newPasswordVerify: fresh })
+        return { res, withNew: restLogin(PW_USER, fresh), withOld: restLogin(PW_USER, PW) }
+    },
+    then({ res, withNew, withOld }) {
+        res.text.toLowerCase().includes("password updated")
+        loggedIn(withNew)
+        withOld.status == 401
     },
 })

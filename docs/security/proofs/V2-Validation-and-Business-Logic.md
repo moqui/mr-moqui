@@ -17,7 +17,7 @@ table, and what a status claims, is in the [index](README.md).
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
 | v5.0.0-2.2.1 | 1 | Input checked against declared allowed forms | Application | `service/validate.rs` `clean`: type, `required`, declared checks; `allow-html` none refuses `<`; undeclared parameters dropped (`validate_input`) | PASS: mr-mantle `pass/PassAuthority` "an operation runs its schema service and a field the schema does not list is the envelope's 422" |
-| v5.0.0-2.2.2 | 1 | Validation enforced on the server, not client | Framework | `service/validate.rs` `clean` runs in every service call before its body; client checks not relied on | V6Authentication "v5.0.0-6.2.1: a new password shorter than the minimum length is refused"; PASS: mr-mantle `pass/PassAuthority` "an operation runs its schema service and a field the schema does not list ..." |
+| v5.0.0-2.2.2 | 1 | Validation enforced on the server, not client | Framework | `service/validate.rs` `clean` runs in every service call before its body; client checks not relied on | V2Validation "v5.0.0-2.2.2: the server refuses a password change the form would not send"; PASS: mr-mantle `pass/PassAuthority` "an operation runs its schema service and a field the schema does not list ..." |
 | v5.0.0-2.2.3 | 2 | Related fields checked to fit together | Application | SECA `pre-validate`, service actions; entity-auto status flow check (`service/call.rs` `check_status`) | - |
 
 ## V2.3 Business Logic Security
