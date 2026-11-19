@@ -21,7 +21,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::{ConnectInfo, Request, State};
 use axum::middleware::Next;
@@ -75,6 +75,13 @@ pub(crate) struct ListenLimits {
     /// `upload-idle-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`), default 60: an upload that sends nothing for this long
     /// is cut off with 408.
     pub upload_idle: Option<Duration>,
+    /// `upload-min-rate` (`webapp-list/webapp[webroot]/web-protection/requests@upload-min-rate`), default 1024: once
+    /// `body-timeout` has passed, an upload that averaged fewer bytes a second is cut off with 408 (SEC-RTE-91); 0 for
+    /// none.
+    pub upload_min_rate: u64,
+    /// `max-uploads` (`webapp-list/webapp[webroot]/web-protection/requests@max-uploads`), default 1024: the uploads
+    /// arriving at once; another is answered 503 (SEC-RTE-91).
+    pub max_uploads: usize,
     /// `request-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`), default 300: from the request head to the response head, or the
     /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
@@ -119,6 +126,8 @@ impl ListenLimits {
             header: seconds("connections", "header-timeout", 30),
             body: seconds("requests", "body-timeout", 60),
             upload_idle: seconds("requests", "upload-idle-timeout", 60),
+            upload_min_rate: setting(node, "requests", "upload-min-rate").parse::<u64>().unwrap_or(1024),
+            max_uploads: count("requests", "max-uploads", 1024),
             request: seconds("requests", "request-timeout", 300),
             connections: count("connections", "max", 4096),
             shutdown: seconds("connections", "shutdown-timeout", 30),
@@ -137,6 +146,8 @@ impl ListenLimits {
             header: None,
             body: None,
             upload_idle: None,
+            upload_min_rate: 0,
+            max_uploads: 1024,
             request: None,
             connections: 4096,
             shutdown: None,
@@ -1267,14 +1278,16 @@ async fn read_multipart(
         MultipartError::SpoolFull => BodyRefused::SpoolFull,
         other => BodyRefused::Malformed(other.to_string()),
     };
+    let _slot = UploadSlot::take(state.limits.max_uploads)?;
     let spool = Spool::under(state.factory.runtime_dir());
     let mut reader = MultipartReader::new(content_type, Some(spool)).map_err(refused)?;
     let mut stream = body.into_data_stream();
     let mut pending: Vec<u8> = Vec::with_capacity(UPLOAD_FEED);
     let mut total = 0usize;
+    let started = Instant::now();
     loop {
-        let next = match state.limits.upload_idle {
-            Some(idle) => tokio::time::timeout(idle, stream.next())
+        let next = match upload_wait(&state.limits, started.elapsed(), total)? {
+            Some(wait) => tokio::time::timeout(wait, stream.next())
                 .await
                 .map_err(|_| BodyRefused::TimedOut)?,
             None => stream.next().await,
@@ -1325,13 +1338,15 @@ pub(crate) async fn read_to_spool(
         MultipartError::SpoolFull => BodyRefused::SpoolFull,
         other => BodyRefused::Failed(other.to_string()),
     };
+    let _slot = UploadSlot::take(state.limits.max_uploads)?;
     let mut spool = BodySpool::new(Spool::under(state.factory.runtime_dir()));
     let mut stream = body.into_data_stream();
     let mut pending: Vec<u8> = Vec::with_capacity(UPLOAD_FEED);
     let mut total = 0usize;
+    let started = Instant::now();
     loop {
-        let next = match state.limits.upload_idle {
-            Some(idle) => tokio::time::timeout(idle, stream.next())
+        let next = match upload_wait(&state.limits, started.elapsed(), total)? {
+            Some(wait) => tokio::time::timeout(wait, stream.next())
                 .await
                 .map_err(|_| BodyRefused::TimedOut)?,
             None => stream.next().await,
@@ -1374,8 +1389,51 @@ pub(crate) enum BodyRefused {
     Malformed(String),
     /// An upload that could not be spooled.
     Failed(String),
-    /// The uploads being read fill the spool (`webapp-list/webapp[webroot]/web-protection/requests@max-spool`).
+    /// The uploads being read fill the spool (`webapp-list/webapp[webroot]/web-protection/requests@max-spool`), or are
+    /// as many as `max-uploads`.
     SpoolFull,
+}
+
+/// The uploads arriving now, in this process ([`UploadSlot`]).
+static UPLOADS_ARRIVING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// One upload arriving, counted against `max-uploads` until it is dropped (SEC-RTE-91).
+struct UploadSlot;
+
+impl UploadSlot {
+    fn take(max: usize) -> Result<Self, BodyRefused> {
+        use std::sync::atomic::Ordering;
+        let taken = UPLOADS_ARRIVING.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+            (count < max).then_some(count + 1)
+        });
+        if taken.is_err() {
+            tracing::warn!("an upload was refused: {max} uploads are arriving at once (max-uploads)");
+            return Err(BodyRefused::SpoolFull);
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for UploadSlot {
+    fn drop(&mut self) {
+        UPLOADS_ARRIVING.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// How long an upload that has had `total` bytes in `elapsed` may wait for its next chunk: `upload-idle-timeout`, cut
+/// to when its average would fall under `upload-min-rate` once `body-timeout` (60 seconds when off) has passed; `None`
+/// for no limit. A [`BodyRefused::TimedOut`] when it has fallen under already, so a client sending a byte now and then
+/// does not hold the connection for as long as it likes (SEC-RTE-91).
+fn upload_wait(limits: &ListenLimits, elapsed: Duration, total: usize) -> Result<Option<Duration>, BodyRefused> {
+    if limits.upload_min_rate == 0 {
+        return Ok(limits.upload_idle);
+    }
+    let grace = limits.body.unwrap_or(Duration::from_secs(60));
+    let earned = Duration::from_millis(u64::try_from(total).unwrap_or(u64::MAX).saturating_mul(1000) / limits.upload_min_rate);
+    let Some(left) = (grace + earned).checked_sub(elapsed).filter(|left| !left.is_zero()) else {
+        return Err(BodyRefused::TimedOut);
+    };
+    Ok(Some(limits.upload_idle.map_or(left, |idle| idle.min(left))))
 }
 
 impl BodyRefused {

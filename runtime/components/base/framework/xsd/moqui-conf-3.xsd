@@ -828,6 +828,14 @@ along with this software (see the LICENSE.md file). If not, see
                         Seconds for a whole request body that is not an upload (webapp-list/webapp[webroot]/web-protection/requests@body-timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="upload-idle-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds an upload may send nothing (webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout, 60); then 408.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="upload-min-rate" type="xs:string"><xs:annotation><xs:documentation>
+                        Bytes a second an upload (a multipart body, a DAV PUT) must arrive at on average once body-timeout
+                        has passed (webapp-list/webapp[webroot]/web-protection/requests@upload-min-rate, 1024); a slower one
+                        is cut off with 408, so slow uploads cannot hold the connections for as long as they like. 0 turns
+                        it off.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="max-uploads" type="xs:string"><xs:annotation><xs:documentation>
+                        Uploads arriving at once (webapp-list/webapp[webroot]/web-protection/requests@max-uploads, 1024);
+                        another is answered 503, so uploads never take every connection.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="request-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds from the request head to the response head (webapp-list/webapp[webroot]/web-protection/requests@request-timeout, 300); then 504.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
