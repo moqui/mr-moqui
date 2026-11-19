@@ -1,6 +1,7 @@
 // Where a whole-database backup goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): without the sealed
 // ADMIN_BACKUP_DOWNLOAD a user who may write the job and remote rows (System's JobDetail and ConnectionDetail, Tools) neither
-// sets a backup job's directory or mirror nor repoints the remote it mirrors to (Security.eecas.xml BackupDestination*),
+// sets a backup job's directory or mirror nor repoints the remote it mirrors to, its message type or that type's send path
+// (Security.eecas.xml BackupDestination*, BackupDestination.js),
 // and backup#EmbeddedDatabase called by name with another destination is refused before anything is dumped
 // (service/backup.rs). Another job's parameters and the remote's name stay open; a holder changes the destination.
 // Run: ./moq test framework --spec BackupDestination
@@ -99,6 +100,13 @@ feature("a backup's directory and mirror are set only by a holder of ADMIN_BACKU
             dir: attempt(setParameter(JOB, "backupDir", "/srv/www/static")),
             mirror: attempt(setParameter(JOB, "systemMessageRemoteId", "SPEC_TAKER")),
             remote: attempt(updateRemote({sendUrl: "sftp://taker.example.net/backups", username: "taker"})),
+            // the mirror's path is its message type's sendPath: neither the remote's type nor that path is changed
+            remoteType: attempt(updateRemote({systemMessageTypeId: "SPEC_BKDEST_TYPE"})),
+            sendPath: attempt(() => {
+                const row = ec.entity.find("moqui.service.message.SystemMessageType").condition("systemMessageTypeId", REMOTE).one()
+                row.setFields({sendPath: "../../srv/www/static"}, true, null, null)
+                row.update()
+            }),
             renamed: attempt(updateRemote({description: "Embedded database backup mirror (spec)"})),
             other: attempt(setParameter(OTHER_JOB, "daysToKeep", "30")),
             byName: attempt(() => {
@@ -119,6 +127,8 @@ feature("a backup's directory and mirror are set only by a holder of ADMIN_BACKU
         out.dir.includes("ADMIN_BACKUP_DOWNLOAD")
         out.mirror.includes("ADMIN_BACKUP_DOWNLOAD")
         out.remote.includes("ADMIN_BACKUP_DOWNLOAD")
+        out.remoteType.includes("ADMIN_BACKUP_DOWNLOAD")
+        out.sendPath.includes("ADMIN_BACKUP_DOWNLOAD")
         out.byName.includes("ADMIN_BACKUP_DOWNLOAD")
         out.renamed == ""
         out.other == ""

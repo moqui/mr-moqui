@@ -160,61 +160,32 @@ along with this software (see the LICENSE.md file). If not, see
         </script></actions>
     </eeca>
     <!-- Where a whole-database backup goes is its download (plans/Security-Review-Medium.md SEC-TLS-83): a backup job's
-        directory and mirror parameters, its service, and the address and credentials of a remote a backup job mirrors to
-        are changed only by a holder of the sealed ADMIN_BACKUP_DOWNLOAD, whatever screen or tool writes them (System's
-        JobDetail and ConnectionDetail, Tools). A data load runs with authorization disabled and is not checked;
-        backup#EmbeddedDatabase itself refuses another destination named in a call (service/backup.rs). They are checks, so
-        they run when the call already has errors too. -->
+        directory and mirror parameters, its service, and the address, credentials and message type of a remote a backup job
+        mirrors to, and the send path of that type (the mirror's directory or key prefix), are changed only by a holder of
+        the sealed ADMIN_BACKUP_DOWNLOAD, whatever screen or tool writes them (System's JobDetail and ConnectionDetail,
+        Tools). The rules are BackupDestination.js, on get#BackupDestination's list, which backup#EmbeddedDatabase refuses
+        another destination named in a call by (service/backup.rs). A data load runs with authorization disabled and is not
+        checked. They are checks, so they run when the call already has errors too. -->
     <eeca id="BackupDestinationParameter" entity="moqui.service.job.ServiceJobParameter"
             on-create="true" on-update="true" on-delete="true" run-before="true" get-original-value="true" run-on-error="true">
-        <actions><script><![CDATA[
-            const destination = ['backupDir', 'systemMessageRemoteId', 'mirrorTransport', 'mirrorEncrypt', 'mirrorRecipient']
-            if (!ec.artifactExecution.authzDisabled() && destination.includes(String(parameterName ?? ''))
-                    && (eecaOperation != 'update' || parameterValue != originalValue?.parameterValue)
-                    && ec.entity.find('moqui.service.job.ServiceJob').condition('jobName', jobName).disableAuthz().one()?.serviceName
-                        == 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
-                    && !ec.user.hasPermission('ADMIN_BACKUP_DOWNLOAD')) {
-                const refused = new Error('Where a database backup goes is a download of the whole database: changing a backup job\'s '
-                    + parameterName + ' needs ADMIN_BACKUP_DOWNLOAD')
-                refused.moquiErrorKind = 'Unauthorized'
-                throw refused
-            }
-        ]]></script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .parameter(eecaOperation, jobName, parameterName, parameterValue, originalValue)</script></actions>
     </eeca>
     <eeca id="BackupDestinationJob" entity="moqui.service.job.ServiceJob"
             on-update="true" run-before="true" get-original-value="true" run-on-error="true">
-        <actions><script><![CDATA[
-            const backup = 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
-            if (!ec.artifactExecution.authzDisabled() && serviceName == backup && originalValue?.serviceName != backup
-                    && ec.entity.find('moqui.service.job.ServiceJobParameter').condition('jobName', jobName)
-                        .condition('parameterName', 'in', ['backupDir', 'systemMessageRemoteId', 'mirrorTransport', 'mirrorEncrypt', 'mirrorRecipient'])
-                        .disableAuthz().count() > 0
-                    && !ec.user.hasPermission('ADMIN_BACKUP_DOWNLOAD')) {
-                const refused = new Error('A job with a directory or a mirror becomes a database backup only for a holder of ADMIN_BACKUP_DOWNLOAD')
-                refused.moquiErrorKind = 'Unauthorized'
-                throw refused
-            }
-        ]]></script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .job(eecaOperation, jobName, serviceName, originalValue)</script></actions>
     </eeca>
     <eeca id="BackupDestinationRemote" entity="moqui.service.message.SystemMessageRemote"
             on-create="true" on-update="true" run-before="true" get-original-value="true" run-on-error="true">
-        <actions><script><![CDATA[
-            const fields = {sendUrl, username, password, privateKey, sharedSecret, sendSharedSecret}
-            const changed = Object.keys(fields).some((name) => fields[name] != null
-                    && (eecaOperation != 'update' || String(fields[name]) != String(originalValue?.get(name) ?? '')))
-            if (changed && !ec.artifactExecution.authzDisabled()) {
-                const backup = 'org.moqui.impl.ServerServices.backup#EmbeddedDatabase'
-                const mirrored = Array.from(ec.entity.find('moqui.service.job.ServiceJobParameter')
-                        .condition('parameterName', 'systemMessageRemoteId').condition('parameterValue', systemMessageRemoteId)
-                        .disableAuthz().list())
-                    .some((row) => ec.entity.find('moqui.service.job.ServiceJob').condition('jobName', row.jobName).disableAuthz().one()?.serviceName == backup)
-                if (mirrored && !ec.user.hasPermission('ADMIN_BACKUP_DOWNLOAD')) {
-                    const refused = new Error('Remote ' + systemMessageRemoteId + ' is the mirror of a database backup: its address and credentials need ADMIN_BACKUP_DOWNLOAD')
-                    refused.moquiErrorKind = 'Unauthorized'
-                    throw refused
-                }
-            }
-        ]]></script></actions>
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .remote(eecaOperation, systemMessageRemoteId, {sendUrl, username, password, privateKey, sharedSecret, sendSharedSecret,
+                systemMessageTypeId}, originalValue)</script></actions>
+    </eeca>
+    <eeca id="BackupDestinationMessageType" entity="moqui.service.message.SystemMessageType"
+            on-create="true" on-update="true" run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
+            .messageType(eecaOperation, systemMessageTypeId, sendPath, originalValue)</script></actions>
     </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at

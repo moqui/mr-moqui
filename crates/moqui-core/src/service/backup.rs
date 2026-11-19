@@ -65,6 +65,7 @@ pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {
     rust_service!(map, backup_embedded_database)?;
+    rust_service!(map, get_backup_destination)?;
     Ok(())
 }
 
@@ -117,6 +118,23 @@ pub(super) fn backup_embedded_database(
         add_error(error.clone());
     }
     Ok(outcome_map(&outcome, &mirrored))
+}
+
+/// `get#BackupDestination`: the parameters that say where this service's archives go ([`DESTINATION_PARAMETERS`]) and
+/// the service's name, for the security rules on the rows that set them (`Security.eecas.xml` `BackupDestination*`,
+/// `BackupDestination.js`), so the list is kept once.
+pub(super) fn get_backup_destination(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    Ok(BTreeMap::from([
+        (
+            "parameterNameList".to_string(),
+            Value::List(DESTINATION_PARAMETERS.iter().map(|name| Value::string(*name)).collect()),
+        ),
+        ("serviceName".to_string(), Value::string(SERVICE_NAME)),
+        ("permissionId".to_string(), Value::string(DOWNLOAD_PERMISSION)),
+    ]))
 }
 
 /// Where a call's archives go, as this service reads it: each of [`DESTINATION_PARAMETERS`] as text, `mirrorEncrypt` as
