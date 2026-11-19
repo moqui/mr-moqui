@@ -48,6 +48,7 @@ pub mod gc;
 pub(crate) mod hosting;
 pub(crate) mod index;
 pub(crate) mod lease;
+pub(crate) mod leftovers;
 pub(crate) mod lfs_files;
 pub(crate) mod merge;
 pub(crate) mod mirror;
@@ -97,6 +98,7 @@ fn construct(factory: &Arc<ExecutionContextFactory>) -> Result<Arc<dyn moqui_cor
     provider.set_factory(factory);
     // archives nobody used for a while, and what a writer that died left (get#GitArchive)
     archive::sweep_at_start(resources.runtime_dir());
+    leftovers::sweep_at_start(resources.runtime_dir());
     // on a cluster member: the rows other members write, and the on-disk repositories it cannot share (shared.rs)
     provider.listen_for_row_changes(factory);
     provider.warn_unshared_after_start(factory);
@@ -1577,7 +1579,8 @@ impl GitProvider {
                 &format!("import of {}", moqui_core::outbound::redacted(&source)),
             )?;
             let path = self.inner.runtime_dir.join("tmp").join(format!(
-                "git-import-{repository_id}-{}",
+                "git-import-{repository_id}-{}-{}",
+                std::process::id(),
                 jiff::Timestamp::now().as_millisecond()
             ));
             // an http(s) source was checked for public addresses (import_source_allowed): the fetch connects only to one,
