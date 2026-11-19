@@ -697,16 +697,19 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   that carries a row's scope, as the enumeration's `optionValue` (`groupField` for `ReportUserGroups`): the engine answers it
   as each dataset's `scopeParameter`, and the dataset forms send their one scope field under it, whichever policy is
   chosen. A policy that registers none is asked for no field.
-- **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document with a registered policy, owned by the
-  steward, waiting for review; its creator holds the dataset-save artifact `org.moqui.report.dataset` and the update artifact
+- **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document that a group of the creator's
+  reads, with a registered policy, owned by the steward, waiting for review; its creator holds the dataset-save artifact `org.moqui.report.dataset` and the update artifact
   of the dataset named, so a steward granted the datasets of a name pattern creates only under it, whatever id a caller
   sends; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
   a git pull, returns it to review, and deleting the definition deletes its admission), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
   it to review; a shipped dataset's definition is its component's; steward; admit; retire; `expectedVersion`),
   `store#BusinessDatasetFields` (plain field paths only, no expression, secret or encrypted entity field; unique names; removing or renaming a field
   any definition over the dataset names is refused with those definitions' names) and `store#BusinessDatasetConditions` (a field of
-  the document and an operator of the list, never a post-query expression). `index#BusinessDataset` rebuilds the dataset's
-  document of its feed only (`index#DataFeedDocuments` with the document), for its steward, recording the time and count. An
+  the document and an operator of the list, never a post-query expression). A field or condition is revised or removed only
+  by the dataset that added it, never one made with the document or in Tools. Both change the document every dataset over it reads, so they need the
+  steward to steward each other dataset over it too. `index#BusinessDataset` rebuilds the dataset's
+  document of its feed only (`index#DataFeedDocuments` with the document), for its steward, recording the time and count. A
+  create and a change of fields or conditions need the steward's groups to read the document (`DataDocumentUserGroup`). An
   application grants its readers each dataset's artifact (view) and its documents' `DataDocumentUserGroup` rows; admission does
   not grant.
 - **The document is read through its dataset.** A dataset that is not a business one (a DataDocument by its id, an `index:`
@@ -1218,7 +1221,10 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   grant on `org.moqui.report.dataset` (saving dataset definitions) with a pattern over the saver's own dataset names is
   not a way to the logs or past a business dataset's row filter.
 - Row filters (`rowFilter`, `contextFilters` from the signed-in identity, or a `rowFilterService`) are added by the
-  server before documents, ranking, totals, aggregations and exports; a client never supplies them. Existing entity
+  server before documents, ranking, totals, aggregations and exports; a client never supplies them. A saved dataset names
+  as its `serviceName` only a service a component's shipped dataset names there (CalcGrid's `get#CalcFrame`), and as its
+  `rowFilterService` also a registered scope policy, since each reader calls them as themselves: a new service source
+  or row filter is shipped in a component's `report/` directory. Existing entity
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
   only the datasets they should read.
 - Alerts and scheduled reports run as their owner, whose access is checked at each run; recipients do not set what

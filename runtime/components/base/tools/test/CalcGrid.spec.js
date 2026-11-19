@@ -467,3 +467,57 @@ feature("a range of a saved document is added to a dashboard of the viewer's own
         String(badKind.json.errors).includes("A panel of a range is")
     },
 })
+
+// The room of a saved document is the room of one scope: a member whose scope changed (here the time zone, part of the
+// scope's fingerprint) reads no rows of theirs into it and leaves it, so the view opens the document again in the room
+// of their scope. A viewport read checks it (cached a minute, and read again after the room's rows were), a refresh
+// always, and a report's frame leaves it and reads the document in theirs (SEC-TLS-94).
+feature("a member whose scope changed leaves a saved document's room: on a viewport read, a refresh and a frame", {
+    when() {
+        const zone = ec.user.timeZone
+        const other = zone === "Pacific/Auckland" ? "America/Denver" : "Pacific/Auckland"
+        const opened = call("calcOpen", {sourceJson: JSON.stringify(source)}, "post")
+        const saved = call("calcSave", {roomId: opened.json.roomId, title: "Scoped", definitionId: "spec-calcgrid-scope"}, "post")
+        const first = saved.json.roomId
+        const cells = roomId => call("calcCells", {roomId, sheet: 0, row: 1, column: 1, width: 1, height: 1})
+        const open = () => call("calcOpen", {definitionId: "spec-calcgrid-scope"}, "post")
+        const out = {saved, first}
+        try {
+            // the saved room's rows were read again at the save: the next read checks the reader's scope
+            ec.user.setTimeZone(other)
+            out.polled = cells(first)
+            out.reopened = open()
+            out.inScope = cells(out.reopened.json.roomId)
+            // a refresh checks it whatever the viewport's check found
+            ec.user.setTimeZone(zone)
+            out.refreshed = call("calcRefresh", {roomId: out.reopened.json.roomId}, "post")
+            ec.user.setTimeZone(other)
+            const again = open()
+            cells(again.json.roomId)
+            ec.user.setTimeZone(zone)
+            const framed = ec.service.sync().name("org.moqui.calc.CalcServices.get#CalcFrame")
+                .parameters({definitionId: "spec-calcgrid-scope", range: "Enumeration!A1:A2"}).call() || {}
+            ec.message.clearErrors()
+            out.framed = JSON.stringify(framed.frame || {})
+            ec.user.setTimeZone(other)
+            out.afterFrame = cells(again.json.roomId)
+        } finally {
+            ec.user.setTimeZone(zone)
+        }
+        call("calcDelete", {definitionId: "spec-calcgrid-scope"}, "post")
+        ec.message.clearErrors()
+        return out
+    },
+    then({saved, first, polled, reopened, inScope, refreshed, framed, afterFrame}) {
+        !saved.json.errors
+        String(first).startsWith("d")
+        String(polled.json.errors).includes("ROOM_GONE")
+        !reopened.json.errors
+        reopened.json.roomId != first
+        !inScope.json.errors
+        String(refreshed.json.errors).includes("ROOM_GONE")
+        framed.includes('"name":"enumId"')
+        // back in the scope of the room it left: the frame's leaving is why it is gone
+        String(afterFrame.json.errors).includes("ROOM_GONE")
+    },
+})

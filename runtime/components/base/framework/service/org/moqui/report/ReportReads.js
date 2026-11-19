@@ -10,7 +10,7 @@
 //                                 fields and conditions and the definitions that use it
 //     get#BusinessDatasetOptions  what a dataset form may offer: the registered scope policies, each with its scope
 //                                 parameter, the operators and functions a steward may use, and for a caller who may
-//                                 create a dataset the documents of registered feeds
+//                                 create a dataset the documents of registered feeds that a group of theirs reads
 //     find#ReportRecipients       who a caller that may deliver to others may propose as a recipient of a report or an
 //                                 alert, and which of the users and groups named may be one
 //     find#ShareGroups            the groups the caller may share a definition with, by name: their own, and of
@@ -155,9 +155,24 @@ function scopePolicies() {
         }))
         .sort((a, b) => a.description.localeCompare(b.description))
 }
-// The documents a business dataset may be made over: those a registered feed indexes, never a telemetry index.
+// The documents a business dataset may be made over: those a registered feed indexes, never a telemetry index, that a
+// group of the caller's reads (a DataDocumentUserGroup row, as create#BusinessDataset asks: business.rs, SEC-TLS-92).
 function fedDocuments() {
-    const fed = Array.from(new Set(rows("moqui.entity.feed.DataFeedDocument", {}).map(row => row.dataDocumentId)))
+    const groupIds = Array.from(ec.user.getUserGroupIdSet() || [])
+    const read = groupIds.length
+        ? new Set(
+              Array.from(
+                  ec.entity
+                      .find("moqui.entity.document.DataDocumentUserGroup")
+                      .condition("userGroupId", "in", groupIds)
+                      .disableAuthz()
+                      .list()
+              ).map(row => row.dataDocumentId)
+          )
+        : new Set()
+    const fed = Array.from(new Set(rows("moqui.entity.feed.DataFeedDocument", {}).map(row => row.dataDocumentId))).filter(id =>
+        read.has(id)
+    )
     if (!fed.length) return []
     return Array.from(
         ec.entity
