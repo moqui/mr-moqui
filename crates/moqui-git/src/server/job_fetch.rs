@@ -51,7 +51,7 @@ pub(super) fn token_of(request: &GitHttpRequest) -> Option<String> {
 }
 
 /// Check a fetch request's lines: each `want` is `commit`, and a request with wants deepens by a depth of at most
-/// `max_depth`.
+/// `max_depth`, counted from `commit` (never `deepen-relative`, which counts from the client's shallow commits).
 fn check_request(body: &[u8], commit: &ObjectId, max_depth: u32) -> Result<(), Error> {
     let mut input = body;
     let (mut wants, mut depth) = (0usize, None);
@@ -59,11 +59,17 @@ fn check_request(body: &[u8], commit: &ObjectId, max_depth: u32) -> Result<(), E
     while let Some(packet) = pktline::read(&mut input).map_err(io_error)? {
         let Some(line) = packet.text() else { continue };
         if let Some(rest) = line.strip_prefix("want ") {
-            if rest.split_whitespace().next() != Some(hex.as_str()) {
+            let mut parts = rest.split_whitespace();
+            // v0 asks for deepen-relative as a capability of the first want, v2 as an argument (below): from the
+            // client's shallow commits it would go deeper than the depth checked here (SEC-GIT-82)
+            if parts.next() != Some(hex.as_str()) || parts.any(|cap| cap == "deepen-relative") {
                 return Err(Error::new("a job token fetches its job's commit and nothing else"));
             }
             wants += 1;
-        } else if line.starts_with("want-ref ") || line.starts_with("deepen-since ") || line.starts_with("deepen-not ")
+        } else if line.starts_with("want-ref ")
+            || line.starts_with("deepen-since ")
+            || line.starts_with("deepen-not ")
+            || line == "deepen-relative"
         {
             return Err(Error::new(
                 "a job token fetches its job's commit by depth and nothing else",
@@ -190,10 +196,21 @@ pub(super) fn serve(request: &GitHttpRequest, job_token: &str, body: &mut dyn Re
         }],
         review: Vec::new(),
     };
-    // nothing is wanted by id but the one ref's commit, and a `have` is acknowledged for that commit alone: what
-    // else the store holds is not this token's to learn
+    // what the token reads: the commit and its ancestors within `max-fetch-depth`, the most a fetch of it gives. Only
+    // the commit is wanted (`check_request`); a `have` and a client's shallow commit (a deepened fetch's) are answered
+    // within that depth alone: what else the store holds is not this token's to learn (SEC-GIT-82)
+    let within: std::cell::OnceCell<HashSet<ObjectId>> = std::cell::OnceCell::new();
     let only = |ids: &[ObjectId]| -> Result<HashSet<ObjectId>, Error> {
-        Ok(ids.iter().filter(|id| **id == commit).copied().collect())
+        if ids.iter().all(|id| *id == commit) {
+            return Ok(ids.iter().copied().collect());
+        }
+        if within.get().is_none() {
+            let depth = crate::ci::limits().max_fetch_depth.max(1);
+            let (boundary, inside) = super::plan::by_depth(repo.store.as_ref(), &[commit], depth)?;
+            let _ = within.set(inside.into_iter().chain(boundary).collect());
+        }
+        let within = within.get().expect("set just above");
+        Ok(ids.iter().filter(|id| within.contains(*id)).copied().collect())
     };
     let v2 = wants_v2(request.git_protocol.as_deref());
     let outcome = (|| -> Result<(), Error> {
@@ -242,3 +259,7 @@ pub(super) fn serve(request: &GitHttpRequest, job_token: &str, body: &mut dyn Re
         let _ = std::io::Write::flush(out);
     }
 }
+
+#[cfg(test)]
+#[path = "job_fetch_tests.rs"]
+mod tests;
