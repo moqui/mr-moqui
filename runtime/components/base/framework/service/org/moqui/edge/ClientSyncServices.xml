@@ -210,7 +210,7 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.resource.expand('At most ${mb} MB of uploads at once: finish one first', '', {mb: maxBytesOpen / 1048576})); return }
                 const token = Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
                 row = ec.entity.makeValue(UPLOAD)
-                row.setFields({userId: userId, uploadId: uploadId, fileName: String(fileName || 'file').split(/[\\/]/).pop().substring(0, 200) || 'file',
+                row.setFields({userId: userId, uploadId: uploadId, fileName: String(fileName || 'file').split(/[\\/]/).pop().replace(/[\u0000-\u001f#?]/g, '_').substring(0, 200) || 'file',
                     contentType: contentType || null, totalSize: size, receivedSize: 0, chunkCount: 0,
                     storeLocation: `dbresource://upload/${userId}/${token}`, createdDate: now}, true, null, null)
                 row.create()

@@ -504,12 +504,17 @@ macro_rules! tools_js {
         // a write goes to the location as it was given: a reference of `location#suffix` reads the file before the `#`,
         // and the facade refuses a write there rather than write that other file (SEC-PFS-82)
         const writeAt = () => ref.writeLocation || ref.location;
+        // a child or matching directory of a `location#suffix` reference would be made from the location cut at the
+        // `#`, another tree than the one named, so none is derived from one
+        const derivable = () => {
+            if (ref.writeLocation) throw new Error("No file or directory is found under a location with '#' in it: " + ref.writeLocation);
+        };
         Object.assign(ref, {
             getLocation: () => ref.location, getFileName: () => ref.fileName, getExists: () => ref.exists,
             isDirectory: () => ref.directory, isFile: () => ref.file, getSize: () => ref.size,
             isText: () => ref.text, isBinary: () => ref.binary, getContentType: () => ref.contentType,
             getLastModified: () => ref.lastModified, length: () => ref.size || 0, getName: () => ref.fileName,
-            getDirectoryEntries: () => host.resourceEntries(ref.location).map((child) => wrap("Resource", child)),
+            getDirectoryEntries: () => { derivable(); return host.resourceEntries(ref.location).map((child) => wrap("Resource", child)); },
             // null for a file that is not there, as Java's (the stream is null)
             getInputStream: () => ref.openStream(),
             // a reference of `location#versionName` reads that version, as getLocationText does
@@ -563,6 +568,7 @@ macro_rules! tools_js {
                 versionNameLhs == null ? "" : String(versionNameLhs), versionNameRhs == null ? "" : String(versionNameRhs)),
             // the directory named as this file without its extensions, or this directory
             findMatchingDirectory: function () {
+                derivable();
                 if (ref.directory) return ref;
                 let dirLoc = ref.location, directoryRef = ref;
                 while (!(directoryRef.exists && directoryRef.directory) && dirLoc.lastIndexOf(".") > 0) {
@@ -571,13 +577,17 @@ macro_rules! tools_js {
                 }
                 return directoryRef;
             },
-            getChild: (childName) => childName ? makeRef(joinPath(ref.findMatchingDirectory().location, String(childName))) : null,
+            getChild: (childName) => {
+                derivable();
+                return childName ? makeRef(joinPath(ref.findMatchingDirectory().location, String(childName))) : null;
+            },
             getChildren: function () {
                 const directoryRef = ref.findMatchingDirectory();
                 if (directoryRef == null || !directoryRef.exists) return null;
                 return directoryRef.getDirectoryEntries().filter((child) => child.file);
             },
             findChildFile: function (relativePath) {
+                derivable();
                 if (!relativePath) return ref;
                 relativePath = String(relativePath);
                 const directoryRef = ref.findMatchingDirectory();
@@ -603,6 +613,7 @@ macro_rules! tools_js {
                 return makeRef(newDirectoryLoc + "/" + relativePath);
             },
             findChildDirectory: function (relativePath) {
+                derivable();
                 if (!relativePath) return ref;
                 relativePath = String(relativePath);
                 let childDirectoryRef = ref.file ? ref.findMatchingDirectory() : ref;
@@ -706,8 +717,8 @@ macro_rules! tools_js {
     ec.resource.textDiff = (oldText, newText, fromName, toName) => host.textDiff(oldText == null ? "" : String(oldText),
         newText == null ? "" : String(newText), fromName == null ? "old" : String(fromName),
         toName == null ? "new" : String(toName));
-    // CommonMark as HTML, unsanitized: a caller showing it to others cleans it
-    ec.resource.markdownHtml = (text) => host.markdownHtml(text == null ? "" : String(text));
+    // CommonMark as HTML, unsanitized: a caller showing it to others cleans it; relative links against base when given
+    ec.resource.markdownHtml = (text, base) => host.markdownHtml(text == null ? "" : String(text), base == null ? "" : String(base));
     // digests and archives read as streams (archive_host.rs): checksums of exports, operator-supplied import archives
     ec.resource.digest = (location, algorithm) => host.resourceDigest(String(location), String(algorithm || "sha256"));
     ec.resource.digestText = (text, algorithm) => host.textDigest(String(text ?? ""), String(algorithm || "sha256"));
@@ -1293,7 +1304,7 @@ static METHODS: &[Method] = &[
         resource_version_diff
     ),
     method!("tools", "textDiff", [Text, Text, Text, Text], None, leaf, text_diff),
-    method!("tools", "markdownHtml", [Text], None, leaf, markdown_html),
+    method!("tools", "markdownHtml", [Text, Text], None, leaf, markdown_html),
     method!("tools", "restSend", [Value], rest_send),
     method!("tools", "testConfConnection", [Value], test_conf_connection),
     method!("tools", "runSqlCountConf", [Text, Text, Value], run_sql_count_conf),
@@ -2543,11 +2554,13 @@ fn text_diff(call: &mut Call<'_>) -> Result<Ret, HostError> {
     ))
 }
 
-/// `ec.resource.markdownHtml(text)`: CommonMark (with GitHub tables) as HTML, the `.md` template renderer for text a
-/// script holds, such as imported posts. Raw HTML passes through, so a caller showing the result to others sanitizes it.
+/// `ec.resource.markdownHtml(text, base)`: CommonMark (with GitHub tables) as HTML, the `.md` template renderer for text
+/// a script holds, such as imported posts or a wiki page (`render#WikiPage`), with relative links resolved against
+/// `base` when one is given. Raw HTML passes through, so a caller showing the result to others sanitizes it.
 fn markdown_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let text = call.text_or_empty(0);
-    Ok(Ret::from(moqui_lib::markdown::to_html(&text)))
+    let base = call.text_or_empty(1);
+    Ok(Ret::from(moqui_lib::markdown::to_html_with_base(&text, Some(base.as_str()))))
 }
 
 // ---- SQL on a database named by a conf map (InstanceServices) ----

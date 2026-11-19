@@ -288,6 +288,9 @@ fn upload(drive: &Drive, parent: &str, file: UploadedFile) -> Result<(), String>
     Ok(())
 }
 
+/// Why a name with a `#` is refused, before anything is read or written.
+const HASH_REFUSED: &str = "A file or folder name may not have # in it";
+
 pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
     let drives = match drives() {
         Ok(drives) => drives,
@@ -303,6 +306,10 @@ pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
         return DavResponse::status(404);
     };
     let path = context.rest[1..].join("/");
+    // a '#' ends a location where it is read, so a name with one would reach another file (SEC-PFS-82)
+    if path.contains('#') {
+        return DavResponse::text(400, HASH_REFUSED);
+    }
     let href = entry_href(context, drive, &path, context.trailing_slash);
     match method {
         "PROPFIND" => propfind(context, drive, &path),
@@ -669,6 +676,9 @@ fn move_or_copy(context: &Context<'_>, drives: &[Drive], drive: &Drive, path: &s
     {
         return DavResponse::status(400);
     }
+    if segments.iter().any(|part| part.contains('#')) {
+        return DavResponse::text(400, HASH_REFUSED);
+    }
     let Some(target_drive) = segments.first().and_then(|folder| {
         drives
             .iter()
@@ -803,7 +813,7 @@ pub fn drive_folder(drive_id: &str) -> Option<String> {
 /// WebDAV, and each path below goes through the same services (a write is an upload, a removal goes to the trash, a
 /// rename across folders is a move). The desktops' litter is not dropped here, as SFTP clients write none.
 pub mod tree {
-    use super::{children, drives, info, open_file, split_parent, trash, upload, Drive, Entry, FILES};
+    use super::{children, drives, info, open_file, split_parent, trash, upload, Drive, Entry, FILES, HASH_REFUSED};
     use moqui_core::context::{Error, ResourceStat};
     use moqui_core::web::multipart::UploadedFile;
     use moqui_lib::object::Value;
@@ -828,6 +838,9 @@ pub mod tree {
         };
         if parts.iter().any(|part| *part == "." || *part == "..") {
             return Err(refused("not found: a path climbs out".into()));
+        }
+        if parts.iter().any(|part| part.contains('#')) {
+            return Err(refused(format!("permission denied: {HASH_REFUSED}")));
         }
         let drive = drives()
             .map_err(refused)?

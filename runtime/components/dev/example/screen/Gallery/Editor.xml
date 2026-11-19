@@ -90,6 +90,11 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="currentVersionName" from="pageInfo.currentVersionName"/>
         <set field="publishedVersionName" from="pageInfo.publishedVersionName"/>
         <set field="viewVersion" from="versionName &amp;&amp; versionName != currentVersionName ? versionName : null"/>
+        <!-- the page as HTML to show, by its space and path, the renderer chosen by its type and the space, never a
+            location rendered as a template (SEC-SCR-81) -->
+        <service-call name="org.moqui.resource.WikiServices.render#WikiPage" out-map="rendered"
+                in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '', versionName:viewVersion}"/>
+        <if condition="ec.message.hasError()"><return/></if>
         <script><![CDATA[
             // a git version name is a 40 digit commit id; show its first 10 digits
             const short = (name) => name == null ? '' : String(name).length > 12 ? String(name).substring(0, 10) : String(name)
@@ -245,11 +250,11 @@ along with this software (see the LICENSE.md file). If not, see
 
                 <section name="PageBody" condition="pageReference?.exists"><widgets>
                     <container-box><box-body>
-                        <render-mode><text type="html,qvt" template="true"
-                                location="${pageInfo.pageLocation}${viewVersion ? '#' + viewVersion : ''}"/>
+                        <!-- v-pre: the page's text is not a Vue template, so a {{ }} in it stays text -->
+                        <render-mode><text type="html,qvt"><![CDATA[<div v-pre>${rendered.pageHtml || ''}</div>]]></text>
                             <!-- the same page rendered, as text blocks with numbered links -->
                             <text type="tui"><![CDATA[${JSON.stringify(Object.assign({t: 'html', id: 'EditorPageBody'},
-                                JSON.parse(sri.htmlText(String(sri.renderTextValue(pageInfo.pageLocation + (viewVersion ? '#' + viewVersion : ''), 'true') || '')))))}]]></text></render-mode>
+                                JSON.parse(sri.htmlText(String(rendered.pageHtml || '')))))}]]></text></render-mode>
                     </box-body></container-box>
                 </widgets><fail-widgets>
                     <label type="p" text="There is no page ${pagePath} in ${wikiSpaceId}."/>

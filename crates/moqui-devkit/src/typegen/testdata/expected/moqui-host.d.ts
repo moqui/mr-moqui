@@ -694,6 +694,8 @@ interface MoquiResourceFacade {
     getLocationStream(location: string): unknown;
     getUriReference(uri: string): unknown;
     template(location: string, data?: MoquiMap | null): string;
+    /** CommonMark as HTML, not sanitized; relative links resolved against `base` when given. */
+    markdownHtml(text: string | null, base?: string | null): string;
     /** PDF bytes of an `html-print` (old name `xsl-fo`) document. `xslt` must be null and `out` is ignored. Throws when PDF is not available. */
     xslFoTransform(document: string, xslt?: null, out?: unknown, contentType?: string | null): Uint8Array;
     /** The Code 128 barcode of `text` as an inline `<svg>` sized in millimetres, for a print document. Lengths take CSS units
@@ -1782,6 +1784,8 @@ interface MoquiStringUtilities {
     elasticQueryAutoWildcard(query: string, allFieldPrefix?: boolean): string;
     cleanHtml(text: string | null): string;
     cleanChatHtml(text: string | null): string;
+    /** Markdown with its raw HTML cleaned to the safe set and the markdown around it kept. */
+    cleanMarkdown(text: string | null): string;
     urlEncodeIfNeeded(text: string | null): string;
     encodeAsciiFilename(filename: string | null): string;
     /** A formatter of a mask (`#` digit, `U`/`L` letter, `A` letter or digit, `?` letter, `H` hex, `*` any), or null for no mask. */

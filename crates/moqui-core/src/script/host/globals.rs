@@ -59,7 +59,7 @@ const GLOBALS_JS: &str = concat!(
     for (const name of ["encodeHtml", "encodeHtmlJsSafe", "fieldValuesEncodeHtmlJsSafe", "ipMatches",
         "isSafeSinglePathSegment", "isSameOriginRedirect", "lastPathSegment", "reportSaveLocationProblem"]) web[name] = hidden[name];
     for (const name of ["encodeForXmlAttribute", "base64UrlEncode", "base64UrlDecode", "base64Encode", "base64Decode",
-        "cleanHtml", "cleanChatHtml",
+        "cleanHtml", "cleanChatHtml", "cleanMarkdown",
         "urlEncodeIfNeeded"]) string[name] = hidden[name];
     // the checks Security.eecas.xml runs, a global of a whole runtime (`oxide::engine`) as the helpers are
     helpers.UserSecurityChecks = {
@@ -268,6 +268,7 @@ pub(crate) static SHIM: Shim = Shim {
         ),
         method!("StringUtilities", "cleanHtml", [OptText], None, leaf, clean_html),
         method!("StringUtilities", "cleanChatHtml", [OptText], None, leaf, clean_chat_html),
+        method!("StringUtilities", "cleanMarkdown", [OptText], None, leaf, clean_markdown),
         method!(
             "StringUtilities",
             "urlEncodeIfNeeded",
@@ -774,6 +775,11 @@ fn clean_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// A chat message's HTML: the safe set with only this server's own images (SEC-COM-02).
 fn clean_chat_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(moqui_lib::safe_html::clean_chat(&call.opt_text(0).unwrap_or_default()).into())
+}
+
+/// A wiki page's markdown with its raw HTML cleaned to the safe set, the markdown around it kept (SEC-SCR-81).
+fn clean_markdown(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(moqui_lib::safe_html::clean_markdown(&call.opt_text(0).unwrap_or_default()).into())
 }
 
 fn url_encode_if_needed(call: &mut Call<'_>) -> Result<Ret, HostError> {

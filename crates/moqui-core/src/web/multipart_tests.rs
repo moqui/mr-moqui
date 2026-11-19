@@ -338,3 +338,22 @@ fn the_spool_holds_at_most_its_total_and_a_body_spools_as_a_part_does() {
     assert!(small.finish("t.txt", "text/plain").unwrap().is_in_memory());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An uploaded file's name is its base name with a control character, `#` or `?` made `_`, so a service that puts it in
+/// a location writes a file a reference finds again (SEC-PFS-82, SEC-BAP-82).
+#[test]
+fn an_uploaded_file_name_is_safe_in_a_location() {
+    let data = body(&[(
+        "Content-Disposition: form-data; name=\"f\"; filename=\"C:\\\\docs\\\\Invoice #12?.pdf\"",
+        b"%PDF",
+    )]);
+    let parsed = parse("multipart/form-data; boundary=\"XyZ\"", &data).unwrap();
+    assert_eq!(parsed.files[0].file_name, "Invoice _12_.pdf");
+    assert_eq!(safe_file_name("../../a\tb#.txt"), "a_b_.txt");
+    assert_eq!(safe_file_name(".."), "..");
+    assert_eq!(safe_file_name(""), "");
+    assert_eq!(
+        UploadedFile::in_memory("f", "C# notes.md", "text/markdown", Vec::new()).file_name,
+        "C_ notes.md"
+    );
+}

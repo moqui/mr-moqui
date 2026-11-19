@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+    <!-- A wiki space's settings that decide what its pages may do, however the row is written (create#WikiSpace, a
+        screen's entity-auto update with the whole context), plans/Security-Review.md SEC-SCR-81:
+        - allowScriptPages Y (a .fancy page renders as server script for its viewers, render#WikiPage) and a
+          decoratorScreenLocation (a screen included around every page) are script stored in a record: DATABASE_ADMIN,
+          as Security.eecas.xml's rules;
+        - allowAnyHtml Y and a rootPageLocation other than the space's own (dbresource://WikiSpace/<id>.<type>, or
+          git://WIKI_<id>/<id>.<type>, the repository made for it) need the ADMIN group, or for a git:// location update
+          access to its repository (get#GitRepositoryAccess); a location with .. never.
+        Only a value that changes is checked, and a write with authorization disabled (a data load, a service writing as
+        the system) is not, except that:
+        - allowScriptPages Y holds only with the space's root at its own dbresource://WikiSpace/<id>.<type> place: a git
+          or other root takes pages from whoever may write there (a push, a drive), who would then author script. -->
+    <eeca id="WikiSpaceSettings" entity="moqui.resource.wiki.WikiSpace" on-create="true" on-update="true"
+            run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script><![CDATA[
+            const scriptPages = allowScriptPages != null && allowScriptPages !== '' ? allowScriptPages : originalValue?.allowScriptPages
+            const root = String((rootPageLocation != null && rootPageLocation !== '' ? rootPageLocation : originalValue?.rootPageLocation) || '')
+            const ownDb = `dbresource://WikiSpace/${wikiSpaceId}.`
+            if (scriptPages == 'Y' && !(root.startsWith(ownDb) && !root.slice(ownDb.length).includes('/') && !root.includes('..')))
+                throw new Error(ec.l10n.localize("A space whose script pages run keeps its pages in its own place in the database, not in a repository or another place"))
+            if (!ec.artifactExecution.authzDisabled()) {
+                const updating = eecaOperation == 'update' && originalValue != null
+                const changed = (value, original) => value != null && value !== '' && (!updating || value != original)
+                const refuse = (text) => { throw new Error(ec.l10n.localize(text)) }
+                if (changed(allowScriptPages, originalValue?.allowScriptPages) && allowScriptPages == 'Y' && !ec.user.hasPermission('DATABASE_ADMIN'))
+                    refuse('A space whose script pages run needs the DATABASE_ADMIN permission')
+                if (changed(decoratorScreenLocation, originalValue?.decoratorScreenLocation) && !ec.user.hasPermission('DATABASE_ADMIN'))
+                    refuse('A screen around the pages of a space needs the DATABASE_ADMIN permission')
+                const admin = ec.user.isInGroup('ADMIN')
+                if (changed(allowAnyHtml, originalValue?.allowAnyHtml) && allowAnyHtml == 'Y' && !admin)
+                    refuse('Only a system administrator allows any HTML in a space')
+                if (changed(rootPageLocation, originalValue?.rootPageLocation)) {
+                    const location = String(rootPageLocation)
+                    const id = String(wikiSpaceId)
+                    const own = (prefix) => location.startsWith(prefix) && !location.slice(prefix.length).includes('/')
+                    let allowed = !location.includes('..') &&
+                            (admin || own(`dbresource://WikiSpace/${id}.`) || own(`git://WIKI_${id}/${id}.`))
+                    const git = /^git:\/\/([^\/]+)\//.exec(location)
+                    if (!allowed && git && !location.includes('..')) {
+                        ec.message.pushErrors()
+                        try {
+                            allowed = !!ec.service.sync().name('org.moqui.git.GitServices.get#GitRepositoryAccess')
+                                    .parameter('repositoryId', git[1]).disableAuthz().call()?.canUpdate && !ec.message.hasError()
+                        } catch (e) {
+                            allowed = false
+                        } finally {
+                            ec.message.clearErrors()
+                            ec.message.popErrors()
+                        }
+                    }
+                    if (!allowed) refuse("A space's pages go under its own place, or a repository the user may change: another needs a system administrator")
+                }
+            }
+        ]]></script></actions>
+    </eeca>
+</eecas>
