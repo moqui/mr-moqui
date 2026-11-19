@@ -1,7 +1,8 @@
 // Web Push subscriptions (org.moqui.ui.NotificationServices get#WebPushStatus, store#, delete#WebPushSubscription and
 // send#WebPush; service/web_push.rs; plans/archive/Comms-Framework.md §7.2 P0): the status gives the VAPID key; a subscription
 // is the signed-in user's only, moves when another user signs in on the same browser, and is deleted only by its user;
-// keys are checked; a failing push counts against the subscription and disables it after 5.
+// keys are checked; a failing push counts against the subscription and disables it after 5, and storing the same endpoint
+// again does not enable it (a new subscription is active).
 // Run: ./moq test framework --spec WebPush
 const SUBSCRIPTION = "moqui.security.user.WebPushSubscription"
 const OTHER_USER = "WEBPUSH_SPEC_OTHER"
@@ -168,11 +169,15 @@ feature("a push that fails counts against the subscription, and the fifth failur
         const status = attempt("get#WebPushStatus", {endpoint: ENDPOINT})
         // a disabled subscription is not sent to
         const none = sys(() => call("org.moqui.ui.NotificationServices.send#WebPush", {userIdList: [JOHN], title: "Hi"}))
-        // the browser storing it again enables it
+        // storing the same endpoint again keeps its failures and leaves it disabled, so re-storing an endpoint does not
+        // undo its disabling (SEC-COM-81); the browser subscribes again (WebrootPush.js subscribeAgain), and the new
+        // endpoint it gets is active
         store(ENDPOINT)
-        return {first, counted, disabled, status, none, again: row(ENDPOINT)}
+        const again = row(ENDPOINT)
+        store(ENDPOINT + "-renewed")
+        return {first, counted, disabled, status, none, again, renewed: row(ENDPOINT + "-renewed")}
     },
-    then({first, counted, disabled, status, none, again}) {
+    then({first, counted, disabled, status, none, again, renewed}) {
         first.failedCount == 1
         first.sentCount == 0
         counted.failureCount == 1
@@ -182,7 +187,9 @@ feature("a push that fails counts against the subscription, and the fifth failur
         disabled.disabledDate != null
         status.subscribed == false
         none.failedCount == 0
-        again.disabledDate == null
-        again.failureCount == 0
+        again.disabledDate != null
+        again.failureCount == 5
+        renewed.disabledDate == null
+        renewed.failureCount == 0
     }
 })
