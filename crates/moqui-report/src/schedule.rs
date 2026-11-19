@@ -82,6 +82,13 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         text(p, "renderMode")
     };
     validate_definition_mode(&definition, mode)?;
+    // another user or a group receives the owner's result: the group delivery grant, as store#Schedule asks
+    // (SEC-TLS-105)
+    if delivers_to_others(&owner, text(p, "userId"), text(p, "userGroupId")) {
+        moqui_core::user::authorize_own("AT_SERVICE", crate::delivery::GROUP_ARTIFACT, "create").map_err(|_| {
+            fail("GROUP_DELIVERY_DENIED: delivering a report to other users needs the group delivery grant")
+        })?;
+    }
     let facade = entity(ec)?;
     let _metadata = ec.disable_authz();
     let mut row = facade.make_value(SCHEDULE)?;
@@ -116,6 +123,11 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         row.get("screenScheduledId").cloned().unwrap_or(Value::Null),
     )]))
 }
+/// Whether a schedule of `owner` with the recipient `user_id` and the group `group_id` sends to anyone but its owner.
+fn delivers_to_others(owner: &str, user_id: &str, group_id: &str) -> bool {
+    !group_id.trim().is_empty() || !user_id.trim().is_empty() && user_id.trim() != owner
+}
+
 fn list_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let owner = viewer()?;
     let facade = entity(ec)?;
@@ -1460,6 +1472,19 @@ pub(crate) fn deliver(
                 )
             } else {
                 (|| -> Result<Vec<String>, Error> {
+                    // the owner's result goes to others only while the owner holds the group delivery grant, as
+                    // send_each asks (SEC-TLS-105)
+                    let owner_name = account.get("username").and_then(Value::as_str).unwrap_or("");
+                    if delivers_to_others(
+                        owner,
+                        schedule.get("userId").and_then(Value::as_str).unwrap_or(""),
+                        schedule.get("userGroupId").and_then(Value::as_str).unwrap_or(""),
+                    ) && !crate::delivery::holds_as(ec, owner_name, crate::delivery::GROUP_ARTIFACT, "create")
+                    {
+                        return Err(fail(
+                            "GROUP_DELIVERY_DENIED: the schedule's owner may not deliver a report to other users",
+                        ));
+                    }
                     let mut recipients = Vec::new();
                     let _authz = context.disable_authz();
                     if let Some(user) = schedule.get("userId").and_then(Value::as_str) {

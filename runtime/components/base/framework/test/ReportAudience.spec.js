@@ -1008,3 +1008,23 @@ feature("a definition is shared with a group of the saver's own, or one their ow
         afterPrivate == null
     }
 })
+
+feature("an owner-mode schedule to another user or a group needs the group delivery grant (SEC-TLS-105)", {
+    when() {
+        const grouped = as("rda.other", "create#Schedule", schedule({userGroupId: "RDA_TEAM"}))
+        const named = as("rda.other", "create#Schedule", schedule({userId: "RDA_EQUAL"}))
+        const own = as("rda.other", "create#Schedule", schedule({userId: "RDA_OTHER"}))
+        const ownId = own.out?.screenScheduledId
+        if (ownId) sys(() => {
+            for (const name of ["moqui.screen.ScreenScheduledLock", "moqui.screen.ScreenScheduled"])
+                ec.entity.find(name).condition("screenScheduledId", ownId).deleteAll()
+        })
+        return {grouped: grouped.error || "", named: named.error || "", own: own.error || "", ownId}
+    },
+    then({grouped, named, own, ownId}) {
+        grouped.includes("GROUP_DELIVERY_DENIED")
+        named.includes("GROUP_DELIVERY_DENIED")
+        own == ""
+        !!ownId
+    }
+})
