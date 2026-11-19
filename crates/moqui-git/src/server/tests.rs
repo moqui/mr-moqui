@@ -2156,7 +2156,12 @@ fn mirror_fetches_and_opted_in_writes_raise_events() {
         eprintln!("skipped: a file:// fetch runs git-upload-pack, and git is not on the PATH");
         return;
     }
-    let fixture = fixture("sources");
+    // the mirrors fetch file:// URLs, which only a server that allows private networks fetches (SEC-BOS-90)
+    let fixture = fixture_with(
+        "sources",
+        std::path::PathBuf::from("."),
+        r#"<git-server webhook-private-network="true"/>"#,
+    );
     moqui_core::service::git_eca::install(
         fixture.context.factory(),
         r#"<gitecas>

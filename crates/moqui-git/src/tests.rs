@@ -41,7 +41,19 @@ impl Drop for Fixture {
 }
 
 fn fixture(name: &str) -> Fixture {
-    let context = ExecutionContextFactory::test_context();
+    fixture_conf(name, None)
+}
+
+/// [`fixture`] with a conf of its own.
+fn fixture_conf(name: &str, conf: Option<&str>) -> Fixture {
+    let context = match conf {
+        None => ExecutionContextFactory::test_context(),
+        Some(conf) => ExecutionContextFactory::test_context_in(
+            conf,
+            moqui_core::service::ServicePools::idle(),
+            moqui_core::context::framework_dir(),
+        ),
+    };
     let entity = moqui_core::testing::open();
     context.factory().set_entity(entity.clone());
     crate::install(context.factory()).unwrap();
@@ -331,7 +343,10 @@ fn write_tree_writes_a_commit_of_a_db_repository() {
 fn a_mirror_fetch_connects_only_to_public_addresses_unless_private_networks_are_allowed() {
     for (conf, refused) in [
         ("", true),
-        (r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#, false),
+        (
+            r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#,
+            false,
+        ),
     ] {
         let context = ExecutionContextFactory::test_context_in(
             conf,
@@ -378,7 +393,11 @@ fn a_remote_repository_is_a_read_only_mirror_kept_by_fetch() {
         eprintln!("skipped: a file:// fetch runs git-upload-pack, and git is not on the PATH");
         return;
     }
-    let fixture = fixture("remote");
+    // a file:// mirror is fetched only where private networks are allowed (SEC-BOS-90)
+    let fixture = fixture_conf(
+        "remote",
+        Some(r#"<moqui-conf><git-server webhook-private-network="true"/></moqui-conf>"#),
+    );
     let _entered = fixture.context.enter();
     let source = fixture.dir.join("source.git");
     define(&fixture.entity, "source", "local", Some(&source), None);

@@ -15,7 +15,10 @@
 //! A fetch that denies internal addresses (SEC-TLS-08): its https client resolves through `PublicOnly`, and its ssh
 //! command is pinned to the address checked, the host's name kept for its host key.
 
-use super::{deny_internal, pin_ssh, pinned_ssh_command, public_only_options, FsStore, DENY_INTERNAL};
+use super::{
+    deny_internal, fetch, network_scheme, pin_ssh, pinned_ssh_command, public_only_options, Credentials, FsStore,
+    DENY_INTERNAL,
+};
 
 fn repo(name: &str) -> (std::path::PathBuf, gix::Repository) {
     let dir = std::env::temp_dir().join(format!("moqui-git-fs-{name}-{}", std::process::id()));
@@ -72,5 +75,46 @@ fn an_https_fetch_gets_the_public_only_client_and_an_ssh_one_a_pinned_command() 
     );
     pin_ssh(&mut repo, "https://git.example.com/r.git").unwrap();
     assert!(pinned_ssh_command("a b", "93.184.216.34".parse().unwrap()).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-BOS-90: while internal addresses are denied only an https, http or ssh address is fetched; `git://`, `file://`
+/// and a local path are refused before anything is read, as their host or path is not held to public addresses.
+#[test]
+fn under_the_guard_only_a_network_address_is_fetched() {
+    for url in [
+        "https://git.example.com/r.git",
+        "http://git.example.com/r.git",
+        "ssh://git@git.example.com/r.git",
+        "git@git.example.com:org/r.git",
+    ] {
+        assert!(network_scheme(url), "{url}");
+    }
+    for url in [
+        "git://git.example.com/r.git",
+        "file:///srv/r.git",
+        "/srv/r.git",
+        "../r.git",
+    ] {
+        assert!(!network_scheme(url), "{url}");
+    }
+    let dir = std::env::temp_dir().join(format!("moqui-git-fs-guard-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let _deny = deny_internal();
+        let refused = fetch(
+            &dir,
+            "file:///srv/r.git",
+            "main",
+            &Credentials::default(),
+            true,
+            None,
+            &|| Ok(()),
+        )
+        .err()
+        .map(|err| err.to_string())
+        .unwrap_or_default();
+        assert!(refused.contains("is not fetched"), "{refused}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

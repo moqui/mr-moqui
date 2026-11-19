@@ -285,6 +285,18 @@ fn ssh_host(url: &str) -> Option<(String, u16)> {
     Some((host, parsed.port.unwrap_or(22)))
 }
 
+/// Whether `url` is one [`DenyInternal`] can hold to public addresses: https, http or ssh (the scp form too). Under
+/// it, `git://`, `file://`, a local path and any other scheme are refused (SEC-BOS-90): their host or path is not
+/// checked.
+fn network_scheme(url: &str) -> bool {
+    gix::url::parse(gix::bstr::BStr::new(url.as_bytes())).is_ok_and(|parsed| {
+        matches!(
+            parsed.scheme,
+            gix::url::Scheme::Https | gix::url::Scheme::Http | gix::url::Scheme::Ssh
+        )
+    })
+}
+
 /// Pin `repo`'s `ssh` to a public address of an ssh remote's host ([`DenyInternal`]); nothing for another scheme.
 fn pin_ssh(repo: &mut gix::Repository, url: &str) -> Result<(), Error> {
     let Some((host, port)) = ssh_host(url) else {
@@ -403,6 +415,12 @@ pub(crate) fn fetch(
     let store = FsStore::init(path, branch)?;
     let before = mirrored_refs(&store)?;
     let deny_internal = DENY_INTERNAL.with(std::cell::Cell::get);
+    if deny_internal && !network_scheme(url) {
+        return Err(Error::new(format!(
+            "{} is not fetched: only an https, http or ssh address is, while internal addresses are denied",
+            moqui_core::outbound::redacted(url)
+        )));
+    }
     let mut repo = store.local();
     if deny_internal {
         pin_ssh(&mut repo, url)?;
