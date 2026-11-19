@@ -28,12 +28,12 @@
 //! Collections are made and removed in the application's screens (MKCALENDAR and a DELETE of a collection are refused).
 //! A client keeps in step by the collection's `getctag` and each object's `getetag` (sync-collection is not served).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use moqui_lib::object::Value;
 
 use super::{
-    call, encode, flag_of, maps, multistatus, multistatus_of, prop_response, proppatch, status_of_error,
+    call, encode, flag_of, maps, multistatus, multistatus_from, prop_response, proppatch, status_of_error,
     status_response, text_of, xml, Context, DavResponse, PropRequest, Resource, BASE,
 };
 use moqui_core::context::ExecutionContextFactory;
@@ -41,6 +41,10 @@ use xml::{Element, CALDAV, CARDDAV, CS, DAV, ICAL};
 
 /// The largest calendar or contact object a client may PUT (1 MiB holds thousands of events or cards).
 const MAX_OBJECT: usize = 1024 * 1024;
+
+/// The most objects one multiget names, each once: a client asks for its changes in batches of tens to a few hundred,
+/// and each named object's data goes into the answer (SEC-FIL-86).
+pub(crate) const MAX_MULTIGET_HREFS: usize = 1_000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -393,13 +397,17 @@ fn report(context: &Context<'_>, adapter: &Adapter, collection_id: &str, writabl
         Kind::Contacts => body.is(CARDDAV, "addressbook-query"),
     };
     if multiget {
-        let asked = asked_hrefs(body);
+        let Some(asked) = asked_hrefs(body) else {
+            tracing::warn!("dav: a multiget names more than {MAX_MULTIGET_HREFS} objects; refused");
+            return DavResponse::status(507);
+        };
         let names: Vec<String> = asked.iter().map(|(_, name)| name.clone()).collect();
         let objects = match adapter.objects(collection_id, Some(&names), with_data, None) {
             Ok(objects) => objects,
             Err(err) => return failed(&err),
         };
-        let responses: Vec<String> = multiget_matches(&base, &asked, &objects)
+        // one response at a time, so the size bound holds before they are all built (SEC-FIL-86)
+        let responses = multiget_matches(&base, &asked, &objects)
             .into_iter()
             .map(|(path, object)| match object {
                 Some(object) => prop_response(
@@ -407,9 +415,8 @@ fn report(context: &Context<'_>, adapter: &Adapter, collection_id: &str, writabl
                     &wanted,
                 ),
                 None => status_response(path, 404),
-            })
-            .collect();
-        return multistatus_of(&responses);
+            });
+        return multistatus_from(responses);
     }
     if query {
         let filter = match adapter.kind {
@@ -424,28 +431,38 @@ fn report(context: &Context<'_>, adapter: &Adapter, collection_id: &str, writabl
             Ok(objects) => objects,
             Err(err) => return failed(&err),
         };
-        let resources: Vec<Resource> = objects
-            .iter()
-            .take(limit.unwrap_or(usize::MAX))
-            .map(|object| object_resource(context, adapter, collection_id, object, writable))
-            .collect();
-        return multistatus(&resources, &wanted);
+        // one response at a time, as the multiget's; an answer past MAX_MULTISTATUS is a 507 (SEC-FIL-86)
+        let responses = objects.iter().take(limit.unwrap_or(usize::MAX)).map(|object| {
+            prop_response(
+                &object_resource(context, adapter, collection_id, object, writable),
+                &wanted,
+            )
+        });
+        return multistatus_from(responses);
     }
     DavResponse::condition(403, DAV, "supported-report")
 }
 
-/// The hrefs a multiget asks for, each as its path and its decoded object name.
-fn asked_hrefs(body: &Element) -> Vec<(String, String)> {
-    body.children_named(DAV, "href")
-        .map(|href| {
-            let text = href.text.trim();
-            let path = text
-                .split_once("://")
-                .map_or(text, |(_, after)| after.find('/').map_or("/", |slash| &after[slash..]));
-            let name = path.rsplit('/').next().map(super::decode_segment).unwrap_or_default();
-            (path.to_string(), name)
-        })
-        .collect()
+/// The hrefs a multiget asks for, each once, as its path and its decoded object name; `None` past
+/// [`MAX_MULTIGET_HREFS`] of them (SEC-FIL-86).
+fn asked_hrefs(body: &Element) -> Option<Vec<(String, String)>> {
+    let mut seen = HashSet::new();
+    let mut asked = Vec::new();
+    for href in body.children_named(DAV, "href") {
+        let text = href.text.trim();
+        let path = text
+            .split_once("://")
+            .map_or(text, |(_, after)| after.find('/').map_or("/", |slash| &after[slash..]));
+        if !seen.insert(path) {
+            continue;
+        }
+        if asked.len() == MAX_MULTIGET_HREFS {
+            return None;
+        }
+        let name = path.rsplit('/').next().map(super::decode_segment).unwrap_or_default();
+        asked.push((path.to_string(), name));
+    }
+    Some(asked)
 }
 
 /// Each asked href with the object it names, or `None` (a 404) when the collection has no such object or the href is

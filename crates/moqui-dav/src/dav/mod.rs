@@ -635,9 +635,10 @@ impl PropRequest {
         };
         // each named once, and at most MAX_ASKED_PROPS of them: every resource of the answer lists each one, found or
         // not (SEC-FIL-86)
+        let mut seen: std::collections::HashSet<(&str, &str)> = std::collections::HashSet::new();
         let mut asked: Vec<(String, String)> = Vec::new();
         for child in &prop.children {
-            if asked.iter().any(|(ns, name)| *ns == child.ns && *name == child.name) {
+            if !seen.insert((child.ns.as_str(), child.name.as_str())) {
                 continue;
             }
             if asked.len() == MAX_ASKED_PROPS {
@@ -717,7 +718,7 @@ pub(crate) fn multistatus_of(responses: &[String]) -> DavResponse {
 
 /// The multistatus of `responses`, built one response at a time, or 507 once its body passes [`MAX_MULTISTATUS`]
 /// (SEC-FIL-86).
-fn multistatus_from<S: AsRef<str>>(responses: impl Iterator<Item = S>) -> DavResponse {
+pub(crate) fn multistatus_from<S: AsRef<str>>(responses: impl Iterator<Item = S>) -> DavResponse {
     let mut body = format!(
         r#"<?xml version="1.0" encoding="utf-8"?><D:multistatus {}>"#,
         xml::ROOT_NAMESPACES
