@@ -99,17 +99,25 @@ pub fn load_entity_xml_text(
     })
 }
 
-/// CSV or JSON text written to the file `path`, as Java's `csvText` and `jsonText`: one transaction, named `label`,
-/// and in a check no `-- Checked data` message.
-pub fn load_entity_text_file(
+/// CSV (`json` false) or JSON text, as Java's `csvText` and `jsonText`: one transaction, named `label`, and in a
+/// check no `-- Checked data` message. Read from memory: the text, which may hold any data, is never written to a
+/// file another local user could read (SEC-OUT-89).
+pub fn load_entity_text(
     facade: &EntityFacade,
     label: &str,
-    path: &Path,
+    text: &str,
+    json: bool,
     options: &LoadOptions,
 ) -> Result<LoadResult, Error> {
     let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let records = super::check::at_location(label, || {
-        in_file_transaction(facade, options, || load_file(facade, label, path, options))
+        in_file_transaction(facade, options, || {
+            if json {
+                load_json_reader(facade, label, text.as_bytes(), options)
+            } else {
+                load_csv_reader(facade, label, text.as_bytes(), options)
+            }
+        })
     })?;
     Ok(LoadResult {
         records,
