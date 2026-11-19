@@ -861,7 +861,11 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
         .iter()
         .map(|item| (text_field(item, "path"), text_field(item, "location")))
         .collect();
-    let building = with_ec(|ec| ec.factory().resource().runtime_dir().join("tmp/drive-zip/.building"))?;
+    // the part files' folder, through the facade's resolution of runtime://
+    let building = with_resources(|resources| resources.get(BUILDING))?
+        .file_path()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| HostError::message(format!("writing the zip: {BUILDING} is not a folder on disk")))?;
     let (count, size, failures) = with_part_file(&building, |part| {
         let (count, failures) = write_zip_file(part, files, |location| {
             match with_ec(|ec| ec.factory().resource().open(location)) {
@@ -871,7 +875,8 @@ fn files_write_zip(call: &mut Call<'_>) -> Result<Ret, HostError> {
             }
         })?;
         let size = std::fs::metadata(part).map_err(|err| zip_error(&err))?.len();
-        deliver_zip(part, &target, size)?;
+        let name = part.file_name().and_then(|name| name.to_str()).unwrap_or_default();
+        deliver_zip(part, &format!("{BUILDING}/{name}"), &target, size)?;
         Ok((count, size, failures))
     })?;
     let mut map = indexmap::IndexMap::default();
@@ -917,23 +922,17 @@ fn with_part_file<T>(
     result
 }
 
-/// The built zip at `part` to `target`: a `runtime://` location (no `#`, no `..`) by renaming the file into place, made
-/// under the runtime directory; anything else, or a rename that fails (another file system), written from the file.
-fn deliver_zip(part: &std::path::Path, target: &str, size: u64) -> Result<(), HostError> {
-    if let Some(rest) = target.strip_prefix("runtime://") {
-        if !rest.contains('#') && !rest.split('/').any(|segment| segment == ".." || segment == ".") {
-            let path = with_ec(|ec| ec.factory().resource().runtime_dir().join(rest))?;
-            crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, target)
-                .map_err(|err| HostError::message(err.to_string()))?;
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|err| zip_error(&err))?;
-            }
-            match std::fs::rename(part, &path) {
-                Ok(()) => return Ok(()),
-                Err(err) => {
-                    tracing::warn!(target = %target, "a zip was not renamed into place, so it is copied: {err}")
-                }
-            }
+/// Where a zip's part files are built: under the runtime directory, which `clean#DriveTempFiles` sweeps.
+const BUILDING: &str = "runtime://tmp/drive-zip/.building";
+
+/// The built zip at `part` (`part_location` its `runtime://` location) to `target`: a `runtime://` target by the
+/// resource facade's rename, which resolves both paths and keeps its checks (a `#` refused, the effect fence, a WebDAV
+/// lock on the target); anything else, or a rename that fails, written from the file.
+fn deliver_zip(part: &std::path::Path, part_location: &str, target: &str, size: u64) -> Result<(), HostError> {
+    if target.starts_with("runtime://") {
+        match with_resources(|resources| resources.rename(part_location, target)) {
+            Ok(()) => return Ok(()),
+            Err(err) => tracing::warn!(target = %target, "a zip was not renamed into place, so it is written: {err:?}"),
         }
     }
     let mut file = std::fs::File::open(part).map_err(|err| zip_error(&err))?;

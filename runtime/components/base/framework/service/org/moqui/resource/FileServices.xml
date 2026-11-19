@@ -2811,7 +2811,8 @@ along with this software (see the LICENSE.md file). If not, see
             resource-facade/drive-share settings: a requester asks for folder-zip-downloads-per-requester in ten minutes; a
             folder past folder-zip-max-bytes or folder-zip-max-files is refused; one zip is kept for the link and the folder
             while its files are unchanged, so asking again sends the same file, and a changed folder's zip replaces it; a
-            zip made counts against folder-zip-builds-per-link, and one is made at a time ("being prepared" meanwhile).
+            zip made counts against folder-zip-builds-per-link, and one is made at a time (a claim taken after that count,
+            released when the build ends and stale after five minutes; "being prepared" meanwhile).
 
             The visitor of a public page has no user, and a file on the database tree is entity rows the visitor may not
             read, so a token route's transition does not send the location itself: with sendResponse true this service
@@ -2865,7 +2866,8 @@ along with this software (see the LICENSE.md file). If not, see
                 // folder-zip-max-files, refused past that rather than cut; one zip kept for the link and the folder, named
                 // by them and by the state of its files, so asking again sends the same file until one changes, and a new
                 // one replaces the link's earlier zip of that folder (clean#DriveTempFiles removes it after a day); a zip
-                // made counts against the link, one made at a time (a claim), the others told it is being prepared.
+                // made counts against the link, one made at a time (a claim released when the build ends), the others told it
+                // is being prepared.
                 // writeZip streams each file into a part file renamed into place, never the whole folder in memory.
                 const conf = (name, fallback) => {
                     const value = Number(ec.factory.getConfValue('resource-facade/drive-share@' + name))
@@ -2908,15 +2910,42 @@ along with this software (see the LICENSE.md file). If not, see
                 const state = digest(marks.join('\n'))
                 location = `runtime://tmp/drive-zip/${prefix}${state}.zip`
                 if (ec.resource.getLastChange(location) == null) {
-                    if (!attempt(`share-zip-build:${prefix}${state}`, 1)) {
-                        ec.message.addError(ec.l10n.localize('The zip of this folder is being prepared; try again in a minute'))
-                        return
-                    }
                     if (!attempt('share-zip:share:' + row.shareId, conf('folder-zip-builds-per-link', 20))) {
                         ec.message.addError(ec.l10n.localize('Too many downloads of this folder; wait a few minutes and try again'))
                         return
                     }
-                    ec.resource.writeZip(location, entries)
+                    // one build of a zip at a time: a claim row, taken in its own transaction (a second taker's insert fails),
+                    // stale after five minutes, and removed when the build ends, made or not
+                    const claimId = `share-zip-claim:${prefix}${state}`
+                    const claimRows = () => ec.entity.find('moqui.security.public.AccountAttempt').condition('bucketId', claimId).disableAuthz()
+                    let claimed = false
+                    try {
+                        ec.transaction.runRequireNew(30, 'Error claiming a share zip', () => {
+                            const wasDisabled = ec.artifactExecution.disableAuthz()
+                            try {
+                                const held = claimRows().forUpdate(true).one()
+                                if (held && Number(held.expiresAt) > Date.now()) return
+                                if (held) held.delete()
+                                const claim = ec.entity.makeValue('moqui.security.public.AccountAttempt')
+                                claim.setFields({bucketId: claimId, attemptCount: 1, expiresAt: new Date(Date.now() + 300000)}, true, null, null)
+                                claim.create()
+                                claimed = true
+                            } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+                        })
+                    } catch (e) {
+                        claimed = false
+                        ec.message.clearErrors()
+                    }
+                    if (!claimed) {
+                        ec.message.addError(ec.l10n.localize('The zip of this folder is being prepared; try again in a minute'))
+                        return
+                    }
+                    try {
+                        ec.resource.writeZip(location, entries)
+                    } finally {
+                        try { ec.transaction.runRequireNew(30, 'Error releasing a share zip claim', () => claimRows().deleteAll()) }
+                        catch (e) { ec.logger.warn(`A share zip claim ${claimId} was not released (it goes stale in five minutes): ${e}`) }
+                    }
                     // the link's earlier zips of this folder: a changed folder's zip replaces them
                     const kept = ec.resource.getLocationReference('runtime://tmp/drive-zip')
                     for (const other of (kept.exists ? Array.from(kept.getDirectoryEntries()) : [])) {
