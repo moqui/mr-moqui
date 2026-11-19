@@ -170,16 +170,21 @@ fn check_recent_auth(
             // to sign in every time (SEC-WEB-84)
             .filter(|flow| match field(flow, "authFlowTypeEnumId").as_str() {
                 "AftOidc" => true,
-                "AftOauth" => facade
-                    .find("moqui.security.sso.OauthFlow")
-                    .and_then(|find| {
-                        find.disable_authz()
-                            .eq("authFlowId", Value::string(field(flow, "authFlowId")))
-                            .one()
-                    })
-                    .ok()
-                    .flatten()
-                    .is_some_and(|row| field(&row, "reauthPrompts") == "Y"),
+                "AftOauth" => match facade.find("moqui.security.sso.OauthFlow").and_then(|find| {
+                    find.disable_authz()
+                        .eq("authFlowId", Value::string(field(flow, "authFlowId")))
+                        .one()
+                }) {
+                    Ok(row) => row.is_some_and(|row| field(&row, "reauthPrompts") == "Y"),
+                    // a flow whose row cannot be read is not offered; the reason is logged
+                    Err(err) => {
+                        tracing::error!(
+                            "OauthFlow {} could not be read for the recent sign-in check: {err}",
+                            field(flow, "authFlowId")
+                        );
+                        false
+                    }
+                },
                 _ => false,
             })
             .map(|flow| {
