@@ -321,7 +321,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                 step_user.is_some(),
             )
             .map_err(|why| Error::new(format!("moqui ci-run poll: {why}")))?;
-            eprintln!("moqui ci-run poll: working in {}", work.display());
+            eprintln!("moqui ci-run poll: working in {}", work.path().display());
             // the step user must run this binary, which reads the reports, artifacts and caches as that user: asked
             // once here, so a runner that could not read them takes no job
             #[cfg(unix)]
@@ -331,7 +331,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
             };
             #[cfg(unix)]
             if let Some(user) = &step_user {
-                runner::collect::probe(user, &work).map_err(|why| {
+                runner::collect::probe(user, work.path()).map_err(|why| {
                     Error::new(format!(
                         "moqui ci-run poll: --step-user {} cannot run this program, which reads each job's reports, \
                          artifacts and caches as that user: {why}",
@@ -354,7 +354,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<i32, Error> {
                             noticed = true;
                         }
                         if let (Some(job), Some(token)) = (answer["jobRunId"].as_str(), answer["token"].as_str()) {
-                            let dir = match runner::job_dir(&work, job, step_user.is_some()) {
+                            let dir = match runner::job_dir(work.path(), job, step_user.is_some()) {
                                 Ok(dir) => dir,
                                 Err(why) => {
                                     eprintln!("moqui ci-run poll: job run {job} was not run: {why}");

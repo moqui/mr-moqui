@@ -768,7 +768,7 @@ fn dir_builder(mode: u32, recursive: bool) -> std::fs::DirBuilder {
 /// # Errors
 ///
 /// Why the directory is refused or was not made.
-pub fn work_dir(work: Option<&Path>, step_user: bool) -> Result<PathBuf, String> {
+pub fn work_dir(work: Option<&Path>, step_user: bool) -> Result<WorkDir, String> {
     let mode = work_mode(step_user);
     let Some(work) = work else {
         let temp = std::env::temp_dir();
@@ -778,7 +778,10 @@ pub fn work_dir(work: Option<&Path>, step_user: bool) -> Result<PathBuf, String>
             let name: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
             let dir = temp.join(format!("moqui-ci-{name}"));
             match dir_builder(mode, false).create(&dir) {
-                Ok(()) => return std::path::absolute(&dir).map_err(|err| format!("{}: {err}", dir.display())),
+                Ok(()) => {
+                    let path = std::path::absolute(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+                    return Ok(WorkDir { path, made: true });
+                }
                 Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(err) => return Err(format!("{}: {err}", dir.display())),
             }
@@ -786,17 +789,91 @@ pub fn work_dir(work: Option<&Path>, step_user: bool) -> Result<PathBuf, String>
         return Err(format!("no new work directory was made in {}", temp.display()));
     };
     let work = std::path::absolute(work).map_err(|err| format!("{}: {err}", work.display()))?;
+    parents_safe(&work)?;
     if std::fs::symlink_metadata(&work).is_err() {
         dir_builder(mode, true)
             .create(&work)
             .map_err(|err| format!("{}: {err}", work.display()))?;
     }
     owned_private(&work, mode)?;
-    Ok(work)
+    Ok(WorkDir {
+        path: work,
+        made: false,
+    })
 }
 
-/// That `dir` is a directory, not a link, of this user, that no group or other user may write; then set to `mode`.
-/// This user is the owner of a file made in it (as SEC-OUT-06's socket directory check).
+/// The runner's work directory ([`work_dir`]); one it made with a random name is removed when this is dropped, as the
+/// runner ends.
+#[derive(Debug)]
+pub struct WorkDir {
+    path: PathBuf,
+    made: bool,
+}
+
+impl WorkDir {
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        if self.made {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
+/// The effective user id of this process (on unix; 0 elsewhere, where the checks that use it do not run).
+fn effective_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        rustix::process::geteuid().as_raw()
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// That no other user can move or replace `work` through a directory above it: each existing parent is root's or this
+/// user's, and one other users may write has the sticky bit (as `/tmp` has), so only its owner renames what is in it
+/// (SEC-GIT-98).
+fn parents_safe(work: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let me = effective_uid();
+        for parent in work.ancestors().skip(1) {
+            let Ok(meta) = std::fs::metadata(parent) else {
+                continue;
+            };
+            let refused = |why: String| {
+                format!(
+                    "the work directory {} is under {}, which {why}: name a work directory under a directory of this user's",
+                    work.display(),
+                    parent.display()
+                )
+            };
+            if meta.uid() != 0 && meta.uid() != me {
+                return Err(refused(format!("is another user's (owner {})", meta.uid())));
+            }
+            if meta.mode() & 0o002 != 0 && meta.mode() & 0o1000 == 0 {
+                return Err(refused(format!(
+                    "other users may write with no sticky bit (mode {:o})",
+                    meta.mode() & 0o7777
+                )));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = work;
+    Ok(())
+}
+
+/// That `dir` is a directory, not a link, of this user (`geteuid`), that no group or other user may write; then set to
+/// `mode`.
 fn owned_private(dir: &Path, mode: u32) -> Result<(), String> {
     let refused = |why: String| {
         format!(
@@ -817,12 +894,7 @@ fn owned_private(dir: &Path, mode: u32) -> Result<(), String> {
                 meta.mode() & 0o7777
             )));
         }
-        let probe = Scratch::in_dir(dir, "owner");
-        let me = create_new(&probe.0)
-            .and_then(|file| file.metadata().map_err(|err| err.to_string()))
-            .map_err(|why| refused(format!("is not this user's ({why})")))?
-            .uid();
-        if meta.uid() != me {
+        if meta.uid() != effective_uid() {
             return Err(refused(format!("is another user's (owner {})", meta.uid())));
         }
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(mode)).map_err(|err| refused(err.to_string()))?;

@@ -599,15 +599,32 @@ fn a_runner_works_only_in_a_directory_of_its_own() {
     let mode = |path: &Path| std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o7777;
     let set = |path: &Path, mode: u32| std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
     let (first, second) = (work_dir(None, false).unwrap(), work_dir(None, false).unwrap());
-    assert!(first.is_absolute() && first != second, "{first:?} {second:?}");
-    assert!(first.starts_with(std::env::temp_dir()), "{first:?}");
-    assert_eq!((mode(&first), mode(&second)), (0o700, 0o700));
-    std::fs::remove_dir(&first).unwrap();
-    std::fs::remove_dir(&second).unwrap();
+    let (first_path, second_path) = (first.path().to_path_buf(), second.path().to_path_buf());
+    assert!(
+        first_path.is_absolute() && first_path != second_path,
+        "{first_path:?} {second_path:?}"
+    );
+    assert!(first_path.starts_with(std::env::temp_dir()), "{first_path:?}");
+    assert_eq!((mode(&first_path), mode(&second_path)), (0o700, 0o700));
+    // one the runner made is removed as it ends
+    drop((first, second));
+    assert!(!first_path.exists() && !second_path.exists());
 
     let root = scratch("work-dir");
     let made = root.join("a/work");
-    assert_eq!(work_dir(Some(&made), true).unwrap(), made);
+    assert_eq!(work_dir(Some(&made), true).unwrap().path(), made);
+    // a work directory under a parent other users may write (with no sticky bit) is refused, and kept when named
+    let open_parent = root.join("open");
+    std::fs::create_dir_all(&open_parent).unwrap();
+    set(&open_parent, 0o777);
+    let refused = work_dir(Some(&open_parent.join("work")), false).unwrap_err();
+    assert!(refused.contains("no sticky bit"), "{refused}");
+    set(&open_parent, 0o1777);
+    assert!(
+        work_dir(Some(&open_parent.join("work")), false).is_ok(),
+        "a sticky directory, as /tmp"
+    );
+    assert!(made.exists(), "a named work directory stays");
     assert_eq!(mode(&made), 0o711);
     set(&made, 0o755);
     work_dir(Some(&made), false).unwrap();
