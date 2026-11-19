@@ -251,6 +251,35 @@ feature("v5.0.0-6.3.3: the deployment's account is not signed in by its password
     },
 })
 
+// sec.mfa.burst (test/ClientFixtures.spec.js, one single-use code, unlocked on every run): twelve sessions each sign in
+// by password and send a wrong code, all at once. A wrong code counts as a failed sign-in, each code is counted though
+// they come together, and no more are compared at once than the failures the account has left (the password's gate),
+// so the account locks (user-facade/login@max-failures 3) and then the right password is refused too. The guesses in
+// turn are test/client SecurityAuthn "A07 wrong codes in turn lock the account across sign-ins; then the right code
+// fails".
+// Does not prove: a per-client limit (web protection's login limit, which takes /rest/verifyOtp and /rest/sendOtp, is
+// on only with web-protection@enabled or trusted-proxies), nor the code's entropy (six digits, eight for a backup code).
+feature("v5.0.0-6.6.3: wrong codes sent at once are each counted, and the account locks", {
+    given() { needsFixtures("the user sec.mfa.burst") },
+    when() {
+        const burst = parallel(12, (index, args) => {
+            const asked = http.post("/rest/login", { json: { username: args.user, password: args.password }, accept: "json", csrf: false })
+            if (asked.status != 200 || asked.json().secondFactorRequired != true) return { asked: false, status: asked.status }
+            const res = http.post("/rest/verifyOtp", { form: { code: String(20000000 + index) }, accept: "json" })
+            return { asked: true, status: res.status }
+        }, { user: "sec.mfa.burst", password: "SecMfaBurst1!!" }, { timeout: 60 })
+        return { burst, after: restLogin("sec.mfa.burst", "SecMfaBurst1!!") }
+    },
+    then({ burst, after }) {
+        burst.errors.length == 0
+        // the control: the password asked for a code
+        burst.results.some((result) => result.asked)
+        burst.results.every((result) => !result.asked || result.status == 403)
+        // locked: the right password is refused
+        after.status == 401
+    },
+})
+
 // Last in the file: it changes sec.pw.proof's password, which ClientFixtures sets again on the next run.
 // Does not prove: the change in an application's own account screens, which call the same service.
 feature("v5.0.0-6.2.2: a user changes their password, and only the new one signs in after", {

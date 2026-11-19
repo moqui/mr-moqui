@@ -40,7 +40,7 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
         sendServiceName="org.moqui.impl.SystemMessageServices.send#SystemMessageRest"
         consumeServiceName="org.moqui.impl.SystemMessageServices.reset#SystemMessageInError" contentType="application/json"/>
     <moqui.service.message.SystemMessageRemote systemMessageRemoteId="GateSelf" description="This server"
-        messageAuthEnumId="SmatLogin" username="john.doe" password="moqui" allowPrivateNetwork="Y"/>
+        messageAuthEnumId="SmatLogin" receiveUserId="EX_JOHN_DOE" username="john.doe" password="moqui" allowPrivateNetwork="Y"/>
 
     <moqui.security.ArtifactGroup artifactGroupId="GATE_SYNC_DATA" description="Gate sync data"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="GATE_SYNC_DATA" artifactName="moqui.basic.Enumeration"

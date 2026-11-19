@@ -224,18 +224,39 @@ struct Negotiation<'a> {
     oldest_have: Option<i64>,
     /// Wants already known to reach a common commit.
     satisfied: HashSet<ObjectId>,
+    /// How many common commits there were when [`Negotiation::ok_to_give_up`] last answered no: until another is
+    /// acknowledged the answer stays no, so a have that is not common costs no walk (SEC-GIT-83).
+    refused_at: Option<usize>,
+    /// The commits the walks of this negotiation read, at most `most_walked` ([`MOST_COMMITS_WALKED`]).
+    walked: usize,
+    most_walked: usize,
+    /// Haves the store has that the readers do not read: answered not common again without asking `readable`, which
+    /// reads the refs (SEC-GIT-83).
+    not_common: HashSet<ObjectId>,
 }
+
+/// The most commits the `ok_to_give_up` walks of one negotiation read. Past it the server gives up as git does when the
+/// wants reach the common commits: it answers ready and sends the pack for the commits acknowledged, a larger pack at
+/// worst, so a request of many haves cannot keep a worker walking history (SEC-GIT-83).
+const MOST_COMMITS_WALKED: usize = 200_000;
 
 impl<'a> Negotiation<'a> {
     fn new(store: &'a dyn GitStore, readable: &'a WantCheck<'a>, wants: &[ObjectId]) -> Self {
+        // each want once: a client may name one many times
+        let mut seen = HashSet::new();
+        let wants = wants.iter().filter(|want| seen.insert(**want)).copied().collect();
         Self {
             store,
             readable,
-            wants: wants.to_vec(),
+            wants,
             haves: Vec::new(),
             have_set: HashSet::new(),
             oldest_have: None,
             satisfied: HashSet::new(),
+            refused_at: None,
+            walked: 0,
+            most_walked: MOST_COMMITS_WALKED,
+            not_common: HashSet::new(),
         }
     }
 
@@ -247,7 +268,11 @@ impl<'a> Negotiation<'a> {
             return Ok(false);
         };
         // a client's haves are commits: a tag object's id is not answered through the commit it names
-        if commit != id || (!self.have_set.contains(&commit) && !(self.readable)(&[commit])?.contains(&commit)) {
+        if commit != id || self.not_common.contains(&commit) {
+            return Ok(false);
+        }
+        if !self.have_set.contains(&commit) && !(self.readable)(&[commit])?.contains(&commit) {
+            self.not_common.insert(commit);
             return Ok(false);
         }
         if self.have_set.insert(commit) {
@@ -259,11 +284,18 @@ impl<'a> Negotiation<'a> {
     }
 
     /// Whether every want reaches a common commit, looking no further back than the oldest one (git's
-    /// `ok_to_give_up`).
+    /// `ok_to_give_up`). The answer for the same common commits is the one already given, and past
+    /// [`MOST_COMMITS_WALKED`] it is yes.
     fn ok_to_give_up(&mut self) -> Result<bool, Error> {
         let Some(oldest) = self.oldest_have else {
             return Ok(false);
         };
+        if self.walked >= self.most_walked {
+            return Ok(true);
+        }
+        if self.refused_at == Some(self.haves.len()) {
+            return Ok(false);
+        }
         for want in self.wants.clone() {
             if self.satisfied.contains(&want) {
                 continue;
@@ -284,6 +316,16 @@ impl<'a> Negotiation<'a> {
                     reached = true;
                     break;
                 }
+                self.walked += 1;
+                if self.walked >= self.most_walked {
+                    tracing::warn!(
+                        "git upload-pack: a negotiation walked {} commits; sending the pack for the {} common commits \
+                         acknowledged",
+                        self.most_walked,
+                        self.haves.len()
+                    );
+                    return Ok(true);
+                }
                 let info = ops::read_commit(self.store, &id)?;
                 if info.seconds < oldest {
                     continue;
@@ -291,6 +333,7 @@ impl<'a> Negotiation<'a> {
                 pending.extend(info.parents);
             }
             if !reached {
+                self.refused_at = Some(self.haves.len());
                 return Ok(false);
             }
             self.satisfied.insert(want);
@@ -780,3 +823,7 @@ fn fetch_v2(
     pktline::text(out, "packfile").map_err(io_error)?;
     sender.pack(&request, &negotiation.haves, &info, &grafts, out, Some(MAX_BAND_64K))
 }
+
+#[cfg(test)]
+#[path = "upload_tests.rs"]
+mod tests;

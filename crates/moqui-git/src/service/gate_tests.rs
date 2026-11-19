@@ -23,7 +23,9 @@ use moqui_lib::object::Value;
 
 use super::commit::tests::{developer, internal, DEVELOPER};
 use crate::server::hosting_tests::{call, framework_rules, framework_rules_with, get, grant_entities, ok, s, Work};
-use crate::server::tests::{define, fixture_in, git_available, head_of, http_server, settled, Fixture, READER, WRITER};
+use crate::server::tests::{
+    define, fixture_in, fixture_with, git_available, head_of, http_server, settled, Fixture, READER, WRITER,
+};
 
 fn git(name: &str) -> String {
     format!("org.moqui.git.GitServices.{name}")
@@ -366,7 +368,12 @@ fn a_pre_rule_stops_a_git_location_write_a_fetch_and_an_import() {
         eprintln!("skipped: a file:// fetch runs git-upload-pack, and git is not on the PATH");
         return;
     }
-    let fixture = fixture_in("gate-sources", moqui_core::context::framework_dir());
+    // the mirror fetches a file:// URL, which only a server that allows private networks fetches (SEC-BOS-90)
+    let fixture = fixture_with(
+        "gate-sources",
+        moqui_core::context::framework_dir(),
+        r#"<git-server webhook-private-network="true"/>"#,
+    );
     moqui_core::service::git_eca::install(
         fixture.context.factory(),
         r#"<gitecas>

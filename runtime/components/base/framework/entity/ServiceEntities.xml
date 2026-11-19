@@ -388,7 +388,8 @@ along with this software (see the LICENSE.md file). If not, see
 
             Note: For a Moqui remote server the user needs authz for the org.moqui.impl.SystemMessageServices.receive#IncomingSystemMessage
             service, ie the user should be in a group that has authz for the SystemMessageServices ArtifactGroup such as the
-            SYSMSG_RECEIVE user group (see SecurityTypeData.xml).
+            SYSMSG_RECEIVE user group (see SecurityTypeData.xml), and be the receiveUserId of that server's remote for
+            this one.
         </description></field>
         <field name="password" type="text-medium" encrypt="true" enable-audit-log="update">
             <description>Username for basic auth when sending to the remote system.</description></field>
@@ -409,6 +410,11 @@ along with this software (see the LICENSE.md file). If not, see
             <description>Shared secret for auth on send if different from secret used to authorize on receive.</description></field>
         <field name="authHeaderName" type="text-medium"/>
         <field name="messageAuthEnumId" type="id"/>
+        <field name="receiveUserId" type="id" enable-audit-log="update"><description>For a remote that receives by login
+            (messageAuthEnumId SmatLogin or empty): the one user account whose posts to /rest/sm/{type}/{this remote} are
+            taken, the account the remote system or partner signs in with. Any other signed-in user is refused, an ADMIN
+            too, and with none set every post by login is refused, as for a remote that is only polled
+            (system_sync/message.rs receive_checked; plans/Security-Review-Medium.md SEC-BAP-96).</description></field>
         <field name="sendAuthEnumId" type="id"><description>If send and receive auth mechanisms are different specify send auth method here</description></field>
 
         <field name="systemMessageTypeId" type="id"><description>Optional. May be used when this remote is for one
@@ -459,6 +465,8 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.service.message.SystemMessageType" short-alias="systemMessageType"/>
         <relationship type="one" title="PreAuth" related="moqui.service.message.SystemMessageRemote" short-alias="preAuthMessageRemote">
             <key-map field-name="preAuthMessageRemoteId"/></relationship>
+        <relationship type="one-nofk" title="Receive" related="moqui.security.UserAccount" short-alias="receiveUser">
+            <key-map field-name="receiveUserId" related="userId"/></relationship>
 
         <seed-data>
             <moqui.basic.EnumerationType description="System Message Auth Type" enumTypeId="SystemMessageAuthType"/>

@@ -29,6 +29,7 @@ use crate::driver::{DbConnection, DbRow};
 use crate::entity::{EntityFacade, EntityValue};
 
 const USER_ACCOUNT: &str = "moqui.security.UserAccount";
+const USER_AUTHC_FACTOR: &str = "moqui.security.UserAuthcFactor";
 const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
 const USER_APP_PASSWORD: &str = "moqui.security.UserAppPassword";
 /// The protocols an app password may be made for (`UserAppPassword.scope`, SEC-COM-21): DAV; SSH, SFTP and git over
@@ -185,17 +186,24 @@ fn gate_password(
             password::burn_verify(password);
             return Err(Error::new(INVALID_LOGIN));
         };
-        if let Err(err) = gate_account(facade, &account, now, true) {
-            password::burn_verify(password);
-            return Err(err);
+        match gate_once(facade, &account, now) {
+            Err(err) => {
+                password::burn_verify(password);
+                return Err(err);
+            }
+            Ok(Some(checking)) => return Ok((account, checking)),
+            Ok(None) => LoginCheck::wait(&text_field(&account, "userId")),
         }
-        let left = policy::max_failures() + 1 - field_i64(&account, "successiveFailedLogins").unwrap_or(0);
-        let user_id = text_field(&account, "userId");
-        if let Some(checking) = LoginCheck::enter(&user_id, left) {
-            return Ok((account, checking));
-        }
-        LoginCheck::wait(&user_id);
     }
+}
+
+/// One pass of the gate in front of a credential that counts as a login when wrong (a password, a second factor's
+/// code): [`gate_account`], then a place among the user's checks running now, `None` when the failures the account has
+/// left are all taken.
+fn gate_once(facade: &EntityFacade, account: &EntityValue, now: i64) -> Result<Option<LoginCheck>, Error> {
+    gate_account(facade, account, now, true)?;
+    let left = policy::max_failures() + 1 - field_i64(account, "successiveFailedLogins").unwrap_or(0);
+    Ok(LoginCheck::enter(&text_field(account, "userId"), left))
 }
 
 /// The old password of a password change (`update#Password`, `ec.user.checkOldPassword`), behind the gate of a password
@@ -239,6 +247,170 @@ fn old_password_ok(user_id: &str, old_password: &str) -> Result<bool, Error> {
     }
     increment_failed(&facade, &text_field(&account, "userId"))?;
     Ok(false)
+}
+
+/// Count a failed login of `user_id` (`increment#UserAccountFailedLogins`, `ec.user.countFailedLogin`), as a wrong
+/// password is counted ([`increment_failed`]): committed at once, and each of failures counted at once counted.
+///
+/// # Errors
+///
+/// Returns a storage error, and an error when there is no such account.
+pub fn count_failed_login(user_id: &str) -> Result<(), Error> {
+    let _authz = without_authz();
+    increment_failed(&entity_facade()?, user_id)
+}
+
+/// The service that compares a code with the user's factors, with no count (`UserServices.xml`).
+const COMPARE_CODE: &str = "org.moqui.impl.UserServices.compare#UserAuthcFactorCode";
+
+/// A second factor's code that stands in for a login (`validate#UserAuthcFactorCode` with `countFailure`,
+/// `ec.user.checkCountedCode`), behind the gate of a password login ([`gate_once`]): an unknown or terminated account
+/// is refused, one still disabled is counted and refused with its code unchecked, no more of the user's codes are
+/// compared at once than the failures the account has left, and a wrong code counts as a failed login by the password's
+/// compare-and-set ([`increment_failed`]). A code past the failures left is counted and refused unchecked rather than
+/// kept waiting, as a password is: a code is checked inside its caller's transaction, whose connection a wait would
+/// hold. So codes sent at once are bounded by the lock as passwords are (SEC-WEB-87). A refusal and a wrong code are
+/// noted for the web protection. The factor the code was for, or `None`.
+///
+/// # Errors
+///
+/// Returns a storage error when the account cannot be read or the failure cannot be counted, and the compare
+/// service's errors.
+pub fn check_counted_code(user_id: &str, code: &str) -> Result<Option<String>, Error> {
+    if user_id.is_empty() {
+        crate::web::note_auth_failure();
+        return Ok(None);
+    }
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let Some(account) = find_user_id(&facade, user_id)? else {
+        crate::web::note_auth_failure();
+        return Ok(None);
+    };
+    let _checking = match gate_once(&facade, &account, now_millis()) {
+        Ok(Some(checking)) => checking,
+        Ok(None) => {
+            tracing::warn!("A second factor code of user {user_id} came past the failures left; counted, not checked");
+            increment_failed(&facade, user_id)?;
+            crate::web::note_auth_failure();
+            return Ok(None);
+        }
+        Err(err) if err.message() == INVALID_LOGIN => {
+            crate::web::note_auth_failure();
+            return Ok(None);
+        }
+        Err(err) => return Err(err),
+    };
+    let parameters = [("userId", user_id), ("code", code)]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), Value::string(value)))
+        .collect();
+    let compared = crate::service::sync(COMPARE_CODE, &parameters)?;
+    let verified = compared.get("verified").is_some_and(super::factor::truthy);
+    let factor_id = verified.then(|| {
+        compared
+            .get("factorId")
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    });
+    if factor_id.is_none() {
+        increment_failed(&facade, user_id)?;
+        crate::web::note_auth_failure();
+    }
+    Ok(factor_id)
+}
+
+/// Take a second factor's code once (`compare#UserAuthcFactorCode`, `ec.user.takeFactorCode`): a single-use code ends
+/// (`thruDate` now) only while it has not ended, and an authenticator factor keeps `step` only while its last step taken
+/// is before it. One conditional update in the caller's transaction (its held rows written first), so of two right
+/// submissions of one code only one takes it: the database holds the second's update until the first's transaction
+/// ends, and then it matches no row. A caller that rolls back gives the code back. True when this call took it.
+///
+/// # Errors
+///
+/// Returns a storage error.
+pub fn take_factor_code(factor_id: &str, step: Option<i64>) -> Result<bool, Error> {
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let tx = facade.transactions_for(USER_AUTHC_FACTOR)?;
+    // the caller's entity writes held in a transaction-cache frame go first, and its reads are forgotten, as for any
+    // raw SQL in a frame (plans/archive/TX-Cache.md D1)
+    crate::entity::cache::flush_before_sql(&facade, &tx)?;
+    let Some(step) = step else {
+        let Some(row) = facade
+            .find(USER_AUTHC_FACTOR)?
+            .eq("factorId", Value::string(factor_id))
+            .one()?
+        else {
+            return Ok(false);
+        };
+        let read = row.get("thruDate").cloned().unwrap_or(Value::Null);
+        return take_single_use(&facade, &tx, factor_id, &read, now_millis());
+    };
+    let condition = Condition::and(vec![
+        Condition::equals("factorId", Value::string(factor_id)),
+        Condition::or(vec![
+            Condition::is_null("lastTotpStep"),
+            Condition::less("lastTotpStep", Value::I64(step)),
+        ]),
+    ]);
+    update_factor(&facade, &tx, "lastTotpStep", Value::I64(step), &condition)
+}
+
+/// Take a single-use code whose `thruDate` was read as `read`, at `now` (epoch millis): one already ended is not taken,
+/// and the update matches only the `thruDate` read, so of two takes that read it only the first ends the code,
+/// whatever the time of each (a printed code ends in a year and a sent one in a day, so the row's own date is not
+/// enough: a later take's update, which the database re-checks once the first commits, would match a date set by the
+/// first after its own `now`).
+fn take_single_use(
+    facade: &EntityFacade,
+    tx: &crate::transaction::TransactionManager,
+    factor_id: &str,
+    read: &Value,
+    now: i64,
+) -> Result<bool, Error> {
+    if value_millis(read).is_some_and(|thru| thru <= now) {
+        return Ok(false);
+    }
+    let by_id = Condition::equals("factorId", Value::string(factor_id));
+    let as_read = if read.is_null() {
+        Condition::is_null("thruDate")
+    } else {
+        Condition::equals("thruDate", read.clone())
+    };
+    update_factor(
+        facade,
+        tx,
+        "thruDate",
+        stamp_value(now),
+        &Condition::and(vec![by_id, as_read]),
+    )
+}
+
+/// `UPDATE` one field of a factor (and its `lastUpdatedStamp`) where `condition` holds, in `tx`: true when a row changed.
+fn update_factor(
+    facade: &EntityFacade,
+    tx: &crate::transaction::TransactionManager,
+    column: &str,
+    set: Value,
+    condition: &Condition,
+) -> Result<bool, Error> {
+    let (statement, stamped) = facade.with_entity(USER_AUTHC_FACTOR, |entity, dialect, _| {
+        let stamped = entity.has_field("lastUpdatedStamp");
+        let columns: &[&str] = if stamped {
+            &[column, "lastUpdatedStamp"]
+        } else {
+            &[column]
+        };
+        Ok((sql_update(entity, dialect, columns, Some(condition))?, stamped))
+    })?;
+    let mut params = vec![set];
+    if stamped {
+        params.push(now_value());
+    }
+    params.extend(statement.params);
+    let updated = crate::entity::exec::execute_tx(tx, &statement.sql, &params)?;
+    Ok(updated > 0)
 }
 
 /// Whether `plain` is the account's reset password (`reset#Password`, always argon2) and that is still in date; a

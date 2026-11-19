@@ -121,6 +121,7 @@ mod search_logs_postgres;
 mod search_opensearch;
 mod search_replica;
 mod search_semantic;
+mod second_factor_codes;
 mod sim_steps;
 mod smtp;
 mod ssh;

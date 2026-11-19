@@ -877,6 +877,12 @@ interface MoquiUserFacade {
     loginUserKey(loginKey: string): boolean;
     /** The old password of a password change, behind the login gate: true when it is the current password or the reset password still in date. A null or unknown userId, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login. */
     checkOldPassword(userId: string | null, oldPassword: string | null): boolean;
+    /** A second factor's code that stands in for a login (validate#UserAuthcFactorCode with countFailure), behind the login gate: the id of the factor it verified, else null. A still disabled account is counted and its code not checked, no more of a user's codes are compared at once than the failures the account has left (one past them is counted and not compared), and a wrong code counts as a failed login. */
+    checkCountedCode(userId: string | null, code: string | null): string | null;
+    /** Count a failed login of the account as a wrong password is counted: committed at once, and failures counted at once each counted; past the login rules' maxFailures the account locks. */
+    countFailedLogin(userId: string): void;
+    /** Take a factor's code once: a single-use code (no step) only while it has not ended, an authenticator code only for a step after the last one taken. One conditional update in the caller's transaction, so of two right submissions of one code only one takes it; a caller that rolls back gives the code back. True when this call took it. */
+    takeFactorCode(factorId: string, step?: number | string | null): boolean;
     /** The step an authenticator code of the secret is valid for now (one step either side) when it is after afterStep, the last step a code of the factor was taken for: a code works once. Null when the code is not valid now or its step was taken. */
     totpCodeStep(secret: string | null, code: string | null, afterStep: number | string | null): number | null;
     /** Whether this request comes from this machine (a loopback peer straight to the listener, no proxy's forwarding header), so the first administrator's form needs no setup secret. */

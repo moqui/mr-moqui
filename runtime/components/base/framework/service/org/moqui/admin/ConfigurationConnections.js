@@ -663,7 +663,9 @@ const REST_SEND = "org.moqui.impl.SystemMessageServices.send#SystemMessageRest"
 // The remote's fields, for the remote kind and for a gateway whose connection it is (Mantle; gateway true): part names the
 // part. How a remote verifies what it RECEIVES (messageAuthEnumId) is never one of them: whoever chose it could open the
 // instance to messages of any type (/rest/sm), so it stays as its owner or an instance administrator set it, and a remote
-// started here receives only from a signed-in user authorized to (SmatLogin). How it sends is sendAuthEnumId.
+// started here receives only from a signed-in user authorized to (SmatLogin) who is its receiveUserId, which is not one
+// of them either: until an instance administrator sets it the remote takes no post (SEC-BAP-96). How it sends is
+// sendAuthEnumId.
 function remoteFields(part = "main", prefix = "", gateway = false) {
     const authOptions = () => enumOptions("SystemMessageAuthType").filter(option => option.value !== "SmatUrlToken")
     const fields = [

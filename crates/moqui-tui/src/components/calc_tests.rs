@@ -269,3 +269,55 @@ fn the_menu_and_the_charts() {
         "a cell's name is not completed"
     );
 }
+
+/// SEC-CLI-83: a sheet's frozen counts are the workbook's, which an xlsx file sets to any number; the grid draws and
+/// reads only the frozen rows that leave the terminal `MIN_ROWS` of the others, at most `MAX_FROZEN_ROWS`, and the
+/// frozen columns that fit its width, so a frame stays the size of the terminal.
+#[test]
+fn a_workbooks_frozen_counts_are_held_to_what_a_terminal_shows() {
+    for (rows, columns) in [(1_048_575, 0), (i64::from(i32::MAX), i64::from(i32::MAX))] {
+        let mut props = props(true);
+        props["room"]["sheets"][0]["frozenRows"] = json!(rows);
+        props["room"]["sheets"][0]["frozenColumns"] = json!(columns);
+        for (terminal, frozen) in [(30u16, 30 - CHROME_ROWS - MIN_ROWS), (1_000, MAX_FROZEN_ROWS)] {
+            let state = ComponentState {
+                rows: terminal,
+                ..ComponentState::default()
+            };
+            let lines = CalcGrid.lines(&props, &state, 120, false);
+            let most = usize::from(terminal);
+            assert!(
+                lines.len() < most,
+                "{rows} frozen rows drew {} lines in {terminal}",
+                lines.len()
+            );
+            // a span or two a column, and the columns of a 120-character line are at most 30
+            assert!(lines.iter().all(|line| line.len() < 80), "{columns} frozen columns");
+            let (name, read) = CalcGrid.source(&props, &state).unwrap();
+            assert_eq!(name, "calcCells");
+            assert_eq!(read["height"], frozen.to_string(), "{read:?}");
+        }
+    }
+}
+
+/// SEC-CLI-83: a frozen column that does not fit the width is not drawn, and scrolls as the others do: moving the
+/// active cell to it brings it on screen.
+#[test]
+fn a_frozen_column_past_the_width_scrolls_into_view() {
+    let (props, mut state) = loaded(true);
+    // the room as the view keeps it
+    state.local["room"]["sheets"][0]["frozenColumns"] = json!(50);
+    for _ in 1..30 {
+        CalcGrid.key(&props, &mut state, &KeyPress::plain(Key::Right), false);
+    }
+    let lines = texts(&props, &state, 60);
+    let header = &lines[1];
+    assert!(
+        header.split_whitespace().any(|name| name == column_name(30)),
+        "{header}"
+    );
+    assert!(
+        !header.split_whitespace().any(|name| name == column_name(50)),
+        "{header}"
+    );
+}
