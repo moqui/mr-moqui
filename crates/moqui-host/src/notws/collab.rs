@@ -317,6 +317,24 @@ pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqu
                     "update": b64().encode(&update)});
                 broadcast(&document_key, None, &frame);
             }
+            // the user may no longer view the page: each client of theirs leaves it, told why (SEC-TLS-112)
+            moqui_collab::Event::Revoked { document_key, user_id } => {
+                let slots: Vec<(u64, String, std::sync::Weak<Slot>)> = lock(members())
+                    .get(&document_key)
+                    .map(|list| {
+                        list.iter()
+                            .filter(|member| member.user_id == user_id)
+                            .map(|member| (member.slot_id, member.client.clone(), member.slot.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (slot_id, client, slot) in slots {
+                    if let Some(slot) = slot.upgrade() {
+                        error(&slot, &document_key, &client, 403, "you may no longer view this page");
+                    }
+                    leave(factory, slot_id, &document_key, Some(&client));
+                }
+            }
         }
     }
 }

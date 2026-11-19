@@ -480,6 +480,47 @@ fn a_refused_join_is_no_member() {
     let bad = [0xff_u8; 11];
     assert_eq!(super::join(&key, "rejoin", &bad).unwrap_err().code, 400);
     super::tick();
-    assert!(!super::open_documents().contains(&key), "the refused join left the room open");
+    assert!(
+        !super::open_documents().contains(&key),
+        "the refused join left the room open"
+    );
+    let _ = super::take_events();
+}
+
+/// SEC-TLS-112: an editor's access is asked again by the tick once a minute old, and an answer the tick did not renew
+/// is not used for an update.
+#[test]
+fn an_editors_access_is_asked_again_and_a_stale_answer_takes_no_update() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "recheck");
+    login("recheck");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("RECHECK")),
+            ("description", Value::string("Recheck")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("RECHECK")),
+            ("pageName", Value::string("Kept")),
+            ("pageText", Value::string("Text.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    let joined = super::join(&key, "recheck", &[]).unwrap();
+    let doc = client(&joined);
+    super::age_grants(&key, super::ACCESS_STALE + std::time::Duration::from_secs(1));
+    let typed = type_paragraph(&doc, "Late.");
+    assert_eq!(super::apply(&key, "recheck", &typed).unwrap_err().code, 403);
+    // the tick asks again: the editor may still change the page
+    super::tick();
+    super::apply(&key, "recheck", &typed).unwrap();
+    super::leave(&key);
+    super::tick();
     let _ = super::take_events();
 }
