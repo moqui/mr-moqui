@@ -64,7 +64,9 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="print" noun="ResourceDocument" type="rust" location="moqui_core::service::tools::print_resource_document">
-        <description>The body is Rust (crates/moqui-core/src/service/tools.rs).</description>
+        <description>The body is Rust (crates/moqui-core/src/service/tools.rs). resourceLocation is a stored document's:
+            dbresource:// or content://, never a file, a runtime:// or component:// location or a URL, whose bytes would go
+            to the printer's server.</description>
         <!-- org.moqui.impl.PrintServices.print#ResourceDocument -->
         <implements service="org.moqui.impl.PrintServices.print#DocumentInterface"/>
         <in-parameters>

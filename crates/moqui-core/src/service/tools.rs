@@ -154,12 +154,28 @@ fn print_document(
     Ok(out)
 }
 
-/// `print#ResourceDocument`: the bytes at a resource location, printed and not stored.
+/// Whether `print#ResourceDocument` reads `location`: a stored document, in the database (`dbresource://`) or the content
+/// store (`content://`), with no `..` segment. Never a file, the runtime directory (its conf and keys), a component's
+/// file or a URL: the bytes go to the printer's server, which the caller may have named
+/// (plans/Security-Review-Medium.md SEC-RTE-83).
+fn printable_location(location: &str) -> bool {
+    let lower = location.trim().to_ascii_lowercase();
+    (lower.starts_with("dbresource://") || lower.starts_with("content://"))
+        && !location.split(['/', '\\']).any(|segment| segment == "..")
+}
+
+/// `print#ResourceDocument`: the bytes at a stored document's location ([`printable_location`]), printed and not stored.
 fn print_resource_document(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let location = param_text(parameters, "resourceLocation");
+    if !printable_location(&location) {
+        add_error(format!(
+            "[{location}] is not printed: only a stored document (dbresource:// or content://) is printed by its location"
+        ));
+        return Ok(BTreeMap::new());
+    }
     let found = ExecutionContext::with_current(|ctx| ctx.factory().resource().get(&location))
         .ok_or_else(|| LibError::new("no execution context is entered"))?;
     let resource = match found {

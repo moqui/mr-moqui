@@ -135,10 +135,11 @@ along with this software (see the LICENSE.md file). If not, see
     <resource name="print" description="Print - Network Printers and Jobs">
         <resource name="printers">
             <method type="get"><entity name="moqui.basic.print.NetworkPrinter" operation="list"/></method>
-            <method type="post"><entity name="moqui.basic.print.NetworkPrinter" operation="create"/></method>
+            <!-- a printer is started and changed in Admin's Connections (store#Connection: a new or repointed printer waits
+                for a test print, and on production reaches no internal address) or System › Print, not here
+                (plans/Security-Review-Medium.md SEC-RTE-83) -->
             <id name="networkPrinterId">
                 <method type="get"><entity name="moqui.basic.print.NetworkPrinter" operation="one"/></method>
-                <method type="patch"><entity name="moqui.basic.print.NetworkPrinter" operation="update"/></method>
 
                 <resource name="print">
                     <!-- TODO how to handle InputStream or SerialBlob in parameters? -->

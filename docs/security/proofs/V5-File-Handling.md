@@ -23,7 +23,7 @@ table, and what a status claims, is in the [index](README.md).
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
 | v5.0.0-5.3.1 | 1 | Stored uploads never run as server code | Gap | SEC-SCR-81 (a wiki page saved with a template extension runs as server script; fix merged 2026-11-18, not yet recorded); the cut at `#` (SEC-PFS-82's cause) is fixed: `context/resource.rs` `refuse_cut_write` refuses a write at a location holding `#` | - |
-| v5.0.0-5.3.2 | 1 | File paths built from trusted data, not names | Gap | SEC-RTE-83 (`print#ResourceDocument` reads any location); `context/resource.rs` `runtime_ref` joins `..`; met in the drive, DAV, SFTP and elFinder checks and `multipart.rs` `base_name` | - |
+| v5.0.0-5.3.2 | 1 | File paths built from trusted data, not names | Gap | `print#ResourceDocument` reads only a `dbresource://` or `content://` location (SEC-RTE-83 fixed); `context/resource.rs` `runtime_ref` joins `..`; met in the drive, DAV, SFTP and elFinder checks and `multipart.rs` `base_name` | - |
 
 ## V5.4 File Download
 
