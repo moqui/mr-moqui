@@ -34,6 +34,13 @@ object Native {
     @JvmStatic external fun openPush(dataDir: String, pushId: String, kind: String, enc: String): String?
     @JvmStatic external fun openFor(dataDir: String, account: String, body: ByteArray): ByteArray?
     @JvmStatic external fun pushPublic(dataDir: String, account: String, make: Boolean): String?
+    /**
+     * The UnifiedPush instance of `account` ([UnifiedPushes]: random, kept in `push.json`, made the first time), or
+     * null for an account not signed in here. The distributor app knows the account only by it, never by its id.
+     */
+    @JvmStatic external fun instanceOf(dataDir: String, account: String): String?
+    /** The account of a UnifiedPush `instance` made by [instanceOf], or null (an account id is no instance). */
+    @JvmStatic external fun accountOf(dataDir: String, instance: String): String?
     @JvmStatic external fun accountIds(dataDir: String): String?
     @JvmStatic external fun pushKnown(dataDir: String, pushId: String): Boolean
     @JvmStatic external fun roomLink(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?

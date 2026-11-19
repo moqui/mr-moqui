@@ -721,6 +721,14 @@ impl ShellHost for MobileHost {
         self.network.load(Ordering::SeqCst)
     }
 
+    /// `KeyguardManager.isDeviceSecure()`, asked as the shell loads (SEC-CLI-113); none off Android.
+    #[cfg(target_os = "android")]
+    fn device_secure(&self) -> Option<bool> {
+        crate::android::device_secure()
+            .inspect_err(|err| log::warn!("Whether the phone has a screen lock was not read: {err}"))
+            .ok()
+    }
+
     fn account_signed_in(&self, account: &str) {
         crate::native::account_back(account);
         let (Some(core), true) = (self.core(), self.network_ready()) else {

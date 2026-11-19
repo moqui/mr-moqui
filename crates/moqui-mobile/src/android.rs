@@ -420,6 +420,23 @@ pub(crate) fn fcm_start() -> Result<(), String> {
     })
 }
 
+/// Whether the phone has a secure lock screen (`DeviceLock.isSecure`: `KeyguardManager.isDeviceSecure()`), which the
+/// shell warns of when it has not (SEC-CLI-113).
+pub(crate) fn device_secure() -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.DeviceLock"))?;
+        let secure = env
+            .call_static_method(
+                &class,
+                jni_str!("isSecure"),
+                jni_sig!("(Landroid/content/Context;)Z"),
+                &[JValue::Object(app)],
+            )?
+            .z()?;
+        Ok(secure)
+    })
+}
+
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
 pub(crate) fn device_model() -> Result<String, String> {
     with_context(|env, _| {

@@ -47,6 +47,8 @@
 -keep class org.moqui.mobile.Push {
     public static void startFcm(android.content.Context);
 }
+# ... and whether the phone has a secure lock screen (src/android.rs device_secure; SEC-CLI-113)
+-keep class org.moqui.mobile.DeviceLock { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
 

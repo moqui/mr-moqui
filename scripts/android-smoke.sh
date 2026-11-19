@@ -58,7 +58,8 @@ JNI_NAMES=(
     org/moqui/mobile/CallManager#pageGone org/moqui/mobile/Native#dialLink org/moqui/mobile/DialAccount#set
     org/moqui/mobile/PhoneBook#search org/moqui/mobile/PhoneBook#names
     org/moqui/mobile/ScreenSecurity#set org/moqui/mobile/CalendarIntent#insert org/moqui/mobile/Push#startFcm
-    org/moqui/mobile/CallManager#busyNow
+    org/moqui/mobile/CallManager#busyNow org/moqui/mobile/Native#instanceOf org/moqui/mobile/Native#accountOf
+    org/moqui/mobile/DeviceLock#isSecure
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain

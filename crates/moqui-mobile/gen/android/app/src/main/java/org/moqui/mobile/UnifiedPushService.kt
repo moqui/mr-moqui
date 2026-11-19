@@ -15,7 +15,9 @@ import org.unifiedpush.android.connector.data.PushMessage
 /**
  * The UnifiedPush connector's events ([UnifiedPushes]): an account's endpoint goes to Rust, which registers it with the
  * account's server with the account's own push keys; a message is opened here with those keys (`Native.openFor`) and is
- * that account's (the instance), shown as an FCM push is once opened ([Push.onOpened]).
+ * that account's, shown as an FCM push is once opened ([Push.onOpened]). The connector names the account by its random
+ * instance (SEC-CLI-125), which Rust maps back (`Native.accountOf`); an event of an instance that is no account's here
+ * (an earlier build's, which was the account id, or one of an account signed out) is ignored.
  *
  * The connector's own receiver (`MessagingReceiverImpl`) tries its default key manager, which has no keys of the
  * instance, so the message comes still sealed (`decrypted` false), and this opens it. One the connector says it opened
@@ -25,16 +27,30 @@ import org.unifiedpush.android.connector.data.PushMessage
 class UnifiedPushService : PushService() {
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
         val app = applicationContext
-        val account = ChatRules.accountId(instance) ?: return
         Native.work {
-            if (Native.ensure(app)) Native.unifiedEndpoint(Native.dataDir(app), account, endpoint.url)
+            if (!Native.ensure(app)) return@work
+            val dir = Native.dataDir(app)
+            val account = Native.accountOf(dir, instance)
+            if (account == null) {
+                Log.i(TAG, "A UnifiedPush endpoint of $instance, no account's here: ignored")
+                return@work
+            }
+            Native.unifiedEndpoint(dir, account, endpoint.url)
         }
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
         val app = applicationContext
-        handle(app, message, instance) { sealed ->
-            if (Native.ensure(app)) Native.openFor(Native.dataDir(app), instance, sealed) else null
+        // the instance's account is read on the opener's thread, as the library may load first
+        Native.open {
+            val dir = if (Native.ensure(app)) Native.dataDir(app) else null
+            val account = dir?.let { Native.accountOf(it, instance) }
+            if (dir == null || account == null) {
+                PushCheck.arrived(app, "unifiedpush")
+                Log.w(TAG, "A UnifiedPush message of $instance, no account's here: dropped")
+                return@open
+            }
+            handle(app, message, account) { sealed -> Native.openFor(dir, account, sealed) }
         }
     }
 
@@ -44,9 +60,12 @@ class UnifiedPushService : PushService() {
 
     override fun onUnregistered(instance: String) {
         val app = applicationContext
-        val account = ChatRules.accountId(instance) ?: return
         Native.work {
-            if (Native.ensure(app)) Native.unifiedEndpoint(Native.dataDir(app), account, "")
+            if (!Native.ensure(app)) return@work
+            val dir = Native.dataDir(app)
+            // an earlier build's instance taken back (the account id) is no account's: the new endpoint stays
+            val account = Native.accountOf(dir, instance) ?: return@work
+            Native.unifiedEndpoint(dir, account, "")
         }
     }
 
@@ -55,14 +74,15 @@ class UnifiedPushService : PushService() {
         private val main = Handler(Looper.getMainLooper())
 
         /**
-         * A message for the account `instance`: opened with `open` (the account's keys, on the opener's thread), then
-         * shown; one that does not open, or that the connector opened with its own keys, is dropped.
+         * A message for `account` (the account of the connector's instance): opened with `open` (the account's keys, on
+         * the opener's thread), then shown; one that does not open, or that the connector opened with its own keys, is
+         * dropped.
          */
-        fun handle(context: Context, message: PushMessage, instance: String, open: (ByteArray) -> ByteArray?) {
+        fun handle(context: Context, message: PushMessage, account: String, open: (ByteArray) -> ByteArray?) {
             val app = context.applicationContext
             val received = System.currentTimeMillis()
             PushCheck.arrived(app, "unifiedpush")
-            val account = ChatRules.accountId(instance) ?: return
+            if (ChatRules.accountId(account) == null) return
             if (message.decrypted) {
                 Log.w(TAG, "A UnifiedPush message for $account opened with the connector's own keys: dropped")
                 return

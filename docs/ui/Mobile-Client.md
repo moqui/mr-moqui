@@ -351,14 +351,18 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
   server encrypts to are never replaced because the key store failed for a moment.
 - **UnifiedPush** (a phone without Google Play; `org.unifiedpush.android:connector`): each account is an instance of
   its own with the distributor (ntfy, for one), whose endpoint Rust registers with that account's server
-  (`provider=unifiedpush`) with the account's same keys. The connector's receiver opens a message with its own default
-  key manager, which has none of the account's keys, so the message comes still sealed and `UnifiedPushService` opens
-  it in Rust (`Native.openFor`) with the account's keys; one the connector says it opened (sealed to its own keys) or
-  that does not open is dropped. A build without Firebase takes the phone's default distributor by itself. Where
-  Firebase works it stays: the notification check offers "Use UnifiedPush" only after asking, and "Use Firebase" to
-  come back. The instances follow the accounts at each sign-in and sign-out (an account signing out has its instance
-  taken back and no keys made again). The server sends no VAPID key to the connector (a distributor that requires one
-  refuses: `VAPID_REQUIRED`, logged).
+  (`provider=unifiedpush`) with the account's same keys. The instance is 32 random hex digits kept in `push.json`
+  (`Native.instanceOf`, mapped back by `Native.accountOf`) and made again at a sign-in after a sign-out, never the
+  account id, which would tell the distributor app the server's host and a hash to test usernames against. An earlier
+  build's instances (the account ids) are taken back at the next `registerAll`; the account keeps its endpoint until
+  the new instance's comes, which the server's registration then puts in place of the old one. The connector's
+  receiver opens a message with its own default key manager, which has none of the account's keys, so the message
+  comes still sealed and `UnifiedPushService` opens it in Rust (`Native.openFor`) with the account's keys; one the
+  connector says it opened (sealed to its own keys) or that does not open is dropped. A build without Firebase takes
+  the phone's default distributor by itself. Where Firebase works it stays: the notification check offers "Use
+  UnifiedPush" only after asking, and "Use Firebase" to come back. The instances follow the accounts at each sign-in
+  and sign-out (an account signing out has its instance taken back and no keys made again). The server sends no VAPID
+  key to the connector (a distributor that requires one refuses: `VAPID_REQUIRED`, logged).
 - **Channels:** Messages (and the test notification), Mentions, Texts (an SMS or other bridged room's), Missed calls
   and Other, beside the calls' ringing and ongoing ones; the user sets each one's sound and importance in Android's
   settings.
@@ -456,7 +460,8 @@ action's data, which puts it on the clipboard (`ClipDescription.EXTRA_IS_SENSITI
 copied" toast before it). The notification is `VISIBILITY_SECRET`, so a secure lock screen shows nothing of it and Copy
 code needs the phone unlocked (a private one with a public version showed the code under Android's default lock screen
 setting, SEC-CLI-115). An APK before this change shows the message without the button. It answers whether the flag is on; the
-desktop app has no such member, and the viewer says a screenshot cannot be stopped there. The app's store deletes
+desktop app's (`bridge.rs` `secure_screen`) keeps the window out of screenshots and screen recording on macOS and
+Windows, and a Linux desktop has no such member, where the viewer says a screenshot cannot be stopped (SEC-CLI-117). The app's store deletes
 disappearing messages at their time as the desktop's does ([Desktop-Client](Desktop-Client.md)).
 
 ## Known gaps (MT1)

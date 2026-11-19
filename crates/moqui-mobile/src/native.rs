@@ -356,7 +356,9 @@ pub(crate) fn push_token(dir: &Path, token: &str) {
 }
 
 /// `account`'s UnifiedPush distributor endpoint (none: it was unregistered), from the connector
-/// (`UnifiedPushService.kt`, whose instance is the account): kept, and registered with the account's server.
+/// (`UnifiedPushService.kt`, which finds the account of the connector's instance with [`account_of`]): kept, and
+/// registered with the account's server. An endpoint for an account with no instance here (it signed out since) is
+/// not taken.
 pub(crate) fn unified_endpoint(dir: &Path, account: &str, endpoint: Option<&str>) {
     let Some(account) = calls::account_id(account) else {
         log::warn!("Push: a UnifiedPush endpoint of no account was passed over");
@@ -367,8 +369,49 @@ pub(crate) fn unified_endpoint(dir: &Path, account: &str, endpoint: Option<&str>
         log::warn!("Push: a UnifiedPush endpoint that is not https was passed over");
         return;
     }
-    change_record(dir, |record| record.set_endpoint(account, endpoint));
+    change_record(dir, |record| {
+        if endpoint.is_some() && !record.instances.contains_key(account) {
+            log::info!("Push: a UnifiedPush endpoint of {account}, which has no instance here, was passed over");
+            return false;
+        }
+        record.set_endpoint(account, endpoint)
+    });
     register_pending(dir);
+}
+
+/// `account`'s UnifiedPush instance (`Native.instanceOf`, `UnifiedPushes.registerAll`), made and kept in `push.json`
+/// the first time it is asked for: none for an account not signed in here (one signing out gets none again) or when
+/// a new one could not be kept.
+pub(crate) fn instance_of(dir: &Path, account: &str) -> Option<String> {
+    let core = core_in(dir).ok()?;
+    // under the lock, as the sign-out's drop of the instance is: an account marked leaving before it gets none
+    let _one = moqui_lib::sync::lock(&PUSH);
+    if !keyed_ids(&core).iter().any(|id| id == account) {
+        return None;
+    }
+    let mut record = PushRecord::load(dir);
+    let (instance, made) = match record.instance_of(account) {
+        Ok(found) => found,
+        Err(err) => {
+            log::error!("Push: no UnifiedPush instance for {account}: {err}");
+            return None;
+        }
+    };
+    if made {
+        // one not kept would be another at the next ask, and the distributor's endpoint for it no account's
+        if let Err(err) = record.save(dir) {
+            log::error!("Push: the UnifiedPush instance of {account} was not kept: {err}");
+            return None;
+        }
+    }
+    Some(instance)
+}
+
+/// The account of the UnifiedPush `instance` (`Native.accountOf`: the connector's events and its key manager); none
+/// for an instance not made here, an account id among them (an earlier build's instance, taken back at the next
+/// `registerAll`).
+pub(crate) fn account_of(dir: &Path, instance: &str) -> Option<String> {
+    load_record(dir).account_of(instance).map(str::to_string)
 }
 
 /// Register each account signed in that is not registered yet (the app's start, a token, an endpoint), or again with
@@ -484,8 +527,9 @@ pub(crate) fn opened_for(mut opened: Value, account: &str, kind: &str, push_id: 
     opened
 }
 
-/// The UnifiedPush connector's key manager (`RustKeyManager.kt`): open a push body to `account` (the connector's
-/// instance) with its keys; none for an account not signed in here or a body that does not open. Only reads keys.
+/// The UnifiedPush connector's key manager (`RustKeyManager.kt`): open a push body to `account` (the account of the
+/// connector's instance, [`account_of`]) with its keys; none for an account not signed in here or a body that does not
+/// open. Only reads keys.
 pub(crate) fn open_for(dir: &Path, account: &str, body: &[u8]) -> Option<Vec<u8>> {
     let core = core_in(dir).ok()?;
     if !keyed_ids(&core).iter().any(|id| id == account) {
@@ -526,7 +570,8 @@ pub(crate) fn push_public(dir: &Path, account: &str, make: bool) -> Option<Strin
     Some(format!("{}.{}", keys.public_b64(), keys.auth_b64()))
 }
 
-/// The accounts signed in here, one id a line: the UnifiedPush connector registers an instance for each.
+/// The accounts signed in here, one id a line: the UnifiedPush connector registers each one's instance
+/// ([`instance_of`]).
 pub(crate) fn account_ids(dir: &Path) -> String {
     core_in(dir).map(|core| keyed_ids(&core).join("\n")).unwrap_or_default()
 }
@@ -1000,6 +1045,44 @@ mod entries {
             let account = account.try_to_string(env)?;
             match super::push_public(&dir, &account, make) {
                 Some(public) => env.new_string(public),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.instanceOf(dataDir, account)`: the account's UnifiedPush instance (made the first time), or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_instanceOf<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        account: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let account = account.try_to_string(env)?;
+            match super::instance_of(&dir, &account) {
+                Some(instance) => env.new_string(instance),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.accountOf(dataDir, instance)`: the account of a UnifiedPush instance made here, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_accountOf<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        instance: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let instance = instance.try_to_string(env)?;
+            match super::account_of(&dir, &instance) {
+                Some(account) => env.new_string(account),
                 None => Ok(JString::default()),
             }
         })

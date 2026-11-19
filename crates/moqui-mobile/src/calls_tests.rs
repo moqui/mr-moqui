@@ -209,6 +209,84 @@ fn a_token_is_registered_once_with_each_account_and_its_id_kept() {
     assert!(record.registered.is_empty());
 }
 
+/// SEC-CLI-125: the distributor app knows each account by a random instance kept in `push.json`, never by the account
+/// id (the server's host and a hash of the server and username); an instance is the same until the account signs out.
+#[test]
+fn each_account_has_a_random_unified_push_instance_kept_until_it_signs_out() {
+    let dir = std::env::temp_dir().join(format!("moqui-mobile-instances-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut record = PushRecord::default();
+    let (a, made) = record.instance_of(A).unwrap();
+    assert!(made, "made at the first ask");
+    assert_eq!(a.len(), 32);
+    assert!(a.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')), "hex: {a}");
+    assert_ne!(a, A);
+    assert_eq!(
+        record.instance_of(A).unwrap(),
+        (a.clone(), false),
+        "the same at the next ask"
+    );
+    let (b, _) = record.instance_of(B).unwrap();
+    assert_ne!(a, b, "one per account");
+    record.save(&dir).unwrap();
+    let mut loaded = PushRecord::load(&dir);
+    assert_eq!(loaded, record);
+    assert_eq!(
+        loaded.instance_of(A).unwrap(),
+        (a.clone(), false),
+        "kept across a save and a load"
+    );
+    assert_eq!(loaded.account_of(&a), Some(A));
+    assert_eq!(loaded.account_of(&b), Some(B));
+    // an earlier build's instance was the account id: no account's, so its late events are ignored
+    assert_eq!(loaded.account_of(A), None);
+    assert_eq!(loaded.account_of(&a.to_uppercase()), None);
+    assert_eq!(loaded.account_of("0123456789abcdef0123456789abcdef"), None);
+    assert_eq!(loaded.account_of(""), None);
+    // a sign-out drops it (a record changed by that alone), and a sign-in again gets another
+    assert!(loaded.drop_account(A));
+    assert!(!loaded.drop_account(A));
+    assert_eq!(loaded.account_of(&a), None);
+    assert_eq!(loaded.instances.keys().collect::<Vec<_>>(), vec![B]);
+    let (again, made) = loaded.instance_of(A).unwrap();
+    assert!(made);
+    assert_ne!(again, a);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A `push.json` an earlier build kept, with no instances: it loads as it was, and its accounts get instances.
+#[test]
+fn a_push_record_with_no_instances_still_loads() {
+    let dir = std::env::temp_dir().join(format!("moqui-mobile-push-shape-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let earlier = json!({
+        "token": "tok",
+        "registered": {A: "100050"},
+        "keys": {A: ["PUB-A", "AUTH-A"]},
+        "endpoints": {A: "https://up.example.net/a"},
+        "taken": [B],
+    });
+    std::fs::write(dir.join("push.json"), earlier.to_string()).unwrap();
+    let mut record = PushRecord::load(&dir);
+    assert_eq!(record.token.as_deref(), Some("tok"));
+    assert_eq!(record.registered.get(A).map(String::as_str), Some("100050"));
+    assert_eq!(
+        record.endpoints.get(A).map(String::as_str),
+        Some("https://up.example.net/a")
+    );
+    assert!(record.taken.contains(B));
+    assert!(record.instances.is_empty());
+    assert_eq!(
+        record.account_of(A),
+        None,
+        "the earlier instance, the account id, is no account's"
+    );
+    let (instance, made) = record.instance_of(A).unwrap();
+    assert!(made && instance != A);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_token_another_account_of_the_server_takes_is_no_longer_the_first_ones() {
     let poster = fake(vec![(
@@ -311,6 +389,7 @@ fn a_sign_out_takes_the_registration_back_with_the_keys_and_endpoint() {
         registered: [(A.to_string(), "1".to_string()), (B.to_string(), "2".to_string())].into(),
         keys: [(A.to_string(), ("PUB".to_string(), "AUTH".to_string()))].into(),
         endpoints: [(B.to_string(), "https://up.example.net/b".to_string())].into(),
+        instances: [(B.to_string(), "0123456789abcdef0123456789abcdef".to_string())].into(),
         ..Default::default()
     };
     assert!(record.unregister(&asked(A), &poster));
@@ -326,6 +405,7 @@ fn a_sign_out_takes_the_registration_back_with_the_keys_and_endpoint() {
     assert!(record.unregister(&asked(B), &poster));
     assert_eq!(poster.posted.borrow()[1].2, "token=https://up.example.net/b");
     assert!(record.registered.is_empty() && record.endpoints.is_empty());
+    assert!(record.instances.is_empty(), "its UnifiedPush instance goes with it");
     assert!(!record.forget(C));
 }
 

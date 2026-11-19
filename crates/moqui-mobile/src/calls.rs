@@ -301,7 +301,8 @@ pub(crate) fn decline(asked: &Asked, id: &str, poster: &dyn Poster) -> Declined 
 
 /// The push token and each account's registration of it (account id → `subscriptionId`), in `push.json` of the
 /// client's directory. An account registers with its own push keys ([`Self::keys`], `crate::push`), and with its own
-/// UnifiedPush distributor endpoint where it has one ([`Self::endpoints`]), else with the app's FCM token.
+/// UnifiedPush distributor endpoint where it has one ([`Self::endpoints`], given to its [`Self::instances`]), else with
+/// the app's FCM token.
 #[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PushRecord {
     /// The app's FCM token.
@@ -312,15 +313,32 @@ pub(crate) struct PushRecord {
     /// Each account's push public key and auth secret its registration was made with: other ones register again.
     #[serde(default)]
     pub(crate) keys: BTreeMap<String, (String, String)>,
-    /// Each account's UnifiedPush distributor endpoint (the connector's instance is the account): it registers with it
-    /// in place of the FCM token.
+    /// Each account's UnifiedPush distributor endpoint (the one its instance was given): it registers with it in place
+    /// of the FCM token.
     #[serde(default)]
     pub(crate) endpoints: BTreeMap<String, String>,
+    /// Each account's UnifiedPush instance, the name the distributor app knows it by ([`Self::instance_of`]): random,
+    /// made at its first registration and dropped when it signs out. Not the account id, which is the server's host and
+    /// a hash of the server and username that the distributor could test usernames against (SEC-CLI-125).
+    #[serde(default)]
+    pub(crate) instances: BTreeMap<String, String>,
     /// The accounts whose FCM registration another account of the same server took (the server keeps one user per
     /// token): not registered, and not tried again, until the token, keys or endpoint change or the account signs in
     /// again (else the two would take the token from each other for ever).
     #[serde(default)]
     pub(crate) taken: BTreeSet<String>,
+}
+
+/// A new UnifiedPush instance: 16 random bytes, as 32 lower-case hex digits.
+fn new_instance() -> Result<String, String> {
+    let mut bytes = [0_u8; 16];
+    getrandom::fill(&mut bytes).map_err(|err| format!("no random bytes: {err}"))?;
+    let mut hex = String::with_capacity(32);
+    for byte in bytes {
+        hex.push(char::from_digit(u32::from(byte >> 4), 16).unwrap_or('0'));
+        hex.push(char::from_digit(u32::from(byte & 0xf), 16).unwrap_or('0'));
+    }
+    Ok(hex)
 }
 
 /// What an account registers with: the provider and its token.
@@ -386,6 +404,29 @@ impl PushRecord {
         self.registered.remove(account);
         self.taken.remove(account);
         true
+    }
+
+    /// `account`'s UnifiedPush instance ([`Self::instances`]), made the first time it is asked for: the instance, and
+    /// whether one was made (the record changed, and must be kept before the instance is given to the distributor).
+    pub(crate) fn instance_of(&mut self, account: &str) -> Result<(String, bool), String> {
+        if let Some(instance) = self.instances.get(account) {
+            return Ok((instance.clone(), false));
+        }
+        let instance = new_instance()?;
+        self.instances.insert(account.to_string(), instance.clone());
+        Ok((instance, true))
+    }
+
+    /// The account whose UnifiedPush instance is `instance`; none for one not made here. An earlier build's instance
+    /// was the account id, so it is none: its late events (an `onUnregistered` of the instance taken back) are ignored.
+    pub(crate) fn account_of(&self, instance: &str) -> Option<&str> {
+        if instance.is_empty() {
+            return None;
+        }
+        self.instances
+            .iter()
+            .find(|(_, kept)| kept.as_str() == instance)
+            .map(|(account, _)| account.as_str())
     }
 
     /// `account`'s push keys (public key, auth secret): other ones than its registration was made with register it
@@ -517,13 +558,15 @@ impl PushRecord {
         self.registered.remove(account).is_some() || taken
     }
 
-    /// The account is gone here (signed out): its registration, keys and endpoint. Whether the record changed.
+    /// The account is gone here (signed out): its registration, keys, endpoint and UnifiedPush instance (a sign-in
+    /// again gets a new one, so the distributor cannot tell it is the same account). Whether the record changed.
     pub(crate) fn drop_account(&mut self, account: &str) -> bool {
         let registered = self.registered.remove(account).is_some();
         let keys = self.keys.remove(account).is_some();
         let endpoint = self.endpoints.remove(account).is_some();
+        let instance = self.instances.remove(account).is_some();
         let taken = self.taken.remove(account);
-        registered || keys || endpoint || taken
+        registered || keys || endpoint || instance || taken
     }
 
     /// Take the registration back from `asked`'s server before its key is revoked (which would delete it there too); a
