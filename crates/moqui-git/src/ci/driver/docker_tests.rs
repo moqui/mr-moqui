@@ -109,9 +109,16 @@ fn answer(method: &str, target: &str, body: &serde_json::Value, seen: &Seen) -> 
                 "named-user:1" => "app",
                 _ => "1000:1000",
             };
+            // an image that declares a VOLUME: the engine made an anonymous volume for it
+            let volumes = if image == "with-volume:1" {
+                json!({"/var/lib/data": {}})
+            } else {
+                json!(null)
+            };
             (
                 200,
-                json!({"Config": {"User": user, "Labels": {"moqui.ci.server": "this"}}}).to_string(),
+                json!({"Config": {"User": user, "Volumes": volumes, "Labels": {"moqui.ci.server": "this"}}})
+                    .to_string(),
             )
         }
         ("GET", _) => (404, json!({"message": "No such container"}).to_string()),
@@ -330,15 +337,27 @@ fn a_jobs_container_has_limits_and_no_way_out() {
         .as_str()
         .unwrap()
         .contains("size=4096m,uid=1000,gid=1000"));
-    // never the host's network or another container's
-    for rule in ["host", "HOST", "container:abc"] {
+    // never the host's network, another container's or a namespace by path (SEC-GIT-93): only bridge, none or a network
+    // of the host by its name
+    for rule in [
+        "host",
+        "HOST",
+        "container:abc",
+        "ns:/proc/1/ns/net",
+        "slirp4netns:allow_host_loopback=true",
+        "pasta:-T,22",
+        "private:x",
+    ] {
         let mut escaping = parameters.clone();
         escaping.insert("networkMode".to_string(), Value::string(rule));
         assert_eq!(
             create_body(&escaping, &Hardening::default(), None)["HostConfig"]["NetworkMode"],
             "none"
         );
-        assert!(!super::valid_egress(rule));
+        assert!(!super::valid_egress(rule), "{rule}");
+    }
+    for rule in ["bridge", "none", "ci-egress", "podman"] {
+        assert!(super::valid_egress(rule), "{rule}");
     }
     // root in any form is no container user
     for user in ["0", "0:0", "00", "0:1000", "root", "root:x", "ROOT"] {
@@ -389,6 +408,7 @@ fn the_run_services_speak_the_docker_api() {
             .collect::<Vec<_>>(),
         [
             "POST /v1.40/containers/create?name=moqui-ci-J1",
+            "GET /v1.40/containers/c0/json",
             "POST /v1.40/containers/c0/start"
         ]
     );
@@ -415,7 +435,7 @@ fn the_run_services_speak_the_docker_api() {
         "POST /v1.40/images/create?fromImage=registry.example.com%2Fci%2Fneeds-pull&tag=2"
     );
     assert_eq!(targets[2], "POST /v1.40/containers/create?name=moqui-ci-J1");
-    assert!(targets[3].ends_with("/start"), "{targets:?}");
+    assert!(targets[4].ends_with("/start"), "{targets:?}");
 
     // an untrusted pool's run pulls nothing: an image the host does not have is an error
     api.seen.lock().unwrap().clear();
@@ -462,13 +482,13 @@ fn the_run_services_speak_the_docker_api() {
         seen[1].2["NetworkingConfig"]["EndpointsConfig"]["moqui-ci-J1-net"]["Aliases"],
         json!(["db"])
     );
-    assert!(seen[2].1.ends_with("/start"));
-    assert_eq!(seen[3].1, "/v1.40/containers/create?name=moqui-ci-J1");
-    assert_eq!(seen[3].2["HostConfig"]["NetworkMode"], "moqui-ci-J1-net");
+    assert!(seen[2].1.ends_with("/json") && seen[3].1.ends_with("/start"));
+    assert_eq!(seen[4].1, "/v1.40/containers/create?name=moqui-ci-J1");
+    assert_eq!(seen[4].2["HostConfig"]["NetworkMode"], "moqui-ci-J1-net");
     // and the job on the pool's network too, so its egress is the pool's
-    assert_eq!(seen[4].1, "/v1.40/networks/ci-egress/connect");
-    assert!(seen[4].2["Container"].as_str().is_some_and(|id| id.starts_with('c')));
-    assert!(seen[5].1.ends_with("/start"));
+    assert_eq!(seen[6].1, "/v1.40/networks/ci-egress/connect");
+    assert!(seen[6].2["Container"].as_str().is_some_and(|id| id.starts_with('c')));
+    assert!(seen[7].1.ends_with("/start"));
     // a pool on the bridge: the job's network reaches out as the bridge does
     api.seen.lock().unwrap().clear();
     let mut bridged = with_service.clone();
@@ -770,4 +790,23 @@ fn an_image_user_that_is_root_is_refused_before_it_starts() {
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
     assert!(errors.is_empty(), "{errors}");
     assert!(out.contains_key("instanceRef"));
+}
+
+/// SEC-GIT-93: an image that declares a VOLUME is refused before its container starts, whatever the container user,
+/// and the container (with the volume the engine made) is removed: the volume would be on the host's disk, outside
+/// the job's limits.
+#[test]
+fn an_image_with_a_volume_is_refused_before_it_starts() {
+    let api = Api::tcp();
+    let (out, errors) = api.call(start_run_docker, &start_parameters("with-volume:1"));
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("VOLUME (/var/lib/data)"), "{errors}");
+    let seen = api.seen();
+    assert!(
+        !seen.iter().any(|(_, target, _)| target.ends_with("/start")),
+        "never started: {seen:?}"
+    );
+    assert!(seen.iter().any(|(method, target, _)| method == "DELETE"
+        && target.contains("/containers/c0")
+        && target.contains("v=true")));
 }

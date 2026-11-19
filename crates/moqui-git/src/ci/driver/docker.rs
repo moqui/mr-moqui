@@ -264,15 +264,41 @@ impl DockerHost {
     /// `Config.User` empty, root, or a name) is refused before it starts: a job never runs as root, in any form, and a
     /// name is whatever the image's own `/etc/passwd` says, which may be uid 0 under another name
     /// ([`is_numeric_user`]).
-    fn refuse_root(&self, id: &str, name: &str) -> Result<(), Error> {
+    ///
+    /// Whatever the user, a container whose image declares a `VOLUME` is refused too: the engine makes an anonymous
+    /// volume at each such path, writable, on the host's disk and sized by neither `StorageOpt` nor a tmpfs, there even
+    /// with a read-only root (SEC-GIT-93). The checks read the made container once, before it starts.
+    fn check_made(&self, id: &str, name: &str, image_user: bool) -> Result<(), Error> {
         let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
         if response.status() >= 300 {
             return Err(Self::problem(&format!("inspecting container {name}"), &response));
         }
-        let user = serde_json::from_str::<serde_json::Value>(response.body())
-            .ok()
-            .and_then(|body| body["Config"]["User"].as_str().map(str::to_string))
+        let made = serde_json::from_str::<serde_json::Value>(response.body()).unwrap_or(serde_json::Value::Null);
+        let mut volumes: Vec<String> = made["Config"]["Volumes"]
+            .as_object()
+            .map(|volumes| volumes.keys().cloned().collect())
             .unwrap_or_default();
+        if let Some(mounts) = made["Mounts"].as_array() {
+            volumes.extend(
+                mounts
+                    .iter()
+                    .filter(|mount| mount["Type"] == "volume")
+                    .filter_map(|mount| mount["Destination"].as_str().map(str::to_string)),
+            );
+        }
+        volumes.sort();
+        volumes.dedup();
+        if !volumes.is_empty() {
+            return Err(Error::new(format!(
+                "the image of container {name} declares a VOLUME ({}), which the engine would make on the host's disk \
+                 outside the job's limits: a CI image declares none",
+                volumes.join(", ")
+            )));
+        }
+        if !image_user {
+            return Ok(());
+        }
+        let user = made["Config"]["User"].as_str().map(str::to_string).unwrap_or_default();
         if !is_numeric_user(&user) {
             return Err(Error::new(format!(
                 "the image of container {name} may run as root (its user is {}), and git-ci container-user=\"image\" \
@@ -546,8 +572,8 @@ impl Hardening {
     }
 }
 
-/// The network mode a pool's `egressRule` asks for: `bridge` when empty, else the mode, but never the host's network
-/// or another container's (`host`, `container:...`), which would be no way in at all: those are `none`.
+/// The network mode a pool's `egressRule` asks for: `bridge` when empty, else the mode when it is one a pool may have
+/// ([`valid_egress`]); any other (the host's network, another container's, a namespace path) is `none`.
 pub fn egress_mode(rule: Option<&str>) -> String {
     match rule.map(str::trim).filter(|rule| !rule.is_empty()) {
         None => "bridge".to_string(),
@@ -556,10 +582,16 @@ pub fn egress_mode(rule: Option<&str>) -> String {
     }
 }
 
-/// Whether `rule` may be a pool's `egressRule`: not the host's network, not another container's.
+/// Whether `rule` may be a pool's `egressRule`: `bridge`, `none`, or the name of a network of the host (letters,
+/// digits, dot, dash and underscore). A list of what is refused would miss a mode: on Podman `ns:<path>` joins the
+/// network namespace at a path, the host's included (`ns:/proc/1/ns/net`), and `slirp4netns:...` and `pasta:...`
+/// take options; `host` and `container:...` are the host's network and another container's (SEC-GIT-93).
 pub fn valid_egress(rule: &str) -> bool {
     let rule = rule.trim();
-    !rule.eq_ignore_ascii_case("host") && !rule.to_ascii_lowercase().starts_with("container:")
+    if rule.eq_ignore_ascii_case("host") {
+        return false;
+    }
+    rule == "bridge" || rule == "none" || crate::ci::file::valid_name(rule)
 }
 
 /// The limits of the pool on a container's host config: CPUs, memory with no swap past it, processes, the root
@@ -751,17 +783,13 @@ fn start_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
                     pull,
                 )?;
                 made.push(id.clone());
-                if hardening.user.is_none() {
-                    host.refuse_root(&id, &format!("{name}-{service_name}"))?;
-                }
+                host.check_made(&id, &format!("{name}-{service_name}"), hardening.user.is_none())?;
                 host.start(&id)?;
             }
         }
         let id = host.create(&name, &create_body(parameters, &hardening, network.as_deref()), pull)?;
         made.push(id.clone());
-        if hardening.user.is_none() {
-            host.refuse_root(&id, &name)?;
-        }
+        host.check_made(&id, &name, hardening.user.is_none())?;
         if network.is_some() && egress != "bridge" && egress != "none" {
             host.connect_network(&egress, &id)?;
         }

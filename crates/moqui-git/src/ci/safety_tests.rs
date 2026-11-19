@@ -107,13 +107,13 @@ fn the_pools_are_an_operators_and_a_registered_pool_is_one_owners() {
     let mut owned = registered("P1");
     owned.push(("ownerId", s("acme")));
     ok(&fixture, WRITER, &store, &owned);
-    // never the host's network or another container's
-    for rule in ["host", "container:db"] {
+    // never the host's network, another container's or a namespace by path
+    for rule in ["host", "container:db", "ns:/proc/1/ns/net"] {
         let mut escaping = owned.clone();
         escaping.push(("egressRule", s(rule)));
         let (_, errors) = call(&fixture, WRITER, &store, &escaping);
         assert!(
-            errors.contains("is the host's network or another container's"),
+            errors.contains("is not bridge, none or the name of a network of the host"),
             "{rule}: {errors}"
         );
     }
