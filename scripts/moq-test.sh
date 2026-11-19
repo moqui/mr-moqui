@@ -262,6 +262,19 @@ else
     lacks "no sccache, a wrapper set: no warning" 'sccache' -- nowrap MOQ_SCCACHE=1 RUSTC_WRAPPER=other "$M" build --debug
 fi
 rm -f "$R/cargo.log" "$R/wrapper.log"
+# An add-on component crate builds through the generated crate, a workspace of its own, which takes the repository's
+# crate patches (cargo reads them only from the root of the workspace it builds; plans/Security-Review.md SEC-CLI-126).
+mkdir -p "$R/runtime/components/addon/crate-x" "$R/patches/yrs"
+printf '<component name="crate-x"/>\n' >"$R/runtime/components/addon/crate-x/component.xml"
+printf '[package]\nname = "crate-x"\n' >"$R/runtime/components/addon/crate-x/Cargo.toml"
+printf '[workspace]\n\n[patch.crates-io]\n# a patched crate\nyrs = { path = "patches/yrs" }\n\n[profile.release]\nlto = true\n' \
+    >"$R/Cargo.toml"
+: >"$R/Cargo.lock"
+check "build links an add-on component crate" 0 'Linking component crate crate-x' -- "$M" build --debug
+check "the generated crate takes the repository's patches" 0 "^yrs = \\{ path = \"$R/patches/yrs\" \\}\$" -- \
+    cat "$R/target/moqui-app/Cargo.toml"
+lacks "the generated crate takes no other table of the repository's" '^lto = true' -- cat "$R/target/moqui-app/Cargo.toml"
+rm -rf "$R/runtime/components/addon/crate-x" "$R/patches" "$R/Cargo.toml" "$R/Cargo.lock" "$R/target/moqui-app" "$R/cargo.log"
 check "release flag is gone" 1 'unknown option -r' -- "$M" run -r
 check "load default all" 0 'moqui load types=all$' -- dry "$M" load
 check "load types" 0 'load types=seed\\?,demo components=x$' -- dry "$M" load seed demo components=x

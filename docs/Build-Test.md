@@ -100,6 +100,12 @@ with 0.8.5.
 
 Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
 
+Cargo takes `[patch.crates-io]` only from the root manifest of the workspace it builds, so a crate that is a workspace
+of its own and builds the framework names the patches again: `crates/moqui-desktop/Cargo.toml` holds a copy of the
+table, and the crate `./moq build` generates for add-on component crates (`target/moqui-app`) copies the root's as it is
+written. A patch added, moved or dropped changes the desktop's copy too; `crates/moqui-client/tests/app_workspaces.rs`
+fails until it does (SEC-CLI-126).
+
 ## Packages
 
 A moqui binary is built as one of five packages, plus the browser build. They differ in the Cargo features they turn

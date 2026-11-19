@@ -373,6 +373,20 @@ write_if_changed() {
     printf '%s\n' "$2" >"$1" || die "could not write $1"
 }
 
+# The repository's [patch.crates-io] table, its paths made absolute, for a crate that is a workspace of its own: cargo
+# takes patches only from the root manifest of the workspace it builds, so without these such a crate builds the
+# crates.io releases the repository replaces, a security fix among them (patches/README.md; plans/Security-Review.md
+# SEC-CLI-126).
+root_patch_table() {
+    [ -f "$ROOT/Cargo.toml" ] || return 0
+    awk -v root="$ROOT" '
+        /^\[/ { patches = ($0 == "[patch.crates-io]") }
+        patches {
+            gsub(/path = "/, "path = \"" root "/")
+            print
+        }' "$ROOT/Cargo.toml"
+}
+
 # Generate the crate in $1 that links the component crates in $2... with the framework: the components/base crates that
 # crates/moqui links, then the add-on ones. The crates of runtime/components/dev (in $2... too, or the framework's own)
 # are optional dependencies that the devtools feature turns on. Its Cargo.lock starts from the repository's, so the
@@ -458,6 +472,10 @@ tikv-jemallocator = \"0.7\"
 
 # Its own workspace: not a member of the repository's.
 [workspace]
+
+# The repository's crate patches: a workspace of its own takes none of the repository's (root_patch_table in
+# scripts/moq/build.sh).
+$(root_patch_table)
 
 # As in the repository's workspace, a debug build leaves the framework and component crates at opt-level 0 with full
 # debug info and optimizes the other dependencies, with line tables only (.cargo/config.toml). Here they are not workspace

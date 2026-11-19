@@ -88,6 +88,15 @@ tauri-build = { version = "=3.0.0-alpha.4", features = [] }
 # Its own workspace: not a member of the repository's.
 [workspace]
 
+# The repository's crate patches (its Cargo.toml's [patch.crates-io]), which cargo takes only from the root manifest of
+# the workspace it builds, so this one names them again: without them the node in the app builds the crates.io releases
+# they replace (plans/Security-Review.md SEC-CLI-126). crates/moqui-client/tests/app_workspaces.rs keeps the two equal.
+[patch.crates-io]
+stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
+stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
+# yrs 0.28.1 with a depth limit on the values an update decodes (patches/README.md; SEC-TLS-95)
+yrs = { path = "../../patches/yrs" }
+
 # As in the repository's workspace and target/moqui-app: a debug build leaves the framework and component crates at
 # opt-level 0 with full debug info and optimizes the other dependencies (.cargo/config.toml). Here they are not
 # workspace members, so they are named.
