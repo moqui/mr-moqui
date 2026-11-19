@@ -143,17 +143,17 @@ pub fn budget_check(specs: &[ComponentSpec], budget: &dyn Fn(&str) -> Option<f64
                 failures += 1;
                 let _ = writeln!(
                     lines,
-                    "  {name}: {time:.1}s, FAILED: over 1.5 times its budget of {limit:.0}s (test/budget)"
+                    "  {name}: {time:.1}s, FAILED: over 1.5 times its budget of {limit}s (test/budget)"
                 );
             }
             Some(limit) if *time > limit => {
                 let _ = writeln!(
                     lines,
-                    "  {name}: {time:.1}s, over its budget of {limit:.0}s (test/budget): cut duplicates or move scenarios to test/acceptance/"
+                    "  {name}: {time:.1}s, over its budget of {limit}s (test/budget): cut duplicates or move scenarios to test/acceptance/"
                 );
             }
             Some(limit) => {
-                let _ = writeln!(lines, "  {name}: {time:.1}s of {limit:.0}s");
+                let _ = writeln!(lines, "  {name}: {time:.1}s of {limit}s");
             }
             None => {
                 let _ = writeln!(lines, "  {name}: {time:.1}s (no test/budget)");
@@ -426,9 +426,12 @@ mod tests {
         assert!(over.contains("over its budget of 1s") && failures == 0, "{over}");
         let (far, failures) = budget_check(&spec(), &|_| Some(0.5));
         assert!(
-            far.contains("FAILED: over 1.5 times its budget") && failures == 1,
+            far.contains("FAILED: over 1.5 times its budget of 0.5s") && failures == 1,
             "{far}"
         );
+        // a budget with a fraction shows as written, as it is compared
+        let (fraction, _) = budget_check(&spec(), &|_| Some(2.5));
+        assert!(fraction.contains("comp-a: 1.3s of 2.5s"), "{fraction}");
     }
 
     #[test]

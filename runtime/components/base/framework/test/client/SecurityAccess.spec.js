@@ -1,7 +1,8 @@
 // A01 Broken Access Control over HTTP, ported from Moqui Java's pytest proofs (framework/test, the catalog in
 // README.md): anonymous requests to the apps and REST, the REST transitions that were removed, a path with .. that is
-// not normalized, the fixture users' limits (test/ClientFixtures.spec.js), and the login's returnTo. Passes on any
-// conf; the features that need the fixture users skip without them, as the Python suite does.
+// not normalized, and the fixture users' limits (test/ClientFixtures.spec.js). Passes on any conf; the features that
+// need the fixture users skip without them, as the Python suite does. The login's returnTo, the SQL Runner refusal and
+// the /notws origin checks are proofs now (test/proofs/V3WebFrontend, V8Authorization and V4ApiWebService).
 
 // The fixture user can log in from here, else the feature skips. A session of its own, not logged out: a REST logout
 // ends every session of the user (UserAccount.hasLoggedOut).
@@ -85,63 +86,14 @@ feature("A01 a user with no authorization cannot open Tools", {
     },
 })
 
-// test_a01_more.py: test_view_only_cannot_open_sql_runner
-feature("A01 a VIEW-only user cannot open the SQL Runner", {
-    given() { requireFixture("sec.view.only", "SecView1!!") },
-    when() {
-        const s = formSession("sec.view.only", "SecView1!!")
-        return {
-            tools: s.get("/apps/tools/Home"),
-            res: s.get("/apps/tools/SqlTui", { params: { db: "group:transactional", sql: "SELECT 1" } }),
-        }
-    },
-    then({ tools, res }) {
-        // the control: the user is logged in and may view Tools
-        tools.status == 200
-        // the screen's actions refuse the user (SQL_RUNNER_WEB) and the page shows why, as in Java; no query ran
-        res.status == 403 || res.text.includes("does not have permission to use the SQL Runner")
-        !res.text.includes("Showing all")
-        !res.text.includes("Query altered")
-    },
-})
-
-// test_a01_redirect.py: test_login_returnTo_does_not_redirect_offsite
-feature("A01 the login does not follow a returnTo off the site", {
-    when() {
-        const s = session()
-        s.get("/Login", { params: { returnTo: "https://evil.example/phish" } })
-        return { res: s.post("/Login/login", { form: { username: params.user ?? "john.doe", password: params.password ?? "moqui" } }) }
-    },
-    then({ res }) {
-        res.status == 302
-        !res.location.toLowerCase().includes("evil.example")
-        !res.location.includes("/phish")
-    },
-})
-
-// test_a01_redirect.py: test_login_returnTo_same_origin_path_is_allowed
-feature("A01 the login follows a returnTo on the site", {
-    when() {
-        const s = session()
-        s.get("/Login", { params: { returnTo: "/apps" } })
-        return { res: s.post("/Login/login", { form: { username: params.user ?? "john.doe", password: params.password ?? "moqui" } }) }
-    },
-    then({ res }) {
-        res.status == 302
-        res.location.startsWith("/") || res.location.startsWith(server.url)
-        res.location.includes("/apps")
-    },
-})
-
 // From SecurityMessages.spec.js, merged here to share a spec run.
 // A01 Broken Access Control for /rest/sm, ported from Moqui Java's pytest proofs (framework/test/test_api_rest.py and
-// test_a01_more.py): SmatHmacSha256, SmatHmacSha256Timestamp (five minute window and replay), SmatNone, and an unknown
-// type. message.rs answers 403 for a missing HMAC header, a bad signature, a timestamp outside the window, and a
+// test_a01_more.py): a replayed timestamp HMAC, SmatNone, and an unknown type. The missing, bad and late signatures and
+// their controls are proofs now (test/proofs/V9SelfContainedTokens.spec.js). message.rs answers 403 for a missing HMAC header, a bad signature, a timestamp outside the window, and a
 // replay, the same codes as those proofs, and for an unknown type or remote, all with one text. No login. Passes on any
 // conf that has the fixtures.
 
 const MESSAGE_TYPE = "SEC_SMT_TEST"
-const REMOTE_HMAC = "SEC_SMR_HMAC"
 const REMOTE_TS = "SEC_SMR_HMAC_TS"
 const REMOTE_NONE = "SEC_SMR_NONE"
 const SECRET = "sec-hmac-test-secret"
@@ -156,60 +108,6 @@ const postMessage = (remote, body, signature) => {
     if (signature != null) headers[HEADER] = signature
     return session().post(`/rest/sm/${MESSAGE_TYPE}/${remote}`, { body, headers, csrf: false })
 }
-
-// test_api_rest.py: test_system_message_hmac_missing_header_is_403
-feature("A01 a /rest/sm HMAC post with no signature header is 403", {
-    when() { return { res: postMessage(REMOTE_HMAC, BODY) } },
-    then({ res }) {
-        res.status == 403
-        res.text.toLowerCase().includes(REFUSED)
-    },
-})
-
-// test_api_rest.py: test_system_message_hmac_bad_signature_is_403
-feature("A01 a /rest/sm HMAC post with a bad signature is 403", {
-    when() { return { res: postMessage(REMOTE_HMAC, BODY, "not-a-valid-hmac") } },
-    then({ res }) {
-        res.status == 403
-        res.text.toLowerCase().includes(REFUSED)
-    },
-})
-
-// test_api_rest.py: test_system_message_hmac_valid_does_not_require_login
-feature("A01 a valid /rest/sm HMAC signature needs no login", {
-    when() { return { res: postMessage(REMOTE_HMAC, BODY, hmac.sha256Base64(SECRET, BODY)) } },
-    then({ res }) {
-        res.status == 200
-        !res.text.toLowerCase().includes("hmac verify failed")
-        res.text.toLowerCase().includes("systemmessageidlist")
-    },
-})
-
-// test_api_rest.py: test_system_message_hmac_timestamp_outside_window_is_403
-feature("A01 a /rest/sm timestamp HMAC outside the window is 403", {
-    when() {
-        // 400 seconds ago, as in the Python proof: the receive window is five minutes.
-        const ts = Math.floor(Date.now() / 1000) - 400
-        return { res: postMessage(REMOTE_TS, BODY, hmac.sha256Timestamp(SECRET, BODY, ts)) }
-    },
-    then({ res }) {
-        res.status == 403
-        res.text.toLowerCase().includes(REFUSED)
-    },
-})
-
-// test_api_rest.py: test_system_message_hmac_timestamp_in_window_is_accepted
-// Positive control: a remote that rejected every timestamp would still pass the refusals above.
-feature("A01 a /rest/sm timestamp HMAC inside the window is accepted", {
-    when() {
-        const ts = Math.floor(Date.now() / 1000)
-        return { res: postMessage(REMOTE_TS, BODY, hmac.sha256Timestamp(SECRET, BODY, ts)) }
-    },
-    then({ res }) {
-        res.status == 200
-        res.text.toLowerCase().includes("systemmessageidlist")
-    },
-})
 
 // test_api_rest.py: test_system_message_smat_none_accepts_anonymous
 feature("A01 a /rest/sm SmatNone remote accepts an anonymous post", {
@@ -405,82 +303,5 @@ feature("A01 Forwarded does not hide /status from loopback", {
         res.json().DataSources == null
         res.json().Heap == null
         res.json().VmVendor == null
-    },
-})
-
-// From SecurityWebSocket.spec.js, merged here to share a spec run.
-// A01 Broken Access Control on the notification socket (/notws), ported from Moqui Java's pytest proofs
-// (framework/test/test_a01_ws.py; the catalog in README.md). An anonymous upgrade is 401 here, where Java accepts it
-// and ignores the null user, so the foreign-origin proof uses a logged-in session: the origin, not the missing user,
-// must be what refuses it. That proof needs a server that allows no foreign origin (the production conf) and skips on
-// a conf that allows every origin; SecurityCors fails there. The origin is compared whole, scheme, host and
-// port, where Java compares the host only.
-
-const EVIL_ORIGIN = "https://evil.example"
-const HOST = server.host.includes(":") ? `[${server.host}]` : server.host
-const OTHER_PORT_ORIGIN = `${server.secure ? "https" : "http"}://${HOST}:${server.port == 65535 ? 65534 : server.port + 1}`
-const OTHER_SCHEME_ORIGIN = `${server.secure ? "http" : "https"}://${HOST}:${server.port}`
-
-// test_a01_ws.py: test_websocket_evil_origin_is_rejected
-feature("A01 a /notws upgrade from a foreign Origin is refused, with a logged-in session", {
-    given() {
-        const probe = session().get("/Login", { headers: { Origin: EVIL_ORIGIN } })
-        if (probe.status != 401) skip("this server allows every origin: run against MoquiProductionConf.xml or " +
-            "MoquiLoadTestConf.xml, as --serve does")
-    },
-    when() {
-        const s = session({ user: params.user ?? "john.doe", password: params.password ?? "moqui" })
-        const evil = ws.connect("/notws", { session: s, origin: EVIL_ORIGIN })
-        const evilOpened = evil.open
-        evil.close()
-        // the control: the same session opens it from the server's own origin
-        const own = ws.connect("/notws", { session: s, origin: server.url.replace(/\/+$/, "") })
-        const ownOpened = own.open
-        own.close()
-        return { evil, evilOpened, own, ownOpened }
-    },
-    then({ evil, evilOpened, own, ownOpened }) {
-        !evilOpened
-        evil.status == 403
-        ownOpened
-        own.status == 101
-    },
-})
-
-// Not in Java, which compares the host only and so opens these
-feature("A01 a /notws upgrade from the server's host on #which is refused, with a logged-in session", {
-    where: [
-        { which: "another port", origin: OTHER_PORT_ORIGIN },
-        { which: "another scheme", origin: OTHER_SCHEME_ORIGIN },
-    ],
-    given() {
-        const probe = session().get("/Login", { headers: { Origin: EVIL_ORIGIN } })
-        if (probe.status != 401) skip("this server allows every origin: run against MoquiProductionConf.xml or " +
-            "MoquiLoadTestConf.xml, as --serve does")
-    },
-    when({ origin }) {
-        const s = session({ user: params.user ?? "john.doe", password: params.password ?? "moqui" })
-        const socket = ws.connect("/notws", { session: s, origin })
-        const opened = socket.open
-        socket.close()
-        return { socket, opened }
-    },
-    then({ socket, opened }) {
-        !opened
-        socket.status == 403
-    },
-})
-
-// Replaces test_a01_ws.py: test_notws_anonymous_upgrade_accepts_or_closes (Java accepts it)
-feature("A01 an anonymous /notws upgrade is 401", {
-    when() {
-        const socket = ws.connect("/notws", { session: session() })
-        const opened = socket.open
-        socket.close()
-        return { socket, opened }
-    },
-    then({ socket, opened }) {
-        !opened
-        socket.status == 401
     },
 })

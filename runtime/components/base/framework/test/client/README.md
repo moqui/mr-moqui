@@ -1,9 +1,12 @@
 # The framework's client specs
 
-HTTP and WebSocket proofs of the framework's security, run from outside the server by `moqui test-client`
+HTTP and WebSocket tests of the framework's security, run from outside the server by `moqui test-client`
 ([plans/archive/ClientTestHarness.md](../../../../../../plans/archive/ClientTestHarness.md) 7). They port Moqui Java's pytest suite
 (`framework/test/*.py` in the Java checkout, with `SECURITY_TESTS.md` and `SecurityTestSupport.groovy`); the catalog
-below lists each of its tests. They are in the regression suite, run by `./moq test-framework`; the load cases
+below lists each of its tests. The ones that prove an OWASP ASVS requirement moved to the security proofs in
+[`../proofs/`](../proofs), filed by requirement ([security proofs](../../../../../../docs/security/proofs/README.md));
+what is here checks the framework's own routes, findings and Java-port details. They are in the regression suite,
+run by `./moq test-framework`; the load cases
 (`LoadBasic`, `SecurityTarpit`) are acceptance tests in `../acceptance/client/`, run by `./moq accept framework`
 ([the two suites](../../../../../../docs/Build-Test.md#the-two-suites)).
 
@@ -11,17 +14,16 @@ below lists each of its tests. They are in the regression suite, run by `./moq t
 moqui test-client framework --serve                  # starts the server suite.js declares, runs, stops it
 ./moq run                                            # or a server of your own, in one terminal,
 ./moq test-client framework                          # and the specs against http://localhost:8080
-moqui test-client framework --spec SecurityAuthn,SecurityCors --server https://test.example.com --insecure
+moqui test-client framework --spec SecurityAuthn,SecurityRest --server https://test.example.com --insecure
 ```
 
 `--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` under
 `conf/MoquiLoadTestConf.xml` (`suite.js`): the production conf with the screen, transition and service tarpits off, so
 that `LoadBasic` is not answered 429. Against another server:
 
-- **The conf.** `SecurityCors` needs a server that allows no foreign origin: the production or load test conf. On the dev conf
-  (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=*`) its `setupSpec` fails with "this server allows every origin (the dev conf)", as the Python
-  suite's `require_production_conf` fails it, and the foreign-origin proof of `SecurityWebSocket` skips. The other
-  specs pass on any conf.
+- **The conf.** These specs pass on any conf. The cross-origin proofs, which need a server that allows no foreign
+  origin (the production or load test conf), are in `../proofs/` and fail on the dev conf
+  (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=*`), as the Python suite's `require_production_conf` did.
 - **The fixture users.** `../ClientFixtures.spec.js` makes the `sec.*` accounts the proofs log in as, with
   Java's passwords, as `SecurityTestSupport.ensureUsers` did. They are not demo data. `sec.ip.v4`, `sec.ip.loop`
   and `sec.mfa.totp` are rows only: a password login from here is not how those proofs start. For a server

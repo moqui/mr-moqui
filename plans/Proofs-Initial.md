@@ -1,6 +1,6 @@
 # Security proofs: the initial plan
 
-Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built, with four seed proofs in the framework's `test/proofs/`.
+Status 2026-11-18: analysis and plan; phase P1, the responsibility matrix for the framework and PASS at levels 1 and 2, is written ([security proofs](../docs/security/proofs/README.md), and mr-pass's `docs/ASVS-Matrix.md`); phase P2, the harness (`moqui test-client --proofs`, the profiles and the summary by requirement), is built; phase P3 moved the security client specs that prove a requirement into the framework's `test/proofs/` (42 features under 20 requirements).
 
 This plan is for a public library of security proofs: executable tests that show mr-moqui meets a published security
 standard's requirements. The library is organized by a standard, as the OWASP lists are. Its readers are the project,
@@ -169,8 +169,17 @@ Those that check an internal rule with no standard behind it stay in `test/clien
   proofs); a passing feature filed under no requirement fails the run; `./moq test-framework` and `./moq test-apps`
   run `--serve --proofs` beside the client specs; a `proofs` line in `test/budget` limits them. Seed proofs:
   `V6Authentication` (6.2.6, 6.2.7, 6.3.2) and `V7SessionManagement` (7.4.1).
-- **P3, the move.** The current security specs move into proofs by requirement, renamed by id; the parts that are
-  regression only stay in `test/client`.
+- **P3, the move** (done). The current security specs move into proofs by requirement, renamed by id; the parts that
+  are regression only stay in `test/client`. As done: of the seven specs' 121 features, 32 moved (four as the control
+  of another proof), into `V1Encoding`, `V3WebFrontend`, `V4ApiWebService`, `V5FileHandling`, `V6Authentication`,
+  `V8Authorization`, `V9SelfContainedTokens`, `V13Configuration`, `V14DataProtection` and `V16Logging`, beside the
+  seeds; `SecurityCors` moved whole. A feature moved only under a Framework row: one that shows part of a Gap row
+  (7.2.4, the CSP rows 3.4.3 to 3.4.6, deny by default 8.2.1) stays a regression test until the gap closes, and so do
+  the tests of internal findings, framework-specific routes (`SecurityDevice`, `/status` from loopback) and Java-port
+  details. Moving tightened three checks (`no-store`, the token's 401, a Content-Disposition present) and gave four
+  refusals a control. Every proof that signs in takes the deployment's account or calls `needsFixtures`. The
+  framework's `test/budget` split its client budget, its total kept: `client = 3.5`, `proofs = 2.5`. The matrix rows
+  for the findings fixed since P1 (SEC-PFS-82, SEC-TLS-81, SEC-TLS-82) were corrected, PASS's V5.3.1 to Inherited.
 - **P4.** New proofs for the level 1 requirements with none: the framework's, then PASS's.
 - **P5.** The same for level 2.
 - **P6.** Cross-references (the API Top 10 for `/rest`, the LLM Top 10 for the agents, NIST 800-63B for

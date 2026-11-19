@@ -9,6 +9,40 @@ const loginInputs = (names) => {
     return (res.text.match(/<input\b[^>]*>/g) ?? []).filter((tag) => names.some((name) => tag.includes(`name="${name}"`)))
 }
 const attribute = (tag, name) => (tag.match(new RegExp(`\\b${name}="([^"]*)"`)) ?? [])[1] ?? null
+const ADMIN_ERROR = "Can only create initial admin account if there are no UserAccount records"
+const loggedIn = (res) => res.status == 200 && res.text.replace(/\s/g, "").toLowerCase().includes('"loggedin":true')
+const restLogin = (username, password) => session().post("/rest/login", { json: { username, password }, accept: "json", csrf: false })
+// A user of test/ClientFixtures.spec.js, signed in over REST in a session of its own and never logged out (a REST
+// logout ends every session of the user); in the deployment profile the feature skips.
+const requireFixture = (username, password) => {
+    needsFixtures(`the user ${username}`)
+    const res = session().post("/rest/login", { form: { username, password }, accept: "json", csrf: false })
+    if (res.status == 401) skip(`${username} is not on this server: run test/ClientFixtures.spec.js on its database (moqui test framework --spec ClientFixtures --db existing), or use --serve`)
+    return res
+}
+
+// test_a07_more.py: test_short_password_is_rejected_over_http. sec.all.only has AUTHZA_ALL, which the password-change
+// transition needs; "short" is under the length rule.
+// Does not prove: the deployment's own minimum beyond one five-character try, nor the admin and REST password paths.
+feature("v5.0.0-6.2.1: a new password shorter than the minimum length is refused", {
+    when() {
+        requireFixture("sec.all.only", "SecAll1!!")
+        const s = session()
+        s.login("sec.all.only", "SecAll1!!")
+        const res = s.post("/Login/changePassword", {
+            form: { username: "sec.all.only", oldPassword: "SecAll1!!", newPassword: "short", newPasswordVerify: "short" },
+            accept: "json",
+        })
+        const still = restLogin("sec.all.only", "SecAll1!!")
+        return { res, still }
+    },
+    then({ res, still }) {
+        res.text.toLowerCase().includes("found issues with password so not updating")
+        res.text.toLowerCase().includes("shorter")
+        !res.text.toLowerCase().includes("password updated")
+        loggedIn(still)
+    },
+})
 
 // Does not prove: the password fields of an application's own forms (the <password/> widget renders type="password",
 // which the render goldens check in-process).
@@ -48,5 +82,27 @@ feature("v5.0.0-6.3.2: the demo data's well-known account does not sign in", {
     then({ res }) {
         res.status == 401
         !res.text.includes("\"loggedIn\":true")
+    },
+})
+
+// test_a07_more.py: test_create_initial_admin_http_fails_when_users_exist. The service's refusal is the screen's JSON
+// errors text, and the username it named still cannot sign in.
+// Does not prove: the first start on an empty database, which loopback or the setup secret guards.
+feature("v5.0.0-6.3.2: no initial administrator can be created over HTTP once accounts exist", {
+    when() {
+        const s = session()
+        s.get("/Login")
+        assert(s.token(), "GET /Login did not give a session token")
+        const res = s.post("/Login/createInitialAdminAccount", {
+            form: { username: "sec.should.not.exist", newPassword: "SecAdmin1!!", newPasswordVerify: "SecAdmin1!!" },
+            accept: "json",
+        })
+        const probe = restLogin("sec.should.not.exist", "SecAdmin1!!")
+        return { res, probe }
+    },
+    then({ res, probe }) {
+        res.text.includes(ADMIN_ERROR)
+        probe.status == 401
+        !loggedIn(probe)
     },
 })

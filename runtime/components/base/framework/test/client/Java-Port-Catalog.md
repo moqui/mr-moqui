@@ -1,7 +1,11 @@
 # Moqui Java's HTTP security tests, ported
 
 The line-by-line map of Moqui Java's pytest suite (`framework/test/*.py` in the Java checkout) to the client specs in
-this directory, and the deliberate differences from Java. How to run the specs is in [README.md](README.md).
+this directory and the security proofs in `../proofs/`, and the deliberate differences from Java. How to run the specs
+is in [README.md](README.md). A spec named for an OWASP ASVS chapter (`V3WebFrontend`) is a proof, filed by requirement
+([security proofs](../../../../../../docs/security/proofs/README.md)). Some rows still name the spec a feature was
+first written in (`SecurityMisc`, `SecurityMessages`, `SecurityAuthnMore`), which was merged into another since: grep
+the feature's name.
 
 ## Differences from Java
 
@@ -14,9 +18,9 @@ Recorded in [Parity-Diffs](../../../../../../plans/Parity-Diffs.md) (P9-06 and t
 - An anonymous `/notws` upgrade is 401; Java accepts it and ignores the null user. So the foreign-origin proof uses a
   logged-in session, with the same session opening it from the server's own origin as the control.
 - The origin is compared whole, scheme, host and port; Java compares the host only. So the server's host on another
-  port or scheme is refused: 401 for CORS (SecurityCors > A02 the server's host on #which is 401 ...) and 403 for
-  `/notws` (SecurityWebSocket > A01 a /notws upgrade from the server's host on #which is refused ...). These have no
-  Python test.
+  port or scheme is refused: 401 for CORS (V3WebFrontend > v5.0.0-3.4.2: the server's host on #which is a foreign
+  origin ...) and 403 for `/notws` (V4ApiWebService > v5.0.0-4.4.2: a /notws upgrade from the server's host on #which
+  is refused). These have no Python test.
 
 Not a difference, but a choice of the suite: an account locks on its fourth failed login (`max-failures="3"`), as in
 Java, and the suite must not lock the demo user, so no proof gives `john.doe` a wrong password. The wrong-password
@@ -55,9 +59,9 @@ are Java Assist checks and out of scope.
 | `test_status_forwarded_for_header_does_not_hide_loopback` | ported: SecurityStatus > A01 Forwarded does not hide /status from loopback
 | `test_login_form_action_is_login_path` | ported: SecurityScreens > A01 the login form posts to the login path
 | `test_static_path_dotdot_does_not_escape` | ported: SecurityAccess > A01 a static path with .. does not serve screen XML |
-| `test_view_only_cannot_run_service_run_over_http` | ported: SecurityScreens > A01 a VIEW-only user cannot run a service over HTTP
+| `test_view_only_cannot_run_service_run_over_http` | ported: V8Authorization > v5.0.0-8.3.1: a user who may view Tools is refused a service run posted directly
 | `test_none_user_cannot_open_tools` | ported: SecurityAccess > A01 a user with no authorization cannot open Tools |
-| `test_view_only_cannot_open_sql_runner` | ported: SecurityAccess > A01 a VIEW-only user cannot open the SQL Runner |
+| `test_view_only_cannot_open_sql_runner` | ported: V8Authorization > v5.0.0-8.3.1: a user who may view Tools is refused the SQL Runner on direct request |
 | `test_elastic_proxy_without_login_is_401` | ported: SecurityProxy > A01 /search without a login is 401
 | `test_elastic_proxy_logged_in_without_permission_is_denied` | ported: SecurityProxy > A01 a logged-in user without SearchRemote is denied /search
 | `test_kibana_proxy_without_login_is_401` | ported: SecurityProxy > A01 /dashboard without a login is 401
@@ -77,8 +81,8 @@ are Java Assist checks and out of scope.
 | `test_elastic_proxy_bad_basic_auth_is_401` | ported: SecurityProxy > A01 bad Basic auth on /search is 401
 | `test_elastic_proxy_api_key_header_garbage_is_401` | ported: SecurityProxy > A01 a garbage api_key on /search does not authenticate
 | `test_elastic_proxy_basic_auth_with_permission_reaches_the_cluster` | ported: SecurityProxy > A01 Basic auth with SearchRemote gets past authorization on /search
-| `test_fop_filename_quote_stays_in_one_content_disposition` | ported: SecurityScreens > A01 a FOP filename quote stays in one Content-Disposition
-| `test_datasnapshot_view_cannot_download` | ported: SecurityScreens > A01 a VIEW-only user cannot download a data snapshot
+| `test_fop_filename_quote_stays_in_one_content_disposition` | ported: V5FileHandling > v5.0.0-5.4.2: a quote in a requested file name stays inside one Content-Disposition
+| `test_datasnapshot_view_cannot_download` | ported: V8Authorization > v5.0.0-8.3.1: a user who may view Tools is refused a data snapshot download
 | `test_datasnapshot_parent_segment_filename_is_not_found` | ported: SecurityScreens > A01 a DataSnapshot download of a parent segment is not found
 | `test_datasnapshot_parent_segment_delete_is_rejected` | ported: SecurityScreens > A01 a DataSnapshot #name of a parent segment is rejected
 | `test_datasnapshot_parent_segment_import_is_rejected` | ported: SecurityScreens > A01 a DataSnapshot #name of a parent segment is rejected
@@ -93,10 +97,10 @@ are Java Assist checks and out of scope.
 
 | Python test | Here |
 | --- | --- |
-| `test_login_returnTo_does_not_redirect_offsite` | ported: SecurityAccess > A01 the login does not follow a returnTo off the site |
-| `test_login_referer_does_not_redirect_offsite` | ported: SecurityMisc > A01 the login does not follow a Referer off the site
-| `test_login_returnTo_does_not_follow_host_header` | ported: SecurityMisc > A01 the login does not follow a returnTo from a spoofed Host |
-| `test_login_returnTo_same_origin_path_is_allowed` | ported: SecurityAccess > A01 the login follows a returnTo on the site |
+| `test_login_returnTo_does_not_redirect_offsite` | ported: V3WebFrontend > v5.0.0-3.7.2: the sign-in follows a returnTo on the site and never one off it |
+| `test_login_referer_does_not_redirect_offsite` | ported: V3WebFrontend > v5.0.0-3.7.2: the sign-in does not redirect to an off-site Referer
+| `test_login_returnTo_does_not_follow_host_header` | ported: V3WebFrontend > v5.0.0-3.7.2: the sign-in does not redirect off the site under a forged Host |
+| `test_login_returnTo_same_origin_path_is_allowed` | ported: V3WebFrontend > v5.0.0-3.7.2: the sign-in follows a returnTo on the site and never one off it |
 
 ### test_a01_ws.py
 
@@ -106,8 +110,8 @@ are Java Assist checks and out of scope.
 | `test_groovysh_admin_can_eval` | not applicable: /groovysh is excluded |
 | `test_groovysh_anonymous_after_admin_session_is_not_a_shell` | not applicable: /groovysh is excluded |
 | `test_groovysh_view_only_is_not_a_shell` | not applicable: /groovysh is excluded |
-| `test_notws_anonymous_upgrade_accepts_or_closes` | ported: SecurityWebSocket > A01 an anonymous /notws upgrade is 401 (replaced: the upgrade is 401 here; Java accepts it) |
-| `test_websocket_evil_origin_is_rejected` | ported: SecurityWebSocket > A01 a /notws upgrade from a foreign Origin is refused, with a logged-in session (skips on the dev conf) |
+| `test_notws_anonymous_upgrade_accepts_or_closes` | ported: V4ApiWebService > v5.0.0-4.4.4: a /notws upgrade without a signed-in session is refused (replaced: the upgrade is 401 here; Java accepts it) |
+| `test_websocket_evil_origin_is_rejected` | ported: V4ApiWebService > v5.0.0-4.4.2: a /notws upgrade from a foreign Origin is refused, the own origin opens |
 | `test_groovysh_same_origin_admin_can_eval` | not applicable: /groovysh is excluded |
 
 ### test_a02_headers.py
@@ -115,22 +119,22 @@ are Java Assist checks and out of scope.
 | Python test | Here |
 | --- | --- |
 | `test_html_response_has_csp_and_frame_options` | ported: SecurityHeaders > A02 an HTML page has a CSP with frame-ancestors and form-action, X-Frame-Options and nosniff |
-| `test_session_cookie_is_httponly` | ported: SecurityHeaders > A02 the session cookie is HttpOnly and SameSite=Lax |
+| `test_session_cookie_is_httponly` | ported: V3WebFrontend > v5.0.0-3.3.4: the session cookie is HttpOnly, out of reach of page scripts |
 | `test_cors_no_origin_header_has_no_allow_origin` | ported: SecurityHeaders > A02 a request with no Origin gets no Access-Control-Allow-Origin |
-| `test_cors_unknown_origin_is_401` | ported: SecurityCors > A02 an unknown origin is 401 with no Access-Control-Allow-Origin (#method) |
-| `test_cors_same_origin_returns_allow_origin` | ported: SecurityCors > A02 the server's own origin gets Access-Control-Allow-Origin with credentials |
-| `test_cors_preflight_same_origin_is_allowed` | ported: SecurityCors > A02 a preflight from the server's own origin is allowed |
+| `test_cors_unknown_origin_is_401` | ported: V3WebFrontend > v5.0.0-3.4.2: a foreign origin is 401 with no Access-Control-Allow-Origin (#method) |
+| `test_cors_same_origin_returns_allow_origin` | ported: V3WebFrontend > v5.0.0-3.4.2: the server's own origin is echoed exactly with credentials, its preflight allowed |
+| `test_cors_preflight_same_origin_is_allowed` | ported: V3WebFrontend > v5.0.0-3.4.2: the server's own origin is echoed exactly with credentials, its preflight allowed |
 | `test_h2_console_is_not_mounted` | ported: SecurityHeaders > A02 no H2 console is mounted (there is no H2 console; the 404 proof is kept) |
-| `test_session_cookie_samesite_lax` | ported: SecurityHeaders > A02 the session cookie is HttpOnly and SameSite=Lax |
-| `test_login_html_is_not_publicly_cacheable` | ported: SecurityHeaders > A02 the login page is not publicly cacheable |
-| `test_cors_preflight_unknown_origin_is_401` | ported: SecurityCors > A02 an unknown origin is 401 with no Access-Control-Allow-Origin (#method) |
+| `test_session_cookie_samesite_lax` | ported: V3WebFrontend > v5.0.0-3.3.2: the session cookie is SameSite=Lax |
+| `test_login_html_is_not_publicly_cacheable` | ported: V14DataProtection > v5.0.0-14.3.2: a screen's answer is Cache-Control no-store and never public |
+| `test_cors_preflight_unknown_origin_is_401` | ported: V3WebFrontend > v5.0.0-3.4.2: a foreign origin is 401 with no Access-Control-Allow-Origin (#method) |
 
 ### test_a05_injection.py
 
 | Python test | Here |
 | --- | --- |
 | `test_rpc_set_preference_rejects_html_by_default` | not applicable: JSON-RPC (/rpc/json) was left out on purpose; /rpc/json is 404 (SecurityAccess) |
-| `test_sql_looking_preference_is_stored_as_data` | ported: SecurityMisc > A05 a SQL-looking preference is stored as data
+| `test_sql_looking_preference_is_stored_as_data` | ported: V1Encoding > v5.0.0-1.2.4: a SQL-looking value is stored and read back as data
 
 ### test_a07_authn.py
 
@@ -140,8 +144,8 @@ are Java Assist checks and out of scope.
 | `test_post_without_csrf_token_rejected_after_login` | ported: SecurityAuthnMore > A07 a Service Run POST without the session token is rejected
 | `test_post_with_csrf_token_is_not_a_csrf_error` | ported: SecurityAuthnMore > A07 a Service Run POST with the session token is not a session-token error
 | `test_api_key_in_query_string_does_not_authenticate` | ported: SecurityAuthn > A07 an api_key #where does not log in |
-| `test_post_with_csrf_token_executes_preference_round_trip` | ported: SecurityAuthn > A07 a POST runs with the session token and stores nothing without it (csrf: #csrf) |
-| `test_post_without_csrf_does_not_store_preference` | ported: SecurityAuthn > A07 a POST runs with the session token and stores nothing without it (csrf: #csrf) |
+| `test_post_with_csrf_token_executes_preference_round_trip` | ported: V3WebFrontend > v5.0.0-3.5.1: a POST changes data only with the session's anti-forgery token (csrf: #csrf) |
+| `test_post_without_csrf_does_not_store_preference` | ported: V3WebFrontend > v5.0.0-3.5.1: a POST changes data only with the session's anti-forgery token (csrf: #csrf) |
 | `test_api_key_header_with_garbage_does_not_authenticate` | ported: SecurityAuthn > A07 an api_key #where does not log in |
 | `test_api_key_header_from_getLoginKey_authenticates` | ported: SecurityAuthnMore > A07 an api_key header of the fixture login key authenticates |
 | `test_login_key_header_authenticates` | ported: SecurityAuthnMore > A07 a login_key header of the fixture login key authenticates
@@ -160,8 +164,8 @@ are Java Assist checks and out of scope.
 | `test_mfa_password_only_does_not_fully_log_in` | ported: SecurityAuthnMore > A07 an MFA password alone does not fully log in
 | `test_mfa_login_with_wrong_code_does_not_log_in` | ported: SecurityAuthnMore > A07 an MFA login with the wrong code does not log in
 | `test_mfa_login_with_code_succeeds` | ported: SecurityAuthnMore > A07 an MFA login with the single-use code succeeds
-| `test_create_initial_admin_http_fails_when_users_exist` | ported: SecurityAuthnMore > A07 create initial admin over HTTP fails when users exist
-| `test_short_password_is_rejected_over_http` | ported: SecurityAuthnMore > A07 a short password is rejected over HTTP
+| `test_create_initial_admin_http_fails_when_users_exist` | ported: V6Authentication > v5.0.0-6.3.2: no initial administrator can be created over HTTP once accounts exist
+| `test_short_password_is_rejected_over_http` | ported: V6Authentication > v5.0.0-6.2.1: a new password shorter than the minimum length is refused
 | `test_failed_logins_lock_dedicated_user` | ported: SecurityAuthnMore > A07 failed logins lock the dedicated user
 | `test_login_json_response_omits_password_parameters` | ported: SecurityAuthnMore > A07 a login JSON response omits password parameters
 | `test_login_json_failed_omits_password_parameters` | ported: SecurityAuthnMore > A07 a failed login JSON response omits password parameters
@@ -176,9 +180,9 @@ are Java Assist checks and out of scope.
 | Python test | Here |
 | --- | --- |
 | `test_unauthorized_error_page_html_has_no_script_tag` | ported: SecurityMisc > A10 the unauthorized page escapes a message and has no script tag
-| `test_rest_unauth_html_error_has_no_script_or_stack` | ported: SecurityMisc > A10 a REST 401 asked for as HTML has no script tag or stack frame
-| `test_internal_error_page_does_not_include_stack_trace_when_hit_directly` | ported: SecurityMisc > A10 the internal error page hit directly has no stack trace
-| `test_rest_unauth_json_does_not_include_stack_frames` | ported: SecurityErrors > A10 a REST 401 in JSON has no stack frames |
+| `test_rest_unauth_html_error_has_no_script_or_stack` | ported: V16Logging > v5.0.0-16.5.1: a REST refusal asked for as HTML has no stack frame or script
+| `test_internal_error_page_does_not_include_stack_trace_when_hit_directly` | ported: V16Logging > v5.0.0-16.5.1: the internal error page shows no stack trace and escapes its message
+| `test_rest_unauth_json_does_not_include_stack_frames` | ported: V16Logging > v5.0.0-16.5.1: a REST refusal in JSON gives a message, no stack or source location |
 
 ### test_api_rest.py
 
@@ -190,15 +194,15 @@ are Java Assist checks and out of scope.
 | `test_rest_e1_user_account_without_entity_authz_is_not_200` | ported: SecurityRest > A01 john.doe reading entity REST UserAccount is not a password dump
 | `test_x_http_method_override_without_auth_is_401` | ported: SecurityRest > A01 a method override on entity REST #case
 | `test_x_http_method_override_still_requires_csrf` | ported: SecurityRest > A01 a method override on entity REST #case
-| `test_entity_rest_post_without_csrf_does_not_create` | ported: SecurityRest > A01 an entity REST POST without the session token does not create
+| `test_entity_rest_post_without_csrf_does_not_create` | ported: V3WebFrontend > v5.0.0-3.5.1: an entity REST POST without the session token is refused and creates nothing
 | `test_rpc_json_without_csrf_does_not_reset_password` | not applicable: JSON-RPC (/rpc/json) was left out on purpose; /rpc/json is 404 (SecurityAccess) |
 | `test_rest_e1_basic_auth_wrong_password_is_401` | ported: SecurityAuthn > A07 Basic on /rest/e1: #who (an unknown user, not john.doe with a wrong password) |
 | `test_rest_e1_basic_auth_valid_is_not_unauthenticated` | ported: SecurityAuthn > A07 Basic on /rest/e1: #who |
-| `test_system_message_hmac_missing_header_is_403` | ported: SecurityMessages > A01 a /rest/sm HMAC post with no signature header is 403
-| `test_system_message_hmac_bad_signature_is_403` | ported: SecurityMessages > A01 a /rest/sm HMAC post with a bad signature is 403
-| `test_system_message_hmac_valid_does_not_require_login` | ported: SecurityMessages > A01 a valid /rest/sm HMAC signature needs no login
-| `test_system_message_hmac_timestamp_outside_window_is_403` | ported: SecurityMessages > A01 a /rest/sm timestamp HMAC outside the window is 403
-| `test_system_message_hmac_timestamp_in_window_is_accepted` | ported: SecurityMessages > A01 a /rest/sm timestamp HMAC inside the window is accepted
+| `test_system_message_hmac_missing_header_is_403` | ported: V9SelfContainedTokens > v5.0.0-9.1.1: a system message with no HMAC signature header is refused
+| `test_system_message_hmac_bad_signature_is_403` | ported: V9SelfContainedTokens > v5.0.0-9.1.1: a system message with a bad HMAC is refused, one with a good HMAC accepted
+| `test_system_message_hmac_valid_does_not_require_login` | ported: V9SelfContainedTokens > v5.0.0-9.1.1: a system message with a bad HMAC is refused, one with a good HMAC accepted
+| `test_system_message_hmac_timestamp_outside_window_is_403` | ported: V9SelfContainedTokens > v5.0.0-9.2.1: a system message timestamped outside its window is refused, one inside accepted
+| `test_system_message_hmac_timestamp_in_window_is_accepted` | ported: V9SelfContainedTokens > v5.0.0-9.2.1: a system message timestamped outside its window is refused, one inside accepted
 | `test_system_message_smat_none_accepts_anonymous` | ported: SecurityMessages > A01 a /rest/sm SmatNone remote accepts an anonymous post
 | `test_entity_rest_narrow_authz_allows_only_its_entity` | ported: SecurityRest > A01 a narrow entity VIEW reads only its entity and cannot create
 | `test_entity_rest_catchall_authz_allows_other_entities` | ported: SecurityRest > A01 a catch-all entity ALL reads another entity and can create
@@ -210,7 +214,7 @@ are Java Assist checks and out of scope.
 | `test_service_rest_moqui_api_view_cannot_update_users` | ported: SecurityRest > A01 #who is 403
 | `test_service_rest_no_api_authz_cannot_read_users` | ported: SecurityRest > A01 #who is 403
 | `test_service_rest_moqui_api_all_can_read_users` | ported: SecurityRest > A01 MOQUI_API #who can list users and the JSON omits password fields
-| `test_x_http_method_override_authz_uses_override_action` | ported: SecurityRest > A01 a method override is authorized as #action
+| `test_x_http_method_override_authz_uses_override_action` | ported: V8Authorization > v5.0.0-8.3.1: a method-override header is authorized as the action it names (#action)
 | `test_service_rest_users_patch_does_not_store_current_password` | ported: SecurityRest > A01 a user PATCH does not store currentPassword
 | `test_service_rest_users_patch_does_not_store_disabled` | ported: SecurityRest > A01 a user PATCH does not store disabled
 | `test_service_rest_users_patch_stores_full_name` | ported: SecurityRest > A01 a user PATCH stores userFullName
@@ -221,7 +225,7 @@ are Java Assist checks and out of scope.
 | `test_jsonrpc_array_body_over_limit_is_rejected` | not applicable: JSON-RPC (/rpc/json) was left out on purpose; /rpc/json is 404 (SecurityAccess) |
 | `test_system_message_hmac_timestamp_replay_is_rejected` | ported: SecurityMessages > A01 a replayed /rest/sm timestamp HMAC is rejected
 | `test_rest_schema_anonymous_is_401` | not applicable: /rest/entity.swagger answers 404 before any auth check (Swagger 2 is not built); the schema proof on /rest/entity.json is test_rest_schema_without_permission_is_403 |
-| `test_rest_schema_without_permission_is_403` | ported: SecurityRest > A01 /rest/entity.json #who
+| `test_rest_schema_without_permission_is_403` | ported: V13Configuration > v5.0.0-13.4.5: the entity REST schema is served only with REST_SCHEMA: #who
 | `test_rest_schema_does_not_set_acao_wildcard` | not applicable: /rest/entity.swagger answers 404 before any auth check (Swagger 2 is not built); the schema proof on /rest/entity.json is test_rest_schema_without_permission_is_403 |
 
 ### test_z_tarpit.py

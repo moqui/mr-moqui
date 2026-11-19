@@ -83,30 +83,6 @@ feature("A01 a method override on entity REST #case", {
     },
 })
 
-// test_api_rest.py: test_entity_rest_post_without_csrf_does_not_create
-feature("A01 an entity REST POST without the session token does not create", {
-    when() {
-        const res = demo().post("/rest/e1/moqui.basic.Enumeration", {
-            json: { enumId: "SEC_SHOULD_NOT_EXIST", description: "sec csrf" }, accept: "json", csrf: false,
-        })
-        // The narrow VIEW user can read Enumeration. When that fixture is loaded, the row must not be there.
-        const probe = session().post("/rest/login", {
-            form: { username: "sec.ent.view", password: "SecEntView1!!" }, accept: "json", csrf: false,
-        })
-        const present = probe.status == 200 && loggedIn(probe)
-        const got = present ? session({ user: "sec.ent.view", password: "SecEntView1!!" })
-            .get("/rest/e1/moqui.basic.Enumeration/SEC_SHOULD_NOT_EXIST", { accept: "json" }) : null
-        return { res, got }
-    },
-    then({ res, got }) {
-        res.status != 200
-        !res.text.includes("SEC_SHOULD_NOT_EXIST")
-        ;[400, 401, 403, 404].includes(res.status) || res.status >= 400
-        res.status != 401 || res.text.includes("Session token is missing or is not valid")
-        got == null || got.status == 404
-    },
-})
-
 // test_api_rest.py: test_entity_rest_narrow_authz_allows_only_its_entity
 feature("A01 a narrow entity VIEW reads only its entity and cannot create", {
     given() { requireFixture("sec.ent.view", "SecEntView1!!") },
@@ -208,27 +184,6 @@ feature("A01 #who is 403", {
     then({ res }) {
         res.status == 403
         res.text.toLowerCase().includes("not authorized")
-    },
-})
-
-// test_api_rest.py: test_x_http_method_override_authz_uses_override_action.
-// The GET row is the positive: a VIEW user may read through the override, so a refusal of every override does not pass.
-feature("A01 a method override is authorized as #action", {
-    where: [
-        { action: "view", method: "GET", path: "/rest/s1/moqui/users", status: 200 },
-        { action: "update", method: "PATCH", path: "/rest/s1/moqui/users/SEC_API_VIEW", status: 403 },
-    ],
-    given() { requireFixture("sec.api.view", "SecApiView1!!") },
-    when({ method, path, action }) {
-        const opts = { headers: { "X-HTTP-Method-Override": method }, accept: "json" }
-        if (action == "update") opts.json = { emailAddress: "sec-should-not-write@example.com" }
-        return { res: session({ user: "sec.api.view", password: "SecApiView1!!" }).post(path, opts) }
-    },
-    then({ res, status, action }) {
-        res.status == status
-        action != "update" || res.text.toLowerCase().includes("update") || res.text.toLowerCase().includes("not authorized")
-        action != "update" || !res.text.toLowerCase().includes("create")
-        action != "view" || noUserAccountSecrets(res.json())
     },
 })
 
@@ -345,28 +300,5 @@ feature("A01 an email server host is not writable without ADMIN", {
         listed.status == 200
         ;[401, 403].includes(patched.status)
         got.status != 200 || got.json().emailServer?.storeHost != "127.0.0.1"
-    },
-})
-
-// test_api_rest.py: test_rest_schema_without_permission_is_403.
-// Anonymous 401 is added because test_rest_schema_anonymous_is_401 hits /rest/entity.swagger, which is not applicable
-// (Swagger 2 is not built; that path 404s before auth). /rest/entity.json checks the login, then REST_SCHEMA, and does
-// not 404 first. sec.api.view has MOQUI_API VIEW and not REST_SCHEMA. The ADMIN row reads one entity document on the
-// same route (the seed data grants REST_SCHEMA to ADMIN): same gate, and the body is the document, not only a status.
-feature("A01 /rest/entity.json #who", {
-    where: [
-        { who: "anonymous is 401", username: null, path: "/rest/entity.json", status: 401, marker: "Authentication required for REST schema" },
-        { who: "without REST_SCHEMA is 403", username: "sec.api.view", password: "SecApiView1!!", path: "/rest/entity.json", status: 403, marker: "Not authorized for REST schema" },
-        { who: "ADMIN with REST_SCHEMA is 200", username: USER, password: PASSWORD, path: "/rest/entity.json/moqui.basic.Enumeration", status: 200, marker: "enumId" },
-    ],
-    given({ username, password }) { if (username && username != USER) requireFixture(username, password) },
-    when({ username, password, path }) {
-        const s = username ? session({ user: username, password }) : session()
-        return { res: s.get(path, { accept: "json" }) }
-    },
-    then({ res, status, marker }) {
-        res.status == status
-        res.text.includes(marker)
-        status == 200 || !res.text.includes("\"enumId\"")
     },
 })

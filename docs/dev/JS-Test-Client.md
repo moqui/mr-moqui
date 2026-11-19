@@ -99,8 +99,8 @@ Against `./moq run` (the dev conf) the specs that pass on any conf pass, and two
   `--serve` runs. For a server it did not start, run that spec on the server's database, such as
   `moqui test framework --spec ClientFixtures --db existing`. Without the fixtures the features that need them skip,
   naming the command.
-- **Conf.** A spec that needs a conf says so. `SecurityCors` needs a server that allows no foreign origin, and fails on
-  the dev conf, which allows localhost on any port (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
+- **Conf.** A spec that needs a conf says so. The framework's cross-origin proofs (`test/proofs/V3WebFrontend`) need a
+  server that allows no foreign origin, and fail on the dev conf, which allows localhost on any port (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
   (`conf/MoquiLoadTestConf.xml`; see Load). Start such a server with `./moq run -c conf/MoquiLoadTestConf.xml` or
   `MOQUI_CONF`.
 
@@ -113,7 +113,7 @@ files.
 A suite declares the server it needs in `test/client/suite.js`, beside the order:
 
 ```js
-suite(["SecurityAccess", "SecurityHeaders", "SecurityCors", "SecurityAuthn", "SecurityScreens", "SecurityRest"], {
+suite(["SecurityAccess", "SecurityHeaders", "SecurityAuthn", "SecurityScreens", "SecurityRest", "SecurityDevice"], {
     server: { components: ["framework"], specs: ["ClientFixtures"], conf: "conf/MoquiLoadTestConf.xml" },
 })
 ```
@@ -744,10 +744,10 @@ that a builder or a certifier runs against their own deployment. What a proof is
 
 ## Examples in the repository
 
-- `runtime/components/base/framework/test/client/`: the security proofs ported from Moqui Java's pytest suite
-  (`SecurityAccess`, `SecurityHeaders`, `SecurityCors`, `SecurityAuthn`, `SecurityScreens`, `SecurityRest`; each
-  feature named with its OWASP id and a comment naming the Python test), and `Java-Port-Catalog.md`, which catalogs
-  all 143 Python tests as ported, pending or not applicable; `LoadBasic` and `SecurityTarpit` are in
+- `runtime/components/base/framework/test/client/`: the security tests ported from Moqui Java's pytest suite
+  (`SecurityAccess`, `SecurityHeaders`, `SecurityAuthn`, `SecurityScreens`, `SecurityRest`; each feature named with its
+  OWASP id and a comment naming the Python test; those that prove an ASVS requirement are in `test/proofs/` now), and
+  `Java-Port-Catalog.md`, which catalogs all 143 Python tests as ported, pending or not applicable; `LoadBasic` and `SecurityTarpit` are in
   `framework/test/acceptance/client/`. The fixtures are `framework/test/ClientFixtures.spec.js`.
 - `runtime/components/base/framework/test/proofs/`: the framework's security proofs, filed by ASVS requirement, with a
   `suite.js` that names its matrix in `docs/security/proofs/`.

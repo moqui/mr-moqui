@@ -22,13 +22,13 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-5.3.1 | 1 | Stored uploads never run as server code | Gap | SEC-SCR-81 (a wiki page saved with a template extension runs as server script); `context/resource.rs` writes `component://` and cuts at `#` (SEC-PFS-82's cause) | - |
+| v5.0.0-5.3.1 | 1 | Stored uploads never run as server code | Gap | SEC-SCR-81 (a wiki page saved with a template extension runs as server script; fix merged 2026-11-18, not yet recorded); the cut at `#` (SEC-PFS-82's cause) is fixed: `context/resource.rs` `refuse_cut_write` refuses a write at a location holding `#` | - |
 | v5.0.0-5.3.2 | 1 | File paths built from trusted data, not names | Gap | SEC-RTE-83 (`print#ResourceDocument` reads any location); `context/resource.rs` `runtime_ref` joins `..`; met in the drive, DAV, SFTP and elFinder checks and `multipart.rs` `base_name` | - |
 
 ## V5.4 File Download
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-5.4.1 | 2 | Download name set by server in Content-Disposition | Framework | `web/mod.rs` `attachment_disposition`, `send_resource_response` (the given name or the location's last segment) | SecurityScreens "A01 a FOP filename quote stays in one Content-Disposition"; PASS: to write: black-box |
-| v5.0.0-5.4.2 | 2 | Served file names encoded against header injection | Framework | `web/mod.rs` `attachment_disposition`: `"`, `\`, `;` and controls replaced, `filename*=utf-8''` percent-encoded; mail attachments not read | SecurityScreens "A01 a FOP filename quote stays in one Content-Disposition"; PASS: to write: black-box |
+| v5.0.0-5.4.1 | 2 | Download name set by server in Content-Disposition | Framework | `web/mod.rs` `attachment_disposition`, `send_resource_response` (the given name or the location's last segment) | V5FileHandling "v5.0.0-5.4.2: a quote in a requested file name stays inside one Content-Disposition"; PASS: to write: black-box |
+| v5.0.0-5.4.2 | 2 | Served file names encoded against header injection | Framework | `web/mod.rs` `attachment_disposition`: `"`, `\`, `;` and controls replaced, `filename*=utf-8''` percent-encoded; mail attachments not read | V5FileHandling "v5.0.0-5.4.2: a quote in a requested file name stays inside one Content-Disposition"; PASS: to write: black-box |
 | v5.0.0-5.4.3 | 2 | Untrusted files scanned for malware | Gap | no scan hook for drives, DAV, SFTP or `upload#PublicShare` (map) | - |

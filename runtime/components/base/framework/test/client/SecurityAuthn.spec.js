@@ -37,25 +37,6 @@ feature("A07 a REST login of an unknown user is 401 with the shared text", {
     },
 })
 
-// test_a07_authn.py: test_post_with_csrf_token_executes_preference_round_trip, test_post_without_csrf_does_not_store_preference
-feature("A07 a POST runs with the session token and stores nothing without it (csrf: #csrf)", {
-    where: [{ csrf: true, status: 200, stored: true }, { csrf: false, status: 401, stored: false }],
-    when({ csrf }) {
-        const key = `secCsrfHttp-${csrf}-${Date.now()}`
-        const res = http.post("/apps/setPreference", { form: { preferenceKey: key, preferenceValue: "csrf-ran" }, csrf })
-        const prefs = http.get("/apps/getPreferences", { params: { keyRegexp: key } })
-        // blank it again, as the Python proofs do
-        if (csrf) http.post("/apps/setPreference", { form: { preferenceKey: key, preferenceValue: "" } })
-        return { res, prefs, key }
-    },
-    then({ res, status, prefs, key, stored }) {
-        res.status == status
-        res.status != 401 || res.text.includes("Session token is missing or is not valid")
-        prefs.status == 200
-        (prefs.json()[key] == "csrf-ran") == stored
-    },
-})
-
 // test_a07_authn.py: test_login_issues_a_new_session_id
 feature("A07 the login form issues a new session id", {
     when() {
@@ -115,7 +96,6 @@ const MFA_PASSWORD = "SecMfaTotp1!!"
 const MFA_CODE = "87654321"
 const SERVICE_RUN = "/apps/tools/Service/ServiceRun/run"
 const GEO_SERVICE = "org.moqui.impl.BasicServices.get#GeoRegionsForDropDown"
-const ADMIN_ERROR = "Can only create initial admin account if there are no UserAccount records"
 const TOKEN_ERROR = "Session token is missing or is not valid"
 const CREDENTIALS = ["password", "oldPassword", "newPassword", "authPassword", "api_key", "login_key"]
 
@@ -320,47 +300,6 @@ feature("A07 an MFA login with the single-use code succeeds", {
     },
     then({ res }) {
         loggedIn(res)
-    },
-})
-
-// test_a07_more.py: test_create_initial_admin_http_fails_when_users_exist
-// The service error is the screen's JSON errors text. No new admin: that username still cannot log in.
-feature("A07 create initial admin over HTTP fails when users exist", {
-    when() {
-        const s = sessionWithToken()
-        const res = s.post("/Login/createInitialAdminAccount", {
-            form: { username: "sec.should.not.exist", newPassword: "SecAdmin1!!", newPasswordVerify: "SecAdmin1!!" },
-            accept: "json",
-        })
-        const probe = restLogin("sec.should.not.exist", "SecAdmin1!!")
-        return { res, probe }
-    },
-    then({ res, probe }) {
-        res.text.includes(ADMIN_ERROR)
-        probe.status == 401
-        !loggedIn(probe)
-    },
-})
-
-// test_a07_more.py: test_short_password_is_rejected_over_http
-// sec.all.only has AUTHZA_ALL, which the password-change transition needs. "short" is under the length rule.
-feature("A07 a short password is rejected over HTTP", {
-    when() {
-        requireFixture("sec.all.only", "SecAll1!!")
-        const s = session()
-        s.login("sec.all.only", "SecAll1!!")
-        const res = s.post("/Login/changePassword", {
-            form: { username: "sec.all.only", oldPassword: "SecAll1!!", newPassword: "short", newPasswordVerify: "short" },
-            accept: "json",
-        })
-        const still = restLogin("sec.all.only", "SecAll1!!")
-        return { res, still }
-    },
-    then({ res, still }) {
-        res.text.toLowerCase().includes("found issues with password so not updating")
-        res.text.toLowerCase().includes("shorter")
-        !res.text.toLowerCase().includes("password updated")
-        loggedIn(still)
     },
 })
 
