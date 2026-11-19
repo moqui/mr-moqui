@@ -5,5 +5,8 @@
 # 4.4 s, rounded up.
 # Nov 14, 2026: raised to the final suites of the Dogfood build (DG0 to DG10, Dev AIDE P11 to P13) with the Sales and
 # Marketing apps merged, with the user's agreement: 20.4 s measured, rounded up. A review of regression vs acceptance follows.
+# Nov 18, 2026: the client budget split, its total kept, when the security proofs moved from test/client to test/proofs
+# (plans/Proofs-Initial.md, P3): measured 3.2 s client and 2.0 s proofs.
 server = 21
-client = 6
+client = 3.5
+proofs = 2.5

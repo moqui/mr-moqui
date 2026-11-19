@@ -29,6 +29,17 @@
     ]) define(name, () => { throw new Error(`${name}() is the server's: ${OUTSIDE}; use ${instead}`); });
     define("server", Object.freeze(config.server));
     define("params", Object.freeze(config.params));
+    // The run's profile (--profile): "fixtures" when the server has the suites' fixture data (--serve made it), else
+    // "deployment", a server the project did not set up, where a spec uses only the accounts its params give.
+    define("profile", config.profile);
+    // needsFixtures(what): unless the profile is fixtures, skips the feature (or in setupSpec the spec), naming what it
+    // needs, so that no spec signs in to someone's deployment with a fixture's password.
+    define("needsFixtures", (what) => {
+        if (config.profile !== "fixtures") {
+            skip(`needs ${what}, a fixture of the project's run, and the profile is ${config.profile}: ` +
+                "--serve, or --profile fixtures against a server with the fixtures, runs it");
+        }
+    });
 
     const options = (opts) => (opts && typeof opts === "object") ? opts : {};
     const messageOf = (e) => e && e.message !== undefined ? `${e.name || "Error"}: ${e.message}` : String(e);

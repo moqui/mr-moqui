@@ -157,28 +157,6 @@ feature("A01 the login form posts to the login path", {
     },
 })
 
-// test_a01_more.py: test_view_only_cannot_run_service_run_over_http. A run that is allowed redirects (302), so a
-// redirect is not a denial.
-feature("A01 a VIEW-only user cannot run a service over HTTP", {
-    given() { requireFixture(VIEW_USER, VIEW_PASSWORD) },
-    when() {
-        const s = formSession(VIEW_USER, VIEW_PASSWORD)
-        if (!s.token()) skip("no CSRF token after VIEW-only login")
-        const res = s.post("/apps/tools/Service/ServiceRun/run", {
-            form: {
-                serviceName: "org.moqui.impl.BasicServices.get#GeoRegionsForDropDown",
-                moquiSessionToken: s.token(),
-            },
-        })
-        return { res, body: res.text.toLowerCase() }
-    },
-    then({ res, body }) {
-        res.status == 401 || res.status == 403
-        !body.includes("session token required")
-        !body.includes("session token is missing")
-    },
-})
-
 // test_a01_more.py: test_unauthenticated_data_import_does_not_fetch_location. A load that ran redirects to the
 // screen, so a 302 counts only when it is the login.
 feature("A01 an anonymous data import does not fetch a location", {
@@ -310,35 +288,6 @@ feature("A01 menu data for Tools without a login is not the menu", {
     then({ res, body }) {
         res.status == 401 || res.status == 403 || res.status == 302 || !body.includes('"schema"')
         !body.includes("groovyshell") || res.status != 200
-    },
-})
-
-// test_a01_more.py: test_fop_filename_quote_stays_in_one_content_disposition
-feature("A01 a FOP filename quote stays in one Content-Disposition", {
-    when() {
-        const res = formSession(USER, PASSWORD).get("/fop/apps/tools/Home", { params: { filename: 'a"; x=y' } })
-        if (res.status == 401 || res.status == 403) skip("user cannot render /fop/apps/tools/Home")
-        return { cd: res.header("Content-Disposition") ?? "" }
-    },
-    then({ cd }) {
-        !cd.includes('"; x=')
-        !cd.includes("\r")
-        !cd.includes("\n")
-    },
-})
-
-// test_a01_more.py: test_datasnapshot_view_cannot_download
-feature("A01 a VIEW-only user cannot download a data snapshot", {
-    given() { requireFixture(VIEW_USER, VIEW_PASSWORD) },
-    when() {
-        return {
-            res: formSession(VIEW_USER, VIEW_PASSWORD).get("/apps/tools/Data/Snapshots/downloadSnapshot", {
-                params: { filename: "anything.zip" },
-            }),
-        }
-    },
-    then({ res }) {
-        res.status == 401 || res.status == 403
     },
 })
 

@@ -6,7 +6,8 @@
 // sec.ent.all (narrow and catch-all AT_ENTITY), sec.api.view and sec.api.all (MOQUI_API), sec.ip.v4 and sec.ip.loop
 // (ipAllowed only; login is not tried here), sec.key.http (a known login key), sec.mfa.totp (a single-use factor;
 // password login is not tried here) and sec.tap.user (a service tarpit and the setPreference transition), plus the
-// SEC_SMT_TEST system-message remotes. moqui test-client framework --serve runs this spec on
+// SEC_SMT_TEST system-message remotes. The security proofs (test/proofs) also get sec.pw.proof, whose password they
+// change, so it is set again on every run. moqui test-client framework --serve runs this spec on
 // its server's scratch database; for another server run it on that server's database:
 //     moqui test framework --spec ClientFixtures --db existing
 // Each row is made only when it is missing, so a database kept between runs takes it again. These users are not demo
@@ -25,6 +26,8 @@ const USERS = [
     { username: "sec.api.all", password: "SecApiAll1!!", group: "SEC_API_ALL_GROUP" },
     { username: "sec.key.http", password: "SecKeyHttp1!!", group: "SEC_ENT_VIEW_GROUP" },
     { username: "sec.tap.user", password: "SecTapUser1!!", group: "SEC_TAP_GROUP" },
+    // the security proofs' password user (test/proofs/V6Authentication), whose password they change: set again below
+    { username: "sec.pw.proof", password: "SecPwProof1!!", group: "SEC_NONE_GROUP" },
 ]
 
 // hash_login_key("sec-test-login-key-fixed-40-chars-value"): SHA-256 hex, empty salt (login-key/@encrypt-hash-type,
@@ -159,6 +162,14 @@ spec({
             ensureAuthz("TEST_LOAD_ENUM_AUTHZ", "TEST_LOAD_GROUP", "TEST_LOAD_ENUM", "AUTHZA_VIEW")
 
             for (const user of USERS) ensureUser(user)
+            // the proofs change sec.pw.proof's password and try wrong ones: its password and its count of failed
+            // logins are set again on every run, so a database kept between runs takes the proofs again
+            const pwId = one("moqui.security.UserAccount", { username: "sec.pw.proof" }).userId
+            updateAccount({
+                userId: pwId, currentPassword: ec.user.hashPassword("SecPwProof1!!"), passwordSalt: "",
+                passwordHashType: "argon2", passwordBase64: "N", requirePasswordChange: "N", disabled: "N",
+                successiveFailedLogins: 0, disabledDateTime: null,
+            })
             const ipV4 = ensureUser({ username: "sec.ip.v4", password: "SecIpV41!!", group: "SEC_NONE_GROUP" })
             const ipLoop = ensureUser({ username: "sec.ip.loop", password: "SecIpLoop1!!", group: "SEC_NONE_GROUP" })
             updateAccount({ userId: ipV4, ipAllowed: "10.99.99.99" })

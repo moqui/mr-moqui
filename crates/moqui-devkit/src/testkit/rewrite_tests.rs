@@ -115,6 +115,24 @@ fn suite_order_reads_the_names() {
 }
 
 #[test]
+fn suite_matrix_reads_the_paths() {
+    let source = "suite([\"V3\"], { server: { components: [\"framework\"] }, matrix: \"../../docs/proofs\" })\n";
+    assert_eq!(suite_matrix(source).unwrap(), vec!["../../docs/proofs".to_string()]);
+    assert_eq!(
+        suite_server(source).unwrap().unwrap().components,
+        vec!["framework".to_string()]
+    );
+    assert_eq!(
+        suite_matrix("suite(['A'], { matrix: ['docs/A.md', \"docs/b\"] })").unwrap(),
+        vec!["docs/A.md".to_string(), "docs/b".to_string()]
+    );
+    assert!(suite_matrix("suite(['A'])").unwrap().is_empty());
+    assert!(suite_matrix("suite(['A'], { server: {} })").unwrap().is_empty());
+    assert!(suite_matrix("suite(['A'], { matrix: 3 })").is_err());
+    assert!(suite_matrix("suite(['A'], { matrix: [dir] })").is_err());
+}
+
+#[test]
 fn suite_server_reads_the_declaration() {
     let source = "suite([\"A\", \"B\"], {\n    server: { components: [\"mr-mantle\", 'mr-marble'], specs: [\"Render\"], conf: \"conf/MoquiProductionConf.xml\",\n        properties: { moqui_conf__email_client__capture_sends: \"true\", 'b.c': 'd' } },\n})\n";
     assert_eq!(suite_order(source).unwrap(), vec!["A".to_string(), "B".to_string()]);

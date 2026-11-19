@@ -1,7 +1,8 @@
 # Testing a server from outside with `moqui test-client`
 
 `moqui test-client` (`./moq test-client`) runs the JavaScript spec files in a component's `test/client/` directory
-against a server that is already running. The specs have the format of `moqui test`
+against a server that is already running; with `--proofs`, the security proofs of its `test/proofs/`
+([Security proofs](#security-proofs)). The specs have the format of `moqui test`
 ([JS-Testkit](JS-Testkit.md)): `spec`, `feature`, the blocks, `where` rows, conditions that fail with the values of
 their parts, `suite.js`, the console report and JUnit. They reach the server only from outside: HTTP sessions with
 cookies and the session token, raw requests over TCP or TLS, WebSocket, headless Chromium, and a load runner of
@@ -33,6 +34,8 @@ moqui test-client webroot --offline                   # client specs with no ser
 moqui test-client runtime/components/dev/dev-aide --offline
 moqui test-client mr-marble --serve --junit build/test-results
 moqui test-client framework --acceptance --spec LoadBasic --param users=50 --param duration=60
+moqui test-client framework --proofs --serve           # the security proofs, with the summary by requirement
+MOQUI_TEST_PASSWORD=... moqui test-client framework --proofs --server https://test.example.com --param user=auditor
 moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
 moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results --fail-on-skip
@@ -59,6 +62,8 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, exactly (no patterns), with the specs their `dependsOn` names |
 | `--feature text` | Only the features whose names contain the text |
 | `--acceptance` | The acceptance client specs (`test/acceptance/client/`) in place of `test/client/`; with `--serve` the server is the one `test/acceptance/client/suite.js` declares, and its specs resolve across `test/` and `test/acceptance/` ([The two suites](../Build-Test.md#the-two-suites)) |
+| `--proofs` | The security proofs (`test/proofs/`) in place of `test/client/`; with `--serve` the server is the one `test/proofs/suite.js` declares. The run writes `proofs.json` and `proofs.md` ([Security proofs](#security-proofs)). Not with `--acceptance` |
+| `--profile name` | What the specs may assume of the server, the `profile` global: `fixtures` (the suite's fixtures are there) or `deployment` (a server the project did not set up: no fixture user signs in, an account comes from `--param`). `fixtures` with `--serve`, else `deployment` |
 | `--param name=value` | Repeatable; `params.name` in specs. `MOQUI_TEST_<NAME>` variables are params too, in camel case (`MOQUI_TEST_LOAD_PASSWORD` is `params.loadPassword`), for a password that should not show in `ps`. A `--param` wins over a variable |
 | `--junit dir` | `TEST-<component>.client.<Spec>.xml` per spec. Files a case attaches are `[[ATTACHMENT\|path]]` lines in its `system-out`, after its load table |
 | `--out dir` | Where saved bodies, screenshots, PDFs, failure files, load results and `--serve` logs go. The default is `runtime/tmp/test-client/<yyyyMMdd-HHmmss>-<pid>`, or `test-client-out/<run>` in the working directory without a runtime. The run prints it at the end when anything was written |
@@ -94,8 +99,8 @@ Against `./moq run` (the dev conf) the specs that pass on any conf pass, and two
   `--serve` runs. For a server it did not start, run that spec on the server's database, such as
   `moqui test framework --spec ClientFixtures --db existing`. Without the fixtures the features that need them skip,
   naming the command.
-- **Conf.** A spec that needs a conf says so. `SecurityCors` needs a server that allows no foreign origin, and fails on
-  the dev conf, which allows localhost on any port (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
+- **Conf.** A spec that needs a conf says so. The framework's cross-origin proofs (`test/proofs/V3WebFrontend`) need a
+  server that allows no foreign origin, and fail on the dev conf, which allows localhost on any port (`moqui_conf__webapp_list__webapp__WEBROOT__allow_origins=localhost,127.0.0.1`). A real load run needs the tarpits off
   (`conf/MoquiLoadTestConf.xml`; see Load). Start such a server with `./moq run -c conf/MoquiLoadTestConf.xml` or
   `MOQUI_CONF`.
 
@@ -108,7 +113,7 @@ files.
 A suite declares the server it needs in `test/client/suite.js`, beside the order:
 
 ```js
-suite(["SecurityAccess", "SecurityHeaders", "SecurityCors", "SecurityAuthn", "SecurityScreens", "SecurityRest"], {
+suite(["SecurityAccess", "SecurityHeaders", "SecurityAuthn", "SecurityScreens", "SecurityRest", "SecurityDevice"], {
     server: { components: ["framework"], specs: ["ClientFixtures"], conf: "conf/MoquiLoadTestConf.xml" },
 })
 ```
@@ -259,6 +264,8 @@ Every call blocks until it is done; there is no `await`. Conditions are plain va
 |---|---|
 | `server` | `{ url, host, port, secure, ssh }` of the server under test; `ssh` is `{ host, port }` of its SSH listener (`--ssh`, or the server `--serve` started), else null |
 | `params` | The `--param` values and `MOQUI_TEST_*` variables, as text |
+| `profile` | `"fixtures"` or `"deployment"` (`--profile`): whether the server has the suite's fixtures |
+| `needsFixtures(what)` | Unless the profile is `fixtures`, skip the feature (or in `setupSpec` the spec), naming `what` it needs, so that no spec signs in to someone's deployment with a fixture's password |
 | `http` | The current session: the spec's default, or in `load` and `parallel` the thread's own |
 | `session(opts)` | A new session with its own cookie jar and token. `opts.headers` go on each of its requests; `opts.user` (and `opts.password`, `moqui` by default) logs it in |
 | `login(user, password = "moqui")`, `logout()` | `http.login` and `http.logout` |
@@ -704,15 +711,46 @@ The output directory has what the specs wrote and what failures left:
 - `failed-<feature>-<n>.png` and `.txt` for each page open at a failure;
 - `load/<component>.<Spec>.<feature>.json` for each load;
 - `video/<Spec>.webm` and `video/<Spec>.timeline.json` with `--video`;
-- `server-<n>.log`, the output of each `--serve` child.
+- `server-<n>.log`, the output of each `--serve` child;
+- `proofs.json` and `proofs.md` with `--proofs` ([Security proofs](#security-proofs)).
+
+## Security proofs
+
+A component's `test/proofs/` holds its security proofs: client specs filed by OWASP ASVS requirement, a public library
+that a builder or a certifier runs against their own deployment. What a proof is, the matrix and the statuses are in
+[security proofs](../security/proofs/README.md); here is how they run.
+
+- **Filing.** A proof is a feature whose name starts with the requirement's id and a colon: `v5.0.0-6.2.6: the
+  sign-in and password-change forms mask every password field`. A spec file holds one ASVS chapter
+  (`V6Authentication.spec.js`). A feature that passes and is filed under no requirement fails a `--proofs` run: it
+  belongs in `test/client/`. A comment above each feature says what it does not prove.
+- **The suite.** `test/proofs/suite.js` gives the order and the server, as `test/client/suite.js` does, and names the
+  component's matrix: `suite([...], { server: {...}, matrix: "docs/ASVS-Matrix.md" })`, a path or a list of paths
+  relative to the component's directory, a directory standing for its `.md` files. The proofs have no pool with
+  another tree: a proof does not depend on a spec of `test/client/`, and a path into `test/proofs/` runs only with
+  `--proofs`.
+- **Profiles.** With `--serve` the profile is `fixtures`: the server ran the suite's fixture specs. Against any other
+  server it is `deployment`, unless `--profile fixtures` says the server has them (a server spec made them on its
+  database). A proof that needs an account takes one from the params in the deployment profile (`--param user=NAME`,
+  with the password in `MOQUI_TEST_PASSWORD` so that it stays out of `ps`) and otherwise calls `needsFixtures`, as
+  `framework/test/proofs/V7SessionManagement.spec.js` does; a proof that needs fixture data calls `needsFixtures`.
+- **The summary.** After the run, `proofs.json` and `proofs.md` in the output directory list, for each component, the
+  rows of its matrix (the requirement, its level, topic and status) with the run's proofs of each requirement and a
+  result: `passed`, `partial` (some passed, the rest skipped), `failed`, `skipped` or `none`. A row marked `Inherited`
+  takes the proofs of the same requirement in the run's other components. A proof of a requirement the matrix has no
+  row for gets a row of its own, with a note. The console gives a line per component and the summary's path.
+- **Budget and time.** They are regression specs: each under 15 seconds, run by `./moq test-framework` and `./moq
+  test-apps`, against the component's `proofs` budget in `test/budget` when it has that line.
 
 ## Examples in the repository
 
-- `runtime/components/base/framework/test/client/`: the security proofs ported from Moqui Java's pytest suite
-  (`SecurityAccess`, `SecurityHeaders`, `SecurityCors`, `SecurityAuthn`, `SecurityScreens`, `SecurityRest`; each
-  feature named with its OWASP id and a comment naming the Python test), and `Java-Port-Catalog.md`, which catalogs
-  all 143 Python tests as ported, pending or not applicable; `LoadBasic` and `SecurityTarpit` are in
+- `runtime/components/base/framework/test/client/`: the security tests ported from Moqui Java's pytest suite
+  (`SecurityAccess`, `SecurityHeaders`, `SecurityAuthn`, `SecurityScreens`, `SecurityRest`; each feature named with its
+  OWASP id and a comment naming the Python test; those that prove an ASVS requirement are in `test/proofs/` now), and
+  `Java-Port-Catalog.md`, which catalogs all 143 Python tests as ported, pending or not applicable; `LoadBasic` and `SecurityTarpit` are in
   `framework/test/acceptance/client/`. The fixtures are `framework/test/ClientFixtures.spec.js`.
+- `runtime/components/base/framework/test/proofs/`: the framework's security proofs, filed by ASVS requirement, with a
+  `suite.js` that names its matrix in `docs/security/proofs/`.
 - `runtime/components/addon/mr-marble/test/client/`: `BrowserSmoke` (pages of the flow data with their text, PrintOrder's
   barcodes and a PDF), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server; and in
   `test/acceptance/client/`, `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs

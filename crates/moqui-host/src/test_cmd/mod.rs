@@ -289,7 +289,7 @@ pub(crate) struct TestComponent {
 
 /// The components in each of the runtime's component sets (`context::layout`; the dev set loads on a dev instance)
 /// that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`, `test/acceptance` and
-/// `test/acceptance/client` for their `--acceptance`. By directory name within each set. Not a template, whose name is a
+/// `test/acceptance/client` for their `--acceptance`, `test/proofs` for `moqui test-client --proofs`. By directory name within each set. Not a template, whose name is a
 /// placeholder (the dev set's `template`).
 pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
@@ -348,17 +348,22 @@ pub(crate) fn component_name(dir: &Path) -> String {
         .unwrap_or(dir_name)
 }
 
-/// The subdirectories of a test directory that hold another command's files: `test/client` (`moqui test-client`) and
-/// `test/agent` (`--agents`) under `test`, `test/client/process` (named process specs) under `test/client`.
+/// The subdirectories of a test directory that hold another command's files: `test/client` and `test/proofs`
+/// (`moqui test-client`) and `test/agent` (`--agents`) under `test`, `test/client/process` (named process specs) under
+/// `test/client`.
 fn reserved_subdirs(sub: &str) -> &'static [&'static str] {
     match sub {
         // test/load holds load scripts, another command's (moqui test-load)
-        "test" => &["client", "agent", "acceptance", "load"],
+        "test" => &["client", "agent", "acceptance", "load", "proofs"],
         "test/acceptance" => &["client", "agent"],
         "test/client" | "test/acceptance/client" => &["process"],
         _ => &[],
     }
 }
+
+/// The tree of the security proofs (docs/security/proofs/README.md): client specs filed by requirement, which
+/// `moqui test-client --proofs` runs, a suite of their own beside `test/client` and `test/acceptance/client`.
+pub(crate) const PROOFS_TREE: &str = "test/proofs";
 
 /// The tree of a suite: `test` for the regression suite, `test/acceptance` for the acceptance suite; with `client`, its
 /// `client` subdirectory.
@@ -1029,11 +1034,15 @@ fn not_loaded(name: &str) -> Error {
 /// (with `client`, those of `test/client` and `test/acceptance/client`), each as the indexes of the specs it lists that the
 /// component has, in its order. A suite.js that cannot be read lists nothing (discovery has already read it).
 pub(crate) fn suite_chains(component: &TestComponent, acceptance: bool, client: bool) -> Vec<Vec<usize>> {
-    let trees: &[&str] = if acceptance {
-        &[suite_tree(false, client), suite_tree(true, client)]
+    if acceptance {
+        suite_chains_in(component, &[suite_tree(false, client), suite_tree(true, client)])
     } else {
-        &[suite_tree(false, client)]
-    };
+        suite_chains_in(component, &[suite_tree(false, client)])
+    }
+}
+
+/// The `suite.js` chains of a component in the trees `trees` (as [`suite_chains`]); a tree with no `suite.js` has none.
+pub(crate) fn suite_chains_in(component: &TestComponent, trees: &[&str]) -> Vec<Vec<usize>> {
     trees
         .iter()
         .filter_map(|tree| std::fs::read_to_string(component.dir.join(tree).join("suite.js")).ok())
@@ -1060,6 +1069,15 @@ pub(crate) fn run_order(
     acceptance: bool,
     client: bool,
 ) -> Result<Vec<(usize, usize)>, Error> {
+    if acceptance {
+        run_order_in(components, &[suite_tree(false, client), suite_tree(true, client)])
+    } else {
+        run_order_in(components, &[suite_tree(false, client)])
+    }
+}
+
+/// [`run_order`] with the `suite.js` chains of the trees `trees`.
+pub(crate) fn run_order_in(components: &[TestComponent], trees: &[&str]) -> Result<Vec<(usize, usize)>, Error> {
     let nodes: Vec<(usize, usize)> = components
         .iter()
         .enumerate()
@@ -1083,7 +1101,7 @@ pub(crate) fn run_order(
         }
     }
     for (c, component) in components.iter().enumerate() {
-        for chain in suite_chains(component, acceptance, client) {
+        for chain in suite_chains_in(component, trees) {
             for pair in chain.windows(2) {
                 let (Some(before), Some(after)) = (
                     nodes.iter().position(|node| *node == (c, pair[0])),

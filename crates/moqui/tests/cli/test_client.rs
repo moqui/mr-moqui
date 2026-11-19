@@ -277,3 +277,112 @@ fn wait_finds_a_late_server_and_the_runtime_files_are_untouched() {
         "no new log file"
     );
 }
+
+/// A run of the security proofs against the stub: the summary by requirement joins the matrix the proofs' suite.js
+/// names, a server the run did not start is the deployment profile (a feature that needs the fixtures skips), a proof's
+/// path runs only with --proofs, and a passing feature filed under no requirement fails the run.
+#[cfg(unix)]
+#[test]
+fn proofs_write_the_summary_by_requirement() {
+    let dir = temp("proofs");
+    let component = dir.0.join("stub-component");
+    let proofs = component.join("test/proofs");
+    std::fs::create_dir_all(&proofs).unwrap();
+    std::fs::write(
+        component.join("component.xml"),
+        "<component name=\"stub-component\"/>\n",
+    )
+    .unwrap();
+    std::fs::write(
+        component.join("Matrix.md"),
+        "| Requirement | L | Topic | Status | Evidence | Proof |\n| --- | --- | --- | --- | --- | --- |\n\
+         | v5.0.0-3.4.1 | 1 | The stub answers | Framework | stub | - |\n\
+         | v5.0.0-6.3.2 | 1 | A fixture user | Framework | stub | - |\n\
+         | v5.0.0-7.2.1 | 1 | Not proved here | Gap | stub | - |\n",
+    )
+    .unwrap();
+    std::fs::write(proofs.join("suite.js"), "suite(['V3Stub'], { matrix: 'Matrix.md' })\n").unwrap();
+    let filed = "feature('v5.0.0-3.4.1: the stub answers', {\n    expect() {\n        http.get('/').text == 'ok'\n    },\n})\n\
+                 feature('v5.0.0-6.3.2: a fixture user signs in', {\n    expect() {\n        needsFixtures('the stub user')\n        profile == 'fixtures'\n    },\n})\n";
+    std::fs::write(proofs.join("V3Stub.spec.js"), filed).unwrap();
+    let port = free_port();
+    let _stub = stub(port, Duration::ZERO);
+    let server = format!("http://127.0.0.1:{port}");
+    let out = dir.0.join("out");
+    let run = |extra: &[&str]| {
+        let mut args = vec![
+            proofs.to_str().unwrap(),
+            "--server",
+            &server,
+            "--wait",
+            "30",
+            "--out",
+            out.to_str().unwrap(),
+        ];
+        args.extend_from_slice(extra);
+        test_client(&dir.0, &dir.0, &args)
+    };
+    let (stdout, err, ok) = run(&["--proofs"]);
+    assert!(ok, "stdout:\n{stdout}\nstderr:\n{err}");
+    assert!(
+        stdout.contains("V3Stub > v5.0.0-3.4.1: the stub answers  PASSED ("),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("V3Stub > v5.0.0-6.3.2: a fixture user signs in  SKIPPED (")
+            && stdout.contains("needs the stub user, a fixture of the project's run, and the profile is deployment"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "Proofs of stub-component: 2 requirements with proofs: 1 passed, 0 partial, 0 failed, 1 skipped; 3 requirements in its matrix"
+        ),
+        "{stdout}"
+    );
+    let markdown = std::fs::read_to_string(out.join("proofs.md")).unwrap();
+    assert!(
+        markdown.contains(
+            "| v5.0.0-3.4.1 | 1 | The stub answers | Framework | passed | V3Stub › the stub answers: passed |"
+        ),
+        "{markdown}"
+    );
+    assert!(
+        markdown.contains("| v5.0.0-7.2.1 | 1 | Not proved here | Gap | none | - |"),
+        "{markdown}"
+    );
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(out.join("proofs.json")).unwrap()).unwrap();
+    assert_eq!(summary["profile"], "deployment");
+    assert_eq!(summary["server"], server.as_str());
+    assert_eq!(summary["components"][0]["counts"]["withProofs"], 2);
+    assert_eq!(summary["components"][0]["requirements"][1]["result"], "skipped");
+
+    // --profile fixtures: the feature that needs them runs
+    let (stdout, _, ok) = run(&["--proofs", "--profile", "fixtures"]);
+    assert!(
+        ok && stdout.contains("V3Stub > v5.0.0-6.3.2: a fixture user signs in  PASSED ("),
+        "{stdout}"
+    );
+
+    // a proof's path without --proofs is refused
+    let (stdout, err, ok) = run(&[]);
+    assert!(
+        !ok && err.contains("is a proof: run it with --proofs"),
+        "stdout:\n{stdout}\nstderr:\n{err}"
+    );
+
+    // a passing feature filed under no requirement fails the run, and is named
+    std::fs::write(
+        proofs.join("V3Stub.spec.js"),
+        format!("{filed}feature('A05 the stub answers again', {{\n    expect() {{\n        http.get('/').status == 200\n    }},\n}})\n"),
+    )
+    .unwrap();
+    let (stdout, err, ok) = run(&["--proofs"]);
+    assert!(!ok, "{stdout}");
+    assert!(
+        stdout.contains("FAILED: features of test/proofs filed under no requirement")
+            && stdout.contains("  stub-component/V3Stub > A05 the stub answers again"),
+        "{stdout}"
+    );
+    assert!(err.contains("1 test failure(s)"), "{err}");
+}

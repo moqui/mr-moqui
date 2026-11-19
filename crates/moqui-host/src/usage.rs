@@ -480,8 +480,17 @@ with MOQUI_CONF set to the conf, runs that suite against it, then stops it. Comp
 declaration, or the same conf and properties with named specs, share one server; a server that does not start fails its suite's specs only. The child's
 output goes to server-<n>.log in the --out directory.
 
+--proofs runs the security proofs of test/proofs instead: each feature is filed under the requirement
+its name starts with (v5.0.0-6.2.6: ...), and the run writes proofs.json and proofs.md into the --out
+directory, the rows of the matrix test/proofs/suite.js names (matrix: \"...\") with each requirement's
+proofs and their results. A passing feature filed under no requirement fails the run. The profile
+says what the specs may assume of the server: fixtures with --serve, whose server made the suite's
+fixtures, else deployment, where no fixture user signs in and a spec takes an account from --param.
+
   moqui test-client framework
   moqui test-client framework --serve
+  moqui test-client framework --proofs --serve
+  moqui test-client framework --proofs --server https://test.example.com --param user=auditor
   moqui test-client framework --spec SecurityAuthn --param user=john.doe
   moqui test-client runtime/components/addon/my-site/test/client --server https://test.example.com
   moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results
@@ -501,6 +510,11 @@ Options:
                                   of test/client; with --serve, against the server
                                   test/acceptance/client/suite.js declares, its specs resolved
                                   across test/ and test/acceptance/.
+  --proofs                        Run the security proofs of test/proofs in place of test/client,
+                                  and write the summary by requirement (proofs.json, proofs.md).
+  --profile fixtures|deployment   What the specs may assume of the server (the profile global):
+                                  fixtures with --serve, else deployment; needsFixtures(what) skips
+                                  a feature in the deployment profile.
   --param name=value              Repeatable; params.name in specs. MOQUI_TEST_<NAME> variables
                                   are params too (MOQUI_TEST_LOAD_PASSWORD is params.loadPassword),
                                   for a password that should not show in ps.
