@@ -2645,6 +2645,24 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
             ("allowedRefs", s("feature release/*")),
         ],
     );
+    // widening it cleared the value (SEC-GIT-91): a maintainer gives it again for the environment as it is now
+    assert!(given(true, true, "refs/heads/main", Some("staging"))
+        .iter()
+        .all(|(_, value)| value != "staging-value"));
+    let staging_secret = text(
+        &rows(&fixture, crate::ci::CI_SECRET, &[("environmentId", &environment_id)])[0],
+        "secretId",
+    );
+    ok(
+        &fixture,
+        WRITER,
+        &store,
+        &[
+            ("repositoryId", s("app")),
+            ("secretId", s(&staging_secret)),
+            ("value", s("staging-value")),
+        ],
+    );
     assert_eq!(
         given(true, false, "refs/heads/feature", Some("staging")),
         [pair("KEY", "staging-value")]

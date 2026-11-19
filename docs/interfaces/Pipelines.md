@@ -237,7 +237,10 @@ A `GitCiSecret` is a repository's, or an owner's that the application names (a g
 and environments of a repository are managed (`find#CiSecrets`, `store#`, `delete#CiSecret`, `store#`,
 `delete#CiEnvironment`) by a user with the **delete** right on it (a maintainer), not the update right a developer
 who pushes has, or with authorization disabled; an owner's with authorization disabled only. A secret moved to another
-scope or environment takes a new value: its old one was given for the old scope. A job is given a secret it asks for
+scope or environment takes a new value: its old one was given for the old scope. In the same way an environment whose
+`allowedRefs` gains a pattern, or whose `approvalRequired` is turned off, has the values of its secrets cleared (they are
+given again for the environment as it is now), and one whose `targetUrl` changes without a new `token` loses its
+token. A job is given a secret it asks for
 only when its run is trusted and the secret's scope is met:
 
 | Scope | Given when |

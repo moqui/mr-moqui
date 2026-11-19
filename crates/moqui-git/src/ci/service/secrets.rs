@@ -344,6 +344,14 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         return none();
     }
     let creating = existing.is_none();
+    // what gave the secrets before: a change that widens it takes them away (below)
+    let before = existing.as_ref().map(|row| {
+        (
+            field(row, "allowedRefs").unwrap_or_default(),
+            is_yes(row, "approvalRequired"),
+            field(row, "targetUrl"),
+        )
+    });
     let mut row = match existing {
         Some(row) => row,
         None => {
@@ -405,10 +413,47 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if let Some(token) = text(parameters, "token") {
         row.set("targetToken", Value::string(token));
     }
+    let mut cleared = Vec::new();
+    if let Some((refs_before, approval_before, target_before)) = &before {
+        // a new address takes no token given for the old one (SEC-TLS-116's rule)
+        if text(parameters, "token").is_none()
+            && field(&row, "targetUrl") != *target_before
+            && field(&row, "targetToken").is_some()
+        {
+            row.set("targetToken", Value::Null);
+            cleared.push("the target's token".to_string());
+        }
+        // a secret is given to the runs the environment allows: who widens that (a ref allowedRefs did not name, or
+        // approval no longer required) gives it again, so whoever edits does not hand on a value another maintainer
+        // stored, as store#CiSecret refuses to move a secret without a new value (SEC-GIT-91)
+        let named: Vec<&str> = refs_before.split_whitespace().collect();
+        let refs_now = field(&row, "allowedRefs").unwrap_or_default();
+        let widened = refs_now.split_whitespace().any(|pattern| !named.contains(&pattern));
+        let relaxed = *approval_before && !is_yes(&row, "approvalRequired");
+        if widened || relaxed {
+            let id = field(&row, "environmentId").unwrap_or_default();
+            let emptied = facade
+                .find(CI_SECRET)?
+                .eq("environmentId", Value::string(&id))
+                .condition(Condition::is_not_null("secretValue"))
+                .update_all([("secretValue".to_string(), Value::Null)])?;
+            if emptied > 0 {
+                cleared.push(format!("the values of its {emptied} secrets"));
+            }
+        }
+    }
     if creating {
         row.create(facade)?;
     } else {
         row.update(facade)?;
+    }
+    if !cleared.is_empty() {
+        moqui_core::context::ExecutionContext::with_current(|ec| {
+            ec.message().add_message(format!(
+                "The change cleared {}: give them again for the environment as it is now",
+                cleared.join(" and ")
+            ));
+        });
     }
     Ok(out([("environmentId", field_value(&row, "environmentId"))]))
 }
