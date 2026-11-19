@@ -74,7 +74,8 @@ fn online_state<'a>(
 }
 
 /// The accounts (each with its device mode), the current one, whether it is signed in, the key store (`os` or `file`),
-/// the newest `clientApi` this app knows and the build's device mode (`choose` has the sign-in ask). No key.
+/// whether the device has a secure lock screen (null where the app cannot tell), the newest `clientApi` this app knows
+/// and the build's device mode (`choose` has the sign-in ask). No key.
 pub fn state_json(state: &ClientState) -> Value {
     // the accounts as they are now, read without holding them while the keys are looked up
     let (current, accounts) = {
@@ -104,6 +105,7 @@ pub fn state_json(state: &ClientState) -> Value {
         "current": current,
         "signedIn": signed_in,
         "keyStore": state.core.keys().kind,
+        "deviceSecure": state.shell.device_secure(),
         "clientApi": moqui_client::login::CLIENT_API,
         "deviceMode": state.core.conf().device_mode.as_str(),
     })
@@ -404,21 +406,32 @@ pub async fn client_send_code(
     .await
 }
 
-/// Revoke `key` of `account` on its server, when the app can reach it; a failure is logged, and the key goes here
-/// all the same.
+/// Revoke `key` of `account` on its server, when the app can reach it; the key goes here all the same. One the server
+/// did not hear of (the app could not make requests, or the server did not answer) is kept, sealed as the keys are, and
+/// revoked at the outbox's next pass that reaches the server (`moqui_client::login::revoke_pending`), else it would stay
+/// good there for up to 90 days (plans/Security-Review.md SEC-CLI-108).
 async fn revoke(state: &ClientState, account: &Account, key: String) {
+    let pending = |key: &str| {
+        let now = moqui_client::sync::outbox::now_ms();
+        if let Err(err) = state.core.keys().add_pending_revoke(&account.server, key, now) {
+            tracing::warn!("The device key of {} is not kept to revoke later: {err}", account.id);
+        }
+    };
     if !state.shell.network_ready() {
+        pending(&key);
         return;
     }
     let shell = Arc::clone(&state.shell);
     let leaving = account.clone();
+    let sent = key.clone();
     let revoked = blocking(move || {
-        shell.account_signing_out(&leaving, &key);
-        moqui_client::login::sign_out(&leaving.server, &key).map_err(|err| err.to_string())
+        shell.account_signing_out(&leaving, &sent);
+        moqui_client::login::sign_out(&leaving.server, &sent).map_err(|err| err.to_string())
     })
     .await;
     if let Err(err) = revoked {
-        tracing::warn!("The device key of {} was not revoked on the server: {err}", account.id);
+        tracing::warn!("The device key of {} was not revoked on the server, and is kept to revoke later: {err}", account.id);
+        pending(&key);
     }
 }
 

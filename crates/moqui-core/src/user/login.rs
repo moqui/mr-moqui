@@ -809,12 +809,74 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
         return Err(refused_credential());
     };
     recorded_login(&text_field(&account, "username"), false)?;
-    session::set_login_key_kind(Some(LoginKeyKind::of(&row)));
+    let kind = LoginKeyKind::of(&row);
+    session::set_login_key_kind(Some(kind));
+    if kind == LoginKeyKind::Device {
+        session::set_device_key(Some(hashed.clone()));
+        restore_key_stamps(&row, &user_id);
+    }
     // a device's key shows when it was last used, in the user's device list (plans/Mobile-Desktop.md, MD3)
     if !text_field(&row, "deviceName").is_empty() {
         note_key_used(&facade, &row, &hashed);
     }
     Ok(())
+}
+
+/// A re-authentication made in a request signed in by this device's key, which the key's row keeps, is this request's
+/// too: the desktop and mobile clients sign every request in by the key, each a session of its own, so a
+/// re-authentication kept only in the session never counted there, and every action behind `require#RecentAuth` failed
+/// in the apps (plans/Security-Review.md SEC-CLI-107). The session's own later stamp stays.
+fn restore_key_stamps(row: &EntityValue, user_id: &str) {
+    if let Some(at) = field_millis(row, "lastAuthDate") {
+        keep_later_stamp(LAST_AUTH, at, user_id);
+    }
+    if let Some(at) = field_millis(row, "reauthPasswordDate") {
+        if (0..=REAUTH_PASSWORD_MILLIS).contains(&(now_millis() - at)) {
+            keep_later_stamp(REAUTH_PASSWORD, at, user_id);
+        }
+    }
+}
+
+/// Set the stamp attribute `name` to `at` for `user_id`, unless the session holds a later one of that user.
+fn keep_later_stamp(name: &str, at: i64, user_id: &str) {
+    let later = session::session_attribute(name)
+        .and_then(|text| {
+            text.split_once(' ')
+                .map(|(millis, owner)| (millis.parse::<i64>().ok(), owner == user_id))
+        })
+        .is_some_and(|(noted, same)| same && noted.is_some_and(|noted| noted >= at));
+    if !later {
+        session::set_session_attribute(name, Some(&format!("{at} {user_id}")));
+    }
+}
+
+/// Keep `fields`, a re-authentication's stamps, on the device's key this request signed in by, for the key's next
+/// requests ([`restore_key_stamps`]); nothing for any other login. In a transaction of its own, as [`note_key_used`]: the
+/// re-authentication stands whatever happens to the note.
+fn note_on_device_key(fields: &[(&str, Value)]) {
+    let Some(hashed) = session::device_key() else {
+        return;
+    };
+    let _authz = without_authz();
+    let facade = match entity_facade() {
+        Ok(facade) => facade,
+        Err(err) => {
+            tracing::warn!("A device key's re-authentication was not kept for its next requests: {err}");
+            return;
+        }
+    };
+    let written = facade.transactions_for(USER_LOGIN_KEY).and_then(|tx| {
+        tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+            facade
+                .find(USER_LOGIN_KEY)?
+                .eq("loginKey", Value::string(&hashed))
+                .update_all(fields.iter().map(|(name, value)| ((*name).to_string(), value.clone())))
+                .map(|_| ())
+        })
+    });
+    if let Err(err) = written {
+        tracing::warn!("A device key's re-authentication was not kept for its next requests: {err}");
+    }
 }
 
 /// Write a device key's `lastUsedDate`, at most once a minute (a client signs every request in by its key), in a
@@ -1324,7 +1386,8 @@ pub fn logout() -> Result<(), Error> {
 /// The session attribute of the session's last sign-in that proved who its user is: `<millis> <userId>`. A password
 /// login (the form, an SSH or terminal password, Basic credentials), the code that finishes a second factor, an SSO
 /// login and a re-authentication ([`super::reauthenticate`]) set it. A login key, an API key, an app password and an
-/// internal login (jobs, `internalLoginUser`) do not: they are not a person signing in.
+/// internal login (jobs, `internalLoginUser`) do not: they are not a person signing in. A re-authentication in a
+/// request a device's key signed in is kept on the key too, which its next requests take ([`restore_key_stamps`]).
 pub(crate) const LAST_AUTH: &str = "moquiLastAuth";
 /// The password a re-authentication checked while it waits for the code: `<millis> <userId>`.
 pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
@@ -1356,6 +1419,7 @@ fn note_recent_auth_at(user_id: &str, at: i64) {
     }
     session::set_session_attribute(LAST_AUTH, Some(&format!("{at} {user_id}")));
     session::set_session_attribute(REAUTH_PASSWORD, None);
+    note_on_device_key(&[("lastAuthDate", stamp_value(at)), ("reauthPasswordDate", Value::Null)]);
 }
 
 /// A login of `user_id` drops the sign-in stamps of another user, so an account switch in one session (a key, an
@@ -1458,6 +1522,7 @@ fn reauth_password(user_id: &str, password: &str) -> Result<(), Error> {
         )?;
     }
     session::set_session_attribute(REAUTH_PASSWORD, Some(&format!("{now} {user_id}")));
+    note_on_device_key(&[("reauthPasswordDate", stamp_value(now))]);
     Ok(())
 }
 

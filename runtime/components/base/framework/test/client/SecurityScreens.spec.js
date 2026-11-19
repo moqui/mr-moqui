@@ -97,6 +97,26 @@ feature("a GET of a writing transition that another site started is refused; the
     },
 })
 
+// plans/Security-Review-Low.md SEC-CLI-102: the apps' pages sign in every request by a device key, and the desktop's
+// host derives the `Sec-Fetch-Site` its runtime does not send a custom scheme, so a key-signed GET of a writing transition
+// that says another site started it (a frame inside the page) is refused as a browser's is; the page's own, and a
+// program's with no fetch metadata, run. The login key is ClientFixtures' (sec.key.http).
+const KEY_USER = "sec.key.http"
+const KEY_PASSWORD = "SecKeyHttp1!!"
+const KEY = "sec-test-login-key-fixed-40-chars-value"
+feature("a key-signed GET of a writing transition that says another site started it is refused", {
+    when() {
+        requireFixture(KEY_USER, KEY_PASSWORD)
+        const get = (headers) => session().get("/Login/logout", { loginKey: KEY, headers })
+        return { crossSite: get({ "Sec-Fetch-Site": "cross-site" }), own: get({ "Sec-Fetch-Site": "same-origin" }), program: get({}) }
+    },
+    then({ crossSite, own, program }) {
+        crossSite.status == 403
+        own.status != 403
+        program.status != 403
+    },
+})
+
 // plans/Security-Review-Low.md SEC-RTE-08, SEC-ADM-09: the read-only transitions that changed state on a GET are not
 // read-only now. /sso/logout another site started is refused and the session stays signed in; setPrefGoLast takes only a
 // POST, so a GET with the preference in its URL sets nothing; the DataDocument field tree's createFieldDynamic is a POST

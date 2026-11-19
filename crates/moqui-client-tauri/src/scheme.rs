@@ -69,6 +69,14 @@ pub trait SchemeHooks {
         let _ = document;
         response
     }
+
+    /// The `Sec-Fetch-Site` of a page's request on `origin`, where the runtime gives the host a sign of it (on CEF,
+    /// [`moqui_client::proxy::site_by_origin`]); the server then refuses a GET of a writing transition that a frame
+    /// inside the page started (plans/Security-Review.md SEC-CLI-102). None where it cannot tell (Android's WebView).
+    fn fetch_site(&self, headers: &HeaderMap, origin: &str) -> Option<&'static str> {
+        let _ = (headers, origin);
+        None
+    }
 }
 
 /// The hooks of an app that changes nothing.
@@ -264,6 +272,7 @@ pub fn answer(
     } else {
         None
     };
+    let site = hooks.fetch_site(request.headers(), origin);
     // the crypto device whose store passphrase is asked for
     let store_key_device = (request.method() == tauri::http::Method::POST && bare == STORE_KEY_PATH)
         .then(|| store_key_device(request.body()))
@@ -282,7 +291,7 @@ pub fn answer(
         state
             .core
             .proxy()
-            .send(&account.server, key.as_deref(), origin, forwarded)
+            .send_from(&account.server, key.as_deref(), origin, forwarded, site)
             .map_err(|err| err.to_string())
     } else {
         Err("this app cannot make secure connections".to_string())

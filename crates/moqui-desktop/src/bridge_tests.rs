@@ -37,7 +37,7 @@ fn the_capability_pattern_is_the_nodes_origin_alone() {
 
 #[test]
 fn the_permissions_name_the_commands_of_the_app_manifest() {
-    for command in ["notify", "set_counts", "set_presence", "open_external"] {
+    for command in ["notify", "set_counts", "set_presence", "open_external", "node_setup_secret", "secure_screen"] {
         let permission = format!("allow-{}", command.replace('_', "-"));
         assert!(PERMISSIONS.contains(&permission.as_str()), "{permission}");
     }
@@ -177,10 +177,12 @@ fn the_capability_resolves_against_the_built_acl_to_the_bridge_commands_only() {
     assert_eq!(
         commands,
         [
+            "node_setup_secret",
             "notify",
             "notify_clear",
             "open_external",
             "plugin:notification|is_permission_granted",
+            "secure_screen",
             "set_comms_root",
             "set_counts",
             "set_presence"
@@ -277,4 +279,15 @@ fn a_tag_is_one_notification_id_per_account() {
     // a node's pages (configurations 1 and 2) may clear their notifications too
     assert!(PERMISSIONS.contains(&"allow-notify-clear"));
     assert!(SCRIPT.contains("notifyClear: (tag) => invoke(\"notify_clear\""));
+}
+
+/// SEC-CLI-117: a window's screen protection is held while any reason holds it, and let go when the last one goes.
+#[test]
+fn the_screen_protection_is_held_while_any_reason_holds_it() {
+    let mut reasons = std::collections::BTreeSet::new();
+    assert!(hold(&mut reasons, "viewOnce", true));
+    assert!(hold(&mut reasons, "room:R1", true));
+    assert!(hold(&mut reasons, "viewOnce", false), "the room still holds it");
+    assert!(!hold(&mut reasons, "room:R1", false));
+    assert!(!hold(&mut reasons, "room:R1", false), "letting go twice is no error");
 }

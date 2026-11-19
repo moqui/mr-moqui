@@ -26,7 +26,7 @@
 //! with the save dialog ([`on_download`]), with the page's cookies, streamed to disk; a notification says when it is
 //! done.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Mutex, OnceLock};
 
 use tauri::ipc::CapabilityBuilder;
@@ -39,13 +39,15 @@ pub(crate) const SCRIPT: &str = include_str!("bridge.js");
 
 /// The permissions of the node's origin: the app commands of `build.rs` (`allow-` and the command with `-` for `_`),
 /// and the notification plugin's permission check, which its `window.Notification` stand-in asks on every page.
-const PERMISSIONS: [&str; 7] = [
+const PERMISSIONS: [&str; 9] = [
     "allow-notify",
     "allow-notify-clear",
     "allow-set-counts",
     "allow-set-presence",
     "allow-open-external",
     "allow-set-comms-root",
+    "allow-node-setup-secret",
+    "allow-secure-screen",
     "notification:allow-is-permission-granted",
 ];
 
@@ -63,6 +65,8 @@ const URL_MAX: usize = 8192;
 pub(crate) struct Bridge {
     node: OnceLock<Url>,
     tray: Mutex<TrayState>,
+    /// The reasons each window's screen protection is held for, by window label ([`secure_screen`]).
+    secured: Mutex<HashMap<String, BTreeSet<String>>>,
 }
 
 #[derive(Default)]
@@ -87,6 +91,8 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             set_presence,
             open_external,
             set_comms_root,
+            node_setup_secret,
+            secure_screen,
             crate::splash::restart_node,
             moqui_client_tauri::client_state,
             moqui_client_tauri::client_sign_in,
@@ -358,6 +364,55 @@ pub(crate) fn set_comms_root(app: AppHandle, root: String) -> Result<(), String>
     }
     crate::os::comms_root_reported(&app, &root);
     Ok(())
+}
+
+/// The setup secret of a sidecar's first administrator, for its window's Login form (`bridge.js`): the sidecar asks
+/// every caller for it, its window too, as any account of the computer reaches its loopback port, and only the app and
+/// its window have it (plans/Security-Review.md SEC-CLI-101). None for the node in process, whose window needs none.
+#[tauri::command]
+pub(crate) fn node_setup_secret(app: AppHandle) -> Option<String> {
+    let sidecar = crate::node_mode(&app) == Some(crate::node::Mode::Sidecar);
+    sidecar
+        .then(crate::node::setup_secret)
+        .filter(|secret| !secret.is_empty())
+        .map(str::to_string)
+}
+
+/// Whether the OS can keep a window out of screenshots and screen recording: macOS (`NSWindow.sharingType`) and Windows
+/// (`WDA_EXCLUDEFROMCAPTURE`); a Linux desktop cannot, where `bridge.js` offers no `secureScreen`.
+const SCREEN_PROTECTION: bool = cfg!(any(target_os = "macos", windows));
+
+/// Screen protection of the asking page's window for `reason` (`viewOnce` while a view-once photo is open, a room's
+/// or the app's while such a setting holds), on or off: the window is kept out of screenshots and screen recording while
+/// any reason holds it, as the phone's `FLAG_SECURE` (plans/Security-Review.md SEC-CLI-117). Whether it is on now:
+/// false where the OS has none, so the page says a screenshot cannot be stopped there.
+#[tauri::command]
+pub(crate) fn secure_screen(app: AppHandle, webview: Webview, reason: String, on: bool) -> bool {
+    let reason = clip(&reason, 100);
+    if reason.is_empty() {
+        return false;
+    }
+    let window = webview.window();
+    let held = {
+        let state = app.state::<Bridge>();
+        let mut secured = moqui_lib::sync::lock(&state.secured);
+        hold(secured.entry(window.label().to_string()).or_default(), &reason, on)
+    };
+    if let Err(err) = window.set_content_protected(held) {
+        tracing::warn!("The window's screen protection was not set: {err}");
+        return false;
+    }
+    held && SCREEN_PROTECTION
+}
+
+/// `reason` held or let go in `reasons`; whether any reason holds the protection now.
+pub(crate) fn hold(reasons: &mut BTreeSet<String>, reason: &str, on: bool) -> bool {
+    if on {
+        reasons.insert(reason.to_string());
+    } else {
+        reasons.remove(reason);
+    }
+    !reasons.is_empty()
 }
 
 /// `/qapps/` and a path of letters, digits, `_`, `-` and `/`, at most 200 characters.

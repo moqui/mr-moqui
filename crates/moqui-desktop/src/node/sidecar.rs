@@ -81,6 +81,11 @@ impl Node {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // the first administrator's setup secret, which the app hands its window (super::setup_properties)
+        let secret = super::setup_secret();
+        if !secret.is_empty() {
+            command.env(super::SETUP_SECRET_ENV, secret);
+        }
         // A process group of its own: a signal to the app's group (ctrl-c in a terminal, `cargo tauri dev` replacing
         // the app) reaches only the app, and its end closes the node's stdin, which stops the node gracefully. Killed
         // with the app's group, the node would leave its Postgres for the next start to take over.

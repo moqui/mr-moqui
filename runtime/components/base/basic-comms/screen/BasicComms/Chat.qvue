@@ -4929,7 +4929,7 @@ const chatRoom = {
         // Open in maps: the phone's maps app (geo:) in the Android app, OpenStreetMap elsewhere
         openPlace(place) {
             const desktop = window.moquiDesktop;
-            const phone = !!(desktop && typeof desktop.secureScreen === 'function' && typeof desktop.openExternal === 'function');
+            const phone = !!(desktop && typeof desktop.dialAccount === 'function' && typeof desktop.openExternal === 'function');
             if (phone) { Promise.resolve(desktop.openExternal(moqui.chat.place.geoUri(place))).catch(() => window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener')); return; }
             window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener');
         },

@@ -62,6 +62,11 @@ along with this software (see the LICENSE.md file). If not, see
                             <q-item-section avatar><q-icon name="sym_o_warning" color="warning"></q-icon></q-item-section>
                             <q-item-section><q-item-label caption>{{t('No key store on this computer: the device key is kept in a file only you can read.')}}</q-item-label></q-item-section>
                         </q-item>
+                        <!-- the phone has no secure lock screen: whoever holds it opens every account here (SEC-CLI-113) -->
+                        <q-item v-if="deviceSecure === false" class="m-shell-no-lock">
+                            <q-item-section avatar><q-icon name="sym_o_lock_open" color="warning"></q-icon></q-item-section>
+                            <q-item-section><q-item-label caption>{{t('This phone has no screen lock: anyone who holds it opens your accounts in this app. Set a PIN, pattern or password in the phone\'s settings.')}}</q-item-label></q-item-section>
+                        </q-item>
                         <q-item clickable v-close-popup @click="openDevices">
                             <q-item-section avatar><q-icon name="sym_o_devices"></q-icon></q-item-section>
                             <q-item-section>{{t('Apps and devices')}}</q-item-section>
@@ -419,6 +424,8 @@ module.exports = {
         paletteKeyHint() { return moqui.keymap && moqui.keymap.isMac ? '⌘K' : 'Ctrl K'; },
         currentId() { return this.state && this.state.current; },
         keyStore() { return this.state && this.state.keyStore; },
+        // false only where the host tells (the phone), null on the desktop
+        deviceSecure() { return this.state ? this.state.deviceSecure : null; },
         // the server's clientApi is newer than this app knows (moqui_client::login::CLIENT_API)
         updateNeeded() {
             const server = (this.config && this.config.server) || {};

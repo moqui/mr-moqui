@@ -911,6 +911,62 @@ fn a_reauthentication_checks_the_password_and_counts_a_wrong_one() {
     session::reset_session();
 }
 
+/// SEC-CLI-107: the apps sign every request in by the device's key, each a session of its own, so a re-authentication
+/// made in one request is kept on the key and the key's next requests have it: the checked password while it waits for
+/// the code, then the recent sign-in. Another key of the user, and a session's key, carry none, and a stamp is as old
+/// as it was.
+#[test]
+fn a_device_keys_reauthentication_counts_in_its_next_requests_and_no_others() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    let device = get_device_key("Ada's laptop").unwrap();
+    let other = get_device_key("Ada's phone").unwrap();
+    let session_key = get_login_key(None).unwrap();
+    session::reset_session();
+
+    // a request of the device: its password checked; the next request has it, waiting for the code
+    login_user_key(&device).unwrap();
+    assert!(!recent_auth(300_000));
+    check_reauth_password("ada", "Secret1!").unwrap();
+    session::reset_session();
+    login_user_key(&device).unwrap();
+    assert!(reauth_password_checked("ada"));
+    assert!(!recent_auth(300_000));
+    // the code finishes it: the next request is a recent sign-in, and the checked password is spent
+    note_recent_auth("ada");
+    session::reset_session();
+    login_user_key(&device).unwrap();
+    assert!(recent_auth(300_000));
+    assert!(!reauth_password_checked("ada"));
+    session::reset_session();
+
+    // another key of the user, and a session's key (whose re-authentication is kept nowhere), have none
+    login_user_key(&other).unwrap();
+    assert!(!recent_auth(300_000));
+    session::reset_session();
+    login_user_key(&session_key).unwrap();
+    note_recent_auth("ada");
+    session::reset_session();
+    login_user_key(&session_key).unwrap();
+    assert!(!recent_auth(300_000));
+    session::reset_session();
+
+    // a stamp an hour old is an hour old
+    let hashed = password::hash_login_key(&device).unwrap();
+    facade
+        .find(USER_LOGIN_KEY)
+        .unwrap()
+        .eq("loginKey", Value::string(hashed))
+        .update_all([("lastAuthDate".to_string(), stamp_value(now_millis() - 3_600_000))])
+        .unwrap();
+    login_user_key(&device).unwrap();
+    assert!(!recent_auth(300_000));
+    assert!(recent_auth(2 * 3_600_000));
+    session::reset_session();
+}
+
 #[test]
 fn change_password_stores_argon2_and_rejects_history() {
     let (ctx, facade) = open_ctx();

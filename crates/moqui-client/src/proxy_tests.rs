@@ -203,6 +203,52 @@ fn a_failed_request_names_its_server_not_its_path_or_query() {
     }
 }
 
+/// SEC-CLI-102: on CEF the main frame's requests carry its origin (the runtime adds it), so the app's origin is the
+/// page's own request and anything else, none included, a frame inside it.
+#[test]
+fn a_request_with_the_apps_origin_is_the_pages_own_and_any_other_is_cross_site() {
+    assert_eq!(site_by_origin(Some(ORIGIN), ORIGIN), "same-origin");
+    assert_eq!(site_by_origin(Some(&ORIGIN.to_ascii_uppercase()), ORIGIN), "same-origin");
+    assert_eq!(site_by_origin(None, ORIGIN), "cross-site");
+    assert_eq!(site_by_origin(Some("null"), ORIGIN), "cross-site");
+    assert_eq!(site_by_origin(Some("https://widget.example.com"), ORIGIN), "cross-site");
+}
+
+/// The derived `Sec-Fetch-Site` reaches the server, and a page's own does not.
+#[test]
+fn the_hosts_fetch_site_goes_on_and_the_pages_does_not() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut seen = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        while !seen.windows(4).any(|window| window == b"\r\n\r\n") {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            seen.extend_from_slice(&buffer[..read]);
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        String::from_utf8_lossy(&seen).to_ascii_lowercase()
+    });
+    let request = Request {
+        method: "GET".to_string(),
+        path: "/apps/x".to_string(),
+        headers: pairs(&[("Sec-Fetch-Dest", "image")]),
+        body: Vec::new(),
+    };
+    let upstream = Proxy::new().unwrap().send_from(&base, Some("k"), ORIGIN, request, Some("cross-site")).unwrap();
+    assert_eq!(upstream.status, 200);
+    let seen = server.join().unwrap();
+    assert!(seen.contains("sec-fetch-site: cross-site"), "{seen}");
+    assert!(!seen.contains("sec-fetch-dest"), "{seen}");
+}
+
 #[test]
 fn an_attachment_is_named_without_a_directory() {
     assert_eq!(

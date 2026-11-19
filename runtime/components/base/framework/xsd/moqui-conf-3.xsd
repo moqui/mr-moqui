@@ -1067,6 +1067,10 @@ along with this software (see the LICENSE.md file). If not, see
                     </xs:restriction>
                 </xs:simpleType>
             </xs:attribute>
+            <xs:attribute name="initial-admin-secret" type="xs:string" default="">
+                <xs:annotation><xs:documentation>The setup secret the first administrator takes, when the server's starter
+                    chooses it and hands it to its own client (the Desktop app for its sidecar): a secret of the conf,
+                    never logged; empty, the server makes one at start and writes it to its startup log.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="history-incorrect-password" type="boolean" default="false">
                 <xs:annotation><xs:documentation>Ignored: the password a login tried is never stored, as that is too much
                     security risk (UserLoginHistory.passwordUsed is removed). Kept so a Java conf that sets it is still

@@ -132,22 +132,40 @@ pub(crate) fn purpose_properties(dev: bool) -> Vec<(&'static str, String)> {
 
 /// The node's settings on every start: `user-facade/login@initial-admin-enabled` true, so the first run's /Login
 /// offers the first administrator (the default conf has it off, for a server set up from its `.env`). The node is this
-/// user's own, and the form goes once any account exists. In process the window's requests come through the scheme,
-/// not a port, so `initial-admin-local` `in-process` makes only those this machine's: another account of the computer
-/// that reaches the tray's ports needs the setup secret (SEC-CLI-101). A sidecar's window is a loopback client like any
-/// other, so it keeps the default until the app hands its window the secret.
+/// user's own, and the form goes once any account exists. Any account of the computer reaches a loopback port, so
+/// `initial-admin-local` `in-process` makes only the node's own process this machine (SEC-CLI-101): in process the
+/// window's requests come through the scheme, so they still are, and the tray's ports need the setup secret; a
+/// sidecar's window is a loopback client like any other, so the app makes the secret, hands it to the sidecar in its
+/// environment ([`SETUP_SECRET_ENV`]) and to its window (`bridge::node_setup_secret`). With no random source to make
+/// one, a sidecar keeps the default.
 pub(crate) fn setup_properties(mode: Mode) -> Vec<(&'static str, String)> {
     let mut properties = vec![(
         "moqui_conf__user_facade__login__initial_admin_enabled",
         "true".to_string(),
     )];
-    if mode == Mode::InProcess {
+    if mode == Mode::InProcess || (mode == Mode::Sidecar && !setup_secret().is_empty()) {
         properties.push((
             "moqui_conf__user_facade__login__initial_admin_local",
             "in-process".to_string(),
         ));
     }
     properties
+}
+
+/// The environment name of the sidecar's setup secret (`user-facade/login@initial-admin-secret`): in its environment,
+/// not its arguments, which every user of the computer sees in the process list.
+pub(crate) const SETUP_SECRET_ENV: &str = "moqui_conf__user_facade__login__initial_admin_secret";
+
+/// The setup secret of this run's sidecar: made once, kept in memory, an app password's form. Empty when the system
+/// has no random source.
+pub(crate) fn setup_secret() -> &'static str {
+    static SECRET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    SECRET.get_or_init(|| {
+        moqui_core::user::new_app_password().unwrap_or_else(|err| {
+            tracing::error!("No setup secret for the sidecar's first administrator: {err}");
+            String::new()
+        })
+    })
 }
 
 impl Mode {

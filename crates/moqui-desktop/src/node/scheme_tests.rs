@@ -38,6 +38,7 @@ fn only_what_the_host_may_say_is_kept_from_a_page_s_headers() {
         "X-Moqui-Tunnel",
         "login_key",
         "Content-Length",
+        "Sec-Fetch-Site",
     ] {
         assert!(!passed_on(name), "{name}");
     }
@@ -87,8 +88,29 @@ fn a_navigation_from_the_splash_page_reaches_the_node_without_its_origin() {
     ];
     assert_eq!(
         forwarded(sent.clone(), true),
-        [("Accept".to_string(), "text/html".to_string())]
+        [
+            ("Accept".to_string(), "text/html".to_string()),
+            ("Sec-Fetch-Site".to_string(), "cross-site".to_string())
+        ]
     );
     // the node's own pages keep theirs, for its CORS and CSRF checks
-    assert_eq!(forwarded(sent, false).len(), 2);
+    assert_eq!(forwarded(sent, false).len(), 3);
+}
+
+/// SEC-CLI-102: the runtime gives the main frame's requests the node's origin, so those are `same-origin` to the node
+/// and any other (a frame inside the page, which sends none) is `cross-site`, whose GET of a writing transition the
+/// node refuses; the page's own `Sec-Fetch-Site` is not taken.
+#[test]
+fn the_node_hears_whether_the_pages_main_frame_sent_a_request() {
+    let site = |sent: &[(&str, &str)]| {
+        let sent = sent.iter().map(|(name, value)| (name.to_string(), value.to_string())).collect();
+        forwarded(sent, false)
+            .into_iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("sec-fetch-site"))
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(site(&[("Origin", NODE_ORIGIN)]), ["same-origin"]);
+    assert_eq!(site(&[("Accept", "image/webp")]), ["cross-site"]);
+    assert_eq!(site(&[("Origin", "https://widget.example.com"), ("Sec-Fetch-Site", "same-origin")]), ["cross-site"]);
 }

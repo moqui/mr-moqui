@@ -32,6 +32,8 @@ fn main() {
         "set_presence",
         "open_external",
         "set_comms_root",
+        "node_setup_secret",
+        "secure_screen",
         "restart_node",
         "client_state",
         "client_sign_in",

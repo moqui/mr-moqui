@@ -20,7 +20,7 @@
 
 use moqui_client::proxy::Upstream;
 use moqui_client_tauri::scheme::{answered, run, SchemeHooks};
-use tauri::http::{Response, StatusCode};
+use tauri::http::{HeaderMap, Response, StatusCode};
 use tauri::{AppHandle, UriSchemeContext, UriSchemeResponder};
 
 use super::{APP_ORIGIN, SHELL_ORIGIN};
@@ -41,6 +41,13 @@ impl SchemeHooks for Downloads<'_> {
             .status(StatusCode::NO_CONTENT)
             .body(Vec::new())
             .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered")))
+    }
+
+    /// CEF gives a main frame's requests its origin, and a frame inside the page none of the app's: a GET of a writing
+    /// transition from such a frame is refused at the server (SEC-CLI-102).
+    fn fetch_site(&self, headers: &HeaderMap, origin: &str) -> Option<&'static str> {
+        let sent = headers.get("origin").and_then(|value| value.to_str().ok());
+        Some(moqui_client::proxy::site_by_origin(sent, origin))
     }
 }
 

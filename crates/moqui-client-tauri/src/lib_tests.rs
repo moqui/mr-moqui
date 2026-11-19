@@ -30,6 +30,8 @@ use super::*;
 pub(crate) struct TestHost {
     client: Mutex<Option<Arc<Client>>>,
     pub(crate) shown: Mutex<Vec<String>>,
+    /// What the host answers of the device's screen lock.
+    pub(crate) secure: Mutex<Option<bool>>,
 }
 
 impl ClientHost for TestHost {
@@ -80,6 +82,10 @@ impl ShellHost for TestHost {
     fn network_ready(&self) -> bool {
         false
     }
+
+    fn device_secure(&self) -> Option<bool> {
+        *moqui_lib::sync::lock(&self.secure)
+    }
 }
 
 pub(crate) struct Fixture {
@@ -120,6 +126,7 @@ pub(crate) fn fixture(name: &str, signed_in: bool) -> Fixture {
     let host = Arc::new(TestHost {
         client: Mutex::new(Some(Arc::clone(&client))),
         shown: Mutex::new(Vec::new()),
+        secure: Mutex::new(None),
     });
     let files = Assets::new(dir.join("shell"), dir.join("webroot"));
     let state = ClientState::new(client, host.clone(), host.clone(), Box::new(files));
@@ -173,4 +180,17 @@ fn a_removed_account_is_cleared_once_by_each_origin() {
     cleared.add("a2");
     assert_eq!(cleared.shell, vec!["a1", "a2"]);
     assert_eq!(cleared.app, vec!["a1", "a2"]);
+}
+
+/// SEC-CLI-113: the shell hears whether the device has a secure lock screen where the host tells (the phone), and warns
+/// when it has none; where it cannot tell (the desktop) it hears null.
+#[test]
+fn the_shell_hears_whether_the_device_has_a_screen_lock() {
+    let Fixture { state, dir, host, .. } = fixture("device-secure", false);
+    assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Null);
+    *moqui_lib::sync::lock(&host.secure) = Some(false);
+    assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Bool(false));
+    *moqui_lib::sync::lock(&host.secure) = Some(true);
+    assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Bool(true));
+    let _ = std::fs::remove_dir_all(&dir);
 }

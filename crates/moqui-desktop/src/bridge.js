@@ -121,6 +121,9 @@
         setTimeout(() => this.ended(1000), 0);
     };
 
+    // screen protection (bridge.rs secure_screen, SEC-CLI-117): macOS and Windows keep a window out of screenshots and
+    // screen recording, a Linux desktop cannot, where the page has none to ask and says a screenshot cannot be stopped
+    const screenProtection = !/\bLinux\b/.test(navigator.userAgent || "");
     const pageCommands = {
         notify: (options) => {
             const given = options || {};
@@ -144,12 +147,33 @@
         // it has, as the page finds it; a call rings with a native notification when not (WebrootCall.js)
         windowSeen: () => !document.hidden && (typeof window.__moquiWindowFocused === "boolean" ? window.__moquiWindowFocused : document.hasFocus())
     };
+    // for a reason (a view-once photo open, a room's or the app's setting): whether the window is protected now
+    if (screenProtection) {
+        pageCommands.secureScreen = (reason, on) => invoke("secure_screen", { reason: String(reason || ""), on: on === true }).then((held) => held === true, () => false);
+    }
     if (node) {
         // the node's Comms app, which the host's mailto:, tel: and sip: links open (WebrootVue.qvt.js, on load)
         // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket)
         const own = { setCommsRoot: (root) => invoke("set_comms_root", { root: String(root || "") }) };
         if (inProcess) own.socket = (url) => new HostSocket(url);
         window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, own));
+        // A sidecar asks every caller for its first administrator's setup secret, its window too (any account of the
+        // computer reaches its loopback port, SEC-CLI-101): the host made it and hands it here only, to the Login form.
+        if (!inProcess) {
+            const fillSetupSecret = () => {
+                const field = document.querySelector('#InitialAdminForm input[name="setupSecret"]');
+                if (!field) return;
+                invoke("node_setup_secret").then((secret) => {
+                    if (!secret) return;
+                    field.value = String(secret);
+                    field.type = "hidden";
+                    const hint = field.nextElementSibling;
+                    if (hint && hint.tagName === "P") hint.hidden = true;
+                });
+            };
+            if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fillSetupSecret);
+            else fillSetupSecret();
+        }
         return;
     }
     const socket = (url) => new HostSocket(url);

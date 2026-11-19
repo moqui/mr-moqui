@@ -1355,6 +1355,8 @@ module.exports = {
         paletteKeyHint() { return moqui.keymap && moqui.keymap.isMac ? '⌘K' : 'Ctrl K'; },
         currentId() { return this.state && this.state.current; },
         keyStore() { return this.state && this.state.keyStore; },
+        // false only where the host tells (the phone), null on the desktop
+        deviceSecure() { return this.state ? this.state.deviceSecure : null; },
         // the server's clientApi is newer than this app knows (moqui_client::login::CLIENT_API)
         updateNeeded() {
             const server = (this.config && this.config.server) || {};
@@ -1980,6 +1982,36 @@ module.exports = {
                                                 _: 1
                                               }))
                                             : _createCommentVNode("", true),
+                                          (_ctx.deviceSecure === false)
+                                            ? (_openBlock(), _createBlock(_component_q_item, {
+                                                key: 1,
+                                                class: "m-shell-no-lock"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_icon, {
+                                                        name: "sym_o_lock_open",
+                                                        color: "warning"
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  }),
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('This phone has no screen lock: anyone who holds it opens your accounts in this app. Set a PIN, pattern or password in the phone\'s settings.')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 1
+                                                  })
+                                                ]),
+                                                _: 1
+                                              }))
+                                            : _createCommentVNode("", true),
                                           _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                             clickable: "",
                                             onClick: _ctx.openDevices
@@ -2004,7 +2036,7 @@ module.exports = {
                                           ]),
                                           (_ctx.componentOf('devices'))
                                             ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 1,
+                                                key: 2,
                                                 clickable: "",
                                                 class: "m-shell-crypto-devices",
                                                 onClick: $event => (_ctx.setUrl(_ctx.commsLink + '/Settings/Devices'))
@@ -2030,7 +2062,7 @@ module.exports = {
                                             : _createCommentVNode("", true),
                                           (_ctx.pushCheckable)
                                             ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                key: 2,
+                                                key: 3,
                                                 clickable: "",
                                                 onClick: _ctx.openPushCheck
                                               }, {
@@ -7694,7 +7726,7 @@ const chatRoom = {
         // Open in maps: the phone's maps app (geo:) in the Android app, OpenStreetMap elsewhere
         openPlace(place) {
             const desktop = window.moquiDesktop;
-            const phone = !!(desktop && typeof desktop.secureScreen === 'function' && typeof desktop.openExternal === 'function');
+            const phone = !!(desktop && typeof desktop.dialAccount === 'function' && typeof desktop.openExternal === 'function');
             if (phone) { Promise.resolve(desktop.openExternal(moqui.chat.place.geoUri(place))).catch(() => window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener')); return; }
             window.open(moqui.chat.place.osmUrl(place), '_blank', 'noopener');
         },

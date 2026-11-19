@@ -578,7 +578,11 @@ While the only accounts are the seeded ones nobody logs in as (`_NA_` and the ag
 ([the first administrator](#the-first-administrator)). Once any person has an account, the form is gone and the
 service refuses the call. A request from the server's own machine (a loopback peer, straight to the listener, with no
 proxy's forwarding header) creates it as is; from any other address the form asks for the one-time setup secret the
-server writes to its startup log while no account exists, and a restart makes a new one.
+server writes to its startup log while no account exists, and a restart makes a new one. On a machine other people
+sign in to, `user-facade/login@initial-admin-local` `in-process` makes only a request of the server's own process this
+machine's (the Desktop app's node sets it), and a starter that hands the secret to its own client sets it as
+`user-facade/login@initial-admin-secret` (a secret of the conf, through its environment name), which the log then does not
+show.
 Two requests at once make one account: the create takes a row lock and asks again.
 
 | Type | What it holds |

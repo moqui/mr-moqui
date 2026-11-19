@@ -245,7 +245,7 @@ pub static CATALOG: &[Unit] = &[
     single("user-facade", Class::Live).children(&[
         single("password", Class::Live),
         single("login-key", Class::Live),
-        single("login", Class::Live),
+        single("login", Class::Live).secrets(&[("initial-admin-secret", Secret::Kept)]),
         single("authz", Class::Live).children(&[
             keyed("sealed-permission", &["name"], Class::Live),
             keyed("privileged-group", &["name"], Class::Live),

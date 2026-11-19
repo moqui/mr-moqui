@@ -66,3 +66,39 @@ fn the_server_sync_is_read_from_the_client_config() {
     assert_eq!(boss.mail_uncovered, vec!["internal".to_string()]);
     assert_eq!(ServerSync::default().client_api, 0);
 }
+
+/// SEC-CLI-108: a key the server did not hear signed out is revoked at a later pass: one the server answers goes, one
+/// it does not stays and is tried again only after five minutes, and one past a device key's life goes untried.
+#[test]
+fn a_key_signed_out_unheard_is_revoked_at_a_later_pass() {
+    use std::cell::RefCell;
+    let dir = std::env::temp_dir().join(format!("moqui-client-revoke-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let keys = crate::keys::Keys::new(Box::new(crate::keys::FileKeyStore::new(&dir)), "file");
+    let now = 100 * 24 * 60 * 60 * 1000;
+    keys.add_pending_revoke("https://up.example.com", "up", now - 1_000).unwrap();
+    keys.add_pending_revoke("https://down.example.com", "down", now - 1_000).unwrap();
+    keys.add_pending_revoke("https://old.example.com", "old", now - crate::keys::PENDING_MILLIS - 1).unwrap();
+    let tried = RefCell::new(Vec::new());
+    let revoke = |server: &str, key: &str| -> Result<(), Error> {
+        tried.borrow_mut().push(key.to_string());
+        if server.contains("down") {
+            Err(Error::new("unreachable"))
+        } else {
+            Ok(())
+        }
+    };
+    assert_eq!(revoke_pending(&keys, now, &revoke), 1);
+    assert_eq!(tried.borrow().clone(), ["up", "down"]);
+    let left = keys.pending_revokes();
+    assert_eq!(left.iter().map(|entry| entry.key.as_str()).collect::<Vec<_>>(), ["down"]);
+    assert_eq!(left[0].tried, now);
+    // a minute later it waits; five minutes later it is tried, and answered, it goes
+    tried.borrow_mut().clear();
+    assert_eq!(revoke_pending(&keys, now + 60_000, &revoke), 0);
+    assert!(tried.borrow().is_empty());
+    let revoke_up = |_: &str, _: &str| -> Result<(), Error> { Ok(()) };
+    assert_eq!(revoke_pending(&keys, now + 5 * 60_000, &revoke_up), 1);
+    assert!(keys.pending_revokes().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

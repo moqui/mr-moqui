@@ -141,7 +141,25 @@ impl Proxy {
     /// Returns an error for a request another site started, a method a page does not send, a path that is not one on
     /// the server, or the transport's when the server does not answer.
     pub fn send(&self, base: &str, key: Option<&str>, origin: &str, request: Request) -> Result<Upstream, Error> {
-        self.send_within(base, key, origin, request, None)
+        self.forward(base, key, origin, request, None, None)
+    }
+
+    /// [`Self::send`] with the `Sec-Fetch-Site` the host derived for a page's request, which the runtimes do not give
+    /// a custom scheme ([`site_by_origin`]): the server refuses a GET of a writing transition that another site started,
+    /// as it does for a browser (plans/Security-Review.md SEC-CLI-102). The page's own `Sec-Fetch-*` never go on.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::send`].
+    pub fn send_from(
+        &self,
+        base: &str,
+        key: Option<&str>,
+        origin: &str,
+        request: Request,
+        site: Option<&'static str>,
+    ) -> Result<Upstream, Error> {
+        self.forward(base, key, origin, request, None, site)
     }
 
     /// [`Self::send`] with its own `timeout` (the whole request, its answer's body read included) in place of the
@@ -158,6 +176,18 @@ impl Proxy {
         request: Request,
         timeout: Option<Duration>,
     ) -> Result<Upstream, Error> {
+        self.forward(base, key, origin, request, timeout, None)
+    }
+
+    fn forward(
+        &self,
+        base: &str,
+        key: Option<&str>,
+        origin: &str,
+        request: Request,
+        timeout: Option<Duration>,
+        site: Option<&'static str>,
+    ) -> Result<Upstream, Error> {
         if cross_site(&request.headers, origin) {
             return Err(Error::new(format!("a request from another site: {}", request.path)));
         }
@@ -171,6 +201,9 @@ impl Proxy {
         let mut builder = self.http.request(method, &url);
         for (name, value) in request_headers(&request.headers) {
             builder = builder.header(name, value);
+        }
+        if let Some(site) = site {
+            builder = builder.header("Sec-Fetch-Site", site);
         }
         if let Some(key) = key {
             builder = builder.header("login_key", key);
@@ -206,6 +239,20 @@ pub fn cross_site(headers: &[(String, String)], origin: &str) -> bool {
     let other_site = header(headers, "sec-fetch-site")
         .is_some_and(|site| !site.eq_ignore_ascii_case("same-origin") && !site.eq_ignore_ascii_case("none"));
     other_origin || other_site
+}
+
+/// The `Sec-Fetch-Site` of a request on a CEF app scheme, which Chromium does not send there, from its `Origin`: the
+/// runtime gives every request of a window's main frame the frame's origin when the page sent none (tauri-runtime-cef
+/// `request_handler.rs`, its `initiator_origin`) and leaves a subframe's alone. So the app's `origin` is the main
+/// frame's own (`same-origin`); none, or another, is a frame inside the page (a frame of another origin a server page
+/// embeds, which can start a nested frame or an image of a writing transition) or not the page (`cross-site`).
+/// Android's WebView gives no such sign, so the phone's host derives none (SEC-CLI-102).
+pub fn site_by_origin(sent_origin: Option<&str>, origin: &str) -> &'static str {
+    if sent_origin.is_some_and(|sent| sent.trim().eq_ignore_ascii_case(origin)) {
+        "same-origin"
+    } else {
+        "cross-site"
+    }
 }
 
 /// The server url of a page's path: `base` and the path, which must be an absolute path on it (not `//host`, not a

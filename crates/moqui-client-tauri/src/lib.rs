@@ -104,6 +104,13 @@ pub trait ShellHost: Send + Sync {
         true
     }
 
+    /// Whether the device has a secure lock screen (a PIN, pattern, password or biometric), where the app can tell: the
+    /// phone does, and without one whoever holds it opens every account in the app, whose keys are not tied to the lock
+    /// (plans/Security-Review.md SEC-CLI-113). None on the desktop, whose sign-in is the computer's.
+    fn device_secure(&self) -> Option<bool> {
+        None
+    }
+
     /// An account signed in (a new key) and is the current one: the mobile app registers its push token with it.
     fn account_signed_in(&self, account: &str) {
         let _ = account;

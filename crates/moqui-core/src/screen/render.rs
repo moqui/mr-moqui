@@ -1793,7 +1793,12 @@ fn run_transition(
             web::send_json_error(401, "Session token is missing or is not valid");
             return Ok(());
         }
-        if !job.header_authenticated && !job.new_session && cross_site_write(job, &transition)? {
+        // A program's request (its user by a header) has no session a link could ride, but one with fetch metadata is a
+        // page's: the desktop app's host derives the `Sec-Fetch-Site` its runtime does not send a scheme, for pages whose
+        // every request signs in by the device key, so a frame inside the page gets no writing GET (SEC-CLI-102)
+        let page_of_a_program = job.header_authenticated
+            && job.request.header("sec-fetch-site").is_some_and(|site| !site.trim().is_empty());
+        if ((!job.header_authenticated && !job.new_session) || page_of_a_program) && cross_site_write(job, &transition)? {
             web::send_json_error(
                 403,
                 "A screen transition that changes data does not run on a GET another site started; use the page's button",

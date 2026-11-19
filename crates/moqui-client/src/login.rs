@@ -66,6 +66,54 @@ pub fn sign_out(base: &str, key: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// How often a key waiting to be revoked is tried again, in millis.
+const REVOKE_RETRY_MILLIS: i64 = 5 * 60 * 1000;
+
+/// Revoke on their servers the device keys whose sign-out did not reach them ([`crate::keys::Keys::pending_revokes`]),
+/// with `revoke` (`sign_out` but in a test): each the server answers (revoked, or no longer a key) goes from the list,
+/// as does one past its life ([`crate::keys::PENDING_MILLIS`]); the rest wait, tried again at most every five minutes,
+/// so a sign-out with the server unreachable does not leave the key good there for months (plans/Security-Review.md
+/// SEC-CLI-108). How many were revoked.
+pub fn revoke_pending(
+    keys: &crate::keys::Keys,
+    now: i64,
+    revoke: &dyn Fn(&str, &str) -> Result<(), Error>,
+) -> usize {
+    let pending = keys.pending_revokes();
+    if pending.is_empty() {
+        return 0;
+    }
+    let mut changed = false;
+    let mut revoked = 0;
+    let mut kept = Vec::new();
+    for mut entry in pending {
+        if now - entry.at > crate::keys::PENDING_MILLIS {
+            changed = true;
+            continue;
+        }
+        // the first try at once, then at most every five minutes
+        if entry.tried != entry.at && now - entry.tried < REVOKE_RETRY_MILLIS {
+            kept.push(entry);
+            continue;
+        }
+        changed = true;
+        match revoke(&entry.server, &entry.key) {
+            Ok(()) => revoked += 1,
+            Err(err) => {
+                tracing::info!("A signed-out device key of {} is still to revoke there: {err}", entry.server);
+                entry.tried = now;
+                kept.push(entry);
+            }
+        }
+    }
+    if changed {
+        if let Err(err) = keys.set_pending_revokes(kept) {
+            tracing::warn!("The keys waiting to be revoked were not kept: {err}");
+        }
+    }
+    revoked
+}
+
 /// The server's client config for the user the key signs in (`/qapps/clientConfig`): the user, the server's name and
 /// the shell's settings. `Ok(None)` when the key is no longer valid (401).
 ///

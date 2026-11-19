@@ -19,7 +19,9 @@
 //! (`get#InitialAdminNeeded`; false in the default conf, true in the dev conf). On a machine other people sign in to,
 //! `user-facade/login@initial-admin-local` `in-process` narrows "this machine" to the server's own process: the Desktop
 //! app's node sets it, so another account of the computer that reaches the node's ports needs the secret too
-//! (SEC-CLI-101).
+//! (SEC-CLI-101). A starter that hands the secret to its own client sets it (`initial-admin-secret`, a secret of the
+//! conf, through the environment): the app does for its sidecar, whose window it gives the secret, and the log then
+//! names where it is set, not the secret.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -29,16 +31,25 @@ use crate::web::RequestVia;
 
 const INITIAL_ADMIN_NEEDED: &str = "org.moqui.impl.UserServices.get#InitialAdminNeeded";
 
-/// The setup secret of one server: an app password's form, about 99 bits.
-struct SetupSecret(String);
+/// A setup secret the server's starter chose: the Desktop app sets it for its sidecar, whose window it hands it.
+const SECRET_SETTING: &str = "user-facade/login@initial-admin-secret";
+
+/// The setup secret of one server: the conf's (`initial-admin-secret`), else one made at the first use, an app
+/// password's form, about 99 bits; and whether the conf gave it.
+struct SetupSecret(String, bool);
 
 fn secret(factory: &ExecutionContextFactory) -> Arc<SetupSecret> {
-    factory.extension(|_| {
-        SetupSecret(super::login::new_app_password().unwrap_or_else(|err| {
+    factory.extension(|factory| {
+        let given = crate::context::conf_env::setting_on(factory, SECRET_SETTING);
+        if !given.is_empty() {
+            return SetupSecret(given, true);
+        }
+        let made = super::login::new_app_password().unwrap_or_else(|err| {
             // no random source: no secret works, so only a request from this machine creates the administrator
             tracing::error!("No setup secret for the first administrator: {err}");
             String::new()
-        }))
+        });
+        SetupSecret(made, false)
     })
 }
 
@@ -143,6 +154,14 @@ pub fn log_initial_admin_setup(factory: &Arc<ExecutionContextFactory>) {
     } else {
         "from this machine as is"
     };
+    if secret.1 {
+        // the starter set it and keeps it: the log (which a sidecar's app writes to files of its own) never holds it
+        tracing::warn!(
+            "No user account exists yet. Create the first administrator at /Login: {local}, or with the setup secret \
+             {SECRET_SETTING} sets, which its starter has."
+        );
+        return;
+    }
     tracing::warn!(
         "No user account exists yet. Create the first administrator at /Login: {local}, or from another address with \
          this setup secret: {}. The secret is good until the server stops.",

@@ -214,7 +214,13 @@ fn a_sidecar_starts_at_its_listening_line_once_ready_and_stops_with_its_stdin() 
     let address = health_server(1);
     let (dir, binary) = fake_moqui(
         "start",
-        &format!("test \"$MOQUI_RUNTIME\" = /runtime || exit 9\necho \"Listening on {address}\"\ncat >/dev/null"),
+        &format!(
+            "test \"$MOQUI_RUNTIME\" = /runtime || exit 9\n\
+             test \"$moqui_conf__user_facade__login__initial_admin_secret\" = '{}' || exit 8\n\
+             case \"$*\" in *initial_admin_secret*) exit 7;; esac\n\
+             echo \"Listening on {address}\"\ncat >/dev/null",
+            super::super::setup_secret()
+        ),
     );
     let (events, heard) = events();
     let node = Node::start_binary(&binary, Path::new("/runtime"), address.port(), &[], events).unwrap();

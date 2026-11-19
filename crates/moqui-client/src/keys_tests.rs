@@ -70,3 +70,30 @@ fn chat_store_keys_are_kept_per_device_and_go_with_the_account() {
     assert_eq!(again.get("a").as_deref(), Some("device-key"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// SEC-CLI-108: the keys waiting to be revoked are kept in the key store, sealed as the keys are, under a name no
+/// account id can be; the newest are kept when there are too many, and a key signed out twice is there once.
+#[test]
+fn the_keys_waiting_to_be_revoked_are_kept_beside_the_keys() {
+    let dir = std::env::temp_dir().join(format!("moqui-client-pending-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let keys = Keys::new(Box::new(FileKeyStore::new(&dir)), "file");
+    assert!(keys.pending_revokes().is_empty());
+    keys.add_pending_revoke("https://erp.example.com", "key-a", 1_000).unwrap();
+    keys.add_pending_revoke("https://erp.example.com", "key-a", 2_000).unwrap();
+    let again = Keys::new(Box::new(FileKeyStore::new(&dir)), "file");
+    assert_eq!(
+        again.pending_revokes(),
+        [PendingRevoke { server: "https://erp.example.com".to_string(), key: "key-a".to_string(), at: 2_000, tried: 2_000 }]
+    );
+    for at in 0..40 {
+        keys.add_pending_revoke("https://erp.example.com", &format!("key-{at}"), 10_000 + at).unwrap();
+    }
+    let kept = keys.pending_revokes();
+    assert_eq!(kept.len(), PENDING_MAX);
+    assert_eq!(kept.first().map(|entry| entry.at), Some(10_000 + 40 - PENDING_MAX as i64));
+    keys.set_pending_revokes(Vec::new()).unwrap();
+    assert!(keys.pending_revokes().is_empty());
+    assert!(!crate::account::account_id("https://erp.example.com", "john.doe").contains('_'));
+    let _ = std::fs::remove_dir_all(&dir);
+}

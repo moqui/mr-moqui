@@ -90,3 +90,23 @@ fn the_setup_secret_is_this_servers_and_no_other() {
         assert!(!initial_admin_allowed("abcd-efgh-jkmn-pqrs-tuvw"));
     });
 }
+
+/// SEC-CLI-101: a setup secret the starter set (the Desktop app for its sidecar, through the environment name of
+/// `initial-admin-secret`) is the server's, and none other passes.
+#[test]
+fn a_setup_secret_the_conf_gives_is_the_one_taken() {
+    assert_eq!(
+        crate::context::conf_env::env_name_of(SECRET_SETTING),
+        "moqui_conf__user_facade__login__initial_admin_secret"
+    );
+    let ctx = crate::context::ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><user-facade><login initial-admin-secret="abcd-efgh-jkmn-pqrs-tuvw"/></user-facade></moqui-conf>"#,
+    );
+    let _entered = ctx.enter();
+    let given = secret(ctx.factory());
+    assert_eq!((given.0.as_str(), given.1), ("abcd-efgh-jkmn-pqrs-tuvw", true));
+    super::super::with_client_ip("203.0.113.5", || {
+        assert!(initial_admin_allowed("ABCD EFGH JKMN PQRS TUVW"));
+        assert!(!initial_admin_allowed("abcd-efgh-jkmn-pqrs-tuvx"));
+    });
+}

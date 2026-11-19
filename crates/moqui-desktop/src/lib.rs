@@ -54,6 +54,13 @@ struct NodeState {
     restarting: AtomicBool,
 }
 
+/// The mode of the node this run started, once it has.
+pub(crate) fn node_mode(app: &AppHandle) -> Option<node::Mode> {
+    let state = app.try_state::<NodeState>()?;
+    let started = moqui_lib::sync::lock(&state.started_with);
+    started.as_ref().map(|start| start.mode)
+}
+
 /// How the node was started: a restart starts it again the same way, on the same port.
 #[derive(Clone)]
 struct NodeStart {

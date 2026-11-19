@@ -95,19 +95,30 @@ pub(crate) fn handle(
     }));
 }
 
-/// Whether a request header goes on to the node: not one only the host sets, nor a forwarded-for or edge link one.
+/// Whether a request header goes on to the node: not one only the host sets, nor a forwarded-for or edge link one, nor
+/// `Sec-Fetch-Site`, which the host derives ([`forwarded`]).
 pub(crate) fn passed_on(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
-    !HOST_HEADERS.contains(&name.as_str()) && !name.starts_with("x-forwarded-") && !name.starts_with("x-moqui-edge")
+    !HOST_HEADERS.contains(&name.as_str())
+        && !name.starts_with("x-forwarded-")
+        && !name.starts_with("x-moqui-edge")
+        && name != "sec-fetch-site"
 }
 
 /// The headers of a request the node gets: those [`passed_on`], and of a navigation from another site (`cross`, the
 /// splash page going to the node), not its `Origin`, which the node's CORS check would refuse: the navigation was
-/// already allowed here, and the page it opens is on the node's own origin.
+/// already allowed here, and the page it opens is on the node's own origin. With them the `Sec-Fetch-Site` Chromium
+/// does not send a scheme, from the request's `Origin` ([`moqui_client::proxy::site_by_origin`]: the runtime gives the
+/// main frame's requests its origin), so the node refuses a GET of a writing transition that a frame inside its page
+/// started, with the session's cookie the host adds (plans/Security-Review.md SEC-CLI-102).
 pub(crate) fn forwarded(sent: Vec<(String, String)>, cross: bool) -> Vec<(String, String)> {
-    sent.into_iter()
+    let site = moqui_client::proxy::site_by_origin(header(&sent, "origin"), NODE_ORIGIN);
+    let mut headers: Vec<(String, String)> = sent
+        .into_iter()
         .filter(|(name, _)| passed_on(name) && !(cross && name.eq_ignore_ascii_case("origin")))
-        .collect()
+        .collect();
+    headers.push(("Sec-Fetch-Site".to_string(), site.to_string()));
+    headers
 }
 
 /// Whether a request is a window's `GET` (or `HEAD`) navigation to a `document`, which may come from another site:

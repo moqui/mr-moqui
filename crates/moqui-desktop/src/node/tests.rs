@@ -125,14 +125,23 @@ fn the_dev_tools_follow_the_variable_then_the_purpose_file_and_are_off_by_defaul
         purpose_properties(false).is_empty(),
         "off leaves the conf's own purpose"
     );
+    // the first run offers the first administrator, and a sidecar's window gives the app's secret like any caller
     assert_eq!(
         setup_properties(Mode::Sidecar),
-        vec![(
-            "moqui_conf__user_facade__login__initial_admin_enabled",
-            "true".to_string()
-        )],
-        "the first run offers the first administrator"
+        vec![
+            (
+                "moqui_conf__user_facade__login__initial_admin_enabled",
+                "true".to_string()
+            ),
+            (
+                "moqui_conf__user_facade__login__initial_admin_local",
+                "in-process".to_string()
+            )
+        ]
     );
+    let secret = super::setup_secret();
+    assert_eq!(secret.len(), 24, "an app password's form: {secret}");
+    assert_eq!(super::setup_secret(), secret, "one secret a run");
     // SEC-CLI-101: in process the window comes through the scheme, so a loopback caller of the tray's ports (any account
     // of the computer) is not this machine's and needs the setup secret
     assert_eq!(

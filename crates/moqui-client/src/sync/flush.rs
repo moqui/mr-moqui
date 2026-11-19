@@ -1065,6 +1065,10 @@ pub fn flush_bounded(client: &Client, host: &dyn ClientHost, budget: Duration) -
 /// One pass over every account signed in here, taking nothing at or after `until`; gives when the next operation is
 /// due.
 fn flush_all(client: &Client, host: &dyn ClientHost, until: Option<i64>) -> Option<i64> {
+    // the device keys signed out here whose server did not hear it, revoked there now it may (SEC-CLI-108)
+    if !until.is_some_and(|until| now_ms() >= until) {
+        crate::login::revoke_pending(&client.keys, now_ms(), &crate::login::sign_out);
+    }
     let accounts = moqui_lib::sync::lock(&client.accounts).list().to_vec();
     let mut next: Option<i64> = None;
     for account in accounts {

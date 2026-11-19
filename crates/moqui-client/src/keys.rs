@@ -205,6 +205,73 @@ impl Keys {
     }
 }
 
+/// The key store entry of the device keys whose sign-out the server did not hear: an account id has no `_`, so it names
+/// no account's key (plans/Security-Review.md SEC-CLI-108).
+const PENDING_REVOKES: &str = "_revoke";
+/// At most this many keys wait to be revoked; the oldest go first.
+const PENDING_MAX: usize = 32;
+/// How long a key waits to be revoked: by then the server has ended it (`login-key@device-expire-hours`, 2160).
+pub const PENDING_MILLIS: i64 = 90 * 24 * 60 * 60 * 1000;
+
+/// A device key signed out here whose server did not hear it: kept, sealed as the keys are, until the server revokes it.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingRevoke {
+    /// The server's base url.
+    pub server: String,
+    pub key: String,
+    /// When it was signed out here, in epoch millis.
+    pub at: i64,
+    /// When it was last tried, in epoch millis.
+    #[serde(default)]
+    pub tried: i64,
+}
+
+impl Keys {
+    /// The device keys waiting to be revoked on their servers.
+    pub fn pending_revokes(&self) -> Vec<PendingRevoke> {
+        let Some(text) = self.get(PENDING_REVOKES) else {
+            return Vec::new();
+        };
+        serde_json::from_str(&text).unwrap_or_else(|err| {
+            tracing::warn!("The keys waiting to be revoked do not parse; taken as none: {err}");
+            Vec::new()
+        })
+    }
+
+    /// Keep the waiting keys, `pending`: the newest [`PENDING_MAX`]; none deletes the entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the store does not take them.
+    pub fn set_pending_revokes(&self, mut pending: Vec<PendingRevoke>) -> Result<(), Error> {
+        if pending.is_empty() {
+            return self.delete(PENDING_REVOKES);
+        }
+        pending.sort_by_key(|entry| entry.at);
+        let over = pending.len().saturating_sub(PENDING_MAX);
+        pending.drain(..over);
+        let text = serde_json::to_string(&pending).map_err(|err| Error::new(err.to_string()))?;
+        self.set(PENDING_REVOKES, &text)
+    }
+
+    /// `key` of `server` signed out here at `at` with its server not told: kept to revoke there later.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the store does not take it.
+    pub fn add_pending_revoke(&self, server: &str, key: &str, at: i64) -> Result<(), Error> {
+        let mut pending = self.pending_revokes();
+        pending.retain(|entry| entry.key != key);
+        pending.push(PendingRevoke {
+            server: server.to_string(),
+            key: key.to_string(),
+            at,
+            tried: at,
+        });
+        self.set_pending_revokes(pending)
+    }
+}
+
 /// The key store entry of an account's chat store passphrases: an account id is a host and a hex digest, so this never
 /// names another account's device key.
 fn chat_store_entry(account: &str) -> String {
