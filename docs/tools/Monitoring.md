@@ -1218,7 +1218,10 @@ changing needs `MONITOR_SETTINGS`, which ADMIN holds and the public demo ends. T
   grant on `org.moqui.report.dataset` (saving dataset definitions) with a pattern over the saver's own dataset names is
   not a way to the logs or past a business dataset's row filter.
 - Row filters (`rowFilter`, `contextFilters` from the signed-in identity, or a `rowFilterService`) are added by the
-  server before documents, ranking, totals, aggregations and exports; a client never supplies them. Existing entity
+  server before documents, ranking, totals, aggregations and exports; a client never supplies them. A saved dataset names
+  as its `serviceName` only a service a component's shipped dataset names there (CalcGrid's `get#CalcFrame`), and as its
+  `rowFilterService` also a registered scope policy, since each reader calls them as themselves: a new service source
+  or row filter is shipped in a component's `report/` directory. Existing entity
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
   only the datasets they should read.
 - Alerts and scheduled reports run as their owner, whose access is checked at each run; recipients do not set what

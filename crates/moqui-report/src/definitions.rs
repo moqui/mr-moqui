@@ -281,6 +281,37 @@ pub(super) fn save_owned(ec: &ExecutionContext, definition: &Json, note: &str) -
     save_definition_as(ec, definition, note, true)
 }
 
+/// Why a saved dataset's services are refused, or None: its `serviceName` is called in process as each viewer, with
+/// the parameters a panel's author wrote, and its `rowFilterService` as each viewer too, so a dataset names only a
+/// service a component's shipped dataset names in the same place (reviewed code, such as CalcGrid's `get#CalcFrame`),
+/// and as `rowFilterService` also a registered scope policy (business.rs). Asked at the save and at each read of a
+/// dataset that is not shipped (SEC-TLS-91).
+pub(super) fn service_refusal(ec: &ExecutionContext, body: &Json) -> Result<Option<String>, Error> {
+    for key in ["serviceName", "rowFilterService"] {
+        let Some(named) = body.get(key).filter(|value| !value.is_null()) else {
+            continue;
+        };
+        let Some(service) = named.as_str() else {
+            return Ok(Some(format!("a dataset's {key} is a service name")));
+        };
+        let shipped = shipped(ec)
+            .iter()
+            .any(|definition| definition["type"] == "dataset" && definition["body"][key] == service);
+        if shipped || (key == "rowFilterService" && super::business::registered_policy(ec, service)?) {
+            continue;
+        }
+        return Ok(Some(format!(
+            "a dataset's {key} is one a shipped dataset names{}; {service} is not",
+            if key == "rowFilterService" {
+                " or a registered scope policy"
+            } else {
+                ""
+            }
+        )));
+    }
+    Ok(None)
+}
+
 /// The documents of every business dataset, shipped or saved, whoever may read it (business.rs `check_governed`): the one
 /// each names, else the document of its own id, as the engine reads it (alias.rs `target`). Reads with authorization off and
 /// returns only document ids.
@@ -479,6 +510,9 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
         super::alias::check_save(ec, id, &body)?;
         // a field's lookup reads with authorization off, so only a label entity and none of its secret fields (SEC-TLS-82)
         super::lookup::check_field_defaults(ec, &body)?;
+        if let Some(refusal) = service_refusal(ec, &body)? {
+            return Err(fail(refusal));
+        }
     }
     // a business alert rule (alert_delivery.rs): its audience in place of contact points, the delivery mode the server's
     let business_rule = kind == "alert" && super::alert_delivery::prepare(ec, &mut body)?;

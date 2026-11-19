@@ -144,6 +144,11 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
                 "components/addon/report_lock_fixture/service/fixture/ReportLock.xml",
                 r#"<services><service verb="rows" noun="Fixture" type="rust" transaction="ignore" location="report_lock_fixture::rows"><out-parameters><parameter name="rows" type="List"/></out-parameters></service></services>"#,
             ),
+            // a dataset names a source service only as a component ships it (SEC-TLS-91)
+            (
+                "components/addon/report_lock_fixture/report/lease-dataset.json",
+                r#"{"id":"lease-dataset","type":"dataset","title":"Lease fixture","body":{"serviceName":"fixture.ReportLock.rows#Fixture"}}"#,
+            ),
         ],
     );
     let output = gate.runtime.join("single.csv");
@@ -151,11 +156,6 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
     let expired_output = gate.runtime.join("expired.csv");
     let (live_id, expired_id) = {
         let factory = gate.server.factory();
-        owner(
-            factory,
-            "org.moqui.report.ReportServices.save#Definition",
-            json!({"definition":{"id":"lease-dataset","type":"dataset","title":"Lease fixture","body":{"serviceName":"fixture.ReportLock.rows#Fixture"}}}),
-        );
         owner(
             factory,
             "org.moqui.report.ReportServices.save#Definition",
