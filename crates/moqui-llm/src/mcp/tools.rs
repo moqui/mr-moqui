@@ -101,13 +101,15 @@ impl<'a> Ctx<'a> {
                 );
                 McpError::internal(format!("the MCP agent {agent_id} is not set up on this server"))
             })?;
-        let policy = quietly(|| ToolPolicy::load(&facade, &agent.agent_id)).unwrap_or_else(|error| {
+        // the policy is the server's allowlist: one that cannot be read refuses the request, as a missing agent does,
+        // rather than offer every tool but the destructive ones
+        let policy = quietly(|| ToolPolicy::load(&facade, &agent.agent_id)).map_err(|error| {
             tracing::error!(
                 "the tool policy of the MCP agent {} could not be read: {error}",
                 agent.agent_id
             );
-            ToolPolicy::default()
-        });
+            McpError::internal("the MCP agent's tool policy could not be read")
+        })?;
         let mut caps = ClientCaps::for_surface(Surface::Mcp);
         if crate::screen::installed() {
             caps = caps.with([caps::SCREEN]);

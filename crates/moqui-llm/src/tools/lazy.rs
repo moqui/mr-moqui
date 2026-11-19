@@ -56,17 +56,26 @@ fn facade() -> Result<EntityFacade, ToolError> {
         .ok_or_else(|| ToolError::new("unavailable", "The tool catalog is not available on this server."))
 }
 
-/// The catalog of the run the call belongs to.
-fn catalog_of(ctx: &TurnContext<'_>, facade: &EntityFacade) -> Catalog {
-    let policy = crate::run::quietly(|| ToolPolicy::load(facade, &ctx.agent.agent_id)).unwrap_or_else(|error| {
+/// The agent's tool policy. One that cannot be read refuses the call: with no rules every tool but the destructive
+/// ones would be offered, and a `never` rule or a READ cap would be gone.
+fn policy_of(ctx: &TurnContext<'_>, facade: &EntityFacade) -> Result<ToolPolicy, ToolError> {
+    crate::run::quietly(|| ToolPolicy::load(facade, &ctx.agent.agent_id)).map_err(|error| {
         tracing::error!(
             "the tool policy of agent {} could not be read: {error}",
             ctx.agent.agent_id
         );
-        ToolPolicy::default()
-    });
+        ToolError::new(
+            "unavailable",
+            "The agent's tool policy could not be read; try again later.",
+        )
+    })
+}
+
+/// The catalog of the run the call belongs to.
+fn catalog_of(ctx: &TurnContext<'_>, facade: &EntityFacade) -> Result<Catalog, ToolError> {
+    let policy = policy_of(ctx, facade)?;
     // the MCP server offers its own exposures (`exposeMcp`), the other surfaces the assistant's
-    if ctx.surface == crate::prompt::Surface::Mcp {
+    Ok(if ctx.surface == crate::prompt::Surface::Mcp {
         Catalog::for_mcp(facade, ctx.caps, &policy, &ctx.agent.role_groups())
     } else {
         Catalog::for_run(facade, ctx.caps, &policy, &ctx.agent.role_groups()).with_remotes(
@@ -75,7 +84,7 @@ fn catalog_of(ctx: &TurnContext<'_>, facade: &EntityFacade) -> Catalog {
             &ctx.user.user_id,
             &policy,
         )
-    }
+    })
 }
 
 /// What a name that is not in the catalog gets: a tool of its own is called directly; else the nearest names.
@@ -133,7 +142,10 @@ impl AgentTool for FindTools {
             .unwrap_or_default()
             .trim()
             .to_string();
-        let catalog = catalog_of(ctx, &facade);
+        let catalog = match catalog_of(ctx, &facade) {
+            Ok(catalog) => catalog,
+            Err(error) => return error.outcome(),
+        };
         ToolOutcome::text(find_text(&catalog, &text))
     }
 }
@@ -211,7 +223,10 @@ impl AgentTool for DescribeTools {
             )
             .outcome();
         }
-        let catalog = catalog_of(ctx, &facade);
+        let catalog = match catalog_of(ctx, &facade) {
+            Ok(catalog) => catalog,
+            Err(error) => return error.outcome(),
+        };
         let mut text = describe_text(&catalog, &facade, &names);
         // the lessons of each service described (plan 7.5): the approved ones and the user's own, two each
         for name in names.iter().take(DESCRIBE_MAX) {
@@ -399,7 +414,10 @@ impl AgentTool for RunTool {
                 if let Err(error) = claim(ctx, &entry) {
                     return error.outcome();
                 }
-                let rule = rule_for(ctx, &entry);
+                let rule = match rule_for(ctx, &entry) {
+                    Ok(rule) => rule,
+                    Err(error) => return error.outcome(),
+                };
                 ctx.approvals.write_rule = rule;
                 ctx.approvals.mode = rule.mode;
                 run_add_on(tool.as_ref(), &entry, ctx, &parameters, None)
@@ -418,10 +436,16 @@ impl AgentTool for RunTool {
             Err(error) => return error.outcome(),
         };
         let name = args.get("name").and_then(Json::as_str).unwrap_or_default().to_string();
-        let catalog = catalog_of(ctx, &facade);
+        let catalog = match catalog_of(ctx, &facade) {
+            Ok(catalog) => catalog,
+            Err(error) => return error.outcome(),
+        };
         if let Some(entry) = catalog.get(&name) {
             if let Target::AddOn(tool) = &entry.target {
-                let rule = rule_for(ctx, entry);
+                let rule = match rule_for(ctx, entry) {
+                    Ok(rule) => rule,
+                    Err(error) => return error.outcome(),
+                };
                 ctx.approvals.write_rule = rule;
                 ctx.approvals.mode = rule.mode;
                 let empty = json!({});
@@ -448,7 +472,10 @@ impl AgentTool for RunTool {
                         view.target_name
                     ));
                 };
-                let rule = rule_for(ctx, &entry);
+                let rule = match rule_for(ctx, &entry) {
+                    Ok(rule) => rule,
+                    Err(error) => return error.outcome(),
+                };
                 ctx.approvals.write_rule = rule;
                 ctx.approvals.mode = rule.mode;
                 let outcome = execute(ctx, &facade, &entry, &view);
@@ -462,12 +489,8 @@ impl AgentTool for RunTool {
 }
 
 /// The agent's policy rule for a call of the catalog entry in its class.
-fn rule_for(ctx: &TurnContext<'_>, entry: &Entry) -> super::ToolRule {
-    let policy = facade()
-        .ok()
-        .and_then(|facade| crate::run::quietly(|| ToolPolicy::load(&facade, &ctx.agent.agent_id)).ok())
-        .unwrap_or_default();
-    policy.rule_as(&entry.name, entry.classification)
+fn rule_for(ctx: &TurnContext<'_>, entry: &Entry) -> Result<super::ToolRule, ToolError> {
+    Ok(policy_of(ctx, &facade()?)?.rule_as(&entry.name, entry.classification))
 }
 
 /// Count this call against the entry's calls-per-run limit (the policy's `callsPerRun` for the entry's name; `run_tool`
@@ -478,7 +501,7 @@ fn claim(ctx: &TurnContext<'_>, entry: &Entry) -> Result<(), ToolError> {
         return Ok(());
     };
     let facade = facade()?;
-    let limit = rule_for(ctx, entry).calls_per_run;
+    let limit = rule_for(ctx, entry)?.calls_per_run;
     let holder = ctx.events.holder().clone();
     let tool_call_id = ctx.call.tool_call_id.clone();
     // run bookkeeping the runtime writes under the run's lease, so a read tool's fence lifts for it
@@ -558,7 +581,7 @@ fn prepare(ctx: &TurnContext<'_>, args: &Json) -> Result<(Entry, Json), ToolErro
             ))
         }
     };
-    let catalog = catalog_of(ctx, &facade);
+    let catalog = catalog_of(ctx, &facade)?;
     let Some(entry) = catalog.get(name) else {
         return Err(unknown(name, &catalog));
     };
@@ -855,7 +878,10 @@ fn run_service(
         drop(guard);
         return answer(entry, ran, &checked, None);
     }
-    let rule = rule_for(ctx, entry);
+    let rule = match rule_for(ctx, entry) {
+        Ok(rule) => rule,
+        Err(error) => return error.outcome(),
+    };
     ctx.approvals.write_rule = rule;
     ctx.approvals.mode = rule.mode;
     let facade = match facade() {

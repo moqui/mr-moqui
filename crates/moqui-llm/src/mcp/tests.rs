@@ -1079,3 +1079,39 @@ fn the_tarpit_counts_every_request_before_anything_is_built() {
     let (status, _) = rpc(&bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
     assert_eq!(status, 429, "tools/list counts too");
 }
+
+/// SEC-AI-87: the MCP agent's tool policy is the server's allowlist, so a policy that cannot be read refuses the
+/// request rather than offer every tool but the destructive ones.
+#[test]
+fn a_tool_policy_that_cannot_be_read_refuses_the_request() {
+    let bed = bed("");
+    let _entered = bed.ctx.enter();
+    let (key, _) = ready(&bed);
+    row(
+        &bed.facade,
+        "moqui.agent.AgentToolPolicy",
+        &[
+            ("agentId", "mcp"),
+            ("sequenceNum", "1"),
+            ("toolPattern", "enum_*"),
+            ("approvalModeEnumId", "AgamNever"),
+        ],
+    );
+    let failing = moqui_core::testing::FailTable::new("agent_tool_policy");
+    let (status, refused) = rpc(&bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
+    assert_eq!(
+        (status, refused["error"]["code"].as_i64()),
+        (200, Some(super::code::INTERNAL)),
+        "{refused}"
+    );
+    drop(failing);
+    let (status, listed) = rpc(&bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
+    assert_eq!(status, 200, "{listed}");
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"enum_find"), "the never rule holds: {names:?}");
+}
