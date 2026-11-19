@@ -40,10 +40,16 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <!-- The body is images.rs (the image feature and its decoder). A signed-in user uploads a png, gif, jpeg or webp;
-        the bytes are stored under dbresource://moqui/rich-text/ and the url is /richTextImage/<id>. -->
+        the image is stored under dbresource://moqui/rich-text/, recorded as a moqui.resource.RichTextImage, and the url
+        is /richTextImage/<id>. -->
     <service verb="upload" noun="RichTextImage" type="rust" location="moqui_core::service::images::upload_rich_text_image">
         <description>Store a rich-text image (png, gif, jpeg or webp, at most 8 MiB) and return its url. An svg, a file
-            that does not decode, and a larger file are refused. The original bytes are kept.</description>
+            that does not decode, and a larger file are refused, as is an image past the user's resource-facade
+            rich-text-images limits (max-per-user images, max-bytes-per-user bytes; SEC-CLI-92); a refused image is
+            not stored. The metadata is taken out (SEC-CLI-96): a jpeg or png is written again from its pixels, turned
+            upright by its EXIF orientation, with its color profile and no EXIF, XMP or text; a webp keeps its image
+            data without its EXIF and XMP chunks; a gif is kept as uploaded. Each stored image is a
+            moqui.resource.RichTextImage row with its uploader and stored size.</description>
         <in-parameters>
             <parameter name="contentFile" type="Object" required="true"><description>The uploaded image.</description></parameter>
         </in-parameters>

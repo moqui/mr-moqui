@@ -112,9 +112,9 @@ object ChatNotifications {
         val kind = payload.optString("kind", "")
         when (kind) {
             "clear" -> clear(context, account, payload.optString("chatRoomId", ""))
-            "test" -> showOther(context, payload, context.getString(R.string.push_test_title),
+            "test" -> showOther(context, account, payload, context.getString(R.string.push_test_title),
                 context.getString(R.string.push_test_body), ChatRules.channel(kind, false, null, false))
-            "notification" -> showOther(context, payload, payload.optString("title", context.getString(R.string.chat_new_message)),
+            "notification" -> showOther(context, account, payload, payload.optString("title", context.getString(R.string.chat_new_message)),
                 null, ChatRules.OTHER)
             "message" -> showRoom(context, account, payload)
             else -> Log.i(TAG, "A push of kind $kind is not shown")
@@ -161,7 +161,8 @@ object ChatNotifications {
         notify(context, "chat-bare", ROOM_ID, builder)
     }
 
-    private fun showOther(context: Context, payload: JSONObject, title: String, body: String?, channel: String) {
+    /** A test or a reminder of `account`, tagged by the account ([ChatRules.otherTag]) so its sign-out finds it. */
+    private fun showOther(context: Context, account: String, payload: JSONObject, title: String, body: String?, channel: String) {
         if (!allowed(context)) return
         val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -169,7 +170,8 @@ object ChatNotifications {
             .setContentIntent(openApp(context, null))
             .setAutoCancel(true)
         if (body != null) builder.setContentText(body)
-        notify(context, payload.optString("tag", "moqui-other").ifEmpty { "moqui-other" }, ROOM_ID, builder)
+        val tag = payload.optString("tag", "moqui-other").ifEmpty { "moqui-other" }
+        notify(context, ChatRules.otherTag(account, tag), ROOM_ID, builder)
     }
 
     private fun showRoom(context: Context, account: String, payload: JSONObject) {
@@ -209,7 +211,7 @@ object ChatNotifications {
             .setGroupConversation(!direct)
             .addMessage(shown, payload.optLong("sentDate", System.currentTimeMillis()), from)
         val link = roomLink(context, account, room, eventSeq)
-        val shortcutId = "chat-$account-$room"
+        val shortcutId = ChatRules.shortcutId(account, room)
         pushShortcut(context, shortcutId, roomName ?: sender, link)
         val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -272,10 +274,13 @@ object ChatNotifications {
     }
 
     /** The room notifications of `account` that show, but for the one of `except` (a tag). */
-    private fun roomTags(context: Context, account: String, except: String? = null): List<String> {
+    private fun roomTags(context: Context, account: String, except: String? = null): List<String> =
+        shownTags(context, ChatRules.tag(account, ""), except)
+
+    /** The tags of the notifications that show whose tag starts with `prefix`, but for `except`. */
+    private fun shownTags(context: Context, prefix: String, except: String? = null): List<String> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return emptyList()
         val manager = context.getSystemService(NotificationManager::class.java) ?: return emptyList()
-        val prefix = ChatRules.tag(account, "")
         return manager.activeNotifications
             .filter { it.id == ROOM_ID && it.tag?.startsWith(prefix) == true && it.tag != except }
             .mapNotNull { it.tag }
@@ -297,6 +302,32 @@ object ChatNotifications {
     fun clearAll(context: Context, account: String) {
         for (tag in roomTags(context, account)) manager(context).cancel(tag, ROOM_ID)
         manager(context).cancel(ChatRules.summaryTag(account), SUMMARY_ID)
+    }
+
+    /**
+     * `account` is signed out here (`MobileHost::account_signed_out`, src/host.rs: every sign-out, one its server did not
+     * hear included): its room notifications and their summary go ([clearAll]), and its other ones (a test, a reminder);
+     * its conversation shortcuts ([ChatRules.shortcutId], long-lived, so kept by Android past the dynamic list) are
+     * removed; and a room of it the shell showed is shown no more. Nothing of its chats (a sender, a snippet, a room's
+     * name) stays for the next person to use the phone (SEC-CLI-100).
+     */
+    @JvmStatic
+    fun forgetAccount(context: Context, account: String) {
+        val plainAccount = ChatRules.accountId(account) ?: return
+        val app = context.applicationContext
+        clearAll(app, plainAccount)
+        for (tag in shownTags(app, ChatRules.otherTag(plainAccount, ""))) manager(app).cancel(tag, ROOM_ID)
+        if (shownRoom?.startsWith("$plainAccount/") == true) shownRoom = null
+        try {
+            val prefix = ChatRules.shortcutId(plainAccount, "")
+            val ids = ShortcutManagerCompat.getShortcuts(
+                app, ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_CACHED
+            ).map { it.id }.filter { it.startsWith(prefix) }
+            // another account whose id starts with this one's and a `-` loses a shortcut too, made again by its next push
+            if (ids.isNotEmpty()) ShortcutManagerCompat.removeLongLivedShortcuts(app, ids)
+        } catch (err: Exception) {
+            Log.w(TAG, "The conversation shortcuts of a signed-out account were not removed: ${err.message}")
+        }
     }
 
     /** The page read a room of `account` (`notify_clear`, src/commands.rs; `*`: every room): its notification goes. */

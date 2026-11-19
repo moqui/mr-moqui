@@ -14,7 +14,9 @@
 
 use tauri::http::{HeaderMap, HeaderValue};
 
-use super::{document_request, forwarded_on_shell, has_script_policy, upgraded_page, PAGE_PERMISSIONS_POLICY};
+use super::{
+    document_request, forwarded_on_shell, has_script_policy, page_policies, upgraded_page, PAGE_PERMISSIONS_POLICY,
+};
 use crate::tests::{fixture, Fixture};
 use crate::{APP_ORIGIN, SHELL_ORIGIN};
 
@@ -71,7 +73,7 @@ fn only_a_servers_script_policy_is_kept() {
 #[test]
 fn a_servers_page_has_its_loads_of_other_hosts_upgraded_in_its_head() {
     let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\">";
-    let page = |html: &str| String::from_utf8(upgraded_page(html.as_bytes().to_vec())).unwrap();
+    let page = |html: &str| String::from_utf8(upgraded_page(html.as_bytes().to_vec(), &page_policies(&[]))).unwrap();
     assert_eq!(
         page("<!DOCTYPE html><html lang=\"en\"><HEAD><title>t</title></HEAD><body><header>h</header></body></html>"),
         format!("<!DOCTYPE html><html lang=\"en\"><HEAD>{meta}<title>t</title></HEAD><body><header>h</header></body></html>")
@@ -237,4 +239,27 @@ fn with_no_secure_connection_the_pages_answer_from_the_store_or_as_offline() {
     assert_eq!(other.status(), 502);
     assert_eq!(other.headers().get("X-Moqui-Offline").unwrap(), "unreachable");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-04: the CSP of the server's that its header could not carry keeps all a meta tag takes (`form-action`
+/// among them; `frame-ancestors`, `report-uri` and `sandbox` it ignores), each policy its own tag, before the upgrade.
+#[test]
+fn a_servers_policy_with_no_script_policy_is_kept_in_the_page() {
+    assert_eq!(
+        page_policies(&["frame-ancestors 'none'; form-action 'self';"]),
+        ["form-action 'self'", "upgrade-insecure-requests"]
+    );
+    assert_eq!(
+        page_policies(&["form-action 'self'; img-src https:; report-uri /csp", "sandbox; frame-ancestors 'none'"]),
+        ["form-action 'self'; img-src https:", "upgrade-insecure-requests"]
+    );
+    let page = String::from_utf8(upgraded_page(
+        b"<html><head></head></html>".to_vec(),
+        &page_policies(&["form-action 'self' https://sso.example.com/?a=1&b=\"2\""]),
+    ))
+    .unwrap();
+    assert_eq!(
+        page,
+        "<html><head><meta http-equiv=\"Content-Security-Policy\" content=\"form-action 'self' https://sso.example.com/?a=1&amp;b=&quot;2&quot;\"><meta http-equiv=\"Content-Security-Policy\" content=\"upgrade-insecure-requests\"></head></html>"
+    );
 }

@@ -959,3 +959,19 @@ fn a_get_loaded_as_a_part_of_a_page_changes_nothing() {
         assert!(!super::get_write_refused(&request(&[("Accept", accept)])), "{accept}");
     }
 }
+
+/// SEC-CLI-105: `webapp@csp-append`'s directives join each policy the response has, once, or are its policy where it
+/// has none; an empty one adds nothing.
+#[test]
+fn a_deployments_csp_directives_join_the_responses_policy() {
+    let mut headers = vec![("Content-Security-Policy".to_string(), "frame-ancestors 'none'; form-action 'self';".to_string())];
+    super::append_csp(&mut headers, "upgrade-insecure-requests");
+    super::append_csp(&mut headers, "upgrade-insecure-requests");
+    assert_eq!(headers[0].1, "frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests");
+    let mut none = vec![("Content-Type".to_string(), "text/html".to_string())];
+    super::append_csp(&mut none, " upgrade-insecure-requests; ");
+    assert_eq!(none[1], ("Content-Security-Policy".to_string(), "upgrade-insecure-requests".to_string()));
+    let mut unchanged = headers.clone();
+    super::append_csp(&mut unchanged, "");
+    assert_eq!(unchanged, headers);
+}

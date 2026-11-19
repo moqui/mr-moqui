@@ -1941,9 +1941,14 @@ pub fn display_width(text: &str) -> usize {
     text.chars().map(char_width).sum()
 }
 
+/// The columns `c` takes in a cell. A control character, other than tab and newline, and a bidirectional override or
+/// isolate take none, so the painter drops them where text becomes a cell: text from outside the screen model (a menu
+/// title, a server's message, a component's JSON) cannot drive the terminal, the snapshot or a copy, and the widths
+/// laid out are the ones drawn (SEC-CLI-93). The painter draws a tab or a newline as a space of one column.
 pub fn char_width(c: char) -> usize {
     let cp = c as u32;
-    if (0x0300..=0x036F).contains(&cp) || cp == 0x200D || (0xFE00..=0xFE0F).contains(&cp) {
+    if (0x0300..=0x036F).contains(&cp) || cp == 0x200D || (0xFE00..=0xFE0F).contains(&cp) || crate::model::is_unsafe(c)
+    {
         return 0;
     }
     if is_wide(cp) {

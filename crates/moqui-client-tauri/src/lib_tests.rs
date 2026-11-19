@@ -32,6 +32,10 @@ pub(crate) struct TestHost {
     pub(crate) shown: Mutex<Vec<String>>,
     /// What the host answers of the device's screen lock.
     pub(crate) secure: Mutex<Option<bool>>,
+    /// The accounts the host was told are signed out.
+    pub(crate) signed_out: Mutex<Vec<String>>,
+    /// How many times the host was told to clear the server pages' storage.
+    pub(crate) storage_cleared: Mutex<usize>,
 }
 
 impl ClientHost for TestHost {
@@ -86,6 +90,14 @@ impl ShellHost for TestHost {
     fn device_secure(&self) -> Option<bool> {
         *moqui_lib::sync::lock(&self.secure)
     }
+
+    fn account_signed_out(&self, account: &str) {
+        moqui_lib::sync::lock(&self.signed_out).push(account.to_string());
+    }
+
+    fn clear_page_storage(&self) {
+        *moqui_lib::sync::lock(&self.storage_cleared) += 1;
+    }
 }
 
 pub(crate) struct Fixture {
@@ -127,6 +139,8 @@ pub(crate) fn fixture(name: &str, signed_in: bool) -> Fixture {
         client: Mutex::new(Some(Arc::clone(&client))),
         shown: Mutex::new(Vec::new()),
         secure: Mutex::new(None),
+        signed_out: Mutex::new(Vec::new()),
+        storage_cleared: Mutex::new(0),
     });
     let files = Assets::new(dir.join("shell"), dir.join("webroot"));
     let state = ClientState::new(client, host.clone(), host.clone(), Box::new(files));
@@ -192,5 +206,95 @@ fn the_shell_hears_whether_the_device_has_a_screen_lock() {
     assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Bool(false));
     *moqui_lib::sync::lock(&host.secure) = Some(true);
     assert_eq!(crate::commands::state_json(&state)["deviceSecure"], Value::Bool(true));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-08: a personal account's sign-out keeps it in the list with its data, to sign in to again, unless the user
+/// asks for its data to go too; then the account and its store go, as a shared one's do.
+#[test]
+fn a_personal_account_signs_out_with_its_data_deleted_only_when_asked() {
+    let Fixture {
+        state, dir, account, ..
+    } = fixture("sign-out-keep", true);
+    state.core.with_store(&account, |store| {
+        store.put_answer("/qapps/clientConfig", "", "application/json", b"{}")
+    });
+    crate::commands::signed_out_in(&state, &account, false);
+    assert!(
+        moqui_lib::sync::lock(state.core.accounts()).get(&account).is_some(),
+        "the account stays"
+    );
+    let kept = state
+        .core
+        .with_store(&account, |store| store.answer("/qapps/clientConfig", "").is_some());
+    assert_eq!(kept, Some(true), "its store stays");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let Fixture {
+        state, dir, account, ..
+    } = fixture("sign-out-forget", true);
+    state.core.with_store(&account, |store| {
+        store.put_answer("/qapps/clientConfig", "", "application/json", b"{}")
+    });
+    crate::commands::signed_out_in(&state, &account, true);
+    assert!(
+        moqui_lib::sync::lock(state.core.accounts()).get(&account).is_none(),
+        "the account goes"
+    );
+    let kept = state
+        .core
+        .with_store(&account, |store| store.answer("/qapps/clientConfig", "").is_some());
+    assert_ne!(kept, Some(true), "its store goes");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-81: the server pages' storage is cleared when the current account changes and when it signs out, so what
+/// one account's pages kept on the origin they share on the phone is gone before another's open.
+#[test]
+fn the_pages_storage_is_cleared_when_the_current_account_changes_or_signs_out() {
+    let Fixture {
+        state,
+        dir,
+        account,
+        host,
+    } = fixture("page-storage", true);
+    assert_eq!(*moqui_lib::sync::lock(&host.storage_cleared), 0);
+    crate::commands::switched(&state);
+    assert_eq!(*moqui_lib::sync::lock(&host.storage_cleared), 1);
+    crate::commands::signed_out_in(&state, &account, false);
+    assert_eq!(*moqui_lib::sync::lock(&host.storage_cleared), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-113: a shared-device sign-in (a password's or an SSO start's) is refused where the host says the device has
+/// no secure lock screen, and goes on where it has one or the host cannot tell; a personal one always goes on.
+#[test]
+fn a_shared_sign_in_needs_a_screen_lock_where_the_host_can_tell() {
+    let Fixture { state, dir, host, .. } = fixture("shared-lock", false);
+    let ask = |chosen| crate::commands::sign_in_mode(&state, Some(chosen));
+    assert_eq!(state.core.conf().device_mode, moqui_client::conf::DeviceMode::Choose);
+    assert!(ask("shared").is_ok());
+    *moqui_lib::sync::lock(&host.secure) = Some(false);
+    assert_eq!(ask("shared"), Err(moqui_client::modes::SHARED_NEEDS_LOCK.to_string()));
+    assert!(ask("personal").is_ok());
+    *moqui_lib::sync::lock(&host.secure) = Some(true);
+    assert!(ask("shared").is_ok());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-100: every sign-out tells the host, which takes the account's notifications and shortcuts off the phone,
+/// a sign-out the server did not hear (no network, as this host has) included; its key is gone.
+#[test]
+fn a_sign_out_tells_the_host_even_with_no_network() {
+    let Fixture {
+        state,
+        dir,
+        account,
+        host,
+    } = fixture("signed-out", true);
+    assert!(state.core.keys().get(&account).is_some());
+    crate::commands::signed_out_in(&state, &account, false);
+    assert_eq!(moqui_lib::sync::lock(&host.signed_out).clone(), vec![account.clone()]);
+    assert!(state.core.keys().get(&account).is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

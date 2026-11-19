@@ -63,7 +63,7 @@ pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
     let base = chat_base(&run.job.comms_root);
     // the disappearing messages whose time came while no push or feed said so
     let expired = run
-        .store(|store| offline::sweep_expired(store, offline::server_now()))
+        .store(|store| offline::sweep_expired(store, store.server_now()))
         .unwrap_or_default();
     run.synced.rooms_changed.extend(expired);
     // what an earlier run left to read
@@ -91,7 +91,7 @@ pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
         };
         // the server's clock, which disappearing messages go by
         if let Some(server) = number(&page["serverNow"]) {
-            offline::learn_server_time(server);
+            run.store(|store| store.learn_server_time(server));
         }
         if page["reset"].as_bool() == Some(true) {
             let last = number(&page["lastSeq"]).unwrap_or(0);

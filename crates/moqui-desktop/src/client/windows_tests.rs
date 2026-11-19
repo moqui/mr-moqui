@@ -55,6 +55,16 @@ fn each_window_stays_on_its_origin() {
         Goes::Outside
     );
     assert_eq!(goes(&url("about:blank"), APP_ORIGIN), Goes::Here);
+    // a page's own blob (an inline answer) stays; another origin's, and a data: document, go nowhere (SEC-CLI-03)
+    assert_eq!(
+        goes(&url("blob:http://moqui-app.localhost/0c5f4b9e"), APP_ORIGIN),
+        Goes::Here
+    );
+    assert_eq!(
+        goes(&url("blob:https://evil.example.com/0c5f4b9e"), APP_ORIGIN),
+        Goes::Nowhere
+    );
+    assert_eq!(goes(&url("data:text/html,<p>x</p>"), APP_ORIGIN), Goes::Nowhere);
     // a node's loopback port is the web to a client
     assert_eq!(goes(&url("http://127.0.0.1:8080/qapps"), SHELL_ORIGIN), Goes::Outside);
 }
@@ -203,4 +213,68 @@ fn only_app_windows_open_a_screen_in_the_shell_and_leave_it_the_crypto_device() 
     let shell = shell_script("MR Moqui desktop on \"desk\"");
     assert!(shell.starts_with("window.__moquiDeviceName = \"MR Moqui desktop on \\\"desk\\\"\";\n"));
     assert!(!shell.contains("__moquiCryptoInShell = true"));
+}
+
+/// SEC-CLI-81: each account's app windows have a browser profile of their own, a folder under Chromium's named by the
+/// account id; at a start the profiles of accounts no longer here go, and the others, and anything that is not a
+/// folder, stay.
+#[test]
+fn each_accounts_app_windows_have_a_browser_profile_of_their_own() {
+    assert_eq!(
+        profile_dir("host.example-0123456789ab"),
+        PathBuf::from("accounts/host.example-0123456789ab")
+    );
+    assert!(profile_dir("..-0123456789ab").is_relative());
+    assert_eq!(profile_dir("..-0123456789ab").components().count(), 2);
+    let source = include_str!("windows.rs");
+    let open = source.find("pub(crate) fn open_remote(").expect("open_remote");
+    assert!(
+        source[open..].contains(".data_directory(profile_dir(&account.id))"),
+        "an app window opens in the shared profile"
+    );
+
+    let root = std::env::temp_dir().join(format!("moqui-desktop-profiles-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(old_profiles(&root, &[]).is_empty(), "no profiles folder yet");
+    for id in ["kept-aaaaaaaaaaaa", "gone-bbbbbbbbbbbb"] {
+        std::fs::create_dir_all(root.join(profile_dir(id)).join("Local Storage")).unwrap();
+    }
+    std::fs::write(root.join("accounts/a-file"), b"not a profile").unwrap();
+    let kept = vec!["kept-aaaaaaaaaaaa".to_string()];
+    assert_eq!(
+        old_profiles(&root, &kept),
+        vec![root.join("accounts/gone-bbbbbbbbbbbb")]
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// SEC-CLI-07: the shell's commands are taken from the main window only with the nonce of the shell page's current
+/// load: the window hands it over as the load finishes and takes it away as the next begins, the shell's host checks
+/// it, and the bridge sends every shell command (`client_*`) with it.
+#[test]
+fn the_shells_commands_carry_the_nonce_of_its_current_load() {
+    let source = include_str!("windows.rs");
+    let shell = &source[source.find("pub(crate) fn shell_window(").expect("shell_window")..];
+    let shell = &shell[..shell.find("\n}\n").expect("shell_window's end")];
+    assert!(
+        shell.contains("load.started(payload.url())"),
+        "a load's start keeps the last nonce"
+    );
+    assert!(
+        shell.contains("load.finished(payload.url())") && shell.contains("window.eval(nonce_script(&nonce))"),
+        "the shell's page is not handed its load's nonce"
+    );
+    let check = &source[source.find("fn is_shell_page(").expect("is_shell_page")..];
+    assert!(
+        check[..check.find("\n    }\n").unwrap()].contains("self.load.is_shell(webview.url().ok().as_ref(), nonce)"),
+        "the desktop's shell host does not check the nonce"
+    );
+    let bridge = include_str!("../bridge.js");
+    let unchecked: Vec<&str> = bridge
+        .match_indices("\"client_")
+        .filter(|(at, _)| !bridge[..*at].ends_with("shellAsk("))
+        .map(|(at, _)| &bridge[at..at + bridge[at..].find(',').unwrap_or(20).min(40)])
+        .collect();
+    assert!(unchecked.is_empty(), "shell commands sent with no nonce: {unchecked:?}");
+    assert!(bridge.matches("shellAsk(\"client_").count() >= 12);
 }

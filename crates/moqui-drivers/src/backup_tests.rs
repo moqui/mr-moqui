@@ -50,6 +50,7 @@ fn request(mode: BackupMode, backup_dir: PathBuf, daily: u32) -> BackupRequest {
         // A spread checkpoint on the idle test cluster takes about 30 seconds for each pg_basebackup.
         fast_checkpoint: true,
         timeout: Duration::from_secs(180),
+        recipient: None,
     }
 }
 
@@ -295,4 +296,93 @@ fn a_dump_s_partial_file_is_this_user_s_alone_before_pg_dump_writes_it() {
     private_partial(&stale).unwrap();
     assert_eq!(mode(&stale), 0o600);
     assert_eq!(std::fs::metadata(&stale).unwrap().len(), 0);
+}
+
+/// SEC-CLI-114: with a recipient, each database's dump is sealed as pg_dump writes it, `.dump.age`, owner-only, with no
+/// plain dump or its rows anywhere in the folder, and it restores once opened with the recipient's identity; a
+/// recipient that is not one fails the backup before anything is dumped.
+#[cfg(unix)]
+#[test]
+fn a_sealed_backup_holds_no_plain_dump_and_restores_with_its_key() {
+    use std::io::Read as _;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::super::embedded::EmbeddedCluster;
+
+    let base = temp_dir();
+    let _guard = DirGuard(base.clone());
+    let (cluster, _driver) = EmbeddedCluster::start(base.join("embedded"), 20).unwrap();
+    let content = cluster.database_driver("moqui_content").unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    conn.execute("CREATE TABLE sealed_kept (body text)", &[]).unwrap();
+    conn.execute(
+        "INSERT INTO sealed_kept (body) VALUES (?)",
+        &[Value::string("a row no plain file may hold")],
+    )
+    .unwrap();
+    drop(conn);
+    let targets = [
+        cluster.tool_connect("moqui"),
+        cluster.tool_connect_database("moqui_content", "moqui_content"),
+    ];
+    let backup = base.join("backup");
+    std::fs::create_dir_all(&backup).unwrap();
+
+    let mut refused = request(BackupMode::Dump, backup.clone(), 1);
+    refused.recipient = Some("age1notarecipient".to_string());
+    let err = run(&targets, &base, &refused).unwrap_err();
+    assert!(err.message().contains("database-backup@recipient"), "{err}");
+    assert_eq!(
+        std::fs::read_dir(&backup).unwrap().count(),
+        0,
+        "a refused backup left a file"
+    );
+
+    let identity = moqui_lib::age::Identity::generate().unwrap();
+    let mut sealed = request(BackupMode::Dump, backup.clone(), 1);
+    sealed.recipient = Some(identity.recipient().to_string());
+    let outcome = run(&targets, &base, &sealed).unwrap();
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    let names: Vec<String> = outcome.keep.iter().map(|kept| kept.name.clone()).collect();
+    assert_eq!(names.len(), 2, "{names:?}");
+    for kept in &outcome.keep {
+        assert!(kept.name.ends_with(".dump.age"), "{}", kept.name);
+        let bytes = std::fs::read(&kept.path).unwrap();
+        assert!(
+            bytes.starts_with(b"age-encryption.org/v1\n"),
+            "{} is not sealed",
+            kept.name
+        );
+        let text = String::from_utf8_lossy(&bytes);
+        assert!(
+            !text.contains("PGDMP") && !text.contains("a row no plain file may hold"),
+            "{}",
+            kept.name
+        );
+        assert_eq!(
+            std::fs::metadata(&kept.path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // a restore of the moqui archive finds the content archive by the same name
+    let siblings = super::super::embedded::sibling_dumps(&outcome.archive_path);
+    assert_eq!(siblings.len(), 1, "{siblings:?}");
+    let mut opened = Vec::new();
+    moqui_lib::age::Decryptor::new(std::fs::File::open(&siblings[0].1).unwrap(), &identity)
+        .unwrap()
+        .read_to_end(&mut opened)
+        .unwrap();
+    assert!(opened.starts_with(b"PGDMP"));
+    let plain = base.join("opened.dump");
+    std::fs::write(&plain, &opened).unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    conn.execute("DROP TABLE sealed_kept", &[]).unwrap();
+    drop(conn);
+    cluster.load_database("moqui_content", &plain).unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    let rows = conn.query_once("SELECT body FROM sealed_kept", &[]).unwrap();
+    assert_eq!(
+        rows[0].get("body"),
+        Some(&Value::string("a row no plain file may hold"))
+    );
 }

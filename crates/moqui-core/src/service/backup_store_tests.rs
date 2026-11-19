@@ -298,20 +298,38 @@ fn an_archive_whose_sidecar_changed_goes_up_again() {
 
 #[test]
 fn keys_map_back_to_archive_names() {
-    assert_eq!(archive_of("p/", &format!("p/{DUMP}.age"), true), Some((DUMP, ".age")));
     assert_eq!(
-        archive_of("p/", &format!("p/{FULL}.tar.gz.age"), true),
+        archive_of("p/", &format!("p/{DUMP}.age"), true, false),
+        Some((DUMP, ".age"))
+    );
+    assert_eq!(
+        archive_of("p/", &format!("p/{FULL}.tar.gz.age"), true, false),
         Some((FULL, ".tar.gz.age"))
     );
-    assert_eq!(archive_of("p/", &format!("p/{FULL}"), true), None);
-    assert_eq!(archive_of("p/", &format!("p/x/{FULL}.age"), true), None);
-    assert_eq!(archive_of("", &format!("{DUMP}.age"), true), Some((DUMP, ".age")));
-    assert_eq!(archive_of("p/", &format!("p/{DUMP}"), false), Some((DUMP, "")));
+    assert_eq!(archive_of("p/", &format!("p/{FULL}"), true, false), None);
+    assert_eq!(archive_of("p/", &format!("p/x/{FULL}.age"), true, false), None);
     assert_eq!(
-        archive_of("p/", &format!("p/{FULL}.tar.gz"), false),
+        archive_of("", &format!("{DUMP}.age"), true, false),
+        Some((DUMP, ".age"))
+    );
+    assert_eq!(archive_of("p/", &format!("p/{DUMP}"), false, false), Some((DUMP, "")));
+    assert_eq!(
+        archive_of("p/", &format!("p/{FULL}.tar.gz"), false, false),
         Some((FULL, ".tar.gz"))
     );
-    assert_eq!(archive_of("p/", &format!("p/{DUMP}.age"), false), None);
+    assert_eq!(archive_of("p/", &format!("p/{DUMP}.age"), false, false), None);
+    // SEC-CLI-114: where the dumps are sealed here, a sealed dump's name is an archive, sent as it is by a plain
+    // mirror and sealed again by an encrypted one
+    let sealed_dump = format!("{DUMP}.age");
+    assert_eq!(
+        archive_of("p/", &format!("p/{DUMP}.age"), false, true),
+        Some((sealed_dump.as_str(), ""))
+    );
+    assert_eq!(
+        archive_of("p/", &format!("p/{DUMP}.age.age"), true, true),
+        Some((sealed_dump.as_str(), ".age"))
+    );
+    assert_eq!(archive_of("p/", &format!("p/{DUMP}.age.age"), true, false), None);
     assert_eq!(key_prefix("/a/b/"), "a/b/");
     assert_eq!(key_prefix(""), "");
 }

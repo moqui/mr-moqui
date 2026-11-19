@@ -19,13 +19,21 @@
 //! account changes or signs out. The comms app's screens the shell bundles (Chat, the Inbox, Compose, a call and the
 //! Dialer) are shown in the shell instead, from a link of the shell's, the OS (`mailto:`, `tel:`, `sip:`) or a notification
 //! ([`open_page`]).
+//!
+//! Every account's server pages are on the one `moqui-app` origin, so each account's app windows have a Chromium
+//! profile of their own ([`profile_dir`]): its storage, caches and service workers are the browser's to keep apart, and
+//! one account's pages see nothing another's kept (plans/Security-Review-Medium.md SEC-CLI-81). A removed account's
+//! profile is deleted at the next start ([`forget_old_profiles`]), as Chromium holds its files while it runs.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use tauri::ipc::CapabilityBuilder;
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
-use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Url, Webview, WebviewUrl, WebviewWindowBuilder};
 
+use moqui_client_tauri::shell_load::{nonce_script, ShellLoad};
 use moqui_client_tauri::{ClientState, ShellHost};
 use serde_json::Value;
 
@@ -113,6 +121,8 @@ pub(crate) fn add_capabilities(app: &AppHandle) {
 /// The app's windows as the shared shell commands use them (`moqui_client_tauri::ShellHost`).
 pub(crate) struct DesktopShell {
     pub(crate) app: AppHandle,
+    /// The main window's load, and the nonce of the shell's ([`shell_window`]).
+    pub(crate) load: Arc<ShellLoad>,
 }
 
 impl ShellHost for DesktopShell {
@@ -148,6 +158,12 @@ impl ShellHost for DesktopShell {
     fn sso_starting(&self) {
         crate::os::claim_app_scheme();
     }
+
+    /// The main window, at the shell's page, with the nonce of its current load: the capability grants the shell's
+    /// commands to the main window only, and the nonce holds if another document is ever shown there (SEC-CLI-07).
+    fn is_shell_page(&self, webview: &Webview, nonce: Option<&str>) -> bool {
+        webview.label() == super::SHELL_WINDOW && self.load.is_shell(webview.url().ok().as_ref(), nonce)
+    }
 }
 
 /// Tell the account's windows that its outbox changed: `event` to `window.__moquiOutboxEvent` in the shell (when it
@@ -178,7 +194,8 @@ pub(crate) fn notify_pages(app: &AppHandle, account: &str, event: &Value) {
 /// Where a window on `origin` sends a navigation to a URL.
 #[derive(Debug, PartialEq, Eq)]
 enum Goes {
-    /// The window goes there: its own origin, or a page's own `about:`, `data:` or `blob:` document.
+    /// The window goes there: its own origin (a `blob:` of it too), or `about:blank`. A `data:` document, or a `blob:`
+    /// of another origin, goes nowhere (plans/Security-Review.md SEC-CLI-03).
     Here,
     /// A page of the server, from the shell: in an app window.
     AppWindow,
@@ -195,7 +212,7 @@ fn goes(url: &Url, origin: &str) -> Goes {
     if at == SHELL_ORIGIN && origin == SHELL_ORIGIN && !matches!(url.path(), "/" | "/index.html") {
         return Goes::AppWindow;
     }
-    if at == origin || matches!(url.scheme(), "about" | "data" | "blob") {
+    if at == origin || url.as_str() == "about:blank" {
         Goes::Here
     } else if at == APP_ORIGIN {
         Goes::AppWindow
@@ -404,9 +421,16 @@ static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 /// The main window, on the shell.
 pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
     let _ = APP.set(app.clone());
+    // the shell's commands carry the nonce of the shell page's current load, handed to it as the load finishes
+    // (SEC-CLI-07); the next load's start takes it away (not a navigation's start: one that ends as a download loads
+    // nothing, and the next document never sees the last one's nonce)
+    let load = app
+        .try_state::<Client>()
+        .map(|client| Arc::clone(&client.shell_load))
+        .unwrap_or_default();
     WebviewWindowBuilder::new(
         app,
-        "main",
+        super::SHELL_WINDOW,
         WebviewUrl::External(moqui_client_tauri::shell_url(None, None)),
     )
     .title("MR Moqui")
@@ -415,10 +439,18 @@ pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
     .initialization_script(shell_script(&super::device_name()))
     .on_download(crate::bridge::on_download)
     .on_permission_request(crate::bridge::on_permission)
-    .on_page_load(|window, payload| {
-        if payload.event() == PageLoadEvent::Started {
+    .on_page_load(move |window, payload| match payload.event() {
+        PageLoadEvent::Started => {
+            load.started(payload.url());
             if let Some(client) = window.app_handle().try_state::<Client>() {
                 client.core.sockets().close_for(window.label());
+            }
+        }
+        PageLoadEvent::Finished => {
+            if let Some(nonce) = load.finished(payload.url()) {
+                if let Err(err) = window.eval(nonce_script(&nonce)) {
+                    tracing::warn!("The shell's page was not handed its load's nonce: {err}");
+                }
             }
         }
     })
@@ -432,8 +464,54 @@ pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Load the shell again (another account, signed out), with `query`.
-/// Open `path` of the current account's server (`/qapps/...`) in a new app window.
+/// The folder, under Chromium's (`<cache>/<identifier>/cef`), of the profile of `account`'s app windows: relative, so
+/// the runtime keeps it under its own folder (tauri-runtime-cef's `data_directory`). An account id is a host name's
+/// letters, digits, dots and dashes and a hash (`moqui_client::account::account_id`), one plain folder name.
+pub(crate) fn profile_dir(account: &str) -> PathBuf {
+    Path::new(PROFILES).join(account)
+}
+
+/// The folder under Chromium's that holds the accounts' profiles ([`profile_dir`]).
+const PROFILES: &str = "accounts";
+
+/// The profiles under `root` (Chromium's folder, [`PROFILES`] in it) of accounts no longer in `kept`.
+pub(crate) fn old_profiles(root: &Path, kept: &[String]) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(root.join(PROFILES)) else {
+        return Vec::new();
+    };
+    let mut old: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| !kept.iter().any(|id| entry.file_name().to_str() == Some(id.as_str())))
+        .map(|entry| entry.path())
+        .collect();
+    old.sort();
+    old
+}
+
+/// Delete the profiles of accounts removed since the last run (Chromium's folder is `<cache>/<identifier>/cef`,
+/// tauri-runtime-cef's default, which this app does not change); one that will not go is logged and the rest go on.
+pub(crate) fn forget_old_profiles(app: &AppHandle, kept: &[String]) {
+    let root = match app.path().app_cache_dir() {
+        Ok(cache) => cache.join("cef"),
+        Err(err) => {
+            tracing::warn!("The accounts' browser profiles were not checked: {err}");
+            return;
+        }
+    };
+    for old in old_profiles(&root, kept) {
+        match std::fs::remove_dir_all(&old) {
+            Ok(()) => tracing::info!(
+                "The browser profile of a removed account was deleted: {}",
+                old.display()
+            ),
+            Err(err) => tracing::error!("The browser profile {} was not deleted: {err}", old.display()),
+        }
+    }
+}
+
+/// Open `path` of the current account's server (`/qapps/...`) in a new app window, in the account's own browser
+/// profile ([`profile_dir`]).
 ///
 /// # Errors
 ///
@@ -468,6 +546,7 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
         .inner_size(1280.0, 860.0)
         .min_inner_size(400.0, 300.0)
         .initialization_script(script)
+        .data_directory(profile_dir(&account.id))
         .on_download(crate::bridge::on_download)
         .on_permission_request(crate::bridge::on_permission)
         .on_page_load(|window, payload| {

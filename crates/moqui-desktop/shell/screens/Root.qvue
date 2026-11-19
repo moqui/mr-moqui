@@ -182,8 +182,13 @@ along with this software (see the LICENSE.md file). If not, see
             <q-card-section class="q-pt-none text-body2">{{signOutBox.shared
                 ? t('Sign out of this account on this computer? Its device key is revoked, and what was kept for it here is deleted.')
                 : t('Sign out of this account on this computer? Its device key is revoked.')}}</q-card-section>
+            <!-- a personal account keeps its mail, chat and drafts here to sign in to again, unless the user asks
+                (plans/Security-Review.md SEC-CLI-08) -->
+            <q-card-section v-if="!signOutBox.shared" class="q-pt-none m-shell-sign-out-forget">
+                <q-checkbox v-model="signOutBox.forget" dense :label="t('Also delete the mail, chat and drafts kept for it on this computer')"></q-checkbox>
+            </q-card-section>
             <template v-if="signOutBox.items.length">
-                <q-card-section class="q-pt-none text-body2 text-weight-medium" :class="signOutBox.shared ? 'text-negative' : ''">{{signOutBox.shared
+                <q-card-section class="q-pt-none text-body2 text-weight-medium" :class="signOutDeletes ? 'text-negative' : ''">{{signOutDeletes
                     ? t('Not sent yet: signing out deletes these.') : t('Not sent yet: these stay on this computer and go after you sign in again.')}}</q-card-section>
                 <q-list dense separator class="m-shell-unsent">
                     <q-item v-for="item in signOutBox.items" :key="item.key">
@@ -194,8 +199,8 @@ along with this software (see the LICENSE.md file). If not, see
                 </q-list>
             </template>
             <q-card-section v-if="signOutBox.inCall" class="q-pt-none text-body2 text-weight-medium text-negative m-shell-sign-out-call">{{t('You are in a call: signing out leaves it.')}}</q-card-section>
-            <q-card-section v-if="!signOutBox.items.length && !signOutBox.checked" class="q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown" :class="signOutBox.shared ? 'text-negative' : ''">
-                {{signOutBox.shared ? t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
+            <q-card-section v-if="!signOutBox.items.length && !signOutBox.checked" class="q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown" :class="signOutDeletes ? 'text-negative' : ''">
+                {{signOutDeletes ? t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
                     : t('What is not sent yet could not be checked: it stays on this computer and goes after you sign in again.')}}</q-card-section>
             <q-card-actions align="right">
                 <q-btn flat no-caps :label="t('Stay signed in')" v-close-popup></q-btn>
@@ -291,7 +296,7 @@ module.exports = {
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
             // the palette (m-shell-palette reads these of its $root, as of m-qapps-root's)
             paletteOpen: false, assistOn: false,
-            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
+            signOutBox: { open: false, shared: false, forget: false, items: [], checked: true, inCall: false },
             pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
     },
@@ -354,7 +359,9 @@ module.exports = {
             return rows;
         },
         // the sign-out leaves something unsent, or could not tell
-        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared) || this.signOutBox.inCall; },
+        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutDeletes) || this.signOutBox.inCall; },
+        // the sign-out deletes the account's data here: a shared device's, or a personal one's the user asked to delete
+        signOutDeletes() { return this.signOutBox.shared || this.signOutBox.forget; },
         // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
         shared() {
             const current = this.accounts.find((account) => account.id === this.currentId);
@@ -583,12 +590,13 @@ module.exports = {
             const desktop = host();
             const unsent = desktop && desktop.outbox && typeof desktop.outbox.unsent === 'function'
                 ? desktop.outbox.unsent().catch((err) => { console.info('The unsent items were not read', err); return null; }) : Promise.resolve(null);
-            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found, inCall: this.inCall() }; });
+            unsent.then((found) => { this.signOutBox = { open: true, shared, forget: false, items: unsentItems(found), checked: !!found, inCall: this.inCall() }; });
         },
         confirmSignOut() {
             this.signOutBox.open = false;
+            const forget = !this.signOutBox.shared && this.signOutBox.forget === true;
             const left = this.inCall() ? moqui.call.leave().catch(() => null) : Promise.resolve();
-            left.then(() => host().signOut()).catch((err) => this.failed(err));
+            left.then(() => host().signOut(forget)).catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
         // the notification check (plans/Comms-Messaging.md §7.6): the host's state, read again after a fix

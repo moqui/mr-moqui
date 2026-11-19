@@ -320,7 +320,8 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    SEC-RTE-15, SEC-FIL-63, SEC-PSS-62, SEC-GIT-12, SEC-PSS-45 and SEC-CLI-02.
 
    Deferred, each for an owner's decision or a design: SEC-COM-19 and SEC-COM-26 (each a design of its own), and
-   SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine).
+   SEC-CLI-03, SEC-CLI-04 and SEC-CLI-05 (the desktop and Tauri clients, waiting for the desktop build machine; fixed
+   2026-11-19, item 9).
 
    Found while fixing and not fixed: each `RCPT` and delivery sums a mail account's message sizes, with no kept counter
    (SEC-MAIL-07; the owner's call, later work if it is slow).
@@ -346,7 +347,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 
    Found while fixing and not fixed: the framework's `update#UserAccount` asks `check#AccountAction` with `permissionId: 'NONE'`, so a caller that passes another user's `userId` gets no owner check from it; mr-marble's Search expands `DataDocument` titles and link text (administrator records) and its `EditParty`, `EditCustomer` and `EditSupplier` show identifications whole; SEC-BAP-87 (`Knowledge.js` expands `publicPageUrl`) stays open; the CI work directory's predictable scratch names stay with SEC-GIT-98.
 
-5. **Round 3's Medium fixes, 2026-11-18 and 19.** The 54 Medium findings the lead had read were fixed in six batches (four framework, two component), each read by a reviewer and read again after its follow-ups, with SEC-TLS-87, SEC-SCR-84 (already closed by High fixes) and SEC-BAP-87; SEC-CLI-81 is fixed in part. The other 35 Medium findings, with no second reading, are item 9.
+5. **Round 3's Medium fixes, 2026-11-18 and 19.** The 54 Medium findings the lead had read were fixed in six batches (four framework, two component), each read by a reviewer and read again after its follow-ups, with SEC-TLS-87, SEC-SCR-84 (already closed by High fixes) and SEC-BAP-87; SEC-CLI-81 is fixed in part. The other 35 Medium findings, with no second reading, are item 12.
 
    Found while fixing and fixed with them: a shell provider's, or a service's, `disableAuthz()`/`enableAuthz()` could leave the caller's authorization off for the rest of the request (and a failing one, its entity ECA and tarpit switches): `require_authz`, a new `keep_authz` and every service call now hold an `AuthzScope` that puts the caller's state back on any exit (`context/artifact.rs`, `service/call.rs`, `screen/shell.rs`); yrs is patched to decode at most 128 levels of nesting (`patches/yrs`); the CI runner's scratch files are made new and private (SEC-GIT-98); SSH keys, app passwords and device credentials, the SSO flows and SAML, SIP trunks, remote agents and MCP servers no longer keep a secret through a generic write or an endpoint change; Customer Service's customer read masks identifications; the forum's mbox import keys no author by display text; mr-marble's print screens and the Marble and mr-boss search lookups; the share-zip limits are conf settings (`resource-facade/drive-share`); a new `allow-html="app"` cleaner for rich text only signed-in users read.
 
@@ -384,7 +385,39 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    app lock, SEC-CLI-114's encrypted dump, SEC-CLI-118's feed, and SEC-CLI-103's sandbox by decision. Nothing of these
    three batches ran on a device, a Linux machine or a built desktop app.
 
-9. **Round 3's last Medium fixes, 2026-11-19.** The 34 Medium findings no one had read a second time, with SEC-WEB-87
+9. **The clients' fourth batch, 2026-11-19.** The older client findings and the last parts of fixed ones: fixed
+   SEC-CLI-03, SEC-CLI-04, SEC-CLI-05 (deferred since round 1, as no desktop build could check them then), SEC-CLI-06,
+   SEC-CLI-09, SEC-CLI-85, SEC-CLI-86, SEC-CLI-87, SEC-CLI-88 (found to reach a writing transition: any app's forged
+   notification tap opened a server path as the shell's main frame), SEC-CLI-91, SEC-CLI-95, SEC-CLI-97, SEC-CLI-98,
+   SEC-CLI-99 and SEC-CLI-100, and the sidecar's part of SEC-CLI-105, the name others see of SEC-CLI-106, the push
+   take-back of SEC-CLI-108 and the FCM token of SEC-CLI-121. Left to the fix session: SEC-CLI-83 and SEC-CLI-84 (the
+   terminal client's Mediums, in its next batch). Next: SEC-CLI-07, SEC-CLI-08, SEC-CLI-81, SEC-CLI-90, SEC-CLI-92,
+   SEC-CLI-93, SEC-CLI-94, SEC-CLI-96, the phone's SEC-CLI-102, SEC-CLI-104's Gradle verification, SEC-CLI-113's
+   second key and SEC-CLI-118's feed; then SEC-CLI-114's encrypted dumps.
+
+10. **The clients' fifth batch, 2026-11-19.** Fixed: SEC-CLI-07 (the desktop shell's commands carry its load's
+   nonce), SEC-CLI-08 (a sign-out may delete a personal account's data), SEC-CLI-90 (the phone's camera, microphone
+   and location for its own origins only), SEC-CLI-93 and SEC-CLI-94 (control characters dropped where text becomes a
+   terminal cell, and from a copy), SEC-CLI-96 (rich-text images stored without their metadata) and SEC-CLI-118's feed
+   (read by the app, to 256 KiB); in part: SEC-CLI-81 (a Chromium profile per account on the desktop; on the phone the
+   shared origin's storage cleared at a switch, a webview per account later), SEC-CLI-92 (images recorded and capped
+   per user; removing unused ones later, by the owner's decision), the phone's half of SEC-CLI-102 (to check on a
+   device) and SEC-CLI-113 (the second Keystore key and the shared-device refusal; an app lock later, by decision).
+   Left: SEC-CLI-104's Gradle verification, for a machine with the Android toolchain (this one has no SDK platform 37,
+   and the Tauri Gradle settings come from an Android build); SEC-CLI-114's encrypted dumps are the next batch. Nothing
+   of this batch ran on a device or a built desktop app, and its Kotlin is not compiled.
+
+11. **The clients' sixth batch, 2026-11-19.** SEC-CLI-114 is fixed: the desktop's backups, the nightly one and the
+   tray's, are sealed to an age key the app keeps in the OS key store as `pg_dump` writes them (`.dump.age`, no plain
+   dump on disk), the tray saves the key to a file, and a restore opens a sealed dump with it. The framework's
+   `database-backup@recipient` does the same for a server, and `moqui save-db --recipient` and `load-save --identity`
+   take it on the command line. Of the clients' findings, what is open: SEC-CLI-81 on the phone (a webview per
+   account), SEC-CLI-92's removal of unused images and SEC-CLI-113's app lock (both designs for later, by decision),
+   SEC-CLI-102 on the phone (to check on a device), SEC-CLI-103 (by decision) and SEC-CLI-104's Gradle verification.
+   SEC-TLS-97 (the plain dumps' and the backup folder's modes) is left to its own area. Not run on a built desktop
+   app: a nightly sealed backup, the tray's key file, a restore from it.
+
+12. **Round 3's last Medium fixes, 2026-11-19.** The 34 Medium findings no one had read a second time, with SEC-WEB-87
    (from the security proofs) and SEC-BAP-138, were fixed in four batches: two framework (SEC-TLS-86, TLS-91, TLS-92,
    TLS-93, TLS-94; SEC-WEB-87, GIT-83, FIL-86, CLI-83, CLI-84 and SEC-BAP-96's framework half) and two component
    (SEC-BOS-86, BOS-87, BOS-88, BOS-89, BOS-90, BOS-92, BOS-93, BOS-94, BOS-96, BOS-97, BOS-101; SEC-BAP-84, BAP-85,
@@ -1217,33 +1250,33 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | --- | --- | --- | --- | --- |
 | SEC-CLI-01 | crates/moqui-desktop/src/node/mod.rs:271, crates/moqui-core/src/web/origin.rs:127, runtime/components/base/webroot/screen/webroot/Login.xml:116 | The sidecar's loopback web listener is open to every local user and has no Host check seen | Medium | fixed |
 | SEC-CLI-02 | runtime/components/base/webroot/screen/webroot/sw.js:28 | The service worker keeps any same-origin GET that has a `v` parameter, cache first, with no expiry | Low | fixed |
-| SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | deferred |
-| SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | deferred |
-| SEC-CLI-05 | crates/moqui-desktop/src/bridge.rs:288, crates/moqui-desktop/src/os/mod.rs:214 | A node page can set where OS mail and call links open, and it is kept across runs | Low | deferred |
-| SEC-CLI-06 | crates/moqui-mobile/src/scheme.rs:173 | On mobile `scheme_fetch` trusts the webview's URL and the caller's own headers | Info | reported (confirmed in code) |
-| SEC-CLI-07 | crates/moqui-client-tauri/src/lib.rs:96, crates/moqui-desktop/src/client/windows.rs:95 | The shell's commands in the desktop client are not bound to an account | Info | reported (confirmed in code) |
-| SEC-CLI-08 | crates/moqui-client/src/store/mod.rs:21, crates/moqui-client-tauri/src/commands.rs:575 | A personal account's mail and chat stay on disk in plain SQLite after sign-out | Info | reported (confirmed in code) |
-| SEC-CLI-09 | crates/moqui-desktop/src/os/instance.rs:137 | The single-instance socket is restricted only after it is bound | Info | reported (confirmed in code) |
+| SEC-CLI-03 | crates/moqui-desktop/src/lib.rs:234 | The main window's navigation check in node modes passes every scheme but five | Low | fixed |
+| SEC-CLI-04 | crates/moqui-client-tauri/src/scheme.rs:319, crates/moqui-desktop/src/node/scheme.rs:195, crates/moqui-core/src/context/factory.rs:93 | In the apps the server's default CSP is dropped whole, `form-action` and `frame-ancestors` with it | Low | fixed |
+| SEC-CLI-05 | crates/moqui-desktop/src/bridge.rs:288, crates/moqui-desktop/src/os/mod.rs:214 | A node page can set where OS mail and call links open, and it is kept across runs | Low | fixed |
+| SEC-CLI-06 | crates/moqui-mobile/src/scheme.rs:173 | On mobile `scheme_fetch` trusts the webview's URL and the caller's own headers | Info | fixed |
+| SEC-CLI-07 | crates/moqui-client-tauri/src/lib.rs:96, crates/moqui-desktop/src/client/windows.rs:95 | The shell's commands in the desktop client are not bound to an account | Info | fixed |
+| SEC-CLI-08 | crates/moqui-client/src/store/mod.rs:21, crates/moqui-client-tauri/src/commands.rs:575 | A personal account's mail and chat stay on disk in plain SQLite after sign-out | Info | fixed |
+| SEC-CLI-09 | crates/moqui-desktop/src/os/instance.rs:137 | The single-instance socket is restricted only after it is bound | Info | fixed |
 | SEC-CLI-81 | `crates/moqui-client-tauri/src/lib.rs:62`; `crates/moqui-client-tauri/src/scheme.rs:208`; `js/WebrootChat.js:454`, `:499`, `:571-588`; `js/MoquiLib.js:355-357`, `:451-466` | Every server's pages in the apps share one origin: one server's page queues a chat send that another account's page then sends as that user, and may register a service worker there | Medium | fixed in part |
 | SEC-CLI-82 | `crates/moqui-lib/src/safe_html.rs:31-36`; `mr-boss/screen/Shared/Chatter.qvue:302`; `crates/moqui-core/src/screen/render.rs:2768-2782`; `crates/moqui-dav/src/elfinder.rs:578-587` | Rich text keeps any image source, so a same-site image in a Chatter entry runs a GET with the reader's session, and an outside one tells the writer who read it | Medium | fixed |
 | SEC-CLI-83 | `crates/moqui-tui/src/components/calc.rs:340-343`, `:1164-1171`; `crates/moqui-calc/src/fill.rs:504`; IronCalc `xlsx/src/import/worksheets.rs:885-888`, `:900-904` | A workbook's frozen-row count sizes a loop and an allocation in the terminal's calc grid on every frame | Medium | fixed |
 | SEC-CLI-84 | `crates/moqui-tui/src/ui/run.rs:201-236`; `crates/moqui-host/src/tui.rs:870-882` | On Windows a server's `Content-Type` puts a `moqui tui --server` download outside the downloads folder | Medium | fixed |
-| SEC-CLI-85 | `crates/moqui-client/src/proxy.rs:61-72`, `:232-247`; `crates/moqui-client-tauri/src/scheme.rs:318-333` | A server's answer on the shell's origin can carry `Clear-Site-Data`, which would wipe what the shell keeps for every account | Low | reported (to check) |
-| SEC-CLI-86 | `crates/moqui-client/src/offline.rs:255-276`, `:285-297`; `crates/moqui-client/src/sync/feeds/chat.rs:93-95` | One server's clock decides when another account's disappearing messages leave the device | Low | reported (confirmed in code) |
-| SEC-CLI-87 | `crates/moqui-client/src/proxy.rs:308-353` | A download's file name keeps Unicode format characters such as a right-to-left override | Low | reported (likely) |
-| SEC-CLI-88 | `crates/moqui-mobile/src/lib.rs:196-203`; `crates/moqui-mobile/src/commands.rs:184-189`; `NotificationPlugin.kt:124-131` | Any app on the phone can make the app open a server path of the current account in its shell | Low | reported (likely) |
+| SEC-CLI-85 | `crates/moqui-client/src/proxy.rs:61-72`, `:232-247`; `crates/moqui-client-tauri/src/scheme.rs:318-333` | A server's answer on the shell's origin can carry `Clear-Site-Data`, which would wipe what the shell keeps for every account | Low | fixed |
+| SEC-CLI-86 | `crates/moqui-client/src/offline.rs:255-276`, `:285-297`; `crates/moqui-client/src/sync/feeds/chat.rs:93-95` | One server's clock decides when another account's disappearing messages leave the device | Low | fixed |
+| SEC-CLI-87 | `crates/moqui-client/src/proxy.rs:308-353` | A download's file name keeps Unicode format characters such as a right-to-left override | Low | fixed |
+| SEC-CLI-88 | `crates/moqui-mobile/src/lib.rs:196-203`; `crates/moqui-mobile/src/commands.rs:184-189`; `NotificationPlugin.kt:124-131` | Any app on the phone can make the app open a server path of the current account in its shell | Low | fixed |
 | SEC-CLI-89 | `crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt:366-386`, `:502-508`; `crates/moqui-mobile/gen/android/app/src/main/res/xml/file_paths.xml:3-4` | A photo taken with the camera from a page stays in the app's external files folder | Low | fixed |
-| SEC-CLI-90 | `crates/moqui-mobile/src/lib.rs:261-286`; `crates/moqui-mobile/patches/wry/src/android/binding.rs:510-512`; `RustWebChromeClient.kt:60-81`, `:250-288` | On the phone every page and delegated frame that asks gets the camera, microphone and location with no prompt | Low | reported (confirmed in code) |
-| SEC-CLI-91 | `crates/moqui-desktop/src/runtime_dir.rs:81-89`; `crates/moqui-host/src/lib.rs:947-953` | The desktop app runs the first runtime it finds in its working directory or beside its executable | Low | reported (confirmed in code) |
-| SEC-CLI-92 | `crates/moqui-core/src/service/images.rs:268-289`; `runtime/components/base/webroot/screen/webroot/webroot.xml:239-249` | Any signed-in user stores rich-text images with no count, owner or removal | Low | reported (confirmed in code) |
-| SEC-CLI-93 | `crates/moqui-tui/src/ui/paint.rs:195-204`; revue 3.15.0 `render/terminal/render.rs:188-191`; `crates/moqui-tui/src/ui/agent.rs:1533`; `crates/moqui-host/src/tui_cmd.rs:161`, `:263` | Text from outside the screen model reaches the terminal with its control characters on every writer but the session encoder (SEC-CLU-87's statement that every other text goes through `clean_text` does not hold) | Low | reported (confirmed in code) |
-| SEC-CLI-94 | `crates/moqui-tui/src/ui/mod.rs:262-268`, `:304-321`, `:436-452`; `crates/moqui-tui/src/session/mod.rs:1116-1146` | A mouse selection copies the cells' control characters to the clipboard, a bracketed-paste end marker included | Low | reported (confirmed in code) |
-| SEC-CLI-95 | `crates/moqui-client/src/store/mod.rs:479-505`, `:565-623` | Removing an account can leave its whole old store in `data/<account>.db.old` | Info | reported (confirmed in code) |
-| SEC-CLI-96 | `crates/moqui-core/src/service/images.rs:271-288` | A rich-text image is stored and served as uploaded, with its metadata | Info | reported (confirmed in code) |
-| SEC-CLI-97 | `crates/moqui-mobile/src/commands.rs:244-251`; `crates/moqui-mobile/src/host.rs:652-654` | Four mobile commands are checked by the last load's origin only, not the shell's nonce | Info | reported (confirmed in code) |
-| SEC-CLI-98 | `scripts/moq/desktop.sh:366-367`; `tauri-plugin-updater` `src/updater.rs:1932-1940` | The updater does not require the signed version | Info | reported (confirmed in code) |
-| SEC-CLI-99 | `crates/moqui-mobile/gen/android/app/src/main/AndroidManifest.xml:83-88`; `crates/moqui-mobile/src/host.rs:358-375` | A web page can switch the phone app's current account through the join link | Info | reported (confirmed in code) |
-| SEC-CLI-100 | `crates/moqui-mobile/src/host.rs:741-750`; `ChatNotifications.kt:367-384` | A signed-out account's chat notifications and conversation shortcuts stay on the phone | Info | reported (confirmed in code) |
+| SEC-CLI-90 | `crates/moqui-mobile/src/lib.rs:261-286`; `crates/moqui-mobile/patches/wry/src/android/binding.rs:510-512`; `RustWebChromeClient.kt:60-81`, `:250-288` | On the phone every page and delegated frame that asks gets the camera, microphone and location with no prompt | Low | fixed |
+| SEC-CLI-91 | `crates/moqui-desktop/src/runtime_dir.rs:81-89`; `crates/moqui-host/src/lib.rs:947-953` | The desktop app runs the first runtime it finds in its working directory or beside its executable | Low | fixed |
+| SEC-CLI-92 | `crates/moqui-core/src/service/images.rs:268-289`; `runtime/components/base/webroot/screen/webroot/webroot.xml:239-249` | Any signed-in user stores rich-text images with no count, owner or removal | Low | fixed in part |
+| SEC-CLI-93 | `crates/moqui-tui/src/ui/paint.rs:195-204`; revue 3.15.0 `render/terminal/render.rs:188-191`; `crates/moqui-tui/src/ui/agent.rs:1533`; `crates/moqui-host/src/tui_cmd.rs:161`, `:263` | Text from outside the screen model reaches the terminal with its control characters on every writer but the session encoder (SEC-CLU-87's statement that every other text goes through `clean_text` does not hold) | Low | fixed |
+| SEC-CLI-94 | `crates/moqui-tui/src/ui/mod.rs:262-268`, `:304-321`, `:436-452`; `crates/moqui-tui/src/session/mod.rs:1116-1146` | A mouse selection copies the cells' control characters to the clipboard, a bracketed-paste end marker included | Low | fixed |
+| SEC-CLI-95 | `crates/moqui-client/src/store/mod.rs:479-505`, `:565-623` | Removing an account can leave its whole old store in `data/<account>.db.old` | Info | fixed |
+| SEC-CLI-96 | `crates/moqui-core/src/service/images.rs:271-288` | A rich-text image is stored and served as uploaded, with its metadata | Info | fixed |
+| SEC-CLI-97 | `crates/moqui-mobile/src/commands.rs:244-251`; `crates/moqui-mobile/src/host.rs:652-654` | Four mobile commands are checked by the last load's origin only, not the shell's nonce | Info | fixed |
+| SEC-CLI-98 | `scripts/moq/desktop.sh:366-367`; `tauri-plugin-updater` `src/updater.rs:1932-1940` | The updater does not require the signed version | Info | fixed |
+| SEC-CLI-99 | `crates/moqui-mobile/gen/android/app/src/main/AndroidManifest.xml:83-88`; `crates/moqui-mobile/src/host.rs:358-375` | A web page can switch the phone app's current account through the join link | Info | fixed |
+| SEC-CLI-100 | `crates/moqui-mobile/src/host.rs:741-750`; `ChatNotifications.kt:367-384` | A signed-out account's chat notifications and conversation shortcuts stay on the phone | Info | fixed |
 | SEC-CLI-101 | `crates/moqui-desktop/src/node/mod.rs:133-141`; `crates/moqui-core/src/user/setup.rs:40-68` | In sidecar mode, or with the tray's ports on, any local user may create the desktop node's first administrator until the owner does (the rest of SEC-CLI-01) | Low | fixed |
 | SEC-CLI-102 | `crates/moqui-client/src/proxy.rs:35-52`, `:201-206`; `crates/moqui-mobile/src/scheme.rs:129-131`; `crates/moqui-desktop/src/node/scheme.rs:111-116` | The app schemes get no `Sec-Fetch-*` and the proxy passes no `Referer`, so a GET a cross-origin frame in a server page starts runs a writing transition as the user | Low | fixed in part |
 | SEC-CLI-103 | tauri-runtime-cef 3.0.0-alpha.6 `src/sandbox.rs:33-40`, `:84-92`; `crates/moqui-desktop/README.md:237-239` | The desktop AppImage runs Chromium with no process sandbox where unprivileged user namespaces are restricted, and a Windows build would always | Low | fixed in part |
@@ -1257,11 +1290,11 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | SEC-CLI-111 | `crates/moqui-desktop/src/client/keystore.rs:112-132`; `crates/moqui-client-tauri/src/commands.rs:500`, `:560` | On the desktop a device key in the file fallback outlives the move to the OS key store, in plain text | Info | fixed |
 | SEC-CLI-112 | `crates/moqui-mobile/src/lib.rs:158-165`, `:317`; `crates/moqui-client-tauri/src/scheme.rs:258`; `crates/moqui-client/src/proxy.rs:184` | The phone's release build logs a failed request's whole URL and a refused navigation's URL to logcat | Info | fixed |
 | SEC-CLI-113 | `KeyVault.kt:22-33`; `docs/ui/Mobile-Client.md:68-72` | The phone's keys and data are not tied to a secure lock screen, and neither app has a lock of its own | Info | fixed in part |
-| SEC-CLI-114 | `crates/moqui-desktop/src/backup.rs:18-23`, `:75-82`, `:140-148`, `:284-291` | The desktop dumps the whole node every night, in clear, into a Documents folder by default, without saying so, and the tray cannot turn it off | Info | fixed in part |
+| SEC-CLI-114 | `crates/moqui-desktop/src/backup.rs:18-23`, `:75-82`, `:140-148`, `:284-291` | The desktop dumps the whole node every night, in clear, into a Documents folder by default, without saying so, and the tray cannot turn it off | Info | fixed |
 | SEC-CLI-115 | `ChatNotifications.kt:246-256` | A text's one-time code shows on a lock screen left at its default | Info | fixed |
 | SEC-CLI-116 | `crates/moqui-mobile/gen/android/app/build.gradle.kts:47` | The phone app installs on Android 8 and 9, which receive no security updates, and has no overlay defence below Android 12 | Info | fixed |
 | SEC-CLI-117 | `crates/moqui-desktop/src/bridge.js:240-260` | The desktop has no screen protection for a view-once photo | Info | fixed |
-| SEC-CLI-118 | tauri-plugin-updater 3.0.0-alpha.3 `src/updater.rs:625`, `:885-890` | The desktop updater reads the feed and the whole artifact into memory with no size limit | Info | fixed in part |
+| SEC-CLI-118 | tauri-plugin-updater 3.0.0-alpha.3 `src/updater.rs:625`, `:885-890` | The desktop updater reads the feed and the whole artifact into memory with no size limit | Info | fixed |
 | SEC-CLI-119 | `crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt:141-240`; `crates/moqui-mobile/src/commands.rs:100-127` | A server page's native dialogs and notifications on the phone carry no origin | Info | fixed |
 | SEC-CLI-120 | `MainActivity.kt:335-376`; `crates/moqui-mobile/src/commands.rs:117-127` | The phone asks for the microphone at the first start after sign-in with no reason of its own, and any page's notification raises the notifications question | Info | fixed |
 | SEC-CLI-121 | `MainActivity.kt:110-114`; `Push.kt:30-42`; `src/fcm/java/org/moqui/mobile/PushService.kt:29-35` | A Firebase build reaches Google on every launch, before any account signs in | Info | fixed |

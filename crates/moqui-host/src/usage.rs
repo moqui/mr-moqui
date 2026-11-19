@@ -30,8 +30,8 @@ Server
 
 Data
   load             [name=value ...]                         Load data files into the configured database
-  save-db          <cluster-dir> <dump-file>                pg_dump --format=custom of an embedded cluster
-  load-save        <cluster-dir> <dump-file>                pg_restore --format=custom into an embedded cluster
+  save-db          <cluster-dir> <dump-file> [--recipient]  pg_dump --format=custom of an embedded cluster
+  load-save        <cluster-dir> <dump-file> [--identity]   pg_restore --format=custom into an embedded cluster
 
 Check
   lint             [file | --screens | --groovy <dir> ...]  Lint services, screens, or leftover Groovy
@@ -166,7 +166,7 @@ Booleans accept true/false, yes/no, y/n, and 1/0.
 ";
 
 const SAVE_DB: &str = "\
-moqui save-db <cluster-dir> <dump-file>
+moqui save-db <cluster-dir> <dump-file> [--recipient <age1...>]
     pg_dump --format=custom of an embedded cluster.
 
 Writes a custom-format dump of the embedded moqui database in that cluster directory. Starts the
@@ -177,13 +177,17 @@ selected by the transactional datasource's database-conf-name. The usual directo
 
   moqui save-db runtime/db/embedded runtime/save/before-upgrade/moqui.dump
 
+With --recipient, an age public key (as age-keygen prints), each dump is sealed to it as pg_dump
+writes it, and only the sealed bytes reach the disk; name the file .dump.age. Only that key's
+identity restores it (load-save --identity).
+
 The job backup_EmbeddedDatabase_daily takes this same kind of dump while Moqui is running and rotates
 the archives. Stop Moqui before load-save of that dump onto a cluster Moqui is using. A physical or
 incremental archive is restored with the cluster stopped. See plans/PostgresBackup.md.
 ";
 
 const LOAD_SAVE: &str = "\
-moqui load-save <cluster-dir> <dump-file>
+moqui load-save <cluster-dir> <dump-file> [--identity <file>|-]
     pg_restore --format=custom into an embedded cluster.
 
 Restores a custom-format dump with pg_restore --clean --if-exists into the embedded moqui database
@@ -192,6 +196,10 @@ command started. A postmaster that was already running keeps running. This is th
 only. The usual directory is runtime/db/embedded.
 
   moqui load-save runtime/db/embedded runtime/save/before-upgrade/moqui.dump
+
+A sealed dump (.age, from save-db --recipient or database-backup@recipient) needs --identity, the
+age identity file of its recipient, or - to read it from stdin. Each sealed dump is decrypted whole
+into an owner-only file under runtime/db before anything is restored, and that file is deleted after.
 
 Stop Moqui before restoring a dump from backup_EmbeddedDatabase_daily onto a cluster it is using.
 A physical or incremental archive is restored with the cluster stopped. See plans/PostgresBackup.md.

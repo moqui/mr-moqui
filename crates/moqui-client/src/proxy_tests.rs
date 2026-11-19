@@ -279,3 +279,34 @@ fn an_attachment_is_named_without_a_directory() {
     assert_eq!(attachment_name("attachment; filename=com1").as_deref(), Some("_com1"));
     assert_eq!(attachment_name("inline; filename=a.pdf"), None);
 }
+
+/// SEC-CLI-87: a character that reorders or hides the name's text (a right-to-left override, a zero-width space) is
+/// no part of a saved name, so `invoice\u{202E}fdp.exe` is not shown as a PDF.
+#[test]
+fn an_attachment_name_has_no_character_that_reorders_or_hides_it() {
+    assert_eq!(
+        attachment_name("attachment; filename*=UTF-8''invoice%E2%80%AEfdp.exe").as_deref(),
+        Some("invoice_fdp.exe")
+    );
+    assert_eq!(attachment_name("attachment; filename=\"a\u{200B}b\u{2066}c.pdf\"").as_deref(), Some("a_b_c.pdf"));
+    assert_eq!(attachment_name("attachment; filename=\"r\u{e9}sum\u{e9}.pdf\"").as_deref(), Some("r\u{e9}sum\u{e9}.pdf"));
+}
+
+/// SEC-CLI-85: an answer's headers that could wipe or take over what every account's pages and the shell keep do not
+/// reach the page.
+#[test]
+fn an_answer_cannot_clear_the_apps_storage_or_reach_past_its_page() {
+    let shown = response_headers(
+        &pairs(&[
+            ("Clear-Site-Data", "\"*\""),
+            ("Service-Worker-Allowed", "/"),
+            ("Refresh", "0; url=https://evil.example.com"),
+            ("Link", "<https://evil.example.com/x.js>; rel=preload"),
+            ("Content-Type", "text/html"),
+        ]),
+        "https://erp.example.com",
+        ORIGIN,
+    );
+    let names: Vec<String> = shown.iter().map(|(name, _)| name.to_ascii_lowercase()).collect();
+    assert_eq!(names, ["content-type"]);
+}

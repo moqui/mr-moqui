@@ -722,9 +722,12 @@ are offered, up and down arrows move, Enter or Tab or a click picks. **The recor
 set (light and full): a row may be `{id, label, entity}`, and `recordId` is preferred over `id`, `recordEntityName` over nothing.
 **Images.** Paste and drop (light and full) and the full toolbar's File button upload the file to `POST /richTextImage`
 (`contentFile`) and insert `<img src="(the url)" alt="(the file name)">`. A pasted `data:` image is uploaded the same way.
-The server keeps the original bytes of a png, gif, jpeg or webp at `dbresource://moqui/rich-text/<32 hex>.<ext>` and returns
-`/richTextImage/<id>` (no extension; the id is the capability). A signed-in `GET /richTextImage/<id>` sends the file. An svg, a
-file that does not decode, and a file over 8 MiB are refused; the editor then says the image was not saved and inserts nothing.
+The server stores a png, gif, jpeg or webp at `dbresource://moqui/rich-text/<32 hex>.<ext>` without its metadata (a jpeg or
+png is written again from its pixels, turned upright by its EXIF orientation; a webp loses its EXIF and XMP chunks; a gif is
+kept as uploaded), records its uploader and size, and returns `/richTextImage/<id>` (no extension; the id is the capability).
+A signed-in `GET /richTextImage/<id>` sends the file. An svg, a file that does not decode, a file over 8 MiB, and an image past
+the user's `resource-facade/rich-text-images` limits (1000 images and 200 MiB by default) are refused; the editor then says the
+image was not saved and inserts nothing.
 The address field stays for an `http`, `https` or path `src`.
 
 **The plain-text toggle** shows `moqui.richText.toPlain` in the textarea (blocks apart by a blank line, list items with `- ` or

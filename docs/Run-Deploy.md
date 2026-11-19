@@ -760,6 +760,13 @@ in `runtime/db/backup`, or the directory in `database-backup@dir`.
   `moqui_content-<stamp>-d.dump`, with the same stamp. `incremental` takes `pg_basebackup` fulls and block
   incrementals of the whole cluster, both databases in one copy. Each incremental is taken from the generation's full;
   with `chainIncrementals=true` it is taken from the archive before it, which holds only a day's changed blocks.
+- **Sealed dumps**: with `database-backup@recipient` set to an age recipient (`age1...`, from `age-keygen`), each dump
+  is sealed to it as `pg_dump` writes it, `moqui-<stamp>-d.dump.age`, and only the sealed bytes reach the disk: a backup
+  directory that another system copies holds no plain copy of the database. A recipient that does not parse fails the
+  backup. A physical backup is not sealed. `moqui save-db <cluster> <file>.dump.age --recipient age1...` seals the same
+  way. Keep the identity off the server and apart from the backups: without it they do not restore. An encrypted
+  mirror seals such a dump again, to its own recipient, so its copy needs both identities; with this set, leave
+  `mirrorEncrypt` off.
 - **Mirror**: set `systemMessageRemoteId` (the seed job's is `EmbeddedDbBackup`) and on that remote `sendUrl`, the
   user, and a password or key. The remote directory or key prefix is its message type's `sendPath`. Only the archives
   the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. An
@@ -781,7 +788,9 @@ in `runtime/db/backup`, or the directory in `database-backup@dir`.
   A `.tar.gz` holds the backup directory's contents at the top. Changing `mirrorEncrypt` sends every archive again in
   the new form and leaves the old-form objects alone.
 - **Restore**: restore a dump with `moqui load-save` while the server is stopped. It also restores the content dump
-  of the same name beside it (`moqui_content-<stamp>-d.dump` for `moqui-<stamp>-d.dump`). A physical backup is put
+  of the same name beside it (`moqui_content-<stamp>-d.dump` for `moqui-<stamp>-d.dump`). A sealed dump takes
+  `--identity <file>` (or `-` for stdin), the identity of its recipient; each sealed dump is decrypted whole into an
+  owner-only file under `runtime/db` before anything is restored, and that file is deleted after. A physical backup is put
   together with `pg_combinebackup`: the full, then each incremental in order up to the one restored (each names its
   parent in `moqui-backup.txt`). An encrypted archive is decrypted first: `age -d -i key.txt <name>.age > <name>`, or for a directory
   `mkdir <name> && age -d -i key.txt <name>.tar.gz.age | tar xz -C <name>` (`tar xz` alone for a plain `.tar.gz`).

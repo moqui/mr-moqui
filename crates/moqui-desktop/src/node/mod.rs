@@ -149,6 +149,14 @@ pub(crate) fn setup_properties(mode: Mode) -> Vec<(&'static str, String)> {
             "in-process".to_string(),
         ));
     }
+    if mode == Mode::Sidecar {
+        // the sidecar serves its pages to the window itself, over plain http with no scheme to add the page's meta
+        // policy: its own CSP takes upgrade-insecure-requests (SEC-CLI-105)
+        properties.push((
+            "moqui_conf__webapp_list__webapp__WEBROOT__csp_append",
+            "upgrade-insecure-requests".to_string(),
+        ));
+    }
     properties
 }
 

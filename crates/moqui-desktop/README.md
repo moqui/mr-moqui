@@ -82,9 +82,10 @@ origin (and on a client's, [Client of a server](#client-of-a-server)), and the w
 
 - **Commands:** `notify` (a native notification; a click shows the window at its link), `set_counts` (the shell's
   counts on the tray and the dock or launcher badge), `set_presence` (the user's presence on the tray), `open_external`
-  (http, https, mailto, tel and sip only, never the node), `set_comms_root` (the node's Comms app, `calls.appRoot`,
-  kept in `comms-root` for the `mailto:` and `tel:` links, which a sidecar's conf does not tell the host), and on the
-  node in process the sockets.
+  (http, https, mailto, tel and sip only, never the node), `node_setup_secret` (a sidecar's first administrator),
+  `secure_screen` (screen protection), and on the node in process the sockets. The Comms app the OS's `mailto:` and
+  `tel:` links open is the node's `comms@app-root`, which the host reads from the node's conf, never from a page
+  (`os::conf_comms_root`).
 - **ACL:** the commands are in the app manifest (`build.rs`), so each is checked; the only capability that grants them
   is the one added at run time for the node's exact origin on the main window (in a client, the shell's on it; the
   node in process's, whose scheme pages Tauri counts as local, names the main window). `restart_node` is granted only
@@ -164,17 +165,25 @@ The attributes are in `moqui-conf-3.xsd` and
 
 ## Backups, restore and sleep
 
-`src/backup.rs`, with a Backups menu in the tray: Back up now, choose and open the folder, Restore from backup, and the
-last backup's time. The folder and whether the nightly backup runs are in `backups` in the app's config directory.
+`src/backup.rs`, with a Backups menu in the tray: Back up now, Nightly backup, choose and open the folder, Restore from
+backup, Save backup key…, and the last backup's time. The folder and whether the nightly backup runs are in `backups` in the app's config directory.
 
 - **Nightly:** the node gets `moqui_conf__database_backup__scheduled=true` and `database-backup@dir`, which run the
   framework's `backup_EmbeddedDatabase_daily` job into the folder, by default `MR-Moqui Backups` in Documents (a
   development run keeps `runtime/db/backup` and leaves the job's schedule as the repository's runtime has it). See [PostgresBackup](../../plans/archive/PostgresBackup.md).
-- **Back up now:** a `pg_dump` of the live database (`moqui save-db`), named `moqui-<stamp>-manual.dump`, outside the
-  nightly rotation, with the content database's `moqui_content-<stamp>-manual.dump` beside it.
+- **Sealed:** each backup, the nightly one and the tray's, is sealed as it is written to the public key of the app's
+  backup key, an age identity made once and kept in the OS key store (`src/backup_key.rs`), as `<name>.dump.age`; the
+  node gets `database-backup@recipient`. **Save backup key…** writes the key to a file (`age -d -i <file>` reads it),
+  which a restore on another computer needs. Where the key cannot be had, the backups are written as they are and the
+  user is told.
+- **Back up now:** a `pg_dump` of the live database (`moqui save-db --recipient`), named
+  `moqui-<stamp>-manual.dump.age`, outside the nightly rotation, with the content database's
+  `moqui_content-<stamp>-manual.dump.age` beside it.
 - **Restore:** backs up the current data (`-before-restore`, and does not go on if that fails), stops the node, runs
   `moqui load-save` on the chosen `moqui-` dump (which restores the content database from the dump beside it; another
-  database's dump is refused), and starts it again.
+  database's dump is refused), and starts it again. A sealed dump is opened with the key from the store, or a key file
+  the user picks when that is not the key it was sealed to, checked before anything stops; the key goes to `moqui
+  load-save --identity -` on its stdin.
 - **Sleep:** `src/wake.rs` compares the wall clock with the monotonic one; after a sleep it asks the node's `/health`
   again and logs the answer. A nightly backup missed in a sleep runs once soon after the wake.
 
@@ -218,12 +227,9 @@ MOQUI_DESKTOP_NODE=client ./moq desktop    # a client of a remote server: sign i
 - **A server on the same runtime:** a node's mode refuses to start while a server answers on the runtime's own port
   (`webapp-list/webapp[webroot]@http-port`, default 8080). Two nodes would share its Postgres. The client mode has no runtime.
 
-The runtime is, in order: `MOQUI_RUNTIME`; in a development run, this repository's `runtime`; the first one with a
-`components/base` directory of `runtime` in the working directory, `runtime` beside the executable (for an AppImage, the
-`.AppImage` file) and the executable's own directory (the app looks beside itself, since it is started from anywhere;
-`moqui` looks only in its working directory); else the bundled runtime. So
-`MR-Moqui_0.1.0_amd64.AppImage` run from a checkout's root, or with `MOQUI_RUNTIME` set, runs on that runtime and its
-database.
+The runtime is, in order: `MOQUI_RUNTIME`; in a development run, this repository's `runtime`; else the bundled
+runtime. A release build looks for no runtime in its working directory or beside it, which could be any account's of
+the computer (SEC-CLI-91), so an AppImage runs on a checkout's runtime and its database only with `MOQUI_RUNTIME` set.
 
 A bundled app keeps its runtime in the app data directory (`~/Library/Application Support/org.moqui.desktop/runtime` on
 macOS, `~/.local/share/org.moqui.desktop/runtime` on Linux):

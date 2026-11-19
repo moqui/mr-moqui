@@ -50,6 +50,13 @@ fn a_later_launch_hands_its_links_to_the_first_and_a_stale_socket_is_taken() {
     let Claim::First(listener) = claim(&path, &[]) else {
         panic!("a stale socket is taken");
     };
+    // SEC-CLI-09: the directory was this user's alone before the socket was made in it, and the socket is too
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&path), 0o600);
+    }
     let (sender, received) = mpsc::channel();
     let served = listener.serve(move |links| {
         let _ = sender.send(links);

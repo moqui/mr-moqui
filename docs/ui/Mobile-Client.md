@@ -32,7 +32,10 @@ own `/qapps`), never both:
   sign-in, SSO, sign-out, opening a page) check the page themselves (`ShellHost::is_shell_page`): the webview's URL on
   the shell's origin, and the nonce of the shell's current load, which the host hands the shell's document once it has
   loaded (only a document on the shell's origin takes it) and forgets at the next navigation or load, and which each
-  shell command carries. A server page has the sockets, the outbox and the drafts of its account, as a desktop app
+  shell command carries: the phone's own too (the notification check's `push_check`, `push_check_fix` and `push_test`,
+  the room the shell shows, `chat_room_shown`, the calls', contacts' and dialer's; SEC-CLI-97). The room the shell
+  showed goes with its page (`MobileHost::page_gone`), as its own word of leaving it comes after the navigation took
+  the nonce. A server page has the sockets, the outbox and the drafts of its account, as a desktop app
   window does, the terminal's `/termws` with its binary frames among them (in base64 between the page and the host).
   The device key never reaches a page. The Terminal on a phone has a key bar above the keyboard, fits above the
   keyboard as it opens, and takes a pinch for its font size ([Terminal](Terminal.md#the-desktop-and-mobile-apps-and-phones)).
@@ -68,7 +71,12 @@ own `/qapps`), never both:
   as the scheme would and follows a redirect in the page. Any other request but a GET or HEAD on the schemes (a form
   posted by navigation) is refused, 405, rather than sent on empty. The headers it hands are User-Agent, Accept,
   Referer, the client hints, `Upgrade-Insecure-Requests` on a navigation and `Origin` on a CORS-mode request; no
-  `Sec-Fetch-*`, so a document is told by its Accept, as on the desktop without them.
+  `Sec-Fetch-*`, so a document is told by its Accept, as on the desktop without them. A `scheme_fetch` on the shell's
+  origin is answered only with the nonce of the shell's current load (`scheme.rs` `refuse_fetch`), so a server page
+  still running as the host shows the shell gets none of the shell's answers (its offline ones, the chat store's
+  passphrase); and where any page's comes from is the host's to say: the caller's `Origin`, `Referer`, `Sec-Fetch-*`
+  and `Service-Worker` are dropped, and the host sends the page's own `Origin`, `Sec-Fetch-Dest: empty` and
+  `Sec-Fetch-Site: same-origin`, which holds as the IPC takes the main frame only (SEC-CLI-06).
 - **No redirect status.** A scheme answer cannot be a 3xx, so a document's redirect is answered as a page that goes to
   its `Location`.
 - **The shell's files** are embedded in the app (Tauri's assets of `target/mobile-shell`, which `./moq android` stages
@@ -80,7 +88,12 @@ own `/qapps`), never both:
   it, and kept in the app's private files (`client/keys/<account>.sealed`). The Keystore is asked twice; a device that
   still cannot make its key keeps them in a plain owner-only file there, and the shell says so (`keyStore: file`). A
   later run with the Keystore seals any such plain key and removes it. The key is not limited to an unlocked device
-  (`setUnlockedDeviceRequired`): the outbox and the coming call path (MT2) need the keys with the screen locked.
+  (`setUnlockedDeviceRequired`): the outbox and the coming call path (MT2) need the keys with the screen locked. What
+  no background work reads, each account's chat store passphrases, is sealed by a second Keystore key that is
+  (`client/keys/<account>.chat-store.unlocked`, Android 9 and later; one sealed by the first key before moves as it is
+  read), so they do not open while the phone is locked and are never kept in memory.
+- **A screen lock.** The shell's account menu warns when the phone has none (`KeyguardManager.isDeviceSecure()`), and
+  a shared-device sign-in is refused there: the next person to pick the phone up would open the account in the app.
 - **No backup.** `allowBackup` is off and `data_extraction_rules.xml` excludes every file from cloud backups and device
   transfers: the private files hold each account's store (its mail and chat) and the sealed keys, whose Keystore key
   would not come along anyway.
@@ -134,7 +147,10 @@ page loses Android's predictive back animation (the preview of the screen back l
   panics on an async runtime's thread, so until MT2 every such POST from the shell answered 500.
 - **Notifications:** the page bridge's `notify` shows a native notification (tauri-plugin-notification). Its `tag` (a
   room's `chat-<id>`) is the notification's id, so the same tag replaces it and `notifyClear(tag)` removes it; its
-  `link` (a path on the account's server) is kept with it, and a tap opens the app at that path. The chat's own
+  `link` (any path on the account's server) is kept with it, with the account and the app's signature of both (an
+  HMAC with the room links' key), and a tap opens the app at that path only when the signature checks and that account
+  is the current one (`commands.rs` `tapped_path`). The activity is exported, and the notification plugin takes any
+  app's intent with its extras as a tap, so another app's opens no page, only the app (SEC-CLI-88). The chat's own
   notifications, shown with no WebView, are below ([Chat notifications](#chat-notifications)).
 
 ## The incoming call (MT2)
@@ -200,7 +216,10 @@ answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later)
   another account of its server took (one user per FCM token) is not tried again until something changes. The
   registrations post with no lock held, merged after. One that fails schedules `RegisterWorker` (WorkManager, backing
   off from 30 seconds), which tries until each account's server answers; it is not scheduled at every start, which
-  would start the process again after the user backed out.
+  would start the process again after the user backed out. Firebase is asked for a token only once an account is
+  signed in; at the last sign-out the token is forgotten here and Firebase deletes it and then its installation
+  (`Push.stopFcm`, `FcmPush.stop`), so the phone stays registered with Google for no account, and the next sign-in's
+  new token registers (SEC-CLI-121).
 - **Permissions:** `POST_NOTIFICATIONS` (Android 13+) and `RECORD_AUDIO` are asked once an account is signed in, not at
   the first start's sign-in, after a dialog that says why: the microphone so a call can be answered on a locked phone,
   and notifications (messages, mentions and calls) when those are missing too; its Not now leaves out the
@@ -394,14 +413,22 @@ The chat's pushes are shown by Kotlin with no WebView, also when the push starte
 - **A room's invite link** (plans/Comms-Messaging.md §18.3 phase 17). A link or QR code opens the room's join page in
   the phone's browser; on Android the page's "Open in the MR Moqui app" is `org.moqui.mobile:/join?host=<host>&token=<token>`
   (a `BROWSABLE` intent filter, `src/join.rs`). A web page makes it, so it is not signed, and it only opens a page: the
-  app opens `/join/<token>` in its account on that host (the current one when it is there, else the first), where the
-  person presses Join. With no account on that host the shell says so and adds none. Android App Links are not used:
-  each server has its own host.
+  app opens `/join/<token>` in the current account when it is on that host, where the person presses Join. It never
+  switches the account (`join_action`, SEC-CLI-99): with another account here on that host the page shown says the
+  invite is for it, to switch from the account menu and open the invite again; with none on that host it says so and
+  adds none. Android App Links are not used: each server has its own host.
 - **Clear and ack.** The server's `clear` (the room was read on another device) removes the room's notification, and
   the summary only when no other room's shows; a read in the app removes it too, Mark all read every room's of the
   account (the page's `notifyClear` reaches
   `ChatNotifications.clearRoom`, as the server sends no clear to the device that read). After a push is shown the app
   tells the server (`/qapps/ackClientPush` with its `ackId`), which the server's push health counts.
+- **A sign-out** (each one, one the server did not hear included: no network, a key the server no longer takes) takes
+  the account off the phone with no request (`MobileHost::account_signed_out`): its room notifications and their
+  summary, its other ones (a test, a reminder: tagged `other-<account>/<tag>`), its rooms' conversation shortcuts
+  (`chat-<account>-<room>`, long-lived, so Android keeps them past the dynamic list), a room of it shown
+  (`ChatNotifications.forgetAccount`, SEC-CLI-100), its number for the phone's dialer, and its push registration,
+  keys and UnifiedPush instance here. The server's take-back of the registration comes before it, when the server can
+  be reached. A page's own notifications (`notify`, the notification plugin's) stay until tapped or dismissed.
 - **The notification check** (the shell's account menu, "Notifications on this device"; host commands `push_check`,
   `push_check_fix`, `push_test`): the permission, each channel on or off, battery optimization (Android's own; a
   maker's task killer is not detected), the full-screen intent, the push service (Firebase, or the UnifiedPush
@@ -510,7 +537,8 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   shows an opened push and checks its channel and
   actions, another account's room as another notification, a mention's channel, an encrypted room's lack of text, Reply
   and Mark read through a stand-in outbox (ids from the intent's data, not its extras), a
-  reply that could not be queued, `clear`, Mute, the room in view, and a push or ring that does not open. Build the
+  reply that could not be queued, `clear`, Mute, the room in view, a push or ring that does not open, and an account's
+  sign-out taking its notifications and shortcuts off and leaving another's. Build the
   test APK without the Rust tasks (the app's `.so` from
   `./moq android build --target x86_64 --apk` stays), install both, run it:
 
@@ -522,7 +550,8 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   adb shell am instrument -w org.moqui.mobile.test/androidx.test.runner.AndroidJUnitRunner   # all; -e class one
   ```
 - `scripts/android-smoke.sh`: on the emulator when asked (not in `./moq test-all`): install, start, the shell's ready
-  line in logcat, a screenshot, the frame check, then back out and start again. With a release APK
+  line in logcat, a screenshot, a notification tap another app makes up (`am start` with the plugin's extras) refused
+  with no page opened, the frame check, then back out and start again. With a release APK
   (`MOQUI_MOBILE_APK`), which has no DevTools socket, it skips the frame check and checks instead that R8 kept the
   classes Rust calls by name (`dexdump`) and that the log has no JNI lookup failure. With `MOQUI_SMOKE_APP=/qapps/...` and an
   account signed in, the frame check opens that server page and puts the frames there, and checks that the page cannot

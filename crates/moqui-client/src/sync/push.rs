@@ -70,7 +70,7 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) -> bool {
     }
     let (kept, wanted) = if let Some(room) = topic.strip_prefix("chatRoom:") {
         let room = message["chatRoomId"].as_str().unwrap_or(room).to_string();
-        crate::offline::sweep_expired(store, crate::offline::server_now());
+        crate::offline::sweep_expired(store, store.server_now());
         let kept = room_push(store, me, &room, &message);
         // a push that did not fold has the feeds read (where they are kept: a cursor of the room)
         let name = format!("{ROOM_CURSOR}{room}");

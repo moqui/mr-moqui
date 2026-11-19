@@ -188,18 +188,22 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         Box::new(shell),
     ));
     app.manage(Arc::clone(&host));
-    // a tap on a page's notification (`notify`): its link in the shell (plans/Comms-Messaging.md §7.5)
+    // a tap on a page's notification (`notify`): its link in the shell (plans/Comms-Messaging.md §7.5), when the app
+    // signed it for the current account; the activity is exported, so any app can send a tap's intent (SEC-CLI-88)
     #[cfg(mobile)]
     {
         use tauri_plugin_notification::NotificationExt;
         let tapped = app.clone();
         let listened = app.notification().on_action(move |performed| {
-            let link = performed
-                .notification()
-                .and_then(|notification| notification.extra().get("link"))
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string);
-            commands::notification_opened(&tapped, link.as_deref());
+            let extra = |name: &str| -> Option<String> {
+                performed
+                    .notification()
+                    .and_then(|notification| notification.extra().get(name))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            };
+            let (link, account, sig) = (extra("link"), extra("account"), extra("sig"));
+            commands::notification_opened(&tapped, link.as_deref(), account.as_deref(), sig.as_deref());
         });
         if let Err(err) = listened {
             log::warn!("The taps of the page's notifications are not followed: {err}");

@@ -122,3 +122,42 @@ fn a_logged_url_has_only_its_scheme_and_host_and_a_logged_path_no_query() {
         "Not a path on the server: //x"
     );
 }
+
+/// SEC-CLI-97 and SEC-CLI-06: the notification check's commands, the room the shell shows and the shell's fetch through
+/// the host carry the shell's load's nonce, which the host checks (`is_shell_page`, `scheme::refuse_fetch`); none is
+/// checked by the last load's origin alone any more.
+#[test]
+fn the_shells_room_notification_check_and_fetch_carry_its_nonce() {
+    for command in ["chat_room_shown", "push_check", "push_check_fix", "push_test"] {
+        assert!(
+            super::BRIDGE.contains(&format!("shellAsk(\"{command}\"")),
+            "the bridge does not send {command} with the nonce"
+        );
+        for unchecked in ["ask", "invoke"] {
+            assert!(
+                !super::BRIDGE.contains(&format!(" {unchecked}(\"{command}\"")),
+                "the bridge sends {command} without the nonce"
+            );
+        }
+    }
+    assert!(super::BRIDGE.contains("const fetchAsk = shell ? shellAsk : ask;"));
+    assert!(super::BRIDGE.contains("fetchAsk(\"scheme_fetch\""));
+    assert!(!super::BRIDGE.contains(" ask(\"scheme_fetch\""));
+    let commands = include_str!("commands.rs");
+    assert!(
+        !commands.contains("shell_only("),
+        "a command checked by the last load's origin only"
+    );
+    for command in ["chat_room_shown", "push_check", "push_check_fix", "push_test"] {
+        let body = commands
+            .split(&format!("pub(crate) fn {command}("))
+            .nth(1)
+            .and_then(|rest| rest.split("\n}\n").next())
+            .unwrap_or_else(|| panic!("no {command} command"));
+        assert!(
+            body.contains("nonce: Option<String>")
+                && body.contains("is_shell_page(host.as_ref(), &webview, nonce.as_deref())"),
+            "{command} does not check the shell's page and nonce"
+        );
+    }
+}

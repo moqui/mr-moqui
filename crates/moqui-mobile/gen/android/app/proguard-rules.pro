@@ -43,12 +43,16 @@
 # without these R8 may remove or rename ScreenSecurity.set and CalendarIntent.insert in a release build)
 -keep class org.moqui.mobile.ScreenSecurity { *; }
 -keep class org.moqui.mobile.CalendarIntent { *; }
-# ... and Firebase's start once an account signs in (src/android.rs fcm_start; SEC-CLI-121)
+# ... and Firebase's start once an account signs in, and its token's deletion once none is (src/android.rs fcm_start,
+# fcm_stop; SEC-CLI-121)
 -keep class org.moqui.mobile.Push {
     public static void startFcm(android.content.Context);
+    public static void stopFcm(android.content.Context);
 }
 # ... and whether the phone has a secure lock screen (src/android.rs device_secure; SEC-CLI-113)
 -keep class org.moqui.mobile.DeviceLock { *; }
+# The server pages' storage, cleared at a switch of account (PageStorage.kt, SEC-CLI-81), called only through JNI.
+-keep class org.moqui.mobile.PageStorage { *; }
 # ... and the server whose pages the app origin shows, for their dialogs' title (src/android.rs page_server; wry's
 # RustWebChromeClient, crates/moqui-mobile/patches; SEC-CLI-119)
 -keep class org.moqui.mobile.RustWebChromeClient {

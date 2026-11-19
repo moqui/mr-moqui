@@ -755,6 +755,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="https-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, off none. https-port is the port clients see in generated URLs, which differs behind a reverse proxy.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="http-bind" type="xs:string"><xs:annotation><xs:documentation>The address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>The Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a listener must name, comma separated, or it is answered 421; empty takes any.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="csp-append" type="xs:string" default=""><xs:annotation><xs:documentation>Directives added to every screen response's Content-Security-Policy, or the whole policy where none is set; empty adds none (the Desktop app's sidecar: upgrade-insecure-requests).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="http2" type="boolean" default="true"><xs:annotation><xs:documentation>HTTP/2 on the HTTPS listener, chosen by ALPN beside HTTP/1.1: true, or false for HTTP/1.1 only.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dev-marker-color" type="xs:string"><xs:annotation><xs:documentation>The color of the dev/test instance marker of the Quasar shell, a CSS color; empty turns it off.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="qvt-static-only" type="boolean" default="false"><xs:annotation><xs:documentation>true sends the qvt pages with the Vue build that has no template compiler, for a deployment whose pages are all server-static and whose CSP has no unsafe-eval.</xs:documentation></xs:annotation></xs:attribute>
@@ -1156,6 +1157,15 @@ along with this software (see the LICENSE.md file). If not, see
                         <xs:attribute name="upload-calls-per-requester" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>Upload calls from one requester in an hour.</xs:documentation></xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
+                <xs:element minOccurs="0" maxOccurs="1" name="rich-text-images">
+                    <xs:annotation><xs:documentation>The limits of each user's rich-text images (ResourceServices
+                        upload#RichTextImage, POST /richTextImage; SEC-CLI-92), counted from the moqui.resource.RichTextImage
+                        rows. An upload past either is refused and nothing is stored. No Java counterpart.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="max-per-user" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>The most rich-text images one user stores; empty or 0 is the default.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="max-bytes-per-user" type="non-neg-int-expandable" default="209715200"><xs:annotation><xs:documentation>The most bytes of rich-text images one user stores in all, as stored (after the metadata is taken out); empty or 0 is the default.</xs:documentation></xs:annotation></xs:attribute>
+                    </xs:complexType>
+                </xs:element>
             </xs:sequence>
             <xs:attribute name="xml-actions-template-location" type="xs:string"/>
             <xs:attribute name="xsl-fo-handler-factory" type="xs:string"><xs:annotation><xs:documentation>
@@ -1164,7 +1174,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="blob-chunk-size" type="non-neg-int-expandable" default="1048576"><xs:annotation><xs:documentation>Bytes per ContentBlobChunk row of a content blob (moqui.resource.ContentBlob). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="blob-gc-prune-days" type="non-neg-int-expandable" default="14"><xs:annotation><xs:documentation>How many days a content blob nothing refers to is kept (gc#ContentBlobs). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) and rich-text image uploads (upload#RichTextImage) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drive-root" type="xs:string" default="dbresource://drive"><xs:annotation><xs:documentation>The location under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made (FileServices ensure#PersonalDrive, create#Drive). A setting, not a user preference, so a user does not choose where their drive is. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-timeout" type="xs:string"><xs:annotation><xs:documentation>Seconds a script may run when no transaction limits it (a widget condition, a
@@ -2389,6 +2399,10 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="scheduled" type="xs:string"/>
             <xs:attribute name="dir" type="xs:string"/>
+            <xs:attribute name="recipient" type="xs:string"><xs:annotation><xs:documentation>An age X25519 recipient
+                (age1...) each dump of backup#EmbeddedDatabase is sealed to as it is written, as name.dump.age; empty
+                writes them as they are. A recipient that does not parse fails the backup. No Java
+                counterpart.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="comms">

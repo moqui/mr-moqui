@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use std::io::Write;
+use std::io::{Read, Write};
 
 use base64::Engine as _;
 
-use super::{decrypt, Encryptor, Identity, Recipient};
+use super::{decrypt, Decryptor, Encryptor, Identity, Recipient};
 
 /// A key pair and a file that rage (pyrage 1.x) made, with one of its grease stanzas, whose body is two lines.
 const IDENTITY: &str = "AGE-SECRET-KEY-1L30V3C6NPLGY2HV2MY5KH2UE0T7VHJDVD5LUTKW4ARAKFD42K6PQ32HY9N";
@@ -97,4 +97,64 @@ fn a_low_order_share_or_recipient_is_refused() {
 
     let low_order = Recipient::parse(&Recipient([0_u8; 32]).to_string()).unwrap();
     assert!(Encryptor::new(Vec::new(), &low_order).is_err());
+}
+
+/// A reader that hands out at most `step` bytes a call, as a pipe or a slow file can.
+struct Trickle<'a> {
+    data: &'a [u8],
+    step: usize,
+}
+
+impl Read for Trickle<'_> {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let take = self.step.min(out.len()).min(self.data.len());
+        out[..take].copy_from_slice(&self.data[..take]);
+        self.data = &self.data[take..];
+        Ok(take)
+    }
+}
+
+/// SEC-CLI-114: a sealed backup is read back as a stream, a chunk in memory at a time, whatever sizes its source hands
+/// out and its reader asks for; another identity's file, a changed byte and a file cut at a chunk's end are refused.
+#[test]
+fn a_stream_reads_back_in_pieces_and_refuses_another_key_a_change_or_a_cut() {
+    let identity = Identity::generate().unwrap();
+    let chunk = 64 * 1024;
+    let plain: Vec<u8> = (0..3 * chunk + 11).map(|i| (i % 253) as u8).collect();
+    let sealed = encrypt(&identity.recipient(), &plain, 7000);
+    for (step, read_size) in [(1, 1), (7, 4096), (chunk + 3, 10), (usize::MAX, 3 * chunk)] {
+        let mut reader = Decryptor::new(Trickle { data: &sealed, step }, &identity).unwrap();
+        let mut out = Vec::new();
+        let mut buffer = vec![0_u8; read_size];
+        loop {
+            let read = reader.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            out.extend_from_slice(&buffer[..read]);
+        }
+        assert_eq!(out, plain, "{step}/{read_size}");
+    }
+
+    let other = Identity::generate().unwrap();
+    assert!(
+        Decryptor::new(sealed.as_slice(), &other).is_err(),
+        "another identity opens it"
+    );
+
+    let mut changed = sealed.clone();
+    let last = changed.len() - 5;
+    changed[last] ^= 1;
+    let mut out = Vec::new();
+    let read = Decryptor::new(changed.as_slice(), &identity)
+        .unwrap()
+        .read_to_end(&mut out);
+    assert!(read.is_err(), "a changed byte goes unseen");
+
+    let payload_start = sealed.len() - (plain.len() + 4 * 16);
+    let cut = &sealed[..payload_start + 2 * (chunk + 16)];
+    let mut out = Vec::new();
+    let read = Decryptor::new(cut, &identity).unwrap().read_to_end(&mut out);
+    assert!(read.is_err(), "a file cut at a chunk's end reads as a shorter one");
+    assert!(out.len() < plain.len());
 }

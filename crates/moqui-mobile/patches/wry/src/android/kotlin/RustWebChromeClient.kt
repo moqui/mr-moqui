@@ -83,7 +83,9 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
 
   override fun onPermissionRequest(request: PermissionRequest) {
     val requestedResources = request.resources
-    if (requestedResources.isEmpty()) {
+    // MR Moqui patch (SEC-CLI-90): the camera and the microphone are for the app's own origins only; a frame of another
+    // origin in a server page is refused, whatever the page's frame policy delegates to it
+    if (requestedResources.isEmpty() || !isPageOrigin(request.origin.toString())) {
       request.deny()
       return
     }
@@ -99,8 +101,8 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
       }
     }
 
-    val resources =
-      allowedResources.plus(filterKnownPermissions(defaultResources)).toList().toTypedArray()
+    // MR Moqui patch (SEC-CLI-90): even a resource Rust allows is granted only if it is the camera or the microphone
+    val resources = filterKnownPermissions(allowedResources.plus(defaultResources))
     grantPermissionRequest(request, resources)
   }
 
@@ -297,6 +299,12 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     return if (uri.port == -1) "$scheme://$host" else "$scheme://$host:${uri.port}"
   }
 
+  /** MR Moqui patch (SEC-CLI-90): whether the page or frame at `url` is of the app's own origins (PAGE_ORIGINS). */
+  private fun isPageOrigin(url: String): Boolean {
+    val origin = pageOrigin(url)
+    return origin == SHELL_ORIGIN || origin == APP_ORIGIN
+  }
+
   /**
    * MR Moqui patch (SEC-CLI-119): the title of a page's alert, confirm or prompt, which names who asks, since the
    * dialogs are the app's own: the shell's the app's name; a server page's (every account's are on the one app origin)
@@ -323,6 +331,11 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     callback: GeolocationPermissions.Callback
   ) {
     super.onGeolocationPermissionsShowPrompt(origin, callback)
+    // MR Moqui patch (SEC-CLI-90): the location is for the app's own origins only, not a frame of another origin
+    if (!isPageOrigin(origin)) {
+      callback.invoke(origin, false, false)
+      return
+    }
     if (onGeolocationPermissionRequestNative(webViewId, origin)) {
       callback.invoke(origin, false, false)
       return
@@ -358,13 +371,13 @@ class RustWebChromeClient(private val activity: WryActivity, private val webView
     }
   }
 
+  // MR Moqui patch (SEC-CLI-90): the camera and the microphone only, which calls use; not protected media (a device
+  // identifier for DRM) or MIDI system-exclusive messages (which can rewrite a device's firmware)
   private fun filterKnownPermissions(resources: List<String>): Array<String> {
     return resources.filter {
       it == PermissionRequest.RESOURCE_AUDIO_CAPTURE ||
-        it == PermissionRequest.RESOURCE_VIDEO_CAPTURE ||
-        it == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID ||
-        it == PermissionRequest.RESOURCE_MIDI_SYSEX
-    }.toTypedArray()
+        it == PermissionRequest.RESOURCE_VIDEO_CAPTURE
+    }.distinct().toTypedArray()
   }
 
   private fun definedGeolocationPermissions(): Array<String> {

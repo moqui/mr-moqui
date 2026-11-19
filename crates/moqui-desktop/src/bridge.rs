@@ -39,13 +39,12 @@ pub(crate) const SCRIPT: &str = include_str!("bridge.js");
 
 /// The permissions of the node's origin: the app commands of `build.rs` (`allow-` and the command with `-` for `_`),
 /// and the notification plugin's permission check, which its `window.Notification` stand-in asks on every page.
-const PERMISSIONS: [&str; 9] = [
+const PERMISSIONS: [&str; 8] = [
     "allow-notify",
     "allow-notify-clear",
     "allow-set-counts",
     "allow-set-presence",
     "allow-open-external",
-    "allow-set-comms-root",
     "allow-node-setup-secret",
     "allow-secure-screen",
     "notification:allow-is-permission-granted",
@@ -90,7 +89,6 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             set_counts,
             set_presence,
             open_external,
-            set_comms_root,
             node_setup_secret,
             secure_screen,
             crate::splash::restart_node,
@@ -355,17 +353,6 @@ pub(crate) fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     Ok(())
 }
 
-/// The node's Comms app (`calls.appRoot` of its pages' config), which the host cannot read from a sidecar's conf: kept
-/// for the `mailto:`, `tel:` and `sip:` links (`os::comms_root`). Only an app path, `/qapps/<name>`.
-#[tauri::command]
-pub(crate) fn set_comms_root(app: AppHandle, root: String) -> Result<(), String> {
-    if !comms_root_valid(&root) {
-        return Err("Not a Comms app's path".to_string());
-    }
-    crate::os::comms_root_reported(&app, &root);
-    Ok(())
-}
-
 /// The setup secret of a sidecar's first administrator, for its window's Login form (`bridge.js`): the sidecar asks
 /// every caller for it, its window too, as any account of the computer reaches its loopback port, and only the app and
 /// its window have it (plans/Security-Review.md SEC-CLI-101). None for the node in process, whose window needs none.
@@ -415,7 +402,8 @@ pub(crate) fn hold(reasons: &mut BTreeSet<String>, reason: &str, on: bool) -> bo
     !reasons.is_empty()
 }
 
-/// `/qapps/` and a path of letters, digits, `_`, `-` and `/`, at most 200 characters.
+/// Whether `root` is a Comms app's path (the node's `comms@app-root`, `os::conf_comms_root`): `/qapps/` and a path of
+/// letters, digits, `_`, `-` and `/`, at most 200 characters.
 pub(crate) fn comms_root_valid(root: &str) -> bool {
     root.len() <= 200
         && root.strip_prefix("/qapps/").is_some_and(|rest| {

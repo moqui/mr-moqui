@@ -134,7 +134,9 @@ pub fn clean_text(text: &str) -> String {
     text.chars().filter(|ch| !is_unsafe(*ch)).collect()
 }
 
-fn is_unsafe(ch: char) -> bool {
+/// The characters [`clean_text`] drops. The width table gives them no column, so the painter drops them too
+/// (SEC-CLI-93).
+pub(crate) fn is_unsafe(ch: char) -> bool {
     let code = u32::from(ch);
     (code < 0x20 && ch != '\t' && ch != '\n')
         || (0x7F..0xA0).contains(&code)

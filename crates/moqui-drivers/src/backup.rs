@@ -16,6 +16,10 @@
 //!
 //! `moqui-core` decides which archives stay. This module runs `pg_dump` or `pg_basebackup`, publishes
 //! the archive, and applies that plan. The service is `backup#EmbeddedDatabase`.
+//!
+//! With `database-backup@recipient` set, each dump is sealed to that age recipient as `pg_dump` writes it: its
+//! archive goes to a pipe, not a file, and only the sealed bytes reach the disk, as `<name>.dump.age`
+//! ([`run_bounded_to`]; plans/Security-Review.md SEC-CLI-114). A physical backup is not sealed.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -26,11 +30,12 @@ use std::time::{Duration, Instant};
 use jiff::tz::TimeZone;
 use jiff::{SignedDuration, Timestamp};
 use moqui_core::backup::{
-    archive_name, is_archive_name, parse_archive_name, retain, ArchiveIn, BackupMode, BackupOutcome, BackupRequest,
-    KeptArchive, RetainPlan, Tier, SIDECAR,
+    archive_name, dump_name, is_archive_name, parse_archive_name, retain, ArchiveIn, BackupMode, BackupOutcome,
+    BackupRequest, KeptArchive, RetainPlan, Tier, SEALED, SIDECAR,
 };
 use moqui_core::driver::DbConnection;
 use moqui_core::entity::EntityFacade;
+use moqui_lib::age::{Encryptor, Recipient};
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
@@ -80,7 +85,25 @@ pub fn install(facade: &EntityFacade, db: &EntityDb, search: Option<ToolTarget>,
     moqui_core::backup::set_runner(facade, Some(runner));
 }
 
+/// The recipient the dumps are sealed to, from the request's text; a text that is not one fails the backup rather
+/// than leave the dumps as they are.
+pub(crate) fn sealing_recipient(text: Option<&str>) -> Result<Option<Recipient>, Error> {
+    text.map(|text| {
+        Recipient::parse(text).map_err(|err| {
+            Error::new(format!(
+                "database-backup@recipient is not an age recipient (age1..., as age-keygen prints), so no backup is \
+                 taken: {err}"
+            ))
+        })
+    })
+    .transpose()
+}
+
 fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Result<BackupOutcome, Error> {
+    let recipient = sealing_recipient(request.recipient.as_deref())?;
+    if recipient.is_some() && request.mode == BackupMode::Incremental {
+        tracing::info!("a physical backup is not sealed to database-backup@recipient; only a dump is");
+    }
     let backup_dir = backup_directory(request, runtime, targets)?;
     if request.mode == BackupMode::Incremental {
         require_incremental_tools(targets)?;
@@ -105,7 +128,7 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
             }
             copied.push(&target.data_dir);
         }
-        match backup_one(&backup_dir, target, stamp, request) {
+        match backup_one(&backup_dir, target, stamp, request, recipient.as_ref()) {
             Ok(one) => {
                 bytes_written = bytes_written.saturating_add(one.bytes);
                 promoted.extend(one.promoted);
@@ -146,11 +169,16 @@ fn backup_one(
     target: &ToolTarget,
     stamp: Timestamp,
     request: &BackupRequest,
+    recipient: Option<&Recipient>,
 ) -> Result<PrefixBackup, Error> {
     let dump = request.mode == BackupMode::Dump;
-    let name = archive_name(&target.prefix, stamp, Tier::Daily, dump);
+    let name = if dump {
+        dump_name(&target.prefix, stamp, Tier::Daily, recipient.is_some())
+    } else {
+        archive_name(&target.prefix, stamp, Tier::Daily, false)
+    };
     let kind = if dump {
-        dump_one(dir, target, &name, request.timeout)?;
+        dump_one(dir, target, &name, request.timeout, recipient)?;
         "dump".to_string()
     } else {
         let from = next_incremental(dir, target, request.full_every, request.chain_incrementals)?;
@@ -183,18 +211,28 @@ fn published_path(dir: &Path, name: &str, renames: &[(String, String)]) -> PathB
     dir.join(final_name)
 }
 
-fn dump_one(dir: &Path, target: &ToolTarget, name: &str, timeout: Duration) -> Result<(), Error> {
+fn dump_one(
+    dir: &Path,
+    target: &ToolTarget,
+    name: &str,
+    timeout: Duration,
+    recipient: Option<&Recipient>,
+) -> Result<(), Error> {
     let partial = dir.join(format!("{name}.partial"));
     let bin = tool_bin(&target.bin_dir, "pg_dump");
     let mut args = connect_args(target);
     args.push("--format=custom".to_string());
-    args.push("--file".to_string());
-    args.push(partial.display().to_string());
+    // sealed, the archive comes on pg_dump's stdout and only its sealed bytes are written (SEC-CLI-114)
+    if recipient.is_none() {
+        args.push("--file".to_string());
+        args.push(partial.display().to_string());
+    }
     // pg_dump writes into the file made here, so the dump is never readable by others while it runs (SEC-DAT-06)
     if let Err(err) = private_partial(&partial) {
         return Err(Error::new(format!("create {}", partial.display())).with_source(err));
     }
-    if let Err(err) = run_bounded(&bin, &args, &target.password, timeout) {
+    let sealed = recipient.map(|recipient| (partial.as_path(), recipient));
+    if let Err(err) = run_bounded_to(&bin, &args, &target.password, timeout, sealed) {
         remove_partial(&partial);
         return Err(err);
     }
@@ -417,7 +455,10 @@ fn fresh_stamp(dir: &Path, prefixes: &[&str], dump: bool) -> Timestamp {
     for _ in 0..60 {
         let taken = prefixes.iter().any(|prefix| {
             let name = archive_name(prefix, stamp, Tier::Daily, dump);
-            dir.join(&name).exists() || dir.join(format!("{name}.partial")).exists()
+            let sealed = format!("{name}{SEALED}");
+            [name.as_str(), sealed.as_str()]
+                .iter()
+                .any(|name| dir.join(name).exists() || dir.join(format!("{name}.partial")).exists())
         });
         if !taken {
             return stamp;
@@ -642,6 +683,39 @@ fn fallback_full(err: &Error) -> bool {
 }
 
 fn run_bounded(bin: &Path, args: &[String], password: &str, timeout: Duration) -> Result<(), Error> {
+    run_bounded_to(bin, args, password, timeout, None)
+}
+
+/// What a tool wrote on its stdout, sealed to `recipient` and written to `path` (made empty and owner-only before),
+/// as it comes; the bytes written.
+fn seal_stdout(stdout: impl std::io::Read, path: &Path, recipient: &Recipient) -> Result<u64, Error> {
+    let io = |err: std::io::Error| Error::new(format!("seal the dump into {}", path.display())).with_source(err);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(path)
+        .map_err(io)?;
+    let mut sealed = Encryptor::new(std::io::BufWriter::new(file), recipient)?;
+    let mut stdout = stdout;
+    let copied = std::io::copy(&mut stdout, &mut sealed).map_err(io)?;
+    let file = sealed
+        .finish()
+        .map_err(io)?
+        .into_inner()
+        .map_err(|err| io(err.into_error()))?;
+    file.sync_all().map_err(io)?;
+    Ok(copied)
+}
+
+/// Run a Postgres tool with `password`, killing its process group past `timeout`; with `sealed`, its stdout (a
+/// `pg_dump` archive) is sealed to the recipient into the path as it comes ([`seal_stdout`]).
+pub(crate) fn run_bounded_to(
+    bin: &Path,
+    args: &[String],
+    password: &str,
+    timeout: Duration,
+    sealed: Option<(&Path, &Recipient)>,
+) -> Result<(), Error> {
     let name = bin
         .file_name()
         .and_then(|text| text.to_str())
@@ -651,7 +725,11 @@ fn run_bounded(bin: &Path, args: &[String], password: &str, timeout: Duration) -
         .args(args)
         .env("PGPASSWORD", password)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
+        .stdout(if sealed.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stderr(Stdio::piped());
     #[cfg(unix)]
     {
@@ -670,6 +748,21 @@ fn run_bounded(bin: &Path, args: &[String], password: &str, timeout: Duration) -
         }
         buf
     });
+    // the sealing reads the pipe as the tool fills it; it ends when the tool closes it
+    let sealer = match (sealed, child.stdout.take()) {
+        (Some((path, recipient)), Some(stdout)) => {
+            let (path, recipient) = (path.to_path_buf(), *recipient);
+            Some(std::thread::spawn(move || seal_stdout(stdout, &path, &recipient)))
+        }
+        _ => None,
+    };
+    let sealed_result = |sealer: Option<std::thread::JoinHandle<Result<u64, Error>>>| match sealer {
+        Some(sealer) => sealer
+            .join()
+            .unwrap_or_else(|_| Err(Error::new("the dump's sealing stopped")))
+            .map(|_| ()),
+        None => Ok(()),
+    };
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -677,6 +770,7 @@ fn run_bounded(bin: &Path, args: &[String], password: &str, timeout: Duration) -
             Ok(None) if started.elapsed() >= timeout => {
                 kill_group(&mut child);
                 let _ = reader.join();
+                let _ = sealed_result(sealer);
                 return Err(Error::new(format!(
                     "{name} timed out after {} seconds",
                     timeout.as_secs()
@@ -686,15 +780,21 @@ fn run_bounded(bin: &Path, args: &[String], password: &str, timeout: Duration) -
             Err(err) => {
                 kill_group(&mut child);
                 let _ = reader.join();
+                let _ = sealed_result(sealer);
                 return Err(Error::new(format!("wait for {name}")).with_source(err));
             }
         }
     };
     let stderr = reader.join().unwrap_or_default();
-    if status.success() {
-        return Ok(());
+    // a sealing that failed (a full disk) is the cause of a tool that then failed on its closed pipe
+    let sealing = sealed_result(sealer);
+    if !status.success() {
+        return Err(match sealing {
+            Err(err) => err,
+            Ok(()) => tool_error(name, &status, &stderr),
+        });
     }
-    Err(tool_error(name, &status, &stderr))
+    sealing
 }
 
 fn tool_error(name: &str, status: &std::process::ExitStatus, stderr: &[u8]) -> Error {

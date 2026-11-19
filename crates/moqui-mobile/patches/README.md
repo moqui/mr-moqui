@@ -36,6 +36,14 @@ invoke key and could call the app's commands as the page, with the account's dev
   longer fails on a camera that returns no data. A cancelled capture's file goes at once; one handed to the page stays
   until the next webview's chrome client starts, which empties the folder, since the WebView reads it only when the
   page reads or uploads it (SEC-CLI-89, SEC-CLI-110).
+- `src/android/kotlin/RustWebChromeClient.kt`: the camera, the microphone and the location go to the app's own origins
+  only (`isPageOrigin`), so a frame of another origin in a server page is refused whatever the page delegates to it,
+  and of the resources a page asks for only the camera and the microphone are granted, not protected media or MIDI
+  (SEC-CLI-90).
+- `src/android/binding.rs`: the main frame's own document request carries `x-moqui-main-frame` (from the WebView's
+  `isForMainFrame`, the one place it tells), and a copy a request came with is dropped, so the app's scheme can tell
+  the page's own document from what a frame of another origin in it starts (`src/scheme.rs` `page_site`,
+  SEC-CLI-102).
 
 `./moq android dev` and `build` stop when `cargo tree -i wry` shows a wry that is not this copy (cargo builds a wry the
 patch no longer matches from crates.io with only a warning), so a Tauri update cannot drop the patch unseen.

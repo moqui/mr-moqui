@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.core.app.RemoteInput
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONObject
@@ -26,7 +27,7 @@ import org.junit.runner.RunWith
  * The chat notifications on a device (plans/Comms-Messaging.md §7.6, Android instrumented tests; run on request on
  * the emulator, as docs/ui/Mobile-Client.md#tests says): an opened push (the payload Rust gives, as a fake FCM message
  * would after `Native.openPush`) shows the room's notification with its actions, Reply hands its text to the outbox,
- * and a `clear` removes it.
+ * a `clear` removes it, and an account's sign-out removes its notifications and shortcuts.
  */
 @RunWith(AndroidJUnit4::class)
 class ChatNotificationsTest {
@@ -239,6 +240,45 @@ class ChatNotificationsTest {
     }
 
     /**
+     * SEC-CLI-100: an account's sign-out (`MobileHost::account_signed_out`, every sign-out) takes its room notifications,
+     * its other ones (a reminder) and its rooms' conversation shortcuts off the phone, and a room of it the shell showed
+     * hides its pushes no more; another account's notification and shortcut stay.
+     */
+    @Test
+    fun aSignOutRemovesTheAccountsNotificationsAndShortcutsAndKeepsAnothers() {
+        ChatNotifications.show(context, payload())
+        ChatNotifications.show(context, payload(account = B))
+        val reminder = JSONObject().put("kind", "notification").put("account", A).put("title", "Reminder: Ann in Team")
+            .put("tag", "chat-reminder-1")
+        ChatNotifications.show(context, reminder)
+        assertNotNull(shown(TAG_A))
+        assertNotNull(shown(TAG_B))
+        assertNotNull(shown(ChatRules.otherTag(A, "chat-reminder-1")))
+        waitFor { shortcutIds().containsAll(listOf(SHORTCUT_A, SHORTCUT_B)) }
+        assertTrue("A's room has its shortcut", shortcutIds().contains(SHORTCUT_A))
+        ChatNotifications.foreground = true
+        ChatNotifications.roomShown(context, A, "101")
+
+        ChatNotifications.forgetAccount(context, A)
+        assertNull("A's room notification goes", gone(TAG_A))
+        assertNull("A's reminder goes", gone(ChatRules.otherTag(A, "chat-reminder-1")))
+        assertNotNull("B's stays", shownNow(TAG_B))
+        waitFor { !shortcutIds().contains(SHORTCUT_A) }
+        assertTrue("A's shortcut goes", !shortcutIds().contains(SHORTCUT_A))
+        assertTrue("B's stays", shortcutIds().contains(SHORTCUT_B))
+        // the notification service sheds a package's updates over about 5 a second
+        Thread.sleep(1_500)
+        ChatNotifications.show(context, payload().put("chatRoomId", "101"))
+        assertNotNull("the room A's shell showed hides its pushes no more", shown(ChatRules.tag(A, "101")))
+        ShortcutManagerCompat.removeLongLivedShortcuts(context, listOf(SHORTCUT_A, SHORTCUT_B, ChatRules.shortcutId(A, "101")))
+    }
+
+    /** The conversation shortcuts the app has, dynamic or kept by Android for a notification. */
+    private fun shortcutIds(): List<String> = ShortcutManagerCompat.getShortcuts(
+        context, ShortcutManagerCompat.FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_CACHED
+    ).map { it.id }
+
+    /**
      * Review finding (HIGH): the connector's receiver opens with its own key manager, which has no keys of the account,
      * so a message comes still sealed; the app opens it with the account's keys and shows it. One the connector says it
      * opened (sealed to the connector's own keys) or that does not open is dropped.
@@ -264,5 +304,7 @@ class ChatNotificationsTest {
         const val B = "chat.example.org-ba9876543210"
         val TAG_A = ChatRules.tag(A, "100")
         val TAG_B = ChatRules.tag(B, "100")
+        val SHORTCUT_A = ChatRules.shortcutId(A, "100")
+        val SHORTCUT_B = ChatRules.shortcutId(B, "100")
     }
 }

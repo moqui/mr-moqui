@@ -36,8 +36,11 @@ use std::io::Cursor;
 
 use super::util::param_text;
 
+use ::image::codecs::jpeg::JpegEncoder;
+use ::image::codecs::png::{CompressionType, FilterType as PngFilter, PngEncoder};
 use ::image::imageops::FilterType;
-use ::image::{DynamicImage, ImageFormat, ImageReader, Limits};
+use ::image::metadata::Orientation;
+use ::image::{DynamicImage, ImageDecoder, ImageEncoder, ImageError, ImageFormat, ImageReader, Limits};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{is_empty, to_plain_string, Value};
 
@@ -171,20 +174,67 @@ pub(crate) fn decode_limited(bytes: &[u8]) -> Option<DynamicImage> {
 
 /// Decode an image, and the name of its format as a file suffix.
 fn decode(bytes: &[u8]) -> Result<(DynamicImage, String), LibError> {
-    let mut reader = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()
-        .map_err(|err| LibError::new(format!("Could not read image: {err}")))?;
+    let (reader, format) = limited_reader(bytes)?;
+    let image = reader.decode().map_err(read_error)?;
+    Ok((image, suffix_of(format).to_string()))
+}
+
+/// The decoder's limits: no side over [`MAX_INPUT_SIDE`], and its default allocation limit.
+fn input_limits() -> Limits {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_INPUT_SIDE);
     limits.max_image_height = Some(MAX_INPUT_SIDE);
-    reader.limits(limits);
+    limits
+}
+
+/// The reader [`limited_reader`] makes.
+type BytesReader<'a> = ImageReader<Cursor<&'a [u8]>>;
+
+/// A reader of `bytes` within [`input_limits`], and the format it found.
+fn limited_reader(bytes: &[u8]) -> Result<(BytesReader<'_>, ImageFormat), LibError> {
+    let mut reader = ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|err| LibError::new(format!("Could not read image: {err}")))?;
+    reader.limits(input_limits());
     let format = reader.format().ok_or_else(|| {
         LibError::new("No reader for the image: its format is not one of jpg, png, gif, tiff, webp, bmp")
     })?;
-    let image = reader
-        .decode()
-        .map_err(|err| LibError::new(format!("Could not read image: {err}")))?;
-    Ok((image, suffix_of(format).to_string()))
+    Ok((reader, format))
+}
+
+fn read_error(err: ImageError) -> LibError {
+    LibError::new(format!("Could not read image: {err}"))
+}
+
+/// An image decoded as [`decode`] does, with what is needed to draw it again without its metadata.
+struct Decoded {
+    image: DynamicImage,
+    format: ImageFormat,
+    /// The EXIF orientation, which a viewer applies when it shows the image.
+    orientation: Orientation,
+    /// The color profile, written again so a re-encoded photo keeps its colors.
+    icc_profile: Option<Vec<u8>>,
+}
+
+fn decode_with_metadata(bytes: &[u8]) -> Result<Decoded, LibError> {
+    let (reader, format) = limited_reader(bytes)?;
+    let mut decoder = reader.into_decoder().map_err(read_error)?;
+    // the whole image held to the allocation limit before it is read, as ImageReader::decode does
+    input_limits().reserve(decoder.total_bytes()).map_err(read_error)?;
+    // an orientation or profile that does not parse is left out: the pixels are what is checked
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    let icc_profile = decoder
+        .icc_profile()
+        .ok()
+        .flatten()
+        .filter(|profile| !profile.is_empty());
+    let image = DynamicImage::from_decoder(decoder).map_err(read_error)?;
+    Ok(Decoded {
+        image,
+        format,
+        orientation,
+        icc_profile,
+    })
 }
 
 fn suffix_of(format: ImageFormat) -> &'static str {
@@ -268,25 +318,255 @@ fn put_bytes(location: &str, bytes: &[u8]) -> Result<(), LibError> {
 /// The largest rich-text image accepted, before it is decoded.
 const MAX_RICH_TEXT_IMAGE: usize = 8 * 1024 * 1024;
 
-/// `upload#RichTextImage`: a png, gif, jpeg or webp, stored as the original bytes at
-/// `dbresource://moqui/rich-text/<32 hex>.<ext>`. The url is `/richTextImage/<id>` (the id is the capability). An svg,
-/// a file that does not decode, and a file over 8 MiB are refused. The caller must be logged in.
+/// The quality a rich-text jpeg is written at when it is drawn again without its metadata (SEC-CLI-96).
+const RICH_TEXT_JPEG_QUALITY: u8 = 90;
+/// One row for each stored rich-text image: its uploader and size (SEC-CLI-92).
+const RICH_TEXT_IMAGE: &str = "moqui.resource.RichTextImage";
+/// A user's rich-text images counted and their bytes summed.
+const RICH_TEXT_IMAGE_TOTAL: &str = "moqui.resource.RichTextImageTotal";
+/// The `resource-facade/rich-text-images` defaults, for a conf that leaves them out or empty.
+const DEFAULT_IMAGES_PER_USER: u64 = 1000;
+const DEFAULT_IMAGE_BYTES_PER_USER: u64 = 200 * 1024 * 1024;
+
+/// `upload#RichTextImage`: a png, gif, jpeg or webp, stored at `dbresource://moqui/rich-text/<32 hex>.<ext>` as
+/// [`rich_text_image_bytes`] makes it, with a `moqui.resource.RichTextImage` row naming the uploader and its size. The
+/// url is `/richTextImage/<id>` (the id is the capability). An svg, a file that does not decode, a file over 8 MiB,
+/// and an image past the uploader's `resource-facade/rich-text-images` limits are refused, and nothing is stored. The
+/// caller must be logged in.
 fn upload_rich_text_image(
     parameters: &BTreeMap<String, Value>,
-    _facade: &EntityFacade,
+    facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    let user_id = crate::user::current_user_id()
+        .ok()
+        .flatten()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| LibError::new("Sign in to upload an image"))?;
     let bytes = content_file_bytes(parameters)?;
-    let (_image, format) = decode(&bytes)?;
-    let ext = match format.as_str() {
-        "png" | "gif" | "jpg" | "webp" => format,
-        _ => return Err(LibError::new("The image must be a png, gif, jpeg or webp")),
+    // SEC-CLI-92: a user at either limit is refused before the image is decoded, and one it would pass before it is
+    // written. The counts are read in the slot, so an upload waiting for one holds no database connection. Uploads of
+    // one user at the same moment are not serialized: each that passes adds its one image.
+    let limits = RichTextImageLimits::read();
+    let (ext, stored, size) = {
+        let _slot = image_slot();
+        let used = rich_text_image_usage(facade, &user_id)?;
+        limits.check(used, 0)?;
+        let (ext, stored) = rich_text_image_bytes(&bytes)?;
+        let size = u64::try_from(stored.len()).unwrap_or(u64::MAX);
+        limits.check(used, size)?;
+        (ext, stored, size)
     };
     let id = rich_text_image_id()?;
     let location = format!("dbresource://moqui/rich-text/{id}.{ext}");
-    put_bytes(&location, &bytes)?;
+    // the file and its row in the service's transaction: one is not kept without the other
+    put_bytes(&location, &stored)?;
+    record_rich_text_image(facade, &id, &location, &user_id, size)?;
     let mut out = BTreeMap::new();
     out.insert("url".to_string(), Value::string(format!("/richTextImage/{id}")));
     Ok(out)
+}
+
+/// What a rich-text upload stores, and its extension (SEC-CLI-96). A jpeg or png is drawn again from its pixels, turned
+/// as its EXIF orientation says first so a phone photo still shows upright: its EXIF (a phone's GPS position, device
+/// and time), XMP, comments and text chunks are not written; its color profile is. A webp keeps its bytes but only
+/// the chunks that draw it ([`webp_without_metadata`]). A gif is stored as uploaded. Each is decoded first, so a file
+/// that does not decode is refused; any other format is too.
+fn rich_text_image_bytes(bytes: &[u8]) -> Result<(&'static str, Vec<u8>), LibError> {
+    let decoded = decode_with_metadata(bytes)?;
+    match decoded.format {
+        ImageFormat::Jpeg => Ok(("jpg", reencoded(decoded)?)),
+        ImageFormat::Png => Ok(("png", reencoded(decoded)?)),
+        ImageFormat::WebP => Ok(("webp", webp_without_metadata(bytes)?)),
+        ImageFormat::Gif => Ok(("gif", bytes.to_vec())),
+        _ => Err(LibError::new("The image must be a png, gif, jpeg or webp")),
+    }
+}
+
+/// A decoded jpeg or png written again in its format, upright, with its color profile and no other metadata: a jpeg
+/// at [`RICH_TEXT_JPEG_QUALITY`], a png at the default compression.
+fn reencoded(decoded: Decoded) -> Result<Vec<u8>, LibError> {
+    let Decoded {
+        mut image,
+        format,
+        orientation,
+        icc_profile,
+    } = decoded;
+    image.apply_orientation(orientation);
+    let write_error = |err: ImageError| LibError::new(format!("Could not write image: {err}"));
+    let mut out = Vec::new();
+    if format == ImageFormat::Jpeg {
+        // a jpeg decodes to 8-bit gray or color, which the encoder takes; anything else is made color
+        if !matches!(image, DynamicImage::ImageRgb8(_) | DynamicImage::ImageLuma8(_)) {
+            image = DynamicImage::ImageRgb8(image.to_rgb8());
+        }
+        let mut encoder = JpegEncoder::new_with_quality(&mut out, RICH_TEXT_JPEG_QUALITY);
+        if let Some(profile) = icc_profile {
+            // a profile the encoder cannot hold is left out
+            let _ = encoder.set_icc_profile(profile);
+        }
+        image.write_with_encoder(encoder).map_err(write_error)?;
+    } else {
+        let mut encoder = PngEncoder::new_with_quality(&mut out, CompressionType::Default, PngFilter::Adaptive);
+        if let Some(profile) = icc_profile {
+            let _ = encoder.set_icc_profile(profile);
+        }
+        image.write_with_encoder(encoder).map_err(write_error)?;
+    }
+    Ok(out)
+}
+
+/// The chunks of a webp that draw it; every other chunk (`EXIF`, `XMP `, and any a decoder does not read) is dropped.
+const WEBP_KEPT_CHUNKS: [&[u8; 4]; 7] = [b"VP8 ", b"VP8L", b"VP8X", b"ALPH", b"ANIM", b"ANMF", b"ICCP"];
+/// The flags of a `VP8X` header that say an `EXIF` and an `XMP ` chunk follow.
+const VP8X_EXIF_FLAG: u8 = 0x08;
+const VP8X_XMP_FLAG: u8 = 0x04;
+
+/// A webp's bytes with only [`WEBP_KEPT_CHUNKS`] (SEC-CLI-96): its EXIF and XMP chunks are left out and its `VP8X`
+/// header's flags for them cleared to match, the RIFF size written again, and anything after the RIFF data dropped.
+/// The image data is kept as uploaded. A container whose chunks do not fit in it is refused.
+fn webp_without_metadata(bytes: &[u8]) -> Result<Vec<u8>, LibError> {
+    let malformed = || LibError::new("Could not read image: the webp container is not well formed");
+    let (header, body) = bytes.split_at_checked(12).ok_or_else(malformed)?;
+    let (riff, rest) = header.split_at(4);
+    let (riff_size, webp) = rest.split_at(4);
+    if riff != b"RIFF" || webp != b"WEBP" {
+        return Err(malformed());
+    }
+    let riff_size = u32::from_le_bytes(riff_size.try_into().map_err(|_| malformed())?);
+    // the RIFF size counts "WEBP" and the chunks after it
+    let chunks_size = usize::try_from(riff_size)
+        .map_err(|_| malformed())?
+        .checked_sub(4)
+        .ok_or_else(malformed)?;
+    let mut rest = body.get(..chunks_size).ok_or_else(malformed)?;
+    let mut chunks = Vec::with_capacity(rest.len());
+    while !rest.is_empty() {
+        let (chunk_header, after) = rest.split_at_checked(8).ok_or_else(malformed)?;
+        let (fourcc, size) = chunk_header.split_at(4);
+        let size =
+            usize::try_from(u32::from_le_bytes(size.try_into().map_err(|_| malformed())?)).map_err(|_| malformed())?;
+        let (payload, after) = after.split_at_checked(size).ok_or_else(malformed)?;
+        // a chunk of odd size has a pad byte, which a last chunk may leave out
+        rest = if size % 2 == 1 {
+            after.get(1..).unwrap_or_default()
+        } else {
+            after
+        };
+        if !WEBP_KEPT_CHUNKS.iter().any(|kept| fourcc == kept.as_slice()) {
+            continue;
+        }
+        chunks.extend_from_slice(chunk_header);
+        let start = chunks.len();
+        chunks.extend_from_slice(payload);
+        if fourcc == b"VP8X" {
+            if let Some(flags) = chunks.get_mut(start) {
+                *flags &= !(VP8X_EXIF_FLAG | VP8X_XMP_FLAG);
+            }
+        }
+        if size % 2 == 1 {
+            chunks.push(0);
+        }
+    }
+    let riff_size = u32::try_from(chunks.len() + 4).map_err(|_| malformed())?;
+    let mut out = Vec::with_capacity(chunks.len() + 12);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&riff_size.to_le_bytes());
+    out.extend_from_slice(b"WEBP");
+    out.extend_from_slice(&chunks);
+    Ok(out)
+}
+
+/// The `resource-facade/rich-text-images` limits of one user's images (SEC-CLI-92).
+struct RichTextImageLimits {
+    max_count: u64,
+    max_bytes: u64,
+}
+
+/// A user's stored rich-text images: how many, and their bytes in all.
+#[derive(Clone, Copy)]
+struct RichTextImageUsage {
+    count: u64,
+    bytes: u64,
+}
+
+impl RichTextImageLimits {
+    /// The settings now; one that is empty, zero or not a number is its default.
+    fn read() -> Self {
+        let number = |name: &str, default: u64| {
+            crate::context::conf_env::setting(&format!("resource-facade/rich-text-images@{name}"))
+                .parse::<u64>()
+                .ok()
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        Self {
+            max_count: number("max-per-user", DEFAULT_IMAGES_PER_USER),
+            max_bytes: number("max-bytes-per-user", DEFAULT_IMAGE_BYTES_PER_USER),
+        }
+    }
+
+    /// Refused when `used` and one more image of `size` bytes would pass either limit. With `size` 0 (before the
+    /// decode), a user already at the byte limit is refused too.
+    fn check(&self, used: RichTextImageUsage, size: u64) -> Result<(), LibError> {
+        if used.count >= self.max_count {
+            return Err(LibError::new(format!(
+                "You have stored {} rich-text images, the most a user may store",
+                used.count
+            )));
+        }
+        let total = used.bytes.saturating_add(size);
+        if total > self.max_bytes || (size == 0 && used.bytes >= self.max_bytes) {
+            const MIB: u64 = 1024 * 1024;
+            let limit = if self.max_bytes.is_multiple_of(MIB) {
+                format!("{} MiB", self.max_bytes / MIB)
+            } else {
+                format!("{} bytes", self.max_bytes)
+            };
+            return Err(LibError::new(format!(
+                "The image would take your rich-text images past {limit}, the most a user may store"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn rich_text_image_usage(facade: &EntityFacade, user_id: &str) -> Result<RichTextImageUsage, LibError> {
+    let total = facade
+        .find(RICH_TEXT_IMAGE_TOTAL)?
+        .eq("userId", Value::string(user_id))
+        .disable_authz()
+        .one()?;
+    let number = |name: &str| {
+        total
+            .as_ref()
+            .and_then(|row| row.get(name))
+            .map(to_plain_string)
+            .and_then(|text| text.trim().parse::<f64>().ok())
+            .map_or(0, |number| number.max(0.0) as u64)
+    };
+    Ok(RichTextImageUsage {
+        count: number("imageCount"),
+        bytes: number("totalBytes"),
+    })
+}
+
+fn record_rich_text_image(
+    facade: &EntityFacade,
+    id: &str,
+    location: &str,
+    user_id: &str,
+    size: u64,
+) -> Result<(), LibError> {
+    // the framework's own record of the upload, written whatever the caller may write
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let mut row = facade.make_value(RICH_TEXT_IMAGE)?;
+    row.set("imageId", Value::string(id));
+    row.set("location", Value::string(location));
+    row.set("userId", Value::string(user_id));
+    row.set("fileSize", Value::I64(i64::try_from(size).unwrap_or(i64::MAX)));
+    row.set("createdDate", crate::user::now_value());
+    row.create(facade)?;
+    Ok(())
 }
 
 /// `get#RichTextImage`: the stored location of an id that is 32 lowercase hex digits, when that file exists.
@@ -382,7 +662,8 @@ fn encode_image(
     }
 }
 
-/// Image conversions that may run at once (`resource-facade` `image-max-concurrent`, 2): a decoded image may take hundreds of MB.
+/// Image conversions and rich-text uploads that may run at once (`resource-facade` `image-max-concurrent`, 2): a decoded
+/// image may take hundreds of MB.
 struct Slots {
     used: std::sync::Mutex<usize>,
     freed: std::sync::Condvar,

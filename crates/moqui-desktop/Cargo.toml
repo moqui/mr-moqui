@@ -32,7 +32,8 @@ devtools = ["moqui-app/devtools"]
 [dependencies]
 moqui-app = { path = "../../target/moqui-app", default-features = false }
 moqui-host = { path = "../moqui-host", default-features = false }
-moqui-lib = { path = "../moqui-lib" }
+# age: the backup key and the sealed backups (src/backup_key.rs, SEC-CLI-114)
+moqui-lib = { path = "../moqui-lib", features = ["age"] }
 # The client of a remote server (src/client/, plans/Mobile-Desktop.md configuration 3): accounts, sign-in, the proxy and
 # the sockets.
 moqui-client = { path = "../moqui-client" }
@@ -53,6 +54,9 @@ base64 = "0.23"
 # The PDF engine's timeout on the app's runtime (src/pdf.rs) and the update download's ceiling (src/updates.rs), the same
 # Tokio as Tauri's.
 tokio = { version = "1", features = ["time", "sync", "macros"] }
+# The update feed, read by the app with a size limit (src/updates.rs, SEC-CLI-118); the version moqui-client and the
+# updater plugin build, its TLS theirs.
+reqwest = { version = "0.13", default-features = false, features = ["blocking"] }
 tauri = { version = "=3.0.0-alpha.6", features = ["unstable", "tray-icon"] }
 # The release tauri, tauri-runtime-cef and tauri-runtime-wry name; pinned with them, as each alpha changes its traits.
 tauri-runtime = "=3.0.0-alpha.5"

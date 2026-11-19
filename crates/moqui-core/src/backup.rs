@@ -54,6 +54,10 @@ pub struct BackupRequest {
     /// which can take minutes on an idle server. Off by default, so a scheduled backup does not add an I/O burst.
     pub fast_checkpoint: bool,
     pub timeout: Duration,
+    /// The age recipient (`age1...`) each dump is sealed to as it is written, its name ending `.dump.age`
+    /// (`database-backup@recipient`, plans/Security-Review.md SEC-CLI-114); none writes dumps as they are. A physical
+    /// backup is not sealed.
+    pub recipient: Option<String>,
 }
 
 /// One archive that should exist locally after the run, name and path.
@@ -150,7 +154,12 @@ pub struct ParsedName {
     pub stamp: Timestamp,
     pub tier: Tier,
     pub dump: bool,
+    /// A dump sealed to an age recipient, its name ending [`SEALED`].
+    pub sealed: bool,
 }
+
+/// What a dump sealed to an age recipient has after `.dump` ([`BackupRequest::recipient`]).
+pub const SEALED: &str = ".age";
 
 /// One archive on disk. `parent` is the archive name an incremental was taken from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,11 +187,15 @@ pub struct MirrorPlan {
     pub deletes: Vec<String>,
 }
 
-/// `moqui-YYYYMMDDTHHMMSSZ-d.dump` or the same stem without `.dump` for a physical backup directory.
-/// The prefix is `moqui`, `search`, or `moqui_` and a name for another database of the entity cluster (the content
-/// group's `moqui_content`).
+/// `moqui-YYYYMMDDTHHMMSSZ-d.dump`, the same with `.age` after it for a sealed dump, or the stem without `.dump` for a
+/// physical backup directory. The prefix is `moqui`, `search`, or `moqui_` and a name for another database of the
+/// entity cluster (the content group's `moqui_content`).
 #[must_use]
 pub fn parse_archive_name(name: &str) -> Option<ParsedName> {
+    let (name, sealed) = match name.strip_suffix(SEALED) {
+        Some(stem) => (stem, true),
+        None => (name, false),
+    };
     let (prefix, rest) = name.split_once('-')?;
     let other_database = prefix
         .strip_prefix("moqui_")
@@ -199,11 +212,16 @@ pub fn parse_archive_name(name: &str) -> Option<ParsedName> {
     let &[tier] = tier_text.as_bytes() else {
         return None;
     };
+    // only a dump is sealed
+    if sealed && !dump {
+        return None;
+    }
     Some(ParsedName {
         prefix: prefix.to_string(),
         stamp,
         tier: Tier::parse(tier)?,
         dump,
+        sealed,
     })
 }
 
@@ -214,9 +232,35 @@ pub fn archive_name(prefix: &str, stamp: Timestamp, tier: Tier, dump: bool) -> S
     format!("{prefix}-{}-{}{ext}", format_stamp(stamp), tier.letter())
 }
 
+/// The file name of one dump, with [`SEALED`] after it when it is `sealed`.
+#[must_use]
+pub fn dump_name(prefix: &str, stamp: Timestamp, tier: Tier, sealed: bool) -> String {
+    let name = archive_name(prefix, stamp, tier, true);
+    if sealed {
+        format!("{name}{SEALED}")
+    } else {
+        name
+    }
+}
+
 #[must_use]
 pub fn is_archive_name(name: &str) -> bool {
     parse_archive_name(name).is_some()
+}
+
+/// Whether `name` on a mirror is one of its archives, when the archives it mirrors are `sealed` ([`sealed_locally`]):
+/// a sealed dump's name (`.dump.age`) is one only then. An encrypted mirror names what it sealed `<name>.age` too, so
+/// a mirror whose own encryption is turned off leaves those objects alone, as it always has, unless the dumps here are
+/// sealed themselves (plans/Security-Review.md SEC-CLI-114).
+#[must_use]
+pub fn is_mirror_archive(name: &str, sealed: bool) -> bool {
+    parse_archive_name(name).is_some_and(|parsed| sealed || !parsed.sealed)
+}
+
+/// Whether the archives kept here include a sealed dump ([`SEALED`]): the dumps are sealed to a recipient.
+#[must_use]
+pub fn sealed_locally(keep: &[KeptArchive]) -> bool {
+    keep.iter().any(|kept| kept.name.ends_with(SEALED))
 }
 
 /// Promote completed periods, then cap each tier. `now` is the backup just taken: its week, month,
@@ -329,6 +373,7 @@ struct Item {
     stamp: Timestamp,
     tier: Tier,
     dump: bool,
+    sealed: bool,
     parent: Option<String>,
     original_parent: Option<String>,
 }
@@ -343,6 +388,7 @@ impl Item {
             stamp: parsed.stamp,
             tier: parsed.tier,
             dump: parsed.dump,
+            sealed: parsed.sealed,
             parent: archive.parent.clone(),
             original_parent: archive.parent.clone(),
         })
@@ -405,7 +451,13 @@ fn bump(items: &mut [Item], index: usize) {
     };
     let old = items[index].name.clone();
     items[index].tier = next;
-    items[index].name = archive_name(&items[index].prefix, items[index].stamp, next, items[index].dump);
+    let item = &items[index];
+    let name = if item.dump {
+        dump_name(&item.prefix, item.stamp, next, item.sealed)
+    } else {
+        archive_name(&item.prefix, item.stamp, next, false)
+    };
+    items[index].name = name;
     let new = items[index].name.clone();
     for item in items.iter_mut() {
         if item.parent.as_deref() == Some(old.as_str()) {

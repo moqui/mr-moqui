@@ -30,6 +30,7 @@ fn counts(daily: u32, weekly: u32, monthly: u32, yearly: Option<u32>) -> BackupR
         chain_incrementals: false,
         fast_checkpoint: false,
         timeout: Duration::from_secs(60),
+        recipient: None,
     }
 }
 
@@ -227,4 +228,42 @@ fn archive_names_parse_their_prefix_stamp_and_tier_and_reject_the_rest() {
     ] {
         assert!(parse_archive_name(name).is_none(), "{name}");
     }
+}
+
+/// SEC-CLI-114: a dump sealed to an age recipient is `.dump.age`, one of the ladder's archives: it is promoted and
+/// capped with the plain dumps of its prefix, keeps its `.age` through a promotion, and a physical backup is never one.
+#[test]
+fn a_sealed_dump_is_an_archive_of_the_ladder_and_stays_sealed_when_promoted() {
+    let parsed = parse_archive_name("moqui-20260311T020000Z-d.dump.age").unwrap();
+    assert!(parsed.dump && parsed.sealed);
+    assert!(!parse_archive_name("moqui-20260311T020000Z-d.dump").unwrap().sealed);
+    assert!(
+        parse_archive_name("moqui-20260311T020000Z-d.age").is_none(),
+        "a sealed physical backup"
+    );
+    assert!(parse_archive_name("moqui-20260311T020000Z-d.dump.age.age").is_none());
+    assert_eq!(
+        dump_name("moqui_content", stamp("20260311T020000Z"), Tier::Weekly, true),
+        "moqui_content-20260311T020000Z-w.dump.age"
+    );
+    assert_eq!(
+        dump_name("moqui", stamp("20260311T020000Z"), Tier::Daily, false),
+        "moqui-20260311T020000Z-d.dump"
+    );
+
+    let now = stamp("20260318T020000Z");
+    let archives = [
+        named("moqui-20260309T020000Z-d.dump"),
+        named("moqui-20260311T020000Z-d.dump.age"),
+        named("moqui-20260318T020000Z-d.dump.age"),
+    ];
+    let plan = retain(&archives, now, &TimeZone::UTC, &counts(1, 5, 12, None));
+    assert_eq!(
+        plan.renames,
+        vec![(
+            "moqui-20260311T020000Z-d.dump.age".to_string(),
+            "moqui-20260311T020000Z-w.dump.age".to_string()
+        )]
+    );
+    assert_eq!(plan.deletes, vec!["moqui-20260309T020000Z-d.dump".to_string()]);
 }

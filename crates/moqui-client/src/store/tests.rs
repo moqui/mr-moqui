@@ -738,6 +738,9 @@ fn forget_removes_the_database_and_files() {
         let _other = Store::open(&dir, "b", 1 << 20).unwrap();
     }
     assert!(dir.join("data/a.db").exists() && dir.join("data/a.files").exists());
+    // an earlier schema's copy kept beside it holds the whole old store, and goes with it (SEC-CLI-95)
+    std::fs::write(dir.join("data/a.db.old"), b"old").unwrap();
+    std::fs::write(dir.join("data/a.db.old-wal"), b"old").unwrap();
     forget(&dir, "a").unwrap();
     let left = |prefix: &str| -> Vec<String> {
         std::fs::read_dir(dir.join("data"))
@@ -1158,5 +1161,24 @@ fn a_store_of_an_earlier_schema_is_made_again_with_its_outbox_and_drafts() {
     store.conn.pragma_update(None, "application_id", 99).unwrap();
     drop(store);
     assert!(Store::open(&dir, "a", 1 << 20).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-86: each account's store keeps its own server's clock, so one server's time never decides when another
+/// account's disappearing messages leave the device, and a time more than a day from the device's is passed over.
+#[test]
+fn each_accounts_store_keeps_its_own_servers_clock() {
+    let dir = dir("server-clock");
+    let a = Store::open(&dir, "a", 1 << 20).unwrap();
+    let b = Store::open(&dir, "b", 1 << 20).unwrap();
+    let hour = 60 * 60 * 1000;
+    a.learn_server_time(now_ms() + hour);
+    assert!((a.server_now() - now_ms() - hour).abs() < 5_000);
+    assert!((b.server_now() - now_ms()).abs() < 5_000, "the other account's server said nothing");
+    // a server a week out, or one that answers 1, is wrong, not this device
+    b.learn_server_time(now_ms() + 7 * 24 * hour);
+    b.learn_server_time(1);
+    assert!((b.server_now() - now_ms()).abs() < 5_000);
+    drop((a, b));
     let _ = std::fs::remove_dir_all(&dir);
 }

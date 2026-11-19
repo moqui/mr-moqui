@@ -32,6 +32,7 @@
 pub mod commands;
 pub mod outbox;
 pub mod scheme;
+pub mod shell_load;
 pub mod sockets;
 
 use std::collections::HashMap;
@@ -121,6 +122,20 @@ pub trait ShellHost: Send + Sync {
     fn account_signing_out(&self, account: &moqui_client::account::Account, key: &str) {
         let _ = (account, key);
     }
+
+    /// An account is signed out here: its key is forgotten, whether its server heard (a sign-out with no network, a key
+    /// the server no longer takes) or not. The mobile app takes its chat notifications and conversation shortcuts off
+    /// the phone (plans/Security-Review.md SEC-CLI-100), and what its push and calling state names of it, with no
+    /// request to the server ([`Self::account_signing_out`] has that part, when the server can be reached).
+    fn account_signed_out(&self, account: &str) {
+        let _ = account;
+    }
+
+    /// The server's pages of the account they showed are closed, and the next ones may be another account's: the
+    /// current account changed, or it signed out. The mobile app, whose one origin every account's server pages share,
+    /// clears that origin's storage, so one account's pages leave nothing for another's (plans/Security-Review-Medium.md
+    /// SEC-CLI-81). The desktop gives each account's app windows a browser profile of their own, and does nothing here.
+    fn clear_page_storage(&self) {}
 }
 
 /// The shell's own files, as the scheme serves them: from disk ([`Assets`], the desktop) or from the app's embedded

@@ -564,6 +564,29 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastActivityDate" type="date-time"/>
     </entity>
 
+    <!-- Rich-text images (ResourceServices upload#RichTextImage, POST /richTextImage; crates/moqui-core/src/service/images.rs).
+        No Java counterpart. In the default group, beside the user accounts, so a user's images are counted where the
+        user is; the file itself is a dbresource:// file in the content group, written in the same transaction. -->
+    <entity entity-name="RichTextImage" package="moqui.resource" use="nontransactional" cache="never">
+        <description>A stored rich-text image: who uploaded it and its stored size, held to the resource-facade
+            rich-text-images limits on each upload (SEC-CLI-92). Nothing removes an image yet.</description>
+        <field name="imageId" type="id" is-pk="true"><description>The 32 hex digits of its url, /richTextImage/[imageId]</description></field>
+        <field name="location" type="text-medium"><description>dbresource://moqui/rich-text/[imageId].[ext]</description></field>
+        <field name="userId" type="id"><description>The user who uploaded it</description></field>
+        <field name="fileSize" type="number-integer"><description>The bytes stored, after its metadata was taken out</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="RICH_TEXT_IMG_USER"><index-field name="userId"/></index>
+    </entity>
+    <view-entity entity-name="RichTextImageTotal" package="moqui.resource">
+        <description>A user's rich-text images in all: how many and their bytes, which upload#RichTextImage holds to
+            resource-facade rich-text-images max-per-user and max-bytes-per-user.</description>
+        <member-entity entity-alias="RTI" entity-name="moqui.resource.RichTextImage"/>
+        <alias entity-alias="RTI" name="userId"/>
+        <alias entity-alias="RTI" name="imageCount" field="imageId" function="count"/>
+        <alias entity-alias="RTI" name="totalBytes" field="fileSize" function="sum"/>
+    </view-entity>
+
     <!-- ========================================================= -->
     <!-- moqui.resource drives (org.moqui.resource.FileServices) -->
     <!-- ========================================================= -->

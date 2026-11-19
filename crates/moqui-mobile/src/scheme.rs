@@ -18,21 +18,25 @@
 //!
 //! - **No request bodies.** Its request interception sees a request's headers but not its body, so a page's `fetch`
 //!   with a body comes to the host as a command instead ([`scheme_fetch`], the bridge's `fetch`), answered the same
-//!   way.
+//!   way: the shell's with its load's nonce, and with where it comes from set by the host, not the caller (SEC-CLI-06).
 //! - **No redirect status.** A `WebResourceResponse` refuses 3xx, so a document's redirect is answered as a page that
 //!   goes there ([`MobileHooks`]); the bridge's `fetch` follows a redirect itself.
 //! - **One init script for every page.** A server page's storage scope and the scopes to clear are asked of the host
 //!   at its start ([`PAGE_PATH`]), as an app window's init script has them on the desktop.
+//! - **No `Sec-Fetch-*`.** The scheme hears whether the page itself asked from two marks, the main frame's document
+//!   (wry's patch) and the bridge's on the page's own GETs, and tells the server the rest came from another site
+//!   ([`page_site`], SEC-CLI-102).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
 use base64::Engine;
 use moqui_client::assets::{asset, Asset, Assets};
+use moqui_client::proxy::site_by_origin;
 use moqui_client_tauri::scheme::{answer, answered, plain, run, SchemeHooks};
 use moqui_client_tauri::{ClientState, ShellFiles, APP_ORIGIN, SHELL_ORIGIN};
 use serde_json::{json, Value};
-use tauri::http::{Response, StatusCode};
+use tauri::http::{HeaderMap, Response, StatusCode};
 use tauri::utils::assets::AssetKey;
 use tauri::{AppHandle, UriSchemeContext, UriSchemeResponder, Webview};
 
@@ -61,6 +65,15 @@ impl ShellFiles for EmbeddedShell {
     }
 }
 
+/// The header wry's binding sets on the main frame's own document request, and only there (the patch's
+/// `MAIN_FRAME_HEADER`, `patches/wry/src/android/binding.rs`, from the WebView's `isForMainFrame`).
+pub(crate) const MAIN_FRAME_HEADER: &str = "x-moqui-main-frame";
+
+/// The header the bridge adds to the page's own GET and HEAD `fetch` and `XMLHttpRequest` on its own origin
+/// (`bridge.js`). A frame of another origin cannot send it: a header that is not CORS-safelisted needs a preflight,
+/// which the scheme refuses (it takes GET and HEAD only), and a `no-cors` request drops it.
+pub(crate) const OWN_HEADER: &str = "x-moqui-own";
+
 /// The hooks of Android's WebView.
 pub(crate) struct MobileHooks;
 
@@ -68,6 +81,56 @@ impl SchemeHooks for MobileHooks {
     fn adapt(&self, document: bool, response: Response<Vec<u8>>) -> Response<Vec<u8>> {
         redirect_page(document, response)
     }
+
+    fn fetch_site(&self, headers: &HeaderMap, origin: &str) -> Option<&'static str> {
+        Some(page_site(headers, origin))
+    }
+}
+
+/// The `Sec-Fetch-Site` of a request of the WebView on `origin`, which hands the scheme no fetch metadata
+/// (SEC-CLI-102): by its `Origin` where it sends one ([`site_by_origin`]); else `same-origin` for the main frame's own
+/// document ([`MAIN_FRAME_HEADER`]) or the page's own fetch ([`OWN_HEADER`]); else `cross-site`, so the server refuses
+/// a GET of a writing transition that a frame of another origin in the page started (a nested frame, an image). The
+/// page's own requests that carry no mark (its stylesheets, scripts and images, a frame of its own origin) read as
+/// `cross-site` too, which the server's rule takes only for a writing transition.
+pub(crate) fn page_site(headers: &HeaderMap, origin: &str) -> &'static str {
+    if let Some(sent) = headers.get("origin") {
+        return site_by_origin(sent.to_str().ok(), origin);
+    }
+    if headers.contains_key(MAIN_FRAME_HEADER) || headers.contains_key(OWN_HEADER) {
+        "same-origin"
+    } else {
+        "cross-site"
+    }
+}
+
+/// The hooks of a page's request through the host ([`scheme_fetch`]): `same-origin`, which the host knows here as the
+/// WebView's scheme requests do not tell it, since the IPC takes the main frame's messages only (wry's patch,
+/// `patches/wry/src/android/kotlin/Ipc.kt`) and the request goes to the page's own origin ([`fetch_request`]); the
+/// server's check of a writing GET reads it (SEC-CLI-06, SEC-CLI-102). A redirect is answered as it is, for the bridge.
+pub(crate) struct FetchHooks;
+
+impl SchemeHooks for FetchHooks {
+    fn fetch_site(&self, _headers: &HeaderMap, _origin: &str) -> Option<&'static str> {
+        Some("same-origin")
+    }
+}
+
+/// The request headers a page's `fetch` through the host does not choose, the host's own to set ([`fetch_request`]):
+/// where it comes from (`Origin`, `Referer`, `Sec-Fetch-*`) and whether it is a service worker's (SEC-CLI-06).
+fn hosts_header(name: &str) -> bool {
+    let name = name.trim().to_ascii_lowercase();
+    matches!(name.as_str(), "origin" | "referer" | "service-worker") || name.starts_with("sec-fetch-")
+}
+
+/// Whether a page's [`scheme_fetch`] from `origin` is refused before it is made (SEC-CLI-06): on the shell's origin,
+/// unless it is the shell's current load (`shell_page`: its page and the load's nonce), so a server page still running
+/// as the host shows the shell gets none of the shell's answers (its offline ones, the chat store's passphrase).
+pub(crate) fn refuse_fetch(origin: &str, shell_page: bool) -> Result<(), String> {
+    if origin == SHELL_ORIGIN && !shell_page {
+        return Err("Not the shell's page".to_string());
+    }
+    Ok(())
 }
 
 /// A redirect as Android's WebView takes it: a document's as a page that goes to its `Location` at once, any other
@@ -167,25 +230,33 @@ pub(crate) fn app(
 
 /// A page's request with a body, which Android's WebView does not hand the scheme: `method` to `url` (on the page's own
 /// origin) with `headers` and `body` (base64), answered as the scheme would: `{status, headers, body}`, the body in
-/// base64. A redirect is answered as it is, for the bridge to follow. The request is made on Tauri's blocking pool:
-/// reqwest's blocking client panics on an async runtime's thread, where an async command runs.
+/// base64. A redirect is answered as it is, for the bridge to follow. The shell's carries the nonce of its load
+/// ([`refuse_fetch`]), and where the request comes from is the host's to say ([`fetch_request`], [`FetchHooks`]),
+/// never the caller's (SEC-CLI-06). The request is made on Tauri's blocking pool: reqwest's blocking client panics on
+/// an async runtime's thread, where an async command runs.
 #[tauri::command]
 pub(crate) async fn scheme_fetch(
     app: AppHandle,
     webview: Webview,
+    nonce: Option<String>,
     method: String,
     url: String,
     headers: HashMap<String, String>,
     body: Option<String>,
 ) -> Result<Value, String> {
     let page = webview.url().map_err(|err| err.to_string())?;
-    let request = fetch_request(&page, &method, &url, &headers, body.as_deref())?;
     let origin = page.origin().ascii_serialization();
+    let shell_page = origin == SHELL_ORIGIN && {
+        let state = moqui_client_tauri::state(&app)?;
+        moqui_client_tauri::ShellHost::is_shell_page(state.shell.as_ref(), &webview, nonce.as_deref())
+    };
+    refuse_fetch(&origin, shell_page)?;
+    let request = fetch_request(&page, &method, &url, &headers, body.as_deref())?;
     let label = webview.label().to_string();
     let answered = tauri::async_runtime::spawn_blocking(move || {
         let state = moqui_client_tauri::state(&app)?;
         let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            answer(&state, &label, request, &origin, &moqui_client_tauri::scheme::NoHooks)
+            answer(&state, &label, request, &origin, &FetchHooks)
         }))
         .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
         Ok::<Value, String>(fetch_answer(&response))
@@ -195,7 +266,9 @@ pub(crate) async fn scheme_fetch(
     answered
 }
 
-/// The request of a page at `page` for [`scheme_fetch`]: on the page's own origin, which is one of the app's.
+/// The request of a page at `page` for [`scheme_fetch`]: on the page's own origin, which is one of the app's, with the
+/// caller's headers less those the host sets: `Origin` the page's own and `Sec-Fetch-Dest` `empty` (a fetch: never a
+/// document, a frame or a worker's script), whatever the caller wrote ([`hosts_header`], SEC-CLI-06).
 pub(crate) fn fetch_request(
     page: &tauri::Url,
     method: &str,
@@ -228,9 +301,15 @@ pub(crate) fn fetch_request(
         .map_err(|_| "Not a method".to_string())?;
     let mut request = tauri::http::Request::builder().method(method).uri(target.as_str());
     for (name, value) in headers {
-        request = request.header(name.as_str(), value.as_str());
+        if !hosts_header(name) {
+            request = request.header(name.as_str(), value.as_str());
+        }
     }
-    request.body(body).map_err(|err| format!("Not a request: {err}"))
+    request
+        .header("Origin", origin.as_str())
+        .header("Sec-Fetch-Dest", "empty")
+        .body(body)
+        .map_err(|err| format!("Not a request: {err}"))
 }
 
 /// A scheme's answer for the bridge's `fetch`.

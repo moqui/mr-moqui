@@ -183,7 +183,6 @@ fn the_capability_resolves_against_the_built_acl_to_the_bridge_commands_only() {
             "open_external",
             "plugin:notification|is_permission_granted",
             "secure_screen",
-            "set_comms_root",
             "set_counts",
             "set_presence"
         ]

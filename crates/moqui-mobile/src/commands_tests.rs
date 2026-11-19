@@ -13,8 +13,10 @@
  */
 
 use super::{
-    call_name, chat_room_of, clip, contact_numbers, contact_term, external_url, notification_title, tag_id, under,
+    call_name, chat_room_of, clip, contact_numbers, contact_term, external_url, notification_title, tag_id,
+    tapped_path, under,
 };
+use crate::calls::notify_signature;
 
 #[test]
 fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
@@ -125,4 +127,51 @@ fn the_phone_book_is_asked_only_a_term_and_e164_numbers() {
     );
     let many: Vec<String> = (0..80).map(|n| format!("+1801555{n:04}")).collect();
     assert_eq!(contact_numbers(&many).len(), 50);
+}
+
+/// SEC-CLI-88: a page notification's tap opens its link only with the app's signature of it and its account, the
+/// current one: any app can send the exported activity a tap's intent with a link of its own, and links may be any
+/// server path, so the path is not narrowed.
+#[test]
+fn a_notifications_tap_opens_its_link_only_when_the_app_signed_it_for_the_current_account() {
+    let key = [7_u8; 32];
+    let (a, b) = ("chat.example.com-0123456789ab", "chat.example.org-ba9876543210");
+    let path = "/qapps/system/Security/UserAccount?userId=ANN";
+    let sig = notify_signature(&key, a, path);
+    assert_eq!(tapped_path(&key, Some(a), Some(path), Some(a), Some(&sig)), Some(path));
+    // the link as the notification carried it, spaces and all, is the path that was signed
+    assert_eq!(
+        tapped_path(&key, Some(a), Some(&format!(" {path} ")), Some(a), Some(&sig)),
+        Some(path)
+    );
+    // no signature (another app's tap), a wrong one, the app's of another path, made with another key
+    assert_eq!(tapped_path(&key, Some(a), Some(path), Some(a), None), None);
+    assert_eq!(tapped_path(&key, Some(a), Some(path), Some(a), Some("")), None);
+    assert_eq!(tapped_path(&key, Some(a), Some(path), Some(a), Some(&sig[1..])), None);
+    assert_eq!(
+        tapped_path(
+            &key,
+            Some(a),
+            Some("/qapps/system/Security/UserAccount?userId=JOE"),
+            Some(a),
+            Some(&sig)
+        ),
+        None
+    );
+    assert_eq!(tapped_path(&[8_u8; 32], Some(a), Some(path), Some(a), Some(&sig)), None);
+    // another account: one not current now (a switch, a sign-out since), and a tap that names another than it was
+    // signed for
+    assert_eq!(tapped_path(&key, Some(b), Some(path), Some(a), Some(&sig)), None);
+    assert_eq!(tapped_path(&key, None, Some(path), Some(a), Some(&sig)), None);
+    assert_eq!(tapped_path(&key, Some(b), Some(path), Some(b), Some(&sig)), None);
+    assert_eq!(tapped_path(&key, Some(a), Some(path), None, Some(&sig)), None);
+    // no link, or one that is not a path on the server
+    assert_eq!(tapped_path(&key, Some(a), None, Some(a), Some(&sig)), None);
+    let web = "//evil.example/x";
+    assert_eq!(
+        tapped_path(&key, Some(a), Some(web), Some(a), Some(&notify_signature(&key, a, web))),
+        None
+    );
+    // a room link's signature of the same text is not a notification's
+    assert_ne!(sig, crate::calls::link_signature(&key, &format!("room\n{a}\n{path}")));
 }

@@ -33,6 +33,19 @@
         if (!ipc || !ipc.invoke) return Promise.reject(new Error("Not in the MR Moqui app"));
         return ipc.invoke(cmd, args).catch((err) => { throw new Error(String((err && err.message) || err)); });
     };
+    // The shell's commands carry the nonce of the shell's current load, which the host hands this document once it has
+    // loaded (client/windows.rs shell_window, SEC-CLI-07); they wait for it. A document that came in the shell's place
+    // never gets it.
+    let shellNonce = null;
+    let nonceArrived = null;
+    const nonceReady = new Promise((resolve) => { nonceArrived = resolve; });
+    if (shell) {
+        Object.defineProperty(window, "__moquiShellNonce", { configurable: false, writable: false,
+            value: (nonce) => { if (shellNonce === null) { shellNonce = String(nonce); nonceArrived(); } } });
+    }
+    const shellAsk = (cmd, args) => (shell
+        ? nonceReady.then(() => ask(cmd, Object.assign({}, args || {}, { nonce: shellNonce })))
+        : ask(cmd, args));
     const text = (value) => (value === undefined || value === null ? null : String(value));
     // a link of the page as a full URL, so the host can tell it is on the node's origin; the shell's links are its
     // server's, which the app windows show
@@ -152,9 +165,9 @@
         pageCommands.secureScreen = (reason, on) => invoke("secure_screen", { reason: String(reason || ""), on: on === true }).then((held) => held === true, () => false);
     }
     if (node) {
-        // the node's Comms app, which the host's mailto:, tel: and sip: links open (WebrootVue.qvt.js, on load)
-        // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket)
-        const own = { setCommsRoot: (root) => invoke("set_comms_root", { root: String(root || "") }) };
+        // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket); the
+        // Comms app the OS's links open is the node's conf's, which the host reads, never a page's (SEC-CLI-05)
+        const own = {};
         if (inProcess) own.socket = (url) => new HostSocket(url);
         window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, own));
         // A sidecar asks every caller for its first administrator's setup secret, its window too (any account of the
@@ -269,28 +282,28 @@
         outbox: Object.freeze(Object.assign({ unsent: () => ask("outbox_unsent") }, outbox)),
         drafts,
         // the shell (shell/js/shell.js): the accounts and sign-in, which the host keeps; never the key
-        state: () => ask("client_state"),
+        state: () => shellAsk("client_state"),
         // the name of the shell's chat crypto device (WebrootCrypto deviceName): "MR Moqui desktop on <OS>"
         deviceName: String(window.__moquiDeviceName || ""),
         // the storage of the accounts state's clearScopes names, as the shell loads
         clearScopes,
         // deviceMode: personal or shared, when the build asks (state's deviceMode is choose)
-        signIn: (given) => ask("client_sign_in", { server: String(given.server || ""), username: String(given.username || ""),
+        signIn: (given) => shellAsk("client_sign_in", { server: String(given.server || ""), username: String(given.username || ""),
             password: String(given.password || ""), code: given.code ? String(given.code) : null,
             deviceMode: given.deviceMode ? String(given.deviceMode) : null }),
-        sendCode: (given) => ask("client_send_code", { server: String(given.server || ""), username: String(given.username || ""),
+        sendCode: (given) => shellAsk("client_send_code", { server: String(given.server || ""), username: String(given.username || ""),
             password: String(given.password || ""), factor: String(given.factor || "") }),
-        signOut: () => ask("client_sign_out"),
-        switchAccount: (id) => ask("client_switch_account", { id: String(id) }),
-        addAccount: () => ask("client_add_account"),
-        removeAccount: (id) => ask("client_remove_account", { id: String(id) }),
-        openRemote: (path) => ask("client_open_remote", { path: String(path || "") }),
+        signOut: (forget) => shellAsk("client_sign_out", { forget: forget === true }),
+        switchAccount: (id) => shellAsk("client_switch_account", { id: String(id) }),
+        addAccount: () => shellAsk("client_add_account"),
+        removeAccount: (id) => shellAsk("client_remove_account", { id: String(id) }),
+        openRemote: (path) => shellAsk("client_open_remote", { path: String(path || "") }),
         // the comms screen the host keeps for the shell to show (an OS mailto:, a notification), once
-        takeOpen: () => ask("client_take_open"),
+        takeOpen: () => shellAsk("client_take_open"),
         // SSO in the system browser: the server's providers, and a sign-in through one (the server hands it back)
-        ssoProviders: (server) => ask("client_sso_providers", { server: String(server || "") }),
-        ssoStart: (server, authFlowId, deviceMode) => ask("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
+        ssoProviders: (server) => shellAsk("client_sso_providers", { server: String(server || "") }),
+        ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
-        ssoCancel: () => ask("client_sso_cancel")
+        ssoCancel: () => shellAsk("client_sso_cancel")
     }));
 })();

@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use moqui_tui::{
-    gallery_link, Action, AppView, FakeLink, Key, KeyPress, LinkCall, Mouse, MouseKind, Overlay, ScreenLink,
+    gallery_link, Action, AppView, FakeLink, Key, KeyPress, LinkCall, MenuItem, Mouse, MouseKind, Overlay, ScreenLink,
     ScreenModel, Target, GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
 };
 
@@ -292,6 +292,41 @@ fn a_drag_selects_rows_and_copies_them_once() {
         view.session_mut().take_copy().as_deref(),
         Some("ENUM_00\nENUM_01\nENUM_02")
     );
+}
+
+/// SEC-CLI-94: a selection over text with control characters copies none of them, so no bracketed paste end
+/// (`ESC [ 201 ~`) reaches the clipboard to end a shell's paste early. The text is a menu title, which no reader of the
+/// shell's data cleans: the painter drops them from the cells, and the copy cleans what it is given.
+#[test]
+fn a_selection_over_control_characters_copies_none_of_them() {
+    let (mut view, _) = list_view();
+    view.session_mut().set_menu(vec![MenuItem {
+        title: "Orders\u{1b}[201~\nls\u{7}\u{9b}0m\u{202e}!".to_string(),
+        url: GALLERY_LIST_PATH.to_string(),
+        children: Vec::new(),
+        disabled: false,
+        group: String::new(),
+    }]);
+    // At 180 columns the drawer docks, with the title.
+    let text = view.screen_text(180, HEIGHT);
+    let row = text
+        .lines()
+        .position(|line| line.contains("Orders"))
+        .expect("the title is drawn");
+    let row = u16::try_from(row).unwrap();
+    let now = Instant::now();
+    report(&mut view, MouseKind::Press, (0, row), now);
+    report(&mut view, MouseKind::Drag, (179, row), now);
+    report(&mut view, MouseKind::Release, (179, row), now);
+    let copied = view.session_mut().take_copy().expect("the selection is copied");
+    assert!(copied.contains("Orders[201~ ls0m!"), "{copied:?}");
+    assert!(
+        !copied.contains("\u{1b}[201~") && !copied.chars().any(|ch| ch.is_control() || ch == '\u{202e}'),
+        "{copied:?}"
+    );
+    // A copy that is not read from cells (a component's, a field's value) is cleaned too; tab and newline stay.
+    view.session_mut().copy_text("a\u{1b}[201~\tb\nc\u{9b}".to_string());
+    assert_eq!(view.session_mut().take_copy().as_deref(), Some("a[201~\tb\nc"));
 }
 
 #[test]

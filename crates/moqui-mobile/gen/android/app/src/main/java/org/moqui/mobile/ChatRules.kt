@@ -45,6 +45,15 @@ object ChatRules {
     /** The group of an account's room notifications. */
     fun group(account: String): String = "chat-$account"
 
+    /**
+     * The tag of an account's other notification (a test, a reminder; `tag` the push's own), so the same tag of another
+     * account is another notification and an account's sign-out finds its own ([ChatNotifications.forgetAccount]).
+     */
+    fun otherTag(account: String, tag: String): String = "other-$account/$tag"
+
+    /** The id of the conversation shortcut of a room of an account. */
+    fun shortcutId(account: String, room: String): String = "chat-$account-$room"
+
     /** A room id: letters, digits, `-` and `_`, as the server makes them. */
     fun plainId(text: String?): String? = text?.trim()?.takeIf { ID.matches(it) }
 

@@ -18,22 +18,27 @@ use moqui_client::keys::KeyStore;
 
 use super::{SealedFileStore, Sealer};
 
-/// A stand-in for the Keystore: flips each byte, and refuses to open once `lost` (the Keystore's key gone).
+/// A stand-in for the Keystore: flips each byte (and XORs it with `mask`, so two keys seal differently), and refuses
+/// to open once `lost` (the Keystore's key gone, or the phone locked).
 #[derive(Default)]
 struct Flip {
     lost: AtomicBool,
+    mask: u8,
 }
 
 impl Sealer for &Flip {
     fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
-        Ok(plain.iter().map(|byte| !byte).collect())
+        if self.lost.load(Ordering::SeqCst) {
+            return Err("no such key".to_string());
+        }
+        Ok(plain.iter().map(|byte| !byte ^ self.mask).collect())
     }
 
     fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String> {
         if self.lost.load(Ordering::SeqCst) {
             return Err("no such key".to_string());
         }
-        Ok(sealed.iter().map(|byte| !byte).collect())
+        Ok(sealed.iter().map(|byte| !(byte ^ self.mask)).collect())
     }
 }
 
@@ -83,5 +88,61 @@ fn plain_keys_a_run_without_the_keystore_left_are_sealed_and_removed() {
     assert!(!dir.join("server_abc.key").exists() && !dir.join("server_abc.chat-store.key").exists());
     // nothing left to move
     assert_eq!(store.seal_plain_keys(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-CLI-113: with a key of an unlocked phone, the chat store passphrases are sealed by it (`.unlocked`) and the
+/// device keys by the first; one sealed by the first before is moved as it is read; while the phone is locked the
+/// passphrases do not open and cannot be written, and the device keys still do; a delete takes both files; and the
+/// passphrases are read each time, never kept in memory.
+#[test]
+fn the_chat_store_passphrases_are_sealed_by_the_key_of_an_unlocked_phone() {
+    let dir = std::env::temp_dir().join(format!("moqui-mobile-unlocked-keys-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let first = Flip::default();
+    let unlocked = Flip {
+        mask: 0x55,
+        ..Flip::default()
+    };
+    // a passphrase sealed before there was a second key
+    SealedFileStore::new(&dir, &first)
+        .set("server_abc.chat-store", "{\"DEV\":\"old\"}")
+        .unwrap();
+    assert!(dir.join("server_abc.chat-store.sealed").exists());
+    let store = SealedFileStore::new(&dir, &first).with_unlocked(&unlocked);
+    assert!(store.fresh("server_abc.chat-store") && !store.fresh("server_abc"));
+    assert!(!SealedFileStore::new(&dir, &first).fresh("server_abc.chat-store"));
+    // read: it opens, and is moved to the second key
+    assert_eq!(store.get("server_abc.chat-store").as_deref(), Some("{\"DEV\":\"old\"}"));
+    assert!(!dir.join("server_abc.chat-store.sealed").exists());
+    let moved = std::fs::read(dir.join("server_abc.chat-store.unlocked")).unwrap();
+    assert_eq!((&unlocked).open(&moved).unwrap(), b"{\"DEV\":\"old\"}");
+    assert!(
+        (&first).open(&moved).unwrap() != b"{\"DEV\":\"old\"}",
+        "sealed by the first key still"
+    );
+    // a new passphrase goes to the second key, a device key to the first
+    store.set("server_abc.chat-store", "{\"DEV\":\"new\"}").unwrap();
+    store.set("server_abc", "the-device-key").unwrap();
+    assert!(dir.join("server_abc.sealed").exists() && !dir.join("server_abc.unlocked").exists());
+    assert_eq!(store.get("server_abc.chat-store").as_deref(), Some("{\"DEV\":\"new\"}"));
+    // the phone locked: no passphrase, none written over it, the device key as before
+    unlocked.lost.store(true, Ordering::SeqCst);
+    assert_eq!(store.get("server_abc.chat-store"), None);
+    assert!(store.set("server_abc.chat-store", "{}").is_err());
+    assert_eq!(store.get("server_abc").as_deref(), Some("the-device-key"));
+    unlocked.lost.store(false, Ordering::SeqCst);
+    assert_eq!(store.get("server_abc.chat-store").as_deref(), Some("{\"DEV\":\"new\"}"));
+    // a plain passphrase a run without the Keystore left goes to the second key
+    moqui_client::keys::FileKeyStore::new(&dir)
+        .set("server_def.chat-store", "{}")
+        .unwrap();
+    assert_eq!(store.seal_plain_keys(), 1);
+    assert!(dir.join("server_def.chat-store.unlocked").exists());
+    // a delete takes the passphrase in either file
+    std::fs::write(dir.join("server_abc.chat-store.sealed"), b"stale").unwrap();
+    store.delete("server_abc.chat-store").unwrap();
+    assert!(!dir.join("server_abc.chat-store.sealed").exists());
+    assert!(!dir.join("server_abc.chat-store.unlocked").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

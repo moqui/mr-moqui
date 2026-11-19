@@ -460,12 +460,33 @@ function uploadKeys(p) {
   return { one_time_key_counts: unclaimedCounts(me, deviceId) }
 }
 
-/** The signed device keys of a device as others see them: as uploaded, with its display name unsigned. */
-function publicKeys(device) {
+/**
+ * The kind of device a `User-Agent` names, as another user is told it: the browser or app, and the OS, never the name
+ * its owner gave it, which can name them or their computer (plans/Security-Review.md SEC-CLI-106).
+ */
+function coarseDeviceName(userAgent) {
+  const ua = String(userAgent || '')
+  const app = /MR Moqui|moqui-desktop|moqui-mobile|Tauri/i.test(ua) ? 'MR Moqui' : /Edg\//.test(ua) ? 'Edge'
+    : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'A device'
+  const os = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Mac OS X/.test(ua) ? 'macOS'
+    : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : ''
+  return os ? `${app} on ${os}` : app
+}
+
+/**
+ * The signed device keys of a device as `forOwner` (its own user) or another user sees them: as uploaded, with its
+ * display name unsigned. Its own user gets the name they gave it; another gets the kind of device it is, and none the
+ * client uploaded unsigned (SEC-CLI-106).
+ */
+function publicKeys(device, forOwner) {
   let keys = null
   try { keys = JSON.parse(device.deviceKeysJson) } catch (err) { return null }
   if (!isObject(keys)) return null
-  keys.unsigned = Object.assign({}, isObject(keys.unsigned) ? keys.unsigned : {}, device.displayName ? { device_display_name: device.displayName } : {})
+  const unsigned = Object.assign({}, isObject(keys.unsigned) ? keys.unsigned : {})
+  delete unsigned.device_display_name
+  const name = forOwner ? device.displayName : coarseDeviceName(device.userAgent)
+  if (name) unsigned.device_display_name = name
+  keys.unsigned = unsigned
   return keys
 }
 
@@ -491,7 +512,7 @@ function queryKeys(p) {
     const signatures = signaturesOver(me, userId)
     const devices = {}
     for (const device of query.limit(MAX_DEVICES + 10).list()) {
-      const keys = publicKeys(device)
+      const keys = publicKeys(device, userId === me)
       if (keys) devices[device.deviceId] = withSignatures(keys, signatures.get(device.deviceId))
     }
     out[id] = devices

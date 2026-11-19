@@ -576,9 +576,10 @@ pub(crate) fn account_ids(dir: &Path) -> String {
     core_in(dir).map(|core| keyed_ids(&core).join("\n")).unwrap_or_default()
 }
 
-/// The app's key for its room links (`calls::room_link`), made and kept in the key store on first use. A key that
-/// cannot be read now is made again: the links already shown then open nothing, and nothing else.
-fn link_key(core: &Client) -> Option<Vec<u8>> {
+/// The app's key for its own links (`calls::room_link`, and a page notification's tap, `commands::notify`), made and
+/// kept in the key store on first use. A key that cannot be read now is made again: the links already shown then open
+/// nothing, and nothing else.
+pub(crate) fn link_key(core: &Client) -> Option<Vec<u8>> {
     const ENTRY: &str = "app.link-key";
     if let Some(key) = core.keys().get(ENTRY).and_then(|text| crate::push::unb64(&text).ok()) {
         if key.len() == 32 {
@@ -736,6 +737,22 @@ pub(crate) fn unregister_push(core: &Client, dir: &Path, account: &Account, key:
     }
     change_record(dir, |record| record.drop_account(&account.id));
     crate::push::forget_keys(core.keys(), &account.id);
+}
+
+/// `account` is signed out here, its key gone, whether its server heard or not (`MobileHost::account_signed_out`): its
+/// registration, push keys, endpoint and UnifiedPush instance are forgotten here with no request, as
+/// [`unregister_push`] does after its post (none when the app could not make requests). With no account left signed
+/// in, the FCM token goes too ([`PushRecord::forget_token`], SEC-CLI-121), which Firebase then deletes. Whether no
+/// account is left signed in.
+pub(crate) fn push_signed_out(core: &Client, dir: &Path, account: &str) -> bool {
+    let last = keyed_ids(core).is_empty();
+    change_record(dir, |record| {
+        let dropped = record.drop_account(account);
+        let forgot = last && record.forget_token();
+        dropped || forgot
+    });
+    crate::push::forget_keys(core.keys(), account);
+    last
 }
 
 /// The app's host, for the pages of a background send ([`flush_background`]).

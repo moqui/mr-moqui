@@ -413,7 +413,9 @@ desktop_updater_config() {
         esac
         list="${list:+$list,}\"$endpoint\""
     done
-    printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s","endpoints":[%s]}}}\n' \
+    # requireSignedVersion: an update's signature must name its version, so an older release signed with the same key is
+    # never taken as a newer one (plans/Security-Review.md SEC-CLI-98); the bundle signs with the app's version
+    printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s","endpoints":[%s],"requireSignedVersion":true}}}\n' \
         "$pubkey" "$list"
 }
 

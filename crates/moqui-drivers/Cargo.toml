@@ -13,7 +13,8 @@ publish.workspace = true
 
 [features]
 # Postgres embedded in the process (theseus archive, staged by build.rs).
-embedded-postgres = ["postgres", "dep:postgresql_embedded", "dep:tar", "dep:flate2", "dep:close_fds"]
+# Its dumps can be sealed to an age recipient (database-backup@recipient, SEC-CLI-114): moqui-lib's age.
+embedded-postgres = ["postgres", "dep:postgresql_embedded", "dep:tar", "dep:flate2", "dep:close_fds", "moqui-lib/age"]
 postgres = ["dep:postgres-protocol", "dep:postgres-types", "dep:fallible-iterator", "dep:webpki-roots", "dep:socket2"]
 mysql = ["dep:mysql"]
 

@@ -377,6 +377,22 @@ pub(crate) fn chat_room_shown(account: &str, room: &str) -> Result<(), String> {
     })
 }
 
+/// `account` is signed out here: its chat notifications, their summary, its conversation shortcuts and a room of it
+/// shown go (`ChatNotifications.forgetAccount`, SEC-CLI-100).
+pub(crate) fn forget_account(account: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ChatNotifications"))?;
+        let account = env.new_string(account)?;
+        env.call_static_method(
+            &class,
+            jni_str!("forgetAccount"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account)],
+        )?;
+        Ok(())
+    })
+}
+
 /// A push registration failed: the native code's worker tries again (`RegisterWorker.start`).
 pub(crate) fn register_worker_start() -> Result<(), String> {
     with_context(|env, app| {
@@ -416,6 +432,32 @@ pub(crate) fn fcm_start() -> Result<(), String> {
             jni_sig!("(Landroid/content/Context;)V"),
             &[JValue::Object(app)],
         )?;
+        Ok(())
+    })
+}
+
+/// The last account here signed out: Firebase's token and installation deleted (`Push.stopFcm`; nothing in a build
+/// without Firebase), so the phone stays registered with Google for no account; the next sign-in's [`fcm_start`] asks
+/// for a new token (SEC-CLI-121).
+pub(crate) fn fcm_stop() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.Push"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("stopFcm"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
+/// Clear the server pages' origin's storage (`PageStorage.clear`), at a switch of the current account or its sign-out
+/// (SEC-CLI-81).
+pub(crate) fn clear_page_storage() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.PageStorage"))?;
+        env.call_static_method(&class, jni_str!("clear"), jni_sig!("()V"), &[])?;
         Ok(())
     })
 }
@@ -507,28 +549,47 @@ pub(crate) fn open_url(url: &str) -> Result<(), String> {
     })
 }
 
-/// The Android Keystore's AES-GCM key of the app's device keys (`org.moqui.mobile.KeyVault`).
-pub(crate) struct KeyVault;
+/// An Android Keystore AES-GCM key of the app's (`org.moqui.mobile.KeyVault`): the device keys' (`unlocked` false), or
+/// the one that opens only while the phone is unlocked, for what no background work reads (SEC-CLI-113,
+/// `crate::keystore`).
+pub(crate) struct KeyVault {
+    unlocked: bool,
+}
 
 impl KeyVault {
-    /// The vault, once its Keystore key is made or found.
+    /// The device keys' vault, once its Keystore key is made or found.
     pub(crate) fn ready() -> Result<Self, String> {
         with_context(|env, app| {
             let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
             env.call_static_method(&class, jni_str!("ready"), jni_sig!("()V"), &[])?;
             Ok(())
         })?;
-        Ok(Self)
+        Ok(Self { unlocked: false })
     }
 
-    /// `bytes` through `KeyVault.<method>(byte[]): byte[]`.
-    fn call(method: &'static str, bytes: &[u8]) -> Result<Vec<u8>, String> {
+    /// The vault of an unlocked phone, once its Keystore key is made or found; an error before Android 9, which has no
+    /// such key.
+    pub(crate) fn ready_unlocked() -> Result<Self, String> {
+        with_context(|env, app| {
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
+            env.call_static_method(&class, jni_str!("readyUnlocked"), jni_sig!("()V"), &[])?;
+            Ok(())
+        })?;
+        Ok(Self { unlocked: true })
+    }
+
+    /// `bytes` through `KeyVault.<method>(byte[]): byte[]` (`seal`, `open`, or for the unlocked phone's key
+    /// `sealUnlocked`, `openUnlocked`).
+    fn call(&self, method: &'static str, bytes: &[u8]) -> Result<Vec<u8>, String> {
+        let unlocked = self.unlocked;
         with_context(|env, app| {
             let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
             let input = env.byte_array_from_slice(bytes)?;
-            let name = match method {
-                "seal" => jni_str!("seal"),
-                _ => jni_str!("open"),
+            let name = match (method, unlocked) {
+                ("seal", false) => jni_str!("seal"),
+                ("seal", true) => jni_str!("sealUnlocked"),
+                (_, false) => jni_str!("open"),
+                (_, true) => jni_str!("openUnlocked"),
             };
             let output = env
                 .call_static_method(&class, name, jni_sig!("([B)[B"), &[JValue::Object(&input)])?
@@ -541,11 +602,11 @@ impl KeyVault {
 
 impl Sealer for KeyVault {
     fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
-        Self::call("seal", plain)
+        self.call("seal", plain)
     }
 
     fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String> {
-        Self::call("open", sealed)
+        self.call("open", sealed)
     }
 }
 

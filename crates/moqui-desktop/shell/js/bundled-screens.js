@@ -1218,7 +1218,7 @@ module.exports = {
             quickCreateShow: false, quickCreateUrl: '', quickCreateTitle: '', trayOpen: false,
             // the palette (m-shell-palette reads these of its $root, as of m-qapps-root's)
             paletteOpen: false, assistOn: false,
-            signOutBox: { open: false, shared: false, items: [], checked: true, inCall: false },
+            signOutBox: { open: false, shared: false, forget: false, items: [], checked: true, inCall: false },
             pushBox: { open: false, loaded: false, state: {}, testing: false, result: '', confirmOpen: false, confirmRow: null }
         };
     },
@@ -1281,7 +1281,9 @@ module.exports = {
             return rows;
         },
         // the sign-out leaves something unsent, or could not tell
-        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutBox.shared) || this.signOutBox.inCall; },
+        signOutRisky() { return this.signOutBox.items.length > 0 || (!this.signOutBox.checked && this.signOutDeletes) || this.signOutBox.inCall; },
+        // the sign-out deletes the account's data here: a shared device's, or a personal one's the user asked to delete
+        signOutDeletes() { return this.signOutBox.shared || this.signOutBox.forget; },
         // the account is a shared device's (client-conf device-mode): its data goes with the sign-out
         shared() {
             const current = this.accounts.find((account) => account.id === this.currentId);
@@ -1510,12 +1512,13 @@ module.exports = {
             const desktop = host();
             const unsent = desktop && desktop.outbox && typeof desktop.outbox.unsent === 'function'
                 ? desktop.outbox.unsent().catch((err) => { console.info('The unsent items were not read', err); return null; }) : Promise.resolve(null);
-            unsent.then((found) => { this.signOutBox = { open: true, shared, items: unsentItems(found), checked: !!found, inCall: this.inCall() }; });
+            unsent.then((found) => { this.signOutBox = { open: true, shared, forget: false, items: unsentItems(found), checked: !!found, inCall: this.inCall() }; });
         },
         confirmSignOut() {
             this.signOutBox.open = false;
+            const forget = !this.signOutBox.shared && this.signOutBox.forget === true;
             const left = this.inCall() ? moqui.call.leave().catch(() => null) : Promise.resolve();
-            left.then(() => host().signOut()).catch((err) => this.failed(err));
+            left.then(() => host().signOut(forget)).catch((err) => this.failed(err));
         },
         // the user's apps and devices (/qapps/clientDevices), each to sign out; this app's own signs out here too
         // the notification check (plans/Comms-Messaging.md §7.6): the host's state, read again after a fix
@@ -1710,6 +1713,7 @@ module.exports = {
                   const _component_q_card_actions = _resolveComponent("q-card-actions")
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_q_dialog = _resolveComponent("q-dialog")
+                  const _component_q_checkbox = _resolveComponent("q-checkbox")
                   const _component_m_shell_palette = _resolveComponent("m-shell-palette")
                   const _component_m_call_dock = _resolveComponent("m-call-dock")
                   const _component_q_page = _resolveComponent("q-page")
@@ -2583,13 +2587,29 @@ module.exports = {
                                 ]),
                                 _: 1
                               }),
+                              (!_ctx.signOutBox.shared)
+                                ? (_openBlock(), _createBlock(_component_q_card_section, {
+                                    key: 0,
+                                    class: "q-pt-none m-shell-sign-out-forget"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_checkbox, {
+                                        modelValue: _ctx.signOutBox.forget,
+                                        "onUpdate:modelValue": $event => ((_ctx.signOutBox.forget) = $event),
+                                        dense: "",
+                                        label: _ctx.t('Also delete the mail, chat and drafts kept for it on this computer')
+                                      }, null, 8, ["modelValue", "onUpdate:modelValue", "label"])
+                                    ]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true),
                               (_ctx.signOutBox.items.length)
-                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                                     _createVNode(_component_q_card_section, {
-                                      class: _normalizeClass(["q-pt-none text-body2 text-weight-medium", _ctx.signOutBox.shared ? 'text-negative' : ''])
+                                      class: _normalizeClass(["q-pt-none text-body2 text-weight-medium", _ctx.signOutDeletes ? 'text-negative' : ''])
                                     }, {
                                       default: _withCtx(() => [
-                                        _createTextVNode(_toDisplayString(_ctx.signOutBox.shared
+                                        _createTextVNode(_toDisplayString(_ctx.signOutDeletes
                                     ? _ctx.t('Not sent yet: signing out deletes these.') : _ctx.t('Not sent yet: these stay on this computer and go after you sign in again.')), 1)
                                       ]),
                                       _: 1
@@ -2648,7 +2668,7 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (_ctx.signOutBox.inCall)
                                 ? (_openBlock(), _createBlock(_component_q_card_section, {
-                                    key: 1,
+                                    key: 2,
                                     class: "q-pt-none text-body2 text-weight-medium text-negative m-shell-sign-out-call"
                                   }, {
                                     default: _withCtx(() => [
@@ -2659,11 +2679,11 @@ module.exports = {
                                 : _createCommentVNode("", true),
                               (!_ctx.signOutBox.items.length && !_ctx.signOutBox.checked)
                                 ? (_openBlock(), _createBlock(_component_q_card_section, {
-                                    key: 2,
-                                    class: _normalizeClass(["q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown", _ctx.signOutBox.shared ? 'text-negative' : ''])
+                                    key: 3,
+                                    class: _normalizeClass(["q-pt-none text-body2 text-weight-medium m-shell-unsent-unknown", _ctx.signOutDeletes ? 'text-negative' : ''])
                                   }, {
                                     default: _withCtx(() => [
-                                      _createTextVNode(_toDisplayString(_ctx.signOutBox.shared ? _ctx.t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
+                                      _createTextVNode(_toDisplayString(_ctx.signOutDeletes ? _ctx.t('What is not sent yet could not be checked: any of it is deleted with the sign-out.')
                                     : _ctx.t('What is not sent yet could not be checked: it stays on this computer and goes after you sign in again.')), 1)
                                     ]),
                                     _: 1
