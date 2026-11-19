@@ -1237,6 +1237,47 @@ fn the_host_is_asked_for_the_path_a_request_reached_and_its_refusal_is_answered(
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-WEB-89: a screen renders for GET, HEAD, POST and OPTIONS only, a transition of method `any` runs for those and
+/// PUT, PATCH and DELETE, and the sign-in transitions take POST only, whatever web protection says.
+#[test]
+fn a_screen_and_an_any_transition_refuse_other_methods_and_sign_in_takes_post_only() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-methods-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    std::fs::write(
+        dir.join("Root.xml"),
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("Root/Form.xml"),
+        r#"<screen require-authentication="false">
+            <transition name="go" read-only="true">
+                <actions><script>ec.web.sendTextResponse('ran')</script></actions>
+                <default-response type="none"/>
+            </transition>
+            <widgets><label text="Form body"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    let serve = |method: &str, path: &str| serve_at(&world.factory, request(method, path), &root);
+    assert!(serve("GET", "/Form").body_text().contains("Form body"));
+    for method in ["TRACE", "PUT", "PROPFIND"] {
+        let response = serve(method, "/Form");
+        assert_eq!(response.status, 405, "{method}: {}", response.body_text());
+        assert_eq!(response.header("allow"), Some("GET, HEAD, POST, OPTIONS"));
+    }
+    assert_eq!(serve("PUT", "/Form/go").body_text(), "ran");
+    assert_eq!(serve("TRACK", "/Form/go").status, 405);
+    let webroot = webroot().to_string_lossy().into_owned();
+    for path in ["/Login/login", "/SecondFactor/verifyUserAuthcFactor", "/ChangePassword/changePassword"] {
+        let response = serve_at(&world.factory, request("PUT", path), &webroot);
+        assert_eq!(response.status, 405, "{path}: {}", response.body_text());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 mod anonymous;
 mod authc;
 mod boxes;

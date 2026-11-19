@@ -591,7 +591,7 @@
             <web-protection enabled="" client-ipv6-prefix="64" max-tracked-clients="100000">
                 <connections max="4096" max-per-client="64" header-timeout="30" write-timeout="60" shutdown-timeout="30"
                         http2-max-streams="100"/>
-                <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" max-uri-length="8192"
+                <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS,PROPFIND,PROPPATCH,MKCOL,COPY,MOVE,LOCK,UNLOCK,REPORT" max-uri-length="8192"
                         max-header-bytes="65536" max-headers="100" max-body="10485760"
                         max-upload="2147483648" anonymous-upload-paths="/s/" max-spool="4294967296"
                         body-timeout="60" upload-idle-timeout="60" request-timeout="300"/>
