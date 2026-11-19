@@ -4,7 +4,7 @@
 //   moqui test tools --agents --llm-profile local-qwen --runs 3
 //   moqui test tools --agents --replay runtime/components/base/tools/test/agent/replay
 //   moqui test tools --agents --replay runtime/components/base/tools/test/agent/replay-small
-// The tasks make their own rows (a user group, visits, a note, a user with no permissions) and remove them after. The user
+// The tasks make their own rows (a user group, visits, a note, a user with only AgentUse) and remove them after. The user
 // group tasks are on System › Access (Groups, and GroupDetail with its instance administrator's "All settings" form, whose
 // transition is updateUserGroup): a group a task makes has no type, so it is neither a registered bundle nor a custom
 // group and its Profile form is not offered; "All settings" is the one form that changes it.
@@ -223,8 +223,19 @@ agentSpec({
             setup() {
                 make("moqui.security.UserAccount", { userId: "AGENT_EVAL_VIEWER", username: "agent.eval.viewer",
                     userFullName: "Agent Eval Viewer" })
+                // AgentUse alone, which each step of a run checks: the agent runs, and the screen is refused
+                make("moqui.security.UserGroup", { userGroupId: "AGENT_EVAL_AGENTS", description: "Agent eval: agents only" })
+                make("moqui.security.UserGroupPermission", { userGroupId: "AGENT_EVAL_AGENTS", userPermissionId: "AgentUse",
+                    fromDate: new Date(0) })
+                make("moqui.security.UserGroupMember", { userGroupId: "AGENT_EVAL_AGENTS", userId: "AGENT_EVAL_VIEWER",
+                    fromDate: new Date(0) })
             },
-            cleanup() { remove("moqui.security.UserAccount", "userId", "AGENT_EVAL_VIEWER") },
+            cleanup() {
+                remove("moqui.security.UserGroupMember", "userId", "AGENT_EVAL_VIEWER")
+                remove("moqui.security.UserGroupPermission", "userGroupId", "AGENT_EVAL_AGENTS")
+                remove("moqui.security.UserGroup", "userGroupId", "AGENT_EVAL_AGENTS")
+                remove("moqui.security.UserAccount", "userId", "AGENT_EVAL_VIEWER")
+            },
             expect: {
                 results: [{ tool: "screen", result: /not (allowed|authorized|permitted)|permission|access/i }],
                 answer: /permission|not allowed|access/i,
