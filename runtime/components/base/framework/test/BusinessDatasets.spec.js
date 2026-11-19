@@ -188,6 +188,8 @@ feature("three fixture documents, one on a fed feed and one on a feed never buil
                 authzActionEnumId: "AUTHZA_VIEW"
             })
             make("moqui.entity.document.DataDocumentUserGroup", {dataDocumentId: types.fed, userGroupId: "BDS_READER"})
+            // the steward (john.doe) reads the document whose fields and index they change (SEC-TLS-92)
+            make("moqui.entity.document.DataDocumentUserGroup", {dataDocumentId: types.fed, userGroupId: "ADMIN"})
         })
         dataset("bds-sales", types.fed, policy)
         dataset("bds-unfed", types.unfed, policy)
@@ -411,6 +413,7 @@ feature("the document by id, its index and a copy without the signal reach no re
                 fieldSeqId: "01",
                 fieldPath: "remoteId"
             })
+            make("moqui.entity.document.DataDocumentUserGroup", {dataDocumentId: "BdsRemote", userGroupId: "ADMIN"})
         })
         dataset("bds-remote", "BdsRemote", policy)
         const encrypted = asSteward(R + "store#BusinessDatasetFields", {
@@ -695,7 +698,8 @@ feature(
             others.includes("Dataset bds-sales is not available")
             // the sources are a creator's; the policies, operators and functions any caller's
             creator.canCreate == true
-            creatorDocuments.includes(types.fed) && creatorDocuments.includes(types.unbuilt)
+            // a fed document no group of the creator's reads is not offered (SEC-TLS-92)
+            creatorDocuments.includes(types.fed) && !creatorDocuments.includes(types.unbuilt)
             !creatorDocuments.includes(types.unfed)
             policy.scopeParameter == "groupField"
             Array.from(creator.operators).includes("not-between") && Array.from(creator.functions).includes("count-distinct")
@@ -708,3 +712,77 @@ feature(
         }
     }
 )
+
+// A dataset's document is shared by everything that reads it (SEC-TLS-92): a dataset is made over a document a group of its
+// creator's reads; its steward changes the document's fields and conditions only when they steward every other dataset over
+// it, and changes or removes only a condition their dataset added, never one made in Tools.
+feature("a steward changes a document only when it is theirs: one their groups read, no other steward's dataset over it, conditions they added", {
+    when() {
+        const STEWARD = "bds.steward"
+        sys(() => {
+            for (const verbNoun of ["store#BusinessDatasetFields", "store#BusinessDatasetConditions"])
+                make("moqui.security.ArtifactGroupMember", {
+                    artifactGroupId: "BDS_STEWARD",
+                    artifactName: R + verbNoun,
+                    artifactTypeEnumId: "AT_SERVICE"
+                })
+        })
+        const unread = asUser(STEWARD, R + "create#BusinessDataset", {
+            datasetId: "bds-own-unread",
+            dataDocumentId: types.unbuilt,
+            scopePolicyId: "ReportUserGroups",
+            rowFilterParameters: policy.rowFilterParameters
+        })
+        // bds-own-sales (the steward's) reads the document bds-sales (not theirs) reads
+        const shared = asUser(STEWARD, R + "store#BusinessDatasetFields", {
+            datasetId: "bds-own-sales",
+            fields: [{fieldPath: "enumTypeId", fieldNameAlias: "typeAgain"}]
+        })
+        const kept = sys(() =>
+            ec.entity.find("moqui.entity.document.DataDocumentField").condition("dataDocumentId", types.fed).condition("fieldNameAlias", "typeAgain").count()
+        )
+        // the system administrator stewards every dataset over it: the condition made with the document is not theirs to
+        // change, one they add is, and its removal
+        const seeded = asSteward(R + "store#BusinessDatasetConditions", {
+            datasetId: "bds-sales",
+            conditions: [{conditionSeqId: "01", fieldNameAlias: "enumTypeId", operator: "not-equals", fieldValue: "BdsFixture"}]
+        })
+        const removeSeeded = asSteward(R + "store#BusinessDatasetConditions", {
+            datasetId: "bds-sales",
+            conditions: [{conditionSeqId: "01", remove: true}]
+        })
+        const added = asSteward(R + "store#BusinessDatasetConditions", {
+            datasetId: "bds-sales",
+            conditions: [{fieldNameAlias: "enumCode", operator: "not-equals", fieldValue: "BDS_NONE"}]
+        })
+        const conditions = () =>
+            Array.from(sys(() => ec.entity.find("moqui.entity.document.DataDocumentCondition").condition("dataDocumentId", types.fed).list()))
+        const mine = conditions().find(row => row.fieldNameAlias === "enumCode")
+        const removed = asSteward(R + "store#BusinessDatasetConditions", {
+            datasetId: "bds-sales",
+            conditions: [{conditionSeqId: mine?.conditionSeqId, remove: true}]
+        })
+        return {
+            unread: unread.error || "",
+            shared: shared.error || "",
+            kept,
+            seeded: seeded.error || "",
+            removeSeeded: removeSeeded.error || "",
+            added: added.error || "",
+            mine: !!mine,
+            removed: removed.error || "",
+            left: conditions().map(row => row.conditionSeqId + ":" + row.fieldNameAlias + ":" + (row.operator || "equals")).join(",")
+        }
+    },
+    then({unread, shared, kept, seeded, removeSeeded, added, mine, removed, left}) {
+        unread.includes("is not one your groups read")
+        shared.includes("is read by dataset bds-")
+        kept == 0
+        seeded.includes("was not added by dataset bds-sales")
+        removeSeeded.includes("was not added by dataset bds-sales")
+        added == ""
+        mine
+        removed == ""
+        left == "01:enumTypeId:equals"
+    }
+})

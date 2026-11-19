@@ -130,8 +130,9 @@
     <service verb="create" noun="BusinessDataset" type="rust" location="moqui_core::report::create_business_dataset">
         <description>A steward's business dataset over a DataDocument a registered DataFeed indexes, with a registered scope policy
             and its parameters, saved as a dataset definition they own and waiting for review. Refuses a document of no feed, a
-            telemetry index, an unregistered policy, a group the steward is not in, and an id whose own update artifact
-            (org.moqui.report.dataset.(id)) the creator does not hold: a prefix a screen puts before a name gives no right.</description>
+            telemetry index, a document no group of the creator's reads (DataDocumentUserGroup), an unregistered policy, a
+            group the steward is not in, and an id whose own update artifact (org.moqui.report.dataset.(id)) the creator does
+            not hold: a prefix a screen puts before a name gives no right.</description>
         <in-parameters>
             <parameter name="datasetId" required="true"/><parameter name="title"/><parameter name="dataDocumentId" required="true"/>
             <parameter name="timeField"/><parameter name="scopePolicyId" required="true"/><parameter name="rowFilterParameters" type="Map"/>
@@ -152,7 +153,8 @@
     </service>
     <service verb="index" noun="BusinessDataset" type="rust" transaction-timeout="3600" location="moqui_core::report::index_business_dataset">
         <description>Rebuild one business dataset's index: org.moqui.search.SearchServices.index#DataFeedDocuments for its feed
-            and its document only, for its steward (the dataset's update artifact), recording when and how many.</description>
+            and its document only, for its steward (the dataset's update artifact) whose groups read the document, recording
+            when and how many.</description>
         <in-parameters><parameter name="datasetId" required="true"/></in-parameters>
         <out-parameters><parameter name="documentsIndexed" type="Long"/><parameter name="dataFeedId"/><parameter name="dataDocumentId"/></out-parameters>
     </service>
@@ -160,14 +162,17 @@
         <description>A steward adds, revises and removes a business dataset's document fields (fields: fieldSeqId, fieldPath,
             fieldNameAlias, functionName, sequenceNum, remove). A new path is plain (no expression or secret field); names stay
             unique; removing or renaming a field a definition over the dataset names is refused until it is revised, as is a
-            stale expectedVersion. The index is stale until rebuilt.</description>
+            stale expectedVersion. The steward's groups read the document, and every other dataset over it is one they
+            steward too. The index is stale until rebuilt.</description>
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="fields" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
         <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
     </service>
     <service verb="store" noun="BusinessDatasetConditions" type="rust" location="moqui_core::report::store_business_dataset_conditions">
         <description>A steward adds, revises and removes the conditions that narrow a business dataset's document (conditions:
             conditionSeqId, fieldNameAlias, operator, fieldValue, toFieldNameAlias, remove), each on a field of the document with
-            an operator of the list; never a post-query expression, and never in place of the row filter.</description>
+            an operator of the list; never a post-query expression, and never in place of the row filter. Only a condition
+            the dataset added is revised or removed; the steward's groups read the document, and every other dataset over it
+            is one they steward too.</description>
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="conditions" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
         <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
     </service>
@@ -199,7 +204,7 @@
             none), the condition operators and field functions a steward may use (operators, functions), whether the caller
             may create a dataset (canCreate: the dataset-save artifact org.moqui.report.dataset, update, by the caller's own
             grant) and, only then, the documents a dataset may be made over (documents: dataDocumentId, documentName,
-            indexName; those of registered data feeds, never a telemetry index). It takes nothing from the request.</description>
+            indexName; those of registered data feeds that a group of the caller's reads, never a telemetry index). It takes nothing from the request.</description>
         <out-parameters>
             <parameter name="canCreate" type="Boolean"/>
             <parameter name="documents" type="List"/>

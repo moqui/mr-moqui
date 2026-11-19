@@ -324,9 +324,17 @@ pub(super) fn business_documents(ec: &ExecutionContext) -> Result<BTreeSet<Strin
 /// Every business dataset, shipped or saved, whoever may read it, as its id and body (business.rs). Reads with authorization
 /// off and returns no owner or group.
 pub(super) fn business_datasets(ec: &ExecutionContext) -> Result<Vec<(String, Json)>, Error> {
+    Ok(all_datasets(ec)?
+        .into_iter()
+        .filter(|(_, body)| super::business::is_business(body))
+        .collect())
+}
+/// Every dataset, shipped or saved, whoever may read it, as its id and body (business.rs). Reads with authorization off and
+/// returns no owner or group.
+pub(super) fn all_datasets(ec: &ExecutionContext) -> Result<Vec<(String, Json)>, Error> {
     let mut out = Vec::new();
     let mut add = |definition: &Json| {
-        if definition["type"] == "dataset" && super::business::is_business(&definition["body"]) {
+        if definition["type"] == "dataset" {
             out.push((text(definition, "id", "").to_owned(), definition["body"].clone()));
         }
     };
