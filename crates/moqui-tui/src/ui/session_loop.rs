@@ -24,7 +24,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::decode::{Decoded, Decoder};
+use crate::decode::{Decoded, Decoder, MAX_PASTE};
 use crate::link::{Push, Reply, ScreenLink};
 use crate::session::Session;
 use crate::theme::Theme;
@@ -209,6 +209,13 @@ fn run<L: ScreenLink + 'static, W: Write>(
                     changed = true;
                 }
                 SessionEvent::Close => return Ok(()),
+            }
+        }
+        if decoder.take_cut() {
+            if let Some(log) = options.notes {
+                log(&format!(
+                    "a paste of more than {MAX_PASTE} bytes was cut to its first {MAX_PASTE}"
+                ));
             }
         }
         let now = Instant::now();

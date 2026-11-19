@@ -29,6 +29,13 @@ use crate::keys::{Key, KeyPress, Mouse, MouseKind};
 /// Terminals send a sequence in one write, so a gap this long means a person pressed Escape.
 pub const ESC_WAIT: Duration = Duration::from_millis(50);
 
+/// The most bytes of one bracketed paste kept (SEC-FIL-99), the prompt's line limit: past it the rest of the paste is
+/// read to its end marker and dropped, so a paste that never ends holds this much and no more.
+pub const MAX_PASTE: usize = 1024 * 1024;
+
+/// The end of a bracketed paste.
+const PASTE_END: &[u8] = b"\x1b[201~";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
     Key(KeyPress),
@@ -49,9 +56,35 @@ pub enum Decoded {
 #[derive(Debug)]
 pub struct Decoder {
     pending: Vec<u8>,
-    paste: Option<Vec<u8>>,
+    paste: Option<Paste>,
     /// When the bytes still pending stopped short of a whole sequence.
     waiting: Option<Instant>,
+    /// Pastes cut to [`MAX_PASTE`] since [`Self::take_cut`].
+    cut: usize,
+}
+
+/// A bracketed paste under way.
+#[derive(Debug, Default)]
+struct Paste {
+    /// At most [`MAX_PASTE`] bytes of it, then the last bytes read, which may be the start of the end marker.
+    bytes: Vec<u8>,
+    /// The bytes already searched for the end marker, so each read searches only what is new.
+    searched: usize,
+    /// More than [`MAX_PASTE`] bytes came.
+    cut: bool,
+}
+
+impl Paste {
+    /// Keep the first [`MAX_PASTE`] bytes and the end marker's length less one after them.
+    fn keep_within(&mut self) {
+        let tail = PASTE_END.len() - 1;
+        if self.bytes.len() > MAX_PASTE + tail {
+            let from = self.bytes.len() - tail;
+            self.bytes.drain(MAX_PASTE..from);
+            self.cut = true;
+        }
+        self.searched = self.bytes.len();
+    }
 }
 
 impl Default for Decoder {
@@ -66,11 +99,17 @@ impl Decoder {
             pending: Vec::new(),
             paste: None,
             waiting: None,
+            cut: 0,
         }
     }
 
+    /// Whether a paste was cut to [`MAX_PASTE`] since the last call, for the caller's log.
+    pub fn take_cut(&mut self) -> bool {
+        std::mem::take(&mut self.cut) > 0
+    }
+
     /// When [`Self::flush`] should run: an unfinished sequence has waited [`ESC_WAIT`]. None inside a paste, which
-    /// waits for its end however long it takes.
+    /// waits for its end however long it takes, holding at most [`MAX_PASTE`] bytes of it.
     pub fn deadline(&self) -> Option<Instant> {
         self.waiting.map(|since| since + ESC_WAIT)
     }
@@ -90,19 +129,24 @@ impl Decoder {
 
     pub fn push(&mut self, bytes: &[u8]) -> Vec<Decoded> {
         if let Some(paste) = &mut self.paste {
-            paste.extend_from_slice(bytes);
+            paste.bytes.extend_from_slice(bytes);
         } else {
             self.pending.extend_from_slice(bytes);
         }
         let mut out = Vec::new();
-        let paste_end: &[u8] = b"\x1b[201~";
         loop {
-            if let Some(buf) = &self.paste {
-                let Some(at) = find_sub(buf, paste_end) else {
+            if let Some(paste) = &mut self.paste {
+                // the marker may start in the bytes searched before, at most its length less one back
+                let from = paste.searched.saturating_sub(PASTE_END.len() - 1);
+                let Some(at) = find_sub(&paste.bytes[from..], PASTE_END).map(|at| from + at) else {
+                    paste.keep_within();
                     break;
                 };
-                let text = String::from_utf8_lossy(&buf[..at]).into_owned();
-                let rest = buf[at + paste_end.len()..].to_vec();
+                let text = String::from_utf8_lossy(&paste.bytes[..at.min(MAX_PASTE)]).into_owned();
+                let rest = paste.bytes[at + PASTE_END.len()..].to_vec();
+                if paste.cut {
+                    self.cut += 1;
+                }
                 self.paste = None;
                 self.pending = rest;
                 out.push(Decoded::Paste(text));
@@ -114,7 +158,10 @@ impl Decoder {
                     let start = matches!(take_one(&self.pending), Take::PasteStart(_));
                     self.pending.drain(..len);
                     if start {
-                        self.paste = Some(std::mem::take(&mut self.pending));
+                        self.paste = Some(Paste {
+                            bytes: std::mem::take(&mut self.pending),
+                            ..Paste::default()
+                        });
                     }
                 }
                 Take::One(decoded, len) => {
@@ -535,6 +582,38 @@ mod tests {
         // A paste waits for its end without a deadline.
         assert!(decoder.push(b"\x1b[200~part").is_empty());
         assert_eq!(decoder.deadline(), None);
+    }
+
+    /// SEC-FIL-99: a paste holds at most MAX_PASTE bytes however much comes, each read searching only its own bytes
+    /// for the end marker (one split across reads included); past it the rest is dropped and the paste is cut. A paste
+    /// of MAX_PASTE bytes comes whole.
+    #[test]
+    fn a_paste_keeps_at_most_its_limit_and_ends_at_its_marker() {
+        let mut decoder = Decoder::new();
+        assert!(decoder.push(b"\x1b[200~").is_empty());
+        let chunk = vec![b'a'; 4096];
+        for _ in 0..(MAX_PASTE / chunk.len()) {
+            assert!(decoder.push(&chunk).is_empty());
+        }
+        assert!(decoder.push(b"\x1b[20").is_empty());
+        let whole = decoder.push(b"1~x");
+        assert_eq!(whole.len(), 2);
+        assert!(matches!(&whole[0], Decoded::Paste(text) if text.len() == MAX_PASTE));
+        assert_eq!(whole[1], key(Key::Char('x')));
+        assert!(!decoder.take_cut());
+
+        // ten times the limit: what is held stays near the limit, and the paste is its first MAX_PASTE bytes
+        assert!(decoder.push(b"\x1b[200~").is_empty());
+        for _ in 0..(10 * MAX_PASTE / chunk.len()) {
+            assert!(decoder.push(&chunk).is_empty());
+            let held = decoder.paste.as_ref().map_or(0, |paste| paste.bytes.len());
+            assert!(held < MAX_PASTE + PASTE_END.len(), "{held}");
+        }
+        let cut = decoder.push(b"b\x1b[201~");
+        assert!(matches!(&cut[..], [Decoded::Paste(text)] if text.len() == MAX_PASTE && !text.contains('b')));
+        assert!(decoder.take_cut());
+        assert!(!decoder.take_cut());
+        assert_eq!(decoder.push(b"y"), vec![key(Key::Char('y'))]);
     }
 
     #[test]
