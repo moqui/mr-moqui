@@ -277,17 +277,25 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
     assert_eq!(own["revoked"], Value::Bool(true));
     assert!(crate::user::login_user_key_for(&key, "gateway").is_err());
 
-    // SEC-RTE-85: a browser session with no recent sign-in makes none; a client signing in by its own key does
+    // SEC-RTE-85: a browser session with no recent sign-in makes none, whatever header it carries that did not sign it
+    // in (a Bearer token the login does not take); a client that signed the request in by its own key does
     let _web = crate::web::install(BTreeMap::new());
-    let made_by = |key_header: bool| {
+    let made_by = |signed_in_by_header: bool| {
         let mut request = crate::web::WebRequest::new("POST", "/rest/s1/moqui/hosting/gatewayKey");
-        if key_header {
+        if signed_in_by_header {
             request.set_header("login_key", "the-device-key");
+        } else {
+            request.set_header("Authorization", "Bearer junk");
         }
         crate::web::set_request(std::sync::Arc::new(request), bytes::Bytes::new());
         crate::user::session::reset_session();
         crate::user::internal_login_user("keys.ann").unwrap();
-        let called = crate::service::call::sync(&format!("{SERVICES}.create#UserScopedKey"), &BTreeMap::new());
+        let called = crate::screen::gate::with_request_frame(
+            crate::screen::RenderOrigin::Browser,
+            signed_in_by_header,
+            false,
+            || crate::service::call::sync(&format!("{SERVICES}.create#UserScopedKey"), &BTreeMap::new()),
+        );
         let errors = ExecutionContext::with_current(|ctx| {
             let text = ctx.message().errors_text().join("\n");
             ctx.message().clear();
@@ -297,7 +305,7 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
         crate::user::logout().unwrap();
         called.ok().is_some_and(|out| out.contains_key("loginKey")) && errors.is_empty()
     };
-    assert!(!made_by(false), "a session with no recent sign-in");
+    assert!(!made_by(false), "a session with no recent sign-in, a junk Authorization header beside it");
     assert!(made_by(true), "a client by its own key");
 }
 

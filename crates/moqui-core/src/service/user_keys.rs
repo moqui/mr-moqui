@@ -769,11 +769,9 @@ fn create_scoped_key(
     }
     // a browser session, which a taken-over cookie may be, makes a lasting key only after a recent sign-in, as the other
     // lasting credentials ask; a client signing its requests in by its own key (the device key) is that client (SEC-RTE-85)
-    let by_session = crate::web::current_request().is_some_and(|request| {
-        ["api_key", "login_key", "authorization"]
-            .iter()
-            .all(|name| request.header(name).is_none_or(|value| value.trim().is_empty()))
-    });
+    // by whether the request signed in by its own credentials, not by which headers it carries: a header the login
+    // did not take (a Bearer token, a key it refused) leaves the request its session's
+    let by_session = crate::web::current_request().is_some() && !crate::screen::gate::header_authenticated_request();
     if by_session && !super::recent_auth::require_recent_auth() {
         return Ok(BTreeMap::new());
     }
