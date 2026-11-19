@@ -781,15 +781,17 @@ pub fn render_text_value(state: &RenderState, location: &str, template: &str) ->
 
 /// Whether a screen text may render `location` as a template: a component's own file. That is a `component://`
 /// location, or a file path (no scheme) under the runtime's components, a component's directory or the directory of the
-/// screen rendering it (a screen loaded by its path); never one with a `..` segment, nor another scheme
-/// (`dbresource://`, `file:`, `git://`, `runtime://`). A `#version` after it is not part of the name.
+/// screen rendering it (a screen loaded by its path); never one with a `..` segment or a segment that starts with a
+/// dot (a repository's `.git/config`, a `.env`: under a component's directory, but no component file), nor another
+/// scheme (`dbresource://`, `file:`, `git://`, `runtime://`). A `#version` after it is not part of the name.
 pub(crate) fn template_location_allowed(state: &RenderState, location: &str) -> bool {
     let path = location.split('#').next().unwrap_or(location);
+    let dotted = |text: &str| text.split(['/', '\\']).any(|segment| segment.starts_with('.'));
     if path.split(['/', '\\']).any(|segment| segment == "..") {
         return false;
     }
-    if path.starts_with("component://") {
-        return true;
+    if let Some(rest) = path.strip_prefix("component://") {
+        return !dotted(rest);
     }
     // a scheme is a word of two or more before a colon; `C:\` is a drive
     if path.split_once(':').is_some_and(|(scheme, _)| scheme.len() > 1) {
@@ -799,7 +801,17 @@ pub(crate) fn template_location_allowed(state: &RenderState, location: &str) -> 
     let Ok(file) = file.canonicalize() else {
         return false;
     };
-    let under = |dir: &std::path::Path| dir.canonicalize().is_ok_and(|dir| file.starts_with(dir));
+    // under the directory, and no segment below it a dot one (the directory itself may be under one, as a checkout in
+    // a hidden folder)
+    let under = |dir: &std::path::Path| {
+        dir.canonicalize().is_ok_and(|dir| {
+            file.strip_prefix(&dir).is_ok_and(|below| {
+                !below
+                    .components()
+                    .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+            })
+        })
+    };
     let screen = active_def(state).location.clone();
     let screen_dir = std::path::Path::new(&screen).parent().map(std::path::Path::to_path_buf);
     let screen_is_file = !screen.contains("://") && !screen.starts_with("file:");

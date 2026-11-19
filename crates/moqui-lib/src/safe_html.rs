@@ -263,14 +263,47 @@ fn clean_raw_html(raw: &str, inline: bool) -> String {
 /// `<span data-mention-id="john.doe">@John Doe</span>`), and `data-record-entity` with `data-record-id`
 /// (a record, `<span data-record-entity="moqui.test.Order" data-record-id="100050">#SO100050</span>`).
 /// A record span is not a mention. The values are only ever text: ammonia escapes them. Tables (`table`,
-/// `thead`, `tbody`, `tr`, `th`, `td`, with `colspan` and `rowspan`) are in ammonia's defaults.
+/// `thead`, `tbody`, `tr`, `th`, `td`, with `colspan` and `rowspan`) are in ammonia's defaults. A `class` on `code`,
+/// `pre` and `span` keeps only a code block's language and highlighting names (`language-js`, `lang-rust`, `hljs`,
+/// `hljs-keyword`, [`code_class`]), what markdown writes for a fenced block, so a wiki page keeps them when it is
+/// cleaned; any other class (a layout class of the page's own CSS) is taken out, and `style` and `id` stay out.
 fn cleaner() -> &'static ammonia::Builder<'static> {
     static CLEANER: std::sync::OnceLock<ammonia::Builder<'static>> = std::sync::OnceLock::new();
     CLEANER.get_or_init(|| {
         let mut builder = ammonia::Builder::default();
         builder.add_tag_attributes("span", &["data-mention-id", "data-record-entity", "data-record-id"]);
+        for tag in ["code", "pre", "span"] {
+            builder.add_tag_attributes(tag, &["class"]);
+        }
+        builder.attribute_filter(|_element, attribute, value| {
+            if attribute != "class" {
+                return Some(value.into());
+            }
+            let kept: Vec<&str> = value.split_ascii_whitespace().filter(|name| code_class(name)).collect();
+            (!kept.is_empty()).then(|| kept.join(" ").into())
+        });
         builder
     })
+}
+
+/// Whether `name` is a code block's language or highlighting class: `language-` or `lang-` and a name of letters,
+/// digits and `+#_.-`, or `hljs` and its token classes.
+fn code_class(name: &str) -> bool {
+    let language = name.strip_prefix("language-").or_else(|| name.strip_prefix("lang-"));
+    if let Some(language) = language {
+        return !language.is_empty()
+            && language.len() <= 40
+            && language
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+#_.-".contains(&b));
+    }
+    name == "hljs"
+        || name.strip_prefix("hljs-").is_some_and(|token| {
+            !token.is_empty()
+                && token
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+        })
 }
 
 /// `text` cleaned for a chat message (SEC-COM-02): the safe set, and an image only when its `src` is this server's own
@@ -329,6 +362,28 @@ mod tests {
         // mentions survive
         let mention = r#"<p><span data-mention-id="john.doe">@John</span></p>"#;
         assert_eq!(clean_chat(mention), mention);
+    }
+
+    /// A code block keeps its language and highlighting classes; any other class, a `style` and an `id` go.
+    #[test]
+    fn a_code_block_keeps_its_language_class_only() {
+        assert_eq!(
+            clean(r#"<pre><code class="language-rust">fn x()</code></pre>"#),
+            r#"<pre><code class="language-rust">fn x()</code></pre>"#
+        );
+        assert_eq!(
+            clean(r#"<span class="hljs-keyword fixed-full z-max">fn</span>"#),
+            r#"<span class="hljs-keyword">fn</span>"#
+        );
+        assert_eq!(clean(r#"<span class="fixed-full">x</span>"#), "<span>x</span>");
+        assert_eq!(
+            clean(r#"<p class="language-js" id="a" style="position:fixed">x</p>"#),
+            "<p>x</p>"
+        );
+        assert_eq!(
+            clean(r#"<code class="language-x&quot;onclick">x</code>"#),
+            "<code>x</code>"
+        );
     }
 
     /// Markdown's raw HTML is cleaned and the markdown around it kept; one with none comes back as it was.

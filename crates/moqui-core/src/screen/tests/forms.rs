@@ -2193,8 +2193,8 @@ fn a_service_reload_makes_again_only_the_screens_that_looked_up_its_services() {
 }
 
 /// A templated `<text>` renders only a component's own file: one beside the screen renders, while a location the
-/// request names elsewhere (another directory, `dbresource://`, `file:`, a path with `..`) is logged and renders
-/// nothing, so a print screen's `templateLocation` or a wiki page's location cannot run a planted `.fancy` file as server
+/// request names elsewhere (another directory, `dbresource://`, `file:`, a path with `..`, a file under a dot directory
+/// beside the screen, as a repository's `.git`) is logged and renders nothing, so a print screen's `templateLocation` or a wiki page's location cannot run a planted `.fancy` file as server
 /// script (SEC-SCR-81).
 #[test]
 fn a_templated_text_renders_only_a_component_file() {
@@ -2205,6 +2205,8 @@ fn a_templated_text_renders_only_a_component_file() {
     std::fs::create_dir_all(&planted).unwrap();
     std::fs::write(screens.join("Own.html.fancy"), "own ${1 + 1}").unwrap();
     std::fs::write(planted.join("Evil.html.fancy"), "evil ${1 + 1}").unwrap();
+    std::fs::create_dir_all(screens.join(".git")).unwrap();
+    std::fs::write(screens.join(".git").join("Evil.html.fancy"), "evil ${1 + 1}").unwrap();
     let root = screens.join("Root.xml").to_string_lossy().into_owned();
     std::fs::write(
         &root,
@@ -2227,6 +2229,12 @@ fn a_templated_text_renders_only_a_component_file() {
         "dbresource://WikiSpace/X/Evil.html.fancy".to_string(),
         dotted,
         "component://webroot/../../../tmp/Evil.html.fancy".to_string(),
+        screens
+            .join(".git")
+            .join("Evil.html.fancy")
+            .to_string_lossy()
+            .into_owned(),
+        "component://webroot/.git/Evil.html.fancy".to_string(),
     ] {
         let text = render(&location);
         assert!(
