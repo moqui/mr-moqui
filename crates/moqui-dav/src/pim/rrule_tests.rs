@@ -416,6 +416,12 @@ fn an_expansion_stops_at_its_work_budget_and_a_stored_rule_is_checked() {
     let cut = expand_within(&rule, dtstart, &utc, range, MAX_INSTANCES, 500);
     assert!(cut.is_empty(), "past the budget: {cut:?}");
     assert_eq!(expand(&rule, dtstart, &utc, range.0, range.1, MAX_INSTANCES), found);
+    // the thread's script deadline ends an expansion too, so the events of one read share it
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    moqui_core::script::interrupt_thread_on(Some(stop));
+    let interrupted = expand(&rule, dtstart, &utc, range.0, range.1, MAX_INSTANCES);
+    moqui_core::script::interrupt_thread_on(None);
+    assert!(interrupted.is_empty(), "{interrupted:?}");
 
     assert_eq!(
         checked("FREQ=WEEKLY;BYDAY=MO".to_string()).as_deref(),

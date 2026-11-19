@@ -42,6 +42,8 @@ const MAX_PERIOD_CANDIDATES: usize = MAX_INSTANCES;
 /// walked from DTSTART, so a range far after it would otherwise look at up to `MAX_PERIODS` periods of up to
 /// `MAX_PERIOD_CANDIDATES` each. Past it the expansion ends with what it found, logged.
 const MAX_EXPAND_WORK: usize = 4_000_000;
+/// The work between two looks at the thread's script deadline ([`expand_within`]).
+const DEADLINE_EVERY: usize = 100_000;
 /// Without COUNT, UNTIL or the end of a range, the instances given.
 pub(crate) const OPEN_ENDED_INSTANCES: usize = 1_000;
 
@@ -701,6 +703,7 @@ fn expand_within(
     let end_local = range_end.map(|to| to.to_zoned(tz.clone()).datetime());
     let mut empty_periods = 0;
     let mut done = 0usize;
+    let mut next_look = 0usize;
     for _ in 0..MAX_PERIODS {
         let Some(candidates) = plan.period(index) else { break };
         index += rule.interval;
@@ -710,6 +713,15 @@ fn expand_within(
                 "a recurrence rule took more than {work} periods and candidates to expand; it was cut there"
             );
             break;
+        }
+        // the budget is one rule's; a read of a range expands each of its events, all within the script's deadline
+        // (the request's or the transaction's), which ends the expansions as it ends the script
+        if done >= next_look {
+            next_look = done.saturating_add(DEADLINE_EVERY);
+            if moqui_core::script::thread_interrupted() {
+                tracing::warn!("a recurrence rule's expansion was cut at the script's deadline");
+                break;
+            }
         }
         if candidates.is_empty() {
             empty_periods += 1;
