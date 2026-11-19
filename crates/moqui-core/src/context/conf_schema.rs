@@ -265,6 +265,8 @@ pub static CATALOG: &[Unit] = &[
         keyed("script-runner", &["extension"], Class::Live),
         // a drive's share link limits (FileServices download#PublicShare, upload#PublicShare; SEC-BOS-83)
         single("drive-share", Class::Live),
+        // each user's rich-text image limits (ResourceServices upload#RichTextImage; SEC-CLI-92)
+        single("rich-text-images", Class::Live),
     ]),
     single("screen-facade", SCREENS).children(&[
         keyed("screen-text-output", &["type"], SCREENS),

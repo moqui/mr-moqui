@@ -706,6 +706,13 @@
                 folder-zip-downloads-per-requester="30" upload-max-files="20" upload-max-bytes="104857600"
                 upload-link-max-files="1000" upload-link-max-bytes="2147483648" upload-calls-per-link="30"
                 upload-calls-per-requester="60"/>
+        <!-- Rich-text images (ResourceServices upload#RichTextImage, POST /richTextImage; SEC-CLI-92), per user, counted
+            from the moqui.resource.RichTextImage rows: max-per-user images and max-bytes-per-user bytes of them in all. An
+            upload past either is refused and nothing is stored. Nothing removes an image yet, so these bound for good
+            what one signed-in account can put in the database, which without them was 8 MiB an upload with no end.
+            1000 images is far more than a person pastes into messages and notes; 200 MiB is a few hundred screenshots
+            or some dozens of phone photos, the larger cost, so the bytes are the limit a heavy user meets first. -->
+        <rich-text-images max-per-user="1000" max-bytes-per-user="209715200"/>
         <!-- resource reference class needs to implement the ResourceReference interface -->
         <resource-reference scheme="http" class="org.moqui.resource.UrlResourceReference"/>
         <resource-reference scheme="https" class="org.moqui.resource.UrlResourceReference"/>

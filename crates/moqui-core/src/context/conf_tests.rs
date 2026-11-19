@@ -148,6 +148,7 @@ fn a_runtime_conf_overrides_one_attribute_of_a_settings_element() {
         "moqui-conf",
         r#"<moqui-conf><screen-facade><pdf page-limit="4" timeout="60"/></screen-facade>
                 <user-facade><authz privileged-groups="ADMIN"/></user-facade>
+                <resource-facade><rich-text-images max-per-user="1000" max-bytes-per-user="209715200"/></resource-facade>
                 <git-server max-concurrent="4" max-queued="16"/></moqui-conf>"#,
     )
     .unwrap();
@@ -155,6 +156,7 @@ fn a_runtime_conf_overrides_one_attribute_of_a_settings_element() {
         "moqui-conf",
         r#"<moqui-conf><screen-facade><pdf timeout="90"/></screen-facade>
                 <user-facade><authz sealed-permissions="X"/></user-facade>
+                <resource-facade><rich-text-images max-per-user="3"/></resource-facade>
                 <git-server max-concurrent="2"/><ssh-server sftp-root="dbresource://sftp"/></moqui-conf>"#,
     )
     .unwrap();
@@ -171,6 +173,11 @@ fn a_runtime_conf_overrides_one_attribute_of_a_settings_element() {
         .unwrap();
     assert_eq!(authz.attribute("privileged-groups").as_deref(), Some("ADMIN"));
     assert_eq!(authz.attribute("sealed-permissions").as_deref(), Some("X"));
+    let resource = base.first_named("resource-facade").unwrap();
+    assert_eq!(resource.children_named("rich-text-images").len(), 1);
+    let images = resource.first_named("rich-text-images").unwrap();
+    assert_eq!(images.attribute("max-per-user").as_deref(), Some("3"));
+    assert_eq!(images.attribute("max-bytes-per-user").as_deref(), Some("209715200"));
     let git = base.first_named("git-server").unwrap();
     assert_eq!(git.attribute("max-concurrent").as_deref(), Some("2"));
     assert_eq!(git.attribute("max-queued").as_deref(), Some("16"));

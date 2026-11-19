@@ -1157,6 +1157,15 @@ along with this software (see the LICENSE.md file). If not, see
                         <xs:attribute name="upload-calls-per-requester" type="non-neg-int-expandable" default="60"><xs:annotation><xs:documentation>Upload calls from one requester in an hour.</xs:documentation></xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
+                <xs:element minOccurs="0" maxOccurs="1" name="rich-text-images">
+                    <xs:annotation><xs:documentation>The limits of each user's rich-text images (ResourceServices
+                        upload#RichTextImage, POST /richTextImage; SEC-CLI-92), counted from the moqui.resource.RichTextImage
+                        rows. An upload past either is refused and nothing is stored. No Java counterpart.</xs:documentation></xs:annotation>
+                    <xs:complexType>
+                        <xs:attribute name="max-per-user" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>The most rich-text images one user stores; empty or 0 is the default.</xs:documentation></xs:annotation></xs:attribute>
+                        <xs:attribute name="max-bytes-per-user" type="non-neg-int-expandable" default="209715200"><xs:annotation><xs:documentation>The most bytes of rich-text images one user stores in all, as stored (after the metadata is taken out); empty or 0 is the default.</xs:documentation></xs:annotation></xs:attribute>
+                    </xs:complexType>
+                </xs:element>
             </xs:sequence>
             <xs:attribute name="xml-actions-template-location" type="xs:string"/>
             <xs:attribute name="xsl-fo-handler-factory" type="xs:string"><xs:annotation><xs:documentation>
@@ -1165,7 +1174,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="blob-chunk-size" type="non-neg-int-expandable" default="1048576"><xs:annotation><xs:documentation>Bytes per ContentBlobChunk row of a content blob (moqui.resource.ContentBlob). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="blob-gc-prune-days" type="non-neg-int-expandable" default="14"><xs:annotation><xs:documentation>How many days a content blob nothing refers to is kept (gc#ContentBlobs). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) and rich-text image uploads (upload#RichTextImage) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drive-root" type="xs:string" default="dbresource://drive"><xs:annotation><xs:documentation>The location under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made (FileServices ensure#PersonalDrive, create#Drive). A setting, not a user preference, so a user does not choose where their drive is. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-timeout" type="xs:string"><xs:annotation><xs:documentation>Seconds a script may run when no transaction limits it (a widget condition, a

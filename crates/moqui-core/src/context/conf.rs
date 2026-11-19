@@ -718,9 +718,10 @@ fn merge_resource_facade(base: &MNode, over: &MNode) {
         keys(&[RESOURCE, "script-runner"]),
         None,
     );
-    // the share link limits, one element (SEC-BOS-83)
+    // the share link limits (SEC-BOS-83) and the rich-text image limits (SEC-CLI-92), one element each
     if let (Some(base_resource), Some(over_resource)) = (base.first_named(RESOURCE), over.first_named(RESOURCE)) {
         base_resource.merge_single_child(&over_resource, "drive-share");
+        base_resource.merge_single_child(&over_resource, "rich-text-images");
     }
 }
 
