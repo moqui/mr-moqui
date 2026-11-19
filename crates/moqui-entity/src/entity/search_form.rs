@@ -201,11 +201,12 @@ impl EntityFind {
             .with_entity(self.entity_name(), |entity, _, _| Ok(entity.cache != "never"))
     }
 
+    /// ANDed with the find's own conditions: a search input never replaces a condition the code set on the field.
     fn add(&mut self, field: &SearchField, condition: Condition) {
         if field.aggregate {
             self.having.push(condition);
         } else {
-            super::find::add_condition(&mut self.conditions, condition);
+            super::find::push_condition(&mut self.conditions, condition);
         }
     }
 

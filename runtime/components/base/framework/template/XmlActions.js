@@ -85,7 +85,9 @@
         const simple = operator === "equals" && attr(node, "ignore-case") !== "true" &&
             attr(node, "ignore-if-empty") !== "true" && attr(node, "or-null") !== "true" &&
             !has(node, "to-field-name") && !has(node, "ignore");
-        if (simple) return `.condition(${jsString(attr(node, "field-name"))}, ${fieldExpr(node)})`;
+        // with the operator, not `condition(field, value)`: two econditions on one field are both ANDed, where a second
+        // field value would replace the first (found while fixing SEC-BOS-97)
+        if (simple) return `.condition(${jsString(attr(node, "field-name"))}, "equals", ${fieldExpr(node)})`;
         return `.condition(${econditionFactory(node)})`;
     };
 

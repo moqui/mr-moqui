@@ -119,14 +119,17 @@ fn ignore_case_is_not_for_in_and_not_also_finds_the_empty_rows() {
 }
 
 #[test]
-fn a_form_value_replaces_the_finds_own_and_the_cache_is_off_unless_asked_for() {
-    let replaced = find()
+fn a_form_value_is_anded_with_the_finds_own_and_the_cache_is_off_unless_asked_for() {
+    // A form's input never replaces the find's own condition on the field, which may be a security one (found while
+    // fixing SEC-BOS-97); Java's replaced it in its simple map.
+    let anded = find()
         .eq("testId", Value::string("A"))
         .search_form_map(&input(&[("testId", "B")]), &BTreeMap::new(), "", "", false)
         .unwrap();
-    assert_eq!(conditions(&replaced), [Condition::equals("testId", Value::string("B"))]);
+    let both = [Condition::equals("testId", Value::string("A")), Condition::equals("testId", Value::string("B"))];
+    assert_eq!(conditions(&anded), both);
     // Java's `useCache(false)` when the find did not choose, so a paged form never reads a cached list.
-    assert_eq!(replaced.find.use_cache, Some(false));
+    assert_eq!(anded.find.use_cache, Some(false));
     // A find that asked for the cache is not paged, so the cached list answers it.
     let cached = find()
         .use_cache(true)
