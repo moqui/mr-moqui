@@ -46,10 +46,10 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.ArtifactGroupMember artifactGroupId="GATE_SYNC_DATA" artifactName="moqui.basic.Enumeration"
         artifactTypeEnumId="AT_ENTITY" nameIsPattern="N" filterMap="{enumTypeId: 'EntitySyncArtifactAppl'}"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PUSH" description="Gate push" statusId="EsNotStarted" forPull="N"
-        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui" allowPrivateNetwork="Y"/>
+        delayBufferMillis="1" targetUsername="john.doe" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PUSH" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PULL" description="Gate pull" statusId="EsNotStarted" forPull="Y"
-        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui" allowPrivateNetwork="Y"/>
+        delayBufferMillis="1" targetUsername="john.doe" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PULL" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
 </entity-facade-xml>"#;
 
@@ -355,7 +355,10 @@ fn the_instance_administrators_message_transitions_send_consume_and_receive(gate
 fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::common::Gate) {
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
-    let target = serde_json::json!({ "targetServerUrl": format!("http://{address}") }).to_string();
+    // the address and the password it is sent to, in one write: a new address alone would clear a stored password
+    // (SEC-TLS-116)
+    let target =
+        serde_json::json!({ "targetServerUrl": format!("http://{address}"), "targetPassword": "moqui" }).to_string();
 
     for sync_id in ["GATE_PUSH", "GATE_PULL"] {
         let row_path = format!("/rest/e1/moqui.entity.sync.EntitySync/{sync_id}");

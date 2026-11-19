@@ -187,6 +187,19 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
             .messageType(eecaOperation, systemMessageTypeId, sendPath, originalValue)</script></actions>
     </eeca>
+    <!-- The endpoint-change rule of ConfigurationConnections.js for the secrets kept beside a URL elsewhere
+        (plans/Security-Review-Low.md SEC-TLS-116): a change of a model endpoint's baseUrl or path, or of an entity sync's
+        targetServerUrl or targetUsername, is a member of ADMIN's only, and clears the stored apiKey or targetPassword unless
+        a new one is given in the same write, so a stolen session or a screen's plain store does not send the key to a host
+        it names. A write with authorization disabled (a data load, a setup service) answers for itself. -->
+    <eeca id="LlmEndpointSecretMoves" entity="moqui.llm.LlmEndpoint" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, ['baseUrl', 'path'], 'apiKey')</script></actions>
+    </eeca>
+    <eeca id="EntitySyncSecretMoves" entity="moqui.entity.sync.EntitySync" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, ['targetServerUrl', 'targetUsername'], 'targetPassword')</script></actions>
+    </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
         most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own
