@@ -492,7 +492,9 @@ fn take_backup(app: &AppHandle, start: &NodeStart, kind: &str) -> Result<PathBuf
     if let Some(refused) = refuse_folder(&folder, &start.runtime) {
         return Err(refused);
     }
-    std::fs::create_dir_all(&folder).map_err(|err| format!("could not create {}: {err}", folder.display()))?;
+    // the folder of whole-database dumps is this user's alone (SEC-TLS-97)
+    moqui_lib::private_fs::create_dir_all(&folder)
+        .map_err(|err| format!("could not create {}: {err}", folder.display()))?;
     let recipient = sealing_recipient(app);
     let path = folder.join(backup_name(Timestamp::now(), kind, recipient.is_some()));
     let partial = partial_of(&path);
@@ -681,7 +683,7 @@ fn open_folder(app: &AppHandle) {
         notify(app, "No backup folder yet", Some("The node has not started."));
         return;
     };
-    if let Err(err) = std::fs::create_dir_all(&folder) {
+    if let Err(err) = moqui_lib::private_fs::create_dir_all(&folder) {
         tracing::warn!("Could not create {}: {err}", folder.display());
     }
     #[cfg(target_os = "macos")]
