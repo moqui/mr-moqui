@@ -846,8 +846,10 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
 ///
 /// A read-only run is a transaction of its own on a connection that is closed after it, not returned to the pool:
 /// a statement may change its session (`SET search_path`, `set_config(…, false)`, a temporary table, a prepared
-/// statement, an advisory lock), and no later borrower gets that session. On MySQL and MariaDB only a query runs
-/// read only ([`is_query`]): DDL and a `CALL` that commits end the read-only transaction there before they run.
+/// statement, an advisory lock), and no later borrower gets that session. Only a query runs read only, without the
+/// calls that reach past the tables, and on Postgres a superuser's run is the reader role's
+/// ([`super::sql_read_only`], SEC-TLS-86): on MySQL and MariaDB DDL and a `CALL` that commits end the read-only
+/// transaction before they run, and on Postgres a superuser's `COPY … TO PROGRAM` runs in one.
 ///
 /// # Errors
 ///
@@ -890,14 +892,18 @@ pub fn run_sql_on(
     if !options.read_only {
         return run_statement(tx, sql, syntax, &mut options);
     }
-    if syntax == SqlSyntax::Mysql && !is_query(sql) {
-        return Err(Error::new(
-            "only a query runs read only on MySQL and MariaDB, where other statements can commit the transaction",
-        ));
+    if let Some(refusal) = super::sql_read_only::refusal(sql, syntax) {
+        return Err(Error::new(refusal));
     }
     // Read only is set before any statement of the transaction, so it is one of its own.
     tx.run(TransactionAttribute::ForceNew, Some(QUERY_TIMEOUT), || {
-        tx.with_connection(|conn| conn.set_transaction_read_only())?;
+        tx.with_connection(|conn| {
+            conn.set_transaction_read_only()?;
+            if syntax == SqlSyntax::Postgres {
+                super::sql_read_only::reduce(conn)?;
+            }
+            Ok(())
+        })?;
         tx.discard_connection_at_end()?;
         run_statement(tx, sql, syntax, &mut options)
     })
