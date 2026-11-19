@@ -109,7 +109,9 @@ const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
 /// changes write (SEC-RTE-03); and Monitor's recovery actions, adapters, policies and emergency stop, its instance drains
 /// and its ingest keys, whose `MONITOR_*` permissions only their own services check, so a generic write of a row would
 /// run a recovery action, plant a working ingest key or lift the stop without them (SEC-TLS-11); and the scrape targets
-/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03).
+/// and synthetic checks, whose `allowPrivateNetwork` only a holder of `MONITOR_PRIVATE_NETWORK` sets (SEC-OUT-03); and the
+/// mail OAuth providers, whose token endpoint is posted the client secret and every mailbox's refresh token, so a generic
+/// write could point it at another host (SEC-OUT-82): seed data, the conf and Admin's mail sign-in provider kind set them.
 const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "entityauditlog",
     "recoveryaction",
@@ -121,6 +123,8 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     // the allowPrivateNetwork flag of a scrape target or synthetic check is set in Monitor/Checks, with its permission
     "scrapetarget",
     "syntheticcheck",
+    // the token endpoint of a mail OAuth provider receives the client secret and the refresh tokens
+    "emailoauthprovider",
 ];
 
 /// The text after the last `.`, in lower case.
@@ -621,8 +625,9 @@ mod tests {
         assert!(!is_secret_config_entity("moqui.database.DatabaseConnection"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseConnection"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
-        // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11)
+        // read by the generic tools, written only by their own services (SEC-RTE-03, SEC-TLS-11, SEC-OUT-82)
         for name in [
+            "moqui.basic.email.EmailOAuthProvider",
             "moqui.entity.EntityAuditLog",
             "moqui.monitor.RecoveryAction",
             "moqui.monitor.RecoveryAdapter",

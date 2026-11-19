@@ -697,6 +697,52 @@ fn a_new_account_from_a_sign_in_starts_paused_with_a_sync_window() {
     assert!(errors().contains("Active or Paused"));
 }
 
+/// A provider row's endpoints are used only over https (plans/Security-Review-Medium.md SEC-OUT-82): a token endpoint in
+/// plain text on another host is left out, so the provider is not offered and nothing (the client secret, a refresh
+/// token) is posted to it; on an instance that is not production a stand-in on this machine may be http.
+#[test]
+fn a_provider_endpoint_that_is_not_https_is_not_used() {
+    let _serial = serial();
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let _properties = Properties::set();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    let fields = |id: &str, token_url: &str| {
+        vec![
+            ("oauthProviderEnumId", text(id)),
+            ("clientId", text("row-client")),
+            ("clientSecret", text("row-secret")),
+            ("authorizeUrl", text("https://login.example.test/authorize")),
+            ("tokenUrl", text(token_url)),
+        ]
+    };
+    row(
+        &facade,
+        PROVIDER,
+        &fields("EopHttps", "https://login.example.test/token"),
+    );
+    row(
+        &facade,
+        PROVIDER,
+        &fields("EopPlain", "http://login.example.test/token"),
+    );
+    row(&facade, PROVIDER, &fields("EopLocal", "http://127.0.0.1:9/token"));
+    let configured = |id: &str| {
+        super::oauth::load_provider(&facade, id)
+            .unwrap()
+            .expect("the provider")
+            .configured()
+    };
+    assert!(configured("EopHttps"));
+    assert!(!configured("EopPlain"));
+    assert!(configured("EopLocal"));
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
+    let local_on_production = configured("EopLocal");
+    moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(None));
+    assert!(!local_on_production);
+}
+
 /// A token goes only to the provider's own mail servers (plans/Security-Review-Medium.md SEC-MAIL-84): a server row pointed
 /// at another host, as a generic write could leave it, gets no token, kept or refreshed, and the provider is not asked.
 #[test]

@@ -143,6 +143,29 @@ impl fmt::Debug for Provider {
     }
 }
 
+/// Whether a provider endpoint may be used: an `https` URL, or `http` to this machine's loopback on an instance that is
+/// not production (a test's or a developer's stand-in provider). The client secret and users' refresh tokens are posted
+/// to the token endpoint, so a row's endpoint in plain text, or on an address it was not meant for, gets none
+/// (plans/Security-Review-Medium.md SEC-OUT-82).
+fn endpoint_allowed(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return true;
+    }
+    let Some(rest) = lower.strip_prefix("http://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.contains('@') {
+        return false;
+    }
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next().unwrap_or(""),
+        None => authority.rsplit_once(':').map_or(authority, |(host, _)| host),
+    };
+    moqui_lib::net::loopback_host(host) && !moqui_core::web::is_production()
+}
+
 fn comma_list(text: &str) -> Vec<String> {
     text.split(',')
         .map(|part| part.trim().to_ascii_lowercase())
@@ -178,15 +201,29 @@ impl Provider {
             tenant => tenant,
         };
         let fill = |field: &str| field_text(row, field).trim().replace("{tenant}", &tenant);
+        // an endpoint the client secret, a refresh token or an access token is sent to: https, else left out (the
+        // provider is then not offered, or not asked to revoke or for the address)
+        let endpoint = |field: &str| {
+            let url = fill(field);
+            if url.is_empty() || endpoint_allowed(&url) {
+                url
+            } else {
+                tracing::error!(
+                    "EmailOAuthProvider {id}: {field} {} is not https; it is not used",
+                    moqui_lib::http::redacted(&url)
+                );
+                String::new()
+            }
+        };
         Self {
-            name: if name.is_empty() { id.clone() } else { name },
-            id,
             client_id: pick(conf("client-id"), "clientId"),
             client_secret,
-            authorize_url: fill("authorizeUrl"),
-            token_url: fill("tokenUrl"),
-            revoke_url: fill("revokeUrl"),
-            user_info_url: fill("userInfoUrl"),
+            authorize_url: endpoint("authorizeUrl"),
+            token_url: endpoint("tokenUrl"),
+            revoke_url: endpoint("revokeUrl"),
+            user_info_url: endpoint("userInfoUrl"),
+            name: if name.is_empty() { id.clone() } else { name },
+            id,
             scope: field_text(row, "scope"),
             mail_scope: field_text(row, "mailScope"),
             pop_scope: field_text(row, "popScope"),
@@ -437,7 +474,12 @@ impl Answer {
 
 fn http() -> &'static moqui_lib::http::RestClient {
     static CLIENT: OnceLock<moqui_lib::http::RestClient> = OnceLock::new();
-    CLIENT.get_or_init(|| moqui_lib::http::RestClient::new().timeout(HTTP_TIMEOUT))
+    // never a link-local or cloud metadata address, wherever a provider row points
+    CLIENT.get_or_init(|| {
+        moqui_lib::http::RestClient::new()
+            .timeout(HTTP_TIMEOUT)
+            .deny_link_local_addresses(true)
+    })
 }
 
 /// Send `request` with the trace headers of a CLIENT span; the span has the method and the redacted URL only, never the
