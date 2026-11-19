@@ -184,8 +184,10 @@ const DENIED_ATTRIBUTES: &[&str] = &[
     "ping",
     "http-equiv",
     "is",
-    // a link's own referrer policy overrides the page's `Referrer-Policy` (SEC-PSF-83)
+    // a link's own referrer policy overrides the page's `Referrer-Policy` (SEC-PSF-83), and Chromium's attribution
+    // reporting sends a request to the URL it names (SEC-SCR-91)
     "referrerpolicy",
+    "attributionsrc",
 ];
 
 /// `<meta name>` values a theme may use. Others are refused, `referrer` above all: it could loosen the server's

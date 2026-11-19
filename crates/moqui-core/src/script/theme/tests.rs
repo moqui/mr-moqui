@@ -758,6 +758,18 @@ fn a_theme_link_cannot_set_its_referrer_policy() {
     );
 }
 
+/// Chromium's `attributionsrc` sends a request to the URL it names, which the URL check does not read (SEC-SCR-91).
+#[test]
+fn a_theme_cannot_have_attributionsrc() {
+    refuses(
+        &[(
+            "blocks/text.html.fancy-locked",
+            Some("<img src=\"/x.png\" alt=\"\" attributionsrc=\"https://evil.example/r\">"),
+        )],
+        "attribute `attributionsrc`",
+    );
+}
+
 /// IE's `behavior` property is refused only as a property of its own: `scroll-behavior` passes (Shop F131), and
 /// `behavior:` stays refused with whitespace, a comment, an escape or an IE hack around it.
 #[test]
