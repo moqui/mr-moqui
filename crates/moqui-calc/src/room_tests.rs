@@ -502,13 +502,39 @@ fn an_area_edit_is_held_to_the_cell_bound_and_a_busy_room_holds_up_no_other() {
         .unwrap();
     }
 
-    // alice's room is held (an edit under way); bob's call still finds his own
+    // alice's saved document's room is held (an edit under way): an open, a join, a find of its document (a report's
+    // frame), its document's rooms, another's room and a close each answer without waiting for it
+    let mut saved = opening("alice", 1);
+    saved.definition_id = Some("doc".to_string());
+    saved.shared = Some(("dbusy".to_string(), 0));
+    let busy = rooms.open(saved).unwrap();
     let held = lock(&busy);
     let (sender, receiver) = std::sync::mpsc::channel();
     let finder = Arc::clone(&rooms);
     std::thread::spawn(move || {
-        let _ = sender.send(finder.get("bob", &other).is_some());
+        let answers = [
+            finder.get("bob", &other).is_some(),
+            finder.open(opening("bob", 1)).is_ok(),
+            finder.join("carol", "dbusy").is_some(),
+            finder.find_document("alice", "doc", None).is_some(),
+            finder.document_rooms("doc").len() == 1,
+        ];
+        finder.close("carol", "dbusy");
+        let _ = sender.send(answers);
     });
-    assert_eq!(receiver.recv_timeout(Duration::from_secs(5)), Ok(true));
+    assert_eq!(receiver.recv_timeout(Duration::from_secs(5)), Ok([true; 5]));
     drop(held);
+}
+
+/// One call's edits are held to [`MAX_CALL_CELLS`] in all, each within [`MAX_EDIT_CELLS`] (SEC-TLS-93).
+#[test]
+fn one_calls_edits_are_held_to_the_call_cell_bound() {
+    let rooms = Rooms::default();
+    let room = rooms.open(opening("alice", 1)).unwrap();
+    let mut room = lock(&room);
+    room.edit("alice", &[json!({"op": "addSheet"})]).unwrap();
+    let clear = json!({"op": "clear", "sheet": 1, "row": 1, "column": 1, "width": 300, "height": 300});
+    let err = room.edit("alice", &vec![clear.clone(); 3]).expect_err("three areas of 90,000 cells");
+    assert!(err.message().contains("of one call change at most"), "{}", err.message());
+    room.edit("alice", &[clear.clone(), clear]).unwrap();
 }
