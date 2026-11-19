@@ -332,54 +332,84 @@ pub fn check_counted_code(user_id: &str, code: &str) -> Result<Option<String>, E
 pub fn take_factor_code(factor_id: &str, step: Option<i64>) -> Result<bool, Error> {
     let _authz = without_authz();
     let facade = entity_facade()?;
-    let by_id = Condition::equals("factorId", Value::string(factor_id));
-    let (column, set, condition) = match step {
-        // a printed code ends in a year, a sent one in a day: one still in date is taken by ending it now
-        None => (
-            "thruDate",
-            now_value(),
-            Condition::and(vec![
-                by_id,
-                Condition::or(vec![
-                    Condition::is_null("thruDate"),
-                    Condition::greater("thruDate", now_value()),
-                ]),
-            ]),
-        ),
-        Some(step) => (
-            "lastTotpStep",
-            Value::I64(step),
-            Condition::and(vec![
-                by_id,
-                Condition::or(vec![
-                    Condition::is_null("lastTotpStep"),
-                    Condition::less("lastTotpStep", Value::I64(step)),
-                ]),
-            ]),
-        ),
+    let tx = facade.transactions_for(USER_AUTHC_FACTOR)?;
+    // the caller's entity writes held in a transaction-cache frame go first, and its reads are forgotten, as for any
+    // raw SQL in a frame (plans/archive/TX-Cache.md D1)
+    crate::entity::cache::flush_before_sql(&facade, &tx)?;
+    let Some(step) = step else {
+        let Some(row) = facade
+            .find(USER_AUTHC_FACTOR)?
+            .eq("factorId", Value::string(factor_id))
+            .one()?
+        else {
+            return Ok(false);
+        };
+        let read = row.get("thruDate").cloned().unwrap_or(Value::Null);
+        return take_single_use(&facade, &tx, factor_id, &read, now_millis());
     };
-    let (statement, tx, stamped) = facade.with_group(USER_AUTHC_FACTOR, |entity, dialect, _, tx| {
+    let condition = Condition::and(vec![
+        Condition::equals("factorId", Value::string(factor_id)),
+        Condition::or(vec![
+            Condition::is_null("lastTotpStep"),
+            Condition::less("lastTotpStep", Value::I64(step)),
+        ]),
+    ]);
+    update_factor(&facade, &tx, "lastTotpStep", Value::I64(step), &condition)
+}
+
+/// Take a single-use code whose `thruDate` was read as `read`, at `now` (epoch millis): one already ended is not taken,
+/// and the update matches only the `thruDate` read, so of two takes that read it only the first ends the code,
+/// whatever the time of each (a printed code ends in a year and a sent one in a day, so the row's own date is not
+/// enough: a later take's update, which the database re-checks once the first commits, would match a date set by the
+/// first after its own `now`).
+fn take_single_use(
+    facade: &EntityFacade,
+    tx: &crate::transaction::TransactionManager,
+    factor_id: &str,
+    read: &Value,
+    now: i64,
+) -> Result<bool, Error> {
+    if value_millis(read).is_some_and(|thru| thru <= now) {
+        return Ok(false);
+    }
+    let by_id = Condition::equals("factorId", Value::string(factor_id));
+    let as_read = if read.is_null() {
+        Condition::is_null("thruDate")
+    } else {
+        Condition::equals("thruDate", read.clone())
+    };
+    update_factor(
+        facade,
+        tx,
+        "thruDate",
+        stamp_value(now),
+        &Condition::and(vec![by_id, as_read]),
+    )
+}
+
+/// `UPDATE` one field of a factor (and its `lastUpdatedStamp`) where `condition` holds, in `tx`: true when a row changed.
+fn update_factor(
+    facade: &EntityFacade,
+    tx: &crate::transaction::TransactionManager,
+    column: &str,
+    set: Value,
+    condition: &Condition,
+) -> Result<bool, Error> {
+    let (statement, stamped) = facade.with_entity(USER_AUTHC_FACTOR, |entity, dialect, _| {
         let stamped = entity.has_field("lastUpdatedStamp");
         let columns: &[&str] = if stamped {
             &[column, "lastUpdatedStamp"]
         } else {
             &[column]
         };
-        Ok((
-            sql_update(entity, dialect, columns, Some(&condition))?,
-            tx.clone(),
-            stamped,
-        ))
+        Ok((sql_update(entity, dialect, columns, Some(condition))?, stamped))
     })?;
     let mut params = vec![set];
     if stamped {
         params.push(now_value());
     }
     params.extend(statement.params);
-    // the caller's entity writes held in a transaction-cache frame go first, and its reads are forgotten, as for any
-    // raw SQL in a frame (plans/archive/TX-Cache.md D1)
-    crate::entity::cache::flush_before_sql(&facade, &tx)?;
-    let updated = crate::entity::exec::execute_tx(&tx, &statement.sql, &params)?;
+    let updated = crate::entity::exec::execute_tx(tx, &statement.sql, &params)?;
     Ok(updated > 0)
 }
 

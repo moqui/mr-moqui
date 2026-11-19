@@ -223,6 +223,32 @@ fn a_code_is_taken_by_a_conditional_update() {
         None,
         "the code was taken"
     );
+    // two takes that read the same thruDate, the second with an earlier now (a request that began first and was held
+    // on the row lock): the second matches nothing once the first has ended the code
+    let read = facade
+        .find(USER_AUTHC_FACTOR)
+        .unwrap()
+        .eq("factorId", Value::string("TWICE_T"))
+        .one()
+        .unwrap()
+        .and_then(|row| row.get("thruDate").cloned())
+        .expect("a thruDate a year ahead");
+    let tx = facade.transactions_for(USER_AUTHC_FACTOR).unwrap();
+    let now = now_millis();
+    assert!(take_single_use(&facade, &tx, "TWICE_T", &read, now).unwrap());
+    assert!(
+        !take_single_use(&facade, &tx, "TWICE_T", &read, now - 5_000).unwrap(),
+        "the later take of the same read"
+    );
+    let ended = facade
+        .find(USER_AUTHC_FACTOR)
+        .unwrap()
+        .eq("factorId", Value::string("TWICE_T"))
+        .one()
+        .unwrap()
+        .and_then(|row| row.get("thruDate").and_then(value_millis))
+        .expect("ended");
+    assert_eq!(ended, now);
     assert!(
         !take_factor_code("TWICE_1", None).unwrap(),
         "a single-use code ended is not taken again"
