@@ -2000,6 +2000,13 @@ fn pause_owned_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Paramet
     Ok(out(json!({"pausedCount": paused})))
 }
 
+/// The definition types a schedule's transfer hands on with it: what a report reads and shows. An alert rule acts on
+/// its own, evaluated as its owner each minute and notifying the contact points its author wrote, so it goes only
+/// through `transfer#AlertRuleOwner`, which pauses it until the new owner resumes it and clears its state; its contact
+/// points, silences and mute timings stay with it, and the walk does not go through it
+/// (plans/Security-Review-Medium.md SEC-TLS-90).
+const MOVES_WITH_SCHEDULE: &[&str] = &["dashboard", "report", "panel", "dataset", "calcgrid", "search"];
+
 /// `transfer#DefinitionOwner`.
 fn transfer_definition_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let (from, to, id) = (text(p, "fromUserId"), text(p, "toUserId"), text(p, "screenScheduledId"));
@@ -2040,6 +2047,9 @@ fn transfer_definition_owner(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Par
                 .eq("definitionId", Value::string(&next))
                 .one()?
             {
+                if !MOVES_WITH_SCHEDULE.contains(&field(&row, "definitionType")) {
+                    continue;
+                }
                 // a telemetry alias the leaving owner does not hold the index of stays theirs (alias.rs)
                 let owned = field(&row, "ownerId") == from && field(&row, "readOnly") != "Y";
                 let goes = owned

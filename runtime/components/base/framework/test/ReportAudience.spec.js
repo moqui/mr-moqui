@@ -543,6 +543,13 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
         const paused = call(R + "pause#OwnedSchedules", {userId: "RDA_OWNER", reason: "Left the company"})
         const pausedOther = call(R + "pause#OwnedSchedules", {userId: "RDA_OTHER", reason: "On leave"})
         const equals = one("moqui.screen.ScreenScheduled", {reportOwnerId: "RDA_OTHER"})
+        // an alert rule the board references stays its author's: it acts on its own, and only transfer#AlertRuleOwner,
+        // which pauses it, hands it on (plans/Security-Review-Medium.md SEC-TLS-90)
+        sys(() => {
+            make("moqui.report.Definition", {definitionId: "rda-alert", definitionType: "alert", title: "Audience alert",
+                bodyJson: "{}", ownerId: "RDA_OWNER", versionNumber: 1})
+            make("moqui.report.DefinitionReference", {definitionId: "rda-board", referencedId: "rda-alert"})
+        })
         const transfer = toUserId => {
             try {
                 return {
@@ -594,6 +601,7 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
             transferError: transferred.error || "",
             pending: [pending.reportOwnerId, pending.paused, pending.pausedReason].join(","),
             boardOwner: String(one("moqui.report.Definition", {definitionId: "rda-board"}).ownerId),
+            alertOwner: String(one("moqui.report.Definition", {definitionId: "rda-alert"}).ownerId),
             sendPaused: sendPaused.error || "",
             resumeRefused: resumeRefused.error || "",
             resumed: resumed.error || "",
@@ -615,6 +623,7 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
         transferError,
         pending,
         boardOwner,
+        alertOwner,
         sendPaused,
         resumeRefused,
         resumed,
@@ -635,6 +644,7 @@ feature("a disabled owner's schedule pauses until a qualified owner takes it and
         transferred.transferred == true
         Array.from(transferred.definitionIds).join(",") == "rda-board"
         boardOwner == "RDA_NEXT"
+        alertOwner == "RDA_OWNER"
         pending == "RDA_NEXT,Y,transfer-pending"
         sendPaused.includes("paused until its new owner resumes it")
         resumeRefused.includes("RECIPIENT_REFUSED")
