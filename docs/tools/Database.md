@@ -386,8 +386,10 @@ Load into… call.
   the `mappingId`. See [Scheduling](#scheduling) below.
   - The cron expression is checked first: one that does not parse, or is never due, is refused. The answer gives the
     next run.
-  - The mapping is stored again, so the schedule gets the same checks as a change of the mapping. That limits it to the
-    mapping's owner or a `DATABASE_ADMIN` holder.
+  - The owner's own mapping is stored again, so the schedule gets the same checks as a change of the mapping. Another
+    user's mapping is scheduled only by a holder of `DATABASE_ADMIN` and `ADMIN_LOGIN_AS` whom the owner holds no
+    access beyond (`ec.user.heldBeyond`). It is not stored again, since a store by another user makes the mapping theirs,
+    and it runs as its owner's job.
   - The job is made paused. Its `mappingId` parameter and a `ServiceJobUser` of the mapping's owner (notified of each
     run) are added, and only then is the job unpaused, so the scheduler never sees half a job. A failure removes what
     was made.
@@ -467,8 +469,11 @@ Load into… call.
   - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface-Tools.md#jobs)), so the run signs
     in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
     `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
-  - The owner must be a `ServiceJobUser` of the job. An `ADMIN` may write both, so may schedule another user's saved
-    mapping to run as that user; that is allowed on purpose.
+  - The owner must be a `ServiceJobUser` of the job, and the row is the owner's consent only when the owner made it,
+    or a holder of `ADMIN_LOGIN_AS` whom the owner holds no access beyond (asked again at each run). The row's
+    `addedByUserId` records who made it (the `ServiceJobUserAddedBy` EECA; an update keeps it). A row loaded as data
+    has none, so its job refuses to run as the owner until the owner or such a holder adds the row again.
+  - Each value map the mapping uses must be the owner's too; whoever saves a mapping or a value map owns it.
   - The run reads the mapping's own source: the job's `location` and `contentBytes` parameters are ignored.
   - The owner signs in as any login does. A missing owner, an account that is disabled or terminated, and a password
     that must change or has expired refuse the run, with a logged error. So an expired password fails the owner's

@@ -119,3 +119,50 @@ feature("the mapping form is its qvue component", {
         String(r.output).includes("Test against another file")
     },
 })
+
+// SEC-TLS-103: another user's mapping is scheduled only by a holder of ADMIN_LOGIN_AS, as its owner's job and without
+// making it the scheduler's; a job user row keeps who made it whatever an update passes
+feature("another user's mapping is scheduled only with ADMIN_LOGIN_AS, and a job user's maker is kept on update", {
+    when() {
+        const from = new Date(Date.now() - 60000)
+        asSystem(() => {
+            const make = (entityName, fields) => { const row = ec.entity.makeValue(entityName); row.setFields(fields, true, null, null); row.create() }
+            make("moqui.security.UserAccount", { userId: "ETLS_SCHEDULER", username: "etl.scheduler", userFullName: "ETL scheduler", disabled: "N" })
+            make("moqui.security.UserGroup", { userGroupId: "ETLS_DBA", description: "ETL spec database admins" })
+            make("moqui.security.UserGroupPermission", { userGroupId: "ETLS_DBA", userPermissionId: "DATABASE_ADMIN", fromDate: from })
+            for (const userGroupId of ["ADMIN", "ETLS_DBA"]) make("moqui.security.UserGroupMember", { userGroupId, userId: "ETLS_SCHEDULER", fromDate: from })
+        })
+        const mapping = (description) => JSON.stringify({ description, sourceTypeEnumId: "EtlsFile", sourceLocation: "dbresource://moqui/etl/none.csv",
+            targetTypeEnumId: "EtltEntity", targetName: "moqui.test.TestEntity", loadModeEnumId: "EtllCreate", fields: [{ targetField: "testId", sourceColumn: "Test Id" }] })
+        const schedule = (mappingId) => json(tools().render("Etl/etlSchedule", { mappingId, cronExpression: "0 0 3 * * ?" }, "post"))
+        const owners = (mappingId) => asSystem(() => String(ec.entity.find("moqui.etl.EtlMapping").condition("mappingId", mappingId).one().ownerUserId))
+        const jobUsers = (jobName) => asSystem(() => jobName ? ec.entity.find("moqui.service.job.ServiceJobUser").condition("jobName", jobName).list().map((row) => row.userId + ":" + row.addedByUserId) : [])
+        const drop = (jobName) => { if (jobName) asSystem(() => { for (const name of ["ServiceJobUser", "ServiceJobParameter", "ServiceJob"]) ec.entity.find("moqui.service.job." + name).condition("jobName", jobName).deleteAll() }) }
+        // john.doe's mapping, which etl.scheduler (DATABASE_ADMIN, no ADMIN_LOGIN_AS) may not schedule
+        const johns = json(tools().render("Etl/etlStore", { mappingJson: mapping("Etl spec johns") }, "post")).mappingId
+        ec.user.internalLoginUser("etl.scheduler")
+        const refused = schedule(johns)
+        // etl.scheduler's mapping, which john.doe (ADMIN_LOGIN_AS) schedules as etl.scheduler's job
+        const theirs = json(tools().render("Etl/etlStore", { mappingJson: mapping("Etl spec theirs") }, "post")).mappingId
+        login("john.doe")
+        const scheduled = schedule(theirs)
+        const users = jobUsers(scheduled.jobName)
+        // an update of the row that names another maker keeps the one it was made with
+        if (scheduled.jobName) asSystem(() => ec.service.sync().name("update#moqui.service.job.ServiceJobUser").parameters({ jobName: scheduled.jobName,
+            userId: "ETLS_SCHEDULER", addedByUserId: "ETLS_SCHEDULER", receiveNotifications: "N" }).call())
+        ec.message.clearErrors()
+        const updated = jobUsers(scheduled.jobName)
+        const theirOwner = owners(theirs)
+        drop(scheduled.jobName)
+        return { refused, scheduled, users, updated, theirOwner }
+    },
+    then({ refused, scheduled, users, updated, theirOwner }) {
+        String(refused.errors).includes("ADMIN_LOGIN_AS")
+        refused.jobName == null
+        scheduled.errors == null
+        !!scheduled.jobName
+        users.join(",") == "ETLS_SCHEDULER:EX_JOHN_DOE"
+        theirOwner == "ETLS_SCHEDULER"
+        updated.join(",") == "ETLS_SCHEDULER:EX_JOHN_DOE"
+    },
+})
