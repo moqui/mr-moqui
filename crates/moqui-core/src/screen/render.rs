@@ -844,7 +844,7 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
         }
         if let Some(allow) = refused_method(job.method, &info) {
             web::send_json_error(405, &format!("Method {} is not supported", job.method));
-            web::add_header("Allow", allow);
+            web::add_header("Allow", allow.join(", "));
             return Ok(());
         }
     }
@@ -1838,20 +1838,20 @@ fn reached_paths(facade: &ScreenFacade, info: &ScreenUrlInfo) -> Vec<String> {
 }
 
 /// The methods a screen renders for.
-const SCREEN_METHODS: &str = "GET, HEAD, POST, OPTIONS";
+const SCREEN_METHODS: &[&str] = &["GET", "HEAD", "POST", "OPTIONS"];
 /// The methods a transition of method `any` runs for: a REST transition dispatches the others itself.
-const TRANSITION_METHODS: &str = "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS";
+const TRANSITION_METHODS: &[&str] = &["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
 /// The `Allow` list of a request whose method the screen or transition it reached does not take, whatever web
 /// protection's `methods` list says (SEC-WEB-89): a screen renders for GET, HEAD, POST and OPTIONS, and a transition of
 /// method `any` runs for those and PUT, PATCH and DELETE, so TRACE or a made-up method neither renders a page nor runs
 /// a transition. A transition of the method itself takes it, and one with none for the method is answered by
 /// [`run_transition`]; a file is answered by its own rules.
-fn refused_method(method: &str, info: &ScreenUrlInfo) -> Option<&'static str> {
+fn refused_method(method: &str, info: &ScreenUrlInfo) -> Option<&'static [&'static str]> {
     if info.file_resource.is_some() {
         return None;
     }
-    let takes = |allowed: &str| allowed.split(", ").any(|name| name.eq_ignore_ascii_case(method));
+    let takes = |allowed: &[&str]| allowed.iter().any(|name| name.eq_ignore_ascii_case(method));
     let Some(name) = info.target_transition_name.as_deref() else {
         return (!takes(SCREEN_METHODS)).then_some(SCREEN_METHODS);
     };
