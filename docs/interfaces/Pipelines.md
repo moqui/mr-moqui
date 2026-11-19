@@ -119,8 +119,10 @@ not.
   `${matrix.NAME}` is expanded in the image, env values, step commands, cache keys, artifact names and service
   images, and the job has `MATRIX_NAME`. A job that needs a matrix job waits for all of them.
 - **`cache`**: a directory kept between runs by key. `${hash:FILE}` in the key is the SHA-256 of a file of the
-  checkout. It is restored before the first step (at most 4 GiB and a million entries, regular files, directories and
-  links that stay in the workspace; past a limit it stops and the log says it was not restored), and saved after the last when the job succeeded and nothing is
+  checkout. It is restored before the first step (at most `git-ci` `max-unpack-bytes`, 16 GiB, and a million entries;
+  regular files, directories and
+  links that stay in the workspace, resolved through the links already restored; past a limit it stops and the log says
+  it was not restored), and saved after the last when the job succeeded and nothing is
   stored under the key. Caches are per repository and apart for protected refs: a run for a protected ref reads only
   caches such a run wrote, an untrusted run never reads them (a build with secrets may have filled one), and another
   trusted run reads both. A cache of a job that was given secrets (an environment whose `allowedRefs` names a branch
@@ -761,6 +763,7 @@ the client's address arrives).
 | `max-timeout-minutes`, `default-timeout-minutes`, `max-fetch-depth` | 360, 60, 50 | |
 | `max-log-bytes`, `max-log-batch-bytes` | 16 MB, 1 MB | A job's log; one runner request |
 | `max-artifact-bytes`, `max-report-bytes`, `max-cache-bytes`, `max-artifacts` | 1 GB, 16 MB, 2 GB, 100 | Uploads (`max-artifacts` counts caches too) |
+| `max-unpack-bytes` | 16 GiB | What a cache unpacks to on a runner, sent with each job |
 | `max-repository-upload-bytes`, `max-owner-upload-bytes`, `max-untrusted-run-upload-bytes` | 10737418240, 0, 1073741824 | What a repository, an owner and an untrusted run keep of uploads; 0: no cap |
 | `max-services`, `schedule-min-minutes`, `pool-token-days` | 4, 15, 7 | Services of a job; the least time between a schedule's runs; how long a pool token registers |
 | `runner-token-days` | 90 | How long a registered runner's token is good for; rotated halfway; 0 is no expiry |

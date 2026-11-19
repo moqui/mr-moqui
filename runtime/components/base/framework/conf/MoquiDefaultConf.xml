@@ -1218,7 +1218,7 @@
             max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
             max-timeout-minutes="360" default-timeout-minutes="60" max-fetch-depth="50"
             max-log-bytes="16777216" max-log-batch-bytes="1048576" max-artifact-bytes="1073741824"
-            max-report-bytes="16777216" max-cache-bytes="2147483648" max-artifacts="100"
+            max-report-bytes="16777216" max-cache-bytes="2147483648" max-unpack-bytes="17179869184" max-artifacts="100"
             artifact-retention-days="30" max-artifact-retention-days="365" log-retention-days="90"
             cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"

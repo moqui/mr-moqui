@@ -286,6 +286,8 @@ fn get_job(entity: &EntityFacade, run: &EntityValue, job: &EntityValue) -> Resul
         },
         "limits": {
             "maxLogBatchBytes": super::number_setting("max-log-batch-bytes", DEFAULT_MAX_JSON),
+            "maxUnpackBytes":
+                super::number_setting("max-unpack-bytes", super::runner::archive::DEFAULT_MAX_UNPACK_BYTES),
         },
     }))
 }

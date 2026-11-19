@@ -140,17 +140,38 @@ fn an_archive_unpacks_within_its_limits_and_only_files_directories_and_inner_lin
     builder
         .append_link(&mut entry(tar::EntryType::Symlink, 0), "dir/in", "../a.txt")
         .unwrap();
+    // an absolute link, and a chain: a link to its own directory, then a link through it that climbs out
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "abs", "/etc/passwd")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "deep", ".")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "deep/esc", "..")
+        .unwrap();
+    // a hard link names a path from the archive's root: one inside is kept, one outside is not
+    builder
+        .append_link(&mut entry(tar::EntryType::Link, 0), "hard", "a.txt")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Link, 0), "hard-out", "../outside.txt")
+        .unwrap();
     builder.into_inner().unwrap().finish().unwrap();
 
     assert_eq!(
         archive::unpack(&archive_file, &to).unwrap(),
-        3,
-        "a.txt, b.txt and dir/in"
+        5,
+        "a.txt, b.txt, dir/in, deep and hard"
     );
     assert!(to.join("a.txt").is_file() && to.join("b.txt").is_file());
     assert!(to.join("pipe").symlink_metadata().is_err(), "no FIFO");
     assert!(to.join("out").symlink_metadata().is_err(), "no link out");
     assert!(to.join("dir/in").symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(to.join("abs").symlink_metadata().is_err(), "no absolute link");
+    assert!(to.join("esc").symlink_metadata().is_err(), "no link out through a chain");
+    assert!(to.join("hard").is_file());
+    assert!(to.join("hard-out").symlink_metadata().is_err(), "no hard link out");
     std::fs::remove_dir_all(&to).unwrap();
     std::fs::create_dir_all(&to).unwrap();
     let bytes = archive::unpack_within(&archive_file, &to, 150, 100).unwrap_err();

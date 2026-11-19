@@ -1181,6 +1181,8 @@ fn an_untrusted_run_waits_for_approval_and_gets_no_secrets_no_cache_writes_and_o
     let got = json_of(&transport.request("GET", "job", &[]));
     assert_eq!(got["trusted"], false);
     assert_eq!(got["secrets"], serde_json::json!({}));
+    // what a cache may unpack to on the runner: git-ci max-unpack-bytes (SEC-GIT-95)
+    assert_eq!(got["limits"]["maxUnpackBytes"], 16_u64 * 1024 * 1024 * 1024);
     // it reads no cache of the protected target branch (a build with secrets may have filled it) and writes none
     let scratch = fixture.dir.join("cache-probe.tar.gz");
     let key = runner::expand_key("deps-${hash:lock.txt}", &work.dir);

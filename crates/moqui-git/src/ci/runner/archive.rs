@@ -112,43 +112,60 @@ fn append_tree<W: Write>(builder: &mut tar::Builder<W>, path: &Path, name: &Path
     Ok(())
 }
 
-/// The most bytes an archive unpacks to: what the script host's `ec.resource.extractArchive` takes by default.
-pub const MAX_UNPACK_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+/// The most bytes an archive unpacks to when the job does not say (`git-ci` `max-unpack-bytes`, sent as the job's
+/// `limits.maxUnpackBytes`): 16 GiB, room for a build's `target` cache.
+pub const DEFAULT_MAX_UNPACK_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 /// The most entries an archive unpacks: what `ec.resource.extractArchive` takes by default.
 pub const MAX_UNPACK_ENTRIES: usize = 1_000_000;
 
-/// Unpack the tar.gz `archive` into `workspace`, at most [`MAX_UNPACK_BYTES`] and [`MAX_UNPACK_ENTRIES`]
+/// Unpack the tar.gz `archive` into `workspace`, at most [`DEFAULT_MAX_UNPACK_BYTES`] and [`MAX_UNPACK_ENTRIES`]
 /// ([`unpack_within`]). The count of entries written.
 ///
 /// # Errors
 ///
 /// When the archive does not read, an entry cannot be written, or the archive passes a limit.
 pub fn unpack(archive: &Path, workspace: &Path) -> Result<usize, String> {
-    unpack_within(archive, workspace, MAX_UNPACK_BYTES, MAX_UNPACK_ENTRIES)
+    unpack_within(archive, workspace, DEFAULT_MAX_UNPACK_BYTES, MAX_UNPACK_ENTRIES)
 }
 
-/// Whether a link's `target`, from the entry at `path` (both in the archive), stays inside the workspace: relative,
-/// and its `..` never above the root.
-fn link_inside(path: &Path, target: &Path) -> bool {
-    if target.is_absolute() {
-        return false;
-    }
-    let mut depth: i64 = 0;
-    let from = path.parent().unwrap_or(Path::new(""));
-    for component in from.components().chain(target.components()) {
-        match component {
-            std::path::Component::Normal(_) => depth += 1,
-            std::path::Component::ParentDir => {
-                depth -= 1;
-                if depth < 0 {
-                    return false;
-                }
-            }
+/// Where `path` resolves on the file system now: its longest prefix that exists, canonicalized (through every link in
+/// it, the links earlier entries made included), with the rest put on by name, `..` going up from there. What does not
+/// exist yet holds no link. `None` for a path that is not plain (a prefix or root in the rest).
+fn resolve(path: &Path) -> Option<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    let base = loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            break canonical;
+        }
+        let last = existing.components().next_back()?;
+        match last {
+            std::path::Component::Normal(name) => rest.push(name.to_os_string()),
             std::path::Component::CurDir => {}
-            _ => return false,
+            std::path::Component::ParentDir => rest.push("..".into()),
+            _ => return None,
+        }
+        if !existing.pop() {
+            return None;
+        }
+    };
+    let mut out = base;
+    for part in rest.into_iter().rev() {
+        if part == ".." {
+            out.pop();
+        } else {
+            out.push(part);
         }
     }
-    true
+    Some(out)
+}
+
+/// Whether a link's `target` stays inside `root` (the canonical workspace) once resolved from `from`, the directory it
+/// is read from: a symbolic link's own directory in the workspace, a hard link's the workspace itself. An absolute
+/// target never does. The resolution goes through the links already unpacked, so a chain (`deep -> .`, then
+/// `deep/esc -> ..`) is seen for where it leads.
+fn link_inside(root: &Path, from: &Path, target: &Path) -> bool {
+    !target.is_absolute() && resolve(&from.join(target)).is_some_and(|resolved| resolved.starts_with(root))
 }
 
 /// [`unpack`] with the limits: the entries' bytes (`entry.size()`, counted before each is written) and their count.
@@ -163,6 +180,9 @@ pub fn unpack_within(archive: &Path, workspace: &Path, max_bytes: u64, max_entri
     let file = File::open(archive).map_err(|err| format!("{}: {err}", archive.display()))?;
     let mut tar = tar::Archive::new(GzDecoder::new(file));
     tar.set_overwrite(true);
+    let root = workspace
+        .canonicalize()
+        .map_err(|err| format!("{}: {err}", workspace.display()))?;
     let (mut count, mut seen, mut bytes) = (0, 0usize, 0u64);
     for entry in tar
         .entries()
@@ -179,13 +199,16 @@ pub fn unpack_within(archive: &Path, workspace: &Path, max_bytes: u64, max_entri
             tar::EntryType::Symlink | tar::EntryType::Link => {
                 // a hard link names a path from the archive's root, a symbolic one a path from its own directory
                 let from = if kind == tar::EntryType::Link {
-                    Some(PathBuf::from("root-entry"))
+                    Some(root.clone())
                 } else {
-                    entry.path().ok().map(|path| path.into_owned())
+                    entry
+                        .path()
+                        .ok()
+                        .map(|path| root.join(path.parent().unwrap_or(Path::new(""))))
                 };
                 let target = entry.link_name().ok().flatten().map(|target| target.into_owned());
                 from.zip(target)
-                    .is_some_and(|(from, target)| link_inside(&from, &target))
+                    .is_some_and(|(from, target)| link_inside(&root, &from, &target))
             }
             _ => false,
         };
