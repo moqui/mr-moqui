@@ -219,7 +219,7 @@ pub fn has_permission(user_permission_id: &str) -> Result<bool, Error> {
 ///
 /// Returns an error when the rows cannot be read.
 pub fn user_has_permission(user_id: &str, user_permission_id: &str) -> Result<bool, Error> {
-    if !user_granted(user_id, user_permission_id)? {
+    if !user_granted(user_id, user_permission_id, &now_effective_value())? {
         return Ok(false);
     }
     // an external user never holds the agent permissions, whatever group grants them
@@ -251,7 +251,9 @@ pub fn is_external_user(user_id: &str) -> bool {
     if user_id.is_empty() {
         return false;
     }
-    match user_granted(user_id, EXTERNAL_USER) {
+    // on the clock, not the effective time: mr-moqui's own gate (no Java counterpart), so a user made external is
+    // external while code has set an earlier time
+    match user_granted(user_id, EXTERNAL_USER, &now_value()) {
         Ok(external) => external,
         Err(err) => {
             tracing::error!("Could not read whether user {user_id} is external, treating them as external: {err}");
@@ -272,17 +274,14 @@ pub fn current_user_external() -> bool {
     }
 }
 
-/// Whether a group `user_id` is in grants `user_permission_id`, both rows in date at the effective time, as Java's
-/// `hasPermissionById` with `nowTimestamp` (found while fixing SEC-BOS-97: this read the clock).
-fn user_granted(user_id: &str, user_permission_id: &str) -> Result<bool, Error> {
+/// Whether a group `user_id` is in grants `user_permission_id`, both rows in date at `now`: the effective time for
+/// `hasPermission`, as Java's `hasPermissionById` with `nowTimestamp` (found while fixing SEC-BOS-97: this read the
+/// clock), and the clock for [`EXTERNAL_USER`].
+fn user_granted(user_id: &str, user_permission_id: &str, now: &Value) -> Result<bool, Error> {
     let _authz = without_authz();
     let facade = entity_facade()?;
-    let now = now_effective_value();
     let members = facade.find(GROUP_MEMBER)?.eq("userId", Value::string(user_id)).list()?;
-    for member in members
-        .iter()
-        .filter(|row| date_open(row, "fromDate", "thruDate", &now))
-    {
+    for member in members.iter().filter(|row| date_open(row, "fromDate", "thruDate", now)) {
         let Some(group) = text(member, "userGroupId") else {
             continue;
         };
@@ -291,7 +290,7 @@ fn user_granted(user_id: &str, user_permission_id: &str) -> Result<bool, Error> 
             .eq("userGroupId", Value::string(group))
             .eq("userPermissionId", Value::string(user_permission_id))
             .list()?;
-        if grants.iter().any(|row| date_open(row, "fromDate", "thruDate", &now)) {
+        if grants.iter().any(|row| date_open(row, "fromDate", "thruDate", now)) {
             return Ok(true);
         }
     }
