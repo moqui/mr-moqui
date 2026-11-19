@@ -275,7 +275,7 @@ helpers.recalculate(orderId)
 
 | Member | |
 |---|---|
-| `getLocationReference(location)` | A resource reference (below). `location#versionName` is a reference of that version |
+| `getLocationReference(location)` | A resource reference (below). `location#versionName` is a reference of that version; its writes (`putText`, `putBytes`, `putStream`, `putUpload`, `copyFrom`, `delete`, `move`) go to the location as given, and a write, delete or move at a location with a `#` is refused on every storage but `dbresource://`, where the `#` is part of the name |
 | `getUriReference(uri)` | The same; a URI is a location here |
 | `getLocationText(location, cacheOrCharset)` | The file's text. A second argument that is a charset name decodes the bytes in it; a cache flag is ignored |
 | `getLocationStream(location)` | The file as a stream, null for a file that is not there |

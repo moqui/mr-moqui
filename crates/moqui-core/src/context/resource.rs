@@ -529,6 +529,7 @@ impl ResourceFacade {
     /// `file`, `runtime`, or `component` schemes.
     pub fn write_bytes(&self, location: &str, bytes: &[u8]) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_bytes(location, bytes);
@@ -621,7 +622,7 @@ impl ResourceFacade {
         )?;
         let mut by_root: indexmap::IndexMap<String, Vec<ResourceChange>> = indexmap::IndexMap::new();
         for (location, bytes) in files {
-            let location = strip_hash(location);
+            refuse_cut_write(location)?;
             let under = location
                 .split_once("://")
                 .and_then(|(scheme, rest)| {
@@ -655,6 +656,7 @@ impl ResourceFacade {
     /// to storage, never all in memory where the storage can take it as it is read (a file, a `git://` content blob).
     pub fn write_from(&self, location: &str, input: &mut dyn std::io::Read, size: Option<u64>) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_from(location, input, size);
@@ -759,6 +761,7 @@ impl ResourceFacade {
     /// Create a directory and any missing parents.
     pub fn make_directory(&self, location: &str) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.make_directory(location);
@@ -773,6 +776,7 @@ impl ResourceFacade {
     /// Delete a file, or an empty directory. False when nothing is there.
     pub fn delete(&self, location: &str) -> Result<bool, Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
         self.check_lock(location, true)?;
         let deleted = self.delete_at(location)?;
         self.release_locks(location);
@@ -806,6 +810,8 @@ impl ResourceFacade {
     /// Move a file or directory to a new location of the same kind of storage.
     pub fn rename(&self, location: &str, new_location: &str) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
+        refuse_cut_write(location)?;
+        refuse_cut_write(new_location)?;
         self.check_lock(location, true)?;
         self.check_lock(new_location, false)?;
         self.rename_at(location, new_location)?;
@@ -1127,6 +1133,19 @@ pub(crate) fn split_version(location: &str) -> Option<(&str, &str)> {
     location
         .split_once('#')
         .filter(|(path, version)| !path.is_empty() && !version.is_empty())
+}
+
+/// A write, delete or move at a location that holds a `#` is refused, but on `dbresource://`, where the `#` stays part
+/// of the name. Elsewhere a reference cuts the location at its first `#` (a version suffix: [`strip_hash`]), so the
+/// write would change the file named before it, another file than the one asked for: a content root of
+/// `component://<name>/screen/App.xml#` made an upload under it replace that screen (SEC-PFS-82, SEC-BAP-82).
+pub(crate) fn refuse_cut_write(location: &str) -> Result<(), Error> {
+    if location.contains('#') && scheme_of(location) != "dbresource" {
+        return Err(Error::new(format!(
+            "a resource is not written at a location with '#' in it (only the part before the '#' would be): {location}"
+        )));
+    }
+    Ok(())
 }
 
 fn strip_hash(location: &str) -> &str {

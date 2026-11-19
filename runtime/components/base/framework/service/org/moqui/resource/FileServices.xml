@@ -255,8 +255,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="ensure" noun="PersonalDrive">
         <description>The user's personal drive (the current user's; another user's only with authorization disabled), made
-            the first time it is asked for on the database tree under the moqui.drive.root preference
-            (dbresource://drive by default) at personal/userId.</description>
+            the first time it is asked for under the drive root (the resource-facade@drive-root setting,
+            dbresource://drive by default) at personal/userId.</description>
         <in-parameters><parameter name="userId"/></in-parameters>
         <out-parameters>
             <parameter name="driveId"/>
@@ -272,7 +272,7 @@ along with this software (see the LICENSE.md file). If not, see
             const existing = ec.entity.find('moqui.resource.ResourceDrive').condition('ownerUserId', userId)
                     .condition('driveKindEnumId', 'RdkPersonal').orderBy('driveId').limit(1).list()
             if (existing.length) { driveId = existing[0].driveId; return }
-            const root = String(ec.user.getPreference('moqui.drive.root') || 'dbresource://drive').replace(/\/+$/, '')
+            const root = String(ec.factory.getConfValue('resource-facade@drive-root') || 'dbresource://drive').replace(/\/+$/, '')
             const row = ec.entity.makeValue('moqui.resource.ResourceDrive')
             row.setSequencedIdPrimary()
             const rootLocation = `${root}/personal/${userId}`
@@ -338,7 +338,7 @@ along with this software (see the LICENSE.md file). If not, see
             row.setSequencedIdPrimary()
             driveId = row.driveId
             repositoryId = null
-            const root = String(ec.user.getPreference('moqui.drive.root') || 'dbresource://drive').replace(/\/+$/, '')
+            const root = String(ec.factory.getConfValue('resource-facade@drive-root') || 'dbresource://drive').replace(/\/+$/, '')
             if (storage === 'folder') {
                 if (!rootLocation) rootLocation = `${root}/shared/${driveId}`
             } else {

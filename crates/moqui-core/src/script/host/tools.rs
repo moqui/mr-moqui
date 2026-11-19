@@ -501,6 +501,9 @@ macro_rules! tools_js {
             Object.defineProperty(ref, "children", { get: () => children ??= host.resourceEntries(ref.location),
                 enumerable: false, configurable: true });
         }
+        // a write goes to the location as it was given: a reference of `location#suffix` reads the file before the `#`,
+        // and the facade refuses a write there rather than write that other file (SEC-PFS-82)
+        const writeAt = () => ref.writeLocation || ref.location;
         Object.assign(ref, {
             getLocation: () => ref.location, getFileName: () => ref.fileName, getExists: () => ref.exists,
             isDirectory: () => ref.directory, isFile: () => ref.file, getSize: () => ref.size,
@@ -519,18 +522,18 @@ macro_rules! tools_js {
             },
             // a note (optional) is kept with the version the write makes: the commit message on git, versionNote on the
             // database tree (docs/data/Revision-Management.md, Version notes)
-            putText: (text, note) => note == null ? host.resourcePutText(ref.location, String(text))
-                : ec.resource.putContent(ref.location, String(text), note),
-            putBytes: (bytes, note) => note == null ? host.resourcePutBytes(ref.location, bytes)
-                : ec.resource.putContent(ref.location, bytes, note),
+            putText: (text, note) => note == null ? host.resourcePutText(writeAt(), String(text))
+                : ec.resource.putContent(writeAt(), String(text), note),
+            putBytes: (bytes, note) => note == null ? host.resourcePutBytes(writeAt(), bytes)
+                : ec.resource.putContent(writeAt(), bytes, note),
             // Java's `putStream(fileItem.getInputStream())` and `putStream(other.openStream())`
-            putUpload: (fileItem) => fileItem.write(ref.location),
+            putUpload: (fileItem) => fileItem.write(writeAt()),
             // `putStream(stream)`: the stream of `fileItem.getInputStream()` or `openStream()`, or the bytes of a Uint8Array.
             putStream: function (stream, note) {
                 if (stream == null) throw new Error("putStream needs a stream");
-                if (note != null) ec.resource.putContent(ref.location, stream, note);
-                else if (typeof stream.write === "function") stream.write(ref.location);
-                else host.resourcePutBytes(ref.location, stream);
+                if (note != null) ec.resource.putContent(writeAt(), stream, note);
+                else if (typeof stream.write === "function") stream.write(writeAt());
+                else host.resourcePutBytes(writeAt(), stream);
             },
             // `openStream()` and `getInputStream()`: the file's bytes as a stream; null for a file that is not there. A
             // reference of `location#versionName` streams that version (null when it is not there)
@@ -540,12 +543,12 @@ macro_rules! tools_js {
                 const info = host.resourceInfo(ref.location);
                 return info != null && info.exists && info.file ? host.resourceStream(ref.location) : null;
             },
-            copyFrom: (source) => host.resourceCopy(typeof source === "string" ? source : source.location, ref.location),
-            delete: () => host.resourceDelete(ref.location),
+            copyFrom: (source) => host.resourceCopy(typeof source === "string" ? source : source.location, writeAt()),
+            delete: () => host.resourceDelete(writeAt()),
             // nothing to move is not an error, as in Java (a page often has no matching directory)
             move: function (newLocation) {
                 const info = host.resourceInfo(ref.location);
-                if (info != null && info.exists) host.resourceMove(ref.location, String(newLocation));
+                if (info != null && info.exists) host.resourceMove(writeAt(), String(newLocation));
             },
             supportsVersion: () => host.resourceSupportsVersion(ref.location),
             getVersion: (versionName) => makeVersion(host.resourceVersion(ref.location, "named", String(versionName)), ref.location),
@@ -687,6 +690,8 @@ macro_rules! tools_js {
         const info = host.resourceInfo(location);
         const hash = location.indexOf('#');
         if (info != null && hash > 0 && hash + 1 < location.length) info.versionName = location.substring(hash + 1);
+        if (info != null && hash >= 0)
+            Object.defineProperty(info, "writeLocation", { value: location, enumerable: false, configurable: true });
         return wrap("Resource", info);
     };
     // `ResourceReference.isTextFilename(filename)` (static): the file name's content type is text
