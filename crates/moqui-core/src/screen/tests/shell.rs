@@ -2259,12 +2259,29 @@ const TOGGLES: &str = r#"<services>
         <out-parameters><parameter name="refusedUserIdList" type="List"/><parameter name="disabled" type="Boolean"/></out-parameters>
         <actions><script>refusedUserIdList = []; disabled = ec.artifactExecution.authzDisabled()</script></actions>
     </service>
+    <service verb="get" noun="RunAs">
+        <description>a provider whose runAsUser body disables authorization and leaves it so</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/><parameter name="disabled" type="Boolean"/></out-parameters>
+        <actions><script><![CDATA[
+            ec.artifactExecution.runAsUser('{hidden}', () => { ec.artifactExecution.disableAuthz() })
+            refusedUserIdList = []
+            disabled = ec.artifactExecution.authzDisabled()
+        ]]></script></actions>
+    </service>
+    <service verb="consent" noun="Toggle">
+        <description>a conf's sms-consent provider that enables authorization, which it runs with disabled, and fails</description>
+        <in-parameters><parameter name="text"/></in-parameters>
+        <actions><script>ec.artifactExecution.enableAuthz(); throw new Error('the consent records are down')</script></actions>
+    </service>
 </services>"#;
 
 /// A provider's authorization toggles end with its call (found fixing the security review: chat refused no one after a
 /// provider toggled authorization, as get#RefusedUsers then ran with it disabled). A disableAuthz/enableAuthz pair, a
-/// service that toggles it, a provider that fails with it disabled and one that panics leave the caller's authorization
-/// as it was, whether the caller had it on or had disabled it itself, and the next provider runs with it on.
+/// service that toggles it, a runAsUser body that leaves it disabled, a provider that fails with it disabled, a conf's
+/// provider that enables it and one that panics leave the caller's authorization as it was, whether the caller had it
+/// on or had disabled it itself (and then it is still disabled until the caller's own enableAuthz), and the next
+/// provider runs with it on.
 #[test]
 fn a_providers_authorization_toggles_end_with_its_call() {
     let dir = tree("toggles");
@@ -2274,10 +2291,18 @@ fn a_providers_authorization_toggles_end_with_its_call() {
     assert!(screen.contains(reach), "{screen}");
     let providers = r#"<call-target name="open.pair" service="test.Toggle.get#Pair" sequence="10"/>
         <call-target name="open.nested" service="test.Toggle.get#Nested" sequence="20"/>
+        <call-target name="open.runas" service="test.Toggle.get#RunAs" sequence="25"/>
         <call-target name="open.throws" service="test.Toggle.get#Throws" sequence="30"/>
         <call-target name="open.seen" service="test.Toggle.get#Seen" sequence="40"/>"#;
     std::fs::write(&open, screen.replace(reach, providers)).unwrap();
-    std::fs::write(dir.join("service/test/Toggle.xml"), TOGGLES).unwrap();
+    let location = open.to_string_lossy().into_owned();
+    // the screen runAsUser runs as, which needs all actions
+    let hidden = dir.join("Apps/Hidden.xml").to_string_lossy().into_owned();
+    std::fs::write(
+        dir.join("service/test/Toggle.xml"),
+        TOGGLES.replace("{hidden}", &hidden),
+    )
+    .unwrap();
     // the call is made in a render under the apps root, where the providers are found; with wrap the caller disables
     // authorization itself around it, as the Java idiom does
     std::fs::write(
@@ -2286,16 +2311,47 @@ fn a_providers_authorization_toggles_end_with_its_call() {
             <transition name="ask"><actions><script><![CDATA[
                 const wasDisabled = ec.web.parameters.wrap == 'true' ? ec.artifactExecution.disableAuthz() : true
                 const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers')
-                    .parameters({hook: 'call-target', parameters: {userIdList: ['someone']}}).call() || {}
+                    .parameters({hook: ec.web.parameters.hook, parameters: {userIdList: ['someone']}}).call() || {}
+                const inside = ec.artifactExecution.authzDisabled()
                 if (!wasDisabled) ec.artifactExecution.enableAuthz()
-                const seen = (out.results || []).find((row) => row.sourceId === 'open.seen')
-                ec.web.sendJsonResponse({answer: [(out.results || []).map((row) => row.sourceId).join(','),
-                    (out.failedParts || []).map((row) => row.sourceId).join(','), String(seen && seen.disabled)].join(' | ')})
+                const results = out.results || []
+                ec.web.sendJsonResponse({answer: [results.map((row) => row.sourceId).join(','),
+                    (out.failedParts || []).map((row) => row.sourceId).join(','),
+                    results.filter((row) => row.disabled != null).map((row) => row.sourceId + '=' + row.disabled).join(','),
+                    'caller=' + inside].join(' | ')})
             ]]></script></actions><default-response type="none"/></transition>
             <widgets><label text="List"/></widgets></screen>"#,
     )
     .unwrap();
-    let world = world(&dir);
+    let world = world_with(
+        &dir,
+        "<moqui-conf><artifact-execution-facade><artifact-execution type=\"AT_XML_SCREEN\" authz-enabled=\"true\"/>\
+         </artifact-execution-facade><screen-facade><shell-providers>\
+         <sms-consent name=\"conf.toggle\" service=\"test.Toggle.consent#Toggle\"/>\
+         </shell-providers></screen-facade></moqui-conf>",
+    );
+    row(
+        &world,
+        "moqui.security.ArtifactGroupMember",
+        &[
+            ("artifactGroupId", Value::string("HIDDEN_ALL")),
+            ("artifactName", Value::string(&hidden)),
+            ("artifactTypeEnumId", Value::string("AT_XML_SCREEN")),
+            ("nameIsPattern", Value::string("N")),
+            ("inheritAuthz", Value::string("Y")),
+        ],
+    );
+    row(
+        &world,
+        "moqui.security.ArtifactAuthz",
+        &[
+            ("artifactAuthzId", Value::string("HIDDEN_ALL")),
+            ("userGroupId", Value::string("ALL_USERS")),
+            ("artifactGroupId", Value::string("HIDDEN_ALL")),
+            ("authzTypeEnumId", Value::string("AUTHZT_ALWAYS")),
+            ("authzActionEnumId", Value::string("AUTHZA_ALL")),
+        ],
+    );
     // a load replaces the services registered, so the world's go again with these
     load_services(
         &world,
@@ -2323,28 +2379,37 @@ fn a_providers_authorization_toggles_end_with_its_call() {
     };
     let root = root_of(&dir);
     let test = crate::screen::ScreenTest::new(&world.factory).root_screen(root);
-    let ask = |wrap: bool| {
-        let parameters = BTreeMap::from([("wrap".to_string(), Value::string(wrap.to_string()))]);
+    let ask = |hook: &str, wrap: bool| {
+        let parameters = BTreeMap::from([
+            ("hook".to_string(), Value::string(hook)),
+            ("wrap".to_string(), Value::string(wrap.to_string())),
+        ]);
         let out = test.render("apps/open/List/ask", parameters).unwrap();
         assert_eq!(out.status(), 200, "{}", out.text());
         out.json().unwrap()["answer"].as_str().unwrap_or_default().to_string()
     };
-    let answered = "open.pair,open.nested,open.seen | open.throws | false";
+    let answered = "open.pair,open.nested,open.runas,open.seen | open.throws | open.runas=false,open.seen=false";
 
     // a caller with authorization on
-    assert_eq!(ask(false), answered);
+    assert_eq!(ask("call-target", false), format!("{answered} | caller=false"));
     still_checked("the providers");
     // the caller's own toggles work as before
     holds("ec.artifactExecution.disableAuthz() === false && ec.artifactExecution.authzDisabled() === true");
     holds("(ec.artifactExecution.enableAuthz(), ec.artifactExecution.authzDisabled() === false)");
     still_checked("the caller's own disableAuthz and enableAuthz");
 
-    // a caller that disabled authorization itself around the call
-    assert_eq!(ask(true), answered);
+    // a caller that disabled authorization itself around the call: still disabled after it, until its own enableAuthz
+    assert_eq!(ask("call-target", true), format!("{answered} | caller=true"));
     still_checked("the providers under the caller's disableAuthz");
 
+    // a conf's provider, which runs with authorization disabled, enables it and fails
+    let consent = "shared.consent | conf.toggle |  | caller=";
+    assert_eq!(ask("sms-consent", false), format!("{consent}false"));
+    still_checked("a conf's provider");
+    assert_eq!(ask("sms-consent", true), format!("{consent}true"));
+    still_checked("a conf's provider under the caller's disableAuthz");
+
     // a provider that panics: its app's frame is popped and the caller's authorization is back
-    let location = open.to_string_lossy().into_owned();
     let stack = ctx.artifact_stack_names();
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         crate::screen::shell::run_in_app(&location, true, || -> Result<(), crate::context::Error> {
