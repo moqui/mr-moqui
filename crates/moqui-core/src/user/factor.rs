@@ -423,7 +423,7 @@ fn factor_service(name: &str, pairs: &[(&str, &str)]) -> Result<std::collections
     result
 }
 
-fn truthy(value: &Value) -> bool {
+pub(super) fn truthy(value: &Value) -> bool {
     match value {
         Value::Bool(flag) => *flag,
         Value::String(text) => text == "true",

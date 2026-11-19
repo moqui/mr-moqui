@@ -181,6 +181,69 @@ fn codes_sent_at_once_are_gated_and_each_counted() {
     assert!(counted > policy::max_failures(), "counted {counted}");
 }
 
+/// SEC-WEB-87: a factor's code is taken by one conditional update, so of two right submissions of one single-use code
+/// at once only one verifies, and an authenticator factor takes a step only after the last one it took.
+#[test]
+fn a_code_is_taken_once_by_two_right_submissions_at_once() {
+    session::reset_session();
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::bounded(2, 16),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    {
+        let _authz = ctx.disable_authz();
+        crate::service::load_definitions().unwrap();
+    }
+    create_user(&facade, "twice", "Secret1!", |_| {});
+    for (factor_id, kind) in [("TWICE_1", "UafSingleUse"), ("TWICE_T", "UafTotp")] {
+        let mut factor = facade.make_value("moqui.security.UserAuthcFactor").unwrap();
+        factor.set("factorId", Value::string(factor_id));
+        factor.set("userId", Value::string("twice"));
+        factor.set("factorTypeEnumId", Value::string(kind));
+        factor.set(
+            "factorOption",
+            Value::string(super::super::factor::single_use_hash("70316001").unwrap()),
+        );
+        factor.set("fromDate", stamp(now_millis() - 60_000));
+        factor.create(&facade).unwrap();
+    }
+    let factory = Arc::clone(ctx.factory());
+    let start = Arc::new(std::sync::Barrier::new(2));
+    let threads: Vec<_> = (0..2)
+        .map(|_| {
+            let factory = Arc::clone(&factory);
+            let start = Arc::clone(&start);
+            std::thread::spawn(move || {
+                let context = factory.new_context();
+                let _entered = context.enter();
+                start.wait();
+                check_counted_code("twice", "70316001").unwrap()
+            })
+        })
+        .collect();
+    let verified: Vec<Option<String>> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+    assert_eq!(
+        verified
+            .iter()
+            .filter(|factor| factor.as_deref() == Some("TWICE_1"))
+            .count(),
+        1,
+        "{verified:?}"
+    );
+    assert!(
+        !take_factor_code("TWICE_1", None).unwrap(),
+        "a single-use code ended is not taken again"
+    );
+    assert!(take_factor_code("TWICE_T", Some(5)).unwrap());
+    assert!(!take_factor_code("TWICE_T", Some(5)).unwrap(), "the same step");
+    assert!(!take_factor_code("TWICE_T", Some(4)).unwrap(), "an earlier step");
+    assert!(take_factor_code("TWICE_T", Some(6)).unwrap());
+}
+
 #[test]
 fn concurrent_logins_of_one_user_all_succeed() {
     let (ctx, facade) = open_ctx();

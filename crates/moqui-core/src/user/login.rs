@@ -29,6 +29,7 @@ use crate::driver::{DbConnection, DbRow};
 use crate::entity::{EntityFacade, EntityValue};
 
 const USER_ACCOUNT: &str = "moqui.security.UserAccount";
+const USER_AUTHC_FACTOR: &str = "moqui.security.UserAuthcFactor";
 const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
 const USER_APP_PASSWORD: &str = "moqui.security.UserAppPassword";
 /// The protocols an app password may be made for (`UserAppPassword.scope`, SEC-COM-21): DAV; SSH, SFTP and git over
@@ -305,8 +306,7 @@ pub fn check_counted_code(user_id: &str, code: &str) -> Result<Option<String>, E
         .map(|(name, value)| (name.to_string(), Value::string(value)))
         .collect();
     let compared = crate::service::sync(COMPARE_CODE, &parameters)?;
-    let verified = matches!(compared.get("verified"), Some(Value::Bool(true)))
-        || matches!(compared.get("verified"), Some(Value::String(text)) if text == "true");
+    let verified = compared.get("verified").is_some_and(super::factor::truthy);
     let factor_id = verified.then(|| {
         compared
             .get("factorId")
@@ -318,6 +318,47 @@ pub fn check_counted_code(user_id: &str, code: &str) -> Result<Option<String>, E
         crate::web::note_auth_failure();
     }
     Ok(factor_id)
+}
+
+/// Take a second factor's code once (`compare#UserAuthcFactorCode`, `ec.user.takeFactorCode`): a single-use code ends
+/// (`thruDate` now) only while it has not ended, and an authenticator factor keeps `step` only while its last step taken
+/// is before it. One conditional update on a reserve connection, committed at once, so of two right submissions of one
+/// code only one takes it, and a code taken stays taken whatever the caller's transaction does. True when this call
+/// took it.
+///
+/// # Errors
+///
+/// Returns a storage error.
+pub fn take_factor_code(factor_id: &str, step: Option<i64>) -> Result<bool, Error> {
+    let _authz = without_authz();
+    let facade = entity_facade()?;
+    let by_id = Condition::equals("factorId", Value::string(factor_id));
+    let (column, set, condition) = match step {
+        None => (
+            "thruDate",
+            now_value(),
+            Condition::and(vec![by_id, Condition::is_null("thruDate")]),
+        ),
+        Some(step) => (
+            "lastTotpStep",
+            Value::I64(step),
+            Condition::and(vec![
+                by_id,
+                Condition::or(vec![
+                    Condition::is_null("lastTotpStep"),
+                    Condition::less("lastTotpStep", Value::I64(step)),
+                ]),
+            ]),
+        ),
+    };
+    let statement = facade.with_entity(USER_AUTHC_FACTOR, |entity, dialect, _| {
+        sql_update(entity, dialect, &[column], Some(&condition))
+    })?;
+    let mut params = vec![set];
+    params.extend(statement.params);
+    let tx = facade.transactions_for(USER_AUTHC_FACTOR)?;
+    let updated = tx.with_reserve(|conn| conn.execute(&statement.sql, &params))?;
+    Ok(updated > 0)
 }
 
 /// Whether `plain` is the account's reset password (`reset#Password`, always argon2) and that is still in date; a

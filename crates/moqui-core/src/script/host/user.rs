@@ -75,6 +75,7 @@ pub(super) static USER: HostClass = HostClass {
             check_counted_code
         ),
         method!("ec.user", "countFailedLogin", [Text], None, count_failed_login),
+        method!("ec.user", "takeFactorCode", [Text, OptValue], None, take_factor_code),
         method!(
             "ec.user",
             "initialAdminAllowed",
@@ -576,6 +577,23 @@ fn check_counted_code(call: &mut Call<'_>) -> Result<Ret, HostError> {
 fn count_failed_login(call: &mut Call<'_>) -> Result<Ret, HostError> {
     crate::user::count_failed_login(&call.text_or_empty(0))
         .map(|()| Ret::Undefined)
+        .map_err(|err| user_error(&err))
+}
+
+/// `ec.user.takeFactorCode(factorId, step)`: take a factor's code once, a single-use code with no `step`, an
+/// authenticator code for its step ([`crate::user::take_factor_code`]): true when this call took it.
+fn take_factor_code(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factor_id = call.text_or_empty(0);
+    // a step from totpCodeStep is a number; it may come as its text (12345 or 12345.0)
+    let text = call.text_or_empty(1);
+    let text = text.trim();
+    let step = text
+        .split_once('.')
+        .map_or(text, |(whole, _)| whole)
+        .parse::<i64>()
+        .ok();
+    crate::user::take_factor_code(&factor_id, step)
+        .map(Ret::from)
         .map_err(|err| user_error(&err))
 }
 

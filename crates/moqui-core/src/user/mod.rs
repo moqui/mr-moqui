@@ -51,7 +51,7 @@ pub use filter::{apply_entity_filters, entity_filters_apply, find_filters_for_us
 pub use login::{app_password_key, credential_user, APP_PASSWORD_SCOPES};
 pub(crate) use login::login_user_local;
 pub use login::stamp_value;
-pub use login::{check_counted_code, count_failed_login};
+pub use login::{check_counted_code, count_failed_login, take_factor_code};
 pub use login::{
     apply_header_keys, change_password, check_old_password, get_device_key, get_login_key, header_login_session,
     internal_login_queued_user, internal_login_user, issue_device_key, login_anonymous, login_app_password,

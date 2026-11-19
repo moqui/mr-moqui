@@ -848,11 +848,14 @@ along with this software (see the LICENSE.md file). If not, see
                     out-map="context"/>
         </actions>
     </service>
-    <service verb="compare" noun="UserAuthcFactorCode" authenticate="anonymous-all" allow-remote="false" transaction="force-new">
+    <service verb="compare" noun="UserAuthcFactorCode" authenticate="anonymous-all" allow-remote="false">
         <description>Whether a code is one of the user's factors' now, which it then takes (a single-use code ends, a TOTP
             factor keeps the step); nothing is counted. validate#UserAuthcFactorCode calls it, through
-            ec.user.checkCountedCode when a wrong code counts as a failed login. In a transaction of its own, so a code
-            taken is committed before the next of the user's codes is compared.</description>
+            ec.user.checkCountedCode when a wrong code counts as a failed login. The take is one conditional update
+            committed at once (ec.user.takeFactorCode), and the code verifies only when this call took it: of two right
+            submissions of one code only one verifies, and a code taken stays used up even when the caller's
+            transaction then rolls back, as update#Password does when it refuses the new password (a new code is then
+            needed; SEC-WEB-87).</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="code" required="true"/>
@@ -876,10 +879,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <if condition="userAuthcFactor.get('factorTypeEnumId') == 'UafSingleUse'">
                     <then>
                         <!-- This checks to see whether the hashed single use code in the database is the input code hashed. -->
-                        <if condition="userAuthcFactor.get('factorOption') == ec.user.singleUseCodeHash(code)">
+                        <if condition="userAuthcFactor.get('factorOption') == ec.user.singleUseCodeHash(code) &amp;&amp;
+                                ec.user.takeFactorCode(userAuthcFactor.get('factorId'), null)">
                             <set field="factorId" from="userAuthcFactor.get('factorId')"/>
                             <set field="verified" from="true"/>
-                            <service-call name="update#moqui.security.UserAuthcFactor" in-map="{factorId: userAuthcFactor.get('factorId'), thruDate: ec.user.nowTimestamp}"/>
                             <!-- A code sent to the account email names the UserAccountEmail pseudo factor, which has no row to update;
                                 Java's update of it fails the verify. -->
                             <if condition="userAuthcFactor.get('fromFactorId') &amp;&amp; userAuthcFactor.get('fromFactorId') != 'UserAccountEmail'"><service-call name="update#moqui.security.UserAuthcFactor" in-map="{factorId: userAuthcFactor.get('fromFactorId'), needsValidation: 'N'}"/></if>
@@ -889,11 +892,11 @@ along with this software (see the LICENSE.md file). If not, see
                         <!-- This checks to see whether the secret key stored in the database matches the input code at this
                             time, for a step after the last one taken: a code works once (SEC-WEB-12) -->
                         <set field="totpStep" from="ec.user.totpCodeStep(userAuthcFactor.get('factorOption'), code, userAuthcFactor.get('lastTotpStep'))"/>
-                        <if condition="totpStep != null">
+                        <if condition="totpStep != null &amp;&amp; ec.user.takeFactorCode(userAuthcFactor.get('factorId'), totpStep)">
                             <set field="factorId" from="userAuthcFactor.get('factorId')"/>
                             <set field="verified" from="true"/>
                             <service-call name="update#moqui.security.UserAuthcFactor" in-map="{factorId: userAuthcFactor.get('factorId'),
-                                    needsValidation: 'N', lastTotpStep: totpStep}"/>
+                                    needsValidation: 'N'}"/>
                         </if>
                     </else-if>
                 </if>
