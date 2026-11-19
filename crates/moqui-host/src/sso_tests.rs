@@ -454,6 +454,26 @@ fn a_discovery_document_and_its_endpoints_are_https_but_on_this_machine() {
     };
     let err = HuskarlSso::default().start(&flow, REDIRECT).unwrap_err();
     assert!(err.to_string().contains("must be https"), "{err}");
+    // an OAuth 2 flow's endpoints are held to the same rule
+    let oauth = |token_url: &str| FlowConfig {
+        auth_flow_id: format!("PROOF_OAUTH_{}", token_url.len()),
+        kind: FlowKind::Oauth(OauthConfig {
+            client_type: "OctOauth20".to_string(),
+            client_id: CLIENT.to_string(),
+            secret: SECRET.to_string(),
+            authorize_url: "https://idp.example.com/authorize".to_string(),
+            token_url: token_url.to_string(),
+            ..OauthConfig::default()
+        }),
+        deny_internal: false,
+    };
+    let err = HuskarlSso::default()
+        .start(&oauth("http://idp.example.com/token"), REDIRECT)
+        .unwrap_err();
+    assert!(err.to_string().contains("must be https"), "{err}");
+    assert!(HuskarlSso::default()
+        .start(&oauth("https://idp.example.com/token"), REDIRECT)
+        .is_ok());
 }
 
 /// The security proof of OWASP ASVS 5.0.0 v5.0.0-9.1.3 (docs/security/proofs/V9-Self-contained-Tokens.md), in-process:

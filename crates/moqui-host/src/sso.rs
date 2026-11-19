@@ -535,6 +535,13 @@ impl Inner {
                         flow.auth_flow_id
                     )));
                 }
+                // the endpoints are https as an OpenID provider's are, this machine on an instance that is not
+                // production aside (SEC-WEB-93)
+                for (url, what) in [(&authorize, "authorization endpoint"), (&token, "token endpoint"), (&user_info, "user info endpoint")] {
+                    if !url.is_empty() {
+                        secure_url(url, what)?;
+                    }
+                }
                 let grant = AuthorizationCodeGrant::builder()
                     .authorization_endpoint(endpoint(&authorize, "authorize")?)
                     .token_endpoint(endpoint(&token, "token")?)
