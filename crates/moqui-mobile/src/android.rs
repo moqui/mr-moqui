@@ -377,6 +377,22 @@ pub(crate) fn chat_room_shown(account: &str, room: &str) -> Result<(), String> {
     })
 }
 
+/// `account` is signed out here: its chat notifications, their summary, its conversation shortcuts and a room of it
+/// shown go (`ChatNotifications.forgetAccount`, SEC-CLI-100).
+pub(crate) fn forget_account(account: &str) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ChatNotifications"))?;
+        let account = env.new_string(account)?;
+        env.call_static_method(
+            &class,
+            jni_str!("forgetAccount"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;)V"),
+            &[JValue::Object(app), JValue::Object(&account)],
+        )?;
+        Ok(())
+    })
+}
+
 /// A push registration failed: the native code's worker tries again (`RegisterWorker.start`).
 pub(crate) fn register_worker_start() -> Result<(), String> {
     with_context(|env, app| {
@@ -413,6 +429,22 @@ pub(crate) fn fcm_start() -> Result<(), String> {
         env.call_static_method(
             &class,
             jni_str!("startFcm"),
+            jni_sig!("(Landroid/content/Context;)V"),
+            &[JValue::Object(app)],
+        )?;
+        Ok(())
+    })
+}
+
+/// The last account here signed out: Firebase's token and installation deleted (`Push.stopFcm`; nothing in a build
+/// without Firebase), so the phone stays registered with Google for no account; the next sign-in's [`fcm_start`] asks
+/// for a new token (SEC-CLI-121).
+pub(crate) fn fcm_stop() -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.Push"))?;
+        env.call_static_method(
+            &class,
+            jni_str!("stopFcm"),
             jni_sig!("(Landroid/content/Context;)V"),
             &[JValue::Object(app)],
         )?;

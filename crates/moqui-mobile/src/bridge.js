@@ -72,10 +72,13 @@
         for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
         return bytes;
     };
+    // the shell's carries its load's nonce, as the host answers the shell's origin only to the shell's current load
+    // (scheme.rs refuse_fetch, SEC-CLI-06); the host sets Origin and Sec-Fetch-* itself
+    const fetchAsk = shell ? shellAsk : ask;
     const viaHost = (request, hops) => request.arrayBuffer().then((buffer) => {
         const headers = {};
         request.headers.forEach((value, name) => { headers[name] = value; });
-        return ask("scheme_fetch", { method: request.method, url: request.url, headers,
+        return fetchAsk("scheme_fetch", { method: request.method, url: request.url, headers,
             body: buffer.byteLength ? toBase64(buffer) : null });
     }).then((answer) => {
         const location = answer.headers && answer.headers.location;
@@ -232,9 +235,10 @@
         return nonceReady.then(() => invoke("notify", Object.assign(args, { nonce: shellNonce })));
     };
     const windowSeen = () => !document.hidden;
-    // the room the page shows now (none: no room): its pushes show no notification while the app is in front, and a
-    // room shown clears its notification (plans/Comms-Messaging.md §7.5)
-    const roomShown = (room) => invoke("chat_room_shown", { room: room ? String(room) : null }).catch(() => null);
+    // the room the shell shows now (none: no room): its pushes show no notification while the app is in front, and a
+    // room shown clears its notification (plans/Comms-Messaging.md §7.5); with the load's nonce (SEC-CLI-97), and the
+    // host forgets the room as the shell's page goes
+    const roomShown = (room) => shellAsk("chat_room_shown", { room: room ? String(room) : null }).catch(() => null);
 
     if (appPage) {
         // a server's page: its account's storage scope and the scopes to clear, asked of the host as the page starts
@@ -280,10 +284,11 @@
         socket, drafts, notify, windowSeen, clearScopes, pushDelivers: true, roomShown,
         // a room read here: its notification goes (plans/Comms-Messaging.md §7.5)
         notifyClear: (tag) => invoke("notify_clear", { tag: String(tag || "") }),
-        // the account view's notification check (§7.6): the phone's state, a fix of one item, a test through the server
-        pushCheck: () => ask("push_check"),
-        pushCheckFix: (what) => ask("push_check_fix", { what: String(what || "") }),
-        pushTest: () => ask("push_test"),
+        // the account view's notification check (§7.6): the phone's state, a fix of one item, a test through the server;
+        // with the load's nonce (SEC-CLI-97)
+        pushCheck: () => shellAsk("push_check"),
+        pushCheckFix: (what) => shellAsk("push_check_fix", { what: String(what || "") }),
+        pushTest: () => shellAsk("push_test"),
         outbox: Object.freeze(Object.assign({ unsent: () => ask("outbox_unsent") }, outbox)),
         setCounts: () => Promise.resolve(null),
         setPresence: () => Promise.resolve(null),

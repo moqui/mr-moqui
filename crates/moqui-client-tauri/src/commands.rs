@@ -513,6 +513,8 @@ pub async fn client_remove_account(
     if let Err(err) = state.core.keys().delete(&id) {
         tracing::error!("The key of {id} was not removed from the key store: {err}");
     }
+    // its notifications and shortcuts go with it, as at a sign-out (SEC-CLI-100)
+    state.shell.account_signed_out(&id);
     state.shell.close_remotes(Some(&id));
     let was_current = moqui_lib::sync::lock(state.core.accounts())
         .current()

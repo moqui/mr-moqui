@@ -131,16 +131,39 @@ pub(crate) fn account_id(text: &str) -> Option<&str> {
     plain.then_some(text)
 }
 
-/// The signature of a room link: an HMAC of what it opens with the app's own link key (`native::link_key`), base64url,
-/// so a link another app sends opens nothing.
-fn room_link_signature(key: &[u8], account: &str, room: &str, seq: Option<i64>) -> String {
+/// The signature of what a link the app makes for itself opens (a room link, a page notification's tap): an HMAC of
+/// `text` with the app's own link key (`native::link_key`), base64url, so one another app sends opens nothing. Each
+/// kind's `text` starts with its own name (`room`, `notify`), so one kind's signature is never another's.
+pub(crate) fn link_signature(key: &[u8], text: &str) -> String {
     use base64::Engine;
     use hmac::{KeyInit as _, Mac as _};
     let Ok(mut mac) = hmac::Hmac::<sha2::Sha256>::new_from_slice(key) else {
         return String::new();
     };
-    mac.update(format!("room\n{account}\n{room}\n{}", seq.unwrap_or(0)).as_bytes());
+    mac.update(text.as_bytes());
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&mac.finalize().into_bytes()[..18])
+}
+
+/// Whether `given` is the signature `expected` (never an empty one), compared in constant time.
+pub(crate) fn signature_matches(expected: &str, given: &str) -> bool {
+    !expected.is_empty()
+        && expected.len() == given.len()
+        && expected
+            .bytes()
+            .zip(given.bytes())
+            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
+/// The signature of a room link.
+fn room_link_signature(key: &[u8], account: &str, room: &str, seq: Option<i64>) -> String {
+    link_signature(key, &format!("room\n{account}\n{room}\n{}", seq.unwrap_or(0)))
+}
+
+/// The signature of a page notification's tap (`commands::notify`): of the account it was shown for and the server path
+/// it opens, so a tap's intent another app makes up opens no page (plans/Security-Review-Low.md SEC-CLI-88).
+pub(crate) fn notify_signature(key: &[u8], account: &str, path: &str) -> String {
+    link_signature(key, &format!("notify\n{account}\n{path}"))
 }
 
 /// The link a chat notification's tap opens the app with, signed with the app's link `key`: none for an id that is not
@@ -176,15 +199,7 @@ pub(crate) fn room_link_of(url: &tauri::Url, key: &[u8]) -> Option<(String, Stri
         }
     }
     let (account, room, sig) = (account?, room?, sig?);
-    let expected = room_link_signature(key, &account, &room, seq);
-    let same = !expected.is_empty()
-        && expected.len() == sig.len()
-        && expected
-            .bytes()
-            .zip(sig.bytes())
-            .fold(0_u8, |diff, (a, b)| diff | (a ^ b))
-            == 0;
-    if !same {
+    if !signature_matches(&room_link_signature(key, &account, &room, seq), &sig) {
         log::warn!("A room link not made by this app was refused");
         return None;
     }
@@ -388,6 +403,20 @@ impl PushRecord {
         self.registered.retain(|account, _| endpoints.contains_key(account));
         self.taken.clear();
         true
+    }
+
+    /// No account is signed in here any more, and Firebase's token goes with its installation (`Push.stopFcm`,
+    /// SEC-CLI-121): the token is forgotten, with what registered with it, so nothing registers a dead token and the
+    /// next sign-in's new one registers (a UnifiedPush account's registration, with its own endpoint, stays). Whether
+    /// the record changed.
+    pub(crate) fn forget_token(&mut self) -> bool {
+        let token = self.token.take().is_some();
+        let before = self.registered.len();
+        let endpoints = &self.endpoints;
+        self.registered.retain(|account, _| endpoints.contains_key(account));
+        let taken = !self.taken.is_empty();
+        self.taken.clear();
+        token || taken || self.registered.len() != before
     }
 
     /// `account`'s UnifiedPush endpoint (none: it goes back to FCM): another one registers it again. Whether it

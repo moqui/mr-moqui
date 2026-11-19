@@ -353,8 +353,10 @@ impl MobileHost {
         }
     }
 
-    /// A room's invite link from its join page (`org.moqui.mobile:/join`, [`crate::join`]): its page in the shell of an
-    /// account on its host (the current one when it is there), where the person presses Join; with none, the shell says so.
+    /// A room's invite link from its join page (`org.moqui.mobile:/join`, [`crate::join`]): its page in the current
+    /// account's shell when that account is on its host, where the person presses Join. Any web page can make the link,
+    /// so it never switches the account (SEC-CLI-99): with another account here on the host, the page shown says so
+    /// and that the person switches from the account menu; with none, that there is none.
     pub(crate) fn open_join_link(&self, host: &str, token: &str) {
         let Ok(state) = moqui_client_tauri::state(&self.app) else {
             return;
@@ -366,28 +368,33 @@ impl MobileHost {
                 accounts.current().map(|account| account.id.clone()),
             )
         };
-        let Some(account) = crate::join::account_for(&accounts, current.as_deref(), host) else {
-            log::warn!("moqui-mobile: a join link of {host} is not opened: no account on that server here");
-            let text = serde_json::to_string(&format!("This invite is for {host}, and this app has no account there"))
-                .unwrap_or_else(|_| "\"\"".to_string());
-            self.eval(&format!(
-                "window.moqui && moqui.notifyMessages && moqui.notifyMessages([{{type: 'warning', message: \
-                 (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize({text}) : {text})}}])"
-            ));
-            return;
-        };
-        let path = crate::join::join_path(token);
-        if current.as_deref() != Some(account.as_str()) {
-            if let Err(err) = moqui_client_tauri::commands::switch_account(&state, &account) {
-                log::warn!("moqui-mobile: a join link is not opened: {err}");
-                return;
+        match crate::join::join_action(&accounts, current.as_deref(), host) {
+            crate::join::JoinAction::Open => {
+                self.open_shell_path(&crate::join::join_path(token));
+                log::info!("moqui-mobile: a room's join page opens in the shell");
             }
-            // the shell is loading for the account, and takes it then
-            *moqui_lib::sync::lock(&state.open_pending) = Some(path);
-        } else {
-            self.open_shell_path(&path);
+            crate::join::JoinAction::OtherAccount => {
+                log::warn!(
+                    "moqui-mobile: a join link of {host} is not opened: its account here is not the current one"
+                );
+                self.tell_warning(&format!(
+                    "This invite is for your account on {host}: switch to it from the account menu, then open the invite again"
+                ));
+            }
+            crate::join::JoinAction::NoAccount => {
+                log::warn!("moqui-mobile: a join link of {host} is not opened: no account on that server here");
+                self.tell_warning(&format!("This invite is for {host}, and this app has no account there"));
+            }
         }
-        log::info!("moqui-mobile: a room's join page opens in the shell");
+    }
+
+    /// A warning in the page shown (the shell's or a server page's message bar), localized where the page can.
+    fn tell_warning(&self, message: &str) {
+        let text = serde_json::to_string(message).unwrap_or_else(|_| "\"\"".to_string());
+        self.eval(&format!(
+            "window.moqui && moqui.notifyMessages && moqui.notifyMessages([{{type: 'warning', message: \
+             (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize({text}) : {text})}}])"
+        ));
     }
 
     /// A chat notification's tap (a room link this app signed): the room of `account` at the message, in the shell; the
@@ -614,7 +621,9 @@ impl MobileHost {
     /// The page goes (a navigation of the host's to `navigating`, or any new document: `PageLoadEvent::Started`, a
     /// reload, the webview's own history, a renderer gone and loaded again): with `navigating`, the page state too.
     /// The page leaves with its calls' media, so the native calls it joined end with it; a ring, or a call answered on
-    /// the phone and not joined yet, stays. Under [`Self::calls`], so a `joined` on its way is told first.
+    /// the phone and not joined yet, stays. Under [`Self::calls`], so a `joined` on its way is told first. The room the
+    /// shell showed is shown no more: the shell's own word of it (`chat_room_shown`) needs its load's nonce, which the
+    /// navigation has taken (SEC-CLI-97).
     pub(crate) fn page_gone(&self, navigating: Option<&Url>) {
         let _calls = moqui_lib::sync::lock(&self.calls);
         if let Some(to) = navigating {
@@ -623,6 +632,10 @@ impl MobileHost {
         #[cfg(target_os = "android")]
         if let Err(err) = crate::android::calls_page_gone() {
             log::warn!("The native calls were not told the page went: {err}");
+        }
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::chat_room_shown("", "") {
+            log::warn!("The chat notifications were not told the page went: {err}");
         }
     }
 
@@ -771,11 +784,52 @@ impl ShellHost for MobileHost {
         if let Some(core) = self.core() {
             crate::native::unregister_push(&core, &self.dir, account, key);
         }
-        // its number no longer calls from the phone's dialer
+        // its number no longer calls from the phone's dialer (`account_signed_out` again; a removal has only this)
         if let Err(err) = self.set_dial_account(&account.id, false) {
             log::warn!("The calling account was not changed for the sign-out: {err}");
         }
         unified_register_all();
+    }
+
+    /// An account is signed out here, its key gone, whether its server heard or not (a sign-out with no network, a key
+    /// the server no longer takes): what the phone shows and keeps of it goes, with no request to its server (one
+    /// before the TLS verifier is ready would panic). Its chat notifications, conversation shortcuts and a room of it
+    /// shown (`ChatNotifications.forgetAccount`, SEC-CLI-100); its number for the phone's dialer; its push registration,
+    /// keys and UnifiedPush instance here (taken back from the distributor by `registerAll`); and with no account left
+    /// signed in, the FCM token and the Firebase installation (SEC-CLI-121). The server's take-back of the push
+    /// registration is [`Self::account_signing_out`]'s, when the app can reach it.
+    fn account_signed_out(&self, account: &str) {
+        forget_chats(account);
+        if let Err(err) = self.set_dial_account(account, false) {
+            log::warn!("The calling account was not changed for the sign-out: {err}");
+        }
+        let last = self
+            .core()
+            .is_some_and(|core| crate::native::push_signed_out(&core, &self.dir, account));
+        if last {
+            fcm_stop();
+        }
+        unified_register_all();
+    }
+}
+
+/// The chat notifications, conversation shortcuts and shown room of `account`, signed out, go
+/// (`ChatNotifications.forgetAccount`, SEC-CLI-100).
+fn forget_chats(account: &str) {
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::forget_account(account) {
+        log::warn!("The chat notifications of a signed-out account were not taken off: {err}");
+    }
+    #[cfg(not(target_os = "android"))]
+    log::info!("The chat notifications of {account} go");
+}
+
+/// No account is signed in here any more: Firebase's token and installation are deleted (`Push.stopFcm`; nothing in a
+/// build without Firebase), and the next sign-in asks for a new token ([`fcm_start`], SEC-CLI-121).
+fn fcm_stop() {
+    #[cfg(target_os = "android")]
+    if let Err(err) = crate::android::fcm_stop() {
+        log::warn!("Push: Firebase's token was not deleted at the last sign-out: {err}");
     }
 }
 

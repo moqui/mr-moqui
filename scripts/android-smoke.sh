@@ -5,6 +5,8 @@
 #     loaded", logged once the shell's page loaded, with no server needed), and take a screenshot;
 #   - the frame check (scripts/android-frames.py, over the WebView's DevTools socket of a debug build): the page has
 #     the IPC, and a frame of another origin it adds has none (skipped without python3's websocket-client);
+#   - a notification tap another app makes up (an explicit ACTION_MAIN intent with the notification plugin's extras and
+#     a link of its own, SEC-CLI-88) opens no page: the app refuses it, and the shell does not load again;
 #   - back out of the app and start it again: the process ends with the activity, and the new one loads the shell.
 # A release APK (not debuggable, so no DevTools socket) skips the frame check; instead the classes and methods Rust
 # calls by name through JNI are looked for in its dex files (R8 must keep them: proguard-rules.pro, wry's
@@ -60,14 +62,19 @@ JNI_NAMES=(
     org/moqui/mobile/ScreenSecurity#set org/moqui/mobile/CalendarIntent#insert org/moqui/mobile/Push#startFcm
     org/moqui/mobile/CallManager#busyNow org/moqui/mobile/Native#instanceOf org/moqui/mobile/Native#accountOf
     org/moqui/mobile/DeviceLock#isSecure org/moqui/mobile/RustWebChromeClient#pageServer
+    org/moqui/mobile/ChatNotifications#forgetAccount org/moqui/mobile/Push#stopFcm
     org/moqui/mobile/Ipc#attach org/moqui/mobile/RustWebView#loadUrlMainThread org/moqui/mobile/RustWebView#evalScript
     org/moqui/mobile/WryActivity#getAppClass org/moqui/mobile/WryActivity#getVersion
     org/moqui/mobile/WryActivity#setWebView org/rustls/platformverifier/CertificateVerifier#verifyCertificateChain
 )
 
+# The ones Push.kt asks for by name in a build with Firebase (src/fcm, there only with google-services.json): looked for
+# when the dex files have its PushService.
+FCM_NAMES=(org/moqui/mobile/FcmPush#start org/moqui/mobile/FcmPush#stop)
+
 # Each of JNI_NAMES in the APK's dex files, by its own name (not renamed or removed by R8).
 check_jni_names() {
-    local dexdump tmp have name missing=
+    local dexdump tmp have name names missing=
     dexdump=$(find "$sdk/build-tools" -name dexdump -type f 2>/dev/null | sort -V | tail -1)
     if [ -z "$dexdump" ] || ! command -v unzip >/dev/null; then
         echo "   skipped: no dexdump in $sdk/build-tools, or no unzip" >&2
@@ -79,14 +86,16 @@ check_jni_names() {
         /Class descriptor/ { cls = $4; gsub(/^.L|;.$/, "", cls) }
         /^      name  / { n = $3; gsub(/'"'"'/, "", n); print cls "#" n }' | sort -u)
     rm -rf "$tmp"
-    for name in "${JNI_NAMES[@]}"; do
+    names=("${JNI_NAMES[@]}")
+    grep -q '^org/moqui/mobile/PushService#' <<<"$have" && names+=("${FCM_NAMES[@]}")
+    for name in "${names[@]}"; do
         grep -qxF "$name" <<<"$have" || missing="$missing $name"
     done
     if [ -n "$missing" ]; then
         echo "FAILED: R8 removed or renamed what Rust calls by name:$missing" >&2
         return 1
     fi
-    echo "   the ${#JNI_NAMES[@]} classes and methods Rust calls by name are in the dex files" >&2
+    echo "   the ${#names[@]} classes and methods Rust and Push.kt call by name are in the dex files" >&2
 }
 
 echo "== installing $apk on $serial" >&2
@@ -107,6 +116,33 @@ adb shell am start -W -n "$package/.MainActivity" >/dev/null
 wait_shell 1 || { echo "FAILED: the shell did not load in 30 seconds" >&2; failed=1; }
 mkdir -p "$(dirname "$shot")"
 adb exec-out screencap -p >"$shot"
+
+# The notification plugin takes any explicit ACTION_MAIN intent to the exported activity with its extras as a tap on one
+# of its notifications; the app opens a tap's link only with its own signature of it for the current account
+# (src/commands.rs tapped_path), so this one, with none, is refused and the shell does not load again (a page opened
+# from it would show the shell first).
+echo "== a notification tap another app makes up opens no page" >&2
+loaded=$(adb logcat -d -s moqui-mobile | grep -c 'moqui-mobile: the shell loaded' || true)
+adb shell am start -n "$package/.MainActivity" -a android.intent.action.MAIN --ei NotificationId 4242 \
+    --es LocalNotficationObject "'{\"id\":4242,\"extra\":{\"link\":\"/qapps/system/smoke-forged-tap\"}}'" >/dev/null
+refused=
+for _ in $(seq 1 10); do
+    if adb logcat -d -s moqui-mobile | grep -q "a notification's tap the app did not sign"; then
+        refused=1
+        break
+    fi
+    sleep 1
+done
+sleep 2
+if [ -z "$refused" ]; then
+    echo "FAILED: the forged notification tap was not refused (no refusal in the log in 10 seconds)" >&2
+    failed=1
+elif [ "$(adb logcat -d -s moqui-mobile | grep -c 'moqui-mobile: the shell loaded')" -gt "$loaded" ]; then
+    echo "FAILED: the shell loaded again after a forged notification tap" >&2
+    failed=1
+else
+    echo "   refused, and no page opened" >&2
+fi
 
 echo "== frames: only the main frame has the IPC" >&2
 pid=$(adb shell pidof "$package" | tr -d '\r' || true)
@@ -157,4 +193,5 @@ if [ -n "$failed" ]; then
     echo "FAILED (screenshot: $shot)" >&2
     exit 1
 fi
-echo "ok: the shell loaded, frames have no IPC, a relaunch after backing out loads it again (screenshot: $shot)" >&2
+echo "ok: the shell loaded, frames have no IPC, a forged notification tap opened no page, a relaunch after backing out" \
+    "loads it again (screenshot: $shot)" >&2

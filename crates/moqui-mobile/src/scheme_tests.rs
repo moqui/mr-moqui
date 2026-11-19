@@ -18,7 +18,9 @@ use base64::Engine;
 use tauri::http::{Response, StatusCode};
 use tauri::Url;
 
-use super::{fetch_answer, fetch_request, redirect_page};
+use moqui_client_tauri::scheme::SchemeHooks;
+
+use super::{fetch_answer, fetch_request, redirect_page, refuse_fetch, FetchHooks};
 
 fn redirect(location: &str) -> Response<Vec<u8>> {
     Response::builder()
@@ -79,4 +81,53 @@ fn the_hosts_answer_to_a_fetch_carries_its_status_headers_and_body() {
         answer["body"],
         base64::engine::general_purpose::STANDARD.encode(b"done")
     );
+}
+
+/// SEC-CLI-06: where a page's request through the host comes from is the host's to say: the caller's `Origin`,
+/// `Referer`, `Sec-Fetch-*` and `Service-Worker` are replaced by the page's own origin and a fetch's destination, and the
+/// request is `same-origin` (the IPC takes the main frame only); the rest of its headers go on.
+#[test]
+fn a_pages_fetch_through_the_host_has_the_hosts_origin_and_fetch_headers_not_its_own() {
+    let app = Url::parse("http://moqui-app.localhost/qapps/Orders").unwrap();
+    let hostile = HashMap::from([
+        ("Origin".to_string(), "https://evil.example".to_string()),
+        ("referer".to_string(), "https://evil.example/page".to_string()),
+        ("Sec-Fetch-Site".to_string(), "none".to_string()),
+        ("sec-fetch-dest".to_string(), "document".to_string()),
+        ("Sec-Fetch-Mode".to_string(), "navigate".to_string()),
+        ("Service-Worker".to_string(), "script".to_string()),
+        (
+            "Content-Type".to_string(),
+            "application/x-www-form-urlencoded".to_string(),
+        ),
+    ]);
+    let request = fetch_request(&app, "POST", "/apps/Orders/approve", &hostile, None).unwrap();
+    let headers = request.headers();
+    assert_eq!(
+        headers.get_all("origin").iter().collect::<Vec<_>>(),
+        ["http://moqui-app.localhost"]
+    );
+    assert_eq!(headers.get_all("sec-fetch-dest").iter().collect::<Vec<_>>(), ["empty"]);
+    for gone in ["referer", "sec-fetch-site", "sec-fetch-mode", "service-worker"] {
+        assert!(!headers.contains_key(gone), "{gone}: {:?}", headers.get(gone));
+    }
+    assert_eq!(headers["content-type"], "application/x-www-form-urlencoded");
+    // the shell's own origin for the shell's request
+    let shell = Url::parse("http://moqui-shell.localhost/").unwrap();
+    let request = fetch_request(&shell, "POST", "/ChatKeys/storeKey", &hostile, None).unwrap();
+    assert_eq!(request.headers()["origin"], "http://moqui-shell.localhost");
+    assert_eq!(
+        FetchHooks.fetch_site(request.headers(), "http://moqui-shell.localhost"),
+        Some("same-origin")
+    );
+}
+
+/// SEC-CLI-06: a fetch through the host on the shell's origin is answered only to the shell's current load (its page
+/// and nonce): a server page still running as the host shows the shell has the shell's URL, not its nonce. A server
+/// page's own fetch is its account's, as the scheme answers it.
+#[test]
+fn a_fetch_on_the_shells_origin_without_the_shells_nonce_is_refused() {
+    assert!(refuse_fetch("http://moqui-shell.localhost", false).is_err());
+    assert!(refuse_fetch("http://moqui-shell.localhost", true).is_ok());
+    assert!(refuse_fetch("http://moqui-app.localhost", false).is_ok());
 }

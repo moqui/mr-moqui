@@ -799,6 +799,10 @@ fn every_class_and_method_the_mobile_apps_code_asks_for_by_name_has_a_keep_rule(
         ("org.moqui.mobile.CalendarIntent", method("insert")),
         ("org.moqui.mobile.Push", method("startFcm")),
         ("org.moqui.mobile.FcmPush", method("start")),
+        // SEC-CLI-100 and SEC-CLI-121: a sign-out's
+        ("org.moqui.mobile.ChatNotifications", method("forgetAccount")),
+        ("org.moqui.mobile.Push", method("stopFcm")),
+        ("org.moqui.mobile.FcmPush", method("stop")),
         ("org.moqui.mobile.KeyVault", Wanted::Every),
         ("org.moqui.mobile.Native", Wanted::Native("init".to_string())),
     ] {
@@ -914,16 +918,160 @@ fn a_firebase_build_asks_fcm_for_a_token_only_once_an_account_is_signed_in() {
     let asks = start.find("startFcm(").expect("Push.start asks Firebase");
     assert!(accounts < asks, "Push.start asks Firebase before it reads the accounts");
     let start_fcm = body_of(&push, "fun startFcm(").expect("Push.startFcm");
-    assert!(start_fcm.contains("org.moqui.mobile.FcmPush"));
+    assert_eq!(start_fcm.matches("org.moqui.mobile.FcmPush").count(), 1);
+    // and Push.stopFcm, the last sign-out's (the_last_sign_out_deletes_firebases_token_and_installation)
+    let stop_fcm = body_of(&push, "fun stopFcm(").expect("Push.stopFcm");
+    assert_eq!(stop_fcm.matches("org.moqui.mobile.FcmPush").count(), 1);
     assert_eq!(
         push.code.matches("FcmPush").count(),
-        1,
-        "FcmPush is named in Push.startFcm only"
+        2,
+        "FcmPush is named in Push.startFcm and Push.stopFcm only"
     );
 
     let host = lex(&read(&root().join("crates/moqui-mobile/src/host.rs")));
     let signed_in = body_of(&host, "fn account_signed_in(").expect("MobileHost::account_signed_in");
     assert!(signed_in.contains("fcm_start()"), "a sign-in does not start FCM");
+}
+
+/// SEC-CLI-121 (the last sign-out): with no account signed in here, the phone stays registered with Google for none.
+/// `MobileHost::account_signed_out` (every sign-out, one its server did not hear included) asks
+/// `native::push_signed_out` whether no account is left, which then forgets the FCM token (`PushRecord::forget_token`,
+/// so the next sign-in's new token registers), and only then calls `fcm_stop`, which tells `Push.stopFcm` through JNI;
+/// that asks for `FcmPush.stop` by name (nothing in a build without Firebase), which deletes the token and then the
+/// Firebase installation (`firebase-installations` in the Firebase build).
+#[test]
+fn the_last_sign_out_deletes_firebases_token_and_installation() {
+    let mobile = root().join("crates/moqui-mobile/src");
+    let host = lex(&read(&mobile.join("host.rs")));
+    let signed_out = body_of(&host, "fn account_signed_out(").expect("MobileHost::account_signed_out");
+    let last = signed_out
+        .find("crate::native::push_signed_out(")
+        .expect("account_signed_out asks whether no account is left");
+    let stop = signed_out.find("fcm_stop()").expect("account_signed_out stops FCM");
+    assert!(last < stop, "FCM is stopped before the account is known to be the last");
+    assert!(
+        signed_out[..stop].trim_end().ends_with("if last {"),
+        "FCM is stopped at a sign-out that is not the last: {signed_out}"
+    );
+    assert!(
+        body_of(&host, "fn fcm_stop(").is_some_and(|body| body.contains("crate::android::fcm_stop()")),
+        "fcm_stop does not tell the native code"
+    );
+    let native = lex(&read(&mobile.join("native.rs")));
+    let forgets = body_of(&native, "fn push_signed_out(").expect("native::push_signed_out");
+    assert!(
+        forgets.contains("let last = keyed_ids(core).is_empty();") && forgets.contains("last && record.forget_token()"),
+        "push_signed_out does not forget the token with no account left: {forgets}"
+    );
+    let android_rs = lex(&read(&mobile.join("android.rs")));
+    assert!(
+        body_of(&android_rs, "fn fcm_stop(").is_some_and(|body| body.contains("jni_str!(\"stopFcm\")")),
+        "android::fcm_stop does not call Push.stopFcm"
+    );
+    let push = lex(&read(&android().join("app/src/main/java/org/moqui/mobile/Push.kt")));
+    let stop_fcm = body_of(&push, "fun stopFcm(").expect("Push.stopFcm");
+    assert!(
+        stop_fcm.contains("if (!BuildConfig.FCM) return")
+            && stop_fcm
+                .contains("Class.forName(\"org.moqui.mobile.FcmPush\").getMethod(\"stop\", Context::class.java)"),
+        "{stop_fcm}"
+    );
+    let path = android().join("app/src/fcm/java/org/moqui/mobile/PushService.kt");
+    let fcm = lex(&read(&path));
+    let stopped = body_of(&fcm, "fun stop(").expect("FcmPush.stop");
+    let token = stopped
+        .find("FirebaseMessaging.getInstance().deleteToken()")
+        .unwrap_or_else(|| panic!("{}: FcmPush.stop does not delete the token", path.display()));
+    let installation = stopped
+        .find("FirebaseInstallations.getInstance().delete()")
+        .unwrap_or_else(|| panic!("{}: FcmPush.stop does not delete the installation", path.display()));
+    assert!(
+        token < installation,
+        "the installation goes before the token, which needs it"
+    );
+    let gradle = lex(&read(&android().join("app/build.gradle.kts")));
+    assert!(gradle
+        .code
+        .contains("implementation(\"com.google.firebase:firebase-installations\")"));
+}
+
+/// SEC-CLI-100: every sign-out takes the account's chat notifications and conversation shortcuts off the phone, one its
+/// server did not hear included (no network, a key the server no longer takes). The shared hook, which
+/// `signed_out_in` calls once the key is gone, is `MobileHost::account_signed_out`; it calls `forget_chats`, which
+/// tells `ChatNotifications.forgetAccount` through JNI, and it makes no request (a request before the TLS verifier is
+/// ready panics), while it also takes the account's number from the phone's dialer and its UnifiedPush instance.
+/// `forgetAccount` clears the account's room notifications (`clearAll`) and its other ones, removes its rooms'
+/// long-lived shortcuts (dynamic and cached, by the id `showRoom` gives them) and forgets a room of it shown. On a
+/// device: `ChatNotificationsTest.aSignOutRemovesTheAccountsNotificationsAndShortcutsAndKeepsAnothers`.
+#[test]
+fn a_sign_out_takes_the_accounts_chat_notifications_and_shortcuts_off_the_phone() {
+    let tauri = lex(&read(&root().join("crates/moqui-client-tauri/src/commands.rs")));
+    let signed_out_in = body_of(&tauri, "fn signed_out_in(").expect("moqui_client_tauri's signed_out_in");
+    assert!(
+        signed_out_in.contains("state.shell.account_signed_out(id)"),
+        "a sign-out does not tell the host"
+    );
+    let mobile = root().join("crates/moqui-mobile/src");
+    let host = lex(&read(&mobile.join("host.rs")));
+    let signed_out = body_of(&host, "fn account_signed_out(").expect("MobileHost::account_signed_out");
+    for wanted in [
+        "forget_chats(account)",
+        "self.set_dial_account(account, false)",
+        "unified_register_all()",
+    ] {
+        assert!(signed_out.contains(wanted), "account_signed_out has no {wanted}");
+    }
+    for refused in [
+        "return",
+        "network_ready",
+        "ProxyPoster",
+        "unregister_push",
+        "register_or_retry",
+        "test_push",
+    ] {
+        assert!(
+            !signed_out.contains(refused),
+            "account_signed_out has {refused}: it does all, with no request"
+        );
+    }
+    assert!(
+        body_of(&host, "fn forget_chats(").is_some_and(|body| body.contains("crate::android::forget_account(account)")),
+        "forget_chats does not tell the native code"
+    );
+    let android_rs = lex(&read(&mobile.join("android.rs")));
+    assert!(
+        body_of(&android_rs, "fn forget_account(").is_some_and(|body| body.contains("jni_str!(\"forgetAccount\")")),
+        "android::forget_account does not call ChatNotifications.forgetAccount"
+    );
+    let path = android().join("app/src/main/java/org/moqui/mobile/ChatNotifications.kt");
+    let chats = lex(&read(&path));
+    let forget = body_of(&chats, "fun forgetAccount(").expect("ChatNotifications.forgetAccount");
+    for wanted in [
+        "clearAll(app, plainAccount)",
+        "ChatRules.otherTag(plainAccount, \"\")",
+        "ChatRules.shortcutId(plainAccount, \"\")",
+        "FLAG_MATCH_DYNAMIC or ShortcutManagerCompat.FLAG_MATCH_CACHED",
+        "ShortcutManagerCompat.removeLongLivedShortcuts(app, ids)",
+        "shownRoom = null",
+    ] {
+        assert!(
+            forget.contains(wanted),
+            "{}: forgetAccount has no {wanted}",
+            path.display()
+        );
+    }
+    let room = body_of(&chats, "fun showRoom(").expect("ChatNotifications.showRoom");
+    assert!(
+        room.contains("val shortcutId = ChatRules.shortcutId(account, room)"),
+        "{}: a room's shortcut is not named by the id forgetAccount finds",
+        path.display()
+    );
+    let other = body_of(&chats, "fun showOther(").expect("ChatNotifications.showOther");
+    assert!(
+        other.contains("ChatRules.otherTag(account, tag)"),
+        "{}: an account's other notification is not tagged by it",
+        path.display()
+    );
 }
 
 /// SEC-CLI-123 (the phone's part): the app's WebView sends Google no metrics, on a phone whose owner allows usage reports

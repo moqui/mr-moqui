@@ -4,6 +4,7 @@ package org.moqui.mobile
 
 import android.content.Context
 import android.util.Log
+import com.google.firebase.installations.FirebaseInstallations
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -25,12 +26,30 @@ class PushService : FirebaseMessagingService() {
     }
 }
 
-/** Called by name from [Push.startFcm]: the current token, which Rust registers if it is new. */
+/** Called by name from [Push.startFcm] and [Push.stopFcm]. */
 object FcmPush {
+    /** The current token, which Rust registers if it is new. */
     @JvmStatic
     fun start(context: Context) {
         FirebaseMessaging.getInstance().token
             .addOnSuccessListener { token -> Push.token(context, token) }
             .addOnFailureListener { err -> Log.w("moqui-push", "No FCM token: ${err.message}") }
+    }
+
+    /**
+     * No account is signed in here any more (SEC-CLI-121): the token is deleted (FCM takes no push for it), then the
+     * Firebase installation, which the token's deletion still needs; with auto-init off neither is made again until a
+     * sign-in asks ([start]).
+     */
+    @JvmStatic
+    @Suppress("UNUSED_PARAMETER")
+    fun stop(context: Context) {
+        FirebaseMessaging.getInstance().deleteToken().addOnCompleteListener { deleted ->
+            if (!deleted.isSuccessful) Log.w("moqui-push", "The FCM token was not deleted: ${deleted.exception?.message}")
+            FirebaseInstallations.getInstance().delete().addOnCompleteListener { gone ->
+                if (gone.isSuccessful) Log.i("moqui-push", "No account is signed in: Firebase's token and installation are deleted")
+                else Log.w("moqui-push", "The Firebase installation was not deleted: ${gone.exception?.message}")
+            }
+        }
     }
 }

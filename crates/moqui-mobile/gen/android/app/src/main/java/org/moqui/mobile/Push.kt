@@ -57,6 +57,21 @@ object Push {
         }
     }
 
+    /**
+     * The last account here signed out (src/android.rs fcm_stop, SEC-CLI-121): Firebase's token and installation are
+     * deleted ([FcmPush.stop]), so the phone stays registered with Google for no account, and Rust has forgotten the
+     * token; the next sign-in asks for a new one ([startFcm]). Nothing in a build without Firebase.
+     */
+    @JvmStatic
+    fun stopFcm(context: Context) {
+        if (!BuildConfig.FCM) return
+        try {
+            Class.forName("org.moqui.mobile.FcmPush").getMethod("stop", Context::class.java).invoke(null, context)
+        } catch (err: Throwable) {
+            Log.e(TAG, "Firebase's token was not deleted", err)
+        }
+    }
+
     /** A token, from Firebase (or the debug build's injection): kept and registered by Rust, tried again until done. */
     fun token(context: Context, token: String) {
         val app = context.applicationContext

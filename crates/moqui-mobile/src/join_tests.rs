@@ -103,3 +103,46 @@ fn an_accounts_server_is_named_by_its_host_and_port() {
     assert_eq!(named("http://localhost:8080").as_deref(), Some("localhost:8080"));
     assert_eq!(named("not a server"), None);
 }
+
+/// SEC-CLI-99: any web page can open a join link, so it never switches the account: the join page opens in the current
+/// account when it is on the link's host; with another account here on the host the page says so (the person switches
+/// from the account menu), and with none, that there is none. The host does what this decides and switches nothing.
+#[test]
+fn a_join_link_opens_in_the_current_account_only_and_never_switches_to_another() {
+    let accounts = [
+        account("other-1", "https://other.example.com"),
+        account("chat-1", "https://chat.example.com"),
+        account("chat-2", "https://chat.example.com"),
+    ];
+    assert_eq!(
+        join_action(&accounts, Some("chat-2"), "chat.example.com"),
+        JoinAction::Open
+    );
+    assert_eq!(
+        join_action(&accounts, Some("chat-1"), "chat.example.com"),
+        JoinAction::Open
+    );
+    assert_eq!(
+        join_action(&accounts, Some("other-1"), "chat.example.com"),
+        JoinAction::OtherAccount
+    );
+    assert_eq!(
+        join_action(&accounts, None, "chat.example.com"),
+        JoinAction::OtherAccount
+    );
+    assert_eq!(
+        join_action(&accounts, Some("other-1"), "nowhere.example.com"),
+        JoinAction::NoAccount
+    );
+    let host = include_str!("host.rs");
+    let opened = host
+        .split("fn open_join_link(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n    }\n").next())
+        .expect("MobileHost::open_join_link");
+    assert!(opened.contains("join_action("), "{opened}");
+    assert!(
+        !opened.contains("switch_account"),
+        "a join link switches the account: {opened}"
+    );
+}

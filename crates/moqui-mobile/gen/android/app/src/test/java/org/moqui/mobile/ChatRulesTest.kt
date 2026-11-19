@@ -38,6 +38,19 @@ class ChatRulesTest {
         assertNull("a room id has no dots", ChatRules.plainId(a))
     }
 
+    /** SEC-CLI-100: an account's other notifications and its rooms' shortcuts are named by it, so its sign-out finds them. */
+    @Test
+    fun anAccountsOtherNotificationsAndShortcutsAreNamedByIt() {
+        val a = "chat.example.com-0123456789ab"
+        val b = "chat.example.org-ba9876543210"
+        assertEquals("other-$a/chat-reminder-1", ChatRules.otherTag(a, "chat-reminder-1"))
+        assertTrue(ChatRules.otherTag(a, "x") != ChatRules.otherTag(b, "x"))
+        assertTrue(ChatRules.otherTag(a, "x").startsWith(ChatRules.otherTag(a, "")))
+        assertEquals("chat-$a-100", ChatRules.shortcutId(a, "100"))
+        assertTrue(ChatRules.shortcutId(a, "100").startsWith(ChatRules.shortcutId(a, "")))
+        assertFalse(ChatRules.shortcutId(b, "100").startsWith(ChatRules.shortcutId(a, "")))
+    }
+
     @Test
     fun aMuteEndsAfterItsHour() {
         assertTrue(ChatRules.muted(1_000 + ChatRules.MUTE_MS, 1_000))

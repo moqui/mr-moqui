@@ -128,6 +128,8 @@ dependencies {
     if (fcm) {
         implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
         implementation("com.google.firebase:firebase-messaging")
+        // the installation deleted with the token at the last sign-out (FcmPush.stop, SEC-CLI-121)
+        implementation("com.google.firebase:firebase-installations")
     }
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")

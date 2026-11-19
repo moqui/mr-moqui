@@ -113,10 +113,11 @@ pub(crate) fn notification_title(title: &str, from_shell: bool, server: Option<&
 }
 
 /// A native notification: `title`, and `body`, replacing the one of the same `tag` of the account signed in; a tap
-/// shows the app at `link` when it is a path of the account's server (`notification_opened`). Without the notification
-/// permission it fails and never asks (SEC-CLI-120): any server page may call it, and Android's question comes with its
-/// reason once an account signs in (`MainActivity.askForCallsOnce`) or from the notification check's fix. A server
-/// page's title names its server (`notification_title`); the shell's carries its nonce.
+/// shows the app at `link` when it is a path of the account's server (`notification_opened`), which the notification
+/// carries with the account and the app's signature of both (SEC-CLI-88). Without the notification permission it
+/// fails and never asks (SEC-CLI-120): any server page may call it, and Android's question comes with its reason once
+/// an account signs in (`MainActivity.askForCallsOnce`) or from the notification check's fix. A server page's title
+/// names its server (`notification_title`); the shell's carries its nonce.
 #[tauri::command(async)]
 pub(crate) fn notify(
     app: AppHandle,
@@ -155,9 +156,25 @@ pub(crate) fn notify(
         builder = builder.id(id);
     }
     if let Some(path) = link.as_deref().and_then(|link| server_path(link).ok()) {
-        builder = builder.extra("link", path);
+        // the activity is exported, and the notification plugin takes any app's intent with its extras as a tap: the
+        // link opens only with the app's signature of it and its account (`tapped_path`, SEC-CLI-88)
+        match (account.as_deref(), link_key(&app)) {
+            (Some(account), Some(key)) => {
+                builder = builder
+                    .extra("link", path)
+                    .extra("account", account)
+                    .extra("sig", crate::calls::notify_signature(&key, account, path));
+            }
+            _ => log::info!("A page's notification with no account or link key: its tap only shows the app"),
+        }
     }
     builder.show().map_err(|err| err.to_string())
+}
+
+/// The app's key for its own links (`native::link_key`), when the client is made.
+fn link_key(app: &AppHandle) -> Option<Vec<u8>> {
+    let state = moqui_client_tauri::state(app).ok()?;
+    crate::native::link_key(&state.core)
 }
 
 /// Remove the notification of `tag` of the account signed in (a room read here: its notification goes, §7.2 rule 3):
@@ -183,13 +200,21 @@ pub(crate) fn notify_clear(app: AppHandle, tag: String) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-/// The room the shell shows now (none: no room, or the app left it): its pushes show no notification while the app is
-/// in front, as the server sends none to a room read (plans/Comms-Messaging.md §7.5).
+/// The room the shell shows now (none: no room): its pushes show no notification while the app is in front, as the
+/// server sends none to a room read (plans/Comms-Messaging.md §7.5). The shell's page only, by its nonce (SEC-CLI-97);
+/// the room the shell left goes with its page (`MobileHost::page_gone`), as a `null` sent while it leaves has no nonce.
 #[tauri::command(async)]
-pub(crate) fn chat_room_shown(app: AppHandle, room: Option<String>) -> Result<(), String> {
+pub(crate) fn chat_room_shown(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    room: Option<String>,
+) -> Result<(), String> {
     let host = host(&app)?;
     // the shell's comms screens only: a server's page cannot hide a room's notifications
-    shell_only(&host)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
     let account = host.signed_in().unwrap_or_default();
     let room = room.as_deref().and_then(crate::calls::call_id).unwrap_or("");
     #[cfg(target_os = "android")]
@@ -201,22 +226,60 @@ pub(crate) fn chat_room_shown(app: AppHandle, room: Option<String>) -> Result<()
     }
 }
 
-/// A tap on a notification of `notify`: the app shows its link (a path of the account's server) in the shell.
+/// A tap on a notification of `notify`, with its extras `link`, `account` and `sig`: the app shows the link (a path of
+/// the account's server) in the shell only when this app signed it for the current account ([`tapped_path`]); else the
+/// tap only shows the app, which Android has done. Any app can send the exported activity such a tap (SEC-CLI-88).
 #[cfg_attr(not(mobile), allow(dead_code))]
-pub(crate) fn notification_opened(app: &AppHandle, link: Option<&str>) {
-    let (Some(path), Ok(host)) = (link.and_then(|link| server_path(link).ok()), host(app)) else {
+pub(crate) fn notification_opened(app: &AppHandle, link: Option<&str>, account: Option<&str>, sig: Option<&str>) {
+    let (Some(link), Ok(host)) = (link, host(app)) else {
         return;
     };
-    host.open_shell_path(path);
+    let current = host.signed_in();
+    let path = link_key(app).and_then(|key| tapped_path(&key, current.as_deref(), Some(link), account, sig));
+    match path {
+        Some(path) => host.open_shell_path(path),
+        // the path is not logged: it may hold a token (SEC-CLI-112)
+        None => {
+            log::warn!("moqui-mobile: a notification's tap the app did not sign for the current account opens no page")
+        }
+    }
+}
+
+/// The server path a tap on a page's notification opens (SEC-CLI-88): its `link`, when `sig` is this app's signature
+/// (with its link `key`) of `account` and that path and `account` is the current one (`current`); none for a tap
+/// another app made up, a changed link, or an account signed out or not current, whose tap only shows the app. Links
+/// may be any server path (MoquiLib's notifications link anywhere), so the signature is what is checked.
+#[cfg_attr(not(mobile), allow(dead_code))]
+pub(crate) fn tapped_path<'a>(
+    key: &[u8],
+    current: Option<&str>,
+    link: Option<&'a str>,
+    account: Option<&str>,
+    sig: Option<&str>,
+) -> Option<&'a str> {
+    let path = server_path(link?).ok()?;
+    let account = account?;
+    if current != Some(account) {
+        return None;
+    }
+    let expected = crate::calls::notify_signature(key, account, path);
+    crate::calls::signature_matches(&expected, sig?).then_some(path)
 }
 
 /// The phone's notification state for the shell's check screen (plans/Comms-Messaging.md §7.6): the native code's
 /// (`permission`, `channels`, `batteryOptimized`, `fullScreen`, `lastPushDate`, `lastPushKind`, `fcm`), and whether the
-/// push token is registered with the current account's server (`registered`). The shell's page only.
+/// push token is registered with the current account's server (`registered`). The shell's page only, by its nonce
+/// (SEC-CLI-97).
 #[tauri::command(async)]
-pub(crate) fn push_check(app: AppHandle) -> Result<serde_json::Value, String> {
+pub(crate) fn push_check(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+) -> Result<serde_json::Value, String> {
     let host = host(&app)?;
-    shell_only(&host)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
     let mut state = native_state()?;
     let account = host.signed_in();
     let registered = account
@@ -228,10 +291,18 @@ pub(crate) fn push_check(app: AppHandle) -> Result<serde_json::Value, String> {
 }
 
 /// Open the system's screen that fixes one item of the check (`notifications`, `channels`, `battery`, `fullScreen`).
+/// The shell's page only, by its nonce: `firebase` takes back every UnifiedPush instance (SEC-CLI-97).
 #[tauri::command(async)]
-pub(crate) fn push_check_fix(app: AppHandle, what: String) -> Result<(), String> {
+pub(crate) fn push_check_fix(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    what: String,
+) -> Result<(), String> {
     let host = host(&app)?;
-    shell_only(&host)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
     if !matches!(
         what.as_str(),
         "notifications"
@@ -253,23 +324,20 @@ pub(crate) fn push_check_fix(app: AppHandle, what: String) -> Result<(), String>
 
 /// The check screen's "Send a test notification": the current account's server pushes one to this phone through the
 /// full path (§7.6). Its answer `{ackIdList, queuedDate, reasonCode}`; the screen then watches `push_check`'s
-/// `lastPushDate` for it.
+/// `lastPushDate` for it. The shell's page only, by its nonce (SEC-CLI-97).
 #[tauri::command(async)]
-pub(crate) fn push_test(app: AppHandle) -> Result<serde_json::Value, String> {
+pub(crate) fn push_test(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+) -> Result<serde_json::Value, String> {
     let host = host(&app)?;
-    shell_only(&host)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
     let account = host.signed_in().ok_or("No account is signed in")?;
     let state = moqui_client_tauri::state(&app)?;
     crate::native::test_push(&state.core, &account)
-}
-
-fn shell_only(host: &MobileHost) -> Result<(), String> {
-    use moqui_client::app::ClientHost;
-    if host.is_shell(crate::host::MAIN) {
-        Ok(())
-    } else {
-        Err("Only the app's own screens ask this".to_string())
-    }
 }
 
 /// The native code's part of the check (`PushCheck.state`), or none on the desktop.

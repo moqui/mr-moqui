@@ -17,8 +17,10 @@
 //! `org.moqui.mobile:/join?host=<host>&token=<token>` (a `BROWSABLE` intent filter, `RunEvent::Opened`).
 //!
 //! A web page makes the link, so it is not signed as a room link is, and it only opens a page: the app opens
-//! `/join/<token>` in its window of an account on that host (the current one when it is there, else the first), where the
-//! person presses Join. With no account on the host it says so and adds none. Nothing the link brings is done by itself.
+//! `/join/<token>` in the current account's shell when that account is on the host, where the person presses Join. It
+//! never switches the account ([`join_action`], SEC-CLI-99): with another account here on the host it says so, and
+//! that the person switches from the account menu; with none on the host it says so and adds none. Nothing the link
+//! brings is done by itself.
 
 // The link is Android's; it is tested on the desktop.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
@@ -111,6 +113,28 @@ pub(crate) fn account_for(accounts: &[Account], current: Option<&str>, host: &st
         .find(|account| Some(account.id.as_str()) == current)
         .or_else(|| on_host.first())
         .map(|account| account.id.clone())
+}
+
+/// What a join link of a host does here.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum JoinAction {
+    /// The join page in the current account's shell.
+    Open,
+    /// The page shown says the invite is for another account here on the host, which the person switches to from the
+    /// account menu: a web page makes the link, so it switches nothing.
+    OtherAccount,
+    /// The page shown says no account here is on the host.
+    NoAccount,
+}
+
+/// What a join link of `host` does with `accounts` here and `current` the current account (SEC-CLI-99): it opens in the
+/// current account only, and never switches to another, as any web page can open the link.
+pub(crate) fn join_action(accounts: &[Account], current: Option<&str>, host: &str) -> JoinAction {
+    match account_for(accounts, current, host) {
+        Some(account) if current == Some(account.as_str()) => JoinAction::Open,
+        Some(_) => JoinAction::OtherAccount,
+        None => JoinAction::NoAccount,
+    }
 }
 
 /// The path of a join link's page on its server.

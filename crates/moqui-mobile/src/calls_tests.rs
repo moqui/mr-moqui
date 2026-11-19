@@ -409,6 +409,33 @@ fn a_sign_out_takes_the_registration_back_with_the_keys_and_endpoint() {
     assert!(!record.forget(C));
 }
 
+/// SEC-CLI-121: the last account's sign-out has Firebase delete its token, which the record forgets with the
+/// registrations made with it (a UnifiedPush account's stays, with its own endpoint), so nothing registers the dead
+/// token and the next sign-in's new one registers.
+#[test]
+fn the_last_sign_out_forgets_the_fcm_token_and_the_next_sign_ins_token_registers() {
+    let poster = fake(vec![(A, Ok((200, json!({"registered": true, "subscriptionId": "9"}))))]);
+    let mut record = PushRecord {
+        token: Some("tok".to_string()),
+        registered: [(A.to_string(), "7".to_string()), (B.to_string(), "8".to_string())].into(),
+        endpoints: [(B.to_string(), "https://up.example.net/b".to_string())].into(),
+        taken: [C.to_string()].into(),
+        ..Default::default()
+    };
+    assert!(record.forget_token());
+    assert_eq!(record.token, None);
+    assert_eq!(record.registered.keys().collect::<Vec<_>>(), vec![B]);
+    assert!(record.taken.is_empty());
+    assert!(!record.forget_token(), "nothing more to forget");
+    assert!(!record.pending(&[asked(A)]), "no token to register A with");
+    // the next sign-in: Firebase's new token registers
+    assert!(record.set_token("tok-2"));
+    assert!(record.pending(&[asked(A)]));
+    assert!(record.register(&[asked(A)], &poster));
+    assert!(poster.posted.borrow()[0].2.contains("token=tok-2"));
+    assert_eq!(record.registered.get(A).map(String::as_str), Some("9"));
+}
+
 /// plans/Comms-Messaging.md §7.4: each account registers with its own keys, new keys or a UnifiedPush endpoint register
 /// that account again, and an account not yet registered is one to try again.
 #[test]
