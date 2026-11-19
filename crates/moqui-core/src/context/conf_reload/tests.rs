@@ -301,6 +301,8 @@ fn a_put_back_removes_the_element_a_set_made() {
         factory.conf_text()
     );
     super::set_value(&factory, "demo@test-login", None, false).unwrap();
+    // a spec's end puts it back once more (restoreProperties): that resolve makes no element either
+    super::set_value(&factory, "demo@test-login", None, false).unwrap();
     let after = factory.conf_text();
     assert!(!after.contains("<demo"), "{after}");
     assert_eq!(

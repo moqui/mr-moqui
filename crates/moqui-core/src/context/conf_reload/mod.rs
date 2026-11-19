@@ -177,7 +177,8 @@ pub fn set_value(
         if value.is_some() && target.created {
             held.insert(element_key.clone());
         }
-        value.is_none() && held.contains(&element_key)
+        // a put back of an element a set made, or one this resolve made to reach an attribute no file names
+        value.is_none() && (held.contains(&element_key) || target.created)
     };
     let original = {
         let key = compare_key.clone();
