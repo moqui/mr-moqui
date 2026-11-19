@@ -5090,8 +5090,46 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== Identities and out-of-office ========== -->
 
+    <service verb="check" noun="IdentityAddress" allow-remote="false">
+        <description>Refuses, with a message error, an identity's address that is not an address, or one of a domain
+            this node signs mail for (a hosted or shared account's, or one of mail-delivery/dkim@domains) other than the
+            account's own address, unless the user is a mail administrator (EMAIL_ACCOUNT_HOSTED) or authorization is
+            disabled: mail From it gets the node's DKIM signature, which passes DMARC anywhere
+            (plans/Security-Review-Medium.md SEC-MAIL-82).</description>
+        <in-parameters>
+            <parameter name="emailAddress" required="true" allow-html="any"/>
+            <parameter name="accountAddress" allow-html="any"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const domainOf = (value) => {
+                const text = String(value || '').trim().toLowerCase()
+                return text.includes('@') ? text.substring(text.lastIndexOf('@') + 1).replace(/\.+$/, '') : ''
+            }
+            const address = String(emailAddress).trim().toLowerCase()
+            if (!address.includes('@')) { ec.message.addError(`Not an email address: ${emailAddress}`); return }
+            if (address === String(accountAddress || '').trim().toLowerCase()) return
+            if (ec.artifactExecution.authzDisabled() || ec.user.hasPermission('EMAIL_ACCOUNT_HOSTED')) return
+            const domain = domainOf(address)
+            const configured = String(ec.factory.getConfValue('mail-delivery/dkim@domains') || '').toLowerCase()
+                    .split(/[,\s]+/).map((name) => name.replace(/\.+$/, '')).filter((name) => name)
+            let signed = configured.includes(domain)
+            if (!signed) {
+                const wasDisabled = ec.artifactExecution.disableAuthz()
+                try {
+                    signed = Array.from(ec.entity.find('moqui.basic.email.EmailAccount')
+                            .condition('accountKindEnumId', 'in', ['EakHosted', 'EakShared']).selectField('emailAddress').list())
+                            .some((account) => domainOf(account.emailAddress) === domain)
+                } finally {
+                    if (!wasDisabled) ec.artifactExecution.enableAuthz()
+                }
+            }
+            if (signed) ec.message.addError(ec.resource.expand(ec.l10n.localize(
+                    'An address of ${domain}, a domain this server signs mail for, is given to an identity only by a mail administrator'), '', {domain}))
+        ]]></script></actions>
+    </service>
     <service verb="create" noun="EmailIdentity">
-        <description>An address an account sends as (manage permission); isDefault makes it the account's default.</description>
+        <description>An address an account sends as (manage permission); isDefault makes it the account's default. An
+            address of a domain this server signs mail for is a mail administrator's to give (check#IdentityAddress).</description>
         <in-parameters>
             <parameter name="emailAccountId" required="true"/>
             <parameter name="emailAddress" required="true" allow-html="any"/>
@@ -5110,7 +5148,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!(access.level >= 1)) { ec.message.addError(`Email account ${emailAccountId} not found`); return }
             if (access.level < 3) { ec.message.addError(`You may not add identities to email account ${emailAccountId}`); return }
             if (access.account.isInternal) { ec.message.addError(ec.l10n.localize('The Internal account sends as the user')); return }
-            if (!String(emailAddress).includes('@')) { ec.message.addError(`Not an email address: ${emailAddress}`); return }
+            ec.service.sync().name('org.moqui.mail.EmailClientServices.check#IdentityAddress')
+                    .parameters({emailAddress, accountAddress: access.account.emailAddress}).call()
+            if (ec.message.hasError()) return
             const others = Array.from(ec.entity.find('moqui.basic.email.EmailIdentity').condition('emailAccountId', emailAccountId).list())
             const makeDefault = isDefault || others.length === 0
             if (makeDefault) for (const other of others) if (other.isDefault === 'Y') { other.set('isDefault', 'N'); other.update() }
@@ -5125,7 +5165,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="update" noun="EmailIdentity">
         <description>Change an identity (manage permission). A field given is set, an empty one cleared; isDefault true makes
-            it the default.</description>
+            it the default. A new address is held to check#IdentityAddress.</description>
         <in-parameters>
             <parameter name="emailIdentityId" required="true"/>
             <parameter name="emailAddress" allow-html="any"/>
@@ -5144,7 +5184,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (!(access.level >= 1)) { ec.message.addError(`Email identity ${emailIdentityId} not found`); return }
             if (access.level < 3) { ec.message.addError(`You may not change email identity ${emailIdentityId}`); return }
             if (emailAddress != null) {
-                if (!String(emailAddress).includes('@')) { ec.message.addError(`Not an email address: ${emailAddress}`); return }
+                ec.service.sync().name('org.moqui.mail.EmailClientServices.check#IdentityAddress')
+                        .parameters({emailAddress, accountAddress: access.account.emailAddress}).call()
+                if (ec.message.hasError()) return
                 identity.set('emailAddress', emailAddress)
             }
             const blank = (value) => value === '' ? null : value

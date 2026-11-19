@@ -1568,7 +1568,8 @@ fn identities_out_of_office_text_blocks_and_searches() {
             "create#EmailIdentity",
             &[
                 ("emailAccountId", text(&account)),
-                ("emailAddress", text("sales@example.com")),
+                // not of a domain this server signs for, which only a mail administrator gives (SEC-MAIL-82)
+                ("emailAddress", text("sales@sales.example.org")),
                 ("displayName", text("Sales")),
                 ("replyToAddress", text("orders@example.com")),
                 ("isDefault", Value::Bool(true)),
@@ -1596,7 +1597,7 @@ fn identities_out_of_office_text_blocks_and_searches() {
         ],
     );
     let draft = out_text(&draft, "emailMessageId");
-    assert_eq!(message_field(&facade, &draft, "fromAddress"), "sales@example.com");
+    assert_eq!(message_field(&facade, &draft, "fromAddress"), "sales@sales.example.org");
     assert_eq!(message_field(&facade, &draft, "fromName"), "Sales");
     ok(
         "update#EmailIdentity",
