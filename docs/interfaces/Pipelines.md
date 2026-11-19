@@ -458,8 +458,10 @@ token in `Authorization: Bearer`, taken only over HTTPS, from loopback, or with 
 Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (410
 after it ended or passed its time; 401 for a token that is not a job token of this server), and counts the job's requests (`runner-max-requests-per-minute`, 429 over it). A JSON body is at most
 `max-log-batch-bytes`; an upload is limited by its kind (`max-artifact-bytes`, `max-report-bytes`,
-`max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches. What a repository and a
-run's owner keep is capped (`max-repository-upload-bytes`, `max-owner-upload-bytes`; 0, no cap): an upload past it is
+`max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches (counted again once one is
+stored, so uploads sent at once do not each pass it). What a repository, a run's owner and an untrusted run keep is
+capped (`max-repository-upload-bytes`, 10 GiB; `max-owner-upload-bytes`, none; `max-untrusted-run-upload-bytes`, 1 GiB
+over all its jobs; 0, no cap): an upload past it is
 refused (`GitCiStorageQuota`), one that would pass it is cut there and refused the same way, and an upload is
 counted again once stored, so of two at once the one that went past the cap is taken back. Artifacts stored before
 they carried their run's owner are given it before an owner's cap is counted. A cache from an untrusted run is
@@ -750,7 +752,7 @@ the client's address arrives).
 | `max-timeout-minutes`, `default-timeout-minutes`, `max-fetch-depth` | 360, 60, 50 | |
 | `max-log-bytes`, `max-log-batch-bytes` | 16 MB, 1 MB | A job's log; one runner request |
 | `max-artifact-bytes`, `max-report-bytes`, `max-cache-bytes`, `max-artifacts` | 1 GB, 16 MB, 2 GB, 100 | Uploads (`max-artifacts` counts caches too) |
-| `max-repository-upload-bytes`, `max-owner-upload-bytes` | 0, 0 | What a repository and an owner keep of uploads; 0: no cap |
+| `max-repository-upload-bytes`, `max-owner-upload-bytes`, `max-untrusted-run-upload-bytes` | 10737418240, 0, 1073741824 | What a repository, an owner and an untrusted run keep of uploads; 0: no cap |
 | `max-services`, `schedule-min-minutes`, `pool-token-days` | 4, 15, 7 | Services of a job; the least time between a schedule's runs; how long a pool token registers |
 | `runner-token-days` | 90 | How long a registered runner's token is good for; rotated halfway; 0 is no expiry |
 | `artifact-retention-days`, `max-artifact-retention-days`, `log-retention-days`, `cache-retention-days` | 30, 365, 90, 30 | |

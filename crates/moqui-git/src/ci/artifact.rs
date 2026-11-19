@@ -17,8 +17,9 @@
 //! and expiry. A report's failed tests become `GitRunTestFailure` rows. A cache is per repository and key, kept apart
 //! for protected refs: a run for a protected ref reads only caches such a run wrote, an untrusted run reads only
 //! caches no protected run wrote and writes none. What a repository and an owner keep is capped (`git-ci`
-//! `max-repository-upload-bytes`, `max-owner-upload-bytes`), and every upload a job makes counts toward
-//! `max-artifacts`. The daily retention removes what expired; `gc#ContentBlobs` then deletes the blobs.
+//! `max-repository-upload-bytes`, `max-owner-upload-bytes`, and for an untrusted run `max-untrusted-run-upload-bytes`),
+//! and every upload a job makes counts toward `max-artifacts`. The daily retention removes what expired;
+//! `gc#ContentBlobs` then deletes the blobs.
 
 use std::io::Read;
 
@@ -31,6 +32,16 @@ use moqui_core::resource::blob::{BlobInfo, BlobStore, Expected};
 use super::{field, int, is_yes, long, millis, opt, yes_no, JOB_RUN, LOG_CHUNK, RUN_ARTIFACT, TEST_FAILURE};
 
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1000;
+/// `git-ci` `max-repository-upload-bytes` when the conf does not say: 10 GiB.
+const DEFAULT_REPOSITORY_UPLOAD_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+/// `git-ci` `max-untrusted-run-upload-bytes` when the conf does not say: 1 GiB.
+const DEFAULT_UNTRUSTED_RUN_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// A storage cap of the conf: its number, 0 for no cap, or `default` when it is not a number.
+fn cap_setting(name: &str, default: u64) -> u64 {
+    super::setting(name).trim().parse::<u64>().unwrap_or(default)
+}
+
 /// The failed tests kept of one job.
 const MAX_FAILURES: usize = 500;
 
@@ -219,17 +230,27 @@ pub fn store(
     let mut room = upload.kind.max_bytes();
     // the cap that cuts the upload, when one does: an upload past it is refused as the quota's, not the kind's limit
     let mut capped: Option<(&str, &str, u64)> = None;
+    // an untrusted run (a fork's, a review push's, an approved one of an account without update) keeps a smaller total
+    let untrusted = (!is_yes(run, "trusted")).then(|| field(run, "pipelineRunId")).flatten();
     let caps = [
         (
             "max-repository-upload-bytes",
             "repositoryId",
             field(run, "repositoryId"),
             "repository",
+            DEFAULT_REPOSITORY_UPLOAD_BYTES,
         ),
-        ("max-owner-upload-bytes", "ownerId", owner.clone(), "owner"),
+        ("max-owner-upload-bytes", "ownerId", owner.clone(), "owner", 0),
+        (
+            "max-untrusted-run-upload-bytes",
+            "pipelineRunId",
+            untrusted,
+            "untrusted run",
+            DEFAULT_UNTRUSTED_RUN_UPLOAD_BYTES,
+        ),
     ];
-    for (setting, key, id, what) in &caps {
-        let cap = super::number_setting(setting, 0);
+    for (setting, key, id, what, default) in &caps {
+        let cap = cap_setting(setting, *default);
         let Some(id) = id.as_ref().filter(|_| cap > 0) else {
             continue;
         };
@@ -291,9 +312,20 @@ pub fn store(
     row.create(entity)?;
     // two uploads at once may each have fit what was left: counted again with this one stored, the one that went past
     // a cap is taken back. Its content blob is left to gc#ContentBlobs, which deletes a blob no row references: blobs
-    // are kept by their content, so the same bytes may be another upload's
-    for (setting, key, id, what) in &caps {
-        let cap = super::number_setting(setting, 0);
+    // are kept by their content, so the same bytes may be another upload's. The job's count is read again the same
+    // way, so uploads sent at once do not each pass max-artifacts (SEC-GIT-90)
+    let uploads = entity
+        .find(RUN_ARTIFACT)?
+        .eq("jobRunId", Value::string(&job_run_id))
+        .count()?;
+    if uploads > max {
+        row.delete(entity)?;
+        return Err(Error::new(format!(
+            "a job uploads at most {max} artifacts, reports and caches"
+        )));
+    }
+    for (setting, key, id, what, default) in &caps {
+        let cap = cap_setting(setting, *default);
         let Some(id) = id.as_ref().filter(|_| cap > 0) else {
             continue;
         };

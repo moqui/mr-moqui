@@ -1217,7 +1217,8 @@
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
             container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
             container-tmp-mb="1024" container-workspace-mb="4096" max-services="4" schedule-min-minutes="15"
-            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="0" max-owner-upload-bytes="0"
+            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="10737418240" max-owner-upload-bytes="0"
+            max-untrusted-run-upload-bytes="1073741824"
             deploy-timeout-seconds="600" deploy-private-network="false"/>
 
     <!--

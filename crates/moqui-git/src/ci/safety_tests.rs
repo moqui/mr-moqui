@@ -350,6 +350,52 @@ fn what_a_repository_keeps_is_capped_and_its_caches_count() {
     );
 }
 
+/// SEC-GIT-90: an untrusted run keeps at most `git-ci` `max-untrusted-run-upload-bytes` over all its jobs, below the
+/// repository's cap, which has a default now.
+#[test]
+fn an_untrusted_run_keeps_less_than_the_repository_may() {
+    let fixture = operator_fixture(
+        "ci-safety-untrusted-quota",
+        r#"<git-ci max-untrusted-run-upload-bytes="50"/>"#,
+    );
+    queued_run(&fixture, Some("acme"));
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("trusted", s("N"));
+    run.update(&entity).unwrap();
+    let job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
+    let upload = |run: &EntityValue, name: &str, bytes: &[u8]| {
+        let upload = Upload {
+            kind: Kind::Artifact,
+            name,
+            path: None,
+            cache_key: None,
+            retention_days: None,
+        };
+        artifact::store(&entity, run, &job, &upload, &mut &bytes[..])
+    };
+    upload(&run, "a", &[1u8; 40]).unwrap();
+    let refused = upload(&run, "b", &[2u8; 20]).unwrap_err();
+    assert!(
+        refused
+            .message()
+            .starts_with("GitCiStorageQuota: the untrusted run keeps"),
+        "{refused}"
+    );
+    assert_eq!(
+        super::artifact::stored_bytes(&entity, "pipelineRunId", "R1").unwrap(),
+        40
+    );
+    // a trusted run of the repository is held only to the repository's cap
+    run.set("trusted", s("Y"));
+    run.update(&entity).unwrap();
+    upload(&run, "c", &[3u8; 20]).unwrap();
+}
+
 #[test]
 fn a_hosts_errors_are_its_answer_and_the_callers_earlier_ones_stay() {
     let fixture = operator_fixture("ci-safety-errors", "");
