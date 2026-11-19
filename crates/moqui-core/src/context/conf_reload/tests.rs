@@ -287,3 +287,24 @@ fn a_report_masks_secrets_and_a_components_element_is_live() {
         Some("https://authority.example")
     );
 }
+
+/// A setting a spec sets over the conf (`withConf`) on an element the conf does not have makes the element, and putting
+/// it back takes the element away again, so the running conf is as before and a preview finds no change.
+#[test]
+fn a_put_back_removes_the_element_a_set_made() {
+    let factory = factory(RUNNING);
+    let before = factory.conf_text();
+    super::set_value(&factory, "demo@test-login", Some("true"), false).unwrap();
+    assert!(factory.conf_text().contains("test-login=\"true\""), "{}", factory.conf_text());
+    super::set_value(&factory, "demo@test-login", None, false).unwrap();
+    let after = factory.conf_text();
+    assert!(!after.contains("<demo"), "{after}");
+    assert_eq!(
+        MNode::parse_text("after", &after).unwrap().write_string(),
+        MNode::parse_text("before", &before).unwrap().write_string()
+    );
+    // an element the conf has keeps its place when its attribute is put back
+    super::set_value(&factory, "screen-facade@check-interval-ms", Some("5"), false).unwrap();
+    super::set_value(&factory, "screen-facade@check-interval-ms", None, false).unwrap();
+    assert!(factory.conf_text().contains("<screen-facade"), "{}", factory.conf_text());
+}

@@ -106,6 +106,11 @@ struct Applying(Mutex<()>);
 #[derive(Default)]
 struct Originals(Mutex<std::collections::HashMap<String, Option<String>>>);
 
+/// The elements a [`set_value`] made (in neither the conf files nor the running conf), by their path's compare key: a put back takes the element away again once it is empty, so the running conf is the
+/// files' again and a preview of them finds no change.
+#[derive(Default)]
+struct Created(Mutex<std::collections::HashSet<String>>);
+
 /// Run `hook` after a conf reload that changed a unit of `group`.
 pub fn on_apply(
     factory: &ExecutionContextFactory,
@@ -161,8 +166,18 @@ pub fn set_value(
     // the value the running conf had before the first set of this attribute since boot, for a put back with no conf
     // files to merge (a factory of a unit test)
     let originals = factory.extension(|_| Originals::default());
+    let compare_key = crate::context::conf_env::compare_key(&target.path);
+    let created = factory.extension(|_| Created::default());
+    let element_key = compare_key.rsplit_once('/').map_or("", |(element, _)| element).to_string();
+    let made_here = {
+        let mut held = lock(&created.0);
+        if value.is_some() && target.created {
+            held.insert(element_key.clone());
+        }
+        value.is_none() && held.contains(&element_key)
+    };
     let original = {
-        let key = crate::context::conf_env::compare_key(&target.path);
+        let key = compare_key.clone();
         let mut held = lock(&originals.0);
         held.entry(key)
             .or_insert_with(|| target.node.attribute(&target.attribute))
@@ -186,6 +201,13 @@ pub fn set_value(
         Some(live) => target.node.set_attribute(target.attribute.clone(), live),
         None => {
             target.node.remove_attribute(&target.attribute);
+            // an element a set made, empty again, goes with its attribute
+            if made_here && target.node.attributes().is_empty() && target.node.child_count() == 0 {
+                if let Some(parent) = target.node.parent() {
+                    parent.remove_where(|child| child.same_node(&target.node));
+                    lock(&created.0).remove(&element_key);
+                }
+            }
         }
     }
     factory.replace_conf(running.write_string());
