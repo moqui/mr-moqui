@@ -447,5 +447,8 @@ fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
             .expect("no stack overflow")
     };
     assert_eq!(applied, (Err(400), Err(400), Ok(())));
+    // the room is written and closed, as each test leaves the shared rooms
     super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
 }
