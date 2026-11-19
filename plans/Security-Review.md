@@ -407,6 +407,16 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    and the Tauri Gradle settings come from an Android build); SEC-CLI-114's encrypted dumps are the next batch. Nothing
    of this batch ran on a device or a built desktop app, and its Kotlin is not compiled.
 
+11. **The clients' sixth batch, 2026-11-19.** SEC-CLI-114 is fixed: the desktop's backups, the nightly one and the
+   tray's, are sealed to an age key the app keeps in the OS key store as `pg_dump` writes them (`.dump.age`, no plain
+   dump on disk), the tray saves the key to a file, and a restore opens a sealed dump with it. The framework's
+   `database-backup@recipient` does the same for a server, and `moqui save-db --recipient` and `load-save --identity`
+   take it on the command line. Of the clients' findings, what is open: SEC-CLI-81 on the phone (a webview per
+   account), SEC-CLI-92's removal of unused images and SEC-CLI-113's app lock (both designs for later, by decision),
+   SEC-CLI-102 on the phone (to check on a device), SEC-CLI-103 (by decision) and SEC-CLI-104's Gradle verification.
+   SEC-TLS-97 (the plain dumps' and the backup folder's modes) is left to its own area. Not run on a built desktop
+   app: a nightly sealed backup, the tray's key file, a restore from it.
+
 ## Counts
 
 | Area | Critical | High | Medium | Low | Info | Refuted | Total |
@@ -1243,7 +1253,7 @@ Map file: [Attack-Surface-Clients.md](../docs/security/Attack-Surface-Clients.md
 | SEC-CLI-111 | `crates/moqui-desktop/src/client/keystore.rs:112-132`; `crates/moqui-client-tauri/src/commands.rs:500`, `:560` | On the desktop a device key in the file fallback outlives the move to the OS key store, in plain text | Info | fixed |
 | SEC-CLI-112 | `crates/moqui-mobile/src/lib.rs:158-165`, `:317`; `crates/moqui-client-tauri/src/scheme.rs:258`; `crates/moqui-client/src/proxy.rs:184` | The phone's release build logs a failed request's whole URL and a refused navigation's URL to logcat | Info | fixed |
 | SEC-CLI-113 | `KeyVault.kt:22-33`; `docs/ui/Mobile-Client.md:68-72` | The phone's keys and data are not tied to a secure lock screen, and neither app has a lock of its own | Info | fixed in part |
-| SEC-CLI-114 | `crates/moqui-desktop/src/backup.rs:18-23`, `:75-82`, `:140-148`, `:284-291` | The desktop dumps the whole node every night, in clear, into a Documents folder by default, without saying so, and the tray cannot turn it off | Info | fixed in part |
+| SEC-CLI-114 | `crates/moqui-desktop/src/backup.rs:18-23`, `:75-82`, `:140-148`, `:284-291` | The desktop dumps the whole node every night, in clear, into a Documents folder by default, without saying so, and the tray cannot turn it off | Info | fixed |
 | SEC-CLI-115 | `ChatNotifications.kt:246-256` | A text's one-time code shows on a lock screen left at its default | Info | fixed |
 | SEC-CLI-116 | `crates/moqui-mobile/gen/android/app/build.gradle.kts:47` | The phone app installs on Android 8 and 9, which receive no security updates, and has no overlay defence below Android 12 | Info | fixed |
 | SEC-CLI-117 | `crates/moqui-desktop/src/bridge.js:240-260` | The desktop has no screen protection for a view-once photo | Info | fixed |

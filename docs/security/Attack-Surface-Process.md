@@ -46,7 +46,7 @@ The development tools start `ffmpeg` from the `PATH` with fixed arguments (`crat
 | The env file | The file `moqui_lib::env` writes | Written through a partial file with mode 0600 | `crates/moqui-lib/src/env.rs` |
 | TLS private keys | The files `write_private` writes, through a staging file that is renamed | 0600 when the open creates the staging file; one already there keeps its mode, and the open follows a link. The ACME name's directory is made with the umask ([ACME](Attack-Surface-Web.md#acme)) | `crates/moqui-host/src/tls.rs` `write_private` |
 | Edge member key | The edge link's member key file | 0600 | `crates/moqui-host/src/edge_link/member_key.rs` |
-| Database backups | Dump files and directories | Files 0600 (a dump's partial file before `pg_dump` writes it), directories 0700 | `crates/moqui-drivers/src/backup.rs` |
+| Database backups | Dump files and directories | Files 0600 (a dump's partial file before `pg_dump` writes it), directories 0700; with `database-backup@recipient` a dump is sealed as `pg_dump` writes it to a pipe (`.dump.age`, SEC-CLI-114) | `crates/moqui-drivers/src/backup.rs` |
 | Upload temp files | Multipart bodies spooled to disk | 0600 | `crates/moqui-core/src/web/multipart.rs` |
 | Data load text | `runtime/tmp/data-load-<uuid>.csv` or `.json`: the CSV or JSON text of Tools › Data › Load, removed after the load | `std::fs::write` with the umask (0644 under 022), in a directory made with `create_dir_all` | `crates/moqui-core/src/script/host/tools.rs` |
 | PDF browser profile | `<runtime>/tmp/chromium-<pid>-<n>` | Made with `create_dir_all`, so the umask's mode; Chromium's own file modes in it were not traced | `crates/moqui-host/src/pdf.rs` |
