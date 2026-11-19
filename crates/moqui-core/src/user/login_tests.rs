@@ -997,7 +997,7 @@ fn a_verified_app_password_sign_in_checks_ip_allowed_and_is_recorded() {
     assert!(history.iter().any(|row| text(row, "successfulLogin") == "Y"));
 
     let refused = with_client_ip("192.0.2.10", || login_verified_app_password("xmpp", Some("AP_XMPP")));
-    assert!(refused.unwrap_err().to_string().contains("not in allowed list"));
+    assert_eq!(refused.unwrap_err().to_string(), INVALID_LOGIN);
     assert!(session::current_username().unwrap().is_none());
 
     assert_eq!(
@@ -1263,10 +1263,13 @@ fn ip_allowed_on_the_account_or_a_group_refuses_another_client_ip() {
     assert_eq!(session::current_username().unwrap().as_deref(), Some("ada"));
     logout().unwrap();
     from("192.168.0.4");
+    // SEC-WEB-90: refused before the password is compared, with the invalid login error, so the right password and a
+    // wrong one get the same answer there and neither names the address
     let refused = login_user("ada", "Secret1!").unwrap_err().to_string();
-    assert!(refused.contains("not in allowed list"), "{refused}");
+    assert_eq!(refused, INVALID_LOGIN);
+    assert_eq!(login_user("ada", "Wrong1!!").unwrap_err().to_string(), INVALID_LOGIN);
     assert!(session::current_username().unwrap().is_none());
-    // Not a failed password: the count is not raised.
+    // No password was compared: the count is not raised.
     assert_eq!(i64_field(&load_user(&facade, "ada"), "successiveFailedLogins"), 0);
     // The internal login after a second-factor code is checked as well.
     assert!(internal_login_user("ada").is_err());

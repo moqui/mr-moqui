@@ -156,6 +156,13 @@ fn check_password_login(username: &str, password: &str) -> Result<bool, Error> {
         password::burn_verify(password);
         return Err(Error::new(INVALID_LOGIN));
     }
+    // an address outside the account's or its groups' ipAllowed is refused before the password is compared, with the
+    // invalid login error, so a client there cannot tell a right password from a wrong one (SEC-WEB-90)
+    if let Err(err) = check_ip_allowed(&account, &client_ip()) {
+        password::burn_verify(password);
+        save_history(&text_field(&account, "userId"), false);
+        return Err(err);
+    }
     // Once the account passes the gate every outcome is kept in the login history, a pending second factor as one
     // that did not log in.
     let outcome = authenticate(&facade, &account, username, password, now);
@@ -1953,7 +1960,9 @@ pub(super) fn client_ip() -> String {
 }
 
 /// `ipAllowed` of the account and of every group it is in, `ALL_USERS` included: when any is set, the client address
-/// must match one of them. With no address, as for a login outside a request, nothing is checked.
+/// must match one of them. With no address, as for a login outside a request, nothing is checked. A refusal is the
+/// invalid login error, and the address and the account only in the server's log, so the answer tells the client
+/// neither that its credential was right nor which address the server took for it (SEC-WEB-90).
 fn check_ip_allowed(account: &EntityValue, client_ip: &str) -> Result<(), Error> {
     if client_ip.is_empty() {
         return Ok(());
@@ -1975,10 +1984,11 @@ fn check_ip_allowed(account: &EntityValue, client_ip: &str) -> Result<(), Error>
     if allowed.is_empty() || allowed.iter().any(|pattern| crate::web::ip_matches(pattern, client_ip)) {
         return Ok(());
     }
-    Err(Error::new(format!(
+    tracing::warn!(
         "Authenticate failed for user {} because client IP {client_ip} is not in allowed list for user or group.",
         text_field(account, "username")
-    )))
+    );
+    Err(Error::new(INVALID_LOGIN))
 }
 
 /// The visit that began before login, or the one a session put off and starts now, belongs to the user.
