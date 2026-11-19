@@ -458,6 +458,12 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
         .one()?;
     if let Some(row) = &existing {
         if !may_manage(row) {
+            audit_connection(
+                facade,
+                &connection_id,
+                false,
+                serde_json::json!({"op": "update", "refused": "not the owner"}),
+            );
             add_error("That connection is another user's to change");
             return none();
         }
@@ -592,6 +598,12 @@ fn delete_database_connection(parameters: &BTreeMap<String, Value>, facade: &Ent
         .one()?
     {
         if !may_manage(&row) {
+            audit_connection(
+                facade,
+                &connection_id,
+                false,
+                serde_json::json!({"op": "delete", "refused": "not the owner"}),
+            );
             add_error("That connection is another user's to delete");
             return none();
         }
@@ -612,6 +624,12 @@ fn test_database_connection(parameters: &BTreeMap<String, Value>, facade: &Entit
     match row_of(facade, &connection_id)? {
         Some(row) if may_manage(&row) => {}
         Some(_) => {
+            audit_connection(
+                facade,
+                &connection_id,
+                false,
+                serde_json::json!({"op": "test", "refused": "not the owner"}),
+            );
             add_error("That connection is another user's to test");
             return none();
         }

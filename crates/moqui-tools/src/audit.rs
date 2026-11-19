@@ -35,7 +35,7 @@ pub struct AuditEntry {
     /// The row's id, from [`new_id`], when the caller wrote its running mark first; otherwise a new one.
     pub audit_id: Option<String>,
     /// A `DatabaseAuditAction` enumeration: `DbaSql`, `DbaJob`, `DbaCancel`, `DbaTerminate`, `DbaGridSave`, `DbaLoad`,
-    /// `DbaEtlRun`, `DbaStatsReset`, `DbaTableCheck`, `DbaConnection`.
+    /// `DbaEtlRun`, `DbaStatsReset`, `DbaTableCheck`, `DbaConnection`, `DbaGridRead`, `DbaExport`.
     pub action: &'static str,
     /// `group:<name>` or `ext:<connectionId>`, when the action has one database.
     pub db: Option<String>,

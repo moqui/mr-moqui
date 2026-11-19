@@ -48,6 +48,8 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DbaStatsReset" enumTypeId="DatabaseAuditAction" sequenceNum="8" description="Stats Reset"/>
     <moqui.basic.Enumeration enumId="DbaTableCheck" enumTypeId="DatabaseAuditAction" sequenceNum="9" description="Table Check"/>
     <moqui.basic.Enumeration enumId="DbaConnection" enumTypeId="DatabaseAuditAction" sequenceNum="10" description="External Connection"/>
+    <moqui.basic.Enumeration enumId="DbaGridRead" enumTypeId="DatabaseAuditAction" sequenceNum="11" description="Grid Read"/>
+    <moqui.basic.Enumeration enumId="DbaExport" enumTypeId="DatabaseAuditAction" sequenceNum="12" description="Grid Export"/>
 
     <!-- DatabaseAudit rows older than the tools@database-audit-days property (90 by default) go, daily -->
     <moqui.service.job.ServiceJob jobName="DatabaseAuditPurge" description="Delete DatabaseAudit rows older than tools@database-audit-days"

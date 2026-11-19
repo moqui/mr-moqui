@@ -507,6 +507,49 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     assert!(used.is_ok(), "{used:?}");
     assert!(updated.unwrap_err().contains("another user's"));
     assert!(deleted.unwrap_err().contains("another user's"));
+    // SEC-TLS-102: the refusals are audited, and an entity source's page read too
+    let entity_read = call(
+        "get#DataGridRows",
+        &[
+            (
+                "source",
+                Value::Map(
+                    [
+                        ("type".to_string(), Value::string("entity")),
+                        ("entityName".to_string(), Value::string("moqui.basic.Enumeration")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            ),
+            ("page", Value::I64(1)),
+            ("size", Value::I64(5)),
+        ],
+    );
+    assert!(entity_read.is_ok(), "{entity_read:?}");
+    {
+        let _authz = context.disable_authz();
+        let audited = |user: &str, action: &str| {
+            facade
+                .find("moqui.database.DatabaseAudit")
+                .unwrap()
+                .eq("userId", Value::string(user))
+                .eq("actionEnumId", Value::string(action))
+                .list()
+                .unwrap()
+                .iter()
+                .map(|row| row.get("detailJson").map(to_plain_string).unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+        let refused = audited("EXT_OTHER", "DbaConnection");
+        assert!(
+            refused.iter().filter(|detail| detail.contains("not the owner")).count() >= 2,
+            "{refused:?}"
+        );
+        assert!(audited("EX_JOHN_DOE", "DbaGridRead")
+            .iter()
+            .any(|detail| detail.contains("moqui.basic.Enumeration")));
+    }
     assert_eq!(plain, "Not available");
     assert_eq!(plain_list, "Not available");
 
