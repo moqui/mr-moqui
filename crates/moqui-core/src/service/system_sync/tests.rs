@@ -532,17 +532,19 @@ fn a_login_remote_takes_posts_only_from_its_own_account() {
             &[("userId", user), ("username", user)],
         );
     }
-    for (remote, user) in [
-        ("SmsgPartnerA", "partner.a"),
-        ("SmsgPartnerB", "partner.b"),
-        ("SmsgPolled", ""),
+    // an empty messageAuthEnumId is a login remote too
+    for (remote, auth, user) in [
+        ("SmsgPartnerA", "SmatLogin", "partner.a"),
+        ("SmsgPartnerB", "SmatLogin", "partner.b"),
+        ("SmsgPolled", "SmatLogin", ""),
+        ("SmsgPartnerBEmpty", "", "partner.b"),
     ] {
         seed(
             facade,
             "moqui.service.message.SystemMessageRemote",
             &[
                 ("systemMessageRemoteId", remote),
-                ("messageAuthEnumId", "SmatLogin"),
+                ("messageAuthEnumId", auth),
                 ("receiveUserId", user),
             ],
         );
@@ -559,6 +561,7 @@ fn a_login_remote_takes_posts_only_from_its_own_account() {
     };
     assert_eq!(receive("SmsgPartnerB"), 403);
     assert_eq!(receive("SmsgPolled"), 403);
+    assert_eq!(receive("SmsgPartnerBEmpty"), 403);
     assert_eq!(receive("SmsgPartnerA"), 200);
     let kept = facade
         .find("moqui.service.message.SystemMessage")
