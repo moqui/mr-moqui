@@ -300,6 +300,9 @@ fn tls_modes_check_what_sslmode_says() {
     drop(tls_connect("127.0.0.1", port, &TlsOptions::new(TlsVerify::Encrypt, &root_text)).unwrap());
     server.join().unwrap();
 
+    // SEC-DAT-93: verify-ca with no root file would trust any public authority for any name: refused
+    let err = crate::pg_tls::client_config(&TlsOptions::new(TlsVerify::Ca, "")).err().unwrap();
+    assert!(err.message().contains("sslrootcert"), "{err}");
     let missing = TlsOptions::new(TlsVerify::Full, &dir.join("missing.pem").display().to_string());
     let err = crate::pg_tls::client_config(&missing).err().unwrap();
     assert!(err.message().contains("missing.pem"), "{err}");
