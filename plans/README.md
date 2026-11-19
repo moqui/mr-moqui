@@ -42,6 +42,13 @@ audits and historical tests do not complete a walk. The
 **Dev tools**
 - [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent. §21 (Nov 11, 2026, not built) is the Dev AIDE as a client of a group server: a connection, merge requests and reviews in the Workspace, checks, issues, the contributor agreement and a `hosting` tool for agents.
 
+- [Dev-HEMP.md](Dev-HEMP.md): Dev AIDE structured by HEMP (design, Nov 18, 2026, not built): the book's terms, the
+  menu by its process (Requirements, Existing System, User Interface Design, Technical Design, Implementation,
+  Review), HEMP artifacts as XML files in a component's `hemp/` directory and in the artifact index, Coarchy's
+  process story, actor, value and checklist screens adapted, an overview of a site drawn as the HEMP artifact diagram
+  with an item's trace in the Artifact Browser, the HEMP book re-released under CC0 as Markdown in the component, adapted to the
+  screens as their guide and online help and versioned with the repository, and role skills for the dev agent as a later phase.
+
 - [Terminal-Fancy.md](Terminal-Fancy.md): the Terminal screen as the terminal form of the development environment: many
   sessions with tabs and splits that outlive a page, the `moqui>` command line in the browser and shells on the server's
   operating system (bash, zsh, any program on a pty) behind permissions on a dev instance, floating panels as a layer of
