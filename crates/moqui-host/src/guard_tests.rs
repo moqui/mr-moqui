@@ -396,7 +396,10 @@ fn the_default_conf_is_off_until_there_are_trusted_proxies() {
     };
     assert!(denied("/.env"));
     assert!(!denied("/apps/system"));
-    assert_eq!(on.methods.len(), 7);
+    // the standard methods and those /dav serves (SEC-WEB-89)
+    assert_eq!(on.methods.len(), 15);
+    assert!(on.methods.iter().any(|method| method == "PROPFIND"));
+    assert!(!on.methods.iter().any(|method| method == "TRACE"));
     assert_eq!(on.max_per_client, 64);
     assert_eq!(on.queue_timeout, Some(std::time::Duration::from_secs(10)));
     assert_eq!(on.retry_after, 5);
