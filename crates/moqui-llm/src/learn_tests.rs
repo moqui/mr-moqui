@@ -93,6 +93,7 @@ fn bed(name: &str) -> Bed {
             "moqui.security.UserAccount",
             &[("userId", user), ("username", user), ("userFullName", user)],
         );
+        crate::run::grant_agent_use(&facade, user);
     }
     row(
         &facade,

@@ -215,6 +215,7 @@ fn bed_with_cap(name: &str, cap: usize) -> Bed {
         "moqui.security.UserAccount",
         &[("userId", USER), ("username", USER), ("userFullName", "Tools Tester")],
     );
+    crate::run::grant_agent_use(&facade, USER);
     row(
         &facade,
         "moqui.agent.AgentDefinition",

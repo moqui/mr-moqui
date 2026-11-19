@@ -355,6 +355,8 @@ pub struct RunRow {
     pub tier: Option<Tier>,
     /// The Constitution the run uses, resolved when it started ([`crate::constitution::snapshot`]).
     pub constitution: Option<crate::constitution::snapshot::RunConstitution>,
+    /// The `AgentTrigger` that started the run, whose service user is checked by the trigger.
+    pub trigger_id: Option<String>,
 }
 
 impl RunRow {
@@ -404,6 +406,7 @@ impl RunRow {
             active_seconds: int_of(row, "activeSeconds").unwrap_or(0),
             tier: text_of(row, "tier").and_then(|tier| Tier::parse(&tier)),
             constitution: crate::constitution::snapshot::RunConstitution::of_run(row),
+            trigger_id: text_of(row, "triggerId"),
         }
     }
 
@@ -1555,4 +1558,40 @@ pub(crate) fn transition(
         }
         Ok(())
     })
+}
+
+/// Grant `user_id` the `AgentUse` permission, which each step of a run checks, in a test's database.
+#[cfg(test)]
+pub(crate) fn grant_agent_use(facade: &EntityFacade, user_id: &str) {
+    let group = "AGENT_USE_TEST";
+    let rows: [(&str, Vec<(&str, &str)>); 3] = [
+        (
+            "moqui.security.UserGroup",
+            vec![("userGroupId", group), ("description", group)],
+        ),
+        (
+            "moqui.security.UserGroupPermission",
+            vec![
+                ("userGroupId", group),
+                ("userPermissionId", "AgentUse"),
+                ("fromDate", "1265184000000"),
+            ],
+        ),
+        (
+            "moqui.security.UserGroupMember",
+            vec![
+                ("userGroupId", group),
+                ("userId", user_id),
+                ("fromDate", "1265184000000"),
+            ],
+        ),
+    ];
+    for (entity, fields) in rows {
+        let mut value = facade.make_value(entity).expect("a security entity");
+        for (field, text) in fields {
+            value.set(field, Value::string(text));
+        }
+        // the group and its permission are there from an earlier user
+        let _ = value.create(facade);
+    }
 }
