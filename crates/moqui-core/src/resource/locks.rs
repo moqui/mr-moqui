@@ -200,6 +200,20 @@ fn in_own_transaction<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T,
         .run(TransactionAttribute::ForceNew, None, body)
 }
 
+/// How many live locks `user_id` holds, for a cap on what one user may hold (SEC-FIL-83).
+///
+/// # Errors
+///
+/// When the locks cannot be read.
+pub fn live_count_of(facade: &EntityFacade, user_id: &str) -> Result<i64, Error> {
+    facade
+        .find(LOCK_ENTITY)?
+        .eq("userId", Value::string(user_id))
+        .condition(Condition::greater("expiresDate", stamp_value(now_millis())))
+        .disable_authz()
+        .count()
+}
+
 /// Set the lock of `location`, replacing any there, in a transaction of its own; the expired rows go with it.
 ///
 /// # Errors

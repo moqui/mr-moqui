@@ -37,6 +37,8 @@ struct Drive {
     drive_id: String,
     folder: String,
     can_write: bool,
+    /// The user manages the drive (`RdpManage`, level 3): may break another user's lock in it (SEC-FIL-83).
+    can_manage: bool,
     root_location: String,
 }
 
@@ -137,6 +139,7 @@ fn drives() -> Result<Vec<Drive>, String> {
         drives.push(Drive {
             folder: if shared { format!("{name} ({drive_id})") } else { name },
             can_write: flag_of(row, "canWrite"),
+            can_manage: text_of(row, "level").parse::<i64>().unwrap_or(0) >= 3 || flag_of(row, "isOwner"),
             root_location: text_of(row, "rootLocation"),
             drive_id,
         });
@@ -362,7 +365,12 @@ pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
             }
             answer
         }
-        "UNLOCK" => locks::unlock(context.request, &drive.location(&path), &context.user_id),
+        "UNLOCK" => locks::unlock(
+            context.request,
+            &drive.location(&path),
+            &context.user_id,
+            drive.can_manage,
+        ),
         "REPORT" => DavResponse::condition(403, xml::DAV, "supported-report"),
         _ => DavResponse::status(405),
     }

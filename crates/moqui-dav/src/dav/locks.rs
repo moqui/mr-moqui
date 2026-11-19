@@ -28,6 +28,8 @@ const MAX_SECONDS: u64 = 3600;
 const DEFAULT_SECONDS: u64 = 600;
 /// The most of a lock's `D:owner` text kept.
 const MAX_OWNER_CHARS: usize = 256;
+/// The most live locks one user holds: a client locks the files it has open, never a drive's every path (SEC-FIL-83).
+pub(crate) const MAX_LOCKS_PER_USER: i64 = 100;
 
 /// The entity facade of the current request's factory, where the locks are kept.
 fn facade() -> Option<EntityFacade> {
@@ -128,12 +130,22 @@ pub(crate) fn lock(
             None => DavResponse::condition(412, xml::DAV, "lock-token-matches-request-uri"),
         };
     }
-    match table::holding(&facade, location) {
+    let mine = match table::holding(&facade, location) {
         Ok(Some(existing)) if existing.user_id != user_id => {
             return DavResponse::condition(423, xml::DAV, "no-conflicting-lock");
         }
-        Ok(_) => {}
+        Ok(existing) => existing.is_some(),
         Err(err) => return unavailable(&err),
+    };
+    // a new lock past the user's most is refused; one the user takes again stands in its own place
+    if !mine {
+        match table::live_count_of(&facade, user_id) {
+            Ok(count) if count >= MAX_LOCKS_PER_USER => {
+                return DavResponse::text(403, "You hold the most locks a user may: unlock a file to lock another");
+            }
+            Ok(_) => {}
+            Err(err) => return unavailable(&err),
+        }
     }
     // the owner is the client's note of who holds the lock, shown in every PROPFIND under the lock: kept short
     // (SEC-FIL-83)
@@ -175,7 +187,9 @@ fn lock_answer(status: u16, href: &str, lock: &Lock) -> DavResponse {
 }
 
 /// UNLOCK of the resource at `location` by the `Lock-Token` header.
-pub(crate) fn unlock(request: &DavRequest, location: &str, user_id: &str) -> DavResponse {
+/// UNLOCK of `location` with the lock token of the request: the holder's own lock; with `may_break` (a manager of the
+/// drive) another user's too, so a lock its holder left does not hold every other writer of the drive (SEC-FIL-83).
+pub(crate) fn unlock(request: &DavRequest, location: &str, user_id: &str, may_break: bool) -> DavResponse {
     let token = request
         .header("lock-token")
         .map(|text| text.trim().trim_start_matches('<').trim_end_matches('>').to_string())
@@ -184,10 +198,12 @@ pub(crate) fn unlock(request: &DavRequest, location: &str, user_id: &str) -> Dav
         return DavResponse::status(503);
     };
     match table::get(&facade, location) {
-        Ok(Some(lock)) if lock.token == token && lock.user_id == user_id => match table::remove(&facade, location) {
-            Ok(()) => DavResponse::status(204),
-            Err(err) => unavailable(&err),
-        },
+        Ok(Some(lock)) if lock.token == token && (lock.user_id == user_id || may_break) => {
+            match table::remove(&facade, location) {
+                Ok(()) => DavResponse::status(204),
+                Err(err) => unavailable(&err),
+            }
+        }
         Ok(Some(_)) => DavResponse::condition(403, xml::DAV, "lock-token-matches-request-uri"),
         Ok(None) => DavResponse::condition(409, xml::DAV, "lock-token-matches-request-uri"),
         Err(err) => unavailable(&err),
