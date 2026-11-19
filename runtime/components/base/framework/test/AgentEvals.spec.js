@@ -45,3 +45,21 @@ feature('a person reviews a result, and starting an experiment needs MONITOR_EVA
   return{bad,score:one('moqui.agent.AgentScore',{scoreId:ok.scoreId}),denied,after:one('moqui.agent.AgentExperiment',{experimentId:e.experimentId})}},
  then({bad,score,denied,after}){bad.error.includes('0 to 1');score.sourceEnumId=='AgssReview';score.passed=='Y';denied.error.includes('MONITOR_EVAL_RUN');num(after.meanScore)==0.5},
 })
+// SEC-AI-83: another user's run is read (listed with its message and reply, saved as an item, scored) only with
+// AgentAudit, and each such read is written to AgentAuditLog; MONITOR_EVAL alone reads the evaluator's own runs
+feature("another user's run is read only with AgentAudit, and the read is logged",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const theirs=call('create#moqui.agent.AgentRun',{agentId:'EVAL_T_AGENT',userId:'EVAL_T_VIEWER',statusId:'AgrCompleted',submittedDate:'2026-01-02T00:00:00Z',resultJson:JSON.stringify({text:'Their private reply'})}).runId
+  call('create#moqui.agent.AgentMessage',{conversationId:'EVAL_T_CONV2',messageSeq:1,runId:theirs,role:'user',createdDate:ec.user.nowTimestamp})
+  call('create#moqui.security.UserAccount',{userId:'EVAL_T_AUDITOR',username:'eval.auditor',userFullName:'Eval auditor',currentPassword:'16ac58bbfa332c1c55bd98b53e60720bfa90d394',passwordHashType:'SHA'})
+  call('create#moqui.security.UserGroup',{userGroupId:'EVAL_T_AUDIT',description:'Eval auditors'})
+  call('create#moqui.security.UserGroupPermission',{userGroupId:'EVAL_T_AUDIT',userPermissionId:'AgentAudit',fromDate:'2000-01-01T00:00:00Z'})
+  call('create#moqui.security.UserGroupMember',{userGroupId:'EVAL_T_AUDIT',userId:'EVAL_T_AUDITOR',fromDate:'2000-01-01T00:00:00Z'})
+  const reads=(id)=>call(S+'check#RunReadable',{runId:id,reason:'spec'}).readable
+  const own=reads(runId),other=reads(theirs),saved=invoke(S+'save#RunAsDatasetItem',{runId:theirs,datasetId:'EVAL_T_DS',useOutput:'Y'}),scored=invoke(S+'score#Run',{runId:theirs,scorerId:'CONTAINS'})
+  const before=list('moqui.agent.AgentAuditLog',{runId:theirs}).length
+  login('eval.auditor');ec.artifactExecution.disableAuthz();let audited;try{audited=reads(theirs)}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  return{own,other,saved,scored,before,logs:list('moqui.agent.AgentAuditLog',{runId:theirs}),ownLogs:list('moqui.agent.AgentAuditLog',{runId}).length,audited}},
+ then({own,other,saved,scored,before,logs,ownLogs,audited}){own===true;other===false;saved.error.includes('AgentAudit');scored.error.includes('AgentAudit');before==0;ownLogs==0
+  audited===true;logs.length==1;logs[0].auditorUserId=='EVAL_T_AUDITOR';logs[0].targetUserId=='EVAL_T_VIEWER';logs[0].reason=='spec'},
+})

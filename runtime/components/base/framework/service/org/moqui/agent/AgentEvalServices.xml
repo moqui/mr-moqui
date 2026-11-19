@@ -22,16 +22,26 @@
         <out-parameters><parameter name="versionNum" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('removeItem',context))</script></actions>
     </service>
+    <service verb="check" noun="RunReadable" allow-remote="false">
+        <description>Whether the current user reads an agent run's content (its user's message, its reply, a judge's
+            reasons): their own run, or another user's with AgentAudit, that read written to AgentAuditLog with reason
+            (plans/Security-Review-Medium.md SEC-AI-83).</description>
+        <in-parameters><parameter name="runId" required="true"/><parameter name="reason"/></in-parameters>
+        <out-parameters><parameter name="readable" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('runReadable',context))</script></actions>
+    </service>
     <service verb="save" noun="RunAsDatasetItem" allow-remote="false">
         <description>A dataset item from an agent run: the run's user message is the input; groundTruth is given, or the
-            run's reply when useOutput is Y.</description>
+            run's reply when useOutput is Y. Another user's run needs AgentAudit, and the read is logged
+            (check#RunReadable).</description>
         <in-parameters><parameter name="runId" required="true"/><parameter name="datasetId" required="true"/>
             <parameter name="groundTruth" allow-html="any"/><parameter name="useOutput"/></in-parameters>
         <out-parameters><parameter name="itemId"/><parameter name="versionNum" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('saveRun',context))</script></actions>
     </service>
     <service verb="score" noun="Run" allow-remote="false" transaction="ignore">
-        <description>Scores an agent run with scorerId, or with the scorers attached to its agent (source AgssTrace).</description>
+        <description>Scores an agent run with scorerId, or with the scorers attached to its agent (source AgssTrace).
+            Another user's run needs AgentAudit, and the read is logged (check#RunReadable).</description>
         <in-parameters><parameter name="runId" required="true"/><parameter name="scorerId"/><parameter name="groundTruth" allow-html="any"/></in-parameters>
         <out-parameters><parameter name="scoredCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('scoreRun',context))</script></actions>

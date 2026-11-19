@@ -27,7 +27,16 @@ function runInput(runId){let m=rows('AgentMessage',{runId,role:'user'},'messageS
  if(!m){const run=one('AgentRun',{runId}),at=ms(run?.submittedDate)??Infinity;m=run?.conversationId?rows('AgentMessage',{conversationId:run.conversationId,role:'user'},'-messageSeq').find(r=>(ms(r.createdDate)??0)<=at+1000):null}
  if(!m)return'';return rows('AgentMessagePart',{messageId:m.messageId},'partSeq').filter(r=>r.partKindEnumId==='AgpkText'&&r.textValue).map(r=>r.textValue).join('\n')}
 function runOutput(run){const r=json(run.resultJson);return r?.text??r?.output??(r&&typeof r=='object'?JSON.stringify(r):run.resultJson)??(run.errorText||'')}
+// Whether the current user reads the content of run (its user's message, its reply, a judge's reasons): their own run, or
+// with AgentAudit another's, each such read written to AgentAuditLog with why, as get#AgentAuditView and
+// get#LlmCallContent do. AgentAdmin or MONITOR_EVAL alone does not show another user's content (SEC-AI-83).
+function readsRun(run,why){const me=ec.user.userId;if(!me||!run)return false;if(run.userId!=null&&run.userId===me)return true
+ if(!ec.user.hasPermission('AgentAudit'))return false
+ create('AgentAuditLog',{auditorUserId:me,targetUserId:run.userId||null,conversationId:run.conversationId||null,runId:run.runId,reason:why,auditDate:now()});return true}
+function runReadable(p){return{readable:readsRun(one('AgentRun',{runId:p.runId}),p.reason||'an agent run in Evals')}}
+function otherUsers(runId){return new Error('Run '+runId+' is another user\'s: its content needs the AgentAudit permission')}
 function saveRun(p){need('MONITOR_EVAL');const run=one('AgentRun',{runId:p.runId});if(!run)throw new Error('Run '+p.runId+' is not available')
+ if(!readsRun(run,'saved as a dataset item in Evals'))throw otherUsers(run.runId)
  return addItem({datasetId:p.datasetId,inputText:runInput(run.runId),groundTruth:p.groundTruth||(p.useOutput==='Y'?runOutput(run):null),metadataJson:JSON.stringify({agentId:run.agentId}),sourceRunId:run.runId})}
 
 // ---- scoring
@@ -59,6 +68,7 @@ function score(scorers,c,source){
 const active=a=>(a.thruDate==null||ms(a.thruDate)>ms(now()))&&(a.fromDate==null||ms(a.fromDate)<=ms(now()))
 function scorersOf(cond){return rows('AgentScorerAttach',cond).filter(active).map(a=>one('AgentScorer',{scorerId:a.scorerId})).filter(Boolean)}
 function scoreRun(p){need('MONITOR_EVAL');const run=one('AgentRun',{runId:p.runId});if(!run)throw new Error('Run '+p.runId+' is not available')
+ if(!readsRun(run,'scored in Evals'))throw otherUsers(run.runId)
  const ids=p.scorerId?[p.scorerId]:[],scorers=ids.length?ids.map(id=>one('AgentScorer',{scorerId:id})).filter(Boolean):scorersOf({agentId:run.agentId})
  if(!scorers.length)throw new Error('Choose a scorer, or attach one to agent '+run.agentId)
  const rows_=score(scorers,{runId:run.runId,input:runInput(run.runId),output:runOutput(run),groundTruth:p.groundTruth||null},'AgssTrace');return{scoredCount:rows_.length}}
@@ -150,5 +160,5 @@ function calledTool(p){if(!p.runId)return{score:0,reason:'No run to check'};cons
  const used=new Set(rows('AgentToolCall',{runId:p.runId}).map(c=>c.toolName));if(!want.length)return{score:used.size?1:0,reason:used.size?'Called '+[...used].join(', '):'Called no tool'}
  const missing=want.filter(t=>!used.has(t));return{score:(want.length-missing.length)/want.length,reason:missing.length?'Did not call '+missing.join(', '):'Called '+want.join(', ')}}
 
-function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
+function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
 ;({execute})

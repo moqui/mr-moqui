@@ -31,7 +31,17 @@
             const c = {}; if (runId) c.runId = runId; if (agentId) c.agentId = agentId
             runs = Array.from(find('moqui.agent.AgentRun', c).orderBy('-submittedDate').limit(50).list())
         }
+        // a run's content (its message, its reply, a judge's reasons) only for the viewer's own run, or another user's
+        // with AgentAudit, each such read written to AgentAuditLog (check#RunReadable, SEC-AI-83)
+        const reads = r => ec.service.sync().name('org.moqui.agent.AgentEvalServices.check#RunReadable')
+                .parameters({runId: r.runId, reason: 'listed in Evals, Runs'}).call().readable === true
+        const hidden = ec.l10n.localize("Another user's run: its content needs the AgentAudit permission")
         runRows = runs.map(r => {
+            if (!reads(r)) {
+                const scores = Array.from(find('moqui.agent.AgentScore', {runId: r.runId}).orderBy('-scoredDate').list())
+                return {runId: r.runId, agentId: r.agentId || (r.externalHarnessId ? 'external ' + r.externalHarnessId : ''), statusId: r.statusId, endedDate: r.endedDate == null ? '' : ec.l10n.format(r.endedDate, 'yyyy-MM-dd HH:mm'), cost: r.cost, input: hidden, output: '', readable: false,
+                    scores: scores.map(s => (scorers[s.scorerId]?.scorerName || s.scorerId) + ': ' + (s.score == null ? 'error' : num(s.score).toFixed(2))).join('\n')}
+            }
             // the run's user message, else the conversation's last one sent by the time the run was submitted (external runs)
             const at = r.submittedDate == null ? Infinity : Date.parse(String(r.submittedDate)) || Number(String(r.submittedDate))
             const msg = Array.from(find('moqui.agent.AgentMessage', {runId: r.runId, role: 'user'}).orderBy('messageSeq').limit(1).list())[0]
@@ -39,9 +49,10 @@
             const input = msg ? Array.from(find('moqui.agent.AgentMessagePart', {messageId: msg.messageId}).orderBy('partSeq').list()).filter(p => p.partKindEnumId === 'AgpkText').map(p => p.textValue).join('\n') : ''
             const result = json(r.resultJson), output = result?.text ?? result?.output ?? (result && typeof result == 'object' ? JSON.stringify(result) : r.resultJson) ?? r.errorText
             const scores = Array.from(find('moqui.agent.AgentScore', {runId: r.runId}).orderBy('-scoredDate').list())
-            return {runId: r.runId, agentId: r.agentId || (r.externalHarnessId ? 'external ' + r.externalHarnessId : ''), statusId: r.statusId, endedDate: r.endedDate == null ? '' : ec.l10n.format(r.endedDate, 'yyyy-MM-dd HH:mm'), cost: r.cost, input: clip(input, 300), output: clip(output, 500),
+            return {runId: r.runId, agentId: r.agentId || (r.externalHarnessId ? 'external ' + r.externalHarnessId : ''), statusId: r.statusId, endedDate: r.endedDate == null ? '' : ec.l10n.format(r.endedDate, 'yyyy-MM-dd HH:mm'), cost: r.cost, input: clip(input, 300), output: clip(output, 500), readable: true,
                 scores: scores.map(s => (scorers[s.scorerId]?.scorerName || s.scorerId) + ' (' + String(s.sourceEnumId || '').replace('Agss', '').toLowerCase() + '): ' + (s.score == null ? 'error' : num(s.score).toFixed(2)) + (s.reason ? ' — ' + clip(s.reason, 140) : '')).join('\n')}
         })
+        readableRows = runRows.filter(row => row.readable)
     ]]></script></actions>
     <widgets>
         <label text="Recent agent runs with their scores. Score a run with any scorer, or save it as a dataset item so it is tested in every experiment from now on. LLM call traces are in AI." type="p"/>
@@ -60,11 +71,11 @@
             <field name="output"><default-field><display/></default-field></field>
             <field name="scores"><default-field><display/></default-field></field>
         </form-list>
-        <section name="ActSection" condition="canEdit &amp;&amp; runRows.length"><widgets>
+        <section name="ActSection" condition="canEdit &amp;&amp; readableRows.length"><widgets>
             <container style="row q-col-gutter-md"><container style="col-12 col-md-6">
                 <label text="Score a run" type="h6"/>
                 <form-single name="ScoreRun" transition="scoreRun">
-                    <field name="runId"><default-field title="Run"><drop-down><list-options list="runRows" key="${runId}" text="${runId} ${agentId || ''}"/></drop-down></default-field></field>
+                    <field name="runId"><default-field title="Run"><drop-down><list-options list="readableRows" key="${runId}" text="${runId} ${agentId || ''}"/></drop-down></default-field></field>
                     <field name="scorerId"><default-field title="Scorer"><drop-down allow-empty="true"><list-options list="scorerOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
                     <field name="submitButton"><default-field title=""><submit text="Score"/></default-field></field>
                 </form-single>
@@ -72,7 +83,7 @@
             </container><container style="col-12 col-md-6">
                 <label text="Save as a dataset item" type="h6"/>
                 <form-single name="SaveRun" transition="saveRun">
-                    <field name="runId"><default-field title="Run"><drop-down><list-options list="runRows" key="${runId}" text="${runId} ${agentId || ''}"/></drop-down></default-field></field>
+                    <field name="runId"><default-field title="Run"><drop-down><list-options list="readableRows" key="${runId}" text="${runId} ${agentId || ''}"/></drop-down></default-field></field>
                     <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
                     <field name="groundTruth"><default-field title="Expected"><text-area rows="3" cols="50"/></default-field></field>
                     <field name="useOutput"><default-field title="Use the reply as expected"><check><option key="Y" text=" "/></check></default-field></field>
