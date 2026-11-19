@@ -1516,13 +1516,18 @@ pub fn apply_header_keys(api_key: Option<&str>, login_key: Option<&str>, scope: 
     Ok(true)
 }
 
-/// The scope of a request path ([`apply_header_keys`]): [`ACCESS_TOKEN_SCOPE`] for the git REST, the `git` and `hosting`
-/// resources of the framework's REST (`/rest/s1/moqui/git/...`, `/rest/s1/moqui/hosting/...`), by the screen path the
-/// request reaches (`..` and empty names resolved); none for any other path.
+/// The scope of a request path ([`apply_header_keys`]): [`ACCESS_TOKEN_SCOPE`] for the git REST, the `git` resource of
+/// the framework's REST (`/rest/s1/moqui/git/...`) and the read resources of its `hosting` (`offer`, `repository`,
+/// `mergeRequests`, `agreement`), by the screen path the request reaches (`..` and empty names resolved); none for any
+/// other path, so a token for git alone makes no key for another service (`hosting/gatewayKey`) and ends none
+/// (`hosting/keyRevoke`) (SEC-RTE-85).
 pub fn request_key_scope(path: &str) -> Option<&'static str> {
     let names = crate::screen::screen_path_names(path);
     match names.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["rest", "s1", "moqui", "git" | "hosting", ..] => Some(ACCESS_TOKEN_SCOPE),
+        ["rest", "s1", "moqui", "git", ..]
+        | ["rest", "s1", "moqui", "hosting", "offer" | "repository" | "mergeRequests" | "agreement", ..] => {
+            Some(ACCESS_TOKEN_SCOPE)
+        }
         _ => None,
     }
 }

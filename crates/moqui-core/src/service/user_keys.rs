@@ -767,6 +767,16 @@ fn create_scoped_key(
         add_error("Sign in first");
         return Ok(BTreeMap::new());
     }
+    // a browser session, which a taken-over cookie may be, makes a lasting key only after a recent sign-in, as the other
+    // lasting credentials ask; a client signing its requests in by its own key (the device key) is that client (SEC-RTE-85)
+    let by_session = crate::web::current_request().is_some_and(|request| {
+        ["api_key", "login_key", "authorization"]
+            .iter()
+            .all(|name| request.header(name).is_none_or(|value| value.trim().is_empty()))
+    });
+    if by_session && !super::recent_auth::require_recent_auth() {
+        return Ok(BTreeMap::new());
+    }
     let scope = text(parameters, "scope").unwrap_or_else(|| "gateway".to_string());
     match crate::user::get_scoped_key(&scope, &text(parameters, "deviceName").unwrap_or_default()) {
         Ok(key) => Ok(out([("loginKey", Value::string(key)), ("scope", Value::string(scope))])),

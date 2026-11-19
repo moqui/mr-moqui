@@ -276,6 +276,29 @@ fn a_scoped_key_opens_only_its_scope_and_its_holder_ends_it() {
     assert!(errors.is_empty(), "{errors}");
     assert_eq!(own["revoked"], Value::Bool(true));
     assert!(crate::user::login_user_key_for(&key, "gateway").is_err());
+
+    // SEC-RTE-85: a browser session with no recent sign-in makes none; a client signing in by its own key does
+    let _web = crate::web::install(BTreeMap::new());
+    let made_by = |key_header: bool| {
+        let mut request = crate::web::WebRequest::new("POST", "/rest/s1/moqui/hosting/gatewayKey");
+        if key_header {
+            request.set_header("login_key", "the-device-key");
+        }
+        crate::web::set_request(std::sync::Arc::new(request), bytes::Bytes::new());
+        crate::user::session::reset_session();
+        crate::user::internal_login_user("keys.ann").unwrap();
+        let called = crate::service::call::sync(&format!("{SERVICES}.create#UserScopedKey"), &BTreeMap::new());
+        let errors = ExecutionContext::with_current(|ctx| {
+            let text = ctx.message().errors_text().join("\n");
+            ctx.message().clear();
+            text
+        })
+        .unwrap_or_default();
+        crate::user::logout().unwrap();
+        called.ok().is_some_and(|out| out.contains_key("loginKey")) && errors.is_empty()
+    };
+    assert!(!made_by(false), "a session with no recent sign-in");
+    assert!(made_by(true), "a client by its own key");
 }
 
 /// An SSH key, an access token and an app password are made only after a sign-in in the last five minutes (SEC-ADM-03,
@@ -346,6 +369,10 @@ fn credentials_need_a_recent_sign_in_and_an_access_token_is_for_git_alone() {
         None
     );
     assert_eq!(crate::user::request_key_scope("/apps/git"), None);
+    // SEC-RTE-85: a token for git alone makes no key for another service, and ends none
+    assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/offer"), Some("git"));
+    assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/gatewayKey"), None);
+    assert_eq!(crate::user::request_key_scope("/rest/s1/moqui/hosting/keyRevoke"), None);
 
     // a token made before tokens had a scope is git's too
     {
