@@ -2310,6 +2310,37 @@ fn a_file_that_is_not_valid_is_an_error_status_and_a_component_gets_the_built_in
         (text(&scheduled[0], "trusted"), text(&scheduled[0], "triggeredByUserId")),
         ("Y".into(), String::new())
     );
+
+    // SEC-GIT-88: a schedule of another branch, one an account without the update right may make, is trusted only as
+    // a push of its head would be; with no pusher known it is not
+    plain.push(
+        &fixture,
+        &[("ci.xml", r#"<ci><pipeline name="side" on="schedule" cron="0 0 4 * * ?" branches="side"><job name="j" image="moqui-build"><step run="x"/></job></pipeline></ci>"#)],
+        "main",
+    );
+    let side_head = plain.push(&fixture, &[("side.txt", "a branch of its own")], "side");
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        fixture
+            .entity
+            .find("moqui.resource.GitCommitPush")
+            .unwrap()
+            .eq("repositoryId", s("plain"))
+            .eq("commitId", s(&side_head))
+            .delete_all()
+            .unwrap();
+    }
+    assert_eq!(due(now + 50 * 60 * 60 * 1000), 1);
+    let side: Vec<EntityValue> = rows(&fixture, "moqui.resource.GitPipelineRun", &[("repositoryId", "plain")])
+        .into_iter()
+        .filter(|run| text(run, "pipelineName") == "side")
+        .collect();
+    assert_eq!(side.len(), 1);
+    assert_eq!(
+        (text(&side[0], "refName"), text(&side[0], "trusted")),
+        ("refs/heads/side".into(), "N".into())
+    );
 }
 
 #[test]

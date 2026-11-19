@@ -59,6 +59,8 @@ pub struct RunRequest {
     pub pipeline_name: Option<String>,
     pub environment_id: Option<String>,
     pub retry_of_run_id: Option<String>,
+    /// A schedule run of the default branch or a protected one ([`trust::Origin::schedule_own_ref`]).
+    pub schedule_own_ref: bool,
 }
 
 impl RunRequest {
@@ -78,6 +80,7 @@ impl RunRequest {
             pipeline_name: None,
             environment_id: None,
             retry_of_run_id: None,
+            schedule_own_ref: false,
         }
     }
 }
@@ -474,6 +477,7 @@ fn queue_pipeline(
         source_repository_id: request.source_repository_id.as_deref(),
         pushed_for_review: request.pushed_for_review,
         source_detached: request.source_detached,
+        schedule_own_ref: request.schedule_own_ref,
     };
     let decided = decide(
         request,
@@ -698,6 +702,21 @@ pub fn refresh_schedules(provider: &GitProvider, entity: &EntityFacade, reposito
     Ok(())
 }
 
+/// The account that first brought `commit_id` to the repository (`GitCommitPush`); `None` when none is known (an
+/// import, a mirror's fetch, a commit past `eca-max-commits`).
+fn pusher_of(entity: &EntityFacade, repository_id: &str, commit_id: &str) -> Result<Option<String>, Error> {
+    const GIT_COMMIT_PUSH: &str = "moqui.resource.GitCommitPush";
+    if !entity.table_ready(GIT_COMMIT_PUSH) {
+        return Ok(None);
+    }
+    Ok(entity
+        .find(GIT_COMMIT_PUSH)?
+        .eq("repositoryId", Value::string(repository_id))
+        .eq("commitId", Value::string(commit_id))
+        .one()?
+        .and_then(|row| field(&row, "userId")))
+}
+
 /// Queue the schedule pipelines that came due since they were last checked, as of `now` (milliseconds). The count
 /// queued. One that fails is logged and the others still run.
 pub fn queue_due(provider: &GitProvider, entity: &EntityFacade, now: i64) -> Result<usize, Error> {
@@ -741,6 +760,13 @@ pub fn queue_due(provider: &GitProvider, entity: &EntityFacade, now: i64) -> Res
             };
             let mut request = RunRequest::new(&repository, Event::Schedule, &ref_name, &head.to_string());
             request.pipeline_name = Some(pipeline.clone());
+            // the default branch or a protected one is the repository's own; any other branch is trusted only as
+            // its head's push would be (SEC-GIT-88)
+            request.schedule_own_ref = ref_name == crate::ops::branch_ref(&repo.definition.branch)
+                || trust::is_protected(entity, &repository, Event::Schedule, &ref_name)?;
+            if !request.schedule_own_ref {
+                request.user_id = pusher_of(entity, &repository, &head.to_string())?;
+            }
             Ok(queue(provider, entity, &request)?.len())
         })();
         match outcome {
