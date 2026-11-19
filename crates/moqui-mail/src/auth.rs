@@ -556,6 +556,37 @@ pub struct Verdict {
     pub domain: String,
     /// The checks did not finish (a timeout, a failure): the message is not judged now, and the listener answers 451.
     pub temp_error: bool,
+    /// Why the message is refused before any policy is asked: its author is not one domain ([`author_refusal`]). Its
+    /// `dmarc` is then [`DmarcAction::Reject`] too, and the listener answers 550 with this text.
+    pub refused: Option<String>,
+}
+
+/// Why a message whose author is not one domain is refused, or none: more than one `From` field, no `From` address,
+/// or `From` addresses of more than one domain. DMARC judges one author domain and `mail-auth` passes over such a
+/// message (an empty result, no policy), while the stored sender is the first address, so `From: ceo@bank.example,
+/// x@evil.example` would come in as the bank's whatever its policy (RFC 7489 section 6.6.1; plans/Security-Review-Medium.md
+/// SEC-MAIL-81).
+fn author_refusal(raw: &[u8], addresses: &[String]) -> Option<String> {
+    let (head, _) = super::delivery::split_head(raw);
+    let fields = super::delivery::header_fields(head)
+        .into_iter()
+        .map(super::delivery::field_name_value)
+        .filter(|(name, _)| name.trim().eq_ignore_ascii_case("From"))
+        .count();
+    if fields > 1 {
+        return Some(format!("The message has {fields} From fields: one author is required"));
+    }
+    let domains: std::collections::BTreeSet<String> = addresses
+        .iter()
+        .filter_map(|address| address.rsplit_once('@'))
+        .map(|(_, domain)| domain.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|domain| !domain.is_empty())
+        .collect();
+    match domains.len() {
+        0 => Some("The message names no From address: one author is required".to_string()),
+        1 => None,
+        _ => Some("The message's From addresses are of more than one domain: one author domain is required".to_string()),
+    }
 }
 
 /// The SMTP session a message came in, as the checks read it.
@@ -635,6 +666,15 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
             ..Verdict::default()
         };
     };
+    if let Some(why) = author_refusal(raw, message.from_addresses()) {
+        return Verdict {
+            field: format!("Authentication-Results: {authserv_id}; dmarc=permerror (no single author domain)\r\n"),
+            dmarc: DmarcAction::Reject,
+            summary: "dmarc=permerror (no single author domain)".to_string(),
+            refused: Some(why),
+            ..Verdict::default()
+        };
+    }
     let mut kept = 0;
     message.retain_dkim_signatures(|_| {
         kept += 1;
@@ -713,6 +753,7 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         dmarc: action,
         summary,
         temp_error: false,
+        refused: None,
         domain: if dmarc.domain().is_empty() {
             from
         } else {
