@@ -183,10 +183,12 @@ fn read_only_runs_refuse_writes_and_a_cancel_stops_a_sleep() {
             },
         )
     };
-    for sql in ["with made as (insert into test_entity (test_id) values ('RO') returning test_id) select * from made"] {
-        let err = read_only(sql).unwrap_err();
-        assert!(err.to_string().contains("read-only transaction"), "{sql}: {err}");
-    }
+    // a data-modifying CTE is a query by its first word: the database refuses it
+    let err = read_only(
+        "with made as (insert into test_entity (test_id) values ('RO') returning test_id) select * from made",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("read-only transaction"), "{err}");
     for sql in [
         "insert into test_entity (test_id) values ('RO')",
         "create table ro_made (id int)",
