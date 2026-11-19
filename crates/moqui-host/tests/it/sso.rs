@@ -235,12 +235,14 @@ fn location(headers: &[(String, String)]) -> String {
 
 /// One browser login through the server and the provider; returns the cookie after the callback and its response.
 fn sso_login(server: SocketAddr, return_to: &str, tamper: bool) -> (String, u16, Vec<(String, String)>, String) {
-    sso_login_with(server, return_to, tamper, "")
+    sso_login_with(server, "/sso/login", return_to, tamper, "")
 }
 
-/// [`sso_login`] with more form parameters (`extra`, as `&name=value`).
+/// [`sso_login`] at `path` (`/sso/reauth` for a re-authentication) with more form parameters (`extra`, as
+/// `&name=value`).
 fn sso_login_with(
     server: SocketAddr,
+    path: &str,
     return_to: &str,
     tamper: bool,
     extra: &str,
@@ -250,7 +252,7 @@ fn sso_login_with(
         server,
         &http_request(
             "POST",
-            "/sso/login",
+            path,
             &[("Content-Type", "application/x-www-form-urlencoded")],
             &body,
         ),
@@ -374,7 +376,11 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
         !recent(&silent),
         "a sign-in the provider answered from its session an hour old is not recent"
     );
-    let (ignored, status, _, text) = sso_login_with(server, "/qapps", false, "&reauth=true");
+    // SEC-WEB-84: a plain login is no re-authentication, whatever its parameters say; only /sso/reauth starts one
+    let (_, status, _, text) = sso_login_with(server, "/sso/login", "/qapps", false, "&reauth=true");
+    assert_eq!(status, 302, "{text}");
+    assert!(!provider.lock().unwrap().authorize_query.contains_key("prompt"));
+    let (ignored, status, _, text) = sso_login_with(server, "/sso/reauth", "/qapps", false, "");
     assert_eq!(status, 302, "{text}");
     let query = provider.lock().unwrap().authorize_query.clone();
     assert_eq!(query.get("prompt").map(String::as_str), Some("login"), "{query:?}");
@@ -384,7 +390,7 @@ fn an_oidc_login_creates_the_user_maps_groups_and_rotates_the_session() {
         "a re-authentication the provider did not do is not recent"
     );
     provider.lock().unwrap().auth_age = 0;
-    let (reauthenticated, status, _, text) = sso_login_with(server, "/qapps", false, "&reauth=true");
+    let (reauthenticated, status, _, text) = sso_login_with(server, "/sso/reauth", "/qapps", false, "");
     assert_eq!(status, 302, "{text}");
     assert!(
         recent(&reauthenticated),

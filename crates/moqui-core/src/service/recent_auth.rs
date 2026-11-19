@@ -165,6 +165,18 @@ fn check_recent_auth(
             .list()?
             .iter()
             .filter(|flow| field(flow, "disabled") != "Y" && field(flow, "inbound") != "Y")
+            // only a flow whose round trip can answer the check: OpenID Connect, or an OAuth provider that asks the user
+            // to sign in every time (SEC-WEB-84)
+            .filter(|flow| match field(flow, "authFlowTypeEnumId").as_str() {
+                "AftOidc" => true,
+                "AftOauth" => facade
+                    .find("moqui.security.sso.OauthFlow")
+                    .and_then(|find| find.disable_authz().eq("authFlowId", Value::string(field(flow, "authFlowId"))).one())
+                    .ok()
+                    .flatten()
+                    .is_some_and(|row| field(&row, "reauthPrompts") == "Y"),
+                _ => false,
+            })
             .map(|flow| {
                 let id = field(flow, "authFlowId");
                 let description = field(flow, "description");

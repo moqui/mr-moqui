@@ -4,7 +4,7 @@
     moqui.reauth): /ReAuth/check answers check#RecentAuth (recent, method, secondFactor, authFlowId, authFlowList);
     /ReAuth/password takes {password, code} (reauthenticate#User: reauthenticated, or codeNeeded with codeText and
     sendableFactors); /ReAuth/sendCode takes {factorId} (send#ReauthCode). An account without a password signs in again
-    at /sso/login with reauth=true and a returnTo. Each answers JSON ({errors} on a refusal); without a user it is 401.
+    by a POST of /sso/reauth (with the session token) and a returnTo. Each answers JSON ({errors} on a refusal); without a user it is 401.
     Posts need the session's CSRF token. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">

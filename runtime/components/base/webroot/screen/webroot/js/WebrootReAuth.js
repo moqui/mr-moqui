@@ -10,7 +10,7 @@
  * - confirm(): asks for the password, then the code of the second factor when the account has one (offering to send it to
  *   an email or phone factor), in Quasar dialogs. Resolves when the server took them; rejects {reasonCode: 'cancelled'}
  *   when the user cancels. An account without a password goes to a fresh sign-in at its identity provider
- *   (/sso/login with reauth=true), which comes back to this page: the promise does not resolve, and the user does the
+ *   (a POST of /sso/reauth with the session token), which comes back to this page: the promise does not resolve, and the user does the
  *   action again there.
  * - ensure(): check(), then confirm() when the sign-in is not recent.
  * - retry(fn): fn(); when it is refused with reauthRequired, confirm() and fn() once more.
@@ -60,7 +60,19 @@
         return dialog({ title: t("Confirm it is you"), message: t("Sign in again with {provider} to do this. You come back to this page; then do it again.").replace("{provider}", flow.description || flow.authFlowId),
             ok: { label: t("Sign in again"), color: "primary", unelevated: true, noCaps: true } }).then(() => {
             const back = root.location.pathname + root.location.search;
-            root.location.assign("/sso/login?authFlowId=" + encodeURIComponent(flow.authFlowId) + "&reauth=true&returnTo=" + encodeURIComponent(back));
+            // a POST with the session's token: a re-authentication no other site or link can start (SEC-WEB-84)
+            const form = root.document.createElement("form");
+            form.method = "post";
+            form.action = "/sso/reauth";
+            for (const [name, value] of [["authFlowId", flow.authFlowId], ["returnTo", back], ["moquiSessionToken", moqui.sessionToken || ""]]) {
+                const input = root.document.createElement("input");
+                input.type = "hidden";
+                input.name = name;
+                input.value = value;
+                form.appendChild(input);
+            }
+            root.document.body.appendChild(form);
+            form.submit();
             return new Promise(() => null);
         });
     }
