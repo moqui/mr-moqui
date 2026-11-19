@@ -13,6 +13,10 @@
         <!-- add datasource elements here to configure databases -->
     </entity-facade>
 
+    <!-- the demo Shop and PASS checkouts pay through Mantle's local test gateways (TEST_APPROVE and the hosted test gateway the
+        demo data binds), which a production instance refuses unless allowed (mr-mantle account/TestGateways.js, SEC-BOS-129) -->
+    <mantle allow-test-gateways="true"/>
+
     <!-- named here, the component loads on a production instance; its own component.xml leaves it off -->
     <component-list>
         <component name="demo" location="components/dev/demo"/>
