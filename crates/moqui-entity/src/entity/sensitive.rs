@@ -30,13 +30,18 @@ pub const USER_ACCOUNT_SECRET_FIELDS: &[&str] = &[
     "passwordBase64",
 ];
 
-/// `UserAccount` fields that control authentication and identity. Service REST drops them unless the caller is ADMIN.
+/// `UserAccount` fields that control authentication and identity: the sign-in name, where a reset is mailed, the
+/// provider link (`externalUserId`, `externalAuthFlowId`) and the key a key sign-in is checked by (`publicKey`), the
+/// flags and the counters. No generic write takes them, a Service REST entity resource's included, an ADMIN's too:
+/// `update#UserAccount` changes them, with its rules.
 pub const USER_ACCOUNT_IDENTITY_FIELDS: &[&str] = &[
     "disabled",
     "username",
     "emailAddress",
     "ipAllowed",
-    "externalAuthId",
+    "externalUserId",
+    "externalAuthFlowId",
+    "publicKey",
     "requirePasswordChange",
     "hasLoggedOut",
     "disabledDateTime",
