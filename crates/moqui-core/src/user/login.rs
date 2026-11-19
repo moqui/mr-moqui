@@ -322,9 +322,9 @@ pub fn check_counted_code(user_id: &str, code: &str) -> Result<Option<String>, E
 
 /// Take a second factor's code once (`compare#UserAuthcFactorCode`, `ec.user.takeFactorCode`): a single-use code ends
 /// (`thruDate` now) only while it has not ended, and an authenticator factor keeps `step` only while its last step taken
-/// is before it. One conditional update on a reserve connection, committed at once, so of two right submissions of one
-/// code only one takes it, and a code taken stays taken whatever the caller's transaction does. True when this call
-/// took it.
+/// is before it. One conditional update in the caller's transaction (its held rows written first), so of two right
+/// submissions of one code only one takes it: the database holds the second's update until the first's transaction
+/// ends, and then it matches no row. A caller that rolls back gives the code back. True when this call took it.
 ///
 /// # Errors
 ///
@@ -334,10 +334,17 @@ pub fn take_factor_code(factor_id: &str, step: Option<i64>) -> Result<bool, Erro
     let facade = entity_facade()?;
     let by_id = Condition::equals("factorId", Value::string(factor_id));
     let (column, set, condition) = match step {
+        // a printed code ends in a year, a sent one in a day: one still in date is taken by ending it now
         None => (
             "thruDate",
             now_value(),
-            Condition::and(vec![by_id, Condition::is_null("thruDate")]),
+            Condition::and(vec![
+                by_id,
+                Condition::or(vec![
+                    Condition::is_null("thruDate"),
+                    Condition::greater("thruDate", now_value()),
+                ]),
+            ]),
         ),
         Some(step) => (
             "lastTotpStep",
@@ -351,13 +358,28 @@ pub fn take_factor_code(factor_id: &str, step: Option<i64>) -> Result<bool, Erro
             ]),
         ),
     };
-    let statement = facade.with_entity(USER_AUTHC_FACTOR, |entity, dialect, _| {
-        sql_update(entity, dialect, &[column], Some(&condition))
+    let (statement, tx, stamped) = facade.with_group(USER_AUTHC_FACTOR, |entity, dialect, _, tx| {
+        let stamped = entity.has_field("lastUpdatedStamp");
+        let columns: &[&str] = if stamped {
+            &[column, "lastUpdatedStamp"]
+        } else {
+            &[column]
+        };
+        Ok((
+            sql_update(entity, dialect, columns, Some(&condition))?,
+            tx.clone(),
+            stamped,
+        ))
     })?;
     let mut params = vec![set];
+    if stamped {
+        params.push(now_value());
+    }
     params.extend(statement.params);
-    let tx = facade.transactions_for(USER_AUTHC_FACTOR)?;
-    let updated = tx.with_reserve(|conn| conn.execute(&statement.sql, &params))?;
+    // the caller's entity writes held in a transaction-cache frame go first, and its reads are forgotten, as for any
+    // raw SQL in a frame (plans/archive/TX-Cache.md D1)
+    crate::entity::cache::flush_before_sql(&facade, &tx)?;
+    let updated = crate::entity::exec::execute_tx(&tx, &statement.sql, &params)?;
     Ok(updated > 0)
 }
 

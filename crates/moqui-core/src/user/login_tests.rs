@@ -181,10 +181,11 @@ fn codes_sent_at_once_are_gated_and_each_counted() {
     assert!(counted > policy::max_failures(), "counted {counted}");
 }
 
-/// SEC-WEB-87: a factor's code is taken by one conditional update, so of two right submissions of one single-use code
-/// at once only one verifies, and an authenticator factor takes a step only after the last one it took.
+/// SEC-WEB-87: a factor's code is taken by one conditional update: a single-use code while it has not ended, an
+/// authenticator factor's step only after the last one it took. Two right submissions at once are the host test
+/// `second_factor_codes` on Postgres, as this test database has no row locks.
 #[test]
-fn a_code_is_taken_once_by_two_right_submissions_at_once() {
+fn a_code_is_taken_by_a_conditional_update() {
     session::reset_session();
     let ctx = ExecutionContextFactory::test_context_in(
         "",
@@ -209,30 +210,18 @@ fn a_code_is_taken_once_by_two_right_submissions_at_once() {
             Value::string(super::super::factor::single_use_hash("70316001").unwrap()),
         );
         factor.set("fromDate", stamp(now_millis() - 60_000));
+        // a printed code is in date for a year
+        factor.set("thruDate", stamp(now_millis() + 365 * 86_400_000));
         factor.create(&facade).unwrap();
     }
-    let factory = Arc::clone(ctx.factory());
-    let start = Arc::new(std::sync::Barrier::new(2));
-    let threads: Vec<_> = (0..2)
-        .map(|_| {
-            let factory = Arc::clone(&factory);
-            let start = Arc::clone(&start);
-            std::thread::spawn(move || {
-                let context = factory.new_context();
-                let _entered = context.enter();
-                start.wait();
-                check_counted_code("twice", "70316001").unwrap()
-            })
-        })
-        .collect();
-    let verified: Vec<Option<String>> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
     assert_eq!(
-        verified
-            .iter()
-            .filter(|factor| factor.as_deref() == Some("TWICE_1"))
-            .count(),
-        1,
-        "{verified:?}"
+        check_counted_code("twice", "70316001").unwrap().as_deref(),
+        Some("TWICE_1")
+    );
+    assert_eq!(
+        check_counted_code("twice", "70316001").unwrap(),
+        None,
+        "the code was taken"
     );
     assert!(
         !take_factor_code("TWICE_1", None).unwrap(),

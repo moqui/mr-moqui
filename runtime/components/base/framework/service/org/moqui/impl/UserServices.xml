@@ -851,11 +851,11 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="compare" noun="UserAuthcFactorCode" authenticate="anonymous-all" allow-remote="false">
         <description>Whether a code is one of the user's factors' now, which it then takes (a single-use code ends, a TOTP
             factor keeps the step); nothing is counted. validate#UserAuthcFactorCode calls it, through
-            ec.user.checkCountedCode when a wrong code counts as a failed login. The take is one conditional update
-            committed at once (ec.user.takeFactorCode), and the code verifies only when this call took it: of two right
-            submissions of one code only one verifies, and a code taken stays used up even when the caller's
-            transaction then rolls back, as update#Password does when it refuses the new password (a new code is then
-            needed; SEC-WEB-87).</description>
+            ec.user.checkCountedCode when a wrong code counts as a failed login. The take is one conditional update in
+            the caller's transaction (ec.user.takeFactorCode), and the code verifies only when this call took it: of two
+            right submissions of one code only one verifies, as the database holds the second's update until the
+            first's transaction ends. A caller that rolls back gives the code back, as update#Password does when it
+            refuses the new password; the wrong codes counted stay counted (SEC-WEB-87).</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="code" required="true"/>

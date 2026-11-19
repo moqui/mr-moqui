@@ -880,7 +880,7 @@ interface MoquiUserFacade {
     checkCountedCode(userId: string | null, code: string | null): string | null;
     /** Count a failed login of the account as a wrong password is counted: committed at once, and failures counted at once each counted; past the login rules' maxFailures the account locks. */
     countFailedLogin(userId: string): void;
-    /** Take a factor's code once: a single-use code (no step) only while it has not ended, an authenticator code only for a step after the last one taken. Committed at once, so of two right submissions of one code only one takes it, and a code taken stays used up even when the caller's transaction rolls back. True when this call took it. */
+    /** Take a factor's code once: a single-use code (no step) only while it has not ended, an authenticator code only for a step after the last one taken. One conditional update in the caller's transaction, so of two right submissions of one code only one takes it; a caller that rolls back gives the code back. True when this call took it. */
     takeFactorCode(factorId: string, step?: number | string | null): boolean;
     /** The step an authenticator code of the secret is valid for now (one step either side) when it is after afterStep, the last step a code of the factor was taken for: a code works once. Null when the code is not valid now or its step was taken. */
     totpCodeStep(secret: string | null, code: string | null, afterStep: number | string | null): number | null;
