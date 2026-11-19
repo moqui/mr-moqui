@@ -43,11 +43,7 @@ use super::query::{Query, TextFields, TextMatch};
 /// Returns an error naming the clause that is not in the supported subset.
 pub fn parse_query_string(input: &str) -> Result<Query, Error> {
     let tokens = tokenize(input)?;
-    // each clause is a condition the backend runs, a wildcard one on every field served by no index (SEC-DAT-84)
-    let clauses = tokens
-        .iter()
-        .filter(|(token, _)| matches!(token, Token::Word { .. } | Token::Range { .. }))
-        .count();
+    let clauses = clause_count(&tokens);
     let max = super::limits::max_clauses();
     if clauses > max {
         return Err(Error::new(format!(
@@ -60,6 +56,43 @@ pub fn parse_query_string(input: &str) -> Result<Query, Error> {
         return Err(parser.error_at("unexpected ')'"));
     }
     Ok(query)
+}
+
+/// The clauses a query string asks the backend to run, held to `search-facade@query-max-clauses` (SEC-DAT-84): each
+/// word, phrase and range, but a field's list of plain values (`ownerPartyId:(A OR B OR C)`, one `IN` test) is one,
+/// while a wildcard word in it (served by no index) counts on its own.
+fn clause_count(tokens: &[(Token, usize)]) -> usize {
+    let mut count = 0;
+    let mut index = 0;
+    while index < tokens.len() {
+        let is_list = matches!(tokens[index].0, Token::Field(_))
+            && matches!(tokens.get(index + 1).map(|(token, _)| token), Some(Token::Open));
+        if is_list {
+            let mut depth = 0;
+            let mut plain = false;
+            index += 1;
+            while index < tokens.len() {
+                match &tokens[index].0 {
+                    Token::Open => depth += 1,
+                    Token::Close => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    Token::Word { wild, .. } if wild.iter().any(|flag| *flag) => count += 1,
+                    Token::Word { .. } | Token::Range { .. } => plain = true,
+                    _ => {}
+                }
+                index += 1;
+            }
+            count += usize::from(plain);
+        } else if matches!(tokens[index].0, Token::Word { .. } | Token::Range { .. }) {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -607,6 +640,18 @@ mod tests {
         parse(&words(64));
         let refused = parse_query_string(&words(65)).unwrap_err();
         assert!(refused.message().contains("at most 64"), "{refused}");
+        // a field's list of plain values is one clause, however long (Marble's organization limit, AgentTraces' ids)
+        let ids = (0..200)
+            .map(|index| format!("ORG{index}"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        parse(&format!("{} AND ownerPartyId:({ids})", words(63)));
+        // a wildcard word in such a list counts on its own
+        let wild = (0..65)
+            .map(|index| format!("o{index}*"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        assert!(parse_query_string(&format!("ownerPartyId:({wild})")).is_err());
     }
 
     #[test]

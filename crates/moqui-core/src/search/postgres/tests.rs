@@ -425,7 +425,8 @@ impl crate::driver::DbConnection for RecordingConn {
 }
 
 /// SEC-DAT-84: a search statement outside a report's budget runs under the search's own statement timeout
-/// (search-facade@query-timeout-seconds, 10 by default), put back after it.
+/// (search-facade@query-timeout-seconds, 10 by default), and the earlier value is put back after it (here none is
+/// read, so the default).
 #[test]
 fn a_search_statement_runs_under_its_own_time_limit() {
     let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -447,6 +448,7 @@ fn a_search_statement_runs_under_its_own_time_limit() {
     assert_eq!(
         *lock(&seen),
         [
+            "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'",
             "SET LOCAL statement_timeout = '10000'",
             "SELECT 1",
             "SET LOCAL statement_timeout TO DEFAULT"
