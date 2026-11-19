@@ -267,7 +267,7 @@ pub fn service_target_parts(name: &str) -> (String, String, bool) {
 
 /// While alive, the run is the user's: authorization required, and the Tools app's frame (all actions) on the stack.
 pub struct UserRun {
-    _required: Option<moqui_core::context::AuthzRequired>,
+    _required: Option<moqui_core::context::AuthzScope>,
     pushed: bool,
 }
 

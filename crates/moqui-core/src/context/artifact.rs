@@ -16,7 +16,7 @@
 //! decides the frame against the one below it.
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime};
@@ -439,28 +439,43 @@ impl ArtifactStack {
         self.authz_depth.get() > 0
     }
 
-    /// Authorization checked until the guard drops, whatever an outer `disable_authz` holds; the outer state comes back
-    /// on drop.
-    pub(super) fn require_authz(&self) -> AuthzRequired {
-        let saved = self.authz_depth.replace(0);
-        AuthzRequired {
+    /// The authorization state here, set aside until the guard drops: the disabled depth, and the guard of a script's
+    /// `disableAuthz()` in `script` (taken out, so what runs inside starts with none of its own). With `require`,
+    /// authorization is checked until then whatever an outer `disable_authz` holds; without it, the depth stays.
+    pub(super) fn scope_authz(&self, require: bool, script: &Rc<RefCell<Option<AuthzGuard>>>) -> AuthzScope {
+        let saved = if require {
+            self.authz_depth.replace(0)
+        } else {
+            self.authz_depth.get()
+        };
+        AuthzScope {
             depth: Rc::clone(&self.authz_depth),
             saved,
+            outer_script: script.borrow_mut().take(),
+            script: Rc::clone(script),
         }
     }
 }
 
-/// Restores the authorization-disabled depth an [`ArtifactStack::require_authz`] set aside, when dropped.
+/// The caller's authorization state, put back when dropped ([`super::ExecutionContext::require_authz`],
+/// [`super::ExecutionContext::keep_authz`]), however the scope ends: a return, an error or a panic that unwinds
+/// through it. What runs inside cannot change it: a script's `disableAuthz()` left held inside is dropped, and the
+/// caller's own is set aside until then, so no script inside replaces it or enables it.
 #[must_use = "dropping the guard restores the caller's authorization state"]
-pub struct AuthzRequired {
+pub struct AuthzScope {
     depth: Rc<Cell<u32>>,
     saved: u32,
+    script: Rc<RefCell<Option<AuthzGuard>>>,
+    outer_script: Option<AuthzGuard>,
 }
 
-impl Drop for AuthzRequired {
+impl Drop for AuthzScope {
     fn drop(&mut self) {
-        // a guard taken inside and dropped already left the depth at 0; the caller's comes back
+        // what the scope left held goes first: its drop counts down a depth that is set back after it
+        let left = self.script.borrow_mut().take();
+        drop(left);
         self.depth.set(self.saved);
+        *self.script.borrow_mut() = self.outer_script.take();
     }
 }
 

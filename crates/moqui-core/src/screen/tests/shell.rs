@@ -2227,3 +2227,133 @@ fn a_quick_create_with_a_condition_is_offered_only_where_its_service_says_so_and
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The call-target providers of [`a_providers_authorization_toggles_end_with_its_call`], under `test.Toggle`.
+const TOGGLES: &str = r#"<services>
+    <service verb="get" noun="Pair">
+        <description>a provider that disables authorization and enables it again</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
+        <actions><script>ec.artifactExecution.disableAuthz(); refusedUserIdList = []; ec.artifactExecution.enableAuthz()</script></actions>
+    </service>
+    <service verb="get" noun="Nested">
+        <description>a provider that calls a service that toggles authorization</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/></out-parameters>
+        <actions><script>ec.service.sync().name('test.Toggle.toggle#Authz').call(); refusedUserIdList = []</script></actions>
+    </service>
+    <service verb="toggle" noun="Authz">
+        <actions><script><![CDATA[
+            const wasDisabled = ec.artifactExecution.disableAuthz()
+            if (!wasDisabled) ec.artifactExecution.enableAuthz()
+        ]]></script></actions>
+    </service>
+    <service verb="get" noun="Throws">
+        <description>a provider that disables authorization and fails before it enables it</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <actions><script>ec.artifactExecution.disableAuthz(); throw new Error('the provider is down')</script></actions>
+    </service>
+    <service verb="get" noun="Seen">
+        <description>a provider that answers whether it runs with authorization disabled</description>
+        <in-parameters><parameter name="userIdList" type="List"/></in-parameters>
+        <out-parameters><parameter name="refusedUserIdList" type="List"/><parameter name="disabled" type="Boolean"/></out-parameters>
+        <actions><script>refusedUserIdList = []; disabled = ec.artifactExecution.authzDisabled()</script></actions>
+    </service>
+</services>"#;
+
+/// A provider's authorization toggles end with its call (found fixing the security review: chat refused no one after a
+/// provider toggled authorization, as get#RefusedUsers then ran with it disabled). A disableAuthz/enableAuthz pair, a
+/// service that toggles it, a provider that fails with it disabled and one that panics leave the caller's authorization
+/// as it was, whether the caller had it on or had disabled it itself, and the next provider runs with it on.
+#[test]
+fn a_providers_authorization_toggles_end_with_its_call() {
+    let dir = tree("toggles");
+    let open = dir.join("Apps/Open.xml");
+    let screen = std::fs::read_to_string(&open).unwrap();
+    let reach = r#"<chat-target name="open.reach" service="test.Shell.get#Reach"/>"#;
+    assert!(screen.contains(reach), "{screen}");
+    let providers = r#"<call-target name="open.pair" service="test.Toggle.get#Pair" sequence="10"/>
+        <call-target name="open.nested" service="test.Toggle.get#Nested" sequence="20"/>
+        <call-target name="open.throws" service="test.Toggle.get#Throws" sequence="30"/>
+        <call-target name="open.seen" service="test.Toggle.get#Seen" sequence="40"/>"#;
+    std::fs::write(&open, screen.replace(reach, providers)).unwrap();
+    std::fs::write(dir.join("service/test/Toggle.xml"), TOGGLES).unwrap();
+    // the call is made in a render under the apps root, where the providers are found; with wrap the caller disables
+    // authorization itself around it, as the Java idiom does
+    std::fs::write(
+        dir.join("Apps/Open/List.xml"),
+        r#"<screen require-authentication="true" default-menu-title="List">
+            <transition name="ask"><actions><script><![CDATA[
+                const wasDisabled = ec.web.parameters.wrap == 'true' ? ec.artifactExecution.disableAuthz() : true
+                const out = ec.service.sync().name('org.moqui.ui.ShellServices.call#Providers')
+                    .parameters({hook: 'call-target', parameters: {userIdList: ['someone']}}).call() || {}
+                if (!wasDisabled) ec.artifactExecution.enableAuthz()
+                const seen = (out.results || []).find((row) => row.sourceId === 'open.seen')
+                ec.web.sendJsonResponse({answer: [(out.results || []).map((row) => row.sourceId).join(','),
+                    (out.failedParts || []).map((row) => row.sourceId).join(','), String(seen && seen.disabled)].join(' | ')})
+            ]]></script></actions><default-response type="none"/></transition>
+            <widgets><label text="List"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let world = world(&dir);
+    // a load replaces the services registered, so the world's go again with these
+    load_services(
+        &world,
+        &[
+            dir.join("service/test/Shell.xml"),
+            dir.join("service/test/Toggle.xml"),
+            shell_services_xml(),
+        ],
+    );
+    let secret = dir.join("Apps/Secret.xml").to_string_lossy().into_owned();
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    crate::user::internal_login_user("plain").unwrap();
+    let still_checked = |step: &str| {
+        assert!(!ctx.authz_disabled(), "authorization is disabled after {step}");
+        let err = crate::user::authorize("AT_XML_SCREEN", &secret, "view").unwrap_err();
+        assert!(err.to_string().contains("not authorized"), "after {step}: {err}");
+    };
+    let holds = |script: &str| {
+        assert_eq!(
+            crate::script::eval_value(script).unwrap(),
+            Value::Bool(true),
+            "{script}"
+        );
+    };
+    let root = root_of(&dir);
+    let test = crate::screen::ScreenTest::new(&world.factory).root_screen(root);
+    let ask = |wrap: bool| {
+        let parameters = BTreeMap::from([("wrap".to_string(), Value::string(wrap.to_string()))]);
+        let out = test.render("apps/open/List/ask", parameters).unwrap();
+        assert_eq!(out.status(), 200, "{}", out.text());
+        out.json().unwrap()["answer"].as_str().unwrap_or_default().to_string()
+    };
+    let answered = "open.pair,open.nested,open.seen | open.throws | false";
+
+    // a caller with authorization on
+    assert_eq!(ask(false), answered);
+    still_checked("the providers");
+    // the caller's own toggles work as before
+    holds("ec.artifactExecution.disableAuthz() === false && ec.artifactExecution.authzDisabled() === true");
+    holds("(ec.artifactExecution.enableAuthz(), ec.artifactExecution.authzDisabled() === false)");
+    still_checked("the caller's own disableAuthz and enableAuthz");
+
+    // a caller that disabled authorization itself around the call
+    assert_eq!(ask(true), answered);
+    still_checked("the providers under the caller's disableAuthz");
+
+    // a provider that panics: its app's frame is popped and the caller's authorization is back
+    let location = open.to_string_lossy().into_owned();
+    let stack = ctx.artifact_stack_names();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::screen::shell::run_in_app(&location, true, || -> Result<(), crate::context::Error> {
+            ctx.script_disable_authz();
+            panic!("a provider that panics");
+        })
+    }));
+    assert!(panicked.is_err());
+    assert_eq!(ctx.artifact_stack_names(), stack);
+    still_checked("a provider that panicked");
+    let _ = std::fs::remove_dir_all(&dir);
+}
