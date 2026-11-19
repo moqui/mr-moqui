@@ -484,14 +484,19 @@ pub struct Sent {
     pub config: SendConfig,
 }
 
-/// The agents the caller may call over A2A now: those the server exposes ([`super::card::exposed_agents`]).
+/// The agents the caller may call over A2A now: those the server exposes ([`super::card::exposed_agents`]) that the
+/// caller's `LlmApiClient` allows.
 fn callable_agents(ctx: &Ctx<'_>) -> Result<Vec<(AgentDef, EntityValue)>, Failure> {
-    super::card::exposed_agents(&ctx.facade).map_err(|error| Failure::of(&error, "the agent lookup"))
+    let exposed = super::card::exposed_agents(&ctx.facade).map_err(|error| Failure::of(&error, "the agent lookup"))?;
+    Ok(exposed
+        .into_iter()
+        .filter(|(agent, _)| ctx.caller.allows(&agent.agent_id))
+        .collect())
 }
 
 /// Refuse a message to `agent_id` (the agent of a context or a task the caller has) unless the caller may call it
-/// over A2A now: an agent withdrawn from A2A (`exposeA2a` off, disabled, no longer serving `a2a`) takes no more
-/// messages, whatever was started with it before.
+/// over A2A now: an agent withdrawn from A2A (`exposeA2a` off, disabled, no longer serving `a2a`) or not allowed by
+/// the caller's client takes no more messages, whatever was started with it before.
 fn check_callable(ctx: &Ctx<'_>, agent_id: &str) -> Result<(), Failure> {
     if callable_agents(ctx)?
         .iter()

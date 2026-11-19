@@ -648,14 +648,15 @@ impl Caller {
 }
 
 /// The credential a request logged in with, as an `LlmApiClient` names it.
-enum Credential {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Credential {
     /// The hash of a login key, as `UserLoginKey.loginKey` stores it.
     LoginKey(String),
     AppPassword(String),
 }
 
 /// The id and the username of the owner of an app password, by its hash.
-fn app_password_owner(facade: &EntityFacade, password: &str) -> Option<(String, String)> {
+pub(crate) fn app_password_owner(facade: &EntityFacade, password: &str) -> Option<(String, String)> {
     let hashed = moqui_core::user::hash_login_key(&moqui_core::user::app_password_key(password)).ok()?;
     let row = facade
         .find("moqui.security.UserAppPassword")
@@ -860,25 +861,7 @@ fn client_of(facade: &EntityFacade, credential: &Credential, user_id: &str) -> R
     if text_of(&row, "userId").is_some_and(|owner| owner != user_id) {
         return Err(format!("client {client_id} is another user's"));
     }
-    let now = jiff::Timestamp::now().as_millisecond();
-    let used = row
-        .get("lastUsedDate")
-        .and_then(super::millis_of)
-        .is_some_and(|used| now - used < 60_000);
-    if !used {
-        let noted = facade.make_value(LLM_API_CLIENT).and_then(|mut update| {
-            update.set("clientId", Value::string(&client_id));
-            update.set("lastUsedDate", moqui_core::user::stamp_value(now));
-            facade.transactions_for(LLM_API_CLIENT)?.run(
-                moqui_core::transaction::TransactionAttribute::ForceNew,
-                None,
-                || update.update(facade),
-            )
-        });
-        if let Err(error) = noted {
-            tracing::warn!("client {client_id}: last use not written: {error}");
-        }
-    }
+    note_use(facade, &row);
     Ok(Some(Client {
         aliases: list_of(&row, "allowedAliases"),
         daily_tokens: int_of(&row, "dailyTokens")
@@ -890,6 +873,96 @@ fn client_of(facade: &EntityFacade, credential: &Credential, user_id: &str) -> R
             .filter(|n| *n > 0),
         client_id,
     }))
+}
+
+/// Note a client's use, at most once a minute; a write that fails is logged and the call goes on.
+fn note_use(facade: &EntityFacade, row: &moqui_core::entity::EntityValue) {
+    let client_id = text_of(row, "clientId").unwrap_or_default();
+    let now = jiff::Timestamp::now().as_millisecond();
+    let used = row
+        .get("lastUsedDate")
+        .and_then(super::millis_of)
+        .is_some_and(|used| now - used < 60_000);
+    if used {
+        return;
+    }
+    let noted = facade.make_value(LLM_API_CLIENT).and_then(|mut update| {
+        update.set("clientId", Value::string(&client_id));
+        update.set("lastUsedDate", moqui_core::user::stamp_value(now));
+        facade.transactions_for(LLM_API_CLIENT)?.run(
+            moqui_core::transaction::TransactionAttribute::ForceNew,
+            None,
+            || update.update(facade),
+        )
+    });
+    if let Err(error) = noted {
+        tracing::warn!("client {client_id}: last use not written: {error}");
+    }
+}
+
+/// The agents the `LlmApiClient` rows of a credential let it call over the A2A or MCP server (`scope` `a2a` or
+/// `mcp`), as [`client_of`] reads them for the gateway.
+///
+/// `Ok(None)` when no client names the credential: an account's own key or app password, bounded by its user's
+/// permissions alone. `Ok(Some(agents))` for the user's clients of the credential with the scope that are not
+/// disabled: the agents they allow, empty for any agent the server exposes (with several rows, an agent any one allows).
+/// Each use is noted as the gateway notes it.
+///
+/// # Errors
+///
+/// Returns why the credential is refused: the clients that name it are another user's or have not the scope, or all of
+/// them are disabled; or the rows cannot be read.
+pub(crate) fn protocol_client(
+    facade: &EntityFacade,
+    credential: &Credential,
+    user_id: &str,
+    scope: &str,
+) -> Result<Option<Vec<String>>, String> {
+    let (field, value) = match credential {
+        Credential::LoginKey(hash) => ("loginKey", hash),
+        Credential::AppPassword(id) => ("appPasswordId", id),
+    };
+    let rows = facade
+        .find(LLM_API_CLIENT)
+        .and_then(|find| find.eq(field, Value::string(value)).disable_authz().list())
+        .map_err(|error| {
+            tracing::error!("the LlmApiClient of a {scope} call could not be read: {error}");
+            "the client could not be read".to_string()
+        })?;
+    if rows.iter().next().is_none() {
+        return Ok(None);
+    }
+    let scoped: Vec<&moqui_core::entity::EntityValue> = rows
+        .iter()
+        .filter(|row| list_of(row, "scopes").iter().any(|listed| listed == scope))
+        .filter(|row| text_of(row, "userId").as_deref() == Some(user_id))
+        .collect();
+    if scoped.is_empty() {
+        return Err(format!(
+            "the LlmApiClient of this credential does not have the {scope} scope"
+        ));
+    }
+    let enabled: Vec<&moqui_core::entity::EntityValue> = scoped
+        .iter()
+        .copied()
+        .filter(|row| flag_of(row, "disabled") != Some(true))
+        .collect();
+    if enabled.is_empty() {
+        let ids: Vec<String> = scoped.iter().filter_map(|row| text_of(row, "clientId")).collect();
+        return Err(format!("client {} is disabled", ids.join(", ")));
+    }
+    let mut agents = Vec::new();
+    for row in enabled {
+        note_use(facade, row);
+        let allowed = list_of(row, "allowedAgents");
+        if allowed.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+        agents.extend(allowed);
+    }
+    agents.sort();
+    agents.dedup();
+    Ok(Some(agents))
 }
 
 /// The routes under `/llm/v1`.

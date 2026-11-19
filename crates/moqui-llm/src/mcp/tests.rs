@@ -1080,6 +1080,62 @@ fn the_tarpit_counts_every_request_before_anything_is_built() {
     assert_eq!(status, 429, "tools/list counts too");
 }
 
+/// SEC-AI-86: an `LlmApiClient` that names the credential bounds the MCP server as it does the gateway: a client with
+/// no `mcp` scope, a disabled one, or one whose `allowedAgents` leave out the MCP agent is refused; a key no client
+/// names is the account's and is bounded by its permissions alone.
+#[test]
+fn an_api_client_of_the_key_must_have_the_mcp_scope_and_allow_the_agent() {
+    let bed = bed("");
+    let _entered = bed.ctx.enter();
+    let (key, _) = ready(&bed);
+    let list = |bed: &Bed| rpc(bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
+    assert_eq!(list(&bed).0, 200, "no client names the key");
+    let hash = moqui_core::user::hash_login_key(&key).unwrap();
+    row(
+        &bed.facade,
+        "moqui.llm.LlmApiClient",
+        &[
+            ("clientId", "MCP_CLIENT"),
+            ("userId", USER),
+            ("loginKey", &hash),
+            ("scopes", "a2a"),
+        ],
+    );
+    let set = |fields: &[(&str, &str)]| {
+        let mut client = bed
+            .facade
+            .find("moqui.llm.LlmApiClient")
+            .unwrap()
+            .eq("clientId", Value::string("MCP_CLIENT"))
+            .disable_authz()
+            .one()
+            .unwrap()
+            .unwrap();
+        for (field, text) in fields {
+            client.set(*field, Value::string(*text));
+        }
+        client.update(&bed.facade).unwrap();
+    };
+    for (fields, allowed) in [
+        (&[("scopes", "a2a")][..], false),
+        (&[("scopes", "a2a,mcp"), ("disabled", "Y")][..], false),
+        (&[("disabled", "N"), ("allowedAgents", "assist")][..], false),
+        (&[("allowedAgents", "assist,mcp")][..], true),
+    ] {
+        set(fields);
+        let (status, answer) = list(&bed);
+        if allowed {
+            assert_eq!(status, 200, "{fields:?}: {answer}");
+        } else {
+            assert_eq!(
+                (status, answer["error"]["code"].as_i64()),
+                (403, Some(super::code::FORBIDDEN)),
+                "{fields:?}: {answer}"
+            );
+        }
+    }
+}
+
 /// SEC-AI-87: the MCP agent's tool policy is the server's allowlist, so a policy that cannot be read refuses the
 /// request rather than offer every tool but the destructive ones.
 #[test]

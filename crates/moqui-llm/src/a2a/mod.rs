@@ -176,6 +176,18 @@ pub fn enabled(factory: &ExecutionContextFactory) -> bool {
 pub struct Caller {
     pub user_id: String,
     pub base_url: String,
+    /// The agents the caller's `LlmApiClient` allows ([`crate::gateway::protocol_client`]); `None` for any the server
+    /// exposes.
+    pub agents: Option<Vec<String>>,
+}
+
+impl Caller {
+    /// Whether the caller's client allows `agent_id`.
+    pub fn allows(&self, agent_id: &str) -> bool {
+        self.agents
+            .as_ref()
+            .is_none_or(|agents| agents.iter().any(|allowed| allowed == agent_id))
+    }
 }
 
 /// The plain error of a request refused before either binding reads it, in the HTTP+JSON shape.
@@ -195,15 +207,16 @@ pub(crate) enum Login {
     Insecure,
     /// They are not valid.
     Invalid,
-    /// The user they logged in, in the context in place.
-    User(String),
+    /// The user they logged in, in the context in place, and the credential as an `LlmApiClient` names it.
+    User(String, crate::gateway::Credential),
 }
 
 /// Log the request's user in from its headers, as the A2A and MCP servers take them: `Authorization: Bearer <login
 /// key>` (when `bearer`), HTTP Basic with an app password or a login key as the password (never the account
 /// password), or the `api_key`/`login_key` header (when `api_key`); only over TLS, a believed proxy's https or
 /// loopback.
-pub(crate) fn log_in(request: &HttpRequest, bearer: bool, api_key: bool) -> Login {
+pub(crate) fn log_in(factory: &ExecutionContextFactory, request: &HttpRequest, bearer: bool, api_key: bool) -> Login {
+    use crate::gateway::Credential;
     let authorization = request
         .header("authorization")
         .map(str::trim)
@@ -219,41 +232,47 @@ pub(crate) fn log_in(request: &HttpRequest, bearer: bool, api_key: bool) -> Logi
     if !request.secure {
         return Login::Insecure;
     }
-    let logged_in = moqui_core::user::with_client_ip(&request.client_ip, || -> bool {
+    let by_key = |key: &str| -> Option<Credential> {
+        moqui_core::user::login_user_key(key).ok()?;
+        moqui_core::user::hash_login_key(key).ok().map(Credential::LoginKey)
+    };
+    let credential = moqui_core::user::with_client_ip(&request.client_ip, || -> Option<Credential> {
         if let Some(header) = authorization {
             if let Some(token) = header
                 .strip_prefix("Bearer ")
                 .or_else(|| header.strip_prefix("bearer "))
             {
-                return bearer && moqui_core::user::login_user_key(token.trim()).is_ok();
+                return if bearer { by_key(token.trim()) } else { None };
             }
-            if let Some((username, password)) = moqui_core::web::basic_credentials(header) {
-                if moqui_core::user::looks_like_app_password(&password)
-                    && moqui_core::user::login_app_password(&username, &password, "ai").is_ok()
-                {
-                    return true;
-                }
-                // a login key as the password, as git hosts take personal access tokens; never the account password
-                if password.len() == 40 && moqui_core::user::login_user_key(&password).is_ok() {
+            let (username, password) = moqui_core::web::basic_credentials(header)?;
+            if moqui_core::user::looks_like_app_password(&password)
+                && moqui_core::user::login_app_password(&username, &password, "ai").is_ok()
+            {
+                let facade = factory.entity()?;
+                return crate::gateway::app_password_owner(&facade, &password)
+                    .map(|(id, _)| Credential::AppPassword(id));
+            }
+            // a login key as the password, as git hosts take personal access tokens; never the account password
+            if password.len() == 40 {
+                if let Some(credential) = by_key(&password) {
                     let user = moqui_core::user::current_username().ok().flatten().unwrap_or_default();
                     if username.is_empty() || user.eq_ignore_ascii_case(&username) {
-                        return true;
+                        return Some(credential);
                     }
                     let _ = moqui_core::user::logout();
                 }
-                return false;
             }
-            return false;
+            return None;
         }
-        key.is_some_and(|key| api_key && moqui_core::user::login_user_key(key).is_ok())
+        key.filter(|_| api_key).and_then(by_key)
     });
     let user_id = moqui_core::user::current_user_id()
         .ok()
         .flatten()
         .filter(|id| !id.is_empty());
-    match user_id.filter(|_| logged_in) {
-        Some(user_id) => Login::User(user_id),
-        None => Login::Invalid,
+    match (user_id, credential) {
+        (Some(user_id), Some(credential)) => Login::User(user_id, credential),
+        _ => Login::Invalid,
     }
 }
 
@@ -261,16 +280,16 @@ pub(crate) fn log_in(request: &HttpRequest, bearer: bool, api_key: bool) -> Logi
 ///
 /// # Errors
 ///
-/// Returns the reply to send: 401 (with `WWW-Authenticate`) without valid credentials, 403 over plain HTTP or
-/// without the permissions.
+/// Returns the reply to send: 401 (with `WWW-Authenticate`) without valid credentials, 403 over plain HTTP, without
+/// the permissions, or when the `LlmApiClient` rows of the credential are disabled or have not the `a2a` scope.
 pub fn authenticate(factory: &ExecutionContextFactory, request: &HttpRequest) -> Result<Caller, Reply> {
     let conf = crate::facade(factory).conf().a2a.clone();
     let unauthorized = |message: &str| {
         refusal(401, "UNAUTHENTICATED", message)
             .with_header("www-authenticate", "Bearer realm=\"a2a\", Basic realm=\"a2a\"")
     };
-    let user_id = match log_in(request, conf.security.bearer, conf.security.api_key) {
-        Login::User(user_id) => user_id,
+    let (user_id, credential) = match log_in(factory, request, conf.security.bearer, conf.security.api_key) {
+        Login::User(user_id, credential) => (user_id, credential),
         Login::None => {
             return Err(unauthorized(
                 "credentials are required: a Bearer login key, or Basic with an app password",
@@ -293,9 +312,15 @@ pub fn authenticate(factory: &ExecutionContextFactory, request: &HttpRequest) ->
             "this needs the A2aServerUse and AgentUse permissions",
         ));
     }
+    let facade = factory
+        .entity()
+        .ok_or_else(|| refusal(500, "INTERNAL", "Internal error"))?;
+    let agents = crate::gateway::protocol_client(&facade, &credential, &user_id, "a2a")
+        .map_err(|message| refusal(403, "PERMISSION_DENIED", &message))?;
     Ok(Caller {
         user_id,
         base_url: card::base_url(factory, &request.origin),
+        agents,
     })
 }
 

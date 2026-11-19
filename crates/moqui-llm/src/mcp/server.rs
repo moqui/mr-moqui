@@ -423,8 +423,8 @@ pub fn authenticate(factory: &ExecutionContextFactory, request: &HttpRequest) ->
     let unauthenticated = |message: &str| {
         McpError::new(401, code::UNAUTHENTICATED, message).header("www-authenticate", super::www_authenticate())
     };
-    let user_id = match crate::a2a::log_in(request, true, true) {
-        Login::User(user_id) => user_id,
+    let (user_id, credential) = match crate::a2a::log_in(factory, request, true, true) {
+        Login::User(user_id, credential) => (user_id, credential),
         Login::None => {
             return Err(unauthenticated(
                 "credentials are required: a Bearer login key, or Basic with an app password",
@@ -445,6 +445,20 @@ pub fn authenticate(factory: &ExecutionContextFactory, request: &HttpRequest) ->
             403,
             code::FORBIDDEN,
             "this needs the McpServerUse and AgentUse permissions",
+        ));
+    }
+    // a client that names the credential must have the mcp scope, not be disabled, and allow the MCP agent
+    let facade = factory
+        .entity()
+        .ok_or_else(|| McpError::internal("the entity facade is not installed"))?;
+    let agents = crate::gateway::protocol_client(&facade, &credential, &user_id, "mcp")
+        .map_err(|message| McpError::new(403, code::FORBIDDEN, message))?;
+    let agent_id = crate::facade(factory).conf().mcp.agent.clone();
+    if agents.is_some_and(|agents| !agents.is_empty() && !agents.contains(&agent_id)) {
+        return Err(McpError::new(
+            403,
+            code::FORBIDDEN,
+            format!("this credential's LlmApiClient does not allow the MCP agent {agent_id}"),
         ));
     }
     Ok(Caller {

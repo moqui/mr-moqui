@@ -443,6 +443,7 @@ fn a_push_config_is_found_only_through_its_own_task_and_user() {
     let ann = Caller {
         user_id: "ann".to_string(),
         base_url: "https://moqui.example.com".to_string(),
+        agents: None,
     };
     let ctx = Ctx::new(context.factory(), &ann).unwrap();
     let ask = |task: &str, config: &str| json!({"taskId": task, "id": config});
@@ -538,6 +539,7 @@ fn an_agent_withdrawn_from_a2a_takes_no_message_through_an_old_context_or_task()
     let ann = Caller {
         user_id: "ann".to_string(),
         base_url: "https://moqui.example.com".to_string(),
+        agents: None,
     };
     let ctx = super::ops::Ctx::new(context.factory(), &ann).unwrap();
     let to_context = refused(
@@ -552,3 +554,38 @@ fn an_agent_withdrawn_from_a2a_takes_no_message_through_an_old_context_or_task()
     assert!(to_task.contains("no agent gone"), "{to_task}");
 }
 
+/// SEC-AI-86: an `LlmApiClient`'s `allowedAgents` bound the agents of the caller's new tasks, old contexts and tasks,
+/// and the extended card.
+#[test]
+fn a_clients_allowed_agents_bound_contexts_tasks_and_the_card() {
+    let (context, facade) = agent_bed();
+    let _entered = context.enter();
+    let limited = Caller {
+        user_id: "ann".to_string(),
+        base_url: "https://moqui.example.com".to_string(),
+        agents: Some(vec!["other".to_string()]),
+    };
+    let ctx = super::ops::Ctx::new(context.factory(), &limited).unwrap();
+    for message in [
+        json!({"messageId": "m1", "role": "ROLE_USER", "parts": [{"text": "hi"}], "contextId": "conv-open"}),
+        json!({"messageId": "m2", "role": "ROLE_USER", "parts": [{"text": "hi"}], "taskId": "task-open"}),
+        json!({"messageId": "m3", "role": "ROLE_USER", "parts": [{"text": "hi"}], "metadata": {"agentId": "open"}}),
+    ] {
+        let why = refused(&ctx, message.clone());
+        assert!(why.contains("no agent open"), "{message}: {why}");
+    }
+    let skills = |caller: &Caller| -> Vec<String> {
+        super::card::extended(context.factory(), &facade, caller).unwrap()["skills"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|skill| skill["id"].as_str().map(str::to_string))
+            .collect()
+    };
+    assert_eq!(skills(&limited), vec!["moqui".to_string()], "only the generic skill");
+    let any = Caller {
+        agents: None,
+        ..limited.clone()
+    };
+    assert_eq!(skills(&any), vec!["open".to_string()]);
+}
