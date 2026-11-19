@@ -608,6 +608,11 @@ function storeIdentityProvider(p) {
             })
         enabledAfter = false
         Object.assign(flowChanges, {testedConfigHash: null, testedDate: null, testedByUserId: null})
+        // the address is the administrator's to choose: on a production instance a repointed provider reaches the public
+        // network only, whatever an instance administrator allowed the old one, until one allows more (SEC-ADM-84), as
+        // the connections do
+        if (endpointChanged && text(ec.factory.getConfValue("instance@purpose")) === "production")
+            flowChanges.allowPrivateNetwork = "N"
     } else if (yes(p.enabled) && !wasEnabled) {
         needMap("enable a sign-in provider")
         if (flow.authFlowTypeEnumId === "AftSaml")
