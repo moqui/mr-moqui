@@ -126,6 +126,56 @@ feature("a link with a password: the token check, the grant, the listing, and a 
     },
 })
 
+// SEC-BOS-106: an editor of a drive, or the holder of an Edit share of a path, shares with people and with a group of their
+// own, never by a public link, with every user, with a group they are not in or with a group of external users; the owner does
+feature("an editor of a drive shares with a person or a group of their own, not by a link, with every user, another group or external users", {
+    allowMessageErrors: true,
+    when() {
+        for (const id of ["filesReader", "filesSharee"]) user(id)
+        for (const [userGroupId, external] of [["FILES_SPEC_MINE", false], ["FILES_SPEC_OTHER", false], ["FILES_SPEC_EXTERNAL", true]]) {
+            if (ec.entity.find("moqui.security.UserGroup").condition("userGroupId", userGroupId).count()) continue
+            call("create#moqui.security.UserGroup", { userGroupId, description: userGroupId })
+            if (userGroupId !== "FILES_SPEC_OTHER") call("create#moqui.security.UserGroupMember", { userGroupId, userId: "filesEditor", fromDate: 0 })
+            if (external) call("create#moqui.security.UserGroupPermission", { userGroupId, userPermissionId: "EXTERNAL_USER", fromDate: 0 })
+        }
+        const refusal = (params) => {
+            try { files("share#Resource", Object.assign({ driveId: folderDriveId, path: "docs" }, params)) } catch (e) { /* in the messages */ }
+            const error = ec.message.getErrorsString()
+            ec.message.clearErrors()
+            return error
+        }
+        ec.user.internalLoginUser("filesOwner")
+        // an Edit share of the path, not a membership of the drive
+        files("share#Resource", { driveId: folderDriveId, path: "docs", sharedWithUserId: "filesSharee", permissionEnumId: "RspEdit" })
+        ec.user.internalLoginUser("filesSharee")
+        const shareeLink = refusal({ isLink: "Y" })
+        const shareeEveryone = refusal({ sharedWithUserGroupId: "ALL_USERS" })
+        ec.user.internalLoginUser("filesEditor")
+        const link = refusal({ isLink: "Y" })
+        const everyone = refusal({ sharedWithUserGroupId: "ALL_USERS" })
+        const other = refusal({ sharedWithUserGroupId: "FILES_SPEC_OTHER" })
+        const external = refusal({ sharedWithUserGroupId: "FILES_SPEC_EXTERNAL" })
+        const mine = files("share#Resource", { driveId: folderDriveId, path: "docs", sharedWithUserGroupId: "FILES_SPEC_MINE" })
+        const person = files("share#Resource", { driveId: folderDriveId, path: "docs", sharedWithUserId: "filesReader" })
+        ec.user.internalLoginUser("filesOwner")
+        const ownerLink = files("share#Resource", { driveId: folderDriveId, path: "docs", isLink: "Y" })
+        const ownerOther = files("share#Resource", { driveId: folderDriveId, path: "docs", sharedWithUserGroupId: "FILES_SPEC_OTHER" })
+        return { shareeLink, shareeEveryone, link, everyone, other, external, mine, person, ownerLink, ownerOther }
+    },
+    then({ shareeLink, shareeEveryone, link, everyone, other, external, mine, person, ownerLink, ownerOther }) {
+        shareeLink.includes("Only a manager of the drive makes a link")
+        shareeEveryone.includes("Only a manager of the drive shares with every user")
+        link.includes("Only a manager of the drive makes a link")
+        everyone.includes("Only a manager of the drive shares with every user")
+        other.includes("You share with a group only when you are in it")
+        external.includes("Only a manager of the drive shares with a group of external users")
+        mine.shareId != null
+        person.shareId != null
+        ownerLink.linkToken != null
+        ownerOther.shareId != null
+    },
+})
+
 feature("drive files are search documents, found by name", {
     when() {
         ec.user.internalLoginUser("filesOwner")
