@@ -88,8 +88,9 @@ pub(crate) fn join_link_of(url: &tauri::Url) -> Option<(String, String)> {
     Some((host?, token?))
 }
 
-/// The host and port of an account's server (`https://host[:port][/path]`).
-fn server_host(account: &Account) -> Option<String> {
+/// The host and port of an account's server (`https://host[:port][/path]`): a join link's, and the name of its server
+/// pages (`MobileHost::open_remote`, SEC-CLI-119).
+pub(crate) fn server_host(account: &Account) -> Option<String> {
     let url = tauri::Url::parse(&account.server).ok()?;
     let host = url.host_str()?.to_ascii_lowercase();
     Some(match url.port() {

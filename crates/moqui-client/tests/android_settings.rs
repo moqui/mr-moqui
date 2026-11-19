@@ -1057,3 +1057,290 @@ fn no_page_notification_asks_for_the_notification_permission() {
         "notify does not fail without the permission"
     );
 }
+
+/// The offset of the bracket that closes the one at `open` (`(` or `{`) in `lexed`, its strings and comments left out;
+/// the text's end when it is not closed.
+fn closing(lexed: &Lexed, open: usize) -> usize {
+    let bare = lexed.bare.as_bytes();
+    let (opens, closes) = match bare[open] {
+        b'(' => (b'(', b')'),
+        b'{' => (b'{', b'}'),
+        other => panic!("not an opening bracket: {}", other as char),
+    };
+    let mut depth = 0;
+    for (at, byte) in bare.iter().enumerate().skip(open) {
+        if *byte == opens {
+            depth += 1;
+        } else if *byte == closes {
+            depth -= 1;
+            if depth == 0 {
+                return at;
+            }
+        }
+    }
+    bare.len()
+}
+
+/// The text of the string resource `name` in the resources `xml` (`<string name="...">text</string>`).
+fn string_resource(xml: &str, name: &str) -> Option<String> {
+    let open = format!("<string name=\"{name}\">");
+    let (_, rest) = xml.split_once(&open)?;
+    rest.split_once("</string>").map(|(text, _)| text.to_string())
+}
+
+/// SEC-CLI-89 and SEC-CLI-110: a camera capture from a page's file input, photo or video, stays in the app: the
+/// FileProvider's paths (`res/xml/file_paths.xml`, and any other of a source set a release build merges) have no
+/// `external-*` or `root-path` entry and none of a whole folder (`path="."`), only the cache's `captures/`; wry's
+/// `RustWebChromeClient` writes no external files folder (`getExternalFilesDir`), its photo and its video capture
+/// each give the camera app an `EXTRA_OUTPUT` made by `createCaptureFile` in the cache's `captures/`, delete it when
+/// nothing was taken, and the video's no longer fails (`!!`) on a camera app that returns no data; the folder is
+/// emptied as the next webview's chrome client starts (its `init`).
+#[test]
+fn a_camera_capture_from_a_page_stays_in_the_apps_cache() {
+    let mut paths = Vec::new();
+    for (name, dir) in source_sets() {
+        if name == "debug" {
+            continue;
+        }
+        for path in files_under(&dir.join("res"), &|file| file.ends_with(".xml")) {
+            if without_xml_comments(&read(&path)).contains("<paths") {
+                paths.push(path);
+            }
+        }
+    }
+    let main = android().join("app/src/main/res/xml/file_paths.xml");
+    assert!(paths.contains(&main), "the FileProvider's paths were found: {paths:?}");
+    for path in &paths {
+        let xml = without_xml_comments(&read(path));
+        for refused in ["<root-path", "<external-"] {
+            assert!(!xml.contains(refused), "{}: a {refused} entry", path.display());
+        }
+        for value in attribute_values(&xml, "path") {
+            let folder = value.trim().trim_start_matches("./").trim_matches('/');
+            assert!(
+                !folder.is_empty() && folder != ".",
+                "{}: path=\"{value}\" gives a whole folder",
+                path.display()
+            );
+        }
+    }
+    let main_xml = without_xml_comments(&read(&main));
+    let entries = start_tags(&main_xml, "cache-path");
+    assert_eq!(entries.len(), 1, "{}: one cache-path", main.display());
+    assert_eq!(attribute_values(entries[0], "path"), ["captures/"]);
+
+    let path = root().join("crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt");
+    let chrome = lex(&read(&path));
+    for refused in [
+        "getExternalFilesDir",
+        "getExternalStoragePublicDirectory",
+        "getExternalCacheDir",
+    ] {
+        assert!(!chrome.code.contains(refused), "{}: {refused}", path.display());
+    }
+    assert!(
+        chrome.code.contains("const val CAPTURES = \"captures\""),
+        "{}: the captures folder",
+        path.display()
+    );
+    let create = body_of(&chrome, "fun createCaptureFile(").expect("createCaptureFile");
+    assert!(
+        create.contains("File(activity.cacheDir, CAPTURES)"),
+        "a capture is not made in the cache's captures/"
+    );
+    for intent in ["MediaStore.ACTION_IMAGE_CAPTURE", "MediaStore.ACTION_VIDEO_CAPTURE"] {
+        let at = chrome
+            .code
+            .find(intent)
+            .unwrap_or_else(|| panic!("{}: no {intent}", path.display()));
+        let (open, close) = function_around(&chrome, at).expect("the capture's function");
+        let capture = &chrome.code[open..close];
+        for wanted in ["createCaptureFile(", "putExtra(MediaStore.EXTRA_OUTPUT", ".delete()"] {
+            assert!(
+                capture.contains(wanted),
+                "{}: the {intent} capture has no {wanted}",
+                path.display()
+            );
+        }
+        assert!(
+            !capture.contains("!!"),
+            "{}: the {intent} capture fails on no data",
+            path.display()
+        );
+    }
+    assert!(
+        body_of(&chrome, "init {").is_some_and(|init| init.contains("sweepCaptures()")),
+        "{}: the chrome client's init does not empty the captures",
+        path.display()
+    );
+    assert!(
+        body_of(&chrome, "fun sweepCaptures(").is_some_and(|sweep| sweep.contains("File(activity.cacheDir, CAPTURES)")),
+        "{}: sweepCaptures does not empty the cache's captures/",
+        path.display()
+    );
+}
+
+/// SEC-CLI-119: a page's alert, confirm and prompt are the app's own dialogs, so each names who asks: wry's
+/// `RustWebChromeClient` sets each one's title (`dialogTitle`), which is the server's host for the app origin, set by
+/// Rust as it opens a server's pages (`open_remote`, through `RustWebChromeClient.pageServer`) and cleared as they close
+/// (`close_remotes`); `onJsPrompt` refuses (`result.cancel()`) on the app's two origins before it builds a dialog, so a
+/// page of one account's server cannot ask as the app for another account's password; and a page's `notify` is titled
+/// by `notification_title` (commands_tests.rs).
+#[test]
+fn a_pages_dialogs_name_who_asks_and_a_prompt_is_refused_on_the_apps_origins() {
+    let path = root().join("crates/moqui-mobile/patches/wry/src/android/kotlin/RustWebChromeClient.kt");
+    let chrome = lex(&read(&path));
+    for origin in [
+        "const val SHELL_ORIGIN = \"http://moqui-shell.localhost\"",
+        "const val APP_ORIGIN = \"http://moqui-app.localhost\"",
+    ] {
+        assert!(chrome.code.contains(origin), "{}: no {origin}", path.display());
+    }
+    for handler in ["fun onJsAlert(", "fun onJsConfirm(", "fun onJsPrompt("] {
+        let body = body_of(&chrome, handler).unwrap_or_else(|| panic!("{}: no {handler}", path.display()));
+        assert!(
+            body.contains(".setTitle(dialogTitle(url))"),
+            "{}: {handler} shows a dialog with no title of who asks",
+            path.display()
+        );
+    }
+    let title = body_of(&chrome, "fun dialogTitle(").expect("dialogTitle");
+    assert!(
+        title.contains("SHELL_ORIGIN ->") && title.contains("APP_ORIGIN -> appServer"),
+        "{title}"
+    );
+
+    let header = chrome.code.find("fun onJsPrompt(").expect("onJsPrompt");
+    let open = header + chrome.bare[header..].find('{').expect("onJsPrompt's body");
+    let close = closing(&chrome, open);
+    let built = chrome.code[open..close]
+        .find("AlertDialog.Builder(")
+        .expect("the prompt's dialog")
+        + open;
+    let refused = chrome.code[open..built].match_indices("if (").any(|(at, _)| {
+        let condition = open + at + "if ".len();
+        let end = closing(&chrome, condition);
+        let then = end + chrome.bare[end..].find('{').unwrap_or(0);
+        let block = &chrome.code[then..closing(&chrome, then).min(built)];
+        let condition = &chrome.code[condition..end];
+        condition.contains("SHELL_ORIGIN")
+            && condition.contains("APP_ORIGIN")
+            && block.contains("result.cancel()")
+            && block.contains("return true")
+    });
+    assert!(
+        refused,
+        "{}: onJsPrompt does not cancel on the app's origins before its dialog",
+        path.display()
+    );
+
+    let mobile = root().join("crates/moqui-mobile/src");
+    let android = lex(&read(&mobile.join("android.rs")));
+    assert!(
+        body_of(&android, "fn page_server(").is_some_and(|body| body.contains("jni_str!(\"pageServer\")")),
+        "page_server does not tell RustWebChromeClient.pageServer"
+    );
+    let host = lex(&read(&mobile.join("host.rs")));
+    let open_remote = body_of(&host, "fn open_remote(").expect("open_remote");
+    let told = open_remote
+        .find("tell_page_server(server")
+        .expect("open_remote tells the server");
+    let shown = open_remote.find("self.navigate(").expect("open_remote shows the page");
+    assert!(told < shown, "open_remote shows the page before it tells its server");
+    assert!(
+        body_of(&host, "fn close_remotes(").is_some_and(|body| body.contains("tell_page_server(None)")),
+        "close_remotes does not clear the pages' server"
+    );
+    assert!(
+        body_of(&host, "fn tell_page_server(").is_some_and(|body| body.contains("crate::android::page_server(")),
+        "tell_page_server does not tell the chrome client"
+    );
+    let commands = lex(&read(&mobile.join("commands.rs")));
+    let notify = body_of(&commands, "fn notify(").expect("the notify command");
+    assert!(
+        notify.contains("notification_title("),
+        "notify's title does not name the page's server"
+    );
+}
+
+/// SEC-CLI-120 (the microphone half): the app asks for the microphone after a sign-in only behind a dialog that says
+/// why: in `MainActivity.askForCallsOnce`, every `requestPermissions` is in the dialog's buttons and listeners (within
+/// its one `ObscuredTouches.show(...)`), and each title and reason it picks when the microphone is missing
+/// (`microphone` in the arm's condition) names the microphone and a call answered on a locked phone.
+#[test]
+fn the_android_app_asks_for_the_microphone_only_after_a_dialog_that_says_why() {
+    let main = android().join("app/src/main");
+    let path = main.join("java/org/moqui/mobile/MainActivity.kt");
+    let activity = lex(&read(&path));
+    let header = activity.code.find("fun askForCallsOnce(").expect("askForCallsOnce");
+    let open = header + activity.bare[header..].find('{').expect("askForCallsOnce's body");
+    let close = closing(&activity, open);
+    let body = &activity.code[open..close];
+    assert!(
+        body.contains("Manifest.permission.RECORD_AUDIO"),
+        "askForCallsOnce asks for the microphone"
+    );
+    let shows: Vec<usize> = body
+        .match_indices("ObscuredTouches.show(")
+        .map(|(at, _)| open + at)
+        .collect();
+    assert_eq!(shows.len(), 1, "{}: one dialog in askForCallsOnce", path.display());
+    let dialog_open = shows[0] + "ObscuredTouches.show".len();
+    let dialog_close = closing(&activity, dialog_open);
+    let asks: Vec<usize> = body
+        .match_indices("requestPermissions(")
+        .map(|(at, _)| open + at)
+        .collect();
+    assert!(!asks.is_empty(), "askForCallsOnce asks for nothing");
+    for at in asks {
+        assert!(
+            (dialog_open..dialog_close).contains(&at),
+            "{}: askForCallsOnce asks for permissions outside its dialog's buttons (byte {at})",
+            path.display()
+        );
+    }
+    let dialog = &activity.code[dialog_open..dialog_close];
+    assert!(
+        dialog.contains(".setTitle(heading)") && dialog.contains(".setMessage(reason)"),
+        "{dialog}"
+    );
+
+    let chosen = body
+        .find("val (heading, reason) = when {")
+        .expect("the dialog's title and reason, by what is missing");
+    let when_open = open + chosen + body[chosen..].find('{').unwrap();
+    let arms = &activity.code[when_open + 1..closing(&activity, when_open)];
+    let strings = read(&main.join("res/values/strings.xml"));
+    let mut microphone_arms = 0;
+    for arm in arms.lines().filter(|line| line.contains("->")) {
+        let (condition, value) = arm.split_once("->").unwrap();
+        let names: Vec<&str> = value
+            .split("R.string.")
+            .skip(1)
+            .map(|rest| {
+                rest.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(names.len(), 2, "a title and a reason: {arm}");
+        let asks_microphone = condition
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '!')
+            .any(|word| word == "microphone");
+        if !asks_microphone {
+            continue;
+        }
+        microphone_arms += 1;
+        let reason = string_resource(&strings, names[1]).unwrap_or_else(|| panic!("no string {}", names[1]));
+        assert!(
+            reason.contains("microphone") && reason.contains("locked phone"),
+            "{}: the reason shown for the microphone does not say why: {reason}",
+            names[1]
+        );
+        assert!(string_resource(&strings, names[0]).is_some(), "no string {}", names[0]);
+    }
+    assert!(
+        microphone_arms >= 2,
+        "the arms that ask for the microphone were found: {arms}"
+    );
+}

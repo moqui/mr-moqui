@@ -41,6 +41,10 @@
     <!-- Why the app asks (MainActivity.kt) -->
     <string name="ask_notifications_title">Notifications</string>
     <string name="ask_notifications_reason">Allow notifications so messages, mentions and calls reach you when the app is closed or the phone is locked.</string>
+    <string name="ask_microphone_title">Answering calls</string>
+    <string name="ask_microphone_reason">Allow the microphone so you can answer a call on a locked phone: there the app cannot ask for it when you answer.</string>
+    <string name="ask_calls_title">Calls and notifications</string>
+    <string name="ask_calls_reason">Allow notifications so messages, mentions and calls reach you when the app is closed or the phone is locked, and the microphone so you can answer a call on a locked phone: there the app cannot ask for it when you answer.</string>
     <string name="ask_full_screen_title">Calls on the lock screen</string>
     <string name="ask_full_screen_reason">Allow full-screen notifications so an incoming call shows over the lock screen and rings like a phone call.</string>
     <string name="ask_continue">Continue</string>

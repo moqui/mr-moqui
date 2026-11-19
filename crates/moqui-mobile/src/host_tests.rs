@@ -64,7 +64,9 @@ fn only_the_shells_current_load_with_its_nonce_has_the_shells_commands() {
 #[test]
 fn a_server_page_is_its_accounts_only_while_that_account_is_current() {
     let page = PageState::default();
-    page.bind_app("a1");
+    page.bind_app("a1", Some("erp.example.com"));
+    // its dialogs' and notifications' title (SEC-CLI-119)
+    assert_eq!(page.app_server().as_deref(), Some("erp.example.com"));
     page.navigating(None);
     // while a navigation to anywhere else is under way, no account
     assert_eq!(page.account(Some("a1")), None);
@@ -79,9 +81,21 @@ fn a_server_page_is_its_accounts_only_while_that_account_is_current() {
     assert_eq!(page.account(None), None);
     // a switch unbinds the pages before the other account is current
     assert!(!page.unbind_app(Some("a2")));
+    assert_eq!(
+        page.app_server().as_deref(),
+        Some("erp.example.com"),
+        "another account's unbind"
+    );
     assert!(page.unbind_app(Some("a1")));
     assert_eq!(page.account(Some("a1")), None);
+    assert_eq!(page.app_server(), None, "the server goes with the pages' account");
     assert!(!page.unbind_app(None));
+    // pages opened for another account name its server, not the one before
+    page.bind_app("a2", Some("crm.example.org"));
+    assert_eq!(page.app_server().as_deref(), Some("crm.example.org"));
+    page.bind_app("a3", None);
+    assert_eq!(page.app_server(), None);
+    assert!(page.unbind_app(None));
     // the shell is the current account's
     page.started(&url("http://moqui-shell.localhost/"));
     assert_eq!(page.account(Some("a2")).as_deref(), Some("a2"));
@@ -170,7 +184,7 @@ fn the_document_of_a_server_page_opened_is_asked_for_with_its_account() {
     // request comes while the load has not begun: it must have the bound account, or the page is a 401.
     let page = PageState::default();
     page.started(&url("http://moqui-shell.localhost/"));
-    page.bind_app("a1");
+    page.bind_app("a1", None);
     page.navigating(Some(&url("http://moqui-app.localhost/qapps/system")));
     assert_eq!(page.account(Some("a1")).as_deref(), Some("a1"));
     // only while the bound account is the current one

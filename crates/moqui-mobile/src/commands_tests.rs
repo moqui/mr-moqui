@@ -12,7 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{call_name, chat_room_of, clip, contact_numbers, contact_term, external_url, tag_id, under};
+use super::{
+    call_name, chat_room_of, clip, contact_numbers, contact_term, external_url, notification_title, tag_id, under,
+};
 
 #[test]
 fn only_the_webs_and_the_handlers_links_open_outside_the_app() {
@@ -49,6 +51,28 @@ fn a_server_page_shows_in_the_shell_only_its_comms_apps_screens() {
 fn a_notification_is_plain_text_within_its_limit() {
     assert_eq!(clip(" a\nb\tc ", 10), "a b c");
     assert_eq!(clip("abcdef", 3), "abc");
+}
+
+/// SEC-CLI-119: a page's notification shows as the app's own, so only the shell's (by its page and nonce) has its title
+/// as given; any other page's names the server its pages were opened for, or says it is a server page's.
+#[test]
+fn a_server_pages_notification_title_names_its_server() {
+    assert_eq!(
+        notification_title("New message", true, Some("erp.example.com")),
+        "New message"
+    );
+    assert_eq!(
+        notification_title("Your password expired", false, Some("erp.example.com:8443")),
+        "erp.example.com:8443: Your password expired"
+    );
+    assert_eq!(
+        notification_title("Sign in again", false, None),
+        "A server page: Sign in again"
+    );
+    assert_eq!(
+        notification_title("Sign in again", false, Some(" ")),
+        "A server page: Sign in again"
+    );
 }
 
 /// A tag of an account is one notification id, the same each time and clear of the app's own ids; another account's

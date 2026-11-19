@@ -437,6 +437,26 @@ pub(crate) fn device_secure() -> Result<bool, String> {
     })
 }
 
+/// The host of the server whose pages the app origin shows (`MobileHost::open_remote`), or none as they close: the
+/// title of their alert and confirm dialogs, since every account's pages share the one origin
+/// (`RustWebChromeClient.pageServer`, wry's patch; SEC-CLI-119).
+pub(crate) fn page_server(host: Option<&str>) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.RustWebChromeClient"))?;
+        let host: JObject<'_> = match host {
+            Some(host) => env.new_string(host)?.into(),
+            None => JObject::null(),
+        };
+        env.call_static_method(
+            &class,
+            jni_str!("pageServer"),
+            jni_sig!("(Ljava/lang/String;)V"),
+            &[JValue::Object(&host)],
+        )?;
+        Ok(())
+    })
+}
+
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
 pub(crate) fn device_model() -> Result<String, String> {
     with_context(|env, _| {

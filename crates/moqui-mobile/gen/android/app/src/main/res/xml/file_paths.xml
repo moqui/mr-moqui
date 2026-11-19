@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- The FileProvider's one folder (AndroidManifest.xml): the camera captures of a page's file input, in the app's cache
+     (wry's RustWebChromeClient.createCaptureFile; SEC-CLI-89, SEC-CLI-110). Nothing on shared storage, nor the whole
+     cache. -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-  <external-path name="my_images" path="." />
-  <cache-path name="my_cache_images" path="." />
+  <cache-path name="captures" path="captures/" />
 </paths>

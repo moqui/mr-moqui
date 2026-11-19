@@ -98,23 +98,48 @@ pub(crate) fn chat_room_of(tag: &str) -> Option<&str> {
     tag.trim().strip_prefix("chat-").and_then(crate::calls::call_id)
 }
 
+/// The title of a page's notification (SEC-CLI-119), which shows as the app's own: the shell's (`from_shell`, by its
+/// page and nonce) as it gave it; any other page's after the host of the server its pages were opened for (`server`),
+/// so a page of one account's server cannot speak as the app or as another server.
+pub(crate) fn notification_title(title: &str, from_shell: bool, server: Option<&str>) -> String {
+    if from_shell {
+        return title.to_string();
+    }
+    let server = server
+        .map(str::trim)
+        .filter(|server| !server.is_empty())
+        .unwrap_or("A server page");
+    format!("{server}: {title}")
+}
+
 /// A native notification: `title`, and `body`, replacing the one of the same `tag` of the account signed in; a tap
 /// shows the app at `link` when it is a path of the account's server (`notification_opened`). Without the notification
 /// permission it fails and never asks (SEC-CLI-120): any server page may call it, and Android's question comes with its
-/// reason once an account signs in (`MainActivity.askForCallsOnce`) or from the notification check's fix.
+/// reason once an account signs in (`MainActivity.askForCallsOnce`) or from the notification check's fix. A server
+/// page's title names its server (`notification_title`); the shell's carries its nonce.
 #[tauri::command(async)]
 pub(crate) fn notify(
     app: AppHandle,
+    webview: tauri::Webview,
     title: String,
     body: Option<String>,
     link: Option<String>,
     tag: Option<String>,
+    nonce: Option<String>,
 ) -> Result<(), String> {
     let title = clip(&title, TITLE_MAX);
     if title.is_empty() {
         return Err("A notification needs a title".to_string());
     }
-    let account = host(&app).ok().and_then(|host| host.signed_in());
+    let (account, from_shell, server) = match host(&app) {
+        Ok(host) => (
+            host.signed_in(),
+            moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()),
+            host.page.app_server(),
+        ),
+        Err(_) => (None, false, None),
+    };
+    let title = notification_title(&title, from_shell, server.as_deref());
     let notification = app.notification();
     if notification
         .permission_state()
