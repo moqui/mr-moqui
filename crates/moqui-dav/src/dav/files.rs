@@ -328,7 +328,28 @@ pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
             if let Err(refused) = locks::check_write(&location, &context.user_id, false) {
                 return refused;
             }
-            let exists = matches!(info(drive, &path), Ok(Some(_)));
+            // a lock holds every other writer off what it covers: it is taken only where the user may write (a path
+            // that is not there by its folder's right), and never on the drive itself, which would hold the whole drive
+            // (plans/Security-Review-Medium.md SEC-FIL-83)
+            if path.is_empty() {
+                return DavResponse::text(403, "The drive itself is not locked: lock a file or folder in it");
+            }
+            let found = match info(drive, &path) {
+                Ok(found) => found,
+                Err(err) => return server_error(&err),
+            };
+            let may_write = match &found {
+                Some(entry) => entry.can_write,
+                None => match info(drive, &split_parent(&path).0) {
+                    Ok(Some(folder)) => folder.is_directory && folder.can_write,
+                    Ok(None) => return DavResponse::status(409),
+                    Err(err) => return server_error(&err),
+                },
+            };
+            if !may_write {
+                return DavResponse::status(403);
+            }
+            let exists = found.is_some();
             let mut answer = locks::lock(
                 context.request,
                 &location,

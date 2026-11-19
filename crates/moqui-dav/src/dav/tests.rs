@@ -507,6 +507,62 @@ fn a_lock_holds_another_users_client_on_the_same_file_and_not_the_file_beside_it
     assert_eq!(body(&got), "bob");
 }
 
+/// SEC-FIL-83: a lock holds every other writer off what it covers, so it is taken only where the user may write: a
+/// member who only views the drive locks nothing in it (a file, a name not there yet), and nobody locks the drive itself.
+/// The owner text a client gives is kept short.
+#[test]
+fn a_lock_is_taken_only_where_the_user_may_write_and_never_on_the_drive() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "alice");
+    user(&facade, "bob");
+    let (_, password) = app_password("alice", "Laptop");
+    let (_, bob_password) = app_password("bob", "Laptop");
+    let factory = context.factory();
+    let alice = Client {
+        factory,
+        authorization: Some(basic("alice", &password)),
+    };
+    let bob = Client {
+        factory,
+        authorization: Some(basic("bob", &bob_password)),
+    };
+    login("alice");
+    service(
+        "org.moqui.resource.FileServices.create#Drive",
+        &[
+            ("driveName", Value::string("Shown")),
+            (
+                "memberList",
+                Value::List(vec![Value::Map(indexmap::IndexMap::from_iter([
+                    ("userId".to_string(), Value::string("bob")),
+                    ("permissionEnumId".to_string(), Value::string("RdpView")),
+                ]))]),
+            ),
+        ],
+    );
+    moqui_core::user::logout().unwrap();
+    let (mine, theirs) = ("/dav/files/alice/Shown", "/dav/files/bob/Shown");
+    assert_eq!(alice.send("PUT", &format!("{mine}/a.txt"), &[], "one").status, 201);
+    let lockinfo = |owner: &str| {
+        format!(
+            r#"<?xml version="1.0"?><lockinfo xmlns="DAV:"><lockscope><exclusive/></lockscope><locktype><write/></locktype><owner>{owner}</owner></lockinfo>"#
+        )
+    };
+    // the viewer reads the file and locks nothing: not the file, not a new name, not the drive
+    assert_eq!(bob.send("GET", &format!("{theirs}/a.txt"), &[], "").status, 200);
+    for path in ["a.txt", "new.txt", ""] {
+        let refused = bob.send("LOCK", &format!("{theirs}/{path}"), &[], &lockinfo("bob"));
+        assert_eq!(refused.status, 403, "{path}: {}", body(&refused));
+    }
+    // the owner writes on, and locks a file, never the drive
+    assert_eq!(alice.send("PUT", &format!("{mine}/a.txt"), &[], "two").status, 204);
+    assert_eq!(alice.send("LOCK", &format!("{mine}/"), &[], &lockinfo("alice")).status, 403);
+    let locked = alice.send("LOCK", &format!("{mine}/a.txt"), &[], &lockinfo(&"x".repeat(5000)));
+    assert_eq!(locked.status, 200, "{}", body(&locked));
+    assert!(body(&locked).contains(&"x".repeat(256)) && !body(&locked).contains(&"x".repeat(257)));
+}
+
 /// The DAV server's public URL follows the webapp's listener, an explicit `dav-server@public-url`, and the request's origin
 /// (moved from moqui-core's web tests).
 #[test]

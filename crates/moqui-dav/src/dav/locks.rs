@@ -26,6 +26,8 @@ use super::{href_element, xml, DavRequest, DavResponse};
 
 const MAX_SECONDS: u64 = 3600;
 const DEFAULT_SECONDS: u64 = 600;
+/// The most of a lock's `D:owner` text kept.
+const MAX_OWNER_CHARS: usize = 256;
 
 /// The entity facade of the current request's factory, where the locks are kept.
 fn facade() -> Option<EntityFacade> {
@@ -133,13 +135,16 @@ pub(crate) fn lock(
         Ok(_) => {}
         Err(err) => return unavailable(&err),
     }
+    // the owner is the client's note of who holds the lock, shown in every PROPFIND under the lock: kept short
+    // (SEC-FIL-83)
+    let short = |text: &str| text.trim().chars().take(MAX_OWNER_CHARS).collect::<String>();
     let owner = body
         .and_then(|body| body.child(xml::DAV, "owner"))
         .map(|owner| {
             let inner = owner
                 .child(xml::DAV, "href")
-                .map(|href| href_element(href.text.trim()))
-                .unwrap_or_else(|| xml::escape(owner.text.trim()));
+                .map(|href| href_element(&short(&href.text)))
+                .unwrap_or_else(|| xml::escape(&short(&owner.text)));
             format!("<D:owner>{inner}</D:owner>")
         })
         .unwrap_or_default();
