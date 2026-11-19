@@ -64,8 +64,8 @@ spec({
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "org.moqui.impl.BasicServices.echo#Data",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         // set#Preference writes a row keyed by the current user: what shows whom a call ran as
-        // the dev example's fixture that leaves its caller's authorization off
-        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "example.LoadFixtureServices.leave#AuthzDisabledAccountDisabled",
+        // the dev example's fixtures that try to leave their caller's context changed
+        make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "example.LoadFixtureServices.leave#LoggedOutAccountDisabled",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
         make("moqui.security.ArtifactGroupMember", { artifactGroupId: "SPEC_LR_ECHO", artifactName: "example.LoadFixtureServices.leave#AuthzDisabled",
             nameIsPattern: "N", artifactTypeEnumId: "AT_SERVICE", inheritAuthz: "N" })
@@ -374,10 +374,10 @@ feature("a script's own host calls neither act at its top level nor rebind or en
     },
 })
 
-feature("a call that leaves authorization off is an error, and the user's next call is still authorized", {
+feature("a call that disables authorization and never enables it leaves the user's next call authorized", {
     expect() {
         const seen = reached("authz")
-        seen.includes("left authorization disabled")
+        seen.includes("left ok")
         seen.includes("create threw")
         seen.toLowerCase().includes("authoriz")
         ec.entity.find("moqui.basic.Enumeration").condition("enumId", "SPEC_LR_AUTHZ_LEAK").disableAuthz().count() == 0

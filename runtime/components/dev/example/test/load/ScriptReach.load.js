@@ -54,8 +54,8 @@ scenario("reach", {
                 "after " + seen(() => __moquiTestHost.call("service.call", ECHO)),
             ].join("; "))
         } else if (params.mode === "renew") {
-            // a call that leaves authorization off and its user's account disabled: no fresh login, so nothing more
-            service.call("example.LoadFixtureServices.leave#AuthzDisabledAccountDisabled", {}, { expect: ["error"] })
+            // a call that leaves its user logged out and the account disabled: no fresh login, so nothing more
+            service.call("example.LoadFixtureServices.leave#LoggedOutAccountDisabled", {}, { expect: ["error"] })
             const next = seen(() => service.call("org.moqui.impl.BasicServices.echo#Data", { textIn1: "x" }))
             fail("next " + (next.includes("could not be renewed") ? "refused" : next))
         } else if (params.mode === "ssh") {
@@ -70,12 +70,13 @@ scenario("reach", {
             // no host call: only the interrupt of a stop now ends it
             for (;;) { /* spin */ }
         } else if (params.mode === "authz") {
-            // a service that leaves authorization off, then a create the user is not granted
-            const left = service.call("example.LoadFixtureServices.leave#AuthzDisabled", {}, { expect: ["error"] })
+            // a service that disables authorization and never enables it (its call ends that, so the context is not
+            // changed and the call is no error), then a create the user is not granted
+            const left = seen(() => service.call("example.LoadFixtureServices.leave#AuthzDisabled", {}))
             const create = seen(() => service.call("create#moqui.basic.Enumeration",
                 { enumId: "SPEC_LR_AUTHZ_LEAK", enumTypeId: "SpecLoad", description: "never" }))
             // the create's own error is its sample; this names only whether it threw, so it is counted as well
-            fail("left " + (left && left.error) + "; create " + (create.startsWith("threw") ? "threw" : "ran"))
+            fail("left " + (left.startsWith("ok") ? "ok" : left) + "; create " + (create.startsWith("threw") ? "threw" : "ran"))
         } else {
             // a script that declares only service makes no HTTP request
             http.get("/")
