@@ -125,6 +125,22 @@
             .then(found => found.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: keyBytes(publicKey)}))
             .then(subscription => store(subscription).then(() => subscription))
     }
+    // A new subscription, the browser's old one ended first, so the push service gives a new endpoint: the server keeps a
+    // subscription it disabled for failing disabled when the same endpoint is stored again (service/web_push.rs
+    // keep_failures, plans/Security-Review-Medium.md SEC-COM-81), and only a new one is active.
+    function subscribeAgain(publicKey) {
+        return current()
+            .then(subscription => subscription && subscription.unsubscribe().catch(() => null))
+            .then(() => subscribe(publicKey))
+    }
+    // Store the browser's subscription again (one held for another user moves to this one); when the server still does
+    // not hold it active (disabled for failing), subscribe again.
+    function renew(subscription, publicKey) {
+        if (!subscription) return subscribe(publicKey)
+        return store(subscription)
+            .then(() => status(subscription.endpoint))
+            .then(found => (found.subscribed ? subscription : subscribeAgain(publicKey)))
+    }
 
     const push = {
         state,
@@ -168,8 +184,7 @@
                     }
                     if (state.serverPush && state.permission === "granted" && wanted()) {
                         // the user wants push here and the push service dropped it, or it is held for another user
-                        const make = subscription ? store(subscription).then(() => subscription) : subscribe(found.publicKey)
-                        return make
+                        return renew(subscription, found.publicKey)
                             .then(() => {
                                 state.subscribed = true
                             })
@@ -196,7 +211,7 @@
                     }
                     if (!state.browserPush || !state.serverPush) return true
                     return status().then(found =>
-                        subscribe(found.publicKey).then(() => {
+                        subscribeAgain(found.publicKey).then(() => {
                             setWanted(true)
                             state.subscribed = true
                             return true

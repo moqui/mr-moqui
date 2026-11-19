@@ -201,7 +201,8 @@ pub(super) fn check_file(
 }
 
 /// Check one record of `entity` against the database, inside a [`check_with`] or [`check_info_with`] body: an ETL
-/// check's diff (plans/archive/Tools-Database.md §10.3). Outside a check it does nothing.
+/// check's diff (plans/archive/Tools-Database.md §10.3). Outside a check it does nothing. An ETL check is restricted,
+/// as its targets are (plans/Security-Review-Medium.md SEC-TLS-84).
 ///
 /// # Errors
 ///
@@ -217,12 +218,13 @@ pub fn check_entity_record(facade: &EntityFacade, entity: &str, fields: FieldMap
             fields,
             children: Vec::new(),
         },
+        true,
     )
 }
 
 /// Check one record read from the data and its nested records. Returns how many records it read, as a store
-/// returns how many it wrote.
-pub(super) fn check_record(facade: &EntityFacade, record: &Record) -> Result<u64, Error> {
+/// returns how many it wrote. `restrict` is the load's `restrictSensitiveEntities`: see [`check_tree`].
+pub(super) fn check_record(facade: &EntityFacade, record: &Record, restrict: bool) -> Result<u64, Error> {
     let (info, list, location) = CHECKING.with(|slot| {
         slot.borrow()
             .as_ref()
@@ -241,6 +243,7 @@ pub(super) fn check_record(facade: &EntityFacade, record: &Record) -> Result<u64
     }
     let mut found = Findings {
         info,
+        restrict,
         location,
         ..Findings::default()
     };
@@ -331,6 +334,8 @@ fn shared_keys(pk: Vec<(String, Value)>, ancestor: &FieldMap) -> FieldMap {
 #[derive(Default)]
 struct Findings {
     info: bool,
+    /// The load's `restrictSensitiveEntities`.
+    restrict: bool,
     location: String,
     messages: Vec<String>,
     diff_info: Vec<moqui_lib::object::ValueMap>,
@@ -356,13 +361,17 @@ impl Findings {
     }
 }
 
-/// A check reads the stored record the data names, so it is generic access ([`sensitive::generic_access`]): an entity no
-/// generic read takes (identity, secret-config, audit and hosted-instance entities, and views over them) is refused, and
-/// a password or encrypted field is not compared, so no stored value of one is answered or matched
-/// (plans/Security-Review-Medium.md SEC-TLS-84).
+/// A check reads the stored record the data names. A restricted one (`restrictSensitiveEntities`, a Tools check or an
+/// ETL check) is generic access ([`sensitive::generic_access`]): an entity no generic read takes (identity,
+/// secret-config, audit and hosted-instance entities, and views over them) is refused, and a password or encrypted
+/// field is not compared, so no stored value of one is answered or matched (plans/Security-Review-Medium.md
+/// SEC-TLS-84). An unrestricted one, as a load without the option (the testkit's `checkData`, a component's own
+/// check), compares every field of any entity, as Java's.
 fn check_tree(facade: &EntityFacade, record: &Record, ancestor: &FieldMap, found: &mut Findings) -> Result<u64, Error> {
     let access = sensitive::generic_access(facade, &record.entity);
-    if !access.read {
+    let restrict = found.restrict;
+    let hidden = |name: &str| restrict && access.hidden(name);
+    if restrict && !access.read {
         return Err(Error::new(format!(
             "Entity {} is not available in a data check",
             record.entity
@@ -376,7 +385,7 @@ fn check_tree(facade: &EntityFacade, record: &Record, ancestor: &FieldMap, found
         let non_pk_names: Vec<String> = entity
             .fields
             .iter()
-            .filter(|field| !field.is_pk && field.name != "lastUpdatedStamp" && !access.hidden(&field.name))
+            .filter(|field| !field.is_pk && field.name != "lastUpdatedStamp" && !hidden(&field.name))
             .map(|field| field.name.clone())
             .collect();
         Ok((pk_names, non_pk_names))

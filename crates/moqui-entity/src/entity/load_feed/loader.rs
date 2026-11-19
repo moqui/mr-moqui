@@ -435,7 +435,7 @@ pub(super) fn store_record(facade: &EntityFacade, options: &LoadOptions, record:
         refuse_restricted(facade, &record, options)?;
     }
     if super::check::checking() {
-        return super::check::check_record(facade, &record);
+        return super::check::check_record(facade, &record, options.restrict_sensitive_entities);
     }
     // Inside an outer transaction a failed record marks it rollback-only and gives back its join, so the
     // owner's rollback still ends the frame.
@@ -578,7 +578,7 @@ pub(super) fn store_value(facade: &EntityFacade, options: &LoadOptions, record: 
         refuse_restricted(facade, &record, options)?;
     }
     if super::check::checking() {
-        return super::check::check_record(facade, &record);
+        return super::check::check_record(facade, &record, options.restrict_sensitive_entities);
     }
     let Record { entity, fields, .. } = record;
     let entity = entity.as_str();

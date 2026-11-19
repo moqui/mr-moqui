@@ -167,6 +167,22 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="update#moqui.security.UserAccount" in-map="context"/>
         </actions>
     </service>
+    <service verb="patch" noun="UserAccount">
+        <description>PATCH /rest/s1/moqui/users/{userId} (tools moqui.rest.xml): update#UserAccount, whose rules hold for an
+            ADMIN's change (another account that holds more access than the caller, a recent sign-in for the email address;
+            plans/Security-Review-Medium.md SEC-ADM-81). As Java's resource, an entity update that takes the identity fields
+            (sensitive.rs USER_ACCOUNT_IDENTITY_FIELDS) from a caller in ADMIN only, a caller outside ADMIN, who holds the
+            REST API, changes the name, locale, time zone and currency only: the sign-in fields given are left out, so
+            holding the API is not holding the account services' staff rule over every account.</description>
+        <implements service="org.moqui.impl.UserServices.update#UserAccount"/>
+        <actions>
+            <if condition="!ec.user.isInGroup('ADMIN')"><script>
+                for (const name of ['disabled', 'username', 'emailAddress', 'ipAllowed', 'externalUserId', 'externalAuthFlowId',
+                        'publicKey', 'requirePasswordChange']) context.remove(name)
+            </script></if>
+            <service-call name="org.moqui.impl.UserServices.update#UserAccount" in-map="context"/>
+        </actions>
+    </service>
 
     <service verb="increment" noun="UserAccountFailedLogins" authenticate="anonymous-all" allow-remote="false">
         <in-parameters><parameter name="userId" required="true"/></in-parameters>
