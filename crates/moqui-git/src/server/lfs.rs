@@ -24,6 +24,7 @@
 //! The token only says who the user is: each request is authorized again, as any other is. Guide:
 //! `docs/interfaces/Git-Hosting.md`, Large files.
 
+use std::collections::{BTreeSet, HashMap};
 use std::io::Read;
 use std::sync::Arc;
 
@@ -152,6 +153,24 @@ pub fn max_object_size() -> u64 {
         .ok()
         .filter(|size| *size > 0)
         .unwrap_or(DEFAULT_MAX_OBJECT)
+}
+
+/// The most LFS locks a repository has: `git-server` `lfs-max-locks` (1000); no cap when it is 0.
+fn max_locks() -> usize {
+    match crate::setting("lfs-max-locks").parse::<usize>() {
+        Ok(0) => usize::MAX,
+        Ok(most) => most,
+        Err(_) => 1000,
+    }
+}
+
+/// The most LFS locks one `locks` or `locks/verify` request answers: `git-server` `lfs-locks-max-page` (100).
+fn locks_max_page() -> usize {
+    crate::setting("lfs-locks-max-page")
+        .parse::<usize>()
+        .ok()
+        .filter(|most| *most > 0)
+        .unwrap_or(100)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -799,20 +818,43 @@ impl Lfs {
     // ---- locks ----
 
     fn lock_json(&self, row: &EntityValue) -> Json {
-        let owner = text(row.get("ownerUserId")).unwrap_or_default();
-        let entity = self.entity().ok();
-        let name = entity
-            .and_then(|entity| {
-                entity
-                    .find("moqui.security.UserAccount")
-                    .ok()?
-                    .eq("userId", Value::string(&owner))
-                    .one()
-                    .ok()
-                    .flatten()
+        self.lock_json_of(row, &self.owner_names(&[row]))
+    }
+
+    /// The usernames of the owners of `rows`, read at once for a page of locks (SEC-GIT-85): an owner who cannot be
+    /// read is named by their id.
+    fn owner_names(&self, rows: &[&EntityValue]) -> HashMap<String, String> {
+        let owners: BTreeSet<String> = rows.iter().filter_map(|row| text(row.get("ownerUserId"))).collect();
+        if owners.is_empty() {
+            return HashMap::new();
+        }
+        let Ok(entity) = self.entity() else {
+            return HashMap::new();
+        };
+        entity
+            .find("moqui.security.UserAccount")
+            .and_then(|find| {
+                find.condition(moqui_core::entity::Condition::is_in(
+                    "userId",
+                    owners.into_iter().map(Value::string).collect(),
+                ))
+                .select_field("userId")
+                .select_field("username")
+                .list()
             })
-            .and_then(|account| text(account.get("username")))
-            .unwrap_or(owner);
+            .map(|accounts| {
+                accounts
+                    .values()
+                    .iter()
+                    .filter_map(|account| Some((text(account.get("userId"))?, text(account.get("username"))?)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn lock_json_of(&self, row: &EntityValue, names: &HashMap<String, String>) -> Json {
+        let owner = text(row.get("ownerUserId")).unwrap_or_default();
+        let name = names.get(&owner).cloned().unwrap_or(owner);
         let locked_at = match basic_convert(row.get("lockedDate").unwrap_or(&Value::Null), "Timestamp").value {
             Value::Timestamp(stamp) => stamp.to_string(),
             _ => String::new(),
@@ -839,17 +881,19 @@ impl Lfs {
             .into_values())
     }
 
-    /// A page of `locks` from `cursor` (an offset), and the next cursor.
+    /// A page of `locks` from `cursor` (an offset), and the next cursor: at most `git-server` `lfs-locks-max-page`,
+    /// whatever `limit` asks.
     fn page<'a>(
         locks: &'a [EntityValue],
         cursor: Option<&str>,
         limit: Option<u64>,
     ) -> (Vec<&'a EntityValue>, Option<String>) {
         let start = cursor.and_then(|cursor| cursor.parse::<usize>().ok()).unwrap_or(0);
+        let most = locks_max_page();
         let limit = limit
             .and_then(|limit| usize::try_from(limit).ok())
             .filter(|limit| *limit > 0)
-            .unwrap_or(100);
+            .map_or(most, |limit| limit.min(most));
         let page: Vec<&EntityValue> = locks.iter().skip(start).take(limit).collect();
         let next = (start + page.len() < locks.len()).then(|| (start + page.len()).to_string());
         (page, next)
@@ -877,7 +921,8 @@ impl Lfs {
             param("cursor"),
             param("limit").and_then(|limit| limit.parse().ok()),
         );
-        let mut reply = json!({ "locks": page.iter().map(|row| self.lock_json(row)).collect::<Vec<_>>() });
+        let names = self.owner_names(&page);
+        let mut reply = json!({ "locks": page.iter().map(|row| self.lock_json_of(row, &names)).collect::<Vec<_>>() });
         if let Some(next) = next {
             reply["next_cursor"] = json!(next);
         }
@@ -914,7 +959,22 @@ impl Lfs {
             row.set("ownerUserId", Value::string(user));
         }
         row.set("lockedDate", moqui_core::user::now_effective_value());
-        if let Err(err) = self.writing(|| Ok(row.create(&entity)))? {
+        let created = self.writing(|| {
+            // counted under the repository's lock, so locks made at once on this node do not pass it together
+            let most = max_locks();
+            let had = self.locks()?.len();
+            if had >= most {
+                return Err(message(
+                    409,
+                    &format!(
+                        "repository {} has {had} LFS locks, the most it may have (git-server lfs-max-locks); unlock one first",
+                        self.repository
+                    ),
+                ));
+            }
+            Ok(row.create(&entity))
+        })?;
+        if let Err(err) = created {
             // another lock of the path was made at the same time (its unique index)
             return match existing(&self.locks()?) {
                 Some(lock) => Err((409, json!({ "lock": lock, "message": "the path is locked already" }))),
@@ -933,9 +993,10 @@ impl Lfs {
         let (ours, theirs): (Vec<&&EntityValue>, Vec<&&EntityValue>) = page
             .iter()
             .partition(|row| text(row.get("ownerUserId")).as_deref() == Some(me.as_str()));
+        let names = self.owner_names(&page);
         let mut reply = json!({
-            "ours": ours.iter().map(|row| self.lock_json(row)).collect::<Vec<_>>(),
-            "theirs": theirs.iter().map(|row| self.lock_json(row)).collect::<Vec<_>>(),
+            "ours": ours.iter().map(|row| self.lock_json_of(row, &names)).collect::<Vec<_>>(),
+            "theirs": theirs.iter().map(|row| self.lock_json_of(row, &names)).collect::<Vec<_>>(),
         });
         if let Some(next) = next {
             reply["next_cursor"] = json!(next);

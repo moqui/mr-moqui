@@ -2363,3 +2363,47 @@ fn lfs_takes_no_lock_or_object_for_an_archived_repository() {
         );
     }
 }
+
+/// SEC-GIT-85: a repository has at most `git-server` `lfs-max-locks` LFS locks, and a locks page is at most
+/// `lfs-locks-max-page` whatever limit the client asks for.
+#[test]
+fn lfs_locks_are_capped_for_a_repository_and_a_page() {
+    let fixture = fixture_with(
+        "lfs-lock-cap",
+        std::path::PathBuf::from("."),
+        r#"<git-server lfs-max-locks="2" lfs-locks-max-page="1"/>"#,
+    );
+    let _lfs_key = lfs_key("the key of the lfs lock cap test");
+    define(&fixture, "capped", "db");
+    let base = http_server(fixture.context.factory());
+    let writer = format!(
+        "Basic {}",
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            format!("{WRITER}:{PASSWORD}")
+        )
+    );
+    let locks = "/git/capped.git/info/lfs/locks";
+    let lock = |path: &str| {
+        let body = serde_json::json!({ "path": path }).to_string();
+        let (status, _, reply) = http(&base, "POST", locks, &[("Authorization", &writer)], body.as_bytes());
+        (status, String::from_utf8_lossy(&reply).into_owned())
+    };
+    assert_eq!(lock("a.psd").0, 201);
+    assert_eq!(lock("b.psd").0, 201);
+    let (status, reply) = lock("c.psd");
+    assert_eq!(status, 409, "{reply}");
+    assert!(reply.contains("lfs-max-locks"), "{reply}");
+    let (status, _, reply) = http(
+        &base,
+        "GET",
+        &format!("{locks}?limit=1000"),
+        &[("Authorization", &writer)],
+        b"",
+    );
+    assert_eq!(status, 200);
+    let page = json_of(&reply);
+    assert_eq!(page["locks"].as_array().unwrap().len(), 1, "{page}");
+    assert_eq!(page["locks"][0]["owner"]["name"], WRITER);
+    assert_eq!(page["next_cursor"], "1");
+}
