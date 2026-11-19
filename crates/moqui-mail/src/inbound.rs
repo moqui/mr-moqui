@@ -129,7 +129,27 @@ pub(super) fn poll_server(
     // is rolled back and left as it is, so the next poll sees it again. The errors are reported once all are done, so
     // one message's errors do not stop the services the next one's rules call.
     let mut errors = Vec::new();
+    let max_message = max_message();
     for id in ids {
+        // a message over the largest size is left on the server, as its read would fail the poll each time
+        match store.size(&id) {
+            Ok(Some(size)) if size > max_message => {
+                tracing::warn!(
+                    "Message {id} on {} is {size} bytes, over email-client max-message-size ({max_message}); left \
+                    on the server",
+                    settings.host
+                );
+                continue;
+            }
+            Ok(_) => {}
+            Err(text) => {
+                errors.push(format!(
+                    "Error reading the size of message {id} from {}: {text}",
+                    settings.host
+                ));
+                break;
+            }
+        }
         let message = match store.fetch(&id) {
             Ok(message) => message,
             Err(text) => {
@@ -520,6 +540,10 @@ impl Inbound {
 trait Mailbox {
     /// The ids of the messages to look at, in server order.
     fn list_ids(&mut self) -> Result<Vec<String>, Error>;
+    /// The size the server gives for a message, when it gives one.
+    fn size(&mut self, _id: &str) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
     /// One message, with its flags.
     fn fetch(&mut self, id: &str) -> Result<Inbound, Error>;
     fn mark_seen(&mut self, id: &str) -> Result<(), Error>;
@@ -536,6 +560,14 @@ struct FakeBox {
 impl Mailbox for FakeBox {
     fn list_ids(&mut self) -> Result<Vec<String>, Error> {
         Ok(self.messages.iter().map(|message| message.id.clone()).collect())
+    }
+
+    fn size(&mut self, id: &str) -> Result<Option<u64>, Error> {
+        Ok(self
+            .messages
+            .iter()
+            .find(|message| message.id == id)
+            .map(|message| message.raw.len() as u64))
     }
 
     fn fetch(&mut self, id: &str) -> Result<Inbound, Error> {
@@ -692,6 +724,14 @@ impl Mailbox for ImapBox {
             .collect();
         ids.sort_unstable();
         Ok(ids.into_iter().map(|id| id.to_string()).collect())
+    }
+
+    fn size(&mut self, id: &str) -> Result<Option<u64>, Error> {
+        let fetches = self
+            .session
+            .fetch(id, "RFC822.SIZE")
+            .map_err(|err| Error::new(err.to_string()))?;
+        Ok(fetches.iter().next().and_then(|fetch| fetch.size).map(u64::from))
     }
 
     fn fetch(&mut self, id: &str) -> Result<Inbound, Error> {
@@ -951,6 +991,13 @@ fn pop_start_tls(mut reader: BufReader<Net>, settings: &StoreSettings) -> Result
 }
 
 impl Mailbox for Pop3 {
+    fn size(&mut self, id: &str) -> Result<Option<u64>, Error> {
+        match id.parse::<u32>() {
+            Ok(number) => Pop3::size(self, number),
+            Err(_) => Ok(None),
+        }
+    }
+
     fn list_ids(&mut self) -> Result<Vec<String>, Error> {
         self.command("LIST")?;
         let listing = self.read_dot()?;
@@ -1001,12 +1048,18 @@ impl Drop for Pop3 {
 /// A connection to an IMAP or POP3 server. What the server sends in answer to one command, counted from the client's
 /// last write, is at most [`answer_limit`] bytes (SEC-MAIL-85): the IMAP client holds a whole response, a literal
 /// included, and the POP3 client a whole line and a whole multi-line answer, so a server that sends without end would
-/// otherwise grow the process's memory until it fails. Past the limit a read fails, and the connection with it.
+/// otherwise grow the process's memory until it fails. An answer also takes at most `email-client` `answer-timeout`
+/// from the client's last write: a read times out only after a minute with no byte at all, so a server that sends a
+/// byte now and then would hold a sync or IDLE worker without end. Past either limit a read fails, and the connection
+/// with it.
 pub(super) struct Net {
     stream: Stream,
     /// The bytes read since the last write.
     read: u64,
     limit: u64,
+    /// When the last write was (or the connection was made), and how long its answer may take.
+    since: std::time::Instant,
+    answer_time: Duration,
 }
 
 enum Stream {
@@ -1014,9 +1067,12 @@ enum Stream {
     Tls(Box<rustls::StreamOwned<rustls::ClientConnection, TcpStream>>),
 }
 
-/// Room for what an answer holds beside a message of `email-client` `max-message-size`: a batch of the sync's body
-/// fetches is at most 8 MiB by the sizes the server gave, a flag listing of a large folder some MiB.
-const ANSWER_MARGIN: u64 = 16 * 1024 * 1024;
+/// Room for what an answer holds beside its message: the lines and flags around a body fetch.
+const ANSWER_MARGIN: u64 = 1024 * 1024;
+
+/// A batch of the sync's body fetches is at most this, by the sizes the server gave (`sync.rs` `FETCH_BYTES`), so an
+/// answer may be this large whatever `max-message-size` is.
+const BATCH_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The largest message read from an IMAP or POP3 server: `email-client` `max-message-size`. A larger one, by the size
 /// the server gives, is skipped.
@@ -1024,9 +1080,16 @@ pub(super) fn max_message() -> u64 {
     u64::try_from(super::sync::property_number("max-message-size", 64 * 1024 * 1024)).unwrap_or(u64::MAX)
 }
 
-/// The most bytes one answer of a mail server may be: [`max_message`] and [`ANSWER_MARGIN`].
+/// The most bytes one answer of a mail server may be: the larger of [`max_message`] and [`BATCH_BYTES`], and
+/// [`ANSWER_MARGIN`].
 fn answer_limit() -> u64 {
-    max_message().saturating_add(ANSWER_MARGIN)
+    max_message().max(BATCH_BYTES).saturating_add(ANSWER_MARGIN)
+}
+
+/// How long one answer of a mail server may take: `email-client` `answer-timeout`, seconds. It is longer than an IDLE,
+/// whose answer lasts until the client ends it (`idle.rs` `IDLE_RENEW`).
+pub(super) fn answer_time() -> Duration {
+    Duration::from_secs(u64::try_from(super::sync::property_number("answer-timeout", 900)).unwrap_or(900))
 }
 
 impl Net {
@@ -1039,6 +1102,8 @@ impl Net {
             stream,
             read: 0,
             limit: answer_limit(),
+            since: std::time::Instant::now(),
+            answer_time: answer_time(),
         }
     }
 
@@ -1064,6 +1129,16 @@ impl Read for Net {
                 self.limit
             )));
         }
+        if self.since.elapsed() > self.answer_time {
+            tracing::warn!(
+                "a mail server took more than {} seconds to answer one command; the connection is closed",
+                self.answer_time.as_secs()
+            );
+            return Err(std::io::Error::other(format!(
+                "the mail server's answer took more than {} seconds (email-client answer-timeout)",
+                self.answer_time.as_secs()
+            )));
+        }
         let room = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
         let read = match &mut self.stream {
             Stream::Plain(stream) => stream.read(&mut buf[..room]),
@@ -1083,6 +1158,7 @@ impl Write for Net {
         if written > 0 {
             // a command (or a literal of one): what comes next is its answer
             self.read = 0;
+            self.since = std::time::Instant::now();
         }
         Ok(written)
     }

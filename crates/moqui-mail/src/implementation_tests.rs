@@ -1257,6 +1257,56 @@ fn sim_skip_returns_email_message_id_sim() {
     assert!(context.message().errors().is_empty());
 }
 
+/// SEC-MAIL-85: a poll leaves a message over `email-client` `max-message-size`, by the size the store gives, on the
+/// server and goes on with the next (its read would fail and stop every later poll); one under it is read.
+#[cfg(feature = "imap")]
+#[test]
+fn a_poll_leaves_a_message_over_the_largest_size_and_reads_the_rest() {
+    let _lock = lock_tests();
+    let (facade, context) = entered_with(r#"<moqui-conf><email-client max-message-size="100"/></moqui-conf>"#);
+    let _entered = context.enter();
+    moqui_core::service::load_definitions().unwrap();
+    moqui_core::service::install_eca_rules(
+        context.factory(),
+        "",
+        r#"<emecas>
+                <emeca rule-name="Notice">
+                    <condition><expression>true</expression></condition>
+                    <actions><script>ec.message.addMessage(fields.subject);</script></actions>
+                </emeca>
+            </emecas>"#,
+    );
+    seed(
+        &facade,
+        &context,
+        "moqui.basic.email.EmailServer",
+        &[
+            ("emailServerId", "TEST_POLL_SIZE"),
+            ("storeHost", "imap.example.com"),
+            ("mailUsername", "inbox"),
+            ("mailPassword", "secret"),
+            ("storeProtocol", "imap"),
+        ],
+    );
+    let mut big = Inbound::blank();
+    big.id = "1".to_string();
+    big.subject = "big mail".to_string();
+    big.raw = vec![b'x'; 101];
+    let mut small = Inbound::blank();
+    small.id = "2".to_string();
+    small.subject = "small mail".to_string();
+    small.raw = vec![b'x'; 100];
+    let _store = FakeGuard::install(vec![big, small]);
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("emailServerId".into(), Value::string("TEST_POLL_SIZE"));
+    moqui_core::service::sync("org.moqui.mail.EmailServices.poll#EmailServer", &params).expect("poll");
+    let errors = context.message().errors().join("\n");
+    assert!(errors.is_empty(), "{errors}");
+    let messages = context.message().messages().to_vec();
+    assert!(messages.iter().any(|text| text == "small mail"), "{messages:?}");
+    assert!(!messages.iter().any(|text| text == "big mail"), "{messages:?}");
+}
+
 #[cfg(feature = "imap")]
 #[test]
 fn fake_store_poll_runs_one_eca_and_skips_seen() {

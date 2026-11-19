@@ -418,10 +418,17 @@ impl Selected {
 }
 
 /// One status line from a raw connection, before the imap client takes it over (the greeting, STARTTLS).
-fn raw_line(stream: &mut TcpStream) -> Result<String, SyncFailure> {
+fn raw_line(stream: &mut TcpStream, until: std::time::Instant) -> Result<String, SyncFailure> {
     let mut line = Vec::new();
     let mut byte = [0u8; 1];
     while line.len() < 16_384 {
+        // a byte now and then never times a read out: the answer as a whole has a time (`email-client` `answer-timeout`)
+        if std::time::Instant::now() > until {
+            return Err(SyncFailure::Connect(format!(
+                "the mail server's answer took more than {} seconds (email-client answer-timeout)",
+                super::inbound::answer_time().as_secs()
+            )));
+        }
         match stream.read(&mut byte) {
             Ok(0) => {
                 return Err(SyncFailure::Connect(
@@ -452,8 +459,9 @@ fn raw_command(stream: &mut TcpStream, tag: &str, command: &str) -> Result<Vec<S
         .map_err(|err| SyncFailure::Connect(format!("writing to the mail server: {err}")))?;
     let mut lines = Vec::new();
     let mut bytes = 0usize;
+    let until = std::time::Instant::now() + super::inbound::answer_time();
     loop {
-        let line = raw_line(stream)?;
+        let line = raw_line(stream, until)?;
         bytes = bytes.saturating_add(line.len() + 2);
         if bytes > MAX_RAW_ANSWER {
             return Err(SyncFailure::Connect(format!(
@@ -494,7 +502,7 @@ pub(super) fn open_imap(server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
         client
     } else {
         let mut tcp = tcp;
-        let greeting = raw_line(&mut tcp)?;
+        let greeting = raw_line(&mut tcp, std::time::Instant::now() + super::inbound::answer_time())?;
         if greeting.to_ascii_uppercase().starts_with("* BYE") {
             return Err(SyncFailure::Connect(format!(
                 "IMAP {} refused the connection: {greeting}",

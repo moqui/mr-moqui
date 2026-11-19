@@ -993,8 +993,11 @@
         between reading every message's flags, on a server without CONDSTORE. sync-push-now: make a local change (read,
         move, delete) on the server right after it commits; false waits for the next sync.
         max-message-size: the largest message, in bytes, a sync or poll reads from an IMAP or POP3 server, 64 MiB; a
-        larger one, by the size the server gives (RFC822.SIZE, POP3 LIST), is skipped and logged, and what a server
-        sends in answer to one command is at most this and 16 MiB more, past which the connection is closed.
+        larger one, by the size the server gives (RFC822.SIZE, POP3 LIST), is skipped (a poll leaves it on the server)
+        and logged, and what a server sends in answer to one command is at most this (or 8 MiB, a batch of the sync's
+        fetches, when that is more) and 1 MiB more, past which the connection is closed. answer-timeout: the seconds one
+        answer of an IMAP or POP3 server may take from the command, 15 minutes, longer than an IDLE's renewal; past it
+        the connection is closed, so a server that sends a byte now and then does not hold a sync, a poll or an IDLE.
         mailbox-quota: the bytes of mail (the sum of its messages' messageSize, attachments included) a hosted or shared
         account keeps when its EmailAccount.quotaBytes is empty, 10 GiB; once an account has that much, the SMTP listener
         answers its recipients 452 4.2.2 and holds mail an edge node queued for it until it is under (a warning is
@@ -1017,7 +1020,7 @@
         work, school and personal accounts), organizations, consumers or a tenant id.
     -->
     <email-client allowed-hosts="" idle-enabled="true" idle-max="8" sync-interval="5" sync-batch="500" flag-scan="15"
-            sync-push-now="true" max-message-size="67108864" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
+            sync-push-now="true" max-message-size="67108864" answer-timeout="900" mailbox-quota="10737418240" autoconfig-urls="" dns-server="" tls-ca-file=""
             oauth-redirect-uri="" capture-sends="false"
             contact-service="">
         <oauth-provider id="google" client-id="" client-secret=""/>

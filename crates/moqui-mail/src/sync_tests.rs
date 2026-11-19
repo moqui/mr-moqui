@@ -1479,6 +1479,40 @@ fn a_mail_server_answer_past_its_limit_fails_the_read() {
     assert!(refused.message().contains("larger than"), "{}", refused.message());
 }
 
+/// SEC-MAIL-85: an answer that comes a byte at a time, each well within a read's timeout, fails the read past
+/// `email-client` `answer-timeout` instead of holding the worker; a write starts its time again.
+#[test]
+fn a_mail_server_answer_past_its_time_fails_the_read() {
+    use std::io::{BufReader, Write};
+    let (ctx, _facade) = setup_with(r#"<moqui-conf><email-client answer-timeout="1"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = stream.write_all(b"+OK quick\n");
+        // then four seconds of a byte each 100 ms, and the line's end
+        for _ in 0..40 {
+            if stream.write_all(b"a").is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = stream.write_all(b"\n");
+    });
+    let tcp = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let mut reader = BufReader::new(crate::inbound::Net::plain(tcp));
+    assert_eq!(crate::inbound::read_line_bytes(&mut reader).unwrap(), b"+OK quick");
+    let started = Instant::now();
+    let refused = crate::inbound::read_line_bytes(&mut reader).unwrap_err();
+    assert!(
+        refused.message().contains("took more than 1 seconds"),
+        "{}",
+        refused.message()
+    );
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+}
+
 pub(super) fn pop_log_has(pop: &FakePop, line: &str) -> bool {
     moqui_lib::sync::lock(&pop.log).iter().any(|known| known == line)
 }
