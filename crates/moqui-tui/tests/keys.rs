@@ -1544,11 +1544,15 @@ fn an_action_disabled_for_a_reason_is_shown_and_says_why() {
     );
     let model = ScreenModel::from_json(&json).unwrap();
     let link = FakeLink::from_json(&[json.as_str()]).unwrap();
-    let text = moqui_tui::render_text(&model, &link, 140, 12);
-    assert!(text.contains("[ Add exchange rate ]"), "{text}");
-    // focused first: the hint line names it and its reason
-    assert!(text.contains(&format!("Add exchange rate · {REASON}")), "{text}");
-    assert!(!text.contains("Not reached"), "{text}");
+    // drawn by the ui feature; the model alone checks the focus and the message below
+    #[cfg(feature = "ui")]
+    {
+        let text = moqui_tui::render_text(&model, &link, 140, 12);
+        assert!(text.contains("[ Add exchange rate ]"), "{text}");
+        // focused first: the hint line names it and its reason
+        assert!(text.contains(&format!("Add exchange rate · {REASON}")), "{text}");
+        assert!(!text.contains("Not reached"), "{text}");
+    }
 
     let mut session = Session::new(model);
     let order: Vec<&str> = session.focus_order().iter().map(|item| item.node.as_str()).collect();

@@ -58,3 +58,7 @@ required-features = ["ui"]
 [[test]]
 name = "assist"
 required-features = ["ui"]
+
+[[test]]
+name = "artifact_browser"
+required-features = ["ui"]
