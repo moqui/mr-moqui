@@ -34,9 +34,9 @@ const make = (entityName, fields) => {
     row.setFields(fields, true, null, null)
     row.create()
 }
-// signed in as userId, by default with a sign-in in the last five minutes (a password user only); `recent` false is a
-// session with none, as a taken-over one
-function as(userId, action, recent = true) {
+// signed in as userId by an internal login: a session with no recent sign-in; with `recent`, one that confirmed who it
+// is by its password (a password user only), as a change of who signs in through a provider asks (SEC-ADM-87)
+function as(userId, action, recent = false) {
     ec.user.internalLoginUser(userId.toLowerCase().replace(/_/g, "."))
     if (recent && (userId === users.config || userId === users.access)) {
         ec.service.sync().name("org.moqui.sso.RecentAuthServices.reauthenticate#User").parameters({password}).disableAuthz().call()
@@ -146,11 +146,14 @@ feature("a role mapping gives only a registered bundle the actor may assign, nev
             })
         )
         const mapAs = (userId, roleMapList, extra = {}) =>
-            as(userId, () =>
-                invoke(
-                    C + "store#IdentityProvider",
-                    Object.assign({authFlowId: flowId, expectedRevision: provider(flowId).revision, roleMapList}, extra)
-                )
+            as(
+                userId,
+                () =>
+                    invoke(
+                        C + "store#IdentityProvider",
+                        Object.assign({authFlowId: flowId, expectedRevision: provider(flowId).revision, roleMapList}, extra)
+                    ),
+                true
             )
         const out = {
             created,
@@ -221,11 +224,14 @@ feature(
     {
         when() {
             const store = (userId, parameters) =>
-                as(userId, () =>
-                    invoke(
-                        C + "store#IdentityProvider",
-                        Object.assign({authFlowId: liveFlowId, expectedRevision: provider(liveFlowId).revision}, parameters)
-                    )
+                as(
+                    userId,
+                    () =>
+                        invoke(
+                            C + "store#IdentityProvider",
+                            Object.assign({authFlowId: liveFlowId, expectedRevision: provider(liveFlowId).revision}, parameters)
+                        ),
+                    true
                 )
             const out = {before: as(users.config, () => invoke(C + "find#IdentityProviders", {authFlowId: liveFlowId}))}
             out.stale = as(users.config, () =>
