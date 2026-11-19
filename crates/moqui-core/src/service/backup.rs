@@ -324,11 +324,11 @@ fn mirror(
         tracing::info!("embedded database backup mirror is off, SystemMessageRemote {remote_id} has no sendUrl");
         return Ok("N".to_string());
     }
-    // as the message senders do: a remote an administrator disabled, or whose endpoint changed and has not passed a
-    // test since, receives nothing (SEC-TLS-96)
+    // as the message senders do: a remote an administrator disabled receives nothing (SEC-TLS-96)
     if field(&remote, "disabled") == "Y" {
         return Err(LibError::new(format!(
-            "SystemMessageRemote {remote_id} is disabled until a test of it passes; the backup is not mirrored"
+            "SystemMessageRemote {remote_id} is disabled, so the backup is not mirrored; set its disabled to N to \
+             mirror to it again"
         )));
     }
     if options.recipient.is_none() && !backup::sealed_locally(&outcome.keep) {

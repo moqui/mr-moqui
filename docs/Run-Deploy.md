@@ -768,14 +768,20 @@ in `runtime/db/backup`, or the directory in `database-backup@dir`.
   mirror seals such a dump again, to its own recipient, so its copy needs both identities; with this set, leave
   `mirrorEncrypt` off.
 - **Mirror**: set `systemMessageRemoteId` (the seed job's is `EmbeddedDbBackup`) and on that remote `sendUrl`, the
-  user, and a password or key. The remote directory or key prefix is its message type's `sendPath`. Only the archives
+  user, and a password or key. A remote marked `disabled` receives nothing. A mirror host on this machine or the
+  private network (a LAN backup server) needs the remote's `allowPrivateNetwork` set to `Y`; empty is `N` on a
+  production instance, and a link-local or metadata address is refused always. The seed `EmbeddedDbBackup` remote is
+  not changed from System › Integrations, so set it with a data file of your runtime component, loaded with
+  `moqui load` (`<moqui.service.message.SystemMessageRemote systemMessageRemoteId="EmbeddedDbBackup"
+  sendUrl="backup.lan" username="backup" allowPrivateNetwork="Y"/>`), or in Tools › Data as an administrator. The remote directory or key prefix is its message type's `sendPath`. Only the archives
   the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. An
   incremental whose parent a promotion renamed is sent again (over plain SFTP only its `moqui-backup.txt`), so every
   copy names its parent as it is now called. With `incremental` and `chainIncrementals`, a night sends one
   incremental. Two job parameters shape it:
   - `mirrorTransport`: `sftp` or `s3`. Empty picks `s3` for a `sendUrl` of `s3://<bucket>`, else `sftp`. For S3 add
     `?region=<region>` (default `us-east-1`) and, for a store other than AWS (MinIO, R2, B2),
-    `&endpoint=https://<host>`; the username is the access key, the password the secret key.
+    `&endpoint=https://<host>`; the username is the access key, the password the secret key. An `http://` endpoint is
+    taken only on an instance that is not production, for this machine or a store on the private network.
   - `mirrorEncrypt`: `true` seals each archive to `mirrorRecipient`, an [age](https://age-encryption.org) recipient
     (`age1...`, from `age-keygen`), before it leaves the server, which holds no key that reads it; keep the identity
     (`AGE-SECRET-KEY-1...`) off the server. Off by default.

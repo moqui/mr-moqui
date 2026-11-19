@@ -344,6 +344,9 @@ fn a_plain_s3_endpoint_is_taken_only_for_this_machine_off_production() {
     assert!(plain_endpoint_refusal(Some("http://127.0.0.1:9000/x"), false).is_ok());
     assert!(plain_endpoint_refusal(Some("http://[::1]:9000"), false).is_ok());
     assert!(plain_endpoint_refusal(Some("http://localhost:9000"), true).is_err());
-    assert!(plain_endpoint_refusal(Some("http://minio.example.com"), false).is_err());
-    assert!(plain_endpoint_refusal(Some("http://10.0.0.5:9000"), false).is_err());
+    // a store on the private network (a LAN MinIO) off production; never a link-local or metadata address
+    assert!(plain_endpoint_refusal(Some("http://10.0.0.5:9000"), false).is_ok());
+    assert!(plain_endpoint_refusal(Some("http://10.0.0.5:9000"), true).is_err());
+    assert!(plain_endpoint_refusal(Some("http://169.254.169.254"), false).is_err());
+    assert!(plain_endpoint_refusal(Some("http://93.184.216.34"), false).is_err());
 }

@@ -697,3 +697,7 @@ impl Drop for RusshSession {
         self.close();
     }
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;
