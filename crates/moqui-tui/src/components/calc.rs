@@ -120,6 +120,9 @@ struct View {
     menu: Option<usize>,
     charts: bool,
     kiosk: bool,
+    /// The terminal's rows, as the session last gave them (0 before it has), which bound the frozen rows drawn.
+    #[serde(skip)]
+    terminal_rows: u16,
     /// The others who have the document open: `name`, `sheet`, `area`.
     peers: Vec<Value>,
     client: String,
@@ -274,8 +277,9 @@ fn int(value: &Value) -> i32 {
 impl View {
     /// The component's state, or a new one from the room the props carry.
     fn of(props: &Value, state: &ComponentState) -> Self {
-        if let Ok(view) = serde_json::from_value::<Self>(state.local.clone()) {
+        if let Ok(mut view) = serde_json::from_value::<Self>(state.local.clone()) {
             if view.room.is_object() || view.gone {
+                view.terminal_rows = state.rows;
                 return view;
             }
         }
@@ -293,6 +297,7 @@ impl View {
             client: format!("tui-{nanos:x}"),
             need_cells: true,
             need_content: true,
+            terminal_rows: state.rows,
             ..Self::default()
         };
         view.sheet = view.first_sheet();
@@ -340,15 +345,34 @@ impl View {
         self.layout()["data"] == true
     }
 
-    /// The frozen rows and columns drawn: the sheet's, at most what a terminal shows. A workbook may say any number (an
-    /// xlsx file's `ySplit` is read as it is, up to `i32::MAX`), and the frozen ones are drawn and read on every frame
+    /// The frozen rows and columns drawn: the sheet's, at most what a terminal shows (its rows less the chrome and
+    /// [`MIN_ROWS`] of the others, and never more than [`MAX_FROZEN_ROWS`] and [`MAX_FROZEN_COLUMNS`];
+    /// [`columns_shown`] draws only the frozen columns that fit its width). A workbook may say any number (an xlsx
+    /// file's `ySplit` is read as it is, up to `i32::MAX`), and the frozen ones are drawn and read on every frame
     /// (SEC-CLI-83); past the bound they scroll as the others do.
     fn frozen_counts(&self) -> (i32, i32) {
         let layout = self.layout();
+        let fit = (self.terminal_rows_or_default() - self.chrome_rows() - MIN_ROWS).clamp(0, MAX_FROZEN_ROWS);
         (
-            int(&layout["frozenRows"]).clamp(0, MAX_FROZEN_ROWS),
+            int(&layout["frozenRows"]).clamp(0, fit),
             int(&layout["frozenColumns"]).clamp(0, MAX_FROZEN_COLUMNS),
         )
+    }
+
+    fn terminal_rows_or_default(&self) -> i32 {
+        if self.terminal_rows == 0 {
+            30
+        } else {
+            i32::from(self.terminal_rows)
+        }
+    }
+
+    fn chrome_rows(&self) -> i32 {
+        if self.kiosk {
+            KIOSK_CHROME_ROWS
+        } else {
+            CHROME_ROWS
+        }
     }
 
     /// A column's width in characters.
@@ -364,14 +388,13 @@ impl View {
 
     /// The sheet rows that fit on screen below the frozen ones.
     fn rows_shown(&self, terminal_rows: u16) -> i32 {
-        let chrome = if self.kiosk { KIOSK_CHROME_ROWS } else { CHROME_ROWS };
         let rows = if terminal_rows == 0 {
             30
         } else {
             i32::from(terminal_rows)
         };
         let editing = i32::from(self.editing.is_some());
-        (rows - chrome - editing - self.frozen_counts().0).max(MIN_ROWS)
+        (rows - self.chrome_rows() - editing - self.frozen_counts().0).max(MIN_ROWS)
     }
 
     /// The rectangle of the rows and columns on screen: `(row, height, column, width)`.
@@ -1143,8 +1166,17 @@ fn bar_lines(view: &View, width: usize, lines: &mut Vec<Line>) {
 /// The columns drawn: the frozen ones, then from the first shown so the active cell is on screen, as many as fit.
 fn columns_shown(view: &View, room: usize) -> Vec<i32> {
     let (_, frozen_columns) = view.frozen_counts();
-    let mut shown: Vec<i32> = (1..=frozen_columns).collect();
-    let mut used: usize = shown.iter().map(|column| view.width_of(*column) + 1).sum();
+    // the frozen columns that fit, leaving room for one more (SEC-CLI-83)
+    let mut shown: Vec<i32> = Vec::new();
+    let mut used: usize = 0;
+    for column in 1..=frozen_columns {
+        let width = view.width_of(column) + 1;
+        if used + width >= room.saturating_sub(4) {
+            break;
+        }
+        used += width;
+        shown.push(column);
+    }
     let mut start = view.left.max(frozen_columns + 1);
     if view.column > frozen_columns {
         // the active cell on screen: start further right while it does not fit

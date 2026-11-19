@@ -271,22 +271,31 @@ fn the_menu_and_the_charts() {
 }
 
 /// SEC-CLI-83: a sheet's frozen counts are the workbook's, which an xlsx file sets to any number; the grid draws and
-/// reads at most `MAX_FROZEN_ROWS` and `MAX_FROZEN_COLUMNS` of them, so a frame stays the size of a terminal.
+/// reads only the frozen rows that leave the terminal `MIN_ROWS` of the others, at most `MAX_FROZEN_ROWS`, and the
+/// frozen columns that fit its width, so a frame stays the size of the terminal.
 #[test]
 fn a_workbooks_frozen_counts_are_held_to_what_a_terminal_shows() {
     for (rows, columns) in [(1_048_575, 0), (i64::from(i32::MAX), i64::from(i32::MAX))] {
         let mut props = props(true);
         props["room"]["sheets"][0]["frozenRows"] = json!(rows);
         props["room"]["sheets"][0]["frozenColumns"] = json!(columns);
-        let state = ComponentState {
-            rows: 30,
-            ..ComponentState::default()
-        };
-        let lines = CalcGrid.lines(&props, &state, 120, false);
-        assert!(lines.len() < 300, "{rows} frozen rows drew {} lines", lines.len());
-        assert!(lines.iter().all(|line| line.len() < 300), "{columns} frozen columns");
-        let (name, read) = CalcGrid.source(&props, &state).unwrap();
-        assert_eq!(name, "calcCells");
-        assert_eq!(read["height"], MAX_FROZEN_ROWS.to_string(), "{read:?}");
+        for (terminal, frozen) in [(30u16, 30 - CHROME_ROWS - MIN_ROWS), (1_000, MAX_FROZEN_ROWS)] {
+            let state = ComponentState {
+                rows: terminal,
+                ..ComponentState::default()
+            };
+            let lines = CalcGrid.lines(&props, &state, 120, false);
+            let most = usize::from(terminal);
+            assert!(
+                lines.len() < most,
+                "{rows} frozen rows drew {} lines in {terminal}",
+                lines.len()
+            );
+            // a span or two a column, and the columns of a 120-character line are at most 30
+            assert!(lines.iter().all(|line| line.len() < 80), "{columns} frozen columns");
+            let (name, read) = CalcGrid.source(&props, &state).unwrap();
+            assert_eq!(name, "calcCells");
+            assert_eq!(read["height"], frozen.to_string(), "{read:?}");
+        }
     }
 }
