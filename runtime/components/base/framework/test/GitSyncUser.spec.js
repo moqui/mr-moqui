@@ -52,3 +52,39 @@ feature("a sync runs as another user only for a holder of ADMIN_LOGIN_AS", {
         stored == "GSU_OWN:GSU_SYNCER"
     },
 })
+
+feature("a holder of ADMIN_LOGIN_AS may not name an account in a privileged group they are not in", {
+    when() {
+        sys(() => {
+            const from = new Date(Date.now() - 60000)
+            make("moqui.security.UserAccount", {userId: "GSU_LOGIN_AS", username: "gsu.loginas", userFullName: "Git sync login as", disabled: "N"})
+            make("moqui.security.UserGroupMember", {userGroupId: "GSU_SYNCERS", userId: "GSU_LOGIN_AS", fromDate: from})
+            make("moqui.security.UserGroup", {userGroupId: "GSU_LOGIN_AS_G", description: "Git sync spec login as"})
+            make("moqui.security.UserGroupMember", {userGroupId: "GSU_LOGIN_AS_G", userId: "GSU_LOGIN_AS", fromDate: from})
+            make("moqui.security.UserGroupPermission", {userGroupId: "GSU_LOGIN_AS_G", userPermissionId: "ADMIN_LOGIN_AS", fromDate: from})
+        })
+        // john.doe is in ADMIN, a privileged group the holder is not in (user::held_beyond)
+        const admin = storeAs("gsu.loginas", {syncId: "GSU_AS_ADMIN", userId: "EX_JOHN_DOE"})
+        const plain = storeAs("gsu.loginas", {syncId: "GSU_AS_SYNCER", userId: "GSU_SYNCER"})
+        return {admin, plain}
+    },
+    then({admin, plain}) {
+        admin.includes("privileged group ADMIN")
+        plain == ""
+    },
+})
+feature("a sync runs as another user only while its storer still holds ADMIN_LOGIN_AS", {
+    when() {
+        // stored by one who held the grant then and holds it no more: written as the framework
+        sys(() => make("moqui.report.DefinitionGitSync", {syncId: "GSU_STALE", folder: "GitSyncSpec", repositoryId: "git-sync-spec",
+            userId: "GSU_LOGIN_AS", storedByUserId: "GSU_SYNCER", enabled: "Y"}))
+        let error = ""
+        try { call("org.moqui.report.ReportServices.push#DefinitionGitSync", {syncId: "GSU_STALE"}) } catch (e) { error = String(e.message) }
+        error += ec.message.getErrorsString()
+        ec.message.clearErrors()
+        return {error}
+    },
+    then({error}) {
+        error.includes("no longer holds ADMIN_LOGIN_AS")
+    },
+})

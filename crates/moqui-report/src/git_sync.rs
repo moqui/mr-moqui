@@ -76,7 +76,32 @@ fn file_bytes(definition: &Json) -> Result<Vec<u8>, Error> {
     Ok(text.into_bytes())
 }
 
-/// Run `body` in a fresh context signed in as a user, as scheduled reports and alerts run as their owner.
+/// Run `body` in a fresh context signed in as the user of `sync`, as scheduled reports and alerts run as their owner.
+/// A sync stored to run as another user than its storer runs only while the storer still holds `ADMIN_LOGIN_AS` and the
+/// user holds no access beyond them (`user::held_beyond`), asked at each run in a context of the storer's (SEC-TLS-109).
+fn as_sync_user<T>(
+    factory: &Arc<ExecutionContextFactory>,
+    sync: &Json,
+    body: impl FnOnce(&ExecutionContext) -> Result<T, Error>,
+) -> Result<T, Error> {
+    let user_id = text(sync, "userId", "");
+    let stored_by = text(sync, "storedByUserId", "");
+    if !stored_by.is_empty() && stored_by != user_id {
+        let refusal = as_user(factory, stored_by, |_| {
+            if !moqui_core::user::has_permission("ADMIN_LOGIN_AS").map_err(fail)? {
+                return Ok(Some("its storer no longer holds ADMIN_LOGIN_AS".to_owned()));
+            }
+            moqui_core::user::held_beyond(user_id).map_err(fail)
+        })
+        .unwrap_or_else(|error| Some(format!("its storer may not sign in: {error}")));
+        if let Some(reason) = refusal {
+            return Err(fail(format!("git sync may not run as {user_id}: {reason}")));
+        }
+    }
+    as_user(factory, user_id, body)
+}
+
+/// Run `body` in a fresh context signed in as a user.
 fn as_user<T>(
     factory: &Arc<ExecutionContextFactory>,
     user_id: &str,
@@ -227,7 +252,7 @@ fn changed_files(ec: &ExecutionContext, sync: &Json, definitions: &[Json]) -> Re
 
 fn sync_json(row: &moqui_core::entity::EntityValue) -> Json {
     json!({"syncId":field(row,"syncId"),"folder":field(row,"folder"),"repositoryId":field(row,"repositoryId"),"path":field(row,"path"),
-        "userId":field(row,"userId"),"enabled":field(row,"enabled")!="N","lastPushDate":row.get("lastPushDate").map(moqui_lib::json::to_json),
+        "userId":field(row,"userId"),"storedByUserId":field(row,"storedByUserId"),"enabled":field(row,"enabled")!="N","lastPushDate":row.get("lastPushDate").map(moqui_lib::json::to_json),
         "lastPullDate":row.get("lastPullDate").map(moqui_lib::json::to_json),"lastError":row.get("lastError").and_then(Value::as_str)})
 }
 fn read_sync(ec: &ExecutionContext, sync_id: &str) -> Result<Json, Error> {
@@ -244,7 +269,7 @@ fn read_sync(ec: &ExecutionContext, sync_id: &str) -> Result<Json, Error> {
 /// Write every definition of the sync's folder that differs from its file, as one commit.
 pub fn push(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json, Error> {
     let sync_id = text(sync, "syncId", "");
-    let result = as_user(factory, text(sync, "userId", ""), |ec| {
+    let result = as_sync_user(factory, sync, |ec| {
         let definitions = folder_definitions(ec, text(sync, "folder", ""))?;
         let (files, unchanged) = changed_files(ec, sync, &definitions)?;
         if !files.is_empty() {
@@ -284,7 +309,7 @@ pub fn push(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json,
 /// Save each file of the sync's directory that differs from its definition, by its id, into the sync's folder.
 pub fn pull(factory: &Arc<ExecutionContextFactory>, sync: &Json) -> Result<Json, Error> {
     let sync_id = text(sync, "syncId", "");
-    let result = as_user(factory, text(sync, "userId", ""), |ec| {
+    let result = as_sync_user(factory, sync, |ec| {
         let (repository, path, folder) = (
             text(sync, "repositoryId", ""),
             text(sync, "path", ""),
@@ -429,7 +454,7 @@ pub(super) fn after_save(ec: &ExecutionContext, definition: &Json) {
         };
         for sync in &syncs {
             let sync_id = text(sync, "syncId", "");
-            let result = as_user(&factory, text(sync, "userId", ""), |ec| {
+            let result = as_sync_user(&factory, sync, |ec| {
                 let (files, _) = changed_files(ec, sync, std::slice::from_ref(&definition))?;
                 if !files.is_empty() {
                     ec.factory().resource().write_many(&files)?;
@@ -511,7 +536,7 @@ pub(super) fn after_delete(ec: &ExecutionContext, definition: &Json) {
         };
         for sync in &syncs {
             let sync_id = text(sync, "syncId", "");
-            let result = as_user(&factory, text(sync, "userId", ""), |ec| {
+            let result = as_sync_user(&factory, sync, |ec| {
                 remove_file(ec, sync, &id)?;
                 Ok(json!({"removed":[id.clone()]}))
             });
@@ -610,6 +635,8 @@ pub fn store_sync(ec: &ExecutionContext, _service: &ServiceInfo<'_>, params: &Pa
             row.set(name, Value::string(value));
         }
     }
+    // who stored it: each run asks again that they may still run it as its user (as_sync_user)
+    row.set("storedByUserId", Value::string(&caller));
     if let Some(enabled) = params.get("enabled").filter(|value| !value.is_null()) {
         let on = enabled == true || enabled == "Y" || enabled == "true";
         row.set("enabled", Value::string(if on { "Y" } else { "N" }));
