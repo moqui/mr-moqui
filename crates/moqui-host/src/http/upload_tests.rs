@@ -56,9 +56,9 @@ fn an_upload_must_keep_a_minimum_rate() {
     );
 }
 
-/// One client has at most `max-uploads-per-client` arriving at once, an IPv6 one by its /64, whether or not web
-/// protection is on; an upload with no user takes only a share of `max-uploads`, the rest kept for uploads by a user;
-/// a slot is given back when its upload ends.
+/// One client has at most `max-uploads-per-client` arriving at once, whether or not web protection is on; an upload with
+/// no user takes only a share of `max-uploads`, the rest kept for uploads by a user; a slot is given back when its upload
+/// ends.
 #[test]
 fn a_client_and_anonymous_uploads_take_only_their_share_of_the_slots() {
     let limits = ListenLimits {
@@ -67,32 +67,90 @@ fn a_client_and_anonymous_uploads_take_only_their_share_of_the_slots() {
         ..ListenLimits::defaults()
     };
     let uploads = Arc::new(Uploads::default());
-    let first = uploads.take(&limits, ip("203.0.113.1"), false).ok().expect("a slot");
-    let _second = uploads.take(&limits, ip("203.0.113.1"), false).ok().expect("a slot");
-    assert!(matches!(
-        uploads.take(&limits, ip("203.0.113.1"), true),
-        Err(BodyRefused::SpoolFull)
-    ));
-    let _v6 = uploads.take(&limits, ip("2001:db8::1"), false).ok().expect("a slot");
-    let _v6_again = uploads
-        .take(&limits, ip("2001:db8::2"), true)
-        .ok()
-        .expect("another address of the /64 has the second slot");
-    assert!(matches!(
-        uploads.take(&limits, ip("2001:db8::3"), true),
-        Err(BodyRefused::SpoolFull)
-    ));
-    drop(first);
-    // four of four arriving, then one ends: three of four arriving, an upload with no user finds no room past three quarters, one with a user does
+    let one = Some(ip("203.0.113.1"));
+    let first = uploads.take(&limits, one, false).ok().expect("a slot");
+    let _second = uploads.take(&limits, one, false).ok().expect("a slot");
+    assert!(matches!(uploads.take(&limits, one, false), Err(BodyRefused::SpoolFull)));
+    // an upload with a user is counted in the totals only
+    let _with_user = uploads.take(&limits, None, true).ok().expect("a slot");
+    // three of four arriving: an upload with no user finds no room past three quarters, one with a user does
     assert_eq!(uploads.arriving(), 3);
     assert!(!uploads.anonymous_room(&limits));
     assert!(matches!(
-        uploads.take(&limits, ip("203.0.113.9"), false),
+        uploads.take(&limits, Some(ip("203.0.113.9")), false),
         Err(BodyRefused::SpoolFull)
     ));
-    assert!(uploads.take(&limits, ip("203.0.113.9"), true).is_ok());
+    let _last = uploads.take(&limits, None, true).ok().expect("a slot");
+    assert!(matches!(uploads.take(&limits, None, true), Err(BodyRefused::SpoolFull)));
+    // a slot is given back when its upload ends
+    drop(first);
+    assert_eq!(uploads.arriving(), 3);
+    assert!(uploads.take(&limits, one, false).is_err(), "still three of four");
 }
 
+/// An [`HttpState`] whose guard is `guard`.
+fn state_with(guard: Arc<crate::guard::Guard>) -> HttpState {
+    let context = moqui_core::context::ExecutionContextFactory::test_context();
+    let (_, shutdown) = tokio::sync::watch::channel(false);
+    HttpState {
+        factory: Arc::clone(context.factory()),
+        shutdown,
+        limits: ListenLimits::defaults(),
+        guard,
+        uploads: Arc::default(),
+    }
+}
+
+/// An upload is counted per client only when its address is the client's: behind a reverse proxy (or an office NAT)
+/// on loopback or a private network with no client addressing configured, the peer is every client's, so only the
+/// totals apply; with addressing, the client the proxy names is counted, an IPv6 one by `client-ipv6-prefix`; an
+/// upload with a user is never counted per client.
+#[test]
+fn an_upload_is_counted_per_client_only_by_an_address_that_is_the_clients() {
+    use super::per_client_key;
+    use moqui_core::web::address::{parse_cidrs, ClientAddressing};
+    let node =
+        moqui_lib::node::MNode::parse_text("web-protection", r#"<web-protection client-ipv6-prefix="48"/>"#).unwrap();
+    let unaddressed = state_with(Arc::new(crate::guard::Guard::new(crate::guard::GuardConf::from_node(
+        Some(&node),
+        Arc::new(ClientAddressing::new("", Vec::new())),
+    ))));
+    // a proxy on this machine or the private network, believed by nobody: the whole site behind one address
+    assert_eq!(
+        per_client_key(&unaddressed, ip("127.0.0.1"), ip("127.0.0.1"), false),
+        None
+    );
+    assert_eq!(
+        per_client_key(&unaddressed, ip("10.0.0.5"), ip("10.0.0.5"), false),
+        None
+    );
+    // a public address is a client's
+    assert_eq!(
+        per_client_key(&unaddressed, ip("8.8.8.8"), ip("8.8.8.8"), false),
+        Some(ip("8.8.8.8"))
+    );
+    assert_eq!(per_client_key(&unaddressed, ip("8.8.8.8"), ip("8.8.8.8"), true), None);
+    assert_eq!(
+        per_client_key(
+            &unaddressed,
+            ip("2a00:1450:4001:82a::9"),
+            ip("2a00:1450:4001:82a::9"),
+            false
+        ),
+        Some(ip("2a00:1450:4001::"))
+    );
+    let addressed = state_with(Arc::new(crate::guard::Guard::new(crate::guard::GuardConf::from_node(
+        Some(&node),
+        Arc::new(ClientAddressing::new(
+            "X-Forwarded-For",
+            parse_cidrs("127.0.0.1", "test"),
+        )),
+    ))));
+    assert_eq!(
+        per_client_key(&addressed, ip("127.0.0.1"), ip("203.0.113.4"), false),
+        Some(ip("203.0.113.4"))
+    );
+}
 /// Through the screen route: a multipart body that falls under `upload-min-rate` once `body-timeout` has passed is
 /// answered 408 while it arrives, and its slot is given back.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

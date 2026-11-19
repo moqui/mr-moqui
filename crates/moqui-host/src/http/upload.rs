@@ -91,14 +91,13 @@ pub(crate) async fn read_multipart(
 /// A body that is one file (a DAV `PUT`) read as it arrives, up to `limit` bytes, as an upload's file part is: in
 /// memory up to 256 KiB, then spooled to `runtime/tmp/upload`, never held whole (SEC-FIL-04). Each chunk must come
 /// within `webapp-list/webapp[webroot]/web-protection/requests@upload-idle-timeout`. A body refused or cut short leaves no file.
-/// Its sender's credentials held before it is read, so it is an upload with a user of `client`'s.
+/// Its sender's credentials held before it is read, so it is an upload with a user, counted only in the totals.
 pub(crate) async fn read_to_spool(
     state: &HttpState,
     body: axum::body::Body,
     limit: usize,
     file_name: &str,
     content_type: &str,
-    client: IpAddr,
 ) -> Result<moqui_core::web::multipart::UploadedFile, BodyRefused> {
     use futures_util::StreamExt as _;
     use moqui_core::web::multipart::{BodySpool, MultipartError, Spool};
@@ -107,7 +106,7 @@ pub(crate) async fn read_to_spool(
         MultipartError::SpoolFull => BodyRefused::SpoolFull,
         other => BodyRefused::Failed(other.to_string()),
     };
-    let _slot = state.uploads.take(&state.limits, client, true)?;
+    let _slot = state.uploads.take(&state.limits, None, true)?;
     let mut spool = BodySpool::new(Spool::under(state.factory.runtime_dir()));
     let mut stream = body.into_data_stream();
     let mut pending: Vec<u8> = Vec::with_capacity(UPLOAD_FEED);
@@ -172,16 +171,16 @@ impl Uploads {
         self.arriving.load(Ordering::Acquire) < anonymous_cap(limits)
     }
 
-    /// A slot for an upload of `client` (`has_user`: the request named a user before its body), or a 503 refusal:
-    /// at most `max-uploads-per-client` of a client at once, and at most `max-uploads` in all, of which an upload with
-    /// no user takes only a share, so neither one client nor anonymous uploads take every slot.
+    /// A slot for an upload (`has_user`: the request named a user before its body), or a 503 refusal: at most
+    /// `max-uploads-per-client` of the client `per_client` keys ([`per_client_key`]; none for an upload with a user, or
+    /// an address that may be many clients'), and at most `max-uploads` in all, of which an upload with no user takes
+    /// only a share, so neither one client nor anonymous uploads take every slot.
     pub(crate) fn take(
         self: &Arc<Self>,
         limits: &ListenLimits,
-        client: IpAddr,
+        per_client: Option<IpAddr>,
         has_user: bool,
     ) -> Result<UploadSlot, BodyRefused> {
-        let client = upload_client(client);
         let cap = if has_user {
             limits.max_uploads
         } else {
@@ -201,6 +200,12 @@ impl Uploads {
             );
             return Err(BodyRefused::SpoolFull);
         }
+        let Some(client) = per_client else {
+            return Ok(UploadSlot {
+                uploads: Arc::clone(self),
+                client: None,
+            });
+        };
         let mut by_client = moqui_lib::sync::lock(&self.by_client);
         let count = by_client.entry(client).or_insert(0);
         if *count >= limits.max_uploads_per_client {
@@ -215,7 +220,7 @@ impl Uploads {
         *count += 1;
         Ok(UploadSlot {
             uploads: Arc::clone(self),
-            client,
+            client: Some(client),
         })
     }
 }
@@ -225,31 +230,45 @@ fn anonymous_cap(limits: &ListenLimits) -> usize {
 }
 
 /// The key a client's uploads are counted under: its address, or an IPv6 address's /64.
-fn upload_client(client: IpAddr) -> IpAddr {
+/// The key an upload of `client`, through `peer`, is counted under per client: the client's address, an IPv6 one by
+/// web protection's `client-ipv6-prefix`. `None`, so only the totals apply, for an upload with a user, and for an
+/// address that may be many clients': with no client addressing configured (`client-ip-header`, `trusted-proxies`),
+/// a peer on loopback or a private network is a reverse proxy or an office NAT in front, whose every client it is.
+pub(crate) fn per_client_key(state: &HttpState, peer: IpAddr, client: IpAddr, has_user: bool) -> Option<IpAddr> {
+    if has_user {
+        return None;
+    }
+    let conf = state.guard.conf();
+    let addressing = conf.addressing();
+    let configured = !addressing.header().is_empty() || addressing.has_trusted();
+    if !configured && moqui_lib::net::internal_address(peer.to_canonical()) {
+        return None;
+    }
     let client = client.to_canonical();
-    if client.is_ipv6() {
-        moqui_core::web::address::masked(client, 64)
+    Some(if client.is_ipv6() {
+        moqui_core::web::address::masked(client, conf.ipv6_prefix())
     } else {
         client
-    }
+    })
 }
 
 /// One upload arriving, counted in [`Uploads`] until it is dropped (SEC-RTE-91).
 pub(crate) struct UploadSlot {
     uploads: Arc<Uploads>,
-    client: IpAddr,
+    client: Option<IpAddr>,
 }
 
 impl Drop for UploadSlot {
     fn drop(&mut self) {
-        let mut by_client = moqui_lib::sync::lock(&self.uploads.by_client);
-        if let Some(count) = by_client.get_mut(&self.client) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                by_client.remove(&self.client);
+        if let Some(client) = self.client {
+            let mut by_client = moqui_lib::sync::lock(&self.uploads.by_client);
+            if let Some(count) = by_client.get_mut(&client) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    by_client.remove(&client);
+                }
             }
         }
-        drop(by_client);
         self.uploads.arriving.fetch_sub(1, Ordering::AcqRel);
     }
 }

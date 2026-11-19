@@ -1178,7 +1178,8 @@ async fn dispatch_screen(
             None if state.uploads.anonymous_room(&state.limits) => false,
             None => upload_has_user(&state, &parts.headers, web.https, client).await,
         };
-        let slot = match state.uploads.take(&state.limits, client, has_user) {
+        let per_client = upload::per_client_key(&state, peer.ip(), client, has_user);
+        let slot = match state.uploads.take(&state.limits, per_client, has_user) {
             Ok(slot) => slot,
             Err(refused) => return refused.response(),
         };

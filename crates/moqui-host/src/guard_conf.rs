@@ -537,6 +537,11 @@ impl GuardConf {
         &self.addressing
     }
 
+    /// `client-ipv6-prefix`: the prefix an IPv6 client is counted by.
+    pub(crate) fn ipv6_prefix(&self) -> u8 {
+        self.ipv6_prefix
+    }
+
     /// The idle time after which a client is dropped from the table: its longest ban window or rate-limit refill.
     pub(super) fn idle_after(&self) -> u64 {
         let longest_ban = self.bans.iter().map(|ban| ban.window).max().unwrap_or(0);

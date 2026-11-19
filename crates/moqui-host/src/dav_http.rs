@@ -118,7 +118,7 @@ pub(crate) async fn handle(
             .header("content-type")
             .unwrap_or("application/octet-stream")
             .to_string();
-        match read_to_spool(&state, body, limit, "put", &content_type, client).await {
+        match read_to_spool(&state, body, limit, "put", &content_type).await {
             Ok(file) => dav_request.upload = Some(file),
             Err(refused) => return refused.response(),
         }

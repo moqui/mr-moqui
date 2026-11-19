@@ -587,8 +587,9 @@
                 at most max-body together, and is cut off when nothing arrives for upload-idle-timeout seconds, or when
                 after body-timeout seconds it has averaged less than upload-min-rate bytes a second (SEC-RTE-91); at most
                 max-uploads arrive at once (an upload with no user only three quarters of them) and at most
-                max-uploads-per-client of one client, whether or not the per-client parts are on, and another is answered
-                503. An
+                max-uploads-per-client with no user of one client, whether or not the per-client parts are on, counted
+                only by an address that is the client's (client addressing set, or a peer not on loopback or a private
+                network), and another is answered 503. An
                 upload with no user (no session signed in, no key, no Basic credentials that hold) stops at max-body, but
                 under anonymous-upload-paths (path prefixes, comma separated: the public share's file drop). The files of
                 the uploads being read hold at most max-spool bytes together; an upload past it is answered 503. -->
