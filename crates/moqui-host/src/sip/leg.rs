@@ -243,6 +243,20 @@ impl Drop for LegMedia {
     }
 }
 
+/// The datagrams waiting on `socket`, at most `max` of them, each given to `each`; how many were read. The rest wait
+/// in the socket's buffer for the next tick (SEC-COM-86).
+fn read_datagrams(socket: &UdpSocket, buf: &mut [u8], max: usize, mut each: impl FnMut(&[u8], SocketAddr)) -> usize {
+    let mut read = 0;
+    while read < max {
+        let Ok((len, from)) = socket.recv_from(buf) else {
+            break;
+        };
+        each(&buf[..len], from);
+        read += 1;
+    }
+    read
+}
+
 struct Worker {
     leg: String,
     socket: UdpSocket,
@@ -307,21 +321,20 @@ impl Worker {
                 }
             }
             // the phone's packets, at most MAX_DATAGRAMS_PER_TICK, and its digits at most a rate
-            for _ in 0..MAX_DATAGRAMS_PER_TICK {
-                let Ok((len, from)) = self.socket.recv_from(&mut buf) else {
-                    break;
-                };
-                if let Some(media) = self.media.as_mut() {
-                    if let Received::Digit(digit) = media.receive(from, &buf[..len]) {
-                        if self.digits.take(Instant::now()) {
-                            let _ = self.notes.send(LegNote::Digit {
-                                leg: self.leg.clone(),
+            let (socket, media, digits, notes, leg) =
+                (&self.socket, &mut self.media, &mut self.digits, &self.notes, &self.leg);
+            read_datagrams(socket, &mut buf, MAX_DATAGRAMS_PER_TICK, |packet, from| {
+                if let Some(media) = media.as_mut() {
+                    if let Received::Digit(digit) = media.receive(from, packet) {
+                        if digits.take(Instant::now()) {
+                            let _ = notes.send(LegNote::Digit {
+                                leg: leg.clone(),
                                 digit,
                             });
                         }
                     }
                 }
-            }
+            });
             let mixer = self.room.tick();
             let mut out = match self.looped.as_ref().filter(|audio| !audio.is_empty()) {
                 Some(audio) => {
@@ -490,3 +503,7 @@ pub(crate) fn sdp_address(public: Option<IpAddr>, socket: &UdpSocket) -> Option<
     let bound = socket.local_addr().ok()?;
     Some(SocketAddr::new(public.unwrap_or(bound.ip()), bound.port()))
 }
+
+#[cfg(test)]
+#[path = "leg_tests.rs"]
+mod tests;
