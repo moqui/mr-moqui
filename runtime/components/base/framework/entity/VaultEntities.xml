@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     The services are org.moqui.security.VaultServices (crates/moqui-vault-server), which serve a wrap or a body only to a
     member and a delivery only to its recipient. These are moqui.* entities, which entity filters never apply to: screens
     reach them only through those services. V1 writes the personal keys, key checks, vaults, items, members, key versions,
-    deliveries and events; the lease, machine access and recovery tables are here for V2 and V4. -->
+    deliveries and events; V2 the deposit keys, leases and machine access; V4 the recovery tables. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <entity entity-name="Vault" package="moqui.security.vault" use="transactional" cache="never">
@@ -48,6 +48,8 @@ along with this software (see the LICENSE.md file). If not, see
             (Argon2id) or the generated key (HKDF), as the vault crate's JSON with its parameters</description></field>
         <field name="recoveryOn" type="text-indicator"/>
         <field name="depositPublic" type="text-medium"><description>Operational (V2): the deposit key's public half</description></field>
+        <field name="depositKeyVersion" type="number-integer"><description>The key version the deposit key was made for, as
+            signed</description></field>
         <field name="depositSignerUserId" type="id"/>
         <field name="depositSignerKeyId" type="id"/>
         <field name="depositSignature" type="text-medium"/>
@@ -283,9 +285,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="serverSignature" type="text-medium"/>
         <field name="sealedItemKeys" type="text-very-long"/>
         <field name="approvedByUserId" type="id"/>
+        <field name="approverKeyId" type="id"><description>The approver's personal key the approval signature was checked
+            with</description></field>
         <field name="approvalSignature" type="text-medium"/>
         <field name="approvedDate" type="date-time"/>
-        <field name="machineAccess" type="text-indicator"><description>Y: opened under an environment's machine access</description></field>
+        <field name="machineAccess" type="text-indicator"><description>Y: opened under an environment's machine access,
+            approved by "machine"</description></field>
+        <field name="environmentId" type="id"><description>The environment of a machine-access lease, or of a lease asked
+            to grant machine access</description></field>
         <field name="statusId" type="id"/>
         <field name="requestedByUserId" type="id"/>
         <field name="requestedDate" type="date-time"/>
@@ -305,6 +312,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sealedItemKey" type="text-long"/>
         <field name="grantedByUserId" type="id"/>
         <field name="grantedDate" type="date-time"/>
+        <field name="staleDate" type="date-time"><description>When the item was written with a new item key, which this
+            sealed key no longer opens: a lease under it is refused until machine access is given again</description></field>
         <relationship type="one" related="moqui.security.vault.Vault"/>
         <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
     </entity>

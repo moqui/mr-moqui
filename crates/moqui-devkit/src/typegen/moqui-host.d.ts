@@ -1536,6 +1536,21 @@ interface MoquiServerEc {
     readonly search: { [method: string]: (...args: unknown[]) => unknown };
     /** The model calls of app code, in a build with the `llm` feature. */
     readonly llm: MoquiLlmFacade;
+    /** A vault value, only from the lease the code runs under (plans/Vault-Instances.md §3.7). */
+    readonly vault: MoquiVaultFacade;
+}
+
+/**
+ * `ec.vault`: an operational vault item's value from the lease the code runs under, by its binding. Each read is an
+ * event written before the value comes back; with no lease, a lease that names no such item, or one that has ended,
+ * it throws. There is no member that hands out a vault value at will, and a leased value never goes into a queued or
+ * scheduled call, a log or an event field (the stored-call paths refuse it).
+ */
+interface MoquiVaultFacade {
+    /** The item's fields, by name. */
+    leased(binding: string): { [field: string]: string };
+    /** One field of the item. */
+    leased(binding: string, field: string): string;
 }
 
 /**

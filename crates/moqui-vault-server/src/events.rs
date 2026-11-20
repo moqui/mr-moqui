@@ -12,15 +12,18 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The `VaultEvent` rows (plans/Vault-Instances.md §3.13): each change writes its event in its own transaction, so a
-//! change whose event cannot be written does not happen (the service fails and rolls back). An event names who acted,
-//! whom it was about and what changed, in words, never a key or a value. `list#VaultEvents` shows a vault's events to
-//! its members, and a user's own events to them.
+//! The `VaultEvent` rows (plans/Vault-Instances.md §3.13): each change writes its event in the transaction of the
+//! change, so a change whose event cannot be written does not happen (the service fails and rolls back); a lease's use
+//! writes its event in a transaction of its own before the value is returned ([`write_alone`]), so a use whose event
+//! cannot be written returns nothing (fail closed). An event names who acted, whom it was about and what changed, in
+//! words, never a key or a value. `list#VaultEvents` shows a vault's events to its members, and a user's own events to
+//! them.
 
 use std::collections::BTreeMap;
 
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::extension::RustServiceFn;
+use moqui_core::transaction::TransactionAttribute;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
@@ -41,22 +44,40 @@ pub(crate) struct Event<'a> {
     pub(crate) personal_key_id: Option<&'a str>,
     pub(crate) key_version: Option<i64>,
     pub(crate) delivery_id: Option<&'a str>,
+    pub(crate) lease_id: Option<&'a str>,
+    /// Who acted when no user is signed in (the server ending a lease at its time limit or at a restart): none
+    /// leaves the row's user empty.
+    pub(crate) actor: Option<&'a str>,
     pub(crate) detail: Option<String>,
 }
 
-/// Writes `event` as the signed-in user, in the caller's transaction.
+#[cfg(test)]
+thread_local! {
+    /// The tests' fault switch: while set on a thread, every event write there fails, as a database that refuses the
+    /// row would.
+    pub(crate) static FAIL_WRITES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Writes `event` as the signed-in user (or the event's actor when none is), in the caller's transaction.
 pub(crate) fn write(facade: &EntityFacade, event: Event) -> Result<(), LibError> {
-    let actor = user()?;
+    #[cfg(test)]
+    if FAIL_WRITES.with(std::cell::Cell::get) {
+        return Err(crate::common::fail("The vault event could not be written (test fault)"));
+    }
+    let actor = user().ok().or_else(|| event.actor.map(str::to_string));
     let mut row = facade.make_value(EVENT)?;
     row.set_sequenced_id_primary(facade)?;
     row.set("eventTypeEnumId", Value::string(event.kind));
-    row.set("userId", Value::string(actor));
+    if let Some(actor) = actor {
+        row.set("userId", Value::string(actor));
+    }
     let optional = [
         ("vaultId", event.vault_id),
         ("vaultItemId", event.item_id),
         ("subjectUserId", event.subject_user_id),
         ("personalKeyId", event.personal_key_id),
         ("deliveryId", event.delivery_id),
+        ("leaseId", event.lease_id),
     ];
     for (name, given) in optional {
         if let Some(given) = given {
@@ -72,6 +93,14 @@ pub(crate) fn write(facade: &EntityFacade, event: Event) -> Result<(), LibError>
     row.set("eventDate", crate::common::now());
     row.create(facade)?;
     Ok(())
+}
+
+/// Writes `event` in a transaction of its own, committed before this returns: a lease's use, whose value goes back
+/// only once its event is kept (§3.13, fail closed).
+pub(crate) fn write_alone(facade: &EntityFacade, event: Event) -> Result<(), LibError> {
+    let _authz = authz_off();
+    let tx = facade.transactions_for(EVENT)?;
+    tx.run(TransactionAttribute::ForceNew, None, || write(facade, event))
 }
 
 fn event_json(row: &EntityValue) -> Value {

@@ -687,6 +687,8 @@ impl ServicePools {
             self.running()?;
         }
         let factory = capture_factory()?;
+        // a value leased from a vault stays in its operation: never a queued call's parameter (Vault-Instances §3.7)
+        crate::vault_hooks::refuse_leased(&format!("async call of {name}"), parameters).map_err(Error::from)?;
         let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
             return Ok(());
         };

@@ -80,6 +80,12 @@ pub(crate) fn write(
         tracing::debug!(service = %rules.service, "the call's transaction is not the outbox's; its tx-commit rules are not kept in the outbox");
         return Ok(None);
     }
+    // a value leased from a vault is never kept in a stored call (Vault-Instances §3.7)
+    let what = format!("tx rules of {}", rules.service);
+    crate::vault_hooks::refuse_leased(&what, &rules.parameters).map_err(Error::from)?;
+    if let Some(results) = &rules.results {
+        crate::vault_hooks::refuse_leased(&what, results).map_err(Error::from)?;
+    }
     // Written by the framework for the call, whatever the caller may write.
     let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
     let mut row = facade.make_value(OUTBOX)?;

@@ -10,7 +10,8 @@
 // passwords they change, and sec.mfa.proof (two single-use codes) and sec.mfa.burst (one), which they lock with wrong
 // codes, so these are set again on every run. The vault spec (test/client/VaultShared) gets sec.vault.a, .b and .c, each
 // with one single-use code, set again on every run, so its REST sign-ins are strong ones (a password and a second
-// factor). moqui test-client framework --serve runs this spec on
+// factor); the lease spec (test/client/VaultLease) gets sec.vault.d, in SEC_VAULT_ADMIN_GROUP with VAULT_ADMIN, and
+// sec.vault.e, the same way. moqui test-client framework --serve runs this spec on
 // its server's scratch database; for another server run it on that server's database:
 //     moqui test framework --spec ClientFixtures --db existing
 // Each row is made only when it is missing, so a database kept between runs takes it again. These users are not demo
@@ -47,6 +48,9 @@ const VAULT_USERS = [
     ["sec.vault.a", "SecVaultA1!!", "SEC_VAULT_A", "70318001"],
     ["sec.vault.b", "SecVaultB1!!", "SEC_VAULT_B", "70318002"],
     ["sec.vault.c", "SecVaultC1!!", "SEC_VAULT_C", "70318003"],
+    // the lease spec's (test/client/VaultLease.spec.js): d makes an operational vault, so it holds VAULT_ADMIN
+    ["sec.vault.d", "SecVaultD1!!", "SEC_VAULT_D", "70318004"],
+    ["sec.vault.e", "SecVaultE1!!", "SEC_VAULT_E", "70318005"],
 ]
 // AT_SERVICE push name is the service's own name. The transition frame for POST /apps/setPreference is
 // "{screen.location}/{transition}" (screen/render.rs), this location, not the "location#name" artifact-hit name.
@@ -206,6 +210,17 @@ spec({
                 const vaultUserId = ensureUser({ username, password, group: "SEC_NONE_GROUP" })
                 ensureMfa(vaultUserId, factorId, code)
                 updateAccount({ userId: vaultUserId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
+            }
+            // VAULT_ADMIN is sealed: granted here with authorization off, as a data load grants it
+            ensureGroup("SEC_VAULT_ADMIN_GROUP", "Security test: VAULT_ADMIN")
+            if (one("moqui.security.UserGroupPermission", { userGroupId: "SEC_VAULT_ADMIN_GROUP", userPermissionId: "VAULT_ADMIN" }) == null) {
+                call("create#moqui.security.UserGroupPermission", { userGroupId: "SEC_VAULT_ADMIN_GROUP", userPermissionId: "VAULT_ADMIN",
+                    fromDate: ec.user.nowTimestamp })
+            }
+            const vaultAdminId = one("moqui.security.UserAccount", { username: "sec.vault.d" }).userId
+            if (one("moqui.security.UserGroupMember", { userId: vaultAdminId, userGroupId: "SEC_VAULT_ADMIN_GROUP" }) == null) {
+                call("create#moqui.security.UserGroupMember", { userId: vaultAdminId, userGroupId: "SEC_VAULT_ADMIN_GROUP",
+                    fromDate: ec.user.nowTimestamp })
             }
 
             ensure("moqui.service.message.SystemMessageType", { systemMessageTypeId: "SEC_SMT_TEST" },

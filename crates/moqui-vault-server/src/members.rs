@@ -472,6 +472,10 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         row.update(facade)?;
     }
     vault.set("keyVersion", Value::I64(new_version));
+    // the new version's deposit key, or none: one of the old version would be refused at a deposit
+    if operational {
+        crate::deposit::store_rotated(facade, params, &mut vault, &chain, &me)?;
+    }
     bump_revision(facade, &mut vault)?;
     events::write(
         facade,

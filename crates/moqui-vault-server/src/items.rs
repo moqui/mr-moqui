@@ -87,6 +87,10 @@ fn clear_columns(
     if given.iter().any(|(_, given)| given.is_empty()) {
         return Err(fail("An operational item has its type, binding and name"));
     }
+    // a newline or an escape in a name could forge lines of an approver's prompt (the lease dialog, moqui vault approve)
+    if given.iter().any(|(_, given)| crate::lease::has_control(given)) {
+        return Err(fail("An item's type, binding and name have no control character"));
+    }
     let type_id = &given[0].1;
     if find(facade, "moqui.security.vault.VaultItemType")?
         .eq("vaultItemTypeId", Value::string(type_id))
@@ -230,9 +234,23 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     for (name, given) in clear {
         row.set(name, Value::string(given));
     }
+    // a new item key (decision (c) of §9: the first write after a key-version change, or the writer's choice) leaves an
+    // environment's sealed key of this item stale (§3.8): marked here, so a machine lease under it is refused clearly
+    let new_item_key =
+        crate::common::flag(params, "newItemKey").unwrap_or(false) || int_field(&row, "keyVersion") != key_version;
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
     row.update(facade)?;
+    if new_item_key {
+        let access = find(facade, crate::common::MACHINE_ACCESS)?
+            .eq("vaultItemId", Value::string(&item_id))
+            .list()?;
+        for granted in access.iter() {
+            let mut granted = granted.clone();
+            granted.set("staleDate", now());
+            granted.update(facade)?;
+        }
+    }
     bump_revision(facade, &mut vault)?;
     events::write(
         facade,

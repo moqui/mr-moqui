@@ -1,0 +1,7 @@
+[
+  {
+    "t": "text",
+    "id": "VaultLeaseDialog",
+    "text": "A lease is approved in your own client, where your key passphrase is: in a browser, in the desktop or mobile app, or with moqui vault approve <leaseId> on your machine."
+  }
+]

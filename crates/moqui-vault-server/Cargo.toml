@@ -18,6 +18,8 @@ moqui-lib = { workspace = true }
 moqui-vault = { workspace = true, features = ["std", "json"] }
 serde_json.workspace = true
 tracing.workspace = true
+# the lease key's seed, the machine key's pass and the values a lease handed out, cleared when dropped
+zeroize.workspace = true
 
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open.

@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- System › Vaults (plans/Vault-Instances.md §5; docs/security/Vaults.md): the operational vaults the user is a member of
+    (VaultList), a vault's members and roles, items (names, bindings, types, revisions and their age; never a value),
+    leases with Revoke, machine access and events (VaultDetail), and the lease dialog (Lease: what a signed lease names,
+    approved in the browser through the vault worker). Every list comes from org.moqui.security.VaultServices, which
+    shows a vault only to its members; making operational vaults and giving machine access needs VAULT_ADMIN, which the
+    services check. The vault worker needs worker-src blob: and 'wasm-unsafe-eval', which these screens add to their
+    Content-Security-Policy and no other screen has. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Vaults" default-menu-index="26" default-menu-group="Server" menu-image="sym_o_encrypted" menu-image-type="icon">
+    <always-actions>
+        <!-- a page loaded at a vault screen: the worker runs from a blob: URL and compiles the wasm module -->
+        <script>if (ec.web &amp;&amp; ec.web.response) ec.web.response.setHeader("Content-Security-Policy",
+            "frame-ancestors 'none'; form-action 'self'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'")</script>
+    </always-actions>
+    <subscreens default-item="VaultList"/>
+    <widgets>
+        <subscreens-panel id="VaultsPanel" type="tab"/>
+    </widgets>
+</screen>

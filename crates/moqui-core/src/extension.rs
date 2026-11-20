@@ -42,6 +42,9 @@ pub struct Extension {
     /// Start what the crate needs once the factory is up, after its native registrations are configured: the shipped
     /// report definitions. A failure is the crate's to log.
     pub after_boot: fn(&ExecutionContextFactory),
+    /// Start what needs this member's cluster id, once `crate::cluster::start` has set it: the vault's lease registry,
+    /// which names its member in each lease and ends that member's leases left open at a restart.
+    pub after_cluster_start: fn(&ExecutionContextFactory),
     /// Stop what the crate runs, at the start of the factory's shutdown, before the service workers stop.
     pub before_shutdown: fn(&ExecutionContextFactory),
     /// Read again what the crate read from the components' files, after a component was loaded on a running server
@@ -60,10 +63,19 @@ impl Extension {
         register_services: |_| Ok(()),
         register_native: |_| Ok(()),
         after_boot: |_| {},
+        after_cluster_start: |_| {},
         before_shutdown: |_| {},
         after_artifacts_changed: |_| {},
         chat_bridge_adapters: Vec::new,
     };
+}
+
+/// Have each linked crate start what needs this member's cluster id: `crate::cluster::start` calls it at its end. A crate
+/// that fails logs it.
+pub fn cluster_started(factory: &ExecutionContextFactory) {
+    for extension in linked() {
+        (extension.after_cluster_start)(factory);
+    }
 }
 
 /// Have each linked crate read again what it read from the components' files: after a component was loaded on a

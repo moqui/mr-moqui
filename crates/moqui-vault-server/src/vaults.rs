@@ -304,6 +304,12 @@ fn get_vault(params: &Params, facade: &EntityFacade) -> Out {
         ("memberList", Value::List(member_list)),
         ("wraps", my_wraps(facade, &vault_id, &me)?),
         ("secretWrap", value(&secret_wrap)),
+        // an operational vault's deposit key: its client checks the signature on each open (§3.2)
+        ("deposit", value(&crate::deposit::deposit_json(&vault))),
+        (
+            "depositWrappedPrivate",
+            Value::string(field(&vault, "depositWrappedPrivate")),
+        ),
     ]))
 }
 

@@ -23,6 +23,9 @@
 //! - `key check <username>`: compare a user's fingerprint, then store the check signed by this user's key.
 //! - `list`: this user's vaults.
 //! - `open <vaultId> [--item <id>]`: open a vault through its member-list chain and list its items, or print one.
+//! - `leases [--vault <id>]`: the leases waiting for this user's approval and those they asked for, or a vault's.
+//! - `approve <leaseId>`: show what the signed lease names, check the server's lease key once, and approve it here
+//!   (§3.7): the item keys unwrapped under the lease's own names and sealed to it, signed by this user's key.
 
 pub(crate) mod client;
 mod remote;
@@ -46,6 +49,8 @@ Usage: moqui vault --server URL --user USERNAME <command>
   key check <username>      Compare a user's key fingerprint with them, then store your signed check
   list                      Your vaults
   open <vaultId> [--item ID]  Open a vault through its member list and list its items, or print one item
+  leases [--vault ID]       Leases waiting for your approval and those you asked for, or one vault's leases
+  approve <leaseId>         Show what a lease names and approve it here, with your personal key
 
 Each run signs in with your password, and your second factor's code when your account has one: the server sends your
 wrapped personal key only after such a sign-in. The key passphrase never leaves this process. What this client has
@@ -57,6 +62,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
     let mut server = String::new();
     let mut user = String::new();
     let mut item = String::new();
+    let mut vault = String::new();
     let mut words = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -69,6 +75,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
             "--server" => server = value("--server")?,
             "--user" => user = value("--user")?,
             "--item" => item = value("--item")?,
+            "--vault" => vault = value("--vault")?,
             "-h" | "--help" | "help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -96,8 +103,29 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         ["key", "check", username] => key_check(&mut remote, &mut client, username),
         ["list"] => list(&mut remote),
         ["open", vault_id] => open(&mut remote, &mut client, vault_id, &item),
+        ["leases"] => leases(&mut remote, &vault),
+        ["approve", lease_id] => approve(&mut remote, &mut client, lease_id),
         _ => Err(Error::new(USAGE)),
     }
+}
+
+/// A server's text for the terminal: a control character (a newline, an escape that moves the cursor or recolors) is
+/// shown escaped, so a name cannot forge a line of the approval prompt.
+fn shown(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// A field of a server's answer as text for the terminal ([`shown`]).
+fn shown_field(value: &Value, name: &str) -> String {
+    shown(&text(value, name))
 }
 
 fn text(value: &Value, name: &str) -> String {
@@ -290,6 +318,142 @@ fn list(remote: &mut Remote) -> Result<(), Error> {
     Ok(())
 }
 
+/// A shared-key vault's key of its current version, opened in `client` through the vault's chain (checked against
+/// this user's checks and what was remembered); the personal key is open already.
+fn open_shared(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, vault: &Value) -> Result<(), Error> {
+    let key_version = vault["vault"]["keyVersion"].as_u64().unwrap_or(0);
+    let checks = remote.get("/keyChecks", &[])?;
+    let path = state::state_file()?;
+    let mut state = State::read(&path);
+    let wrap = vault["wraps"]
+        .as_array()
+        .and_then(|wraps| {
+            wraps
+                .iter()
+                .find(|wrap| wrap["key_version"].as_u64() == Some(key_version))
+        })
+        .cloned()
+        .ok_or_else(|| Error::new("You hold no wrap of this vault's current key version"))?;
+    let opened = client
+        .call(
+            "vault_key_open",
+            json!({ "entries": vault["entries"], "key_checks": checks["keyCheckList"],
+                    "remembered": state.remembered(remote.base(), vault_id), "wrap": wrap }),
+        )
+        .map_err(vault_err)?;
+    state.remember(remote.base(), vault_id, &opened["remembered"]);
+    state.write(&path)?;
+    if vault["wraps"].as_array().is_some_and(|wraps| wraps.len() > 1) {
+        remote.post(
+            &format!("/vaults/{}/ack", segment(vault_id)),
+            &json!({ "keyVersion": key_version }),
+        )?;
+    }
+    Ok(())
+}
+
+/// `leases`: the leases waiting for this user's approval and those they asked for, or one vault's.
+fn leases(remote: &mut Remote, vault_id: &str) -> Result<(), Error> {
+    let query: Vec<(&str, &str)> = if vault_id.is_empty() {
+        Vec::new()
+    } else {
+        vec![("vaultId", vault_id)]
+    };
+    let leases = remote.get("/leases", &query)?;
+    for lease in leases["leaseList"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        println!(
+            "{}  {}  {}  {}  {}",
+            shown_field(lease, "leaseId"),
+            shown_field(lease, "statusId"),
+            shown_field(lease, "vaultId"),
+            shown_field(lease, "operation"),
+            shown_field(lease, "bindings"),
+        );
+    }
+    Ok(())
+}
+
+/// The time limit of a lease, as a count of minutes from now.
+fn minutes_left(expires_at: i64) -> i64 {
+    (expires_at - now_millis()) / 60_000
+}
+
+/// `approve <leaseId>`: what the signed lease names (never a column), the lease key checked once by its fingerprint,
+/// then on a yes the approval made here and stored. The server needs the approve role and this run's sign-in.
+fn approve(remote: &mut Remote, client: &mut VaultClient, lease_id: &str) -> Result<(), Error> {
+    let got = remote.get(&format!("/leases/{}", segment(lease_id)), &[])?;
+    if text(&got, "statusId") != "VlsRequested" {
+        return Err(Error::new(format!("The lease {lease_id} is not waiting for approval")));
+    }
+    let lease = &got["lease"];
+    let vault_id = text(lease, "vault_id");
+    println!(
+        "Lease {} of vault {}, for: {}",
+        shown(lease_id),
+        shown(&vault_id),
+        shown_field(lease, "operation")
+    );
+    for item in lease["items"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        println!(
+            "  {}  ({}, {})",
+            shown_field(item, "name"),
+            shown_field(item, "binding"),
+            shown_field(item, "item_type")
+        );
+    }
+    let expires_at = lease["expires_at"].as_i64().unwrap_or(0);
+    println!(
+        "Runs on {} for at most {} minutes more.",
+        shown_field(lease, "cluster_member"),
+        minutes_left(expires_at)
+    );
+    println!("These names are checked: an item that is not the one named does not unwrap.");
+    open_key(remote, client)?;
+    let lease_key = text(&got, "leaseKey");
+    let checks = remote.get("/keyChecks", &[("checkedKeyId", "lease-key")])?;
+    let checked = checks["keyCheckList"]
+        .as_array()
+        .is_some_and(|rows| rows.iter().any(|row| text(row, "checked_verify") == lease_key));
+    if !checked {
+        println!(
+            "You have not checked this server's lease key. Its fingerprint:
+  {}",
+            text(&got, "leaseKeyFingerprint")
+        );
+        let same = ask("Does the server's operator read you the same words? [y/N]", false)?;
+        if !matches!(same.trim(), "y" | "Y" | "yes") {
+            return Err(Error::new("Not approved: the lease key is not checked"));
+        }
+        let check = client
+            .call(
+                "key_check_make",
+                json!({ "lease_key": lease_key, "fingerprint": got["leaseKeyFingerprint"], "checked_at": now_millis() }),
+            )
+            .map_err(vault_err)?;
+        remote.post("/keyChecks", &json!({ "check": check }))?;
+    }
+    let vault = remote.get(&format!("/vaults/{}", segment(&vault_id)), &[])?;
+    open_shared(remote, client, &vault_id, &vault)?;
+    let yes = ask("Approve this lease? [y/N]", false)?;
+    if !matches!(yes.trim(), "y" | "Y" | "yes") {
+        return Err(Error::new("Not approved"));
+    }
+    let checks = remote.get("/keyChecks", &[])?;
+    let approval = client
+        .call(
+            "lease_approve",
+            json!({ "lease": lease, "lease_key": lease_key, "key_checks": checks["keyCheckList"],
+                    "wrapped_item_keys": got["wrappedItemKeys"], "now": now_millis() }),
+        )
+        .map_err(vault_err)?;
+    remote.post(
+        &format!("/leases/{}/approve", segment(lease_id)),
+        &json!({ "approval": approval }),
+    )?;
+    println!("Approved: lease {lease_id}");
+    Ok(())
+}
+
 /// `open <vaultId>`: the vault key opened through the vault's chain (checked against this user's checks and what was
 /// remembered), each item's name and type, or one item's body.
 fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: &str) -> Result<(), Error> {
@@ -308,33 +472,7 @@ fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: 
             .map_err(vault_err)?;
     } else {
         open_key(remote, client)?;
-        let checks = remote.get("/keyChecks", &[])?;
-        let path = state::state_file()?;
-        let mut state = State::read(&path);
-        let wrap = vault["wraps"]
-            .as_array()
-            .and_then(|wraps| {
-                wraps
-                    .iter()
-                    .find(|wrap| wrap["key_version"].as_u64() == Some(key_version))
-            })
-            .cloned()
-            .ok_or_else(|| Error::new("You hold no wrap of this vault's current key version"))?;
-        let opened = client
-            .call(
-                "vault_key_open",
-                json!({ "entries": vault["entries"], "key_checks": checks["keyCheckList"],
-                        "remembered": state.remembered(remote.base(), vault_id), "wrap": wrap }),
-            )
-            .map_err(vault_err)?;
-        state.remember(remote.base(), vault_id, &opened["remembered"]);
-        state.write(&path)?;
-        if vault["wraps"].as_array().is_some_and(|wraps| wraps.len() > 1) {
-            remote.post(
-                &format!("/vaults/{}/ack", segment(vault_id)),
-                &json!({ "keyVersion": key_version }),
-            )?;
-        }
+        open_shared(remote, client, vault_id, &vault)?;
     }
     let items = remote.get(&format!("/vaults/{}/items", segment(vault_id)), &[])?;
     for item in items["itemList"].as_array().map(Vec::as_slice).unwrap_or_default() {
