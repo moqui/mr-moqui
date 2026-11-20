@@ -870,6 +870,59 @@ async fn a_flood_from_one_source_is_dropped_while_another_source_is_answered() {
     ua.shutdown();
 }
 
+/// A request with a made-up To tag is in no dialog of this side, so it is counted by the rate as a new one is
+/// (SEC-COM-83): of twenty such INVITEs only the burst is answered.
+#[tokio::test]
+async fn a_made_up_to_tag_does_not_pass_the_rate() {
+    if !loopback_sources(&["127.0.0.7"]).await {
+        return;
+    }
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                rate: 1.0,
+                burst: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().udp.unwrap();
+    let trunk = FakeTrunk::on("127.0.0.1").await;
+    ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    let flood = FakeTrunk::on("127.0.0.7").await;
+    for n in 0..20 {
+        let text = format!(
+            "OPTIONS sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-tag-{n}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-{n}\r\nTo: <sip:100@{addr}>;tag=made-up\r\nCall-ID: tagged-{n}\r\n\
+             CSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n",
+            flood.addr, flood.addr
+        );
+        flood.send(&text, addr).await;
+        let text = format!(
+            "INVITE sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-inv-{n}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-inv-{n}\r\nTo: <sip:100@{addr}>;tag=made-up\r\nCall-ID: tagged-inv-{n}\r\n\
+             CSeq: 1 INVITE\r\nContact: <sip:x@{}>\r\nContent-Length: 0\r\n\r\n",
+            flood.addr, flood.addr, flood.addr
+        );
+        flood.send(&text, addr).await;
+    }
+    let mut answered = std::collections::BTreeSet::new();
+    while let Some((message, _)) = flood.recv(Duration::from_millis(400)).await {
+        if let SipMessage::Response(response) = message {
+            answered.insert(response.call_id_header().unwrap().value().to_string());
+        }
+    }
+    assert!(answered.len() <= 3, "{answered:?}");
+    ua.shutdown();
+}
+
 #[test]
 fn an_inbound_range_wider_than_a_slash_8_or_a_slash_32_matches_nothing() {
     let ip = |s: &str| s.parse::<IpAddr>().unwrap();

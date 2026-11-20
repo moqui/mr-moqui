@@ -439,22 +439,35 @@ struct BlockInspector {
     gate: Arc<Mutex<RequestGate>>,
     /// The endpoint, once built, for its running transactions.
     endpoint: Arc<std::sync::OnceLock<std::sync::Weak<EndpointInner>>>,
+    /// The dialogs, once made, which say whether a request with a To tag is in one.
+    dialogs: Arc<std::sync::OnceLock<std::sync::Weak<DialogLayer>>>,
     /// The registrar's bindings, which end with the stream connection they came over.
     phones: Option<(Arc<Mutex<Registrar>>, mpsc::UnboundedSender<UaEvent>)>,
 }
 
-/// A request outside a dialog (no To tag), other than the ACK and CANCEL of one this side already has.
-fn is_new_request(message: &SipMessage) -> bool {
+/// A request outside a dialog, other than the ACK and CANCEL of one this side already has: one with no To tag, or
+/// one whose Call-ID and tags `in_dialog` does not know (SEC-COM-83). A To tag alone is the sender's to write, so a
+/// made-up one does not pass the rate and the transaction cap; the tag test is only the fast path before the lookup.
+fn is_new_request(message: &SipMessage, in_dialog: impl FnOnce(&Request) -> bool) -> bool {
     let SipMessage::Request(request) = message else {
         return false;
     };
     if matches!(request.method, Method::Ack | Method::Cancel) {
         return false;
     }
-    request
-        .to_header()
-        .map(|to| !to.value().contains(";tag="))
-        .unwrap_or(true)
+    let tagged = request.to_header().is_ok_and(|to| to.value().contains(";tag="));
+    !tagged || !in_dialog(request)
+}
+
+impl BlockInspector {
+    /// Whether this side has the dialog `request` names by its Call-ID and both tags.
+    fn has_dialog(&self, request: &Request) -> bool {
+        let Some(dialogs) = self.dialogs.get().and_then(std::sync::Weak::upgrade) else {
+            return false;
+        };
+        rsipstack::dialog::DialogId::try_from((request, TransactionRole::Server))
+            .is_ok_and(|id| dialogs.get_dialog(&id).is_some())
+    }
 }
 
 #[async_trait::async_trait]
@@ -469,7 +482,7 @@ impl TransportEventInspector for BlockInspector {
                 if lock(&self.guard).is_blocked(addr.ip(), now) {
                     return None;
                 }
-                if is_new_request(message) {
+                if is_new_request(message, |request| self.has_dialog(request)) {
                     let running = self
                         .endpoint
                         .get()
@@ -687,6 +700,7 @@ impl Ua {
             &config.user_agent
         };
         let endpoint_slot = Arc::new(std::sync::OnceLock::new());
+        let dialogs_slot = Arc::new(std::sync::OnceLock::new());
         let phones = config.registrar.as_ref().map(Phones::new);
         let endpoint: Endpoint = EndpointBuilder::new()
             .with_user_agent(user_agent)
@@ -696,6 +710,7 @@ impl Ua {
                 guard: Arc::clone(&guard),
                 gate: Arc::new(Mutex::new(RequestGate::new(config.limits))),
                 endpoint: Arc::clone(&endpoint_slot),
+                dialogs: Arc::clone(&dialogs_slot),
                 phones: phones.as_ref().map(|p| (Arc::clone(&p.registrar), events.clone())),
             }))
             .build();
@@ -746,6 +761,7 @@ impl Ua {
             ca_pem: config.ca_pem,
             tls_flows: Mutex::new(HashMap::new()),
         });
+        let _ = dialogs_slot.set(Arc::downgrade(&inner.dialogs));
         phones::sweep(&inner);
         {
             let inner = Arc::clone(&inner);
