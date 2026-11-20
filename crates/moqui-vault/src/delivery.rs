@@ -14,9 +14,9 @@
 
 //! Deliveries (plans/Vault-Instances.md §3.3, `VaultDelivery`): a value sealed to one user's personal key, from a user
 //! (their signing key) or an instance (its link key, also Ed25519), with its purpose and the sender's signature. The
-//! recipient's client checks the signature before it files the value into a vault. A recovery holder's opened share
-//! goes to the recovering holder this way (§3.10). A client files each `delivery_id` once and drops a repeat
-//! ([`Filed`]).
+//! recipient's client checks the signature before it files the value into a vault. A client files each `delivery_id`
+//! once and drops a repeat ([`Filed`]). A recovery holder's share goes to a recovery session's ephemeral key instead
+//! ([`crate::recovery::SessionShare`]).
 
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;

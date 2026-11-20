@@ -142,6 +142,7 @@ fn create_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     row.set("itemKeyWrapEnumId", Value::string("VwVault"));
     row.set("wrappedItemKey", Value::string(wrapped));
     row.set("keyVersion", Value::I64(key_version));
+    row.set("itemKeyVersion", Value::I64(key_version));
     row.set("bodyCipher", Value::string(body));
     row.set("revision", Value::I64(1));
     for (name, given) in clear {
@@ -226,6 +227,18 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     history.set("changedDate", now());
     history.set("changedByUserId", Value::string(&me));
     history.create(facade)?;
+    // decision (c) of §9: an item key made before the vault's current key version (a rotation rewraps item keys, it does
+    // not make new ones) is replaced at the item's first write after it
+    let new_item_key = crate::common::flag(params, "newItemKey").unwrap_or(false);
+    let made_at = int_field(&row, "itemKeyVersion");
+    if made_at < key_version && !new_item_key {
+        return Err(fail(
+            "The item's key was made before the vault's current key version: seal it with a new item key (newItemKey)",
+        ));
+    }
+    if new_item_key {
+        row.set("itemKeyVersion", Value::I64(key_version));
+    }
     row.set("itemKeyWrapEnumId", Value::string("VwVault"));
     row.set("wrappedItemKey", Value::string(wrapped));
     row.set("keyVersion", Value::I64(key_version));
@@ -236,8 +249,6 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     }
     // a new item key (decision (c) of §9: the first write after a key-version change, or the writer's choice) leaves an
     // environment's sealed key of this item stale (§3.8): marked here, so a machine lease under it is refused clearly
-    let new_item_key =
-        crate::common::flag(params, "newItemKey").unwrap_or(false) || int_field(&row, "keyVersion") != key_version;
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
     row.update(facade)?;
@@ -286,6 +297,7 @@ const ITEM_FIELDS: &[&str] = &[
     "itemKeyWrapEnumId",
     "wrappedItemKey",
     "keyVersion",
+    "itemKeyVersion",
     "bodyCipher",
     "revision",
     "vaultItemTypeId",

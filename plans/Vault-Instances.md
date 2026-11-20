@@ -309,8 +309,10 @@ TLS key the engine uses for queued jobs. An environment may hold **machine acces
   for a vault checks that holder's key as they check a new member's ([§3.5](#35-the-personal-key)), then signs the
   vault's wrap to the recovery key. A client refuses a recovery key with no signature it can check, so a server cannot
   hand out a recovery key of its own.
-- Each holder holds the whole private key. [§3.12](#312-what-the-server-sees-and-the-limits) states that limit, and
-  splitting the key is an [open point](#open-points-from-the-security-review).
+- The private key is split k of n across the holders (the decision of Nov 19, [§9](#9-decisions)), so a recovery takes
+  k holders' clients. Shamir rebuilds the whole key in the recovering holder's client for that recovery, so the key is
+  then used: each vault that lists it replaces it with a new one, in one rotation
+  ([§3.12](#312-what-the-server-sees-and-the-limits) states the limit).
 - A vault shows whether recovery is on, and a person asked to join sees it before they accept.
 - An operational vault must have recovery on or at least two members. Making one, and removing a member, refuse to
   leave it with neither.
@@ -372,9 +374,11 @@ The limits, which the vault's About and [Attack-Surface](../docs/security/Attack
   not checked and refuses, and the items deposited since are rotated.
 - **A fingerprint that is accepted without comparing it** gives a server the swap [§3.5](#35-the-personal-key)
   describes. The signatures bind a wrap to a key, and only the check binds the key to a person.
-- **One recovery holder with a copy of the database** opens every vault that has recovery on. The `VAULT_RECOVERY`
-  permission, the recent sign-in, the event and the notice are rules the server keeps, not cryptography. For a
-  personal shared-key vault with recovery on, that holder is an administrator who can open it.
+- **k recovery holders with a copy of the database** open every vault that has recovery on with their recovery key
+  (split k of n, so fewer cannot). The `VAULT_RECOVERY` permission, the recent sign-in, the event and the notice are
+  rules the server keeps, not cryptography. For a personal shared-key vault with recovery on, k holders acting
+  together are administrators who can open it. And each recovery rebuilds the whole key in the recovering holder's
+  client, which a changed client could keep: the key is marked used after it and replaced in each vault that lists it.
 - **A removed member who kept the vault key** and later gets a copy of the database reads each item whose item key has
   not changed since. The server can also put back a removed member's wrap or an older key version, and a browser with
   no memory cannot tell. Rotating the credentials at their source ([§4.7](#47-rotation)) is the remedy for an

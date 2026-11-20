@@ -293,8 +293,8 @@ fn the_https_listener_speaks_tls_13_and_12_only_preferring_13() {
 /// `p256`, `rsa`), `argon2`, `getrandom`, and `rustls` and `rcgen` on `aws-lc-rs`, each in Cargo.lock from crates.io;
 /// and no source file of the workspace or its components holds the constants a hand-made SHA-1, SHA-2, MD5, AES or
 /// ChaCha would need (their round constants, initial values or S-box). aws-lc-rs is built without its FIPS feature, so
-/// this is not a FIPS 140-3 validated module, and `rsa` (RUSTSEC-2023-0071) signs with blinding. How each primitive is
-/// used is not judged here (the field encryption's weaknesses are V11's Gap rows and the `known_gap_` tests).
+/// this is not a FIPS 140-3 validated module, and `rsa` (0.10, constant time) signs with blinding. How each primitive
+/// is used is not judged here (the field encryption's weaknesses are V11's Gap rows and the `known_gap_` tests).
 #[test]
 fn cryptography_comes_from_the_validated_libraries_and_none_is_home_made() {
     let dir = temp_dir("provider");

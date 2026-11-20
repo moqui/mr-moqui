@@ -19,7 +19,8 @@
 //! - A shared-key vault starts with its first key version (1.1), signed by its maker, a manager in it, and a wrap of
 //!   the vault key to each member it lists, each member's key checked by the maker. An operational vault needs
 //!   `VAULT_ADMIN`, has its name in the clear, and keeps recovery on (its default) or at least two members; a personal
-//!   shared-key vault has recovery off by default (§9, Nov 19).
+//!   shared-key vault has recovery off by default (§9, Nov 19). Recovery is on when the member list lists the
+//!   organization's recovery key (crate::recovery).
 //! - A personal vault's name is in its sealed header; no column of it holds a name in the clear.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,8 +32,7 @@ use serde_json::Value as Json;
 
 use crate::common::{
     authz_off, check_id, fail, field, find, flag, int_field, now, out, required, text, user, value, vault_for, Access,
-    Out, Params, ITEM, ITEM_HISTORY, KEY_VERSION, MEMBER, OPERATIONAL, PERSONAL, RECOVERY_WRAP, SHARED_KEY,
-    SINGLE_SECRET, VAULT,
+    Out, Params, ITEM, ITEM_HISTORY, KEY_VERSION, MEMBER, OPERATIONAL, PERSONAL, SHARED_KEY, SINGLE_SECRET, VAULT,
 };
 use crate::events::{self, Event};
 use crate::members::{
@@ -45,6 +45,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, list_vaults)?;
     moqui_core::rust_service!(map, get_vault)?;
     moqui_core::rust_service!(map, delete_vault)?;
+    moqui_core::rust_service!(map, update_vault_secret_wrap)?;
     Ok(())
 }
 
@@ -71,6 +72,8 @@ fn create_vault(params: &Params, facade: &EntityFacade) -> Out {
     if operational && !moqui_core::user::has_permission("VAULT_ADMIN").map_err(|err| fail(err.message()))? {
         return Err(fail("Making an operational vault needs the VAULT_ADMIN permission"));
     }
+    // recovery is on when the first member list lists the organization's recovery key (§3.10): recoveryOn Y without it
+    // is refused, and an operational vault without it keeps two members. A single-secret vault never has it.
     let recovery = flag(params, "recoveryOn").unwrap_or(operational);
     let mut vault = facade.make_value(VAULT)?;
     vault.set("vaultId", Value::string(&vault_id));
@@ -118,9 +121,17 @@ fn create_vault(params: &Params, facade: &EntityFacade) -> Out {
                 return Err(fail("A member is listed once"));
             }
         }
-        if operational && !recovery && entry.members.len() < 2 {
+        crate::recovery::check_one_recovery(&entry)?;
+        let has_recovery = crate::recovery::listed_recovery(&entry).is_some();
+        if flag(params, "recoveryOn") == Some(true) && !has_recovery {
+            return Err(fail(
+                "Recovery on lists the organization's recovery key in the first member list, with its wrap",
+            ));
+        }
+        if operational && !has_recovery && crate::recovery::people(&entry).count() < 2 {
             return Err(fail("An operational vault keeps recovery on or at least two members"));
         }
+        vault.set("recoveryOn", Value::string(if has_recovery { "Y" } else { "N" }));
         let wraps = wraps_param(params, "memberWraps")?;
         let mut wrapped = BTreeSet::new();
         for wrap in &wraps {
@@ -185,19 +196,64 @@ fn create_single_secret(
     if !["VsPassword", "VsGenerated"].contains(&secret_kind.as_str()) {
         return Err(fail("A single-secret vault opens by a password or a generated key"));
     }
+    let wrap = secret_wrap_param(params, &secret_kind)?;
+    vault.set("secretKindEnumId", Value::string(secret_kind));
+    vault.set("secretWrap", Value::string(wrap.to_string()));
+    Ok(())
+}
+
+/// A single-secret vault's wrap, as the vault crate writes it for its kind: a password's carries its Argon2id
+/// parameters, refused under the floor or over the ceiling; a generated key's is its HKDF seal (`sealed`, hex).
+fn secret_wrap_param(params: &Params, secret_kind: &str) -> Result<Json, moqui_lib::error::Error> {
     let wrap = crate::common::json(params, "secretWrap")?;
     if !wrap.is_object() || wrap.to_string().len() > crate::common::MAX_SMALL_TEXT {
         return Err(fail("secretWrap is the vault crate's wrap"));
     }
-    // a password's wrap carries its Argon2id parameters: refused under the floor or over the ceiling
     if secret_kind == "VsPassword" {
         let parsed = moqui_vault::ops::shapes::password_wrap_of(&serde_json::json!({ "wrap": wrap }), "wrap")
             .map_err(crate::common::refused)?;
         parsed.params.check().map_err(crate::common::refused)?;
+    } else {
+        let sealed = wrap["sealed"].as_str().unwrap_or_default();
+        crate::common::check_hex("secretWrap.sealed", sealed, crate::common::MAX_SMALL_TEXT)?;
     }
-    vault.set("secretKindEnumId", Value::string(secret_kind));
+    Ok(wrap)
+}
+
+/// `update#VaultSecretWrap`: a single-secret vault's owner stores its vault key wrapped again (a password's wrap
+/// raised to the Argon2id target on an open, a new password or generated key), after a strong, recent sign-in. The
+/// kind may change between a password and a generated key; the wrap is checked as `create#Vault` checks it.
+fn update_vault_secret_wrap(params: &Params, facade: &EntityFacade) -> Out {
+    let _authz = authz_off();
+    let me = user()?;
+    let vault_id = required(params, "vaultId")?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Manage, true)?;
+    if field(&vault, "lockEnumId") != SINGLE_SECRET {
+        return Err(fail("Only a single-secret vault has a secret wrap"));
+    }
+    crate::members::check_revision(params, &vault)?;
+    crate::personal::require_strong_sign_in(facade, &me)?;
+    let secret_kind = match text(params, "secretKindEnumId") {
+        kind if kind.is_empty() => field(&vault, "secretKindEnumId"),
+        kind => kind,
+    };
+    if !["VsPassword", "VsGenerated"].contains(&secret_kind.as_str()) {
+        return Err(fail("A single-secret vault opens by a password or a generated key"));
+    }
+    let wrap = secret_wrap_param(params, &secret_kind)?;
+    vault.set("secretKindEnumId", Value::string(&secret_kind));
     vault.set("secretWrap", Value::string(wrap.to_string()));
-    Ok(())
+    let revision = crate::common::bump_revision(facade, &mut vault)?;
+    events::write(
+        facade,
+        Event {
+            kind: "VeSecretRewrapped",
+            vault_id: Some(&vault_id),
+            detail: Some(secret_kind),
+            ..Event::default()
+        },
+    )?;
+    Ok(out([("revision", Value::I64(revision))]))
 }
 
 fn vault_json(vault: &EntityValue, role: &str, item_count: usize) -> Value {
@@ -314,7 +370,7 @@ fn get_vault(params: &Params, facade: &EntityFacade) -> Out {
 }
 
 /// `delete#Vault`: a manager (or a single-secret vault's owner) deletes the vault, its items and their history, its
-/// members, key versions and recovery wraps. Its events stay.
+/// members, key versions and recovery sessions. Its events stay.
 fn delete_vault(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
@@ -326,12 +382,13 @@ fn delete_vault(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("Deleting an operational vault needs the VAULT_ADMIN permission"));
     }
     crate::common::require_recent_auth()?;
-    for entity in [ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION, RECOVERY_WRAP] {
+    for entity in [ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION] {
         let rows = find(facade, entity)?.eq("vaultId", Value::string(&vault_id)).list()?;
         for row in rows.iter() {
             row.delete(facade)?;
         }
     }
+    crate::recovery::forget_vault(facade, &vault_id)?;
     vault.delete(facade)?;
     events::write(
         facade,

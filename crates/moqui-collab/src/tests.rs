@@ -374,9 +374,9 @@ fn the_services_register_at_the_locations_the_service_file_names() {
 }
 
 /// An update whose attribute value nests arrays far past any editor's, two bytes a level: yrs decoded a value by a
-/// recursion once a level, so applying it overflowed the worker's stack and aborted the process. The patched yrs
-/// (patches/yrs) refuses a value nested deeper than 128, so the update is refused as not one, on a small stack too
-/// (plans/Security-Review-Medium.md SEC-TLS-95).
+/// recursion once a level, so applying it overflowed the worker's stack and aborted the process. yrs at moqui's fork
+/// (docs/Build-Test.md Forks) refuses a value nested deeper than 128, so the update is refused as not one, on a small
+/// stack too (plans/Security-Review-Medium.md SEC-TLS-95).
 #[test]
 fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
     use yrs::{Any, Xml};
@@ -431,10 +431,12 @@ fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
     }
     past.extend_from_slice(&marker[2..]);
     past.extend_from_slice(&plain[at + marker.len()..]);
+    // a quarter of a release worker's stack: yrs, built optimized and not incremental as a dependency from git, takes
+    // about 2 KiB a level to read its 128 levels, so 256 KiB is not enough; 100,000 levels would need far more
     let applied = {
         let key = key.clone();
         std::thread::Builder::new()
-            .stack_size(256 * 1024)
+            .stack_size(512 * 1024)
             .spawn(move || {
                 (
                     super::apply(&key, "deep", &nested).map_err(|refusal| refusal.code),
@@ -448,6 +450,53 @@ fn an_update_nested_far_past_the_decode_limit_is_refused_on_a_small_stack() {
     };
     assert_eq!(applied, (Err(400), Err(400), Ok(())));
     // the room is written and closed, as each test leaves the shared rooms
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
+}
+
+/// A state vector or an update of a few bytes that claims billions of clients or blocks: yrs reserved what was claimed
+/// before reading it, which took gigabytes or failed to allocate, and a granted reservation of a hash map cost its size
+/// in memory before the input ran out. yrs at moqui's fork reserves at most 1024 entries, so each is refused at the end
+/// of its few bytes (plans/Security-Review-Medium.md SEC-TLS-117).
+#[test]
+fn a_claimed_length_past_the_input_is_refused_at_its_end() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "claims");
+    login("claims");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("CLAIMS")),
+            ("description", Value::string("Claims")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("CLAIMS")),
+            ("pageName", Value::string("Claimed")),
+            ("pageText", Value::string("Text.\n")),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(page.get("wikiPageId").unwrap()));
+    // about 4 billion clients, each with a clock
+    let vector = [0xff_u8, 0xff, 0xff, 0xff, 0x0f, 1];
+    let refused = super::join(&key, "claims", &vector).unwrap_err();
+    assert_eq!(refused.code, 400);
+    assert!(refused.message.contains("end of buffer"), "{}", refused.message);
+    super::join(&key, "claims", &[]).unwrap();
+    // about 4 billion clients; one client with about 4 billion blocks
+    for update in [
+        [0xff_u8, 0xff, 0xff, 0xff, 0x0f, 0, 0, 0],
+        [0x01, 0xff, 0xff, 0xff, 0xff, 0x0f, 0, 0],
+    ] {
+        let refused = super::apply(&key, "claims", &update).unwrap_err();
+        assert_eq!(refused.code, 400);
+        assert!(refused.message.contains("end of buffer"), "{}", refused.message);
+    }
     super::leave(&key);
     super::tick();
     let _ = super::take_events();

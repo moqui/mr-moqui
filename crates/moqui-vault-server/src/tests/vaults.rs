@@ -216,9 +216,26 @@ fn a_single_secret_vault_refuses_members_and_recovery_and_an_operational_vault_n
                          "vaultName": "prod", "recoveryOn": "N", "entry": entry, "memberWraps": [wrap] });
     let refused = alice.call("create#Vault", create.clone()).unwrap_err();
     assert!(refused.contains("recovery on or at least two members"), "{refused}");
+    // recovery is on only with the recovery key in the member list (tests/recovery.rs), never by the flag alone
     let mut with_recovery = create;
     with_recovery["recoveryOn"] = json!("Y");
-    alice.call("create#Vault", with_recovery).unwrap();
+    let refused = alice.call("create#Vault", with_recovery).unwrap_err();
+    assert!(refused.contains("lists the organization's recovery key"), "{refused}");
+    alice.check("bob");
+    let checks = alice.checks();
+    let members = json!([alice.member("manage"), bob.member("approve")]);
+    let entry = alice
+        .op(json!({ "op": "key_version_first", "vault_id": vault_id, "members": members, "key_checks": checks }))
+        .unwrap();
+    let bob_wrap = alice
+        .op(
+            json!({ "op": "vault_key_wrap_member", "vault_id": vault_id, "key_version": 1, "member_user_id": "bob",
+                    "member_key_id": bob.key_id, "member_public": bob.public, "key_checks": checks }),
+        )
+        .unwrap();
+    let two = json!({ "vaultId": vault_id, "vaultKindEnumId": "VkOperational", "lockEnumId": "VlSharedKey",
+                      "vaultName": "prod", "entry": entry, "memberWraps": [wrap, bob_wrap] });
+    alice.call("create#Vault", two).unwrap();
 
     // an operational item's binding is unique in its vault, on update too, and its clear columns change all together
     super::sys(|| {
@@ -284,4 +301,144 @@ fn a_deletion_needs_a_recent_sign_in_and_a_deleted_vaults_id_is_not_given_again(
     let reused = super::call("create#Vault", secret).unwrap_err();
     assert!(reused.contains("is not available"), "{reused}");
     assert_eq!(reused.replace("alice", ""), taken.replace("bob", ""));
+}
+
+/// A removal's rotation takes the vault's sealed header to the new key version; an item key made before that version
+/// is replaced at the item's first write after it (decision (c)); a single-secret vault's owner stores a new wrap only
+/// after a strong, recent sign-in, with the KDF floor checked.
+#[test]
+fn a_rotation_keeps_the_header_an_old_item_key_is_replaced_and_a_secret_wrap_is_stored() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut alice = Client::new(&facade, "alice");
+    let bob = Client::new(&facade, "bob");
+    let vault_id = new_id("vault");
+    alice.check("bob");
+    let checks = alice.checks();
+    let members = json!([alice.member("manage"), bob.member("read")]);
+    let entry = alice
+        .op(json!({ "op": "key_version_first", "vault_id": vault_id, "members": members, "key_checks": checks }))
+        .unwrap();
+    alice
+        .op(json!({ "op": "vault_key_new", "vault_id": vault_id, "key_version": 1 }))
+        .unwrap();
+    let wraps: Vec<serde_json::Value> = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            alice
+                .op(
+                    json!({ "op": "vault_key_wrap_member", "vault_id": vault_id, "key_version": 1,
+                            "member_user_id": m["user_id"], "member_key_id": m["key_id"], "member_public": m["public"],
+                            "key_checks": checks }),
+                )
+                .unwrap()
+        })
+        .collect();
+    let header = alice
+        .op(json!({ "op": "header_seal", "vault_id": vault_id, "key_version": 1, "header": "{\"name\":\"Family\"}" }))
+        .unwrap();
+    alice
+        .call(
+            "create#Vault",
+            json!({ "vaultId": vault_id, "vaultKindEnumId": "VkPersonal", "lockEnumId": "VlSharedKey", "entry": entry,
+                    "memberWraps": wraps, "headerCipher": header["header_cipher"] }),
+        )
+        .unwrap();
+    let item_id = add_item(
+        &mut alice,
+        &vault_id,
+        1,
+        &json!({ "v": 1, "type": "note", "name": "n" }),
+    );
+    let vault = alice.call("get#Vault", json!({ "vaultId": vault_id })).unwrap();
+    let items = alice.call("list#VaultItems", json!({ "vaultId": vault_id })).unwrap()["itemList"].clone();
+    let rotate = |alice: &mut Client, with_header: bool| {
+        let mut request = json!({ "op": "vault_rotate", "entries": vault["entries"], "members": [alice.member("manage")],
+                                  "items": [{ "item_id": item_id, "wrapped_item_key": items[0]["wrappedItemKey"] }],
+                                  "key_checks": checks });
+        if with_header {
+            request["header_cipher"] = vault["vault"]["headerCipher"].clone();
+        }
+        alice.op(request).unwrap()
+    };
+    let remove = |rotated: &serde_json::Value| {
+        json!({ "vaultId": vault_id, "userId": "bob", "expectedRevision": vault["vault"]["revision"],
+                "entry": rotated["entry"], "itemKeys": rotated["item_keys"], "memberWraps": rotated["member_wraps"],
+                "headerCipher": rotated["header_cipher"] })
+    };
+    // a rotation that leaves the header behind is refused
+    let without = rotate(&mut alice, false);
+    let refused = alice.call("remove#VaultMember", remove(&without)).unwrap_err();
+    assert!(refused.contains("header again"), "{refused}");
+    alice
+        .op(json!({ "op": "vault_key_forget", "vault_id": vault_id, "key_version": 2 }))
+        .unwrap();
+    let rotated = rotate(&mut alice, true);
+    alice.call("remove#VaultMember", remove(&rotated)).unwrap();
+    let after = alice.call("get#Vault", json!({ "vaultId": vault_id })).unwrap();
+    let opened = alice
+        .op(json!({ "op": "header_open", "vault_id": vault_id, "key_version": 2,
+                    "header_cipher": after["vault"]["headerCipher"] }))
+        .unwrap();
+    assert_eq!(opened["header"], json!("{\"name\":\"Family\"}"));
+
+    // the item's key was made at version 1: a write at version 2 that keeps it is refused, a new item key is taken
+    let row = alice.call("list#VaultItems", json!({ "vaultId": vault_id })).unwrap()["itemList"][0].clone();
+    assert_eq!(
+        (row["keyVersion"].as_i64(), row["itemKeyVersion"].as_i64()),
+        (Some(2), Some(1))
+    );
+    let seal = |alice: &mut Client, made_at: Option<i64>| {
+        let mut request = json!({ "op": "item_seal", "vault_id": vault_id, "item_id": item_id, "key_version": 2,
+                                  "body": "{}", "wrapped_item_key": row["wrappedItemKey"], "wrapped_key_version": 2 });
+        if let Some(made_at) = made_at {
+            request["item_key_version"] = json!(made_at);
+        }
+        alice.op(request).unwrap()
+    };
+    let kept = seal(&mut alice, None);
+    let refused = alice
+        .call(
+            "update#VaultItem",
+            json!({ "vaultItemId": item_id, "expectedRevision": 1, "keyVersion": 2,
+                    "wrappedItemKey": kept["wrapped_item_key"], "bodyCipher": kept["sealed_body"] }),
+        )
+        .unwrap_err();
+    assert!(refused.contains("new item key"), "{refused}");
+    let fresh = seal(&mut alice, row["itemKeyVersion"].as_i64());
+    assert_eq!(fresh["new_item_key"], json!(true));
+    alice
+        .call(
+            "update#VaultItem",
+            json!({ "vaultItemId": item_id, "expectedRevision": 1, "keyVersion": 2, "newItemKey": true,
+                    "wrappedItemKey": fresh["wrapped_item_key"], "bodyCipher": fresh["sealed_body"] }),
+        )
+        .unwrap();
+
+    // a single-secret vault's new wrap: a strong, recent sign-in, the Argon2id floor checked
+    let secret_id = new_id("vault");
+    alice
+        .call(
+            "create#Vault",
+            json!({ "vaultId": secret_id, "vaultKindEnumId": "VkPersonal", "lockEnumId": "VlSingleSecret",
+                    "secretKindEnumId": "VsGenerated", "secretWrap": { "sealed": "00" } }),
+        )
+        .unwrap();
+    let update = json!({ "vaultId": secret_id, "expectedRevision": 1, "secretWrap": { "sealed": "abcd" } });
+    let weak = alice.call("update#VaultSecretWrap", update.clone()).unwrap_err();
+    assert!(weak.contains("strongAuth"), "{weak}");
+    super::strong_login("alice", 0);
+    let floor = super::call(
+        "update#VaultSecretWrap",
+        json!({ "vaultId": secret_id, "expectedRevision": 1, "secretKindEnumId": "VsPassword",
+                "secretWrap": { "m_kib": 1024, "t": 3, "p": 1, "salt": "00".repeat(16), "sealed": "ab".repeat(60) } }),
+    )
+    .unwrap_err();
+    assert!(floor.contains("parameters"), "{floor}");
+    super::call("update#VaultSecretWrap", update).unwrap();
+    let stored = super::call("get#Vault", json!({ "vaultId": secret_id })).unwrap();
+    assert_eq!(stored["secretWrap"], json!({ "sealed": "abcd" }));
+    assert!(event_kinds(&alice, &secret_id).iter().any(|k| k == "VeSecretRewrapped"));
 }

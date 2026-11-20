@@ -10,7 +10,8 @@
 // passwords they change, and sec.mfa.proof (two single-use codes) and sec.mfa.burst (one), which they lock with wrong
 // codes, so these are set again on every run. The vault spec (test/client/VaultShared) gets sec.vault.a, .b and .c, each
 // with one single-use code, set again on every run, so its REST sign-ins are strong ones (a password and a second
-// factor); the lease spec (test/client/VaultLease) gets sec.vault.d, in SEC_VAULT_ADMIN_GROUP with VAULT_ADMIN, and
+// factor); the recovery spec (test/client/VaultRecovery) gets sec.vault.r1 and .r2 (VAULT_RECOVERY) and sec.vault.m
+// the same way; the lease spec (test/client/VaultLease) gets sec.vault.d, in SEC_VAULT_ADMIN_GROUP with VAULT_ADMIN, and
 // sec.vault.e, the same way. moqui test-client framework --serve runs this spec on
 // its server's scratch database; for another server run it on that server's database:
 //     moqui test framework --spec ClientFixtures --db existing
@@ -51,6 +52,13 @@ const VAULT_USERS = [
     // the lease spec's (test/client/VaultLease.spec.js): d makes an operational vault, so it holds VAULT_ADMIN
     ["sec.vault.d", "SecVaultD1!!", "SEC_VAULT_D", "70318004"],
     ["sec.vault.e", "SecVaultE1!!", "SEC_VAULT_E", "70318005"],
+]
+// the recovery spec's users (test/client/VaultRecovery.spec.js): two recovery holders, who hold VAULT_RECOVERY through
+// SEC_VAULT_RECOVERY_GROUP, and a member whose vault they recover
+const VAULT_RECOVERY_USERS = [
+    ["sec.vault.r1", "SecVaultR1!!", "SEC_VAULT_R1", "70318011", "SEC_VAULT_RECOVERY_GROUP"],
+    ["sec.vault.r2", "SecVaultR2!!", "SEC_VAULT_R2", "70318012", "SEC_VAULT_RECOVERY_GROUP"],
+    ["sec.vault.m", "SecVaultM1!!", "SEC_VAULT_M", "70318013", "SEC_NONE_GROUP"],
 ]
 // AT_SERVICE push name is the service's own name. The transition frame for POST /apps/setPreference is
 // "{screen.location}/{transition}" (screen/render.rs), this location, not the "location#name" artifact-hit name.
@@ -208,6 +216,14 @@ spec({
             // the vault spec signs each in with the password and its code: the code comes back on every run
             for (const [username, password, factorId, code] of VAULT_USERS) {
                 const vaultUserId = ensureUser({ username, password, group: "SEC_NONE_GROUP" })
+                ensureMfa(vaultUserId, factorId, code)
+                updateAccount({ userId: vaultUserId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
+            }
+            ensureGroup("SEC_VAULT_RECOVERY_GROUP", "Security test vault recovery holders")
+            ensure("moqui.security.UserGroupPermission", { userGroupId: "SEC_VAULT_RECOVERY_GROUP", userPermissionId: "VAULT_RECOVERY" },
+                { fromDate: ec.user.nowTimestamp })
+            for (const [username, password, factorId, code, group] of VAULT_RECOVERY_USERS) {
+                const vaultUserId = ensureUser({ username, password, group })
                 ensureMfa(vaultUserId, factorId, code)
                 updateAccount({ userId: vaultUserId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
             }

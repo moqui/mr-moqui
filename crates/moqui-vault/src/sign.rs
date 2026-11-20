@@ -40,10 +40,12 @@ pub enum Statement {
     DepositKey,
     /// An organization recovery key's public half (§3.10).
     RecoveryKey,
-    /// A vault's wrap of its key to the recovery key (§3.10).
-    RecoveryWrap,
     /// A recovery-key share wrapped to a holder (§3.10, split k of n).
     RecoveryShare,
+    /// A recovery session: the ephemeral key a recovering holder's client made, and what it recovers (§3.10).
+    RecoverySession,
+    /// A holder's share sealed to a recovery session's ephemeral key (§3.10).
+    RecoverySessionShare,
     /// A delivered value (§3.3, `VaultDelivery`).
     Delivery,
     /// A lease, by the server's lease key (§3.7).
@@ -61,8 +63,9 @@ impl Statement {
             Statement::KeyVersion => "key-version",
             Statement::DepositKey => "deposit-key",
             Statement::RecoveryKey => "recovery-key",
-            Statement::RecoveryWrap => "recovery-wrap",
             Statement::RecoveryShare => "recovery-share",
+            Statement::RecoverySession => "recovery-session",
+            Statement::RecoverySessionShare => "recovery-session-share",
             Statement::Delivery => "delivery",
             Statement::Lease => "lease",
             Statement::LeaseApproval => "lease-approval",

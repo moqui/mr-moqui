@@ -126,6 +126,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="itemKeyWrapEnumId" type="id"/>
         <field name="wrappedItemKey" type="text-long"/>
         <field name="keyVersion" type="number-integer"/>
+        <field name="itemKeyVersion" type="number-integer"><description>The key version the item key was made at; a
+            rotation rewraps the item key (keyVersion) and leaves this, so the item's first write after a key-version
+            change makes a new item key (decision (c) of §9)</description></field>
         <field name="bodyCipher" type="text-very-long"/>
         <field name="revision" type="number-integer"/>
         <field name="vaultItemTypeId" type="id"><description>Operational only</description></field>
@@ -204,8 +207,11 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <entity entity-name="VaultRecoveryKey" package="moqui.security.vault" use="transactional" cache="never">
-        <description>An organization's recovery key (§3.10, V4): its public half, signed by the holder who made it, split k
-            of n across its holders (Shamir, decision of §9), kept by user group or by instance.</description>
+        <description>An organization's recovery key (§3.10, V4): its public halves (X25519 to wrap to and Ed25519 to sign,
+            the vault crate's 64 bytes as hex), signed by the holder who made it (makerUserId, makerKeyId), split k of n
+            across its holders (Shamir, decision of §9), kept by user group or by instance. A vault with recovery on lists
+            it as a member with the manage role, under the user id recovery:recoveryKeyId; thruDate ends it for new
+            vaults.</description>
         <field name="recoveryKeyId" type="id" is-pk="true"/>
         <field name="publicKey" type="text-medium"/>
         <field name="sharesNeeded" type="number-integer"><description>k</description></field>
@@ -215,6 +221,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="signature" type="text-medium"/>
         <field name="userGroupId" type="id"/>
         <field name="instanceId" type="id"/>
+        <field name="usedDate" type="date-time"><description>When a recovery used it: the recovering holder's client held
+            the whole key then (the limit of Shamir, §3.12), so each vault that lists it replaces it with a new
+            one</description></field>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
     </entity>
@@ -233,19 +242,46 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.security.vault.VaultRecoveryKey"/>
     </entity>
 
-    <entity entity-name="VaultRecoveryWrap" package="moqui.security.vault" use="transactional" cache="never">
-        <description>A shared-key vault's key of one version wrapped to a recovery key (V4), signed by the member who turned
-            recovery on after checking the recovery key's maker.</description>
-        <field name="vaultId" type="id" is-pk="true"/>
-        <field name="keyVersion" type="number-integer" is-pk="true"/>
-        <field name="recoveryKeyId" type="id" is-pk="true"/>
-        <field name="sealed" type="text-long"/>
-        <field name="signerUserId" type="id"/>
-        <field name="signerKeyId" type="id"/>
+    <entity entity-name="VaultRecoverySession" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A recovery under way (§3.10, V4): the ephemeral public key the recovering holder's client made and
+            keeps the private half of in memory, the vault, the member and their new personal key the vault key is to be
+            wrapped to, all signed by the recovering holder (holderUserId, with holderKeyId) as the vault crate's
+            RecoverySession. The other holders seal their shares to the ephemeral key (VaultRecoveryDelivery); the
+            recovering client combines k of them and completes the recovery (statusId VrsCompleted), or it is cancelled or
+            runs out (VrsCancelled). A vault with recovery on lists its recovery key as a member (recovery:recoveryKeyId),
+            whose wrap the recovery opens.</description>
+        <field name="recoverySessionId" type="id" is-pk="true"/>
+        <field name="recoveryKeyId" type="id"/>
+        <field name="vaultId" type="id"/>
+        <field name="subjectUserId" type="id"><description>The member recovered</description></field>
+        <field name="subjectKeyId" type="id"><description>Their new personal key</description></field>
+        <field name="subjectPublic" type="text-medium"/>
+        <field name="ephemeralPublic" type="text-medium"/>
+        <field name="holderUserId" type="id"/>
+        <field name="holderKeyId" type="id"/>
         <field name="signature" type="text-medium"/>
-        <field name="createdDate" type="date-time"/>
-        <relationship type="one" related="moqui.security.vault.Vault"/>
+        <field name="statusId" type="id"/>
+        <field name="expiresAt" type="number-integer"><description>Epoch millis: a day after it started, no share is taken
+            and it does not complete</description></field>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
         <relationship type="one" related="moqui.security.vault.VaultRecoveryKey"/>
+        <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
+        <relationship type="one-nofk" related="moqui.basic.StatusItem"/>
+        <index name="VAULT_RSESS_KEY"><index-field name="recoveryKeyId"/><index-field name="statusId"/></index>
+    </entity>
+
+    <entity entity-name="VaultRecoveryDelivery" package="moqui.security.vault" use="transactional" cache="never">
+        <description>One holder's share sealed to a recovery session's ephemeral key and signed by the holder (V4), as the
+            vault crate's SessionShare. Only the session's ephemeral key, in the recovering holder's client, opens
+            it.</description>
+        <field name="recoverySessionId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="personalKeyId" type="id"/>
+        <field name="sealedShare" type="text-long"/>
+        <field name="signature" type="text-medium"/>
+        <field name="deliveredDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.VaultRecoverySession"/>
     </entity>
 
     <entity entity-name="VaultDelivery" package="moqui.security.vault" use="transactional" cache="never">
