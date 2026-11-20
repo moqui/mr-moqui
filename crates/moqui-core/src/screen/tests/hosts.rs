@@ -139,6 +139,15 @@ fn a_wrapper_root_has_the_default_roots_static_files_and_error_screens_and_its_f
     }
     assert!(info::host_refuses_framework_routes(factory, "REF.test:443"));
     assert!(!info::host_refuses_framework_routes(factory, "inc.test"));
+    // the framework's screens (the default root's /ping above): on the fallback and with include only
+    for (host, serves) in [
+        ("other.test", true),
+        ("inc.test:8080", true),
+        ("own.test", false),
+        ("REF.test", false),
+    ] {
+        assert_eq!(info::host_serves_framework_screens(factory, host), serves, "{host}");
+    }
     assert_eq!(
         info::root_for_host(factory, "inc.test", "webroot")
             .unwrap()

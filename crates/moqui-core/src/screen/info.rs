@@ -250,6 +250,17 @@ pub fn host_refuses_framework_routes(factory: &ExecutionContextFactory, host: &s
     }
 }
 
+/// Whether `host` (a `Host` header) serves the framework's screens beside its root's own (the shell `/qapps`, `/Login`,
+/// the apps): its `webroot` root is the `.*` fallback, or says `framework-routes="include"`. A root of its own that
+/// refuses them, or leaves `framework-routes` unset, does not. A conf with no root screen for the host serves them; one
+/// whose root screens cannot be read does not, as [`host_refuses_framework_routes`] refuses there.
+pub fn host_serves_framework_screens(factory: &ExecutionContextFactory, host: &str) -> bool {
+    match root_for_host(factory, host, "webroot") {
+        Ok(root) => root.fallback || root.framework_routes == FrameworkRoutes::Include,
+        Err(_) => !unreadable_roots(factory, "webroot"),
+    }
+}
+
 /// Whether the `root-screen` elements of `webapp_name` cannot be read: the conf does not parse, or a host pattern is
 /// not a valid regex.
 fn unreadable_roots(factory: &ExecutionContextFactory, webapp_name: &str) -> bool {

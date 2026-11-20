@@ -981,6 +981,10 @@ interface MoquiWebFacade {
      * `.well-known/caldav`): a site page's route stays off these and the wholly reserved segments, and may take the
      * rest (`/.well-known/security.txt`, `/ci`). */
     readonly reservedSubPaths: string[];
+    /** Whether this request's host serves the framework's screens (`/qapps`, `/Login`, the apps) beside its root's
+     * own: false on a site of its own that refuses them (or leaves `framework-routes` unset), where a link to an app
+     * goes to the webapp's own host (`getWebappRootUrl(true)`). True with no request. */
+    readonly servesFrameworkScreens: boolean;
     /** Rotate the browser session after authentication, preserving its server-side state. */
     rotateSession(): void;
     /** Send this response no session: no session or visitor cookie and no session token. A request that came with no

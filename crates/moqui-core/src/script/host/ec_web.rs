@@ -125,6 +125,7 @@ pub(super) static WEB: HostClass = HostClass {
         method!("ec.web", "sessionToken", [], session_token),
         method!("ec.web", "reservedPaths", [], reserved_paths),
         method!("ec.web", "reservedSubPaths", [], reserved_sub_paths),
+        method!("ec.web", "servesFrameworkScreens", [], serves_framework_screens),
     ],
     hidden: &[
         method!("ec.web", "sendError", [Int, OptText, OptText], send_error),
@@ -482,6 +483,19 @@ fn reserved_sub_paths(_call: &mut Call<'_>) -> Result<Ret, HostError> {
         .map(Value::string)
         .collect();
     Ok(Value::List(paths).into())
+}
+
+/// Whether this request's host serves the framework's screens (`/qapps`, `/Login`, the apps) beside its root's own
+/// ([`crate::screen::info::host_serves_framework_screens`]): false on a site of its own that refuses them, where a link
+/// to an app goes to the webapp's own host (`getWebappRootUrl(true)`). True with no request: a link made then goes to
+/// that host.
+fn serves_framework_screens(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    if crate::web::current_request().is_none() {
+        return Ok(Value::Bool(true).into());
+    }
+    let factory = super::factory()?;
+    let host = crate::web::host_name(false);
+    Ok(Value::Bool(crate::screen::info::host_serves_framework_screens(&factory, &host)).into())
 }
 
 fn session_token(_call: &mut Call<'_>) -> Result<Ret, HostError> {
