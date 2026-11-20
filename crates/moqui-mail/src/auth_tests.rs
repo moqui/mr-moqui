@@ -459,4 +459,27 @@ fn a_dmarc_dns_error_is_a_temporary_error() {
     assert!(verdict.field.contains("dmarc=temperror"), "{verdict:?}");
     // a domain whose record is read is judged as before
     assert!(!check(MESSAGE.as_bytes(), "198.51.100.7", "none").temp_error);
+    // a signature whose key does not resolve: deferred only when the policy is reject or quarantine, so a p=none
+    // domain's mail is taken, not deferred until it bounces
+    let signed = test_key().sign(MESSAGE.as_bytes(), "example.com", "moqui").unwrap();
+    let key_down = |policy: &str| {
+        let records = Records::offline();
+        records.fix_txt("example.com", "v=spf1 ip4:192.0.2.1 -all").unwrap();
+        records
+            .fix_txt("_dmarc.example.com", &format!("v=DMARC1; p={policy}"))
+            .unwrap();
+        records.fail_txt("moqui._domainkey.example.com");
+        dns::run(verify(
+            signed.clone(),
+            session("198.51.100.7"),
+            "edge.example.net".to_string(),
+            Some(Arc::new(records)),
+        ))
+        .unwrap()
+    };
+    let none = key_down("none");
+    assert!(none.field.contains("dmarc=temperror"), "{none:?}");
+    assert!(!none.temp_error, "{none:?}");
+    assert!(key_down("reject").temp_error);
+    assert!(key_down("quarantine").temp_error);
 }

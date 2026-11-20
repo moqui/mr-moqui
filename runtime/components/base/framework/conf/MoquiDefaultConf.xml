@@ -1253,7 +1253,10 @@
         ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), only when that sealer's
         ARC-Authentication-Results records dmarc=pass for the From domain; empty for no ARC exception. rspamd-url:
         Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached
-        fails open (logged, not spam); checks that do not finish in 45 seconds, or a DMARC DNS error, answer 451.
+        fails open (logged, not spam); checks that do not finish in 45 seconds, no
+        resolver, or a DMARC DNS error where it matters (the domain's record not read, or its policy reject or
+        quarantine), answer 451, so an instance in internet mode with no DNS defers all mail unless
+        mail-delivery@dns-offline is true.
         proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
         the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
         of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none

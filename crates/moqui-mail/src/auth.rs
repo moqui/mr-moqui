@@ -694,6 +694,12 @@ pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records
     }
 }
 
+/// Whether a DMARC result defers the message (451): it is a temporary error (`temp`) and either the domain's record
+/// was not read (`has_record` false) or its policy is reject or quarantine.
+fn defers(temp: bool, has_record: bool, policy: Policy) -> bool {
+    temp && (!has_record || matches!(policy, Policy::Reject | Policy::Quarantine))
+}
+
 /// The trusted sealer whose ARC seal overrides a DMARC failure, or none: `newest` (the newest set's sealer, with the
 /// value of its `ARC-Authentication-Results`) is one of `trusted`, and that sealer recorded `dmarc=pass` for `domain`, the
 /// message's From domain, when it took the message. A trusted sealer carries a pass across its own change of the message
@@ -902,8 +908,14 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         result_word(&dmarc.result().to_string()),
         result_word(&arc.result().to_string()),
     );
-    // a DNS error is not a judgment: the sender tries again rather than the message going in unjudged (SEC-MAIL-92)
-    let temp_error = matches!(dmarc.result(), DmarcResult::TempError(_));
+    // a DNS error is not a judgment: the sender tries again rather than the message going in unjudged (SEC-MAIL-92),
+    // when it matters: the domain's record could not be read, or it asks reject or quarantine. A p=none domain with a
+    // selector that does not resolve is accepted as before, not deferred until it bounces
+    let temp_error = defers(
+        matches!(dmarc.result(), DmarcResult::TempError(_)),
+        dmarc.record().is_some(),
+        dmarc.policy(),
+    );
     Verdict {
         field,
         dmarc: action,
