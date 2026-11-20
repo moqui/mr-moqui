@@ -34,7 +34,7 @@ use rsa::pkcs1v15::SigningKey;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::sha2::{Sha256, Sha384, Sha512};
 use rsa::signature::{RandomizedSigner, SignatureEncoding};
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 use sha1::Sha1;
 
 use crate::error::Error;
@@ -90,7 +90,7 @@ impl rand_core::TryCryptoRng for BlindingRng {}
 pub struct SimpleSigner {
     key_resource: String,
     hash: Hash,
-    key: Option<RsaPrivateKey>,
+    key: Option<PrivateKey>,
     load_error: Option<String>,
 }
 
@@ -211,10 +211,10 @@ pub fn read_key(pem: &str) -> Result<Vec<u8>, Error> {
 }
 
 /// PKCS#8 first, which is what Java reads, then PKCS#1.
-fn parse_private_key(der: &[u8]) -> Result<RsaPrivateKey, Error> {
-    match RsaPrivateKey::from_pkcs8_der(der) {
+fn parse_private_key(der: &[u8]) -> Result<PrivateKey, Error> {
+    match PrivateKey::from_pkcs8_der(der) {
         Ok(key) => Ok(key),
-        Err(pkcs8_err) => RsaPrivateKey::from_pkcs1_der(der)
+        Err(pkcs8_err) => PrivateKey::from_pkcs1_der(der)
             .map_err(|_| Error::new(format!("signing key is neither PKCS#8 nor PKCS#1 RSA: {pkcs8_err}"))),
     }
 }
