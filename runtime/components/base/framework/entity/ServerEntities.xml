@@ -170,27 +170,82 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- moqui.server.instance -->
     <!-- ========================================================= -->
 
+    <!-- Managed instances (plans/Vault-Instances.md §4.1; docs/Run-Deploy.md "Managed instances"): environments, the hosts
+        and images instances run on, the kinds they are (mr-moqui, postgres, mysql, opensearch) with their templates and the
+        vault items they need, the instances with their dependencies and secret bindings, and each change as an action. No
+        column holds a secret: a host's TLS client key, a registry login and a database host's admin login are items of an
+        operational vault, by binding, used under a lease or an environment's machine access; the credentials a provision
+        makes are deposited into the environment's vault. The rows are written by org.moqui.dev.InstanceServices and seed
+        data only (crates/moqui-entity/src/entity/sensitive.rs). The services are Rust (crates/moqui-instance), over the
+        container driver CI's runs use too (moqui_lib::docker). The seed rows are in framework/data/InstanceTypeData.xml. -->
+
+    <entity entity-name="InstanceEnvironment" package="moqui.server.instance" use="configuration">
+        <description>Production, staging or demo: its operational vault, who approves its leases, the pipeline that gates its
+            deploys (M3), whether its operations may run under the vault's machine access (§3.8), its unseal policy and
+            method (M6), its transport to its instances (M2) and its lease time limit.</description>
+        <field name="environmentId" type="id" is-pk="true"/>
+        <field name="environmentName" type="text-medium"/>
+        <field name="environmentTypeEnumId" type="id"/>
+        <field name="vaultId" type="id"><description>The operational vault that holds its items, where a provision deposits
+            what it makes</description></field>
+        <field name="approverUserGroupId" type="id"><description>The group whose members approve its leases, beside the
+            vault's approve role, which the lease checks</description></field>
+        <field name="requiredPipeline" type="text-medium"><description>The pipeline whose passed run gates a deploy
+            (M3)</description></field>
+        <field name="machineAccess" type="text-indicator" default="'N'"><description>Y: its operations run under the vault's
+            machine access for this environment, with no approver (§3.8); the items must have been given</description></field>
+        <field name="unsealPolicyEnumId" type="id"/>
+        <field name="unsealMethod" type="text-short"><description>transit, tpm, passphrase or shamir (M6)</description></field>
+        <field name="transportEnumId" type="id"/>
+        <field name="leaseLimitMinutes" type="number-integer"><description>A lease's time limit for its operations; at most
+            vault@lease-max-hours</description></field>
+        <relationship type="one" title="EnvironmentType" related="moqui.basic.Enumeration" short-alias="environmentType">
+            <key-map field-name="environmentTypeEnumId"/></relationship>
+        <relationship type="one" title="UnsealPolicy" related="moqui.basic.Enumeration">
+            <key-map field-name="unsealPolicyEnumId"/></relationship>
+        <relationship type="one" title="Transport" related="moqui.basic.Enumeration">
+            <key-map field-name="transportEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
+        <relationship type="one-nofk" related="moqui.security.UserGroup">
+            <key-map field-name="approverUserGroupId" related="userGroupId"/></relationship>
+    </entity>
+    <entity entity-name="InstanceCluster" package="moqui.server.instance" use="configuration">
+        <description>The instances that are members of one cluster, for rolling deploys (M3).</description>
+        <field name="clusterId" type="id" is-pk="true"/>
+        <field name="environmentId" type="id"/>
+        <field name="clusterName" type="text-medium"/>
+        <relationship type="one" related="moqui.server.instance.InstanceEnvironment"/>
+    </entity>
+
     <entity entity-name="InstanceHost" package="moqui.server.instance" use="configuration">
         <field name="instanceHostId" type="id" is-pk="true"/>
         <field name="hostTypeId" type="id"/>
         <field name="hostProtocol" type="text-short"/>
         <field name="hostAddress" type="text-medium"/>
         <field name="adminPort" type="number-integer"/>
-        <field name="username" type="text-short"/>
-        <field name="password" type="text-medium" encrypt="true"/>
-        <!-- For the hosted-instance services and the run services (CI jobs, docs/interfaces/Pipelines.md), which reach the
-            Docker Engine API through call#DockerApi and the CI driver: hostProtocol is unix (hostAddress the path of a
-            Docker or Podman API socket), https with these, PEM, or http to this machine only (localhost, 127.0.0.0/8,
-            ::1); plain http to another host is refused (SEC-OUT-08) -->
+        <!-- For the instance services and the run services (CI jobs, docs/interfaces/Pipelines.md), which reach the Docker
+            Engine API through the shared driver: hostProtocol is unix (hostAddress the path of a Docker or Podman API
+            socket), https with these, PEM, or http to this machine only (localhost, 127.0.0.0/8, ::1); plain http to
+            another host is refused (SEC-OUT-08). The client key is the tls-key-pair item InstanceHost:<id>:tlsClientKey
+            (field privateKey) of the host's vault, opened under the operation's lease. -->
         <field name="tlsCaCert" type="text-long"><description>The authority that signed the host's certificate, when
             it is not a public one</description></field>
-        <field name="tlsClientCert" type="text-long"><description>The certificate this server presents</description></field>
-        <field name="tlsClientKey" type="text-long" encrypt="true"><description>Its private key</description></field>
+        <field name="tlsClientCert" type="text-long"><description>The certificate this server presents; its key is a
+            vault item</description></field>
+        <field name="vaultId" type="id"><description>The operational vault of its client key; the environment's when
+            empty</description></field>
+        <field name="environmentId" type="id"><description>For a host that serves a CI runner pool: the environment
+            whose machine access to its client key a CI run (unattended, under no lease) opens it with</description></field>
         <relationship type="one" related="moqui.server.instance.InstanceHostType" short-alias="hostType"/>
+        <relationship type="one-nofk" related="moqui.server.instance.InstanceEnvironment"/>
+        <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
     </entity>
     <entity entity-name="InstanceHostType" package="moqui.server.instance" use="configuration">
         <field name="hostTypeId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
+        <!-- The driver contract (§4.2): an instance's container services, implementations of init#Instance, start#Instance,
+            stop#Instance, remove#Instance and check#Instance of org.moqui.dev.InstanceServices, named here and only of
+            that package -->
         <field name="initService" type="text-medium"/>
         <field name="startService" type="text-medium"/>
         <field name="stopService" type="text-medium"/>
@@ -202,37 +257,6 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="runInspectService" type="text-medium"/>
         <field name="runRemoveService" type="text-medium"/>
         <field name="runCleanupService" type="text-medium"/>
-
-        <seed-data>
-            <moqui.server.instance.InstanceHostType hostTypeId="docker" description="Docker"
-                    initService="org.moqui.dev.InstanceServices.init#InstanceDocker"
-                    startService="org.moqui.dev.InstanceServices.start#InstanceDocker"
-                    stopService="org.moqui.dev.InstanceServices.stop#InstanceDocker"
-                    removeService="org.moqui.dev.InstanceServices.remove#InstanceDocker"
-                    checkService="org.moqui.dev.InstanceServices.check#InstanceDocker"
-                    runStartService="org.moqui.dev.InstanceServices.start#RunDocker"
-                    runInspectService="org.moqui.dev.InstanceServices.inspect#RunDocker"
-                    runRemoveService="org.moqui.dev.InstanceServices.remove#RunDocker"
-                    runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsDocker"/>
-            <!-- Starts nothing and records what it was asked; a host's hostAddress says how it answers (success, fail,
-                hang, lost, exit). For tests of pipelines with no container host. -->
-            <moqui.server.instance.InstanceHostType hostTypeId="fake" description="Fake (records its calls, starts nothing)"
-                    runStartService="org.moqui.dev.InstanceServices.start#RunFake"
-                    runInspectService="org.moqui.dev.InstanceServices.inspect#RunFake"
-                    runRemoveService="org.moqui.dev.InstanceServices.remove#RunFake"
-                    runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsFake"/>
-
-            <!-- see: https://docs.docker.com/engine/reference/commandline/dockerd/#bind-docker-to-another-host-port-or-a-unix-socket
-                Plain http only on this machine; another host is reached over https, or a unix socket forwarded to it. -->
-            <moqui.server.instance.InstanceHost instanceHostId="LocalDocker" hostTypeId="docker"
-                    hostProtocol="http" hostAddress="127.0.0.1" adminPort="2375"/>
-            <!-- a host over TLS: its certificate's authority in tlsCaCert, and this server's certificate and key in
-                tlsClientCert and tlsClientKey (PEM)
-            <moqui.server.instance.InstanceHost instanceHostId="LocalDockerTLS" hostTypeId="docker"
-                    hostProtocol="https" hostAddress="docker.example.com" adminPort="2376"
-                    tlsCaCert="(authority PEM)" tlsClientCert="(certificate PEM)" tlsClientKey="(key PEM)"/>
-            -->
-        </seed-data>
     </entity>
     <view-entity entity-name="InstanceHostDetail" package="moqui.server.instance">
         <member-entity entity-alias="INH" entity-name="moqui.server.instance.InstanceHost"/>
@@ -242,173 +266,165 @@ along with this software (see the LICENSE.md file). If not, see
         <alias name="typeDescription" entity-alias="IHT" field="description"/>
     </view-entity>
 
-    <entity entity-name="InstanceImage" package="moqui.server.instance" use="configuration">
-        <field name="instanceImageId" type="id" is-pk="true"/>
-        <field name="imageTypeId" type="id"/>
-        <field name="hostTypeId" type="id"/>
-        <field name="imageName" type="text-medium"/>
-        <!-- better as part of the name? <field name="imageDigest" type="text-medium"/> -->
-        <field name="registryLocation" type="text-medium"/>
-        <field name="username" type="text-short"/>
-        <field name="password" type="text-medium" encrypt="true"/>
-        <field name="emailAddress" type="text-medium"/>
-        <!-- To pull an image from a remote registryLocation, you may need to generate a token using a command example: AWS-ECR -->
-        <!-- Note: if you are using authTokenCmd to authenticate on registry then must keep the password field empty simply-->
-        <!-- The name of a token-command of the conf's instance-hosting element, which holds the command; never a command
-            itself (get#RegistryToken, plans/Security-Review-Medium.md SEC-TLS-03) -->
-        <field name="authTokenCmd" type="text-medium"/>
-        <relationship type="one" related="moqui.server.instance.InstanceImageType" short-alias="imageType"/>
-        <relationship type="one" related="moqui.server.instance.InstanceHostType" short-alias="hostType"/>
-    </entity>
-    <entity entity-name="InstanceImageType" package="moqui.server.instance" use="configuration">
-        <field name="imageTypeId" type="id" is-pk="true"/>
+    <entity entity-name="InstanceKind" package="moqui.server.instance" use="configuration">
+        <description>What an instance is: mr-moqui, postgres, mysql or opensearch (§4.1). Its templates (env that is not
+            secret, volumes, host config), the vault items it needs (InstanceKindSecret) and what it depends on
+            (InstanceKindDependency). Its behaviour is the Rust kind of the same id (crates/moqui-instance/src/kinds.rs); a
+            database kind's create#Database and check#Database are the services it names.</description>
+        <field name="instanceKindId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
-        <field name="defaultInitCommand" type="text-medium"/>
-        <field name="defaultNetworkMode" type="text-short"/>
-        <relationship type="many" related="moqui.server.instance.InstanceImageTypeEnv" short-alias="envs">
-            <key-map field-name="imageTypeId"/></relationship>
-        <relationship type="many" related="moqui.server.instance.InstanceImageTypeLink" short-alias="links">
-            <key-map field-name="imageTypeId"/></relationship>
-        <relationship type="many" related="moqui.server.instance.InstanceImageTypeVolume" short-alias="vols">
-            <key-map field-name="imageTypeId"/></relationship>
-        <relationship type="many" related="moqui.server.instance.InstanceImageTypeHostConfig" short-alias="hostConfigs">
-            <key-map field-name="imageTypeId"/></relationship>
-
-        <seed-data>
-            <!-- matches configuration in nginx-mysql-compose.yml -->
-            <moqui.server.instance.InstanceImageType imageTypeId="moqui" description="Moqui Default Virtual Host"
-                    defaultInitCommand="conf=conf/MoquiProductionConf.xml" defaultNetworkMode="moqui_default">
-                <!-- NOTE: defaultNetworkMode set to a network name, using docker compose use the '-p moqui' argument so moqui
-                    is the app/project name and moqui_default is the network name; use plain 'bridge' or other instead of a network
-                    name to use the default docker bridge or other network -->
-                <envs envName="VIRTUAL_HOST" envValue="${appInstance.hostName}"/>
-                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__http_host" envValue="${appInstance.hostName}"/>
-                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__http_port" envValue="80"/>
-                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__https_port" envValue="443"/>
-                <envs envName="moqui_conf__webapp_list__webapp__WEBROOT__https_enabled" envValue="true"/><!-- NOTE: change this to false for dev/test without https -->
-
-                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name" envValue="${appInstance.database?.type?.confName?:''}"/>
-                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__host" envValue="${appInstance.database?.instanceAddress ?: appInstance.database?.hostAddress ?: ''}"/>
-                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__port" envValue="${appInstance.database?.hostPort?:''}"/>
-                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database" envValue="${appInstance.hostName.replace('.', '_')}"/>
-                <!-- <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__schema_name" envValue=""/> -->
-                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__user" envValue="${appInstance.hostName.replace('.', '_')}"/>
-                <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__password" envValue="${org.moqui.util.StringUtilities.getRandomString(15)}"/>
-
-                <links instanceName="moqui-database"/>
-
-                <vols mountPoint="/opt/moqui/runtime/log" volumeName="${appInstance.hostName.replace('.', '_')}-runtime_log"/>
-                <vols mountPoint="/opt/moqui/runtime/txlog" volumeName="${appInstance.hostName.replace('.', '_')}-runtime_txlog"/>
-                <vols mountPoint="/opt/moqui/runtime/sessions" volumeName="${appInstance.hostName.replace('.', '_')}-runtime_sessions"/>
-                <vols mountPoint="/opt/moqui/runtime/db" volumeName="${appInstance.hostName.replace('.', '_')}-runtime_db"/>
-                <vols mountPoint="/opt/moqui/runtime/elasticsearch" volumeName="${appInstance.hostName.replace('.', '_')}-runtime_elasticsearch"/>
-            </moqui.server.instance.InstanceImageType>
-
-            <!-- these have no registryLocation, username, etc as they are intended to be pulled from Docker Hub -->
-            <moqui.server.instance.InstanceImage instanceImageId="DockerMoquiFramework" imageTypeId="moqui" hostTypeId="docker"
-                    imageName="moqui/moquiframework:latest"/>
-            <moqui.server.instance.InstanceImage instanceImageId="DockerMoquiDemo" imageTypeId="moqui" hostTypeId="docker"
-                    imageName="moqui/moquidemo:latest"/>
-            <moqui.server.instance.InstanceImage instanceImageId="DockerHiveMind" imageTypeId="moqui" hostTypeId="docker"
-                    imageName="moqui/hivemind:latest"/>
-            <moqui.server.instance.InstanceImage instanceImageId="DockerPopCommerce" imageTypeId="moqui" hostTypeId="docker"
-                    imageName="moqui/popcommerce:latest"/>
-            <!-- this is mainly for local testing -->
-            <moqui.server.instance.InstanceImage instanceImageId="DockerMoquiLocal" imageTypeId="moqui" hostTypeId="docker"
-                    imageName="moqui"/>
-        </seed-data>
+        <field name="confName" type="text-short"><description>The database-list name of a database kind (postgres,
+            mysql)</description></field>
+        <field name="containerPort" type="number-integer"><description>The port its service listens on in the
+            container</description></field>
+        <field name="runAsUser" type="text-short"><description>The uid:gid its secret files are owned by</description></field>
+        <field name="createDatabaseService" type="text-medium"/>
+        <field name="checkDatabaseService" type="text-medium"/>
+        <relationship type="many" related="moqui.server.instance.InstanceKindEnv" short-alias="envs">
+            <key-map field-name="instanceKindId"/></relationship>
+        <relationship type="many" related="moqui.server.instance.InstanceKindVolume" short-alias="vols">
+            <key-map field-name="instanceKindId"/></relationship>
+        <relationship type="many" related="moqui.server.instance.InstanceKindHostConfig" short-alias="hostConfigs">
+            <key-map field-name="instanceKindId"/></relationship>
+        <relationship type="many" related="moqui.server.instance.InstanceKindSecret" short-alias="secrets">
+            <key-map field-name="instanceKindId"/></relationship>
     </entity>
-    <entity entity-name="InstanceImageTypeEnv" package="moqui.server.instance" use="configuration">
-        <field name="imageTypeId" type="id" is-pk="true"/>
+    <entity entity-name="InstanceKindEnv" package="moqui.server.instance" use="configuration">
+        <description>A setting the kind's container gets, never a secret: a provision refuses a value that holds one. The
+            value's ${name} placeholders are filled from the instance (appInstanceId, instanceName, hostName, databaseHost,
+            databasePort, databaseName, databaseUser, searchHost, searchPort, secretsDir); nothing else is
+            expanded.</description>
+        <field name="instanceKindId" type="id" is-pk="true"/>
         <field name="envName" type="text-medium" is-pk="true"/>
-        <field name="envValue" type="text-medium" encrypt="true"/>
-        <relationship type="one" related="moqui.server.instance.InstanceImageType"/>
+        <field name="envValue" type="text-medium"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind"/>
     </entity>
-    <entity entity-name="InstanceImageTypeLink" package="moqui.server.instance" use="configuration">
-        <field name="imageTypeId" type="id" is-pk="true"/>
-        <field name="instanceName" type="text-medium" is-pk="true"/>
-        <field name="aliasName" type="text-medium"/>
-        <relationship type="one" related="moqui.server.instance.InstanceImageType"/>
-    </entity>
-    <entity entity-name="InstanceImageTypeVolume" package="moqui.server.instance" use="configuration">
-        <field name="imageTypeId" type="id" is-pk="true"/>
+    <entity entity-name="InstanceKindVolume" package="moqui.server.instance" use="configuration">
+        <field name="instanceKindId" type="id" is-pk="true"/>
         <field name="mountPoint" type="text-medium" is-pk="true"/>
-        <field name="volumeName" type="text-medium"/>
-        <relationship type="one" related="moqui.server.instance.InstanceImageType"/>
+        <field name="volumeName" type="text-medium"><description>With the env placeholders</description></field>
+        <relationship type="one" related="moqui.server.instance.InstanceKind"/>
     </entity>
-    <entity entity-name="InstanceImageTypeHostConfig" package="moqui.server.instance" use="configuration">
-        <field name="imageTypeId" type="id" is-pk="true"/>
+    <entity entity-name="InstanceKindHostConfig" package="moqui.server.instance" use="configuration">
+        <description>How the container runs: RestartPolicy (no, always, unless-stopped, on-failure), HealthCmd (a shell
+            command, never a secret), User (uid:gid).</description>
+        <field name="instanceKindId" type="id" is-pk="true"/>
         <field name="hostConfigName" type="text-medium" is-pk="true"/>
         <field name="hostConfigValue" type="text-medium"/>
-        <field name="type" type="text-short"/>
-        <relationship type="one" related="moqui.server.instance.InstanceImageType"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind"/>
+    </entity>
+    <entity entity-name="InstanceKindSecret" package="moqui.server.instance" use="configuration">
+        <description>A vault item an instance of the kind needs (§4.1, §4.2): its type and binding, whether the manager
+            makes it at the provision and deposits it (generated Y) or it is leased, and how the container reads it: a
+            file under /run/secrets, named by the image's *_FILE setting when envName is set. bindingPattern's {id} is the
+            instance's id.</description>
+        <field name="instanceKindId" type="id" is-pk="true"/>
+        <field name="secretName" type="text-short" is-pk="true"/>
+        <field name="vaultItemTypeId" type="id"/>
+        <field name="bindingPattern" type="text-medium"/>
+        <field name="fieldName" type="text-short"><description>The item's field the file holds</description></field>
+        <field name="fileName" type="text-short"><description>The file's name under /run/secrets</description></field>
+        <field name="envName" type="text-medium"><description>The image's setting that names the file
+            (POSTGRES_PASSWORD_FILE)</description></field>
+        <field name="generated" type="text-indicator" default="'Y'"/>
+        <field name="whenDependency" type="text-short"><description>Bound only when the instance has a dependency of this
+            role (an mr-moqui instance's database password, with a database)</description></field>
+        <field name="description" type="text-medium"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind"/>
+    </entity>
+    <entity entity-name="InstanceKindDependency" package="moqui.server.instance" use="configuration">
+        <description>What an instance of the kind needs, by role (database, search), and the kinds that serve it; an
+            optional role may be left out (an mr-moqui instance on embedded Postgres has no database
+            dependency).</description>
+        <field name="instanceKindId" type="id" is-pk="true"/>
+        <field name="dependencyRole" type="text-short" is-pk="true"/>
+        <field name="allowedKindId" type="id" is-pk="true"/>
+        <field name="optional" type="text-indicator" default="'Y'"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind"/>
+        <relationship type="one" title="Allowed" related="moqui.server.instance.InstanceKind">
+            <key-map field-name="allowedKindId" related="instanceKindId"/></relationship>
+    </entity>
+
+    <entity entity-name="InstanceImage" package="moqui.server.instance" use="configuration">
+        <description>An image of a kind, with its registry. A registry login is the registry-login item
+            InstanceImage:&lt;id&gt;:registry of the image's vault (the environment's when empty), leased by the
+            provision that pulls it.</description>
+        <field name="instanceImageId" type="id" is-pk="true"/>
+        <field name="instanceKindId" type="id"/>
+        <field name="imageName" type="text-medium"/>
+        <field name="registryLocation" type="text-medium"/>
+        <field name="registryLogin" type="text-indicator" default="'N'"><description>Y: a pull needs the registry-login
+            item</description></field>
+        <field name="vaultId" type="id"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind" short-alias="kind"/>
+        <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
     </entity>
     <view-entity entity-name="InstanceImageDetail" package="moqui.server.instance">
         <member-entity entity-alias="IIMG" entity-name="moqui.server.instance.InstanceImage"/>
-        <member-entity entity-alias="IIT" entity-name="moqui.server.instance.InstanceImageType" join-from-alias="IIMG">
-            <key-map field-name="imageTypeId"/></member-entity>
-        <member-entity entity-alias="IHT" entity-name="moqui.server.instance.InstanceHostType" join-from-alias="IIMG">
-            <key-map field-name="hostTypeId"/></member-entity>
+        <member-entity entity-alias="IKND" entity-name="moqui.server.instance.InstanceKind" join-from-alias="IIMG">
+            <key-map field-name="instanceKindId"/></member-entity>
         <alias-all entity-alias="IIMG"/>
-        <alias name="imageTypeDescription" entity-alias="IIT" field="description"/>
-        <alias name="hostTypeDescription" entity-alias="IHT" field="description"/>
+        <alias name="kindDescription" entity-alias="IKND" field="description"/>
     </view-entity>
 
     <entity entity-name="DatabaseHost" package="moqui.server.instance" use="configuration">
+        <description>A database server not managed here (a cloud database, a host's own Postgres), served by its kind's
+            create#Database. The admin login is the database-credential item DatabaseHost:&lt;id&gt;:admin of its vault
+            (the environment's when empty), leased by the provision that makes a database on it.</description>
         <field name="databaseHostId" type="id" is-pk="true"/>
-        <field name="databaseTypeId" type="id"/>
+        <field name="instanceKindId" type="id"/>
         <field name="hostAddress" type="text-medium"/>
         <field name="hostPort" type="number-integer"/>
         <field name="instanceAddress" type="text-medium"><description>If instance accesses DB by different address specify here</description></field>
-        <field name="adminUser" type="text-short"/>
-        <field name="adminPassword" type="text-medium" encrypt="true"/>
-        <relationship type="one" related="moqui.server.instance.DatabaseType" short-alias="type"/>
+        <field name="vaultId" type="id"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind" short-alias="kind"/>
+        <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
     </entity>
-    <entity entity-name="DatabaseType" package="moqui.server.instance" use="configuration">
-        <field name="databaseTypeId" type="id" is-pk="true"/>
-        <field name="description" type="text-medium"/>
-        <field name="confName" type="text-short"/>
-        <field name="createService" type="text-medium"/>
-        <field name="checkService" type="text-medium"/>
-
-        <seed-data>
-            <moqui.server.instance.DatabaseType databaseTypeId="mysql" description="MySQL" confName="mysql"
-                    createService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
-                    checkService="org.moqui.dev.InstanceServices.check#DatabaseMySQL"/>
-            <moqui.server.instance.DatabaseType databaseTypeId="postgres" description="Postgres" confName="postgres"
-                    createService="org.moqui.dev.InstanceServices.create#DatabasePostgres" checkService="org.moqui.dev.InstanceServices.check#DatabasePostgres"/>
-            <!-- matches configuration in nginx-mysql-compose.yml -->
-            <moqui.server.instance.DatabaseHost databaseHostId="LocalMySQL" databaseTypeId="mysql"
-                    hostAddress="127.0.0.1" hostPort="3306" instanceAddress="moqui-database"
-                    adminUser="root" adminPassword="moquiroot"/>
-        </seed-data>
-    </entity>
-    <view-entity entity-name="DatabaseHostDetail" package="moqui.server.instance">
-        <member-entity entity-alias="DBH" entity-name="moqui.server.instance.DatabaseHost"/>
-        <member-entity entity-alias="DBTP" entity-name="moqui.server.instance.DatabaseType" join-from-alias="DBH">
-            <key-map field-name="databaseTypeId"/></member-entity>
-        <alias-all entity-alias="DBH"/>
-        <alias name="typeDescription" entity-alias="DBTP" field="description"/>
-    </view-entity>
 
     <entity entity-name="AppInstance" package="moqui.server.instance" use="configuration">
         <field name="appInstanceId" type="id" is-pk="true"/>
+        <field name="instanceKindId" type="id"/>
         <field name="instanceImageId" type="id"/>
         <field name="instanceHostId" type="id"/>
-        <field name="databaseHostId" type="id"/>
+        <field name="environmentId" type="id"/>
+        <field name="clusterId" type="id"/>
         <field name="hostName" type="text-medium"/>
-        <field name="instanceName" type="text-medium"/>
-        <field name="instanceUuid" type="text-medium"/>
-        <field name="initCommand" type="text-medium"/>
-        <field name="jsonConfig" type="text-long"/>
-        <field name="networkMode" type="text-short"/>
-
+        <field name="instanceName" type="text-medium"><description>Its container's name; its volumes' and network's start
+            with it</description></field>
+        <field name="instanceUuid" type="text-medium"><description>Its container's id on the host</description></field>
+        <field name="hostPort" type="number-integer"><description>The host's port its service is published on, on the host's
+            loopback only; none when it is reached only on the environment's network</description></field>
+        <field name="networkName" type="text-short"/>
+        <field name="databaseName" type="text-short"><description>Its own database on its database dependency</description></field>
+        <field name="databaseUser" type="text-short"/>
+        <!-- the version: the image digest and the component commits (JSON, M3) -->
+        <field name="imageDigest" type="text-medium"/>
+        <field name="componentCommits" type="text-long"/>
+        <field name="desiredStateEnumId" type="id"/>
+        <field name="observedState" type="text-short"><description>What its host last said: created, running, restarting,
+            paused, exited, dead, missing or unreachable</description></field>
+        <field name="observedHealth" type="text-short"/>
+        <field name="observedDate" type="date-time"/>
+        <field name="sealState" type="text-short"/>
+        <field name="sealCheckedDate" type="date-time"/>
+        <field name="linkState" type="text-short"/>
+        <field name="linkCheckedDate" type="date-time"/>
+        <!-- an mr-moqui instance's one-time pairing token (§4.2, §4.4): its SHA-256 and when it stops working; the token
+            itself is only in the file given to the container -->
+        <field name="pairingTokenHash" type="text-medium"/>
+        <field name="pairingTokenExpires" type="date-time"/>
+        <relationship type="one" related="moqui.server.instance.InstanceKind" short-alias="kind"/>
         <relationship type="one" related="moqui.server.instance.InstanceImage" short-alias="image"/>
         <relationship type="one" related="moqui.server.instance.InstanceHost" short-alias="instanceHost"/>
-        <relationship type="one" related="moqui.server.instance.DatabaseHost" short-alias="database"/>
+        <relationship type="one" related="moqui.server.instance.InstanceEnvironment" short-alias="environment"/>
+        <relationship type="one-nofk" related="moqui.server.instance.InstanceCluster" short-alias="cluster"/>
+        <relationship type="one" title="DesiredState" related="moqui.basic.Enumeration">
+            <key-map field-name="desiredStateEnumId"/></relationship>
         <relationship type="many" related="moqui.server.instance.AppInstanceEnv" short-alias="envs">
             <key-map field-name="appInstanceId"/></relationship>
-        <relationship type="many" related="moqui.server.instance.AppInstanceLink" short-alias="links">
+        <relationship type="many" related="moqui.server.instance.AppInstanceSecret" short-alias="secrets">
+            <key-map field-name="appInstanceId"/></relationship>
+        <relationship type="many" related="moqui.server.instance.AppInstanceDependency" short-alias="dependencies">
             <key-map field-name="appInstanceId"/></relationship>
         <relationship type="many" related="moqui.server.instance.AppInstanceVolume" short-alias="vols">
             <key-map field-name="appInstanceId"/></relationship>
@@ -416,16 +432,38 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="appInstanceId"/></relationship>
     </entity>
     <entity entity-name="AppInstanceEnv" package="moqui.server.instance" use="configuration">
+        <description>A setting of the instance's container, never a secret (a secret is an AppInstanceSecret).</description>
         <field name="appInstanceId" type="id" is-pk="true"/>
         <field name="envName" type="text-medium" is-pk="true"/>
-        <field name="envValue" type="text-medium" encrypt="true"/>
+        <field name="envValue" type="text-medium"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
     </entity>
-    <entity entity-name="AppInstanceLink" package="moqui.server.instance" use="configuration">
+    <entity entity-name="AppInstanceSecret" package="moqui.server.instance" use="configuration">
+        <description>A setting of the instance bound to a vault item, never its value: the item's binding and type, the
+            field the file holds, the file's name under /run/secrets and the image's *_FILE setting that names it, and
+            whether the provision makes and deposits it.</description>
         <field name="appInstanceId" type="id" is-pk="true"/>
-        <field name="instanceName" type="text-medium" is-pk="true"/>
-        <field name="aliasName" type="text-medium"/>
+        <field name="secretName" type="text-short" is-pk="true"/>
+        <field name="bindingKey" type="text-medium"/>
+        <field name="vaultItemTypeId" type="id"/>
+        <field name="fieldName" type="text-short"/>
+        <field name="fileName" type="text-short"/>
+        <field name="envName" type="text-medium"/>
+        <field name="generated" type="text-indicator" default="'Y'"/>
+        <field name="depositedDate" type="date-time"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
+    </entity>
+    <entity entity-name="AppInstanceDependency" package="moqui.server.instance" use="configuration">
+        <description>What the instance uses, by role (database, search): another instance, made first, or a database
+            host.</description>
+        <field name="appInstanceId" type="id" is-pk="true"/>
+        <field name="dependencyRole" type="text-short" is-pk="true"/>
+        <field name="dependsOnInstanceId" type="id"/>
+        <field name="databaseHostId" type="id"/>
+        <relationship type="one" related="moqui.server.instance.AppInstance"/>
+        <relationship type="one" title="DependsOn" related="moqui.server.instance.AppInstance">
+            <key-map field-name="dependsOnInstanceId" related="appInstanceId"/></relationship>
+        <relationship type="one" related="moqui.server.instance.DatabaseHost"/>
     </entity>
     <entity entity-name="AppInstanceVolume" package="moqui.server.instance" use="configuration">
         <field name="appInstanceId" type="id" is-pk="true"/>
@@ -437,8 +475,32 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="appInstanceId" type="id" is-pk="true"/>
         <field name="hostConfigName" type="text-medium" is-pk="true"/>
         <field name="hostConfigValue" type="text-medium"/>
-        <field name="type" type="text-short"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
+    </entity>
+    <entity entity-name="InstanceAction" package="moqui.server.instance" use="nontransactional" cache="never">
+        <description>A change to an instance (§4.1): provision, deploy, upgrade, start, stop, restart, drain, rotate,
+            unseal or remove; its state, the lease it ran under (or the environment's machine access), the deploy when
+            there is one, who did it, the versions before and after and its report. The report names what was made and
+            never a value.</description>
+        <field name="instanceActionId" type="id" is-pk="true"/>
+        <field name="appInstanceId" type="id"/>
+        <field name="actionEnumId" type="id"/>
+        <field name="statusEnumId" type="id"/>
+        <field name="leaseId" type="id"/>
+        <field name="machineAccess" type="text-indicator"/>
+        <field name="gitDeploymentId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="versionBefore" type="text-medium"/>
+        <field name="versionAfter" type="text-medium"/>
+        <field name="report" type="text-very-long"/>
+        <field name="startDate" type="date-time"/>
+        <field name="endDate" type="date-time"/>
+        <index name="INST_ACTION_INST"><index-field name="appInstanceId"/><index-field name="startDate"/></index>
+        <relationship type="one-nofk" related="moqui.server.instance.AppInstance"/>
+        <relationship type="one" title="Action" related="moqui.basic.Enumeration">
+            <key-map field-name="actionEnumId"/></relationship>
+        <relationship type="one" title="Status" related="moqui.basic.Enumeration">
+            <key-map field-name="statusEnumId"/></relationship>
     </entity>
 
     <!-- ========== Instance settings (Admin P8) ========== -->

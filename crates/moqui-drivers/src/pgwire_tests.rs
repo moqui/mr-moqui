@@ -392,6 +392,39 @@ fn an_idle_connection_the_server_closed_reads_as_closed() {
     }
 }
 
+/// A server (or a proxy in the path) that asks for the password in clear text over plain TCP gets no password: the
+/// connect fails before a password message is written (plans/Vault-Instances.md M1 review: an admin login would cross
+/// the network in the clear).
+#[test]
+fn a_cleartext_password_is_not_sent_over_plain_tcp() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut tcp, _) = listener.accept().unwrap();
+        let mut len = [0u8; 4];
+        tcp.read_exact(&mut len).unwrap();
+        let mut startup = vec![0u8; u32::from_be_bytes(len) as usize - 4];
+        tcp.read_exact(&mut startup).unwrap();
+        tcp.write_all(&message(b'R', &3_i32.to_be_bytes())).unwrap();
+        // whatever comes back before the client closes
+        let mut rest = Vec::new();
+        let _ = tcp.read_to_end(&mut rest);
+        rest
+    });
+    let endpoint = Endpoint::Tcp {
+        guard: AddressGuard::Off,
+        host: "127.0.0.1".to_string(),
+        port,
+        tls: None,
+    };
+    let refused = Wire::connect(&endpoint, "moqui", "moqui", Some("the-admin-password"), None)
+        .err()
+        .unwrap();
+    assert!(refused.message().contains("clear text"), "{refused}");
+    let rest = server.join().unwrap();
+    assert!(!rest.windows(18).any(|window| window == b"the-admin-password"), "{rest:?}");
+}
+
 #[test]
 fn a_command_tag_counts_its_rows() {
     assert_eq!(tag_rows("INSERT 0 5"), 5);

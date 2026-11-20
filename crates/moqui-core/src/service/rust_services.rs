@@ -91,7 +91,6 @@ fn build() -> BTreeMap<&'static str, RustServiceFn> {
         super::shell::register(&mut map),
         super::user_keys::register(&mut map),
         super::recent_auth::register(&mut map),
-        super::registry_token::register(&mut map),
         super::sign_in_policy::register(&mut map),
         super::protocol_admin::register(&mut map),
         super::web_protection::register(&mut map),

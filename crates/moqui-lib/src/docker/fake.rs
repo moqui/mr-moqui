@@ -21,7 +21,8 @@
 //! What it does on purpose: an image named `missing/...` is not on the host until it is pulled; one named `broken` is
 //! refused at create; a container on the network `absent-net` is refused with a 404 that names no image; on Docker a
 //! container of the image `read-only-root` refuses an archive, as Docker refuses one into a read-only root; an image
-//! named `with-volume...` declares the `VOLUME` `/data`.
+//! named `with-volume...` declares the `VOLUME` `/data`; a container with the label [`ONE_SHOT_LABEL`] exits as soon
+//! as it starts, as [`FakeEngine::one_shot`] says.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -77,6 +78,10 @@ pub struct FakeContainer {
     /// The archives put into it, in order: each entry, with the status it had then.
     pub files: Vec<(String, FakeFile)>,
     pub labels: BTreeMap<String, String>,
+    /// Its exit code once it exited: 143 after a stop, the one-shot answer for a one-shot container.
+    pub exit_code: i64,
+    /// What its logs say, when not the default two lines.
+    pub log: Option<String>,
 }
 
 #[derive(Default)]
@@ -90,7 +95,17 @@ struct State {
     secrets: BTreeMap<String, Vec<u8>>,
     removed: Vec<(String, bool)>,
     next: u64,
+    /// How the next one-shot containers end: their exit code and what their logs say.
+    one_shot: (i64, String),
+    /// The containers removed, as they were.
+    gone: BTreeMap<String, FakeContainer>,
+    /// Every Podman secret made, deleted or not.
+    secrets_ever: BTreeMap<String, Vec<u8>>,
 }
+
+/// The label that makes a fake container a one-shot: it exits as soon as it starts, with [`FakeEngine::one_shot`]'s
+/// answer.
+pub const ONE_SHOT_LABEL: &str = "moqui.one-shot";
 
 /// A fake Docker or Podman engine on a loopback port. Its server thread ends with the test process.
 pub struct FakeEngine {
@@ -107,6 +122,12 @@ impl FakeEngine {
     /// A fake Podman engine: its `/version` names "Podman Engine", and it serves the libpod calls.
     pub fn podman() -> Self {
         Self::start(true)
+    }
+
+    /// How the one-shot containers started from now on end (a container with the label [`ONE_SHOT_LABEL`] exits as
+    /// soon as it starts): their exit code and their logs. Exit 0 with no logs until set.
+    pub fn one_shot(&self, exit_code: i64, log: &str) {
+        lock(&self.state).one_shot = (exit_code, log.to_string());
     }
 
     fn start(podman: bool) -> Self {
@@ -157,6 +178,19 @@ impl FakeEngine {
     /// Forget the requests answered so far.
     pub fn clear(&self) {
         lock(&self.state).requests.clear();
+    }
+
+    /// Every container made, by id: those held and those removed, as they were when removed.
+    pub fn containers_ever(&self) -> BTreeMap<String, FakeContainer> {
+        let state = lock(&self.state);
+        let mut all = state.gone.clone();
+        all.extend(state.containers.clone());
+        all
+    }
+
+    /// Every Podman secret made, with its value, deleted since or not.
+    pub fn podman_secrets_ever(&self) -> BTreeMap<String, Vec<u8>> {
+        lock(&self.state).secrets_ever.clone()
     }
 
     /// The containers held, by id.
@@ -393,6 +427,8 @@ fn create(state: &mut State, name: &str, image: &str, body: &serde_json::Value, 
             status: "created".to_string(),
             files: Vec::new(),
             labels: strings(labels),
+            exit_code: 0,
+            log: None,
         },
     );
     json_answer(201, &json!({ "Id": id, "Warnings": [] }))
@@ -476,11 +512,18 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
             }
         }
         ("POST", ["containers", reference, action]) => {
+            let one_shot = state.one_shot.clone();
             let Some(container) = find(state, reference) else {
                 return message(404, "No such container");
             };
             match *action {
                 "start" if container.status == "running" => (304, "application/json", Vec::new()),
+                "start" if container.labels.contains_key(ONE_SHOT_LABEL) => {
+                    container.status = "exited".to_string();
+                    container.exit_code = one_shot.0;
+                    container.log = Some(one_shot.1);
+                    (204, "application/json", Vec::new())
+                }
                 "start" | "restart" => {
                     container.status = "running".to_string();
                     (204, "application/json", Vec::new())
@@ -488,6 +531,7 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
                 "stop" if container.status != "running" => (304, "application/json", Vec::new()),
                 "stop" => {
                     container.status = "exited".to_string();
+                    container.exit_code = 143;
                     (204, "application/json", Vec::new())
                 }
                 _ => message(400, "the fake engine does not know this"),
@@ -504,7 +548,7 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
                 "State": {
                     "Status": container.status,
                     "Running": container.status == "running",
-                    "ExitCode": if container.status == "exited" { 143 } else { 0 },
+                    "ExitCode": if container.status == "exited" { container.exit_code } else { 0 },
                 },
                 "Image": format!("sha256:{}", "ab".repeat(32)),
                 "Config": { "Labels": container.labels, "Env": container.body["Env"] },
@@ -519,10 +563,11 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
                 return message(404, "No such container");
             };
             let mut frames = Vec::new();
-            for (stream, text) in [
-                (1u8, format!("{} started\n", container.name)),
-                (2u8, "ready\n".to_string()),
-            ] {
+            let lines = match &container.log {
+                Some(log) => vec![(1u8, log.clone())],
+                None => vec![(1u8, format!("{} started\n", container.name)), (2u8, "ready\n".to_string())],
+            };
+            for (stream, text) in lines {
                 frames.extend_from_slice(&[stream, 0, 0, 0]);
                 frames.extend_from_slice(&u32::try_from(text.len()).unwrap_or(0).to_be_bytes());
                 frames.extend_from_slice(text.as_bytes());
@@ -534,7 +579,9 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
             let Some(id) = find(state, reference).map(|container| container.id.clone()) else {
                 return message(404, "No such container");
             };
-            state.containers.remove(&id);
+            if let Some(container) = state.containers.remove(&id) {
+                state.gone.insert(id.clone(), container);
+            }
             state.removed.push((id, volumes));
             (204, "application/json", Vec::new())
         }
@@ -585,6 +632,7 @@ fn libpod(state: &mut State, method: &str, rest: &str, request: &FakeRequest, bo
                 return message(409, &format!("{name}: secret name in use"));
             }
             state.secrets.insert(name.clone(), request.body.clone());
+            state.secrets_ever.insert(name.clone(), request.body.clone());
             json_answer(200, &json!({ "ID": format!("id-{name}") }))
         }
         ("DELETE", ["secrets", name]) => {

@@ -262,6 +262,14 @@ impl LeaseRegistry {
         lock(&self.held).get(lease_id).map(|held| held.lease.clone())
     }
 
+    /// The operation and vault of a lease this member holds, as its signed statement names them (never read back from
+    /// the row's columns): what an operation checks before it runs under a lease it was handed (M1's instance actions).
+    pub fn statement_of(&self, lease_id: &str) -> Option<(String, String)> {
+        lock(&self.held)
+            .get(lease_id)
+            .map(|held| (held.lease.operation.clone(), held.lease.vault_id.clone()))
+    }
+
     /// The environment a machine-access grant's lease was asked for, as asked.
     pub(crate) fn environment_of(&self, lease_id: &str) -> Option<String> {
         lock(&self.held)

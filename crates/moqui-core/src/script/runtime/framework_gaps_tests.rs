@@ -273,21 +273,21 @@ fn a_find_condition_on_an_encrypted_field_matches_the_stored_value() {
     let _entered = context.enter();
     // PartyIdentification-style lookups: the stored value is encrypted, the condition value is plain text
     run_script(
-        r#"const host = ec.entity.makeValue("moqui.server.instance.InstanceHost");
-        host.instanceHostId = "H1";
+        r#"const host = ec.entity.makeValue("moqui.database.DatabaseConnection");
+        host.connectionId = "H1";
         host.password = "Secret";
         host.create();"#,
     )
     .unwrap();
     holds(
-        r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("password", "Secret").list().length === 1"#,
+        r#"ec.entity.find("moqui.database.DatabaseConnection").condition("password", "Secret").list().length === 1"#,
     );
     holds(
-        r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("password", "in", ["Secret", "Other"]).list().length === 1"#,
+        r#"ec.entity.find("moqui.database.DatabaseConnection").condition("password", "in", ["Secret", "Other"]).list().length === 1"#,
     );
-    holds(r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("password", "Other").list().length === 0"#);
+    holds(r#"ec.entity.find("moqui.database.DatabaseConnection").condition("password", "Other").list().length === 0"#);
     holds(
-        r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("instanceHostId", "H1").one().password === "Secret""#,
+        r#"ec.entity.find("moqui.database.DatabaseConnection").condition("connectionId", "H1").one().password === "Secret""#,
     );
 }
 
@@ -1691,5 +1691,18 @@ fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
         r#"ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "like", "GONE-P%").orderBy("enumTypeId")
             .list().map(e => e.enumTypeId).join() === "GONE-P0,GONE-P1,GONE-P4""#,
     );
+    clear_context_stack();
+}
+
+/// SEC-SCR-04, v5.0.0-1.2.5: a script has no way to start a process: no host member runs a command (the old registry
+/// token command, `runTokenCommand`, is gone with the column that named it).
+#[test]
+fn no_script_starts_a_process() {
+    let context = database();
+    let _entered = context.enter();
+    for script in [r#"ec.resource.runTokenCommand("printf tok")"#, r#"ec.resource.runCommand("printf tok")"#] {
+        let err = run_script(script).unwrap_err();
+        assert!(err.message().contains("not a function") || err.message().contains("run"), "{script}: {err}");
+    }
     clear_context_stack();
 }

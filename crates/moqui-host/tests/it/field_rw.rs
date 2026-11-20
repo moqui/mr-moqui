@@ -68,7 +68,7 @@ fn encrypt_audit_and_localized_reads() {
     );
     facade
         .check_tables(&[
-            "moqui.server.instance.InstanceHost",
+            "moqui.server.DeployedComponent",
             "moqui.security.UserAccount",
             "moqui.entity.EntityAuditLog",
             "moqui.entity.SequenceValueItem",
@@ -77,9 +77,9 @@ fn encrypt_audit_and_localized_reads() {
         ])
         .unwrap();
 
-    let mut host = facade.make_value("moqui.server.instance.InstanceHost").unwrap();
-    host.set("instanceHostId", Value::string("H1"));
-    host.set("password", Value::string("TestEntityFieldValue"));
+    let mut host = facade.make_value("moqui.server.DeployedComponent").unwrap();
+    host.set("componentName", Value::string("H1"));
+    host.set("accessToken", Value::string("TestEntityFieldValue"));
     host.create(&facade).unwrap();
     assert_eq!(password_of(&facade).as_deref(), Some("TestEntityFieldValue"));
     let stored = stored_password(&facade);
@@ -98,9 +98,9 @@ fn encrypt_audit_and_localized_reads() {
     assert_eq!(password_of(&facade).as_deref(), Some(failed));
     set_password(&facade, ":not-base64");
     assert_eq!(password_of(&facade).as_deref(), Some(failed));
-    let mut back = facade.make_value("moqui.server.instance.InstanceHost").unwrap();
-    back.set("instanceHostId", Value::string("H1"));
-    back.set("password", Value::string(failed));
+    let mut back = facade.make_value("moqui.server.DeployedComponent").unwrap();
+    back.set("componentName", Value::string("H1"));
+    back.set("accessToken", Value::string(failed));
     let err = back.update(&facade).unwrap_err();
     assert!(err.message().contains("prevent data loss"), "{err}");
     assert_eq!(stored_password(&facade), ":not-base64");
@@ -238,8 +238,8 @@ fn two_threads_refill_one_sequence_bank() {
 
 fn password_result(facade: &EntityFacade) -> Result<Option<EntityValue>, Error> {
     facade
-        .find("moqui.server.instance.InstanceHost")?
-        .eq("instanceHostId", Value::string("H1"))
+        .find("moqui.server.DeployedComponent")?
+        .eq("componentName", Value::string("H1"))
         .one()
 }
 
@@ -247,29 +247,29 @@ fn password_of(facade: &EntityFacade) -> Option<String> {
     password_result(facade)
         .unwrap()
         .unwrap()
-        .get("password")
+        .get("accessToken")
         .and_then(Value::as_str)
         .map(str::to_string)
 }
 
 fn stored_password(facade: &EntityFacade) -> String {
-    let tx = facade.transactions_for("moqui.server.instance.InstanceHost").unwrap();
+    let tx = facade.transactions_for("moqui.server.DeployedComponent").unwrap();
     let rows = tx
         .with_connection(|conn| {
             conn.query(
-                "SELECT password FROM instance_host WHERE instance_host_id = ?",
+                "SELECT access_token FROM deployed_component WHERE component_name = ?",
                 &[Value::string("H1")],
             )
         })
         .unwrap();
-    column_text(rows.first().unwrap(), "password")
+    column_text(rows.first().unwrap(), "access_token")
 }
 
 fn set_password(facade: &EntityFacade, password: &str) {
-    let tx = facade.transactions_for("moqui.server.instance.InstanceHost").unwrap();
+    let tx = facade.transactions_for("moqui.server.DeployedComponent").unwrap();
     tx.with_connection(|conn| {
         conn.execute(
-            "UPDATE instance_host SET password = ? WHERE instance_host_id = ?",
+            "UPDATE deployed_component SET access_token = ? WHERE component_name = ?",
             &[Value::string(password), Value::string("H1")],
         )
     })

@@ -24,7 +24,7 @@ use serde_json::json;
 use moqui_lib::object::{to_plain_string, Value, ValueMap};
 
 use super::{
-    call_docker_api, cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker,
+    cleanup_runs_docker, create_body, inspect_run_docker, remove_run_docker, start_run_docker,
     Hardening,
 };
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
@@ -688,31 +688,40 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         errors.contains("hostProtocol ftp is not unix, http or https"),
         "{errors}"
     );
-    // a TLS host with a client certificate that is not PEM is refused before anything is sent
+    // a TLS host with a client certificate: its key is a vault item, which a CI run (unattended) reads under the
+    // machine access of the host's environment (plans/Vault-Instances.md §4.1, §3.8); nothing is sent without it
     let api = Api::new("https", "docker.example.com", Some(2376), Seen::default());
-    {
+    let set = |fields: Vec<(String, Value)>| {
         let _entered = api.context.enter();
         let _authz = api.context.disable_authz();
         api.entity
             .find("moqui.server.instance.InstanceHost")
             .unwrap()
             .eq("instanceHostId", Value::string("H"))
-            .update_all([
-                ("tlsClientCert".to_string(), Value::string("not a certificate")),
-                ("tlsClientKey".to_string(), Value::string("not a key")),
-            ])
+            .update_all(fields)
             .unwrap();
-    }
+    };
+    set(vec![("tlsClientCert".to_string(), Value::string("not a certificate"))]);
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
     assert!(out.is_empty());
     assert!(
-        errors.contains("the client certificate and key are not PEM"),
+        errors.contains("InstanceHost:H:tlsClientKey") && errors.contains("machineAccessMissing"),
         "{errors}"
     );
+    // with an environment, the key is asked of its machine access: here no vault server is linked, so it is refused
+    // and still nothing is sent (moqui-vault-server's tests open one from the hook)
+    set(vec![("environmentId".to_string(), Value::string("ci-env"))]);
+    let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
+    assert!(out.is_empty());
+    assert!(
+        errors.contains("InstanceHost:H:tlsClientKey") && errors.contains("vault is not built in"),
+        "{errors}"
+    );
+    assert!(api.seen().is_empty(), "nothing sent: {:?}", api.seen());
 }
 
 /// SEC-OUT-08: plain http goes to this machine only. A host row with http to another address is refused before
-/// anything is sent, for a CI run and for `call#DockerApi`; `0.0.0.0`, which Linux connects to this machine, is not
+/// anything is sent, for a CI run; `0.0.0.0`, which Linux connects to this machine, is not
 /// taken as loopback either.
 #[test]
 fn plain_http_to_another_host_is_refused_before_anything_is_sent() {
@@ -723,12 +732,6 @@ fn plain_http_to_another_host_is_refused_before_anything_is_sent() {
         assert!(out.is_empty(), "{address}: {out:?}");
         assert!(errors.contains("not reached over plain http"), "{address}: {errors}");
         assert!(errors.contains("tlsClientCert"), "{address}: {errors}");
-        let (out, errors) = api.call(
-            call_docker_api,
-            &[("method", Value::string("GET")), ("path", Value::string("/version"))],
-        );
-        assert!(out.is_empty(), "{address}: {out:?}");
-        assert!(errors.contains("not reached over plain http"), "{address}: {errors}");
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),
             "{address}: nothing waited on"
@@ -750,51 +753,6 @@ fn plain_http_to_this_machine_is_accepted_in_its_mapped_form_too() {
         assert_eq!(to_plain_string(&out["state"]), "running", "{address}");
         assert_eq!(api.seen()[0].1, "/v1.40/containers/a1/json", "{address}");
     }
-}
-
-/// `call#DockerApi` sends one call on the host's client and answers its status and parsed body; without
-/// `INSTANCE_ADMIN` (authorization on, no such user) it sends nothing.
-#[test]
-fn the_docker_api_call_answers_the_host_and_needs_instance_admin() {
-    let api = Api::tcp();
-    let (out, errors) = api.call(
-        call_docker_api,
-        &[
-            ("method", Value::string("post")),
-            ("path", Value::string("/containers/create")),
-            ("query", map(&[("name", "a b")])),
-            ("body", Value::string(r#"{"Image":"moqui-build:1"}"#)),
-            ("registryAuth", Value::string("e30=")),
-        ],
-    );
-    assert!(errors.is_empty(), "{errors}");
-    assert_eq!(to_plain_string(&out["statusCode"]), "201");
-    assert_eq!(to_plain_string(&out["reasonPhrase"]), "Created");
-    let Some(Value::Map(body)) = out.get("responseBody") else {
-        panic!("{out:?}")
-    };
-    assert_eq!(to_plain_string(&body["Id"]), "c0");
-    let seen = api.seen();
-    assert_eq!(seen[0].0, "POST");
-    assert_eq!(seen[0].1, "/v1.40/containers/create?name=a%20b");
-    assert_eq!(seen[0].2["Image"], "moqui-build:1");
-    // a path that is not one under the API version
-    let (out, errors) = api.call(call_docker_api, &[("path", Value::string("/../version"))]);
-    assert!(out.is_empty() && errors.contains("is not a path"), "{errors}");
-
-    let api = Api::tcp();
-    let _entered = api.context.enter();
-    let parameters: BTreeMap<String, Value> = [
-        ("instanceHostId".to_string(), Value::string("H")),
-        ("path".to_string(), Value::string("/version")),
-    ]
-    .into_iter()
-    .collect();
-    let out = call_docker_api(&parameters, &api.entity).unwrap();
-    assert!(out.is_empty(), "{out:?}");
-    let errors = ExecutionContext::with_current(|ec| ec.message().errors_text().join("\n")).unwrap_or_default();
-    assert!(errors.contains("INSTANCE_ADMIN"), "{errors}");
-    assert!(api.seen().is_empty(), "nothing sent: {:?}", api.seen());
 }
 
 /// With `container-user="image"` the container runs as its image's user, which is inspected before it starts: an

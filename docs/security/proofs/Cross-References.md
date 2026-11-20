@@ -157,7 +157,7 @@ listed under both.
 |  | [v5.0.0-1.2.2](V1-Encoding-and-Sanitization.md) | Gap | none |  |
 |  | [v5.0.0-1.2.3](V1-Encoding-and-Sanitization.md) | Gap | none |  |
 |  | [v5.0.0-1.2.4](V1-Encoding-and-Sanitization.md) | Framework | `V1Encoding`; `postgres_enumeration_insert_select_and_count` (`moqui-db` `sql/tests.rs`) |  |
-|  | [v5.0.0-1.2.5](V1-Encoding-and-Sanitization.md) | Framework | `no_script_starts_a_process_and_the_registry_token_needs_the_conf_and_the_permission` (`registry_token_tests.rs`) |  |
+|  | [v5.0.0-1.2.5](V1-Encoding-and-Sanitization.md) | Framework | `no_script_starts_a_process` (`framework_gaps_tests.rs`) |  |
 |  | [v5.0.0-1.2.6](V1-Encoding-and-Sanitization.md) | N/A | - |  |
 |  | [v5.0.0-1.2.7](V1-Encoding-and-Sanitization.md) | N/A | - |  |
 |  | [v5.0.0-1.2.8](V1-Encoding-and-Sanitization.md) | N/A | - |  |
@@ -428,7 +428,7 @@ ours is wider or the export's row is level 3.
 | 6. [CWE-22](https://cwe.mitre.org/data/definitions/22.html) Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal') | [v5.0.0-5.3.2](V5-File-Handling.md) | Gap | none | none (it gives 5.3.2 CWE-73) | `print#ResourceDocument` reads any location (SEC-RTE-83). Static files refuse `..` and hidden names (the 13.4.1 proof's Rust test). |
 | 7. [CWE-416](https://cwe.mitre.org/data/definitions/416.html) Use After Free | [v5.0.0-1.4.3](V1-Encoding-and-Sanitization.md) | Framework | `the_server_has_unsafe_code_only_at_the_listed_reviewed_sites` (`moqui-host` `lib_tests.rs`) | 1.4.3 |  |
 | 8. [CWE-125](https://cwe.mitre.org/data/definitions/125.html) Out-of-bounds Read | [v5.0.0-1.4.1](V1-Encoding-and-Sanitization.md) | Framework | `the_server_has_unsafe_code_only_at_the_listed_reviewed_sites` (`moqui-host` `lib_tests.rs`) | none |  |
-| 9. [CWE-78](https://cwe.mitre.org/data/definitions/78.html) Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection') | [v5.0.0-1.2.5](V1-Encoding-and-Sanitization.md) | Framework | `no_script_starts_a_process_and_the_registry_token_needs_the_conf_and_the_permission` (`registry_token_tests.rs`) | 1.2.5 |  |
+| 9. [CWE-78](https://cwe.mitre.org/data/definitions/78.html) Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection') | [v5.0.0-1.2.5](V1-Encoding-and-Sanitization.md) | Framework | `no_script_starts_a_process` (`framework_gaps_tests.rs`) | 1.2.5 |  |
 | 10. [CWE-94](https://cwe.mitre.org/data/definitions/94.html) Improper Control of Generation of Code ('Code Injection') | [v5.0.0-1.3.2](V1-Encoding-and-Sanitization.md) | Framework | `WikiPageTypes`, `DocumentExpression` (specs) | 1.3.5, 1.3.7 | Markdown and CSS (1.3.5) and templates from stored text (1.3.7) are Gaps; on a dev instance a `screen-xml` canvas runs model-written script (SEC-AI-82). |
 |  | [v5.0.0-1.3.5](V1-Encoding-and-Sanitization.md) | Gap | none |  |  |
 |  | [v5.0.0-1.3.7](V1-Encoding-and-Sanitization.md) | Gap | part: `urls_forms_and_assembled_expressions` (`script/theme/tests.rs`) |  |  |
@@ -469,7 +469,7 @@ ours is wider or the export's row is level 3.
 |  | [v5.0.0-13.2.4](V13-Configuration.md) | Configuration | `host_rejected_by_allowed_hosts_does_not_touch_the_sink` (`moqui-mail`); `an_http_location_reaches_an_internal_address_only_off_production` (`context/resource/tests.rs`) |  |  |
 |  | [v5.0.0-13.2.5](V13-Configuration.md) | Configuration | `an_http_location_reaches_an_internal_address_only_off_production` (`context/resource/tests.rs`) |  |  |
 |  | [v5.0.0-15.3.2](V15-Secure-Coding-and-Architecture.md) | Framework | `a_redirect_to_another_host_is_followed_only_when_asked` (`moqui-lib` `http_tests.rs`) |  |  |
-| 23. [CWE-77](https://cwe.mitre.org/data/definitions/77.html) Improper Neutralization of Special Elements used in a Command ('Command Injection') | [v5.0.0-1.2.5](V1-Encoding-and-Sanitization.md) | Framework | `no_script_starts_a_process_and_the_registry_token_needs_the_conf_and_the_permission` (`registry_token_tests.rs`) | none |  |
+| 23. [CWE-77](https://cwe.mitre.org/data/definitions/77.html) Improper Neutralization of Special Elements used in a Command ('Command Injection') | [v5.0.0-1.2.5](V1-Encoding-and-Sanitization.md) | Framework | `no_script_starts_a_process` (`framework_gaps_tests.rs`) | none |  |
 |  | [v5.0.0-1.3.11](V1-Encoding-and-Sanitization.md) | Framework | `a_call_gives_its_subject_sender_relay_and_bounce_address` (`moqui-mail` `implementation_tests.rs`) |  |  |
 | 24. [CWE-639](https://cwe.mitre.org/data/definitions/639.html) Authorization Bypass Through User-Controlled Key | [v5.0.0-8.2.2](V8-Authorization.md) | Gap | none | 8.2.2 | Rows are the caller's only by row filters and checks the application writes (8.2.2). |
 |  | [v5.0.0-15.3.3](V15-Secure-Coding-and-Architecture.md) | Framework | `MultiPin` (spec) |  |  |

@@ -63,7 +63,7 @@ feature("an ADMIN's posted rows for a password field, an identity field, a hoste
             rowOp({ entity: "moqui.security.UserAccount", pk: { userId: TARGET }, field: "currentPassword", value: "spec-forged-hash" }),
             rowOp({ entity: "moqui.security.UserAccount", pk: { userId: TARGET, passwordHashType: "NONE" }, field: "userFullName", value: "Spec Smuggled" }),
             rowOp({ entity: "moqui.security.UserAccount", pk: { userId: TARGET }, field: "emailAddress", value: "taken@spec.invalid" }),
-            rowOp({ entity: "moqui.server.instance.InstanceImage", pk: { instanceImageId: "SPEC_DLS_IMAGE" }, createValues: { authTokenCmd: "touch /tmp/spec-dls" } }),
+            rowOp({ entity: "moqui.server.instance.InstanceImage", pk: { instanceImageId: "SPEC_DLS_IMAGE" }, createValues: { imageName: "spec/dls:1" } }),
             rowOp({ entity: "moqui.database.SqlRunToken", pk: { tokenHash: "SPEC_DLS_TOKEN" }, createValues: { userId: "john.doe", textHash: "x" } }),
             rowOp({ entity: "moqui.security.UserAccount", pk: { userId: TARGET }, field: "userFullName", value: "Spec Stored" }),
         ].join(",")

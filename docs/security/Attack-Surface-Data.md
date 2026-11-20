@@ -138,7 +138,7 @@ The short answer: field encryption keeps secrets out of a stolen database dump o
   - `EntityEntities.xml`: `EntitySync.targetPassword`. `GitCiEntities.xml`: `GitCiSecret.secretValue`, `GitCiEnvironment.targetToken`. `LlmEntities.xml`: `LlmEndpoint.apiKey`. `MonitorEntities.xml`: `ScrapeTarget.bearerToken`.
   - `ResourceEntities.xml`: `GitRepository.accessToken`, `GitWebhook.secret`, `GitRepositoryMirror.credential`.
   - `SecurityEntities.xml`: `UserAuthcFactor.factorOption`, `WebPushSubscription.authSecret`, `OauthFlow.secret`, `OidcFlow.secret`, `SamlFlow.keystorePassword`, `.privateKeyPassword`.
-  - `ServerEntities.xml`: `DeployedComponent.accessToken`, `InstanceHost.password`, `.tlsClientKey`, `InstanceImage.password`, `InstanceImageTypeEnv.envValue`, `DatabaseHost.adminPassword`, `AppInstanceEnv.envValue`, `AcmeCertificate.privateKeyPem`.
+  - `ServerEntities.xml`: `DeployedComponent.accessToken`, `AcmeCertificate.privateKeyPem`.
   - `ServiceEntities.xml`: `SystemMessageRemote.password`, `.privateKey`, `.sharedSecret`, `.sendSharedSecret`.
   - `VoiceEntities.xml`: `VoiceTrunk.authJson`, `SipDeviceVerifier.ha1`. `XmppEntities.xml`: `XmppFastToken.token`, `XmppPushRegistration.optionsJson`.
 - mr-mantle, 16 (`runtime/components/addon/mr-mantle/entity/`):

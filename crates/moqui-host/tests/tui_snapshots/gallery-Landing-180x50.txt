@@ -7,7 +7,7 @@
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
      Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Board               │ ┌─ All enumerations ───┐ ┌─ Screen Theme Resour─┐
-     Calendar            │ │ 634                  │ │ 35                   │
+     Calendar            │ │ 660                  │ │ 35                   │
      Split               │ └──────────────────────┘ └──────────────────────┘
      Settings            │                          ┌─ Vault event ────────┐
      Wizard              │                          │ 31                   │
@@ -41,8 +41,8 @@
                          │ │   QZ Active Label Printer Name   User Preference Key (optional) <today> hh:mm     │
                          │ │   QZ Active Main Printer Name    User Preference Key (optional) <today> hh:mm     │
                          │ │   Internal Applications - Quasar Screen Theme Type              <today> hh:mm     │
-                         │ │   Delivery filed                 Vault event                    <today> hh:mm     │
-                         │ │   Delivery sent                  Vault event                    <today> hh:mm     │
+                         │ │   Done                           Managed instance action status <today> hh:mm     │
+                         │ │   Failed                         Managed instance action status <today> hh:mm     │
                          │ │   Rows 1–10 of 10 · Page 1/1                                                         │
                          │ └──────────────────────────────────────────────────────────────────────────────────────┘
 ─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

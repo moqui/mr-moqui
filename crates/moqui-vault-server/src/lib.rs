@@ -70,6 +70,7 @@ moqui_core::vault_hooks::submit! {
     moqui_core::vault_hooks::VaultHooks {
         leased: lease::hook_leased,
         holds_leased: lease::hook_holds_leased,
+        machine_run: machine::hook_machine_run,
     }
 }
 

@@ -103,22 +103,23 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlrunerror",
 ];
 
-/// Hosted-instance configuration (`moqui.server.instance`): an image's `authTokenCmd` runs as a host process, a type's
-/// `envValue`, `volumeName` and `hostConfigValue` are expanded as script, and a host type or database type names the
-/// services that run; so these rows are not written through the generic tools, REST or request loads, where an `ADMIN`
-/// without the sealed `INSTANCE_ADMIN` could plant a command for a holder to run (plans/Security-Review.md SEC-TLS-02).
-/// The `AppInstance*` rows, which hold no command, stay available.
+/// Managed-instance configuration (`moqui.server.instance`, plans/Vault-Instances.md §4.1): a host type names the
+/// services that run, a kind's templates and secrets say what goes into a container and which vault items it binds,
+/// and a host, an image or a database host says where a leased login goes; so these rows are not written through the
+/// generic tools, REST or request loads, where an `ADMIN` without the sealed `INSTANCE_ADMIN` could point a holder's
+/// action at a service or a server of theirs (plans/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
+/// ([`SERVICE_WRITTEN_ENTITY_KEYS`]).
 const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
     "instancehost",
     "instancehosttype",
     "instanceimage",
-    "instanceimagetype",
-    "instanceimagetypeenv",
-    "instanceimagetypelink",
-    "instanceimagetypevolume",
-    "instanceimagetypehostconfig",
+    "instancekind",
+    "instancekindenv",
+    "instancekindvolume",
+    "instancekindhostconfig",
+    "instancekindsecret",
+    "instancekinddependency",
     "databasehost",
-    "databasetype",
 ];
 
 /// Entities the generic tools, REST and request loads read but never write, an ADMIN's included: the entity audit log
@@ -143,6 +144,17 @@ const SERVICE_WRITTEN_ENTITY_KEYS: &[&str] = &[
     "recoverycontrol",
     "instancedrain",
     "ingestkey",
+    // a managed instance's environment (and so its machine access), dependencies and secret bindings decide which vault
+    // items its provision opens, and its actions are its record (plans/Vault-Instances.md §4.1)
+    "instanceenvironment",
+    "instancecluster",
+    "appinstance",
+    "appinstanceenv",
+    "appinstancesecret",
+    "appinstancedependency",
+    "appinstancevolume",
+    "appinstancehostconfig",
+    "instanceaction",
     // the allowPrivateNetwork flag of a scrape target or synthetic check is set in Monitor/Checks, with its permission
     "scrapetarget",
     "syntheticcheck",
@@ -731,12 +743,14 @@ mod tests {
         for name in [
             "moqui.server.instance.InstanceImage",
             "moqui.server.instance.InstanceHostType",
-            "moqui.server.instance.InstanceImageTypeEnv",
-            "moqui.server.instance.DatabaseType",
+            "moqui.server.instance.InstanceKindSecret",
         ] {
             assert!(is_host_config_entity(name) && is_restricted_generic_entity(name), "{name}");
         }
-        assert!(!is_restricted_generic_entity("moqui.server.instance.AppInstanceEnv"));
+        // an instance's environment and secret bindings: read by the tools, written only by the instance services
+        for name in ["moqui.server.instance.InstanceEnvironment", "moqui.server.instance.AppInstanceSecret"] {
+            assert!(!is_restricted_generic_entity(name) && is_generic_write_refused(name), "{name}");
+        }
         assert!(is_user_account_entity("moqui.security.UserAccount"));
         assert!(is_user_account_entity("users"));
         assert!(!is_user_account_entity("moqui.security.UserAccountX"));

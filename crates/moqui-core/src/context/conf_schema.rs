@@ -445,8 +445,6 @@ pub static CATALOG: &[Unit] = &[
         Class::Restart("the gate, its secret and its allow entries are read once at start"),
     )
     .secrets(&[("attestation-secret", Secret::Kept)]),
-    // the registry token commands of hosted instances, read at each image pull (service/registry_token.rs)
-    single("instance-hosting", Class::Live).children(&[keyed("token-command", &["name"], Class::Live)]),
     // vaults (plans/Vault-Instances.md §3): read at each call of the vault services
     single("vault", Class::Live).secrets(&[("lease-key", Secret::Generated)]),
     // read by the desktop and mobile apps, not the server

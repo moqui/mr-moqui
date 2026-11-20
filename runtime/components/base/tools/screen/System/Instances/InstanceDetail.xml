@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- An instance (plans/Vault-Instances.md §5): its state (desired, observed, seal and link), version, dependencies, settings,
+    secret bindings (never a value), volumes, actions, and what a provision would make with the lease it needs
+    (preview#AppInstanceProvision). Provision, Start, Stop, Restart and Remove post request#InstanceAction: it runs now
+    when the action opens no vault item or the environment has machine access, else it asks for the lease and this page
+    goes to the lease dialog (System › Vaults › Lease); the action runs once an approver opens it. The page reads rows
+    only; nothing here reaches a host as it renders. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Instance" default-menu-include="false">
+
+    <parameter name="appInstanceId" required="true"/>
+
+    <transition name="requestInstanceAction" method="post"><service-call name="org.moqui.dev.InstanceServices.request#InstanceAction"/>
+        <conditional-response url="../../Vaults/Lease"><condition><expression>leaseId</expression></condition>
+            <parameter name="leaseId"/></conditional-response>
+        <default-response url="."/></transition>
+    <transition name="instanceDetail"><default-response url="."/></transition>
+
+    <actions>
+        <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
+        <set field="recordFound" from="appInstance != null"/>
+        <entity-find entity-name="moqui.server.instance.AppInstanceDependency" list="dependencyList">
+            <econdition field-name="appInstanceId"/></entity-find>
+        <entity-find entity-name="moqui.server.instance.AppInstanceSecret" list="secretList">
+            <econdition field-name="appInstanceId"/><order-by field-name="secretName"/></entity-find>
+        <entity-find entity-name="moqui.server.instance.AppInstanceEnv" list="envList">
+            <econdition field-name="appInstanceId"/><order-by field-name="envName"/></entity-find>
+        <entity-find entity-name="moqui.server.instance.AppInstanceVolume" list="volumeList">
+            <econdition field-name="appInstanceId"/></entity-find>
+        <entity-find entity-name="moqui.server.instance.InstanceAction" list="actionList" limit="20">
+            <econdition field-name="appInstanceId"/><order-by field-name="-startDate"/></entity-find>
+        <!-- the preview, only for INSTANCE_ADMIN (the service asks it) and only before the container is made -->
+        <set field="preview" from="null"/>
+        <if condition="recordFound &amp;&amp; !appInstance.instanceUuid &amp;&amp; ec.user.hasPermission('INSTANCE_ADMIN')">
+            <service-call name="org.moqui.dev.InstanceServices.preview#AppInstanceProvision" in-map="{appInstanceId:appInstanceId}"
+                    out-map="previewOut" ignore-error="true" transaction="force-new"/>
+            <set field="preview" from="previewOut?.preview"/>
+            <set field="previewError" from="ec.message.hasError() ? ec.message.getErrorsString() : null"/>
+            <script>ec.message.clearErrors()</script>
+        </if>
+        <set field="made" from="recordFound &amp;&amp; !!appInstance.instanceUuid"/>
+    </actions>
+    <widgets>
+        <section name="NotFound" condition="!recordFound"><widgets>
+            <label text="Not available" type="h4"/>
+            <link url="../InstanceList" text="Instances"/>
+        </widgets></section>
+        <section name="Found" condition="recordFound"><widgets>
+            <container-box><box-header title="Instance ${appInstanceId}"/><box-toolbar>
+                <section name="NotMadeActions" condition="!made"><widgets>
+                <form-single name="Provision" transition="requestInstanceAction">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="actionEnumId"><default-field><hidden default-value="IatProvision"/></default-field></field>
+                    <field name="submitButton"><default-field title="Provision"><submit/></default-field></field>
+                </form-single>
+                </widgets></section>
+                <section name="MadeActions" condition="made"><widgets>
+                <form-single name="Start" transition="requestInstanceAction">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="actionEnumId"><default-field><hidden default-value="IatStart"/></default-field></field>
+                    <field name="submitButton"><default-field title="Start"><submit/></default-field></field>
+                </form-single>
+                <form-single name="Stop" transition="requestInstanceAction">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="actionEnumId"><default-field><hidden default-value="IatStop"/></default-field></field>
+                    <field name="submitButton"><default-field title="Stop"><submit/></default-field></field>
+                </form-single>
+                <form-single name="Restart" transition="requestInstanceAction">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="actionEnumId"><default-field><hidden default-value="IatRestart"/></default-field></field>
+                    <field name="submitButton"><default-field title="Restart"><submit/></default-field></field>
+                </form-single>
+                <form-single name="Remove" transition="requestInstanceAction">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="actionEnumId"><default-field><hidden default-value="IatRemove"/></default-field></field>
+                    <field name="removeVolumes"><default-field title="Remove its volumes (its data)"><check><option key="true" text=" "/></check></default-field></field>
+                    <field name="submitButton"><default-field title="Remove"><submit confirmation="Remove the container of ${appInstanceId}?"/></default-field></field>
+                </form-single>
+                </widgets></section>
+            </box-toolbar><box-body>
+                <form-single name="InstanceState" map="appInstance" skip-start="true" skip-end="true">
+                    <field name="instanceKindId"><default-field title="Kind"><display/></default-field></field>
+                    <field name="environmentId"><default-field title="Environment"><display/></default-field></field>
+                    <field name="clusterId"><default-field title="Cluster"><display/></default-field></field>
+                    <field name="instanceHostId"><default-field title="Host"><display/></default-field></field>
+                    <field name="instanceImageId"><default-field title="Image"><display/></default-field></field>
+                    <field name="instanceName"><default-field title="Container"><display/></default-field></field>
+                    <field name="hostName"><default-field><display/></default-field></field>
+                    <field name="hostPort"><default-field><display/></default-field></field>
+                    <field name="desiredStateEnumId"><default-field title="Desired state">
+                        <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                    <field name="observedState"><default-field title="Observed"><display/></default-field></field>
+                    <field name="observedHealth"><default-field title="Health"><display/></default-field></field>
+                    <field name="observedDate"><default-field title="Seen"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
+                    <field name="sealState"><default-field title="Seal"><display/></default-field></field>
+                    <field name="linkState"><default-field title="Link"><display/></default-field></field>
+                    <field name="imageDigest"><default-field title="Image digest"><display/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+
+            <container-box condition="preview || previewError"><box-header title="Provision preview"/><box-body>
+                <label text="${previewError}" type="div" style="text-danger" condition="previewError"/>
+                <label text="Containers: ${(preview?.containers || []).map(c => c.name + ' (' + c.image + ' on ' + c.instanceHostId + ')').join(', ')}" type="div" condition="preview"/>
+                <label text="Volumes: ${(preview?.volumes || []).join(', ')}" type="div" condition="preview"/>
+                <label text="Networks: ${(preview?.networks || []).join(', ')}" type="div" condition="preview"/>
+                <label text="Databases: ${(preview?.databases || []).map(d => d.database + ' and user ' + d.user + ' on ' + d.on).join(', ')}" type="div" condition="preview"/>
+                <label text="Deposited into vault ${preview?.vaultId}: ${(preview?.deposits || []).map(d => d.bindingKey).join(', ')}" type="div" condition="preview"/>
+                <label text="Host names: ${(preview?.hostNames || []).join(', ')}" type="div" condition="preview"/>
+                <label text="${(preview?.leaseBindings || []).length ? 'The lease it needs, and where each login goes: ' + preview.destinations.join(', ') + (preview.machineAccess ? ' (the environment has machine access)' : '') : 'It opens no vault item: it needs no lease'}" type="div" condition="preview"/>
+            </box-body></container-box>
+
+            <container-box><box-header title="Dependencies"/><box-body>
+                <form-list name="DependencyList" list="dependencyList" skip-form="true">
+                    <field name="dependencyRole"><default-field title="Role"><display/></default-field></field>
+                    <field name="dependsOnInstanceId"><default-field title="Instance">
+                        <link url="instanceDetail" text="${dependsOnInstanceId || ''}" parameter-map="{appInstanceId:dependsOnInstanceId}" link-type="anchor" condition="dependsOnInstanceId"/></default-field></field>
+                    <field name="databaseHostId"><default-field title="Database host"><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+
+            <container-box><box-header title="Secret bindings"/><box-body>
+                <label text="Each is a vault item of the environment's vault, by its binding; no value is shown here or kept on these rows." type="p"/>
+                <form-list name="SecretList" list="secretList" skip-form="true">
+                    <field name="secretName"><default-field title="Secret"><display/></default-field></field>
+                    <field name="bindingKey"><default-field title="Binding"><display/></default-field></field>
+                    <field name="vaultItemTypeId"><default-field title="Item type"><display/></default-field></field>
+                    <field name="fileName"><default-field title="File"><display text="${fileName ? '/run/secrets/' + fileName : ''}"/></default-field></field>
+                    <field name="envName"><default-field title="Named by"><display/></default-field></field>
+                    <field name="generated"><default-field title="Made here"><display/></default-field></field>
+                    <field name="depositedDate"><default-field title="Deposited"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+
+            <container-box><box-header title="Settings and volumes"/><box-body>
+                <form-list name="EnvList" list="envList" skip-form="true">
+                    <field name="envName"><default-field title="Setting"><display/></default-field></field>
+                    <field name="envValue"><default-field title="Value"><display/></default-field></field>
+                </form-list>
+                <form-list name="VolumeList" list="volumeList" skip-form="true">
+                    <field name="mountPoint"><default-field><display/></default-field></field>
+                    <field name="volumeName"><default-field title="Volume"><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+
+            <container-box><box-header title="Actions"/><box-body>
+                <form-list name="ActionList" list="actionList" skip-form="true">
+                    <field name="startDate"><default-field title="Started"><display format="yyyy-MM-dd HH:mm:ss"/></default-field></field>
+                    <field name="actionEnumId"><default-field title="Action">
+                        <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                    <field name="statusEnumId"><default-field title="State">
+                        <display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+                    <field name="leaseId"><default-field title="Lease">
+                        <link url="../../Vaults/Lease" text="${leaseId || ''}" parameter-map="{leaseId:leaseId}" link-type="anchor" condition="leaseId"/></default-field></field>
+                    <field name="machineAccess"><default-field title="Machine"><display/></default-field></field>
+                    <field name="userId"><default-field title="By"><display/></default-field></field>
+                    <field name="versionBefore"><default-field title="Before"><display/></default-field></field>
+                    <field name="versionAfter"><default-field title="After"><display/></default-field></field>
+                    <field name="report"><default-field><display/></default-field></field>
+                </form-list>
+            </box-body></container-box>
+        </widgets></section>
+    </widgets>
+</screen>

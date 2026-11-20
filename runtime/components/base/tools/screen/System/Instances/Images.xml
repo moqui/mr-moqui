@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The images, each of a kind (store#InstanceImage). A registry login is the item InstanceImage:<id>:registry of the
+    image's vault, leased by the provision that pulls it. MR Moqui's own image is podman/build.sh's localhost/moqui. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Images" default-menu-index="4">
+
+    <transition name="storeImage" method="post"><service-call name="org.moqui.dev.InstanceServices.store#InstanceImage"/>
+        <default-response url="."/></transition>
+
+    <actions>
+        <entity-find entity-name="moqui.server.instance.InstanceImageDetail" list="imageList">
+            <order-by field-name="instanceKindId,imageName"/></entity-find>
+    </actions>
+    <widgets>
+        <container-dialog id="StoreImageDialog" button-text="New image">
+            <form-single name="StoreImage" transition="storeImage">
+                <field name="instanceImageId"><default-field title="Id"><text-line size="30"/></default-field></field>
+                <field name="instanceKindId"><default-field title="Kind">
+                    <drop-down><entity-options key="${instanceKindId}" text="${description}">
+                        <entity-find entity-name="moqui.server.instance.InstanceKind"/></entity-options></drop-down>
+                </default-field></field>
+                <field name="imageName"><default-field title="Image" tooltip="name:tag, with its registry"><text-line size="50"/></default-field></field>
+                <field name="registryLocation"><default-field title="Registry"><text-line size="40"/></default-field></field>
+                <field name="registryLogin"><default-field title="Registry login" tooltip="A pull leases the item InstanceImage:id:registry">
+                    <drop-down><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
+                <field name="vaultId"><default-field title="Vault of its login" tooltip="The environment's when empty"><text-line size="30"/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+
+        <form-list name="ImageList" list="imageList" skip-form="true">
+            <field name="instanceImageId"><default-field title="Id"><display/></default-field></field>
+            <field name="kindDescription"><default-field title="Kind"><display/></default-field></field>
+            <field name="imageName"><default-field title="Image"><display/></default-field></field>
+            <field name="registryLocation"><default-field title="Registry"><display/></default-field></field>
+            <field name="registryLogin"><default-field title="Login"><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

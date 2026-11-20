@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Managed instances (framework/entity/ServerEntities.xml moqui.server.instance, plans/Vault-Instances.md §4;
+    docs/Run-Deploy.md "Managed instances"): the environment types, desired states and actions, the host types and their
+    Rust services (crates/moqui-instance), the four kinds with their templates, the vault items each needs and what each
+    depends on, MR Moqui's own image (podman/build.sh's localhost/moqui, one data volume /var/lib/moqui) and the
+    third-party images, and the reconcile job. No row holds a secret: what a kind needs is a vault item by binding,
+    made and deposited by the provision (generated Y) or leased. -->
+<entity-facade-xml type="seed">
+    <moqui.basic.EnumerationType enumTypeId="InstanceEnvironmentType" description="Instance environment type"/>
+    <moqui.basic.Enumeration enumId="IetProduction" enumTypeId="InstanceEnvironmentType" enumCode="production" description="Production" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="IetStaging" enumTypeId="InstanceEnvironmentType" enumCode="staging" description="Staging" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="IetDemo" enumTypeId="InstanceEnvironmentType" enumCode="demo" description="Demo" sequenceNum="3"/>
+
+    <moqui.basic.EnumerationType enumTypeId="InstanceUnsealPolicy" description="Managed instance unseal policy"/>
+    <moqui.basic.Enumeration enumId="IupAutomatic" enumTypeId="InstanceUnsealPolicy" enumCode="automatic" description="Automatic" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="IupApproval" enumTypeId="InstanceUnsealPolicy" enumCode="approval" description="Each unseal approved" sequenceNum="2"/>
+
+    <moqui.basic.EnumerationType enumTypeId="InstanceTransport" description="Manager to instance transport"/>
+    <moqui.basic.Enumeration enumId="ItrLink" enumTypeId="InstanceTransport" enumCode="link" description="Manager link" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="ItrSsh" enumTypeId="InstanceTransport" enumCode="ssh" description="SSH" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="ItrBoth" enumTypeId="InstanceTransport" enumCode="both" description="Link and SSH" sequenceNum="3"/>
+
+    <moqui.basic.EnumerationType enumTypeId="InstanceDesiredState" description="Managed instance desired state"/>
+    <moqui.basic.Enumeration enumId="IdsRunning" enumTypeId="InstanceDesiredState" enumCode="running" description="Running" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="IdsStopped" enumTypeId="InstanceDesiredState" enumCode="stopped" description="Stopped" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="IdsRemoved" enumTypeId="InstanceDesiredState" enumCode="removed" description="Removed" sequenceNum="3"/>
+
+    <moqui.basic.EnumerationType enumTypeId="InstanceActionType" description="Managed instance action"/>
+    <moqui.basic.Enumeration enumId="IatProvision" enumTypeId="InstanceActionType" enumCode="provision" description="Provision" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="IatStart" enumTypeId="InstanceActionType" enumCode="start" description="Start" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="IatStop" enumTypeId="InstanceActionType" enumCode="stop" description="Stop" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="IatRestart" enumTypeId="InstanceActionType" enumCode="restart" description="Restart" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="IatRemove" enumTypeId="InstanceActionType" enumCode="remove" description="Remove" sequenceNum="5"/>
+    <moqui.basic.Enumeration enumId="IatDeploy" enumTypeId="InstanceActionType" enumCode="deploy" description="Deploy" sequenceNum="6"/>
+    <moqui.basic.Enumeration enumId="IatUpgrade" enumTypeId="InstanceActionType" enumCode="upgrade" description="Upgrade" sequenceNum="7"/>
+    <moqui.basic.Enumeration enumId="IatDrain" enumTypeId="InstanceActionType" enumCode="drain" description="Drain" sequenceNum="8"/>
+    <moqui.basic.Enumeration enumId="IatRotate" enumTypeId="InstanceActionType" enumCode="rotate" description="Rotate" sequenceNum="9"/>
+    <moqui.basic.Enumeration enumId="IatUnseal" enumTypeId="InstanceActionType" enumCode="unseal" description="Unseal" sequenceNum="10"/>
+
+    <moqui.basic.EnumerationType enumTypeId="InstanceActionStatus" description="Managed instance action status"/>
+    <moqui.basic.Enumeration enumId="IasWaiting" enumTypeId="InstanceActionStatus" enumCode="waiting" description="Waiting for its lease" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="IasRunning" enumTypeId="InstanceActionStatus" enumCode="running" description="Running" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="IasDone" enumTypeId="InstanceActionStatus" enumCode="done" description="Done" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="IasFailed" enumTypeId="InstanceActionStatus" enumCode="failed" description="Failed" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="IasRefused" enumTypeId="InstanceActionStatus" enumCode="refused" description="Refused" sequenceNum="5"/>
+
+    <!-- The driver contract: the container services of an instance, Rust over moqui_lib::docker (crates/moqui-instance),
+        and the run services of a CI job's container (crates/moqui-git/src/ci/driver) -->
+    <moqui.server.instance.InstanceHostType hostTypeId="docker" description="Docker or Podman"
+            initService="org.moqui.dev.InstanceServices.init#InstanceContainer"
+            startService="org.moqui.dev.InstanceServices.start#InstanceContainer"
+            stopService="org.moqui.dev.InstanceServices.stop#InstanceContainer"
+            removeService="org.moqui.dev.InstanceServices.remove#InstanceContainer"
+            checkService="org.moqui.dev.InstanceServices.check#InstanceContainer"
+            runStartService="org.moqui.dev.InstanceServices.start#RunDocker"
+            runInspectService="org.moqui.dev.InstanceServices.inspect#RunDocker"
+            runRemoveService="org.moqui.dev.InstanceServices.remove#RunDocker"
+            runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsDocker"/>
+    <!-- Starts nothing and records what it was asked; a host's hostAddress says how it answers (success, fail, hang, lost,
+        exit). For tests of pipelines with no container host. -->
+    <moqui.server.instance.InstanceHostType hostTypeId="fake" description="Fake (records its calls, starts nothing)"
+            runStartService="org.moqui.dev.InstanceServices.start#RunFake"
+            runInspectService="org.moqui.dev.InstanceServices.inspect#RunFake"
+            runRemoveService="org.moqui.dev.InstanceServices.remove#RunFake"
+            runCleanupService="org.moqui.dev.InstanceServices.cleanup#RunsFake"/>
+    <!-- Plain http only on this machine; another host is reached over https (its client key a vault item), or a unix
+        socket forwarded to it -->
+    <moqui.server.instance.InstanceHost instanceHostId="LocalDocker" hostTypeId="docker"
+            hostProtocol="http" hostAddress="127.0.0.1" adminPort="2375"/>
+
+    <!-- MR Moqui (podman/build.sh's image): one data volume. Its database password, search password and ingest key are
+        made and deposited at the provision, for the bootstrap bundle and Monitor (M2, M4): none reaches its container,
+        which gets only its one-time pairing token, as a file. -->
+    <moqui.server.instance.InstanceKind instanceKindId="mr-moqui" description="MR Moqui" containerPort="8080" runAsUser="1000:1000">
+        <envs envName="moqui_conf__instance__purpose" envValue="production"/>
+        <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name" envValue="${databaseConf}"/>
+        <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__host" envValue="${databaseHost}"/>
+        <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__port" envValue="${databasePort}"/>
+        <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database" envValue="${databaseName}"/>
+        <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__user" envValue="${databaseUser}"/>
+        <envs envName="moqui_conf__search_facade__backend" envValue="${searchBackend}"/>
+        <envs envName="moqui_conf__search_facade__cluster__url" envValue="${searchUrl}"/>
+        <vols mountPoint="/var/lib/moqui" volumeName="${instanceName}-data"/>
+        <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
+        <hostConfigs hostConfigName="HealthCmd" hostConfigValue="curl -fsS http://127.0.0.1:8080/health"/>
+        <secrets secretName="dbPassword" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:dbPassword"
+                fieldName="password" generated="Y" whenDependency="database" description="Its database user's password, for the bootstrap bundle (M2)"/>
+        <secrets secretName="ingestKey" vaultItemTypeId="api-key" bindingPattern="AppInstance:{id}:ingestKey"
+                fieldName="secret" generated="Y" description="Its Monitor ingest key (M4)"/>
+    </moqui.server.instance.InstanceKind>
+
+    <moqui.server.instance.InstanceKind instanceKindId="postgres" description="Postgres" confName="postgres" containerPort="5432"
+            runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabasePostgres"
+            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabasePostgres">
+        <vols mountPoint="/var/lib/postgresql" volumeName="${instanceName}-data"/>
+        <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
+        <hostConfigs hostConfigName="HealthCmd" hostConfigValue="pg_isready -U postgres"/>
+        <secrets secretName="admin" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:admin"
+                fieldName="password" fileName="postgres-password" envName="POSTGRES_PASSWORD_FILE" generated="Y"
+                description="The superuser postgres's password"/>
+    </moqui.server.instance.InstanceKind>
+    <moqui.server.instance.InstanceKind instanceKindId="mysql" description="MySQL" confName="mysql" containerPort="3306"
+            runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
+            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabaseMySQL">
+        <vols mountPoint="/var/lib/mysql" volumeName="${instanceName}-data"/>
+        <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
+        <hostConfigs hostConfigName="HealthCmd" hostConfigValue="mysqladmin ping -h 127.0.0.1 --silent"/>
+        <secrets secretName="admin" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:admin"
+                fieldName="password" fileName="mysql-root-password" envName="MYSQL_ROOT_PASSWORD_FILE" generated="Y"
+                description="The root user's password"/>
+    </moqui.server.instance.InstanceKind>
+    <!-- OpenSearch reads no *_FILE setting: its entrypoint is wrapped to read the admin password from its file into the
+        setting its demo security configuration takes (crates/moqui-instance/src/kinds.rs), so it is in no container's
+        environment, labels or command; the OpenSearch process itself is started with it, as the image requires -->
+    <moqui.server.instance.InstanceKind instanceKindId="opensearch" description="OpenSearch" containerPort="9200" runAsUser="1000:1000">
+        <envs envName="discovery.type" envValue="single-node"/>
+        <envs envName="bootstrap.memory_lock" envValue="false"/>
+        <envs envName="OPENSEARCH_JAVA_OPTS" envValue="-Xms512m -Xmx512m"/>
+        <vols mountPoint="/usr/share/opensearch/data" volumeName="${instanceName}-data"/>
+        <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
+        <secrets secretName="admin" vaultItemTypeId="login" bindingPattern="AppInstance:{id}:admin"
+                fieldName="password" fileName="opensearch-admin-password" generated="Y"
+                description="The admin user's password, which an mr-moqui instance that searches here is given (M2)"/>
+    </moqui.server.instance.InstanceKind>
+    <!-- what each kind depends on, once every kind is there -->
+    <moqui.server.instance.InstanceKindDependency instanceKindId="mr-moqui" dependencyRole="database" allowedKindId="postgres" optional="Y"/>
+    <moqui.server.instance.InstanceKindDependency instanceKindId="mr-moqui" dependencyRole="database" allowedKindId="mysql" optional="Y"/>
+    <moqui.server.instance.InstanceKindDependency instanceKindId="mr-moqui" dependencyRole="search" allowedKindId="opensearch" optional="Y"/>
+
+    <moqui.server.instance.InstanceImage instanceImageId="MoquiLocal" instanceKindId="mr-moqui" imageName="localhost/moqui:latest"/>
+    <moqui.server.instance.InstanceImage instanceImageId="Postgres18" instanceKindId="postgres" imageName="docker.io/library/postgres:18"/>
+    <moqui.server.instance.InstanceImage instanceImageId="MySQL84" instanceKindId="mysql" imageName="docker.io/library/mysql:8.4"/>
+    <moqui.server.instance.InstanceImage instanceImageId="OpenSearch3" instanceKindId="opensearch" imageName="docker.io/opensearchproject/opensearch:3.4.0"/>
+
+    <!-- Observes each instance that has a container and writes what its host says; changes nothing (§4.1) -->
+    <moqui.service.job.ServiceJob jobName="reconcile_AppInstances" description="Observe managed instances"
+            serviceName="org.moqui.dev.InstanceServices.reconcile#AppInstances" cronExpression="0 0/5 * * * ?" paused="N"/>
+</entity-facade-xml>

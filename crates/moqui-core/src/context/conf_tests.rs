@@ -477,7 +477,6 @@ fn every_keyed_merge_has_its_key_in_the_conf_schema() {
         <database-list><dictionary-type type="t"/><database name="d"><database-type type="t"/></database></database-list>
         <repository-list><repository name="r"><init-param name="i"/></repository></repository-list>
         <edge><delegate service="s"/><queue-kind name="q"/><replicate set="s"/></edge>
-        <instance-hosting><token-command name="t"/></instance-hosting>
     </moqui-conf>"#;
     let base = MNode::parse_text("moqui-conf", text).unwrap();
     let over = MNode::parse_text("moqui-conf", text).unwrap();

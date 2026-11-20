@@ -68,7 +68,6 @@ pub mod pool;
 mod protocol_admin;
 mod web_protection;
 mod recent_auth;
-mod registry_token;
 mod replay_store;
 mod remote;
 mod request_pool;

@@ -99,6 +99,9 @@ mod driver {
                 .tcp_port(self.port)
                 .user(Some(self.username.as_str()))
                 .pass(Some(self.password.as_str()))
+                // never the password in clear text (mysql_clear_password): without TLS a caching_sha2 full
+                // authentication encrypts it to the server's RSA key instead
+                .enable_cleartext_plugin(false)
                 .db_name(database)
                 .prefer_socket(false)
                 .stmt_cache_size(0usize)
