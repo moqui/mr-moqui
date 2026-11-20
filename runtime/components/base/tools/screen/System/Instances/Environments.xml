@@ -52,6 +52,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="requiredPipeline"><default-field title="Required pipeline"><text-line size="30"/></default-field></field>
                 <field name="machineAccess"><default-field title="Machine access" tooltip="Its operations use the items the vault gave it, with no approver">
                     <drop-down><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
+                <field name="automaticRecovery"><default-field title="Automatic recovery" tooltip="An automatic Monitor recovery policy may act on its instances with no approver; needs machine access too">
+                    <drop-down><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
                 <field name="unsealPolicyEnumId"><default-field title="Unseal policy">
                     <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
                         <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="InstanceUnsealPolicy"/>

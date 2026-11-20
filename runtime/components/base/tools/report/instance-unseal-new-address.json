@@ -1,0 +1,74 @@
+{
+  "id": "instance-unseal-new-address",
+  "type": "alert",
+  "title": "Managed instance unsealed from a new address",
+  "body": {
+    "folder": "Instances",
+    "description": "Fires when a managed instance unsealed from an address it never unsealed from before (moqui.instance.unseals with moqui.instance.new_address true, by instance): a moved host, or its link key used from elsewhere. Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.instance.unseals\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "moqui.instance.id",
+            "size": 200
+          }
+        },
+        {
+          "id": "value",
+          "type": "sum",
+          "role": "metric",
+          "params": {
+            "field": "sum"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ],
+      "filters": [
+        {
+          "field": {
+            "name": "moqui.instance.new_address",
+            "op": "eq",
+            "value": "true"
+          }
+        }
+      ]
+    },
+    "field": "value",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 0
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "instances",
+      "severity": "critical"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

@@ -952,8 +952,8 @@ fn roll(
         run_backup(facade, backup, request, opened, outcome)?;
     }
     for (at, target) in plan.targets.iter().enumerate() {
-        // between instances: a rollout paused in Monitor stops here, the ones before it changed
-        if at > 0 && rollout_paused(facade, &plan.environment_id)? {
+        // between instances: a rollout paused in Monitor (pause-rollout, §4.8) stops here, the ones before it changed
+        if at > 0 && crate::monitor::rollout_paused(facade, &plan.environment_id)? {
             let line = format!(
                 "the rollout of InstanceEnvironment {} is paused: stopped before AppInstance {} (reasonCode \
                  rolloutPaused)",
@@ -966,13 +966,6 @@ fn roll(
         change(facade, link, plan, target, request, opened, outcome)?;
     }
     Ok(())
-}
-
-/// Whether the environment's rollout is paused (its `rolloutPausedDate`, set by Monitor's pause-rollout, M4): a roll
-/// stops before its next instance. M4's `monitor::rollout_paused` is the same check; one of the two goes at the merge.
-fn rollout_paused(facade: &EntityFacade, environment_id: &str) -> Result<bool, LibError> {
-    Ok(one(facade, ENVIRONMENT, "environmentId", environment_id)?
-        .is_some_and(|environment| !field(&environment, "rolloutPausedDate").is_empty()))
 }
 
 /// The rollback of an instance's last deploy that was done: back to the versions it recorded before it.

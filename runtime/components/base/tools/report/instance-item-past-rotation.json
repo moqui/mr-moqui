@@ -1,0 +1,65 @@
+{
+  "id": "instance-item-past-rotation",
+  "type": "alert",
+  "title": "Vault items past their rotation age",
+  "body": {
+    "folder": "Instances",
+    "description": "Fires when an environment has operational vault items past their rotation age (moqui.instance.items_past_rotation, by environment; the ages come with rotation, M5). Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-2h",
+      "thru": "now",
+      "queryString": "name:\"moqui.instance.items_past_rotation\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "moqui.instance.environment",
+            "size": 200
+          }
+        },
+        {
+          "id": "value",
+          "type": "max",
+          "role": "metric",
+          "params": {
+            "field": "max"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "field": "value",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 0
+    },
+    "intervalSeconds": 3600,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "instances",
+      "severity": "minor"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

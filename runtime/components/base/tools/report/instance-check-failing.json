@@ -1,0 +1,66 @@
+{
+  "id": "instance-check-failing",
+  "type": "alert",
+  "title": "Managed instance check failing",
+  "body": {
+    "folder": "Instances",
+    "description": "Fires when a managed instance that should run is not running or its health check fails, for two minutes (moqui.instance.check_failing, by instance, from what the reconcile job read from its host). Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.instance.check_failing\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "moqui.instance.id",
+            "size": 200
+          }
+        },
+        {
+          "id": "value",
+          "type": "max",
+          "role": "metric",
+          "params": {
+            "field": "max"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "field": "value",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 0
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 120,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "instances",
+      "severity": "major",
+      "incident": "true"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

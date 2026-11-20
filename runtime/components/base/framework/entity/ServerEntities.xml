@@ -203,6 +203,14 @@ along with this software (see the LICENSE.md file). If not, see
             hand that opens no vault item (or runs under machine access) runs as its requester asks; N (the default):
             another member of the group approves it (approve#InstanceDeploy). A deploy's lease is never approved by its
             requester.</description></field>
+        <field name="rolloutPausedDate" type="date-time"><description>Set while its rolling deploys are paused (Monitor's
+            pause-rollout, cleared by promote: plans/Vault-Instances.md §4.8); a deploy changes no further member
+            meanwhile</description></field>
+        <field name="rolloutPausedReason" type="text-medium"/>
+        <field name="automaticRecovery" type="text-indicator" default="'N'"><description>Y: an automatic Monitor recovery
+            policy may act on its instances (restart, isolate, pause-rollout, promote, rollback), with no person
+            approving, and only with machineAccess Y as well (plans/Vault-Instances.md §4.8); N: each needs a person's
+            approval</description></field>
         <relationship type="one" title="EnvironmentType" related="moqui.basic.Enumeration" short-alias="environmentType">
             <key-map field-name="environmentTypeEnumId"/></relationship>
         <relationship type="one" title="UnsealPolicy" related="moqui.basic.Enumeration">
@@ -286,6 +294,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="checkDatabaseService" type="text-medium"/>
         <field name="backupService" type="text-medium"><description>A database kind's backup, which a deploy runs before a
             change that touches the database (M3): of org.moqui.dev.InstanceServices only</description></field>
+        <field name="scrapeUrlTemplate" type="text-medium"><description>Where Monitor scrapes an instance of the kind
+            (its exporter, or its own Prometheus endpoint), with the template placeholders (${instanceName}): a provision
+            adds it as a ScrapeTarget (plans/Vault-Instances.md §4.8). Empty: the kind reports by OTLP or not at
+            all</description></field>
         <relationship type="many" related="moqui.server.instance.InstanceKindEnv" short-alias="envs">
             <key-map field-name="instanceKindId"/></relationship>
         <relationship type="many" related="moqui.server.instance.InstanceKindVolume" short-alias="vols">
@@ -419,6 +431,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="observedDate" type="date-time"/>
         <field name="sealState" type="text-short"/>
         <field name="sealCheckedDate" type="date-time"/>
+        <!-- Monitor (§4.8): since when its link has said it is sealed (empty while unsealed), the addresses it unsealed
+            from (comma-separated, the newest last, at most 20), and the live members of its cluster as its link last
+            said them (comma-separated instance ids, each its AppInstance id when this manager gave it its identity) -->
+        <field name="sealedSince" type="date-time"/>
+        <field name="unsealAddresses" type="text-long"/>
+        <field name="clusterMembers" type="text-long"/>
         <field name="linkState" type="text-short"/>
         <field name="linkCheckedDate" type="date-time"/>
         <!-- an mr-moqui instance's one-time pairing token (§4.2, §4.4): its SHA-256 and when it stops working; the token

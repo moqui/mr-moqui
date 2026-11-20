@@ -187,7 +187,7 @@ impl Otlp {
         let username = authorized.username.clone();
         receiver::run_as(&self.factory, username, move |factory, ec| {
             let json = to_json(&message).map_err(|error| (400, format!("OTLP normalization failed: {error}")))?;
-            let answer = receiver::enqueue(factory, |decoder| {
+            let answer = receiver::enqueue(factory, &authorized.source, |decoder| {
                 Ok(decoder.decode_value(signal, &json, &authorized.key, &authorized.source))
             })?;
             receiver::touch_key(factory, ec, &authorized.key);

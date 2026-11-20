@@ -34,6 +34,7 @@ mod deploy;
 mod docker_real;
 mod kinds;
 mod link;
+mod monitor;
 mod provision;
 
 pub(super) fn setup() -> (ExecutionContext, EntityFacade) {

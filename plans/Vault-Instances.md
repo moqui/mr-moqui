@@ -441,8 +441,8 @@ state and raises the alerts of [§4.8](#48-monitor). It changes nothing by itsel
   - **For a third-party image on Docker:** a file copied into the created container before it starts, and read through
     the image's `*_FILE` settings (`POSTGRES_PASSWORD_FILE`, `MYSQL_ROOT_PASSWORD_FILE`). It is on the host's disk
     only while the container exists.
-  - **For MR Moqui:** the bootstrap bundle over the manager link ([§4.4](#44-the-manager-link)), so no secret is in its
-    container at all.
+  - **For MR Moqui:** the bootstrap bundle over the manager link ([§4.4](#44-the-manager-link)) for its bootstrap
+    secrets; its Monitor ingest key, which its telemetry export reads at boot, is a file ([§4.8](#48-monitor)).
 
   M1 checks each mechanism on both hosts.
 - The only start value that comes near a secret is a managed MR Moqui instance's one-time pairing token. It works once,

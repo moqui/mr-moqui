@@ -1167,6 +1167,8 @@ differently:
   token) to a deployment controller. It is tried again, with the same key, up to five times. The controller answers
   at once, reports on `POST /v1/recovery` with an ingest key and the token, or is polled at `statusUrl`.
 - **manual** waits for an operator to mark the action done or failed.
+- **instance** carries out restart, isolate-instance, pause-rollout, promote and rollback on an instance this server
+  manages, through its own actions ([below](#managed-instances)).
 
 An action past its deadline is timed out and escalated.
 
@@ -1180,6 +1182,105 @@ version:
 The shipped `DEFAULT` policy is advisory and only escalates major and critical incidents to the ADMIN group (its
 `contactJson` takes a contact point as alert rules do). No action reverses committed business transactions. The
 public demo ends `MONITOR_RECOVER` and `MONITOR_RECOVER_ADMIN`.
+
+## Managed instances
+
+A server that manages instances (System › Instances, [Run-Deploy](../Run-Deploy.md#managed-instances)) is their
+Monitor too (plans/Vault-Instances.md §4.8).
+
+**Identity.** A provision gives a new MR Moqui instance its Monitor identity as settings, never secrets:
+- `instance@id` is its `AppInstance` id, so its `service.instance.id` is too;
+- `telemetry@service-name` is `moqui-<environment>`, so an environment's instances are one service in Services and
+  Releases, apart from the manager's own (whose name a sender's record would otherwise take as `moqui (received)`);
+- `telemetry@deployment-environment` is its environment's id, sent as the resource attribute `deployment.environment`;
+- `telemetry@otlp-endpoint` is the manager's Monitor: `manage@monitor-url`, else the origin of `manage@link-url`. It
+  must be https (http only to the loopback) and on the link's host unless `manage@monitor-other-host` is true; else a
+  provision gives none and logs why, since the instance's ingest key would go there;
+- `telemetry@service-version` is set by a deploy (empty, the binary's version).
+
+Its ingest key is made in Monitor's format and deposited as the vault item `AppInstance:<id>:ingestKey`. The container
+gets it as the file `/run/secrets/moqui-ingest-key`, which `telemetry@otlp-headers-file` names: a file of a bare key is
+sent as `Authorization: Bearer`, and one of a `name=value` list as it is. Once every instance of the provision is up,
+the key is registered as an ingest key of source `instance:<id>`, owned by the user who provisioned, who must hold
+`MONITOR_INGEST` (else the provision's report says so, and the instance sends nothing until a key is given). An earlier
+key of the instance is revoked. Monitor's Services, Releases and regressions then line up with the fleet.
+
+**Only the instance's own key names it.** Monitor's receiver refuses a record whose `service.instance.id` (on the
+record or its resource) is a managed instance's unless it came under that instance's key (source `instance:<id>`),
+since incidents and the `instance` recovery adapter act on that id; and it refuses any sender's metric named
+`moqui.instance.*`, which only the manager records. Each refused record is counted in the partial-success answer.
+
+**Scrape targets.** A kind with a `scrapeUrlTemplate` gets a scrape target per instance, `<id>-scrape`, whose metrics
+carry the instance's id (`ScrapeTarget.serviceInstanceId`). The shipped kinds name exporters on the environment's
+network: Postgres `postgres_exporter` (`<name>-exporter:9187`), MySQL `mysqld_exporter` (`:9104`), and OpenSearch's stats
+through `elasticsearch_exporter` (`:9114`). The provision does not make the exporter containers; run one beside each
+instance, or change the target. A target reaches the private network only when the provisioning user holds
+`MONITOR_PRIVATE_NETWORK` (on an instance that is not production, also when it is empty). Removing an instance revokes
+its key and removes its target.
+
+**The fleet screen** (System › Instances › Fleet, `get#InstanceFleet`, `INSTANCE_ADMIN`) lists each environment's
+instances from the rows; nothing reaches a host as it renders. Each row shows:
+- kind and version (the image digest's short form, with a hash of the component commits);
+- health: the host's check (running, and not unhealthy) and how fresh the telemetry is (the ingest key last seen, or
+  the scrape target last read, within 10 minutes): `failing`, `stale`, `ok` or `unknown`;
+- seal and link state, and the cluster with its live members as the link reports them;
+- the last deploy, open incidents (`MonitorIncident.instanceId`), and items past their rotation age (rotation, M5);
+- whether the environment's rolling deploys are paused.
+
+Each instance links to Monitor › Services narrowed to it (`var-instance`) and to Releases of the versions it reports.
+
+**Alert rules.** The manager records gauges and counters of its instances, each with `moqui.instance.id` and
+`moqui.instance.environment`:
+
+| Metric | What it is |
+| --- | --- |
+| `moqui.instance.sealed_seconds` | How long its link has said it is sealed |
+| `moqui.instance.link_down_seconds` | How long the link of an instance that paired has been down |
+| `moqui.instance.check_failing` | 1 while it should run and its host says it does not, or its check fails |
+| `moqui.instance.items_past_rotation` | Items of the environment past their rotation age (0 until rotation, M5) |
+| `moqui.instance.unseals` | Each unseal, with `moqui.instance.new_address` true from an address it never unsealed from |
+| `moqui.instance.deploys_failed` | Each failed deploy, upgrade or rollback |
+| `moqui.instance.machine_access` | Each action that opened items under machine access and is not a deploy |
+
+Each member of the manager's cluster reads the gauges from the rows, again at most every 30 seconds and at the next
+collection after a link change it saw (many reconnects read them once), so a member that does not hold an instance's
+link reports it too. An instance that paired is down while its link says down or unknown, or when it never linked 10
+minutes after pairing. A manager alone in its cluster marks the links its rows say are up as unknown when it starts,
+until each instance links again. The shipped rule templates in the Instances folder of Dashboards › Alerts read them:
+- sealed longer than 15 minutes;
+- the link down for 5 minutes;
+- an unseal;
+- an unseal from a new address;
+- a failing check for 2 minutes;
+- a failed deploy;
+- items past their rotation age;
+- machine access used outside a deploy.
+
+As every shipped rule, each is a template: save a copy to run it. The sealed, link-down, check and deploy rules carry
+`incident="true"`, so a copy opens an incident for the instance, which recovery then works on.
+
+**The `instance` recovery adapter.** A `RecoveryAdapter` of type `instance` runs a step through the manager's own
+actions, by calling `org.moqui.dev.InstanceServices.run#InstanceRecovery`, not a webhook to an outside controller:
+- **restart** and **rollback** are instance actions, as the instance page asks them; a rollback is the deploy path's;
+- **isolate-instance** drains the instance over its manager link;
+- **pause-rollout** stops the environment's rolling deploys at the next member, and **promote** lets them go on.
+
+The manager is given the recovery action's id alone, and reads the rest from Monitor's rows: the action must be
+active, and its decision Approved and of the same incident, action, target and adapter.
+- **The instance.** The step's target when it is an `AppInstance` (an environment for pause-rollout and promote), else
+  the incident's instance. An incident that names several (a version-wide regression) is refused: the policy's step
+  names one.
+- **Approved by a person.** That user must hold `INSTANCE_ADMIN` and be in the environment's approver group when it
+  names one, as on the instance's page; `MONITOR_RECOVER` alone does not act on an instance.
+- **Automatic.** The environment must allow automatic recovery (*Automatic recovery*, `automaticRecovery`, off by
+  default) and have machine access, for every action (`automaticRecoveryOff`, `machineAccessRequired`).
+
+A step that opens vault items waits for its lease: the action is Running with the lease named, and Open lease on the
+incident goes to the lease dialog. Approve (`MONITOR_RECOVER`) starts the action, and when it waits for a lease an
+approver of the lease's vault goes on in the same click to the lease dialog, which approves it in the browser through the
+vault worker. Anyone else is told who approves it. The action ends as the manager's `InstanceAction` ends, and is not
+reverted from Monitor. Cancelling it, or its deadline passing, ends the manager's waiting action and its lease too
+(`cancel#InstanceRecovery`), so nothing runs when the lease would have opened.
 
 ## Changing settings for a while
 

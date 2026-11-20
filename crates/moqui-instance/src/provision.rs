@@ -186,8 +186,12 @@ fn execute(facade: &EntityFacade, plan: &Plan, report: &mut Vec<String>) -> Resu
     let mut made: Vec<Made> = Vec::new();
     let ran = (|| -> Result<(), LibError> {
         let mut made_admins: BTreeMap<String, MadeAdmin> = BTreeMap::new();
+        let mut ingest_keys = Vec::new();
         for step in &plan.steps {
             let values = deposit_credentials(facade, plan, step, report, &mut made)?;
+            if let Some(key) = values.get(crate::monitor::INGEST_SECRET) {
+                ingest_keys.push((step.id(), key.clone()));
+            }
             if let Some(admin) = values.get("admin") {
                 let user = if field(&step.kind, "confName") == "postgres" {
                     "postgres"
@@ -207,6 +211,8 @@ fn execute(facade: &EntityFacade, plan: &Plan, report: &mut Vec<String>) -> Resu
             }
             make_container(facade, plan, step, &values, report, &mut made)?;
         }
+        // step 6, register (§4.3, §4.8): each ingest key and scrape target, once every instance is up
+        crate::monitor::register(facade, plan, &ingest_keys, report);
         Ok(())
     })();
     if ran.is_err() {
@@ -335,7 +341,11 @@ fn deposit_credentials(
         let field_name = Some(field(secret, "fieldName"))
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "password".to_string());
-        let value = kinds::credential_for(&kind);
+        let value = if secret_name == crate::monitor::INGEST_SECRET {
+            crate::monitor::new_ingest_key()
+        } else {
+            kinds::credential_for(&kind)
+        };
         let mut fields = serde_json::Map::new();
         match (item_type.as_str(), secret_name.as_str()) {
             ("database-credential", "admin") => {
@@ -833,20 +843,6 @@ pub(crate) fn link_settings(env: &mut Vec<(String, String)>) -> bool {
     true
 }
 
-/// The setting an mr-moqui instance reports its version by (`telemetry@service-version`).
-const SERVICE_VERSION: &str = "moqui_conf__telemetry__service_version";
-
-/// The service version of an image reference: its digest when it names one, else its tag, else the reference.
-pub(crate) fn service_version(image: &str) -> String {
-    if let Some((_, digest)) = image.split_once('@') {
-        return digest.to_string();
-    }
-    match image.rsplit_once(':') {
-        Some((_, tag)) if !tag.contains('/') => tag.to_string(),
-        _ => image.to_string(),
-    }
-}
-
 /// The container a deploy replaces a made instance's with (plans/Vault-Instances.md §4.6, step 6): from `image`, with
 /// the instance's volumes, settings and secret files (each leased by its binding), its network and published port; no
 /// pairing token, since it is paired.
@@ -866,8 +862,12 @@ pub(crate) fn replacement_spec(
     if field(kind, "instanceKindId") == "mr-moqui" {
         link_settings(&mut env);
         // the version it reports, so Monitor's Releases sees the new one (M4's monitor::version_of names it so)
-        env.retain(|(name, _)| name != SERVICE_VERSION);
-        env.push((SERVICE_VERSION.to_string(), service_version(image)));
+        // its Monitor identity, with the version of the image it now runs, so Monitor's Releases sees it (§4.8)
+        let mut next = instance.clone();
+        next.set("imageDigest", Value::string(image));
+        let identity = crate::monitor::identity_of(&field(instance, "environmentId"), &next);
+        env.retain(|(name, _)| !identity.iter().any(|(given, _)| given == name));
+        env.extend(identity);
     }
     let port = |name: &str, row: &EntityValue| field(row, name).parse::<u16>().ok();
     kinds::container_spec(ContainerInput {
@@ -950,6 +950,8 @@ fn make_container(
             None,
             Zeroizing::new(token.as_bytes().to_vec()),
         ));
+        // its Monitor identity (§4.8): its instance id, environment and the manager's OTLP address, settings too
+        env.extend(crate::monitor::identity_env(facade, plan, step));
         if !link_settings(&mut env) {
             report.push(format!(
                 "AppInstance {id}: this manager's link has no address (manage@link-url), so the instance does not \

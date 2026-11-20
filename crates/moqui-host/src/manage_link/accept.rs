@@ -716,14 +716,17 @@ impl ManagerServer {
         }
     }
 
-    /// Keep an instance's status, if `generation` is still its link.
-    fn note_status(&self, instance: &str, generation: u64, status: &InstanceStatus) {
+    /// Keep an instance's status, if `generation` is still its link; true when its cluster's members changed.
+    fn note_status(&self, instance: &str, generation: u64, status: &InstanceStatus) -> bool {
         if let Some(link) = lock(&self.linked)
             .get_mut(instance)
             .filter(|link| link.generation == generation)
         {
+            let members_changed = link.status.cluster_members != status.cluster_members;
             link.status = status.clone();
+            return members_changed;
         }
+        false
     }
 
     /// What the screens show of `instance`'s link.
@@ -859,11 +862,13 @@ impl Manager for Service {
         self.server.register(&self.conn, status.clone())?;
         self.conn.helloed.store(true, Ordering::Release);
         let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
-        let seal_state = status.seal_state.clone();
+        let (seal_state, members) = (status.seal_state.clone(), status.cluster_members.clone());
         let schema_hash = status.schema_hash.clone();
         self.server
             .on_pool(move |facade| {
                 moqui_instance::link::note_state(facade, &instance, "linked", Some(&seal_state), &remote);
+                // its cluster's live members, which Monitor compares (plans/Vault-Instances.md §4.8)
+                moqui_instance::monitor::note_members(facade, &instance, &members);
                 // the schema a deploy records before it and a rollback compares (M3)
                 moqui_instance::link::note_schema(facade, &instance, &schema_hash);
                 Ok(())
@@ -890,16 +895,44 @@ impl Manager for Service {
         let status = request.into_inner();
         let sealed = status.seal_state != "unsealed";
         let was = self.conn.sealed.swap(sealed, Ordering::AcqRel);
-        self.server
+        let members_changed = self
+            .server
             .note_status(&self.conn.instance, self.conn.generation, &status);
+        if members_changed {
+            // what Monitor shows of its cluster: a write that fails is logged, and the heartbeat goes on
+            let (instance, members) = (self.conn.instance.clone(), status.cluster_members.clone());
+            let written = self
+                .server
+                .on_pool(move |facade| {
+                    moqui_instance::monitor::note_members(facade, &instance, &members);
+                    Ok(())
+                })
+                .await;
+            if let Err(status) = written {
+                tracing::error!(
+                    "Manager link: the cluster members of AppInstance {} were not written: {}",
+                    self.conn.instance,
+                    status.message()
+                );
+            }
+        }
         if !status.schema_hash.is_empty() {
+            // the schema a deploy records before it and a rollback compares (M3): a write that fails is logged
             let (instance, schema_hash) = (self.conn.instance.clone(), status.schema_hash.clone());
-            self.server
+            let written = self
+                .server
                 .on_pool(move |facade| {
                     moqui_instance::link::note_schema(facade, &instance, &schema_hash);
                     Ok(())
                 })
-                .await?;
+                .await;
+            if let Err(status) = written {
+                tracing::error!(
+                    "Manager link: the schema hash of AppInstance {} was not written: {}",
+                    self.conn.instance,
+                    status.message()
+                );
+            }
         }
         if was != sealed {
             let instance = self.conn.instance.clone();

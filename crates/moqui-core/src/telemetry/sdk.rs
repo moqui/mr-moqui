@@ -97,15 +97,7 @@ impl opentelemetry_sdk::metrics::reader::MetricReader for SharedReader {
 
 impl Runtime {
     pub(super) fn new(shared: Arc<Shared>) -> Self {
-        let current_resource = lock(&shared.resource).clone();
-        let resource = opentelemetry_sdk::Resource::builder_empty()
-            .with_attributes([
-                KeyValue::new("service.name", current_resource.service_name),
-                KeyValue::new("service.instance.id", current_resource.instance_id),
-                KeyValue::new("service.version", current_resource.version),
-                KeyValue::new("vcs.ref.head.revision", current_resource.revision),
-            ])
-            .build();
+        let resource = sdk_resource(lock(&shared.resource).clone());
         // These exporters only normalize and try-enqueue in memory. The core worker batches
         // transport, so SDK pre-export queues cannot hide losses or discard request roots.
         let provider = SdkTracerProvider::builder()
@@ -1006,6 +998,23 @@ const ALLOWED_ATTRIBUTES: &[&str] = &[
 
 type AllowedAttributes = HashMap<String, Vec<opentelemetry::Key>>;
 
+/// The SDK's resource of `resource`: its service, instance, version and revision, and its `deployment.environment` when
+/// it has one.
+fn sdk_resource(resource: super::Resource) -> opentelemetry_sdk::Resource {
+    let mut attributes = vec![
+        KeyValue::new("service.name", resource.service_name),
+        KeyValue::new("service.instance.id", resource.instance_id),
+        KeyValue::new("service.version", resource.version),
+        KeyValue::new("vcs.ref.head.revision", resource.revision),
+    ];
+    if !resource.environment.is_empty() {
+        attributes.push(KeyValue::new("deployment.environment", resource.environment));
+    }
+    opentelemetry_sdk::Resource::builder_empty()
+        .with_attributes(attributes)
+        .build()
+}
+
 fn allowed_keys(lists: &HashMap<String, Vec<String>>) -> AllowedAttributes {
     lists
         .iter()
@@ -1318,15 +1327,7 @@ impl opentelemetry_sdk::metrics::exporter::PushMetricExporter for LocalMetricExp
     async fn export(&self, metrics: &opentelemetry_sdk::metrics::data::ResourceMetrics) -> OTelSdkResult {
         let mut request =
             opentelemetry_proto::tonic::collector::metrics::v1::ExportMetricsServiceRequest::from(metrics);
-        let resource = lock(&self.0.resource).clone();
-        let resource = opentelemetry_sdk::Resource::builder_empty()
-            .with_attributes([
-                KeyValue::new("service.name", resource.service_name),
-                KeyValue::new("service.instance.id", resource.instance_id),
-                KeyValue::new("service.version", resource.version),
-                KeyValue::new("vcs.ref.head.revision", resource.revision),
-            ])
-            .build();
+        let resource = sdk_resource(lock(&self.0.resource).clone());
         for metrics in &mut request.resource_metrics {
             metrics.resource = Some((&resource).into());
         }

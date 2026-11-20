@@ -203,6 +203,10 @@ pub fn act(
         let mut row = instance(facade, instance_id)?;
         row.set("desiredStateEnumId", Value::string(desired));
         row.update(facade)?;
+        if verb == "remove" {
+            // Monitor's registration goes with it: its ingest key revoked, its scrape target removed (§4.8)
+            report.extend(crate::monitor::unregister(facade, instance_id));
+        }
     }
     crate::provision::finish(facade, &action_id, &opened, ran, report)
 }

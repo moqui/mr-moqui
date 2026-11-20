@@ -2040,9 +2040,11 @@ with every credential in an operational vault ([Vaults](security/Vaults.md#opera
 Instances, the services of `org.moqui.dev.InstanceServices` (Rust, `crates/moqui-instance`, in the Enterprise and
 Maximal builds) and the container driver CI's runs use too (`moqui_lib::docker`). Every service needs the sealed
 `INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/Vault-Instances.md) §4; built so far are M1,
-the manager link (M2, [below](#the-manager-link)) and deploys (M3: an instance's or an environment's Deploy and Roll back,
-and a pipeline's deployment to an environment, [Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)):
-Monitor's fleet screen, rotation and a managed sealed start come later.
+the manager link (M2, [below](#the-manager-link)), Monitor for managed instances (M4: the fleet screen, each
+instance's identity and ingest key, scrape targets, alert rules and the `instance` recovery adapter,
+[Monitoring](tools/Monitoring.md#managed-instances)) and deploys (M3: an instance's or an environment's Deploy and Roll
+back, and a pipeline's deployment to an environment,
+[Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)): rotation and a managed sealed start come later.
 
 **The rows.** System › Instances has a tab for each:
 
@@ -2053,7 +2055,8 @@ Monitor's fleet screen, rotation and a managed sealed start come later.
 | Images | An image of a kind. MR Moqui's own is `podman/build.sh`'s `localhost/moqui:latest`, with one data volume, `/var/lib/moqui`. A registry login is the `registry-login` item `InstanceImage:<id>:registry`, its `registry` field the image's `registryLocation`, which is the registry `imageName` pulls from |
 | Database hosts | A database server not managed here, of kind `postgres` or `mysql`; its admin login is the `database-credential` item `DatabaseHost:<id>:admin`, whose `host` and `port` fields are the row's |
 | Kinds | `mr-moqui`, `postgres`, `mysql`, `opensearch` (seed data, `framework/data/InstanceTypeData.xml`): each one's settings, volumes, health check, the vault items it needs and what it depends on |
-| Instances | The fleet: each instance's kind, environment, host, desired state and what its host last said |
+| Fleet | Each environment's instances as Monitor sees them: kind, version, health, seal and link, cluster, last deploy, open incidents ([Monitoring](tools/Monitoring.md#managed-instances)) |
+| Instances | Each instance's kind, environment, host, desired state and what its host last said |
 
 No row holds a secret. An instance's page shows its secret bindings (the item's binding and type, the file it is given
 as, and when it was deposited), never a value.
@@ -2105,9 +2108,10 @@ host. A database instance is on the same host as the instances that use it: they
    and a Podman secret on Podman, and the image reads it through its `*_FILE` setting (`POSTGRES_PASSWORD_FILE`,
    `MYSQL_ROOT_PASSWORD_FILE`). OpenSearch reads no such setting: its entrypoint is wrapped to read its admin password
    from the file, so the OpenSearch process has it in its own environment, as the image requires, and `docker inspect`
-   does not. A new MR Moqui instance gets only its one-time pairing token, as the file `moqui-pairing-token`, made after
-   its image is pulled (it works for 15 minutes; the instance's row keeps its SHA-256); its database password and ingest
-   key reach it over the manager link (M2), not as files.
+   does not. A new MR Moqui instance gets two files: its one-time pairing token, `moqui-pairing-token`, made after
+   its image is pulled (it works for 15 minutes; the instance's row keeps its SHA-256), and its Monitor ingest key,
+   `moqui-ingest-key`, which its telemetry export reads (`telemetry@otlp-headers-file`). Its database password reaches
+   it in the bootstrap bundle over the manager link (M2), not as a file.
 8. **All or nothing.** A volume that is there already (an earlier instance's data, with its own credentials) is refused
    before anything is made (`volumeKept`). When a step fails, what the provision made is undone, last first: its
    containers and volumes removed, a database and user it made on a server made before dropped, its deposits withdrawn

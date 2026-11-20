@@ -368,9 +368,9 @@ along with this software (see the LICENSE.md file). If not, see
         the environment's machine access), a backup first, the roll one instance at a time (a cluster member drained over
         the link), the annotations, and rollback to the versions an action recorded, refused across a schema change. -->
     <service verb="define" noun="InstanceDeployParameters" type="interface">
-        <description>What a deploy by hand changes: a new image (instanceImageId, with commitId the revision it was built
-            from), a component's commit (componentName, repositoryUrl, refName, commitId, dataTypes), or the rollback of a
-            deploy action (rollbackOfActionId); in an environment, or on one instance or cluster of it.</description>
+        <description>What a deploy by hand changes: a new image (instanceImageId, gated on the revision its row records),
+            a component's commit (componentName, repositoryId, refName, commitId, dataTypes), or the rollback of a deploy
+            action (rollbackOfActionId); in an environment, or on one instance or cluster of it.</description>
         <in-parameters>
             <parameter name="environmentId"><description>Its instance's when appInstanceId is given</description></parameter>
             <parameter name="appInstanceId"/>
@@ -459,6 +459,44 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="instanceActionId"/>
             <parameter name="statusEnumId"/>
         </out-parameters>
+    </service>
+    <!-- Monitor (plans/Vault-Instances.md §4.8) -->
+    <service verb="get" noun="InstanceFleet" type="rust" location="moqui_instance::services::get_instance_fleet"
+            allow-remote="false" transaction="ignore">
+        <description>The fleet screen's rows: each instance (not removed) by environment, with its kind, version, health
+            (its host's check and how fresh its telemetry is), seal and link state, cluster, last deploy, open Monitor
+            incidents and items past their rotation age (M5). From the rows only.</description>
+        <out-parameters><parameter name="fleetList" type="List"/></out-parameters>
+    </service>
+    <service verb="run" noun="InstanceRecovery" type="rust" location="moqui_instance::services::run_instance_recovery"
+            allow-remote="false" transaction="ignore">
+        <description>Monitor's instance recovery adapter (moqui-report calls it by name, with authorization disabled):
+            the recovery action's step, read from its RecoveryAction (active) and RecoveryDecision (Approved), never from
+            parameters. Approved by a person: that user must hold INSTANCE_ADMIN and be in the environment's approver
+            group; automatic: the environment must allow automatic recovery and have machine access. restart and rollback
+            are instance actions, which wait for their lease unless the environment has machine access; isolate-instance
+            drains the instance over its link; pause-rollout and promote stop and let go on the environment's rolling
+            deploys. Another caller needs INSTANCE_ADMIN.</description>
+        <in-parameters>
+            <parameter name="recoveryActionId" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status"><description>done, or waiting for its lease</description></parameter>
+            <parameter name="instanceActionId"/>
+            <parameter name="leaseId"/>
+            <parameter name="state"/>
+        </out-parameters>
+    </service>
+    <service verb="cancel" noun="InstanceRecovery" type="rust" location="moqui_instance::services::cancel_instance_recovery"
+            allow-remote="false" transaction="ignore">
+        <description>Monitor cancelled or timed out an instance adapter's recovery action: the instance action it waits on
+            (its RecoveryAction's externalId) is marked failed and its lease ended, so it runs nothing. One that runs or
+            ended is left as it is.</description>
+        <in-parameters>
+            <parameter name="recoveryActionId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="cancelled" type="Boolean"/></out-parameters>
     </service>
 
 </services>

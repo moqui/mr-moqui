@@ -1,0 +1,65 @@
+{
+  "id": "instance-machine-access",
+  "type": "alert",
+  "title": "Machine access used outside a deploy",
+  "body": {
+    "folder": "Instances",
+    "description": "Fires when an environment's machine access opened vault items for an action that is not a deploy, upgrade or rollback (a provision, a restart) in the last 5 minutes (moqui.instance.machine_access, by instance): unattended access outside the deploys it is for. Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.instance.machine_access\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "moqui.instance.id",
+            "size": 200
+          }
+        },
+        {
+          "id": "value",
+          "type": "sum",
+          "role": "metric",
+          "params": {
+            "field": "sum"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "field": "value",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 0
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "instances",
+      "severity": "major"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

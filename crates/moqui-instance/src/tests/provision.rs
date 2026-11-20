@@ -99,7 +99,7 @@ impl Fleet {
 
     /// Each secret file the engine was given, by container name and file name, with its value: archives put into a
     /// Docker container, Podman secrets mounted by a Podman one; removed containers too.
-    fn secret_files(&self) -> BTreeMap<(String, String), Vec<u8>> {
+    pub(super) fn secret_files(&self) -> BTreeMap<(String, String), Vec<u8>> {
         let mut files = BTreeMap::new();
         let podman = self.engine.podman_secrets_ever();
         for container in self.engine.containers_ever().values() {
@@ -121,7 +121,7 @@ impl Fleet {
     }
 
     /// The create body of the container named `name`.
-    fn body_of(&self, name: &str) -> Json {
+    pub(super) fn body_of(&self, name: &str) -> Json {
         self.engine
             .containers_ever()
             .values()
@@ -154,7 +154,7 @@ fn actions(facade: &EntityFacade, instance_id: &str) -> Vec<(String, String)> {
     })
 }
 
-fn set_row(facade: &EntityFacade, entity: &str, key: &str, id: &str, fields: &[(&str, &str)]) {
+pub(super) fn set_row(facade: &EntityFacade, entity: &str, key: &str, id: &str, fields: &[(&str, &str)]) {
     sys(|| {
         let mut row = facade
             .find(entity)
@@ -178,7 +178,7 @@ fn set_row(facade: &EntityFacade, entity: &str, key: &str, id: &str, fields: &[(
 }
 
 /// A Postgres instance and an mr-moqui instance on it, made by one provision.
-fn pg_and_app(facade: &EntityFacade, fleet: &Fleet, tag: &str, app_image: &str) -> (String, String) {
+pub(super) fn pg_and_app(facade: &EntityFacade, fleet: &Fleet, tag: &str, app_image: &str) -> (String, String) {
     let pg = fleet.instance(
         facade,
         NewInstance {
@@ -737,7 +737,9 @@ fn an_action_asked_from_a_screen_waits_for_its_lease_then_runs() {
             &requested.action_id,
             "statusEnumId",
         );
-        if status != crate::actions::WAITING || std::time::Instant::now() > until {
+        // a waiting action is running once its lease opens, then done
+        let busy = status == crate::actions::WAITING || status == crate::actions::RUNNING;
+        if !busy || std::time::Instant::now() > until {
             break status;
         }
         std::thread::sleep(Duration::from_millis(100));

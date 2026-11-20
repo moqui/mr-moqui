@@ -514,6 +514,24 @@ fn used_items(facade: &EntityFacade, lease_id: &str) -> BTreeSet<String> {
     })
 }
 
+/// A member took in the item `binding` the provision deposited (here: made again by the vault's manager), so a lease can
+/// name it: the ingest key a replaced container's file holds (M4).
+fn take_in(facade: &EntityFacade, fleet: &mut Fleet, binding: &str) {
+    sys(|| {
+        facade
+            .find("moqui.security.vault.VaultItem")
+            .unwrap()
+            .eq("bindingKey", Value::string(binding))
+            .delete_all()
+            .unwrap()
+    });
+    fleet.vault.item(
+        "api-key",
+        binding,
+        &json!({ "keyId": "ingest", "secret": "an-ingest-key-value" }),
+    );
+}
+
 /// A new image of the mr-moqui kind, its source revision recorded as passed.
 fn image(facade: &EntityFacade, id: &str, name: &str, login: bool) {
     let mut fields = json!({ "instanceImageId": id, "instanceKindId": "mr-moqui", "imageName": name,
@@ -533,6 +551,7 @@ fn a_deploy_uses_only_its_leases_items() {
     login(&fleet.vault.maker.user);
     let registry = lease::registry(ctx.factory());
     let app = app(&facade, &fleet, &registry, "app-items", "");
+    take_in(&facade, &mut fleet, &format!("AppInstance:{app}:ingestKey"));
     gated(&facade, &fleet);
     // a new image of its kind from a registry that needs a login, which is a vault item
     image(&facade, "MoquiNext", "registry.example.com/moqui:2", true);
@@ -555,7 +574,14 @@ fn a_deploy_uses_only_its_leases_items() {
     );
     let link = FakeLink::default();
     let plan = deploy::plan(&facade, &link, &request).unwrap();
-    assert_eq!(plan.bindings, ["InstanceImage:MoquiNext:registry".to_string()]);
+    // the new image's registry login, and the secret file the container is made with again (its ingest key)
+    assert_eq!(
+        plan.bindings,
+        [
+            "InstanceImage:MoquiNext:registry".to_string(),
+            format!("AppInstance:{app}:ingestKey")
+        ]
+    );
     assert!(
         plan.operation
             .contains("InstanceImage:MoquiNext:registry to registry.example.com"),
@@ -599,14 +625,27 @@ fn a_deploy_uses_only_its_leases_items() {
     // the new container reports the new version, for Monitor's Releases
     let body = fleet.engine.containers()[&after].body.to_string();
     assert!(body.contains("moqui_conf__telemetry__service_version=2"), "{body}");
-    let item = field_of(
-        &facade,
-        "moqui.security.vault.VaultItem",
-        "bindingKey",
-        "InstanceImage:MoquiNext:registry",
-        "vaultItemId",
+    let item = |binding: &str| {
+        field_of(
+            &facade,
+            "moqui.security.vault.VaultItem",
+            "bindingKey",
+            binding,
+            "vaultItemId",
+        )
+    };
+    assert_eq!(
+        used_items(&facade, &own),
+        BTreeSet::from([
+            item("InstanceImage:MoquiNext:registry"),
+            item(&format!("AppInstance:{app}:ingestKey"))
+        ])
     );
-    assert_eq!(used_items(&facade, &own), BTreeSet::from([item]));
+    // the ingest key is a file of the new container, as it was of the old
+    assert_eq!(
+        fleet.engine.secret_outside_files(b"an-ingest-key-value"),
+        Vec::<String>::new()
+    );
     // the login went to the registry only, never into a container
     assert!(fleet.engine.secret_outside_files(b"a-registry-token-value").is_empty());
     // the lease ended with the deploy: it opens nothing again
@@ -621,10 +660,11 @@ fn a_deploy_uses_only_its_leases_items() {
 fn a_replacement_that_fails_leaves_the_old_container_running() {
     let (ctx, facade) = super::setup();
     let _guard = ctx.enter();
-    let fleet = fleet(&facade, "keep", FakeEngine::docker());
+    let mut fleet = fleet(&facade, "keep", FakeEngine::docker());
     login(&fleet.vault.maker.user);
     let registry = lease::registry(ctx.factory());
     let app = app(&facade, &fleet, &registry, "app-keep", "");
+    take_in(&facade, &mut fleet, &format!("AppInstance:{app}:ingestKey"));
     gated(&facade, &fleet);
     // the fake engine refuses to make a container of the image `broken`
     image(&facade, "MoquiBroken", "broken", false);
@@ -635,7 +675,10 @@ fn a_replacement_that_fails_leaves_the_old_container_running() {
             image_id: "MoquiBroken".to_string(),
         },
     );
-    let refused = deploy::run(&facade, &registry, &FakeLink::default(), &request, None).unwrap_err();
+    let link = FakeLink::default();
+    let plan = deploy::plan(&facade, &link, &request).unwrap();
+    let lease_id = approved(&facade, &mut fleet, &registry, &plan.bindings, &plan.operation);
+    let refused = deploy::run(&facade, &registry, &link, &request, Some(&lease_id)).unwrap_err();
     assert!(refused.message().contains("unwell"), "{refused}");
     assert_eq!(
         field_of(&facade, INSTANCE, "appInstanceId", &app, "instanceUuid"),
@@ -777,4 +820,42 @@ fn a_deploy_needs_the_environments_approver_group_and_a_second_member() {
         );
         assert!(refused.contains("deploy step's"), "{service}: {refused}");
     }
+}
+
+/// A rollout paused in Monitor (pause-rollout, the environment's `rolloutPausedDate`, M4) stops a roll before its next
+/// instance: the ones before it changed, the rest did not.
+#[test]
+fn a_paused_rollout_stops_before_the_next_instance() {
+    let (ctx, facade) = super::setup();
+    let _guard = ctx.enter();
+    let fleet = fleet(&facade, "pause", FakeEngine::docker());
+    login(&fleet.vault.maker.user);
+    let registry = lease::registry(ctx.factory());
+    let first = app(&facade, &fleet, &registry, "app-pause-1", "");
+    let second = app(&facade, &fleet, &registry, "app-pause-2", "");
+    gated(&facade, &fleet);
+    set_row(
+        &facade,
+        "moqui.server.instance.InstanceEnvironment",
+        "environmentId",
+        &fleet.environment,
+        &[("rolloutPausedDate", "now")],
+    );
+    let link = FakeLink::default();
+    let refused = deploy::run(
+        &facade,
+        &registry,
+        &link,
+        &component_deploy(&fleet, COMMIT_PASSED),
+        None,
+    )
+    .unwrap_err();
+    assert!(refused.message().contains("rolloutPaused"), "{refused}");
+    assert_eq!(
+        link.changes(),
+        [format!("deploy {first} {COMMIT_PASSED} drained=false rollback=false")]
+    );
+    assert!(!actions_of(&facade, &second)
+        .iter()
+        .any(|(action, _)| action == "IatDeploy"));
 }
