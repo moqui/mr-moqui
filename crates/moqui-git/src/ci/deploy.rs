@@ -524,40 +524,59 @@ fn lease_waited(entity: &EntityFacade, deployment_id: &str, lease_id: &str, limi
 /// its approver may decide the deployment (an approver of the environment, not the requester); otherwise the lease
 /// ends and the deployment is refused, naming who approved it.
 fn decide_by_lease(entity: &EntityFacade, deployment: &EntityValue, lease_id: &str) -> Result<(), Error> {
-    let id = field(deployment, "deploymentId").unwrap_or_default();
+    let approver = lease_approver(entity, lease_id)?;
+    if lease_approver_decides(entity, deployment, &approver) {
+        decide(entity, deployment, Some(approver), true, None, None)?;
+        return Ok(());
+    }
+    refuse_by_lease(entity, deployment, lease_id, &approver)
+}
+
+/// Who approved a lease; empty when no one has.
+fn lease_approver(entity: &EntityFacade, lease_id: &str) -> Result<String, Error> {
+    let _rows = crate::rows_guard();
+    Ok(one(entity, VAULT_LEASE, "leaseId", lease_id)?
+        .and_then(|row| field(&row, "approvedByUserId"))
+        .unwrap_or_default())
+}
+
+/// Whether `approver`, who approved a deployment's lease, decides the deployment: not its requester, and an approver
+/// of its environment, checked as themselves with authorization on, as decide#GitDeployment checks its caller.
+fn lease_approver_decides(entity: &EntityFacade, deployment: &EntityValue, approver: &str) -> bool {
+    if approver.is_empty() || field(deployment, "requestedByUserId").as_deref() == Some(approver) {
+        return false;
+    }
     let repository = field(deployment, "repositoryId").unwrap_or_default();
-    let (approver, group) = {
+    let group = {
         let _rows = crate::rows_guard();
-        let approver = one(entity, VAULT_LEASE, "leaseId", lease_id)?
-            .and_then(|row| field(&row, "approvedByUserId"))
-            .unwrap_or_default();
-        let group = field(deployment, "environmentId")
+        field(deployment, "environmentId")
             .and_then(|environment| {
                 one(entity, CI_ENVIRONMENT, "environmentId", &environment)
                     .ok()
                     .flatten()
             })
-            .and_then(|environment| field(&environment, "approverGroupId"));
-        (approver, group)
+            .and_then(|environment| field(&environment, "approverGroupId"))
     };
-    // the approver's own groups and rights, checked with authorization on, as decide#GitDeployment checks its caller
-    let may = !approver.is_empty()
-        && field(deployment, "requestedByUserId").as_deref() != Some(approver.as_str())
-        && moqui_core::user::internal_login_user(&approver).is_ok()
-        && approver_now(group.as_deref(), &repository)
-        && instance_approver(entity, deployment).is_ok();
-    if let Err(err) = moqui_core::user::logout_local() {
-        tracing::debug!("the lease's approver was not signed out of the watch: {err}");
-    }
-    if may {
-        decide(entity, deployment, Some(approver), true, None, None)?;
-        return Ok(());
-    }
+    moqui_core::user::as_user(approver, || {
+        approver_now(group.as_deref(), &repository) && instance_approver(entity, deployment).is_ok()
+    })
+    .unwrap_or(false)
+}
+
+/// A deployment's lease was approved by someone who does not decide it: the lease ends and the deployment is refused,
+/// naming who approved it.
+fn refuse_by_lease(
+    entity: &EntityFacade,
+    deployment: &EntityValue,
+    lease_id: &str,
+    approver: &str,
+) -> Result<(), Error> {
+    let id = field(deployment, "deploymentId").unwrap_or_default();
     moqui_core::vault_hooks::end_lease(lease_id);
     let message = format!(
         "its lease was approved by {}, who does not decide this environment's deployments (or asked for it): the lease \
          ended",
-        if approver.is_empty() { "no one" } else { approver.as_str() }
+        if approver.is_empty() { "no one" } else { approver }
     );
     let _rows = crate::rows_guard();
     end(entity, &id, WAITING_APPROVAL, REFUSED, &message, vec![])
@@ -625,7 +644,9 @@ fn ready(entity: &EntityFacade, id: &str, from: &str, more: Vec<(&str, Value)>) 
 ///
 /// A deployment with a lease (plans/Vault-Instances.md §4.6) is approved by opening it: `lease_approval` is the
 /// approver's client's approval of it (`approve#VaultLease`'s `approval`, under the caller's own rights: the vault's
-/// approve role and a recent sign-in), unless the lease is open already. A refusal ends the lease.
+/// approve role and a recent sign-in), unless the lease is open already: then whoever opened it decides it too, and
+/// one who does not (its requester, or not an approver of the environment) refuses it, ending the lease, the state
+/// answered `refused`. A refusal ends the lease.
 pub fn decide(
     entity: &EntityFacade,
     deployment: &EntityValue,
@@ -662,7 +683,6 @@ pub fn decide(
         call_as_caller(APPROVE_LEASE, &parameters)
             .map_err(|why| Error::new(format!("its lease {lease_id} was not approved: {why}")))?;
     }
-    let _rows = crate::rows_guard();
     if let (true, Some(lease_id)) = (approve, &lease_id) {
         if !lease_open(entity, lease_id)? {
             return Err(Error::new(format!(
@@ -670,7 +690,16 @@ pub fn decide(
                  the lease's approval with the decision"
             )));
         }
+        // a lease opened before this decision (in the lease dialog) is the approval of whoever opened it: one who does
+        // not decide the deployment (its requester, or not an approver of the environment) refuses it, as the lease's
+        // watch does
+        let approver = lease_approver(entity, lease_id)?;
+        if user_id.as_deref() != Some(approver.as_str()) && !lease_approver_decides(entity, deployment, &approver) {
+            refuse_by_lease(entity, deployment, lease_id, &approver)?;
+            return Ok(REFUSED.to_string());
+        }
     }
+    let _rows = crate::rows_guard();
     if approve {
         ready(
             entity,

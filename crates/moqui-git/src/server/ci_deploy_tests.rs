@@ -1229,6 +1229,72 @@ fn a_deployment_whose_token_is_leased_is_approved_by_opening_its_lease() {
     );
 }
 
+/// A lease opened in the lease dialog is the approval of whoever opened it, when a decision comes after it as well as
+/// in the lease's watch: one opened by the deployment's requester refuses the deployment when another maintainer then
+/// decides it, and ends the lease; one opened by another maintainer is the approval.
+#[test]
+fn a_lease_opened_by_the_requester_refuses_the_deployment_another_decides() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, _commit) = site("ci-deploy-lease-requester");
+    let (target, _received) = fake_target(TOKEN);
+    let environment_id = environment(&fixture, &target, TOKEN, true);
+    // a deployment waiting for approval, asked for by the writer, its lease opened by `approver` (rows as the engine and
+    // approve#VaultLease leave them, with no watch of the lease)
+    let waiting = |tag: &str, approver: &str| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let lease_id = format!("LEASE_{tag}");
+        let mut lease = EntityValue::make(&fixture.entity, "moqui.security.vault.VaultLease").unwrap();
+        lease.set("leaseId", s(&lease_id));
+        lease.set("statusId", s("VlsOpen"));
+        lease.set("approvedByUserId", s(approver));
+        lease.create(&fixture.entity).unwrap();
+        let mut row = EntityValue::make(&fixture.entity, "moqui.resource.GitDeployment").unwrap();
+        row.set_sequenced_id_primary(&fixture.entity).unwrap();
+        for (name, value) in [
+            ("repositoryId", "site"),
+            ("environmentId", environment_id.as_str()),
+            ("environmentName", "prod"),
+            ("statusId", deploy::WAITING_APPROVAL),
+            ("requestedByUserId", WRITER),
+            ("leaseId", lease_id.as_str()),
+        ] {
+            row.set(name, s(value));
+        }
+        row.create(&fixture.entity).unwrap();
+        text(&row, "deploymentId")
+    };
+    let decide = format!("{DEPLOYMENTS}.decide#GitDeployment");
+    let by_requester = waiting("REQ", WRITER);
+    let (out, errors) = call(
+        &fixture,
+        "git.second",
+        &decide,
+        &[("deploymentId", s(&by_requester)), ("decision", s("approve"))],
+    );
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(to_plain_string(&out["statusId"]), deploy::REFUSED, "{out:?}");
+    let row = deployment(&fixture, &by_requester);
+    assert_eq!(text(&row, "statusId"), deploy::REFUSED);
+    assert!(text(&row, "approvedByUserId").is_empty());
+    assert!(
+        text(&row, "errorText").contains(&format!("approved by {WRITER}")),
+        "{}",
+        text(&row, "errorText")
+    );
+    // opened by another maintainer, who decides the repository's deployments: the application's decision deploys it
+    let by_maintainer = waiting("MNT", "git.second");
+    let state = {
+        let _entered = fixture.context.enter();
+        let row = deployment(&fixture, &by_maintainer);
+        deploy::decide(&fixture.entity, &row, None, true, None, None).unwrap()
+    };
+    assert_eq!(state, deploy::DEPLOYING);
+}
+
 /// The token's vault for a lease: a new vault whose approver also decides the repository's deployments (a member of
 /// its writers, a maintainer), as the environment's vault, with no machine access.
 fn token_vault_leased(fixture: &Fixture, environment_id: &str) -> OperationalVault {
