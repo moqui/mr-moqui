@@ -55,11 +55,23 @@ fn what_a_dead_process_left_an_hour_ago_is_removed() {
     let dead_db = made(&tmp, &format!("git-repo-incoming-{DEAD}-2"), old);
     let dead_import = made(&tmp, &format!("git-import-repo-{DEAD}-1795128529823"), old);
     let archive = made(&tmp, "git-archive", old);
+    // old at its top, but a nested file is being written: a long import is not removed under it
+    let busy = objects.join(format!("incoming-{DEAD}-3"));
+    std::fs::create_dir_all(busy.join("deep").join("deeper")).unwrap();
+    std::fs::write(busy.join("deep").join("deeper").join("part"), b"being written").unwrap();
+    std::fs::File::open(&busy)
+        .unwrap()
+        .set_modified(SystemTime::now() - old)
+        .unwrap();
+    std::fs::File::open(busy.join("deep"))
+        .unwrap()
+        .set_modified(SystemTime::now() - old)
+        .unwrap();
     sweep_at_start(&root);
     for gone in [&dead_quarantine, &dead_gc, &dead_db, &dead_import] {
         assert!(!gone.exists(), "{} is removed", gone.display());
     }
-    for kept in [&own, &fresh, &pack, &archive] {
+    for kept in [&own, &fresh, &pack, &archive, &busy] {
         assert!(kept.exists(), "{} is kept", kept.display());
     }
     std::fs::remove_dir_all(&root).unwrap();

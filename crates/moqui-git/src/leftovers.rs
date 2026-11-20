@@ -38,20 +38,40 @@ fn pid_of(name: &str) -> Option<u32> {
     pid.parse().ok()
 }
 
-/// Whether process `pid` is running on this machine; true when that cannot be told (no `/proc`), so only the age
-/// decides then.
+/// Whether process `pid` is seen running on this machine. Without `/proc` no process can be seen, so it answers false
+/// and the age alone decides ([`LEFT_FOR`]).
 fn alive(pid: u32) -> bool {
     let proc = Path::new("/proc");
-    !proc.is_dir() || proc.join(pid.to_string()).exists()
+    proc.is_dir() && proc.join(pid.to_string()).exists()
 }
 
-/// The newest change of `dir` or of an entry directly in it.
+/// The most entries [`last_touched`] reads of one directory's tree; past it the directory is taken as touched now.
+const MOST_ENTRIES_READ: usize = 10_000;
+
+/// The newest change of `dir` or of anything in its tree (a long import writes nested files while the top stays old),
+/// reading at most [`MOST_ENTRIES_READ`] entries: a tree larger than that is taken as touched now, and kept.
 fn last_touched(dir: &Path) -> Option<SystemTime> {
-    let mut newest = std::fs::metadata(dir).ok()?.modified().ok()?;
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    let mut newest = std::fs::symlink_metadata(dir).ok()?.modified().ok()?;
+    let mut pending = vec![dir.to_path_buf()];
+    let mut read = 0usize;
+    while let Some(next) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
         for entry in entries.flatten() {
-            if let Some(modified) = entry.metadata().ok().and_then(|meta| meta.modified().ok()) {
+            read += 1;
+            if read > MOST_ENTRIES_READ {
+                return Some(SystemTime::now());
+            }
+            let Ok(meta) = entry.metadata() else {
+                continue;
+            };
+            if let Ok(modified) = meta.modified() {
                 newest = newest.max(modified);
+            }
+            // a link is not followed, so the walk stays in the directory
+            if meta.is_dir() && !entry.file_type().is_ok_and(|kind| kind.is_symlink()) {
+                pending.push(entry.path());
             }
         }
     }
