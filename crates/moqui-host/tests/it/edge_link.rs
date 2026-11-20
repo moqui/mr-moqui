@@ -449,6 +449,25 @@ fn pairing_links_both_ways_and_unpairing_cuts_the_link() {
         matches!(&refused, LinkError::Refused(message) if message.contains("revoked")),
         "{refused:?}"
     );
+
+    // SEC-CLU-82: a code made for no node, or for another, does not pair the revoked id with a new key and what was
+    // kept for it; a code made for that id does
+    let any = rt
+        .block_on(pair(&pair_config(&url, &code(&gate), "local-a", &certs)))
+        .unwrap_err();
+    assert!(any.message().contains("paired before with another key"), "{any:?}");
+    let for_other =
+        to_plain_string(&call(&gate, "create#PairingCode", &[("pairedNodeId", "local-z")]).unwrap()["code"]);
+    assert!(rt
+        .block_on(pair(&pair_config(&url, &for_other, "local-a", &certs)))
+        .is_err());
+    assert_eq!(client(&gate, "local-a")["statusId"], "EdgeClientRevoked");
+    let for_a = to_plain_string(&call(&gate, "create#PairingCode", &[("pairedNodeId", "local-a")]).unwrap()["code"]);
+    let again = rt
+        .block_on(pair(&pair_config(&url, &for_a, "local-a", &certs)))
+        .unwrap();
+    assert_eq!(client(&gate, "local-a")["statusId"], "EdgeClientActive");
+    assert_eq!(client(&gate, "local-a")["keyFingerprint"], again.key_fingerprint);
 }
 
 /// A TCP relay in front of the edge node: what NAT does to the local node's connections, with a switch that cuts them

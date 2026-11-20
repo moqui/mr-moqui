@@ -27,7 +27,8 @@ along with this software (see the LICENSE.md file). If not, see
     its members linked, such as a standby; the node it displaced is refused until Let it link again
     (clear#EdgeTakeover). Deliver again since (deliver#ItemsAgain) queues again the items delivered to a pairing since a
     time, after a standby was restored from a backup. Ping sends a Ping down a node's down connection and shows the
-    round trip; Revoke ends its key and closes its link. Make a pairing code (create#PairingCode) shows the code once,
+    round trip; Revoke ends its key and closes its link. Make a pairing code (create#PairingCode, for one named local node when
+    given, which a node paired before with another key needs: SEC-CLU-82) shows the code once,
     after the redirect, as the Chat apps screen shows a new app password; only its hash is kept. Near the top is this
     node's link key fingerprint (get#LinkStatus, read by the parent screen), for the operator to compare with what a
     local node's Connect step shows. Below, each pairing's replicated sets as this node has applied them. The parent
@@ -37,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Clients" default-menu-index="1">
 
     <transition name="makePairingCode">
-        <service-call name="org.moqui.edge.EdgeServices.create#PairingCode" in-map="{validMinutes:validMinutes}" out-map="codeOut"/>
+        <service-call name="org.moqui.edge.EdgeServices.create#PairingCode" in-map="{validMinutes:validMinutes, pairedNodeId:pairedNodeId}" out-map="codeOut"/>
         <actions><!-- shown once, after the redirect -->
             <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newEdgePairingCode = codeOut.code ?? ''; ec.web.sessionAttributes.newEdgePairingExpire = codeOut.expireDate ? ec.l10n.format(codeOut.expireDate, '') : '' }</script></actions>
         <default-response url="."/><error-response url="."/>
@@ -299,6 +300,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <option key="240" text="4 hours"/>
                         <option key="1440" text="A day"/>
                     </drop-down></default-field></field>
+                    <field name="pairedNodeId"><default-field title="For local node" tooltip="The id of the one local node this code pairs; needed to pair again a node paired before with another key (its hosts, ports and queued items go to the new key). Empty for a new node"><text-line size="30"/></default-field></field>
                     <field name="submitButton"><default-field title="Make the code"><submit/></default-field></field>
                 </form-single>
             </container-dialog>

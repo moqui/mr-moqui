@@ -125,7 +125,8 @@ pub(crate) enum Paired {
 }
 
 /// Use the pairing code and pin `fingerprint` for `node`. A node that is active with another key is refused: its
-/// operator revokes it first, so a code cannot take over a linked node.
+/// operator revokes it first, so a code cannot take over a linked node. A code made for a node (`forNodeId`) pairs that
+/// node only, and a node paired before with another key pairs again only with a code made for it (SEC-CLU-82).
 pub(crate) fn pair_client(
     factory: &ExecutionContextFactory,
     code: &str,
@@ -153,6 +154,11 @@ pub(crate) fn pair_client(
         if !text(row.get("usedDate")).is_empty() || expired {
             return Ok(Paired::Refused(BAD_CODE.to_string()));
         }
+        // a code made for one node pairs that node only (SEC-CLU-82)
+        let for_node = text(row.get("forNodeId"));
+        if !for_node.is_empty() && for_node != node {
+            return Ok(Paired::Refused(BAD_CODE.to_string()));
+        }
         let existing = facade
             .find(CLIENT)?
             .eq("pairedNodeId", Value::string(node))
@@ -164,6 +170,14 @@ pub(crate) fn pair_client(
         if active && key_changed {
             return Ok(Paired::Refused(format!(
                 "local node {node} is already paired with another key; revoke it on the edge node first"
+            )));
+        }
+        // an id paired before with another key (revoked) keeps its hosts, ports, copies and queued items for a re-pair:
+        // only a code the operator made for that id gives them to a new key, never any code (SEC-CLU-82)
+        if key_changed && for_node != node {
+            return Ok(Paired::Refused(format!(
+                "local node {node} was paired before with another key; the edge node's operator makes a pairing code \
+                 for {node} to pair it again"
             )));
         }
         let mut used = facade.make_value(PAIRING_CODE)?;
@@ -190,6 +204,11 @@ pub(crate) fn pair_client(
         // a pairing starts with no member keys, takeover or hold of before
         client.set("memberKeys", Value::Null);
         client.set("takeoverFromId", Value::Null);
+        // a new key's node configures itself again: the setup of the key before (its PASS sites, chat bridges, XMPP
+        // and SIP domain) is not its own
+        if key_changed {
+            client.set("setupJson", Value::Null);
+        }
         client.create_or_update(&facade)?;
         Ok(Paired::Pinned { key_changed })
     })

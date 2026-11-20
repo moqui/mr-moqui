@@ -185,8 +185,12 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="PairingCode" type="rust" location="moqui_core::service::edge::create_pairing_code"
             allow-remote="false">
         <description>On an edge node: a one-use pairing code for a local node, good for validMinutes (60 by default, at
-            most 1440). The code is shown once; only its hash is kept (moqui.edge.EdgePairingCode).</description>
-        <in-parameters><parameter name="validMinutes" type="Integer" default-value="60"/></in-parameters>
+            most 1440). The code is shown once; only its hash is kept (moqui.edge.EdgePairingCode). pairedNodeId names the
+            one local node it pairs, which a node paired before with another key needs to pair again.</description>
+        <in-parameters>
+            <parameter name="validMinutes" type="Integer" default-value="60"/>
+            <parameter name="pairedNodeId"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="pairingCodeId"/>
             <parameter name="code"/>
