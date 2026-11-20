@@ -286,6 +286,8 @@ fn get_job(entity: &EntityFacade, run: &EntityValue, job: &EntityValue) -> Resul
         },
         "limits": {
             "maxLogBatchBytes": super::number_setting("max-log-batch-bytes", DEFAULT_MAX_JSON),
+            "maxUnpackBytes":
+                super::number_setting("max-unpack-bytes", super::runner::archive::DEFAULT_MAX_UNPACK_BYTES),
         },
     }))
 }
@@ -354,6 +356,7 @@ fn put_artifact(
         path: path.as_deref(),
         cache_key: key.as_deref().filter(|_| kind == Kind::Cache),
         retention_days: query_value(&request.query, "retentionDays").and_then(|days| days.parse().ok()),
+        size: request.content_length,
     };
     match artifact::store(entity, run, job, &upload, body) {
         Ok(id) => Ok(json!({ "artifactId": id, "stored": id.is_some() })),

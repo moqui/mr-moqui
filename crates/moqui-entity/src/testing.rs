@@ -98,6 +98,42 @@ pub fn seed_status_flows(facade: &EntityFacade) {
 
 thread_local! {
     static CHECKED_DEFERRED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static FAILING_TABLES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// While it lives, every statement this thread sends to an in-memory database that names the table fails, as a
+/// database error would: for a test of what the code does when a read fails.
+pub struct FailTable(String);
+
+impl FailTable {
+    /// `table` is the table's name as the SQL writes it (`agent_tool_policy`), matched without regard to case.
+    pub fn new(table: &str) -> Self {
+        let table = table.to_ascii_lowercase();
+        FAILING_TABLES.with(|tables| tables.borrow_mut().push(table.clone()));
+        FailTable(table)
+    }
+}
+
+impl Drop for FailTable {
+    fn drop(&mut self) {
+        FAILING_TABLES.with(|tables| {
+            let mut tables = tables.borrow_mut();
+            if let Some(at) = tables.iter().position(|table| *table == self.0) {
+                tables.remove(at);
+            }
+        });
+    }
+}
+
+fn failing_table(sql: &str) -> Option<String> {
+    FAILING_TABLES.with(|tables| {
+        let tables = tables.borrow();
+        if tables.is_empty() {
+            return None;
+        }
+        let sql = sql.to_ascii_lowercase();
+        tables.iter().find(|table| sql.contains(table.as_str())).cloned()
+    })
 }
 
 /// The deferred statements this thread sent with a check that they changed a row (an update of the transaction cache's
@@ -491,6 +527,9 @@ impl MemConn {
             if !sql.eq_ignore_ascii_case("SELECT 1") {
                 lock(tape).push(sql.to_string());
             }
+        }
+        if let Some(table) = failing_table(sql) {
+            return Err(Error::new(format!("table {table} is failing for this test")));
         }
         if sql.eq_ignore_ascii_case("SELECT 1") {
             return Ok((

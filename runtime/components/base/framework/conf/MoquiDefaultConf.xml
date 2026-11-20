@@ -1130,7 +1130,8 @@
         fetch-max-request-bytes of an upload-pack request, max-object-size bytes of one pushed object;
         idle-timeout seconds of silence in a request body end it. pack-threads (2 when empty) compress and index one
         pack; a pushed or fetched delta chain is at most max-delta-depth deep. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
-        object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
+        object, at /git/<repositoryId>.git/info/lfs; a repository has at most lfs-max-locks LFS locks (0: no cap), and one
+        locks or locks/verify request answers at most lfs-locks-max-page (0: 100). eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
         webhook-private-network="true". A repository has at most max-webhooks webhooks and max-mirrors push mirrors
         (0: no cap); one pass of the webhook retries or of the mirror queue starts sends for queue-pass-seconds (0: no
@@ -1191,7 +1192,8 @@
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
             max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
-            lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
+            lfs-max-object-size="5368709120" lfs-max-locks="1000" lfs-locks-max-page="100" lfs-upload-check-service=""
+            outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" max-webhooks="20" max-mirrors="10" queue-pass-seconds="300" queue-pass-gap-seconds="300"
             merge-requests-max-page="100" merge-requests-max-repositories="500" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
@@ -1225,13 +1227,14 @@
             max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
             max-timeout-minutes="360" default-timeout-minutes="60" max-fetch-depth="50"
             max-log-bytes="16777216" max-log-batch-bytes="1048576" max-artifact-bytes="1073741824"
-            max-report-bytes="16777216" max-cache-bytes="2147483648" max-artifacts="100"
+            max-report-bytes="16777216" max-cache-bytes="2147483648" max-unpack-bytes="17179869184" max-artifacts="100"
             artifact-retention-days="30" max-artifact-retention-days="365" log-retention-days="90"
             cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
             container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
             container-tmp-mb="1024" container-workspace-mb="4096" max-services="4" schedule-min-minutes="15"
-            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="0" max-owner-upload-bytes="0"
+            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="10737418240" max-owner-upload-bytes="0"
+            max-untrusted-run-upload-bytes="1073741824"
             deploy-timeout-seconds="600" deploy-private-network="false"/>
 
     <!--

@@ -455,6 +455,7 @@ mod flow {
             }
             row.create(&facade).unwrap();
         }
+        crate::run::grant_agent_use(&facade, USER);
         let factory = Arc::clone(ctx.factory());
         (ctx, factory, facade, endpoint)
     }

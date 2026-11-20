@@ -603,8 +603,20 @@ impl ToolPolicy {
     }
 }
 
+/// The rule of one `AgentToolPolicy` row. A row whose ceiling or approval mode cannot be read fails closed (SEC-AI-87):
+/// it may have been a `never` or a READ cap, so it becomes a `never` rule for its pattern; the rules before it in
+/// sequence still decide their tools. A row with no `toolPattern` decides no tool and is left out (Tools › Policies
+/// stores none).
 fn policy_rule(agent_id: &str, row: &EntityValue) -> Option<PolicyRule> {
     let sequence = super::int_of(row, "sequenceNum").unwrap_or_default();
+    let never = |pattern: String| PolicyRule {
+        sequence,
+        pattern,
+        ceiling: None,
+        mode: ApprovalMode::Never,
+        allow_destructive: false,
+        calls_per_run: None,
+    };
     let Some(pattern) = super::text_of(row, "toolPattern") else {
         tracing::error!("tool policy {sequence} of agent {agent_id} has no toolPattern, so it is left out");
         return None;
@@ -614,8 +626,8 @@ fn policy_rule(agent_id: &str, row: &EntityValue) -> Option<PolicyRule> {
         Some(text) => match Classification::parse(&text) {
             Some(class) => Some(class),
             None => {
-                tracing::error!("tool policy {sequence} of agent {agent_id} has an unknown classification {text}, so it is left out");
-                return None;
+                tracing::error!("tool policy {sequence} of agent {agent_id} has an unknown classification {text}, so {pattern} is never offered");
+                return Some(never(pattern));
             }
         },
     };
@@ -625,8 +637,8 @@ fn policy_rule(agent_id: &str, row: &EntityValue) -> Option<PolicyRule> {
             match ApprovalMode::parse(&text) {
                 Some(mode) => mode,
                 None => {
-                    tracing::error!("tool policy {sequence} of agent {agent_id} has an unknown approval mode {text}, so it is left out");
-                    return None;
+                    tracing::error!("tool policy {sequence} of agent {agent_id} has an unknown approval mode {text}, so {pattern} is never offered");
+                    return Some(never(pattern));
                 }
             }
         }

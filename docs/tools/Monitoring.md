@@ -320,13 +320,19 @@ The entities are in `framework/entity/AgentEvalEntities.xml`, the services in `o
   raises the dataset's version and keeps the old items, so an experiment's version stays as it ran. Runs › Save as a
   dataset item turns a real run into a case.
 - **Experiments** (`AgentExperiment`, `AgentExperimentResult`) run each item, once per trial, through an agent (an
-  `AgentRun` on the job surface as the user who starts it, through `ec.llm.startRun`: the agent must serve `job`
-  and the user needs `AgentAdmin`) or a service (`input` and `metadata` in, `output` out). The job
+  `AgentRun` on the job surface as the user who starts it, through `start#AgentRun`: the agent must serve `job`
+  and the user needs `AgentUse` and `AgentAdmin`) or a service (`input` and `metadata` in, `output` out). An item may be
+  another user's message (a saved run, whose user the item's metadata names), so an agent run's writes are refused, not
+  approved by the agent's tool policy, unless the starter sets `policyWrites` (Policy writes) to Y. A service target, and a
+  scorer of another service, runs with authorization on as a person: the user who presses Start or Check now (which
+  needs `MONITOR_EVAL_RUN`), and in the job the experiment's starter, signed in for it. The job
   `advance_AgentExperiments_frequent` (each minute) reads the runs that ended, scores them with the scorers attached
   to the dataset, and ends the experiment with its mean score and pass rate. At most 200 items × trials. Compare
   shows two experiments of a dataset item by item, worst change first.
 - **Live scoring**: a scorer attached to an agent with a sampling rate scores that share of its completed runs
-  (chosen by a hash of the run ID), from `score_AgentLiveRuns_frequent` each five minutes.
+  (chosen by a hash of the run ID), from `score_AgentLiveRuns_frequent` each five minutes. Attaching one (`attach#Scorer`)
+  needs `AgentAudit`, as does attaching a scorer of another service to a dataset; the attach keeps who made it, and a
+  scorer of another service runs as them.
 - **Scores** (`AgentScore`) say where they came from: an experiment, a live sample, a run scored from Runs, or a
   person's review. A scorer that fails stores a score row with its error, and the other scorers and items go on.
 

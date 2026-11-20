@@ -36,6 +36,9 @@ pub struct Origin<'a> {
     pub pushed_for_review: bool,
     /// A merge request that stopped following its source (a fork its author lost, or that was deleted).
     pub source_detached: bool,
+    /// A schedule run of the default branch or of a protected one ([`is_protected`]): what is on it is the
+    /// repository's own, whoever pushed last. A schedule run of any other branch is decided by its head's pusher.
+    pub schedule_own_ref: bool,
 }
 
 /// Whether `user_id` has the update right on the repository, decided as that user with authorization on.
@@ -44,9 +47,11 @@ pub(crate) fn has_update(repository_id: &str, user_id: &str) -> bool {
     moqui_core::user::as_user(user_id, move || crate::server::permitted(&id, "update")).unwrap_or(false)
 }
 
-/// Whether a run of `event` from `origin` is trusted. A schedule run is: it is the repository's own branch, by its
-/// own file. Every other run needs an account with the update right, and a merge request's commits must be the
-/// repository's own.
+/// Whether a run of `event` from `origin` is trusted. A schedule run of the default branch or a protected one is: it
+/// is the repository's own branch, by its own file. A schedule run of another branch is decided as a push of its head
+/// is, by the account that pushed it (`user_id`, the head's `GitCommitPush`; untrusted when none is known), since an
+/// account without the update right may make such a branch (SEC-GIT-88). Every other run needs an account with the
+/// update right, and a merge request's commits must be the repository's own.
 pub fn is_trusted(event: Event, origin: &Origin<'_>) -> bool {
     if origin.pushed_for_review
         || origin.source_detached
@@ -57,7 +62,7 @@ pub fn is_trusted(event: Event, origin: &Origin<'_>) -> bool {
         return false;
     }
     match (event, origin.user_id) {
-        (Event::Schedule, _) => true,
+        (Event::Schedule, _) if origin.schedule_own_ref => true,
         (_, Some(user)) => has_update(origin.repository_id, user),
         (_, None) => false,
     }

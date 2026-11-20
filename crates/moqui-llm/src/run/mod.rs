@@ -39,6 +39,10 @@ pub mod stream;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::grant_agent_use;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -355,6 +359,8 @@ pub struct RunRow {
     pub tier: Option<Tier>,
     /// The Constitution the run uses, resolved when it started ([`crate::constitution::snapshot`]).
     pub constitution: Option<crate::constitution::snapshot::RunConstitution>,
+    /// The `AgentTrigger` that started the run, whose service user is checked by the trigger.
+    pub trigger_id: Option<String>,
 }
 
 impl RunRow {
@@ -404,6 +410,7 @@ impl RunRow {
             active_seconds: int_of(row, "activeSeconds").unwrap_or(0),
             tier: text_of(row, "tier").and_then(|tier| Tier::parse(&tier)),
             constitution: crate::constitution::snapshot::RunConstitution::of_run(row),
+            trigger_id: text_of(row, "triggerId"),
         }
     }
 

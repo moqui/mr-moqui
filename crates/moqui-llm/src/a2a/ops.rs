@@ -44,7 +44,7 @@ use super::types::{self, A2aError, Cursor, InMessage, PartLimits, SendConfig};
 use super::{Caller, Failure};
 use crate::approval::{self, ApprovalView};
 use crate::prompt::Surface;
-use crate::run::{self, RunRow, RunState};
+use crate::run::{self, AgentDef, RunRow, RunState};
 use crate::tools::PauseKind;
 use crate::{int_of, millis_of, text_of};
 use moqui_core::context::ExecutionContextFactory;
@@ -140,11 +140,15 @@ pub fn load_task(facade: &EntityFacade, run_id: &str) -> Result<Option<TaskRow>,
 }
 
 /// The caller's task `task_id`: a run of theirs on the `a2a` surface; anyone else's, or one of another surface, is
-/// not found.
+/// not found, and so is one of an agent the caller's `LlmApiClient` does not allow.
 pub(crate) fn owned(ctx: &Ctx<'_>, task_id: &str) -> Result<TaskRow, Failure> {
     let task = load_task(&ctx.facade, task_id).map_err(|error| Failure::of(&error, "the task lookup"))?;
-    task.filter(|task| task.run.user_id == ctx.caller.user_id && task.run.surface == Surface::A2a)
-        .ok_or_else(|| Failure::A2a(A2aError::task_not_found(task_id)))
+    task.filter(|task| {
+        task.run.user_id == ctx.caller.user_id
+            && task.run.surface == Surface::A2a
+            && ctx.caller.allows(&task.run.agent_id)
+    })
+    .ok_or_else(|| Failure::A2a(A2aError::task_not_found(task_id)))
 }
 
 /// Whether the run waits for no one here: ended, or paused with no step of it still running on this node.
@@ -484,6 +488,30 @@ pub struct Sent {
     pub config: SendConfig,
 }
 
+/// The agents the caller may call over A2A now: those the server exposes ([`super::card::exposed_agents`]) that the
+/// caller's `LlmApiClient` allows.
+fn callable_agents(ctx: &Ctx<'_>) -> Result<Vec<(AgentDef, EntityValue)>, Failure> {
+    let exposed = super::card::exposed_agents(&ctx.facade).map_err(|error| Failure::of(&error, "the agent lookup"))?;
+    Ok(exposed
+        .into_iter()
+        .filter(|(agent, _)| ctx.caller.allows(&agent.agent_id))
+        .collect())
+}
+
+/// Refuse a message to `agent_id` (the agent of a context or a task the caller has) unless the caller may call it
+/// over A2A now: an agent withdrawn from A2A (`exposeA2a` off, disabled, no longer serving `a2a`) or not allowed by
+/// the caller's client takes no more messages, whatever was started with it before.
+fn check_callable(ctx: &Ctx<'_>, agent_id: &str) -> Result<(), Failure> {
+    if callable_agents(ctx)?
+        .iter()
+        .any(|(agent, _)| agent.agent_id == agent_id)
+    {
+        Ok(())
+    } else {
+        Err(A2aError::invalid_params(format!("there is no agent {agent_id} on this server's A2A card")).into())
+    }
+}
+
 /// The agent a new task runs: the request's or the message's `metadata.agentId`, else the agent whose card lists
 /// `metadata.skillId`, else the conf's `default-agent`; it must be one the caller may use over A2A.
 fn agent_of(ctx: &Ctx<'_>, params: &Json, message: &InMessage) -> Result<String, Failure> {
@@ -496,7 +524,7 @@ fn agent_of(ctx: &Ctx<'_>, params: &Json, message: &InMessage) -> Result<String,
             .filter(|text| !text.is_empty())
             .map(str::to_string)
     };
-    let exposed = super::card::exposed_agents(&ctx.facade).map_err(|error| Failure::of(&error, "the agent lookup"))?;
+    let exposed = callable_agents(ctx)?;
     let wanted = meta("agentId").or_else(|| {
         let skill = meta("skillId")?;
         exposed
@@ -656,7 +684,10 @@ fn start_task(ctx: &Ctx<'_>, params: &Json, message: &InMessage) -> Result<TaskR
         agent_id = text_of(&conversation, "agentId");
     }
     let agent_id = match agent_id {
-        Some(agent_id) => agent_id,
+        Some(agent_id) => {
+            check_callable(ctx, &agent_id)?;
+            agent_id
+        }
         None => agent_of(ctx, params, message)?,
     };
     let request = run::StartRequest {
@@ -745,6 +776,7 @@ fn continue_task(ctx: &Ctx<'_>, task_id: &str, message: &InMessage) -> Result<Ta
         ))
         .into());
     }
+    check_callable(ctx, &task.run.agent_id)?;
     let paused = task.run.state.is_paused();
     let kind = match task.run.pause_kind.filter(|_| paused) {
         None => "AgikMessage",
@@ -849,6 +881,10 @@ pub(crate) fn list(ctx: &Ctx<'_>, params: &Json) -> Result<Json, Failure> {
             .eq("userId", Value::string(&ctx.caller.user_id))
             .eq("surfaceEnumId", Value::string(SURFACE))
             .disable_authz();
+        // a client limited to some agents lists only their tasks, as it gets only theirs (owned)
+        if let Some(agents) = ctx.caller.agents.as_ref().filter(|agents| !agents.is_empty()) {
+            find = find.condition(Condition::is_in("agentId", agents.iter().map(Value::string).collect()));
+        }
         if let Some(context_id) = context_id {
             find = find.eq("conversationId", Value::string(context_id));
         }

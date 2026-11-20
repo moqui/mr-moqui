@@ -243,7 +243,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>For System > LLM > Skills > SkillDetail: a skill's Markdown with its front matter as an editor shows
             it, its sections (name#slug, title, purpose, size), the risk that counts (only a skill a person wrote lowers
             one), whether it comes from a file, and the id of the skill in effect for its name (for its owner when
-            personal, else for the site): another one when this one is shadowed or overridden. Needs AgentAdmin.</description>
+            personal, else for the site): another one when this one is shadowed or overridden. Needs AgentAdmin; the text
+            of another user's personal skill also needs AgentAudit, and its read is written to AgentAuditLog.</description>
         <in-parameters><parameter name="skillId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="skillText"/>
@@ -253,6 +254,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="risk"/>
             <parameter name="fromFile"/>
             <parameter name="inEffectSkillId"/>
+            <parameter name="contentHidden"><description>Y for another user's personal skill to a caller without AgentAudit:
+                its text and sections are left out (SEC-AI-98).</description></parameter>
         </out-parameters>
     </service>
 
@@ -273,7 +276,8 @@ along with this software (see the LICENSE.md file). If not, see
             caller, with their personal skills), agent (default assist) and surface (default drawer), best first, each
             with its score (the lexical score, or the fused one when an embedder is installed), the semantic cosine, whether
             it is a strong match and what matched; the answer the skill tool gives to find with the query; the tail line
-            a later message would carry; and the catalog a conversation that starts with the query on page lists. Needs
+            a later message would carry; and the catalog a conversation that starts with the query on page lists. Another
+            user's retrieval, which lists their personal skills, needs AgentAudit and is written to AgentAuditLog. Needs
             AgentAdmin.</description>
         <in-parameters>
             <parameter name="query"/>

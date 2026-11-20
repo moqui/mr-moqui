@@ -50,7 +50,8 @@ along with this software (see the LICENSE.md file). If not, see
         </box-toolbar><box-body>
             <form-list name="SkillList" list="skillList" skip-form="true" header-dialog="true">
                 <entity-find entity-name="moqui.agent.AgentSkill" list="skillList" use-clone="true">
-                    <search-form-inputs default-order-by="skillName"/>
+                    <!-- a personal skill's text is its owner's (SEC-AI-98): the list finds by name, title and the like only -->
+                    <search-form-inputs default-order-by="skillName" skip-fields="body,description,frontMatterJson,aliases,contentHash"/>
                     <select-field field-name="skillId,skillName,title,skillKind,ownerUserId,locked,statusId,provenance,sourceLocation,versionNum,useCount,lastUsedDate"/>
                 </entity-find>
                 <field name="skillName"><header-field title="Skill" show-order-by="true"><text-find size="15" hide-options="true"/></header-field>

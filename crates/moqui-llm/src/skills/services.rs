@@ -303,6 +303,20 @@ fn get_skill_retrieval(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let query = text(parameters, "query").unwrap_or_default();
     let page = text(parameters, "page");
     let user_id = text(parameters, "userId").or_else(|| moqui_core::user::current_user_id().ok().flatten());
+    // another user's retrieval ranks and quotes their personal skills: AgentAudit's, with the read logged
+    if let Some(user_id) = &user_id {
+        let reason = format!("skill retrieval of user {user_id} in System › LLM › Skills");
+        let (shown, _) = {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            crate::assist::audit::may_read(facade, Some(user_id), None, None, &reason)?
+        };
+        if !shown {
+            add_error(format!(
+                "the retrieval of user {user_id} lists their personal skills, which needs the AgentAudit permission"
+            ));
+            return Ok(BTreeMap::new());
+        }
+    }
     let agent_id = text(parameters, "agentId").unwrap_or_else(|| "assist".to_string());
     let surface = text(parameters, "surface")
         .and_then(|name| Surface::parse(&name))
@@ -409,6 +423,32 @@ fn get_agent_skill(parameters: &Parameters, facade: &EntityFacade) -> Out {
         return Ok(BTreeMap::new());
     };
     let skill = Skill::of_row(&row);
+    let in_effect = super::factory().and_then(|factory| {
+        let index = SkillIndex::for_audience(
+            &factory,
+            facade,
+            &Audience {
+                user_id: skill.owner.as_deref(),
+                ..Audience::default()
+            },
+        );
+        index.get(&skill.name).map(|found| found.skill_id.clone())
+    });
+    // a personal skill is its owner's alone (a learned one holds what the owner's runs did): its text goes to its owner,
+    // or to AgentAudit with the read logged, as a conversation's content does; to anyone else only that it is hidden
+    if let Some(owner) = &skill.owner {
+        let reason = format!("personal skill {} in System › LLM › Skills", skill.name);
+        let (shown, _) = crate::assist::audit::may_read(facade, Some(owner), None, None, &reason)?;
+        if !shown {
+            return Ok(out([
+                ("contentHidden", Value::string("Y")),
+                ("sectionList", Value::List(Vec::new())),
+                ("risk", Value::string(skill.risk().as_str())),
+                ("fromFile", Value::string("N")),
+                ("inEffectSkillId", in_effect.map_or(Value::Null, Value::string)),
+            ]));
+        }
+    }
     let (intro, sections) = skill.sections();
     let section_list: Vec<Value> = sections
         .iter()
@@ -421,17 +461,6 @@ fn get_agent_skill(parameters: &Parameters, facade: &EntityFacade) -> Out {
             ])
         })
         .collect();
-    let in_effect = super::factory().and_then(|factory| {
-        let index = SkillIndex::for_audience(
-            &factory,
-            facade,
-            &Audience {
-                user_id: skill.owner.as_deref(),
-                ..Audience::default()
-            },
-        );
-        index.get(&skill.name).map(|found| found.skill_id.clone())
-    });
     Ok(out([
         ("skillText", Value::string(skill.to_markdown())),
         ("introChars", count(intro.chars().count())),
