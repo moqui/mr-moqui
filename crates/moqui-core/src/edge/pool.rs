@@ -716,6 +716,22 @@ pub fn notify_takeover(paired: &str, from: &str, to: &str, remote: &str, held: b
         .map_err(|err| Error::new(err.message().to_string()))
 }
 
+/// Whether `member` was admitted on a row that names no key for it: of `listed`, the list a linked member gave, or with
+/// none linked (`none_linked`) of `known`, the kept list. Its first pin is then told to the administrators
+/// ([`notify_first_pin`], SEC-CLU-81).
+pub fn admitted_unkeyed(
+    member: &str,
+    listed: Option<&[ClusterMemberInfo]>,
+    none_linked: bool,
+    known: &[ClusterMemberInfo],
+) -> bool {
+    let unkeyed_in = |list: &[ClusterMemberInfo]| {
+        list.iter()
+            .any(|row| row.instance_id == member && row.key_fingerprint.is_empty())
+    };
+    listed.is_some_and(unkeyed_in) || (none_linked && unkeyed_in(known))
+}
+
 /// Tell the edge node's administrators that member `member` of pairing `paired` linked for the first time, from
 /// `remote`, while other members were linked, and its key was pinned on the word of a list that names no key for it
 /// (a member that publishes none): a node with only the pairing's key could be the one that named it (SEC-CLU-81).

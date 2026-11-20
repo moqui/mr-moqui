@@ -111,6 +111,32 @@ fn a_listed_member_is_admitted_only_with_the_key_its_cluster_names() {
     .is_err());
 }
 
+/// SEC-CLU-81: a member admitted on a row naming no key is told, from a linked member's list and, with none linked,
+/// from the kept list too; a keyed row is not.
+#[test]
+fn a_member_admitted_on_an_unkeyed_row_is_told_on_either_branch() {
+    let keyed = ClusterMemberInfo {
+        key_fingerprint: "ab".repeat(32),
+        ..member("b", true, "")
+    };
+    let unkeyed = [member("b", true, "")];
+    assert!(admitted_unkeyed("b", Some(&unkeyed), false, &[]));
+    assert!(
+        admitted_unkeyed("b", None, true, &unkeyed),
+        "none linked, from the kept list"
+    );
+    assert!(
+        !admitted_unkeyed("b", None, false, &unkeyed),
+        "the kept list only with none linked"
+    );
+    assert!(!admitted_unkeyed(
+        "b",
+        Some(std::slice::from_ref(&keyed)),
+        true,
+        std::slice::from_ref(&keyed)
+    ));
+}
+
 #[test]
 fn admission_asks_the_linked_members_list_and_with_none_linked_the_key_admits() {
     let linked_a = vec!["a".to_string()];

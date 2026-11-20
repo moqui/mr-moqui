@@ -104,6 +104,23 @@ impl MemberKey {
         Self::read(&file, &text).map(Arc::new)
     }
 
+    /// Publish this instance's own key on its cluster member row before the row is first written (SEC-CLU-81): a node
+    /// that dials an edge or front node (`edge/node@url`, `edge/front-node@url`) loads or makes the key at its start, so
+    /// its edge node never reads its row live without the key. A key that cannot be had is logged; the dialer's own
+    /// load reports it again.
+    pub fn publish_before_start(factory: &moqui_core::context::ExecutionContextFactory) {
+        let dials = ["edge/node@url", "edge/front-node@url"]
+            .iter()
+            .any(|name| !moqui_core::context::conf_env::setting(name).trim().is_empty());
+        if !dials {
+            return;
+        }
+        match Self::load_or_create(factory.runtime_dir()) {
+            Ok(key) => moqui_core::cluster::set_edge_member_key(factory, &key.fingerprint()),
+            Err(err) => tracing::error!("Edge link: this member's own key was not read at start: {err}"),
+        }
+    }
+
     /// The public key, 32 bytes.
     pub fn public(&self) -> Vec<u8> {
         self.pair.public_key().as_ref().to_vec()

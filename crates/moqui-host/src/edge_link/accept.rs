@@ -2718,10 +2718,7 @@ impl LinkService {
         let _ = named.set(member.to_string());
         // a first pin with other members linked, on a list that names no key for the id: the administrators hear of it,
         // since a node with only the pairing's key could have named it (SEC-CLU-81)
-        let unkeyed = listed.as_deref().is_some_and(|list| {
-            list.iter()
-                .any(|listed| listed.instance_id == member && listed.key_fingerprint.is_empty())
-        });
+        let unkeyed = pool::admitted_unkeyed(member, listed.as_deref(), linked_any.is_empty(), &known);
         if pinned.is_none() && takeover.is_none() && unkeyed {
             tracing::warn!(
                 "Edge link of {node}: member {member} from {remote} linked for the first time; its cluster names no key \

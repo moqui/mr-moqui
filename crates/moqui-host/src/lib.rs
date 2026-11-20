@@ -1931,6 +1931,9 @@ fn boot_server_factory(
     moqui_devkit::deploy::load::load_pending(&factory);
     // the deploys and updates of components kept in the database that other cluster members make
     moqui_devkit::deploy::git::install(&factory);
+    // this member's own edge key on its row from the row's first write, so its edge node never reads it live without one
+    #[cfg(feature = "edge")]
+    edge_link::member_key::MemberKey::publish_before_start(&factory);
     moqui_core::cluster::start(&factory).map_err(moqui_lib::error::Error::from)?;
     if let Some(instance) = moqui_core::cluster::instance_id(&factory) {
         moqui_core::telemetry::for_factory(&factory).set_instance_id(instance);

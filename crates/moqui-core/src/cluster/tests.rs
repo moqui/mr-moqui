@@ -311,6 +311,30 @@ fn write_row(facade: &EntityFacade, id: &str, commit: bool) {
     }
 }
 
+/// SEC-CLU-81: a member key the host set before the start is on the row from its first write, and one set after it is
+/// written to the row at once; the member report carries it.
+#[test]
+fn a_member_publishes_its_edge_key_from_the_rows_first_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-keyed");
+    let (ctx, facade) = open_facade();
+    let _recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    let first = "ab".repeat(32);
+    super::set_edge_member_key(ctx.factory(), &first);
+    super::start(ctx.factory()).unwrap();
+    let members = super::load_members(&facade).unwrap();
+    assert_eq!(members[0].edge_member_key, first, "on the row from the start");
+    let second = "cd".repeat(32);
+    super::set_edge_member_key(ctx.factory(), &second);
+    let members = super::load_members(&facade).unwrap();
+    assert_eq!(members[0].edge_member_key, second, "written at once after the start");
+    let report = super::member_report(ctx.factory(), &facade).unwrap();
+    assert_eq!(report[0].edge_member_key, second);
+    moqui_lib::env::set_property(super::EDGE_MEMBER_KEY_PROPERTY, "");
+}
+
 #[test]
 fn first_start_upserts_one_member_and_does_not_post() {
     let _lock = lock();
