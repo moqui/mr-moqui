@@ -566,6 +566,9 @@ function endAccess(userId, kinds, credentialId, markLoggedOut) {
         try {
             if (kind === "sessions") {
                 counts.sessions = Number(UserSecurityChecks.endUserSessions(userId, null))
+                // the browsers of those sessions get no more pushes of the account's rooms (SEC-COM-92)
+                ec.service.sync().name("org.moqui.ui.NotificationServices.forget#UserWebPush").parameter("userId", userId)
+                    .disableAuthz().call()
                 if (markLoggedOut) {
                     const value = ec.entity.makeValue(ACCOUNT)
                     value.setFields({userId, hasLoggedOut: "Y"}, true, null, null)

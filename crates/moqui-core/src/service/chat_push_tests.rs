@@ -725,6 +725,8 @@ fn a_waiting_push_is_dropped_when_its_message_room_or_account_is_gone() {
     );
     let seq = send(&bed.room, &format!("<p>{} again</p>", mention("erin")), &[]);
     run(bed.now + 120_000);
+    // what went at once is not this check's (an immediate push is not read again)
+    bed.net.take();
     update(
         &bed.facade,
         "moqui.chat.ChatEvent",

@@ -124,6 +124,8 @@ const DELIVERY_PASSES: usize = 4;
 const SWEEP: Duration = Duration::from_secs(60);
 /// The rows done (sent, failed, dropped) are kept this long.
 const KEEP_MILLIS: i64 = 7 * 86_400_000;
+/// A push this long after it was written is checked again before it goes ([`gone_since_queued`], SEC-COM-92).
+const WAITED_CHECK: i64 = 30_000;
 const MAX_SNIPPET: usize = 140;
 const MAX_NAME: usize = 100;
 
@@ -1369,9 +1371,10 @@ fn deliver_one(
         finish(facade, &id, attempts, DROPPED, Some("newer"), None, now)?;
         return Ok(Step::Dropped);
     }
-    // a push that waited (do not disturb, its push service) is of what may have changed since it was written; a test
-    // push is of no room
-    if !clear && room_id != TEST_ROOM {
+    // a push that waited (do not disturb, its push service; written WAITED_CHECK or more ago) is of what may have
+    // changed since it was written; one sent at once is not read again, and a test push is of no room
+    let waited = millis_of(row, "createdDate").is_some_and(|created| now - created >= WAITED_CHECK);
+    if !clear && waited && room_id != TEST_ROOM {
         if let Some(reason) = gone_since_queued(facade, &user, &room_id, count_of(row, "eventSeq"), now)? {
             finish(facade, &id, attempts, DROPPED, Some(reason), None, now)?;
             return Ok(Step::Dropped);
