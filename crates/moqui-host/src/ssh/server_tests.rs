@@ -16,8 +16,8 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use super::{
-    conf_listen_target, git_allowed, listen_target, Counts, GitAccess, GitLogin, SessionRefused, Slot, SlotRefused,
-    Who, MAX_PREAUTH, PREAUTH_PER_SOURCE,
+    conf_listen_target, dialog_expired_within, git_allowed, listen_target, Counts, GitAccess, GitLogin, SessionRefused,
+    Slot, SlotRefused, Who, MAX_PREAUTH, PREAUTH_PER_SOURCE,
 };
 
 #[test]
@@ -173,6 +173,39 @@ fn dialogs_hold_only_their_share_of_the_sessions() {
     assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
 }
 
+/// A dialog that logs in gives back its place among the dialogs and takes its user's share, so logged-in dialog users
+/// are bounded by max-sessions-per-user and not by max-dialog-sessions; a failed login gives the user's share back.
+#[test]
+fn a_dialog_that_logs_in_trades_its_dialog_place_for_its_user_s_share() {
+    let counts = Arc::new(Counts::new(8, 1, 0).with_dialogs(1, 0));
+    let at = |last: u8| std::net::IpAddr::from([198, 51, 100, last]);
+    let first = Slot::preauth(&counts, at(1)).unwrap();
+    first.log_in(Who::Dialog).unwrap();
+    assert_eq!(
+        Slot::preauth(&counts, at(2)).unwrap().log_in(Who::Dialog),
+        Err(SessionRefused::Dialog),
+        "the one dialog place is held"
+    );
+    // a wrong password takes and gives back the user's share
+    first.take_dialog_user("ann").unwrap();
+    first.give_back_dialog_user();
+    assert!(moqui_lib::sync::lock(&counts.by_user).is_empty());
+    first.take_dialog_user("ann").unwrap();
+    first.dialog_logged_in();
+    assert_eq!(counts.dialogs.held(), 0, "the dialog place came back at login");
+    let second = Slot::preauth(&counts, at(2)).unwrap();
+    second.log_in(Who::Dialog).unwrap();
+    // ann has her one session: her second dialog login is refused, and bob's goes
+    assert!(second
+        .take_dialog_user("ann")
+        .unwrap_err()
+        .contains("max-sessions-per-user"));
+    second.take_dialog_user("bob").unwrap();
+    drop((first, second));
+    assert!(moqui_lib::sync::lock(&counts.by_user).is_empty());
+    assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
+}
+
 /// `git-any-account` serves git to an account that proved a key, and gives a password login nothing.
 #[test]
 fn git_any_account_is_for_a_key_login_only() {
@@ -195,4 +228,39 @@ fn git_any_account_is_for_a_key_login_only() {
         assert_eq!(login(true, true, any_account, false), GitAccess::NeedsKey);
         assert_eq!(login(true, true, any_account, true), GitAccess::Served);
     }
+}
+
+/// A connection let in with no user is closed when it opens no `apps` within the start wait (the pre-auth time, 30
+/// s), or its dialog does not log in within the login wait; one that logs in is not (SEC-FIL-87).
+#[tokio::test]
+async fn a_dialog_with_no_apps_or_no_login_is_closed_in_time() {
+    use std::time::Duration;
+    let (start, login) = (Duration::from_millis(50), Duration::from_millis(150));
+    let counts = Arc::new(Counts::new(8, 0, 0));
+    let dialog = || {
+        let slot = Slot::preauth(&counts, std::net::IpAddr::from([198, 51, 100, 7])).unwrap();
+        slot.log_in(Who::Dialog).unwrap();
+        slot.dialog.store(true, Ordering::Release);
+        slot
+    };
+    async fn ends(slot: &Slot, within: Duration, (start, login): (Duration, Duration)) -> bool {
+        let since = tokio::time::Instant::now();
+        tokio::time::timeout(within, dialog_expired_within(slot, since, start, login))
+            .await
+            .is_ok()
+    }
+    let waits = (start, login);
+    // no apps: closed at the start wait
+    let idle = dialog();
+    assert!(ends(&idle, Duration::from_millis(120), waits).await);
+    // apps but no login: closed at the login wait, not before
+    let waiting = dialog();
+    waiting.dialog_started.store(true, Ordering::Release);
+    assert!(!ends(&waiting, Duration::from_millis(100), waits).await);
+    assert!(ends(&waiting, Duration::from_millis(300), waits).await);
+    // logged in: never
+    let logged_in = dialog();
+    logged_in.dialog_started.store(true, Ordering::Release);
+    logged_in.dialog_logged_in();
+    assert!(!ends(&logged_in, Duration::from_millis(300), waits).await);
 }

@@ -124,8 +124,8 @@ struct Gate {
     events: mpsc::Sender<SessionEvent>,
     label: String,
     logged_in: AtomicBool,
-    /// The transport's flag for a dialog login.
-    done: Option<Arc<AtomicBool>>,
+    /// The transport's part in a dialog login.
+    done: Option<Arc<dyn super::DialogLogin>>,
     failures: AtomicUsize,
     /// Why the gate closed the session, for the user.
     note: Mutex<Option<String>>,
@@ -188,11 +188,21 @@ impl ScreenLink for GatedLink {
         if let Some(slot) = lock(&gate.slot).as_mut() {
             slot.assign(username).map_err(LinkError::Remote)?;
         }
+        // the transport's share of the user, as a key or password login takes it (SEC-FIL-87)
+        if let Some(done) = &gate.done {
+            if let Err(reason) = done.take(username) {
+                let back = lock(&gate.slot).as_mut().map_or(Ok(()), |slot| slot.assign(&before));
+                if let Err(back) = back {
+                    tracing::warn!("{}: the session slot did not go back to {before:?}: {back}", gate.label);
+                }
+                return Err(LinkError::Remote(reason));
+            }
+        }
         match self.link.login(username, password, code) {
             Ok(()) => {
                 gate.logged_in.store(true, Ordering::Release);
                 if let Some(done) = &gate.done {
-                    done.store(true, Ordering::Release);
+                    done.done();
                 }
                 tracing::info!("{}: {username} logged in", gate.label);
                 let log = may_read_log_now(&gate.factory, username);
@@ -203,6 +213,9 @@ impl ScreenLink for GatedLink {
                 Ok(())
             }
             Err(err) => {
+                if let Some(done) = &gate.done {
+                    done.give_back();
+                }
                 let back = lock(&gate.slot).as_mut().map_or(Ok(()), |slot| slot.assign(&before));
                 if let Err(reason) = back {
                     tracing::warn!(

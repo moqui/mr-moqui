@@ -397,6 +397,18 @@ impl SessionRefused {
     }
 }
 
+/// What a session holds beside its place in `max-sessions`, each given back as it drops.
+#[derive(Default)]
+struct Shares {
+    /// Its source's share (`max-sessions-per-source`), held for its drop, which gives it back.
+    #[allow(dead_code)]
+    source: Option<SourceSlot>,
+    /// Its user's share (`max-sessions-per-user`): a key or password login's, or a dialog's once it logged in.
+    user: Option<String>,
+    /// With no user, its place among the dialogs (`max-dialog-sessions`), until the dialog logs in.
+    dialog: Option<SourceSlot>,
+}
+
 /// One connection's place in [`Counts`]: a pre-auth slot from accept, traded for a session at login. Drop gives back
 /// whichever it holds.
 struct Slot {
@@ -405,17 +417,16 @@ struct Slot {
     preauth: std::sync::Mutex<Option<SourceSlot>>,
     session: AtomicBool,
     source: IpAddr,
-    /// What the session holds beside its place in `max-sessions`: its source's share, its user's, and with no user
-    /// its place in `max-dialog-sessions`.
-    shares: std::sync::Mutex<(Option<SourceSlot>, Option<String>, Option<SourceSlot>)>,
+    /// What the session holds beside its place in `max-sessions`.
+    shares: std::sync::Mutex<Shares>,
     /// Let in with no user: the login dialog must start within [`PREAUTH_TIMEOUT`] and log in within
     /// `crate::term::LOGIN_WAIT`.
     dialog: AtomicBool,
     /// The connection let in with no user has started its `apps`, the login dialog.
     #[cfg_attr(not(feature = "tui"), allow(dead_code))]
     dialog_started: AtomicBool,
-    /// The dialog logged in, set by the session's login gate.
-    dialog_done: Arc<AtomicBool>,
+    /// The dialog logged in ([`DialogLogin::done`](crate::term::DialogLogin::done)).
+    dialog_done: AtomicBool,
 }
 
 impl Slot {
@@ -431,7 +442,7 @@ impl Slot {
             shares: std::sync::Mutex::default(),
             dialog: AtomicBool::new(false),
             dialog_started: AtomicBool::new(false),
-            dialog_done: Arc::new(AtomicBool::new(false)),
+            dialog_done: AtomicBool::new(false),
         })
     }
 
@@ -456,15 +467,9 @@ impl Slot {
         };
         let user = match who {
             Who::User(name) => {
-                let mut by_user = moqui_lib::sync::lock(&counts.by_user);
-                let held = by_user.entry(name.to_string()).or_insert(0);
-                if counts.max_per_user > 0 && *held >= counts.max_per_user {
-                    if *held == 0 {
-                        by_user.remove(name);
-                    }
+                if !self.take_user(name) {
                     return Err(SessionRefused::User);
                 }
-                *held += 1;
                 Some(name.to_string())
             }
             Who::Dialog | Who::Cluster => None,
@@ -474,10 +479,26 @@ impl Slot {
             self.release_user(user.as_deref());
             return Err(SessionRefused::Total);
         }
-        *moqui_lib::sync::lock(&self.shares) = (source, user, dialog);
+        *moqui_lib::sync::lock(&self.shares) = Shares { source, user, dialog };
         self.session.store(true, Ordering::Release);
         moqui_lib::sync::lock(&self.preauth).take();
         Ok(())
+    }
+
+    /// Take `user`'s share of the sessions, as a key or password login does: false when the user has
+    /// `max-sessions-per-user` open.
+    fn take_user(&self, user: &str) -> bool {
+        let counts = &self.counts;
+        let mut by_user = moqui_lib::sync::lock(&counts.by_user);
+        let held = by_user.entry(user.to_string()).or_insert(0);
+        if counts.max_per_user > 0 && *held >= counts.max_per_user {
+            if *held == 0 {
+                by_user.remove(user);
+            }
+            return false;
+        }
+        *held += 1;
+        true
     }
 
     /// Give a user's share back.
@@ -499,13 +520,67 @@ impl Slot {
     }
 }
 
+/// A dialog's login (SEC-FIL-87): the user's share of the sessions is taken as a key or password login takes it, and
+/// once logged in the connection gives back its place among the dialogs, so logged-in dialogs do not fill
+/// `max-dialog-sessions` and a user's dialog sessions count toward `max-sessions-per-user`. The `apps` session holds
+/// it by a weak reference: the connection's place goes when the connection does, whatever the session does after.
+#[derive(Debug)]
+struct SlotLogin(std::sync::Weak<Slot>);
+
+impl crate::term::DialogLogin for SlotLogin {
+    fn take(&self, username: &str) -> Result<(), String> {
+        self.0.upgrade().map_or(Ok(()), |slot| slot.take_dialog_user(username))
+    }
+
+    fn give_back(&self) {
+        if let Some(slot) = self.0.upgrade() {
+            slot.give_back_dialog_user();
+        }
+    }
+
+    fn done(&self) {
+        if let Some(slot) = self.0.upgrade() {
+            slot.dialog_logged_in();
+        }
+    }
+}
+
+impl Slot {
+    /// A dialog's login: take `username`'s share, the reason it is refused.
+    fn take_dialog_user(&self, username: &str) -> Result<(), String> {
+        let mut shares = moqui_lib::sync::lock(&self.shares);
+        if shares.user.is_some() {
+            return Ok(());
+        }
+        if !self.take_user(username) {
+            return Err(format!(
+                "{username} has ssh-server max-sessions-per-user sessions open; close one and log in again"
+            ));
+        }
+        shares.user = Some(username.to_string());
+        Ok(())
+    }
+
+    /// A dialog's login failed: give its user's share back.
+    fn give_back_dialog_user(&self) {
+        let user = moqui_lib::sync::lock(&self.shares).user.take();
+        self.release_user(user.as_deref());
+    }
+
+    /// A dialog logged in: its place among the dialogs goes back.
+    fn dialog_logged_in(&self) {
+        self.dialog_done.store(true, Ordering::Release);
+        moqui_lib::sync::lock(&self.shares).dialog = None;
+    }
+}
+
 impl Drop for Slot {
     fn drop(&mut self) {
         if self.session.swap(false, Ordering::AcqRel) {
             self.counts.sessions.fetch_sub(1, Ordering::AcqRel);
             // the source's share goes back as its slot drops
-            let (_source, user, _dialog) = std::mem::take(&mut *moqui_lib::sync::lock(&self.shares));
-            self.release_user(user.as_deref());
+            let shares = std::mem::take(&mut *moqui_lib::sync::lock(&self.shares));
+            self.release_user(shares.user.as_deref());
         }
     }
 }
@@ -523,18 +598,23 @@ async fn preauth_expired(slot: &Slot, since: tokio::time::Instant) {
 /// leaves the dialog, does not hold a session slot; never otherwise.
 async fn dialog_expired(slot: &Slot, since: tokio::time::Instant) {
     #[cfg(feature = "tui")]
-    {
-        tokio::time::sleep_until(since + PREAUTH_TIMEOUT).await;
-        if slot.dialog.load(Ordering::Acquire) && !slot.dialog_started.load(Ordering::Acquire) {
-            return;
-        }
-        tokio::time::sleep_until(since + crate::term::LOGIN_WAIT).await;
-        if slot.dialog.load(Ordering::Acquire) && !slot.dialog_done.load(Ordering::Acquire) {
-            return;
-        }
-    }
+    dialog_expired_within(slot, since, PREAUTH_TIMEOUT, crate::term::LOGIN_WAIT).await;
     #[cfg(not(feature = "tui"))]
     let _ = (slot, since);
+    std::future::pending::<()>().await;
+}
+
+/// [`dialog_expired`] with its two waits: `start` for the dialog's `apps`, `login` for its login (a test's own).
+#[cfg_attr(not(feature = "tui"), allow(dead_code))]
+async fn dialog_expired_within(slot: &Slot, since: tokio::time::Instant, start: Duration, login: Duration) {
+    tokio::time::sleep_until(since + start).await;
+    if slot.dialog.load(Ordering::Acquire) && !slot.dialog_started.load(Ordering::Acquire) {
+        return;
+    }
+    tokio::time::sleep_until(since + login).await;
+    if slot.dialog.load(Ordering::Acquire) && !slot.dialog_done.load(Ordering::Acquire) {
+        return;
+    }
     std::future::pending::<()>().await;
 }
 
@@ -910,7 +990,7 @@ impl Connection {
                 (None, Some(_)) if self.dialog_used => return Err("one login screen per connection"),
                 (None, Some(name)) => crate::term::Who::Login {
                     name: Some(name.clone()).filter(|name| !name.is_empty()),
-                    done: Some(Arc::clone(&self.slot.dialog_done)),
+                    done: Some(Arc::new(SlotLogin(Arc::downgrade(&self.slot)))),
                 },
                 (None, None) => return Err(DIALOG_ONLY),
             };
