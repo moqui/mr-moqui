@@ -576,6 +576,14 @@ impl Wire {
             match self.read_message()? {
                 Message::AuthenticationOk => return Ok(()),
                 Message::AuthenticationCleartextPassword => {
+                    // a password in clear text goes only over TLS or this machine's Unix socket: over a plain TCP
+                    // connection anyone on the path reads it, and a server or proxy that asks for it is refused
+                    if matches!(self.stream, Stream::Tcp(_)) {
+                        return Err(Error::new(
+                            "postgres connect: the server asks for the password in clear text over a connection \
+                             without TLS, and this client does not send it: use TLS (sslmode) or scram-sha-256",
+                        ));
+                    }
                     let password = password.ok_or_else(need_password)?;
                     frontend::password_message(password.as_bytes(), &mut self.write)
                         .map_err(|err| io_error("password", err))?;

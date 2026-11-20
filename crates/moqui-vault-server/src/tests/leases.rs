@@ -1242,3 +1242,39 @@ fn a_reveal_goes_only_to_the_reveal_role_and_is_an_event() {
         .unwrap();
     assert!(items["itemList"][0].get("bodyCipher").is_none());
 }
+
+/// The machine-access hook an unattended caller runs under (a CI run's call to its runner host, M1): the value of an
+/// item the environment holds, under a lease approved by "machine" that ends with the call; an item it holds no access
+/// to is refused, naming what to give.
+#[test]
+fn the_machine_run_hook_opens_only_what_the_environment_holds_and_ends_its_lease() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fixture = fixture(&facade, "machinerun");
+    let registry = LeaseRegistry::new("member-1");
+    super::login(&fixture.maker.user);
+    let grant = crate::machine::ask_grant(&registry, &facade, "env-ci-runners", &fixture.vault_id, &[PASSWORD.to_string()])
+        .unwrap();
+    approve(&mut fixture, &grant.lease_id).unwrap();
+    crate::machine::complete_grant(&registry, &facade, &grant.lease_id, Duration::from_secs(5)).unwrap();
+    super::login(&fixture.maker.user);
+    let binding = PASSWORD.to_string();
+    let mut lease_id = None;
+    let value = moqui_core::vault_hooks::machine_run("env-ci-runners", std::slice::from_ref(&binding), "CI run on InstanceHost H", || {
+        lease_id = crate::lease::current_lease();
+        moqui_core::vault_hooks::leased(&binding, Some("password"))
+    })
+    .unwrap();
+    assert_eq!(value, Value::string(SECRET));
+    let lease_id = lease_id.unwrap();
+    assert_eq!(status(&facade, &lease_id), "VlsEnded");
+    let events = lease_events(&facade, &lease_id);
+    assert!(events.contains(&"VeMachineUsed".to_string()), "{events:?}");
+    // another environment, and an item the environment was not given
+    let refused = moqui_core::vault_hooks::machine_run("env-other", std::slice::from_ref(&binding), "CI run", || Ok(()))
+        .unwrap_err();
+    assert!(refused.message().contains("machineAccessMissing"), "{refused}");
+    let refused =
+        moqui_core::vault_hooks::machine_run("env-ci-runners", &[LOG_LEVEL.to_string()], "CI run", || Ok(())).unwrap_err();
+    assert!(refused.message().contains("machineAccessMissing"), "{refused}");
+}

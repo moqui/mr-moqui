@@ -14,7 +14,8 @@
 
 //! Opt-in, against a real Docker or Podman socket (plans/Vault-Instances.md §6 M1, §7): a Postgres instance provisioned
 //! with its admin password as a file, checked by a health check that signs in over TCP with that file (so the
-//! password the server made, deposited and never read back is the one Postgres took), and removed with its volume.
+//! password the server made, deposited and never read back is the one Postgres took); a second instance's database
+//! and user (a SCRAM verifier) made on it by the one-shot client on their network; both removed with their volumes.
 //! Run by name, with the socket named:
 //!
 //! `MOQUI_CI_DOCKER_SOCKET=$HOME/.docker/run/docker.sock cargo test -p moqui-instance docker_real -- --ignored`
@@ -85,9 +86,37 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
         );
         row.update(&facade).unwrap();
     });
+    // a second instance whose database is made on the first by the one-shot on their network: for this test only, the
+    // postgres kind takes a postgres database and binds its user's password
+    create(
+        &facade,
+        "moqui.server.instance.InstanceKindDependency",
+        json!({ "instanceKindId": "postgres", "dependencyRole": "database", "allowedKindId": "postgres", "optional": "Y" }),
+    );
+    create(
+        &facade,
+        "moqui.server.instance.InstanceKindSecret",
+        json!({ "instanceKindId": "postgres", "secretName": "dbPassword", "vaultItemTypeId": "database-credential",
+                "bindingPattern": "AppInstance:{id}:dbPassword", "fieldName": "password", "generated": "Y",
+                "whenDependency": "database" }),
+    );
+    let user = sys(|| {
+        create_instance(
+            &facade,
+            &NewInstance {
+                instance_image_id: "Postgres18".to_string(),
+                instance_host_id: "real-socket".to_string(),
+                environment_id: environment.clone(),
+                instance_name: format!("moqui-it-user-{tag}"),
+                database_instance_id: pg.clone(),
+                ..NewInstance::default()
+            },
+        )
+    })
+    .unwrap();
     login(&vault.maker.user);
     let registry = moqui_vault_server::lease::registry(ctx.factory());
-    let provisioned = crate::provision::provision(&facade, &registry, &pg, None);
+    let provisioned = crate::provision::provision(&facade, &registry, &user, None).map(|outcome| outcome.report);
     let container = field_of(
         &facade,
         "moqui.server.instance.AppInstance",
@@ -97,7 +126,15 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
     );
     let host = DockerHost::unix(&socket);
     let checked = (|| -> Result<(), String> {
-        provisioned.map_err(|err| err.to_string())?;
+        let report = provisioned.map_err(|err| err.to_string())?;
+        // the one-shot made the database and the user on the first instance, from its network
+        let database = format!("moqui_it_user_{tag}");
+        if !report
+            .iter()
+            .any(|line| line == &format!("moqui: made database {database} and user {database}"))
+        {
+            return Err(format!("{report:?}"));
+        }
         let until = Instant::now() + Duration::from_secs(120);
         loop {
             let info = host
@@ -137,8 +174,10 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
         }
         Ok(())
     })();
-    // removed whatever the check found, with its volume and network
+    // removed whatever the check found, with their volumes and network
+    let removed_user = sys(|| crate::lifecycle::act(&facade, &registry, &user, "remove", None, true));
     let removed = sys(|| crate::lifecycle::act(&facade, &registry, &pg, "remove", None, true));
+    removed_user.unwrap();
     if let Err(err) = host.delete_network(&format!("moqui-{environment}")) {
         eprintln!("the network was not removed: {err}");
     }

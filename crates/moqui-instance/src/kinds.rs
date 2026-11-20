@@ -16,8 +16,7 @@
 //! rows (`InstanceKind` with its env, volume, host config, secret and dependency rows, framework/data/
 //! InstanceTypeData.xml) say what its container is made of; this module turns an instance's rows into the container
 //! that stays ([`ContainerSpec`]), with each secret a file under `/run/secrets` and the image's `*_FILE` setting naming
-//! it, and does what a database kind does on a server: `create#Database` and `check#Database`, with the leased or
-//! just-made admin login, keeping the identifier and quote checks of the scripts they replace.
+//! it. What a database kind does on a server is [`crate::database`].
 //!
 //! OpenSearch reads no `*_FILE` setting, so its entrypoint is wrapped: a shell reads the admin password from its file
 //! into the setting the image's demo security configuration takes and starts the image's entrypoint. The value is in
@@ -27,12 +26,11 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use moqui_core::driver::{conf_driver, ConfDb, DbConnection};
 use moqui_lib::docker::{
     ContainerSpec, HealthCheck, Mount, MountKind, PortBinding, RestartPolicy, SecretFile, SECRETS_DIR,
 };
 use moqui_lib::error::Error as LibError;
-use moqui_lib::object::to_plain_string;
+
 use zeroize::Zeroizing;
 
 use crate::common::fail;
@@ -218,222 +216,4 @@ fn opensearch_entrypoint(secrets: &[SecretFile]) -> Vec<String> {
             file.path()
         ),
     ]
-}
-
-// ----- create#Database and check#Database -----
-
-/// A database server's admin login: leased (a database host's, `DatabaseHost:<id>:admin`) or made by this provision (a
-/// new Postgres or MySQL instance's). Its `Debug` shows no password.
-pub struct AdminLogin {
-    /// The database-list name of the kind: postgres or mysql.
-    pub conf_name: String,
-    pub host: String,
-    pub port: String,
-    pub user: String,
-    pub password: Zeroizing<String>,
-    /// `disable` for a new instance on the environment's network, which serves no TLS; empty (verified TLS) for a
-    /// database host.
-    pub ssl_mode: String,
-}
-
-impl std::fmt::Debug for AdminLogin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AdminLogin")
-            .field("conf_name", &self.conf_name)
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("user", &self.user)
-            .finish_non_exhaustive()
-    }
-}
-
-/// What `create#Database` did.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct DatabaseMade {
-    pub database_created: bool,
-    pub user_created: bool,
-}
-
-/// What `check#Database` found.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct DatabaseFound {
-    pub connected: bool,
-    pub database_exists: bool,
-    pub user_exists: bool,
-}
-
-/// A database or user name that goes into SQL: letters, digits and `_` only (the scripts' check).
-pub fn identifier<'a>(name: &'a str, what: &str) -> Result<&'a str, LibError> {
-    if !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_') {
-        Ok(name)
-    } else {
-        Err(fail(format!("The {what} name [{name}] is not a plain identifier")))
-    }
-}
-
-/// A Postgres string literal's body: quotes doubled (standard_conforming_strings, on since 9.1).
-fn pg_quoted(text: &str) -> Zeroizing<String> {
-    Zeroizing::new(text.replace('\'', "''"))
-}
-
-/// A MySQL password literal's body. MySQL's default mode reads a backslash as an escape, so doubling quotes is not
-/// enough: a password with a quote or a backslash is refused (SEC-TLS-10).
-fn mysql_password(text: &str) -> Result<&str, LibError> {
-    if text.contains(['\'', '"', '\\']) {
-        return Err(fail("The database password may not hold a quote or a backslash"));
-    }
-    Ok(text)
-}
-
-fn connect(admin: &AdminLogin, database: &str) -> Result<Box<dyn DbConnection>, LibError> {
-    let conf = ConfDb {
-        db_type: admin.conf_name.clone(),
-        host: admin.host.clone(),
-        port: admin.port.clone(),
-        database: database.to_string(),
-        user: admin.user.clone(),
-        password: admin.password.to_string(),
-        ssl_mode: admin.ssl_mode.clone(),
-        ..ConfDb::default()
-    };
-    conf_driver(&conf).and_then(|driver| driver.connect())
-}
-
-fn count(conn: &mut dyn DbConnection, sql: &str) -> Result<i64, LibError> {
-    let rows = conn.query_once(sql, &[])?;
-    Ok(rows
-        .first()
-        .and_then(|row| row.columns.first())
-        .map(|(_, value)| to_plain_string(value))
-        .and_then(|text| text.trim().parse::<f64>().ok())
-        .map_or(0, |count| if count > 0.0 { 1 } else { 0 }))
-}
-
-/// The database a kind's admin connects to: Postgres's `postgres`, MySQL's `mysql`.
-fn admin_database(conf_name: &str) -> Result<&'static str, LibError> {
-    match conf_name {
-        "postgres" => Ok("postgres"),
-        "mysql" | "mysql8" => Ok("mysql"),
-        other => Err(fail(format!("No database kind {other}: postgres or mysql"))),
-    }
-}
-
-/// Waits up to `wait` for the server to take a connection with the admin login: a new instance's database starts
-/// after its container does.
-pub fn wait_ready(admin: &AdminLogin, wait: Duration) -> Result<(), LibError> {
-    let database = admin_database(&admin.conf_name)?;
-    let until = std::time::Instant::now() + wait;
-    loop {
-        match connect(admin, database) {
-            Ok(_) => return Ok(()),
-            Err(err) if std::time::Instant::now() >= until => {
-                return Err(fail(format!(
-                    "The database server at {}:{} took no connection in {}s: {}",
-                    admin.host,
-                    admin.port,
-                    wait.as_secs(),
-                    err.message()
-                )))
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(500)),
-        }
-    }
-}
-
-/// `create#Database`: the database `database` and the user `user` with `password`, made with the admin login when
-/// they are not there; the user owns a new database (Postgres) or has every privilege on it (MySQL). Names are plain
-/// identifiers, and a password is quoted as each server reads it.
-pub fn create_database(
-    admin: &AdminLogin,
-    database: &str,
-    user: &str,
-    password: &str,
-) -> Result<DatabaseMade, LibError> {
-    let database = identifier(database, "database")?;
-    let user = identifier(user, "user")?;
-    let mut conn = connect(admin, admin_database(&admin.conf_name)?)?;
-    let mut made = DatabaseMade::default();
-    match admin.conf_name.as_str() {
-        "postgres" => {
-            if count(
-                conn.as_mut(),
-                &format!("SELECT COUNT(*) AS row_count FROM pg_catalog.pg_user WHERE usename='{user}'"),
-            )? == 0
-            {
-                let sql = Zeroizing::new(format!(
-                    "CREATE USER {user} WITH PASSWORD '{}'",
-                    pg_quoted(password).as_str()
-                ));
-                conn.execute(&sql, &[])?;
-                made.user_created = true;
-            }
-            if count(
-                conn.as_mut(),
-                &format!("SELECT COUNT(*) AS row_count FROM pg_database WHERE datname='{database}'"),
-            )? == 0
-            {
-                // Postgres reports no rows for CREATE DATABASE, so a statement that did not fail created it; the owner
-                // may create in its public schema, which GRANT on the database alone no longer gives (Postgres 15)
-                conn.execute(&format!("CREATE DATABASE {database} OWNER {user}"), &[])?;
-                made.database_created = true;
-            } else {
-                conn.execute(&format!("GRANT ALL PRIVILEGES ON DATABASE {database} TO {user}"), &[])?;
-            }
-        }
-        _ => {
-            let password = mysql_password(password)?;
-            if count(
-                conn.as_mut(),
-                &format!(
-                    "SELECT COUNT(*) AS row_count FROM information_schema.schemata WHERE schema_name='{database}'"
-                ),
-            )? == 0
-            {
-                conn.execute(
-                    &format!("CREATE DATABASE `{database}` DEFAULT CHARACTER SET utf8mb4"),
-                    &[],
-                )?;
-                made.database_created = true;
-            }
-            if count(
-                conn.as_mut(),
-                &format!("SELECT COUNT(*) AS row_count FROM mysql.user WHERE user='{user}'"),
-            )? == 0
-            {
-                let sql = Zeroizing::new(format!("CREATE USER '{user}'@'%' IDENTIFIED BY '{password}'"));
-                conn.execute(&sql, &[])?;
-                made.user_created = true;
-            }
-            conn.execute(&format!("GRANT ALL ON `{database}`.* TO '{user}'@'%'"), &[])?;
-        }
-    }
-    Ok(made)
-}
-
-/// `check#Database`: whether the admin login connects, and whether the database and the user are there.
-pub fn check_database(admin: &AdminLogin, database: &str, user: &str) -> Result<DatabaseFound, LibError> {
-    let database = identifier(database, "database")?;
-    let user = identifier(user, "user")?;
-    let mut conn = match connect(admin, admin_database(&admin.conf_name)?) {
-        Ok(conn) => conn,
-        Err(err) => {
-            tracing::warn!(host = %admin.host, "Test connection to the database server failed: {}", err.message());
-            return Ok(DatabaseFound::default());
-        }
-    };
-    let (databases, users) = match admin.conf_name.as_str() {
-        "postgres" => (
-            format!("SELECT COUNT(*) AS row_count FROM pg_database WHERE datname='{database}'"),
-            format!("SELECT COUNT(*) AS row_count FROM pg_catalog.pg_user WHERE usename='{user}'"),
-        ),
-        _ => (
-            format!("SELECT COUNT(*) AS row_count FROM information_schema.schemata WHERE schema_name='{database}'"),
-            format!("SELECT COUNT(*) AS row_count FROM mysql.user WHERE user='{user}'"),
-        ),
-    };
-    Ok(DatabaseFound {
-        connected: true,
-        database_exists: count(conn.as_mut(), &databases)? > 0,
-        user_exists: count(conn.as_mut(), &users)? > 0,
-    })
 }

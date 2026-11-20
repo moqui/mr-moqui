@@ -192,10 +192,3 @@ pub(crate) fn connect_host(host: &EntityValue) -> Result<DockerHost, LibError> {
     };
     DockerHost::connect(&address, Some(2375))
 }
-
-/// Whether a host is this machine (a unix socket, or plain http to loopback), where a published port is bound to
-/// loopback and reached there.
-pub(crate) fn host_is_local(host: &EntityValue) -> bool {
-    let protocol = field(host, "hostProtocol").to_ascii_lowercase();
-    protocol == "unix" || (protocol != "https" && moqui_lib::net::loopback_host(&field(host, "hostAddress")))
-}

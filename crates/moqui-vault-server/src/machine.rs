@@ -275,6 +275,61 @@ pub fn machine_lease(
     Ok(lease)
 }
 
+/// `moqui_core::vault_hooks::machine_run`: `body` under a machine lease of `bindings` for the environment, on the entered
+/// factory's registry, ended when `body` returns. The vault is the one the environment's machine access to those items
+/// is in; a binding it holds no access to is refused, naming what to give.
+pub(crate) fn hook_machine_run(
+    environment_id: &str,
+    bindings: &[String],
+    operation: &str,
+    body: &mut dyn FnMut() -> Result<(), LibError>,
+) -> Result<(), LibError> {
+    let factory = factory()?;
+    let facade = factory.entity().ok_or_else(|| fail("No entity facade is installed"))?;
+    let registry = registry(&factory);
+    let vault_id = {
+        let _authz = authz_off();
+        let mut vault_id: Option<String> = None;
+        for binding in bindings {
+            let mut found = None;
+            for access in find(&facade, MACHINE_ACCESS)?
+                .eq("environmentId", Value::string(environment_id))
+                .list()?
+                .iter()
+            {
+                let item = find(&facade, crate::common::ITEM)?
+                    .eq("vaultItemId", Value::string(field(access, "vaultItemId")))
+                    .one()?;
+                if item.is_some_and(|item| field(&item, "bindingKey") == *binding) {
+                    found = Some(field(access, "vaultId"));
+                    break;
+                }
+            }
+            let Some(found) = found else {
+                return Err(fail(format!(
+                    "Environment {environment_id} has no machine access to {binding}: give it in System › Vaults \
+                     (reasonCode machineAccessMissing)"
+                )));
+            };
+            if vault_id.as_ref().is_some_and(|vault_id| *vault_id != found) {
+                return Err(fail("A machine lease is of one vault: these items are in two"));
+            }
+            vault_id = Some(found);
+        }
+        vault_id.ok_or_else(|| fail("A machine lease names at least one item"))?
+    };
+    let lease = {
+        let _authz = authz_off();
+        machine_lease(&registry, &facade, environment_id, &vault_id, bindings, operation)?
+    };
+    let ran = crate::lease::run_under(&lease.lease_id, body);
+    if let Err(err) = registry.end(&facade, &lease.lease_id) {
+        registry.forget(&lease.lease_id);
+        tracing::error!("Vault: the machine lease {} was not marked ended: {err}", lease.lease_id);
+    }
+    ran
+}
+
 fn factory() -> Result<Arc<ExecutionContextFactory>, LibError> {
     moqui_core::context::ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
         .ok_or_else(|| fail("No execution context is entered"))

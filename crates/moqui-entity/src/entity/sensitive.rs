@@ -103,11 +103,11 @@ const AUDIT_ENTITY_KEYS: &[&str] = &[
     "etlrunerror",
 ];
 
-/// Managed-instance configuration (`moqui.server.instance`, plans/Vault-Instances.md §4.1): an image's `authTokenCmd`
-/// runs as a host process, a host type names the services that run, and a kind's templates and secrets say what goes
-/// into a container and which vault items it binds; so these rows are not written through the generic tools, REST or
-/// request loads, where an `ADMIN` without the sealed `INSTANCE_ADMIN` could plant a command for a holder to run
-/// (plans/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
+/// Managed-instance configuration (`moqui.server.instance`, plans/Vault-Instances.md §4.1): a host type names the
+/// services that run, a kind's templates and secrets say what goes into a container and which vault items it binds,
+/// and a host, an image or a database host says where a leased login goes; so these rows are not written through the
+/// generic tools, REST or request loads, where an `ADMIN` without the sealed `INSTANCE_ADMIN` could point a holder's
+/// action at a service or a server of theirs (plans/Security-Review.md SEC-TLS-02). The environments and instances are only their services' to write
 /// ([`SERVICE_WRITTEN_ENTITY_KEYS`]).
 const HOST_CONFIG_ENTITY_KEYS: &[&str] = &[
     "instancehost",

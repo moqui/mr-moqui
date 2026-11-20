@@ -22,6 +22,8 @@ moqui-vault = { workspace = true, features = ["std"] }
 serde_json.workspace = true
 sha2.workspace = true
 base64.workspace = true
+# the SCRAM-SHA-256 verifier a Postgres user is made with
+hmac.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
 

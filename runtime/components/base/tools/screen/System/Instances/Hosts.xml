@@ -40,6 +40,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="tlsClientCert"><default-field title="Client certificate (PEM)" tooltip="Its key is a vault item, never here">
                     <text-area rows="3" cols="60"/></default-field></field>
                 <field name="vaultId"><default-field title="Vault of its key" tooltip="The environment's when empty"><text-line size="30"/></default-field></field>
+                <field name="environmentId"><default-field title="Environment for CI runs"
+                        tooltip="A runner host: CI runs open its client key under this environment's machine access">
+                    <drop-down allow-empty="true"><entity-options key="${environmentId}" text="${environmentName || environmentId}">
+                        <entity-find entity-name="moqui.server.instance.InstanceEnvironment"><order-by field-name="environmentId"/></entity-find>
+                    </entity-options></drop-down>
+                </default-field></field>
                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-single>
         </container-dialog>
@@ -53,6 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="keyBinding"><default-field title="Client key">
                 <display text="${tlsClientCert ? 'InstanceHost:' + instanceHostId + ':tlsClientKey' : ''}"/></default-field></field>
             <field name="vaultId"><default-field title="Vault"><display/></default-field></field>
+            <field name="environmentId"><default-field title="CI environment"><display/></default-field></field>
         </form-list>
     </widgets>
 </screen>

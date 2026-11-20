@@ -33,7 +33,7 @@ use crate::common::{
     DATABASE_HOST, ENVIRONMENT, HOST, HOST_TYPE, IMAGE, INSTANCE_DEPENDENCY, INSTANCE_ENV, INSTANCE_HOST_CONFIG,
     INSTANCE_SECRET, INSTANCE_VOLUME, KIND, KIND_DEPENDENCY, KIND_ENV, KIND_HOST_CONFIG, KIND_SECRET, KIND_VOLUME,
 };
-use crate::kinds::{self, AdminLogin};
+use crate::kinds;
 use crate::plan::{self, environment_of, instance};
 
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
@@ -213,6 +213,7 @@ fn store_instance_host(params: &Params, facade: &EntityFacade) -> Out {
             "tlsCaCert",
             "tlsClientCert",
             "vaultId",
+            "environmentId",
         ],
         &|row| {
             let host_type = field(row, "hostTypeId");
@@ -222,6 +223,10 @@ fn store_instance_host(params: &Params, facade: &EntityFacade) -> Out {
             match field(row, "hostProtocol").to_ascii_lowercase().as_str() {
                 "unix" | "http" | "https" => {}
                 other => return Err(fail(format!("hostProtocol {other} is not unix, http or https"))),
+            }
+            let environment = field(row, "environmentId");
+            if !environment.is_empty() && one(facade, ENVIRONMENT, "environmentId", &environment)?.is_none() {
+                return Err(fail(format!("No InstanceEnvironment {environment}")));
             }
             check_vault(facade, row)
         },
@@ -375,6 +380,12 @@ pub fn create_instance(facade: &EntityFacade, given: &NewInstance) -> Result<Str
                     given.database_instance_id
                 )));
             }
+            if field(&other, "instanceHostId") != given.instance_host_id {
+                return Err(fail(format!(
+                    "AppInstance {} is on another host: an instance reaches its database instance on its host's network",
+                    given.database_instance_id
+                )));
+            }
             let other_kind = one(facade, KIND, "instanceKindId", &field(&other, "instanceKindId"))?
                 .ok_or_else(|| fail(format!("AppInstance {} has no kind", given.database_instance_id)))?;
             (
@@ -406,8 +417,8 @@ pub fn create_instance(facade: &EntityFacade, given: &NewInstance) -> Result<Str
         let user = Some(given.database_user.clone())
             .filter(|text| !text.is_empty())
             .unwrap_or_else(|| plain(name));
-        kinds::identifier(&database, "database")?;
-        kinds::identifier(&user, "user")?;
+        crate::database::identifier(&database, "database")?;
+        crate::database::identifier(&user, "user")?;
         values.insert("databaseConf", conf);
         values.insert("databaseHost", host);
         values.insert("databasePort", port);
@@ -735,75 +746,38 @@ fn check_instance_container(params: &Params, facade: &EntityFacade) -> Out {
 
 // ----- create#Database and check#Database -----
 
-/// The admin login of an instance's database server, from the lease the thread runs under: a database host's
-/// `DatabaseHost:<id>:admin`, or the `AppInstance:<id>:admin` of a database instance made before (taken into the vault
-/// by a member, so a lease can name it). The database and user names.
-fn leased_admin(
+/// The database an instance has on its database dependency, with its server's kind checked, and the admin login from the
+/// lease the call runs under, checked against the server its item names.
+fn leased_database(
     facade: &EntityFacade,
     instance_id: &str,
     conf: &str,
-) -> Result<(AdminLogin, String, String), LibError> {
-    let row = instance(facade, instance_id)?;
-    environment_of(facade, &row)?;
-    let dependency = rows(facade, INSTANCE_DEPENDENCY, "appInstanceId", instance_id)?
-        .into_iter()
-        .find(|row| field(row, "dependencyRole") == "database")
+) -> Result<(plan::DatabaseUse, crate::database::AdminLogin), LibError> {
+    let database = plan::database_of(facade, instance_id)?
         .ok_or_else(|| fail(format!("AppInstance {instance_id} has no database dependency")))?;
-    let (binding, host, port, kind, ssl_mode) = if !field(&dependency, "dependsOnInstanceId").is_empty() {
-        let other = instance(facade, &field(&dependency, "dependsOnInstanceId"))?;
-        let host = crate::lifecycle::host_of(facade, &other)?;
-        let address = if crate::common::host_is_local(&host) {
-            "127.0.0.1".to_string()
-        } else {
-            field(&host, "hostAddress")
-        };
-        (
-            format!("AppInstance:{}:admin", field(&other, "appInstanceId")),
-            address,
-            field(&other, "hostPort"),
-            field(&other, "instanceKindId"),
-            "disable".to_string(),
-        )
-    } else {
-        let host_id = field(&dependency, "databaseHostId");
-        let host = one(facade, DATABASE_HOST, "databaseHostId", &host_id)?
-            .ok_or_else(|| fail(format!("No DatabaseHost {host_id}")))?;
-        (
-            format!("DatabaseHost:{host_id}:admin"),
-            field(&host, "hostAddress"),
-            field(&host, "hostPort"),
-            field(&host, "instanceKindId"),
-            String::new(),
-        )
-    };
-    let kind_conf = one(facade, KIND, "instanceKindId", &kind)?
-        .map(|row| field(&row, "confName"))
-        .unwrap_or_default();
-    if kind_conf != conf {
+    if database.conf_name != conf {
         return Err(fail(format!(
-            "AppInstance {instance_id}'s database is {kind_conf}, not {conf}"
+            "AppInstance {instance_id}'s database is {}, not {conf}",
+            database.conf_name
         )));
     }
-    let admin = AdminLogin {
-        conf_name: kind_conf,
-        host,
-        port,
-        user: crate::common::leased(&binding, "username")?.to_string(),
-        password: crate::common::leased(&binding, "password")?,
-        ssl_mode,
+    let plan::AdminSource::Leased(binding) = &database.admin else {
+        return Err(fail("The admin login of a database made before is leased"));
     };
-    Ok((admin, field(&row, "databaseName"), field(&row, "databaseUser")))
+    let admin = crate::provision::leased_admin(&database, binding)?;
+    Ok((database, admin))
 }
 
 /// `create#Database` for a database kind: the instance's database and user, the user's password made here and
-/// deposited as its `dbPassword` binding (refused when that is deposited already), with the leased admin login.
+/// deposited as its `dbPassword` binding (refused when that is deposited already), with the leased admin login; refused
+/// when the user or the database is there. When the deposit fails, what was made is dropped.
 fn create_database(params: &Params, facade: &EntityFacade, conf: &str) -> Out {
     require_instance_admin()?;
     let _authz = authz_off();
     let id = required(params, "appInstanceId")?;
-    let (admin, database, user) = leased_admin(facade, &id, conf)?;
     let row = instance(facade, &id)?;
     let environment = environment_of(facade, &row)?;
+    crate::actions::check_caller(&environment)?;
     let secret = rows(facade, INSTANCE_SECRET, "appInstanceId", &id)?
         .into_iter()
         .find(|secret| field(secret, "secretName") == "dbPassword")
@@ -813,14 +787,16 @@ fn create_database(params: &Params, facade: &EntityFacade, conf: &str) -> Out {
             "AppInstance {id}'s dbPassword is deposited already: rotate it (M5)"
         )));
     }
+    let (database, admin) = leased_database(facade, &id, conf)?;
     let password = crate::common::new_credential();
-    let made = kinds::create_database(&admin, &database, &user, &password)?;
+    let report = crate::provision::create_on(&database, &admin, &password, &id)?;
     let body = zeroize::Zeroizing::new(
         serde_json::json!({ "v": 1, "type": "database-credential", "name": format!("{id} dbPassword"),
-            "fields": { "host": admin.host, "port": admin.port, "database": database, "username": user, "password": password.as_str() } })
+            "fields": { "host": database.container_host, "port": database.container_port, "database": database.database,
+                        "username": database.user, "password": password.as_str() } })
         .to_string(),
     );
-    moqui_vault_server::deposit::deposit_item(
+    let deposited = moqui_vault_server::deposit::deposit_item(
         facade,
         &moqui_vault_server::deposit::Deposit {
             vault_id: &field(&environment, "vaultId"),
@@ -830,22 +806,34 @@ fn create_database(params: &Params, facade: &EntityFacade, conf: &str) -> Out {
             name: &format!("{id} dbPassword"),
             body: body.as_bytes(),
         },
-    )?;
+    );
+    if let Err(err) = deposited {
+        if let Err(dropped) = crate::provision::drop_on(&database, &admin) {
+            tracing::error!(
+                "Instances: database {} of AppInstance {id} was not dropped: {dropped}",
+                database.database
+            );
+        }
+        return Err(err);
+    }
     let mut secret = secret;
     secret.set("depositedDate", crate::common::now());
     secret.update(facade)?;
     Ok(out([
-        ("databaseCreated", Value::Bool(made.database_created)),
-        ("userCreated", Value::Bool(made.user_created)),
+        ("databaseCreated", Value::Bool(true)),
+        ("userCreated", Value::Bool(true)),
+        ("report", Value::string(report.join("\n"))),
     ]))
 }
 
+/// `check#Database`: whether the admin login connects and the database and user are there, from a one-shot on the
+/// server's network or over verified TLS.
 fn check_database(params: &Params, facade: &EntityFacade, conf: &str) -> Out {
     require_instance_admin()?;
     let _authz = authz_off();
     let id = required(params, "appInstanceId")?;
-    let (admin, database, user) = leased_admin(facade, &id, conf)?;
-    let found = kinds::check_database(&admin, &database, &user)?;
+    let (database, admin) = leased_database(facade, &id, conf)?;
+    let found = crate::provision::check_on(&database, &admin, &id)?;
     Ok(out([
         ("dbConnectSuccess", Value::Bool(found.connected)),
         ("databaseExists", Value::Bool(found.database_exists)),
@@ -872,7 +860,6 @@ fn check_database_postgres(params: &Params, facade: &EntityFacade) -> Out {
 fn check_database_mysql(params: &Params, facade: &EntityFacade) -> Out {
     check_database(params, facade, "mysql")
 }
-
 // ----- the reconcile job -----
 
 /// `reconcile#AppInstances`: the job; observes, changes nothing else.

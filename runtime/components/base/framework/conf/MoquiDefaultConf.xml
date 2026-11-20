@@ -1498,11 +1498,6 @@
         commas; empty for the webroot webapp's URL when its http-host is set. -->
     <component-deploy enabled="" require-passed-run="false" attestation-secret=""
             max-age-seconds="300" public-urls=""/>
-    <!-- Hosted instances (System > Instance): the commands that print a registry token for an image pull, by name. An
-        InstanceImage's authTokenCmd names one; a runtime conf adds them, as
-        <token-command name="ecr" command="/opt/moqui/bin/ecr-token us-east-1"/>. The command runs with no shell and
-        only the named environment (get#RegistryToken, plans/Security-Review-Medium.md SEC-TLS-03). -->
-    <instance-hosting/>
     <!-- Vaults (plans/Vault-Instances.md §3, docs/security/Vaults.md). key-fetch-max-age: seconds since a strong sign-in
         (a password and a second factor, SSO, or a paired device's key; never an app password or a login, API or scoped
         key) within which a user's wrapped personal key is sent to them. Read at each fetch. lease-max-hours: the longest

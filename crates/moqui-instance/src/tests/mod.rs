@@ -29,6 +29,7 @@ use moqui_vault::ops::Session;
 use moqui_vault::rng::OsRng;
 use serde_json::{json, Value as Json};
 
+mod database;
 mod docker_real;
 mod kinds;
 mod provision;
@@ -381,6 +382,7 @@ pub(super) struct Recorded {
     pub(super) user: String,
     pub(super) password: String,
     pub(super) database: String,
+    pub(super) ssl_mode: String,
     pub(super) sql: Vec<String>,
 }
 
@@ -405,6 +407,7 @@ fn install_recorder() {
                 entry.user.clone_from(&conf.user);
                 entry.password.clone_from(&conf.password);
                 entry.database.clone_from(&conf.database);
+                entry.ssl_mode.clone_from(&conf.ssl_mode);
             }
             Ok(Arc::new(Recorder { key }) as Arc<dyn DbDriver>)
         }));
@@ -448,7 +451,8 @@ impl DbConnection for RecorderConn {
     fn query_once(&mut self, sql: &str, _params: &[Value]) -> Result<Vec<DbRow>, Error> {
         self.note(sql);
         Ok(vec![DbRow {
-            columns: vec![("row_count".into(), Value::I64(0))],
+            // a server whose name says "taken" has every user and database already
+            columns: vec![("row_count".into(), Value::I64(i64::from(self.key.contains("taken"))))],
             origins: None,
         }])
     }

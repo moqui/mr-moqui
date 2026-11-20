@@ -125,32 +125,6 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
     </service>
 
-    <!-- The Docker Engine API, which Podman serves on its socket too (crates/moqui-git/src/ci/driver/docker.rs): the host
-        is reached over a Unix socket (hostProtocol unix, hostAddress the socket's path), HTTPS with the host's
-        tlsCaCert and tlsClientCert, its client key the item InstanceHost:<id>:tlsClientKey of the lease the call runs under,
-        or plain HTTP to this machine only (localhost, 127.0.0.0/8, ::1);
-        plain HTTP to another host is refused (plans/Security-Review-Medium.md SEC-OUT-08). -->
-    <service verb="call" noun="DockerApi" type="rust" location="moqui_git::ci::driver::docker::call_docker_api"
-            allow-remote="false">
-        <description>One Docker Engine API call to an InstanceHost, on the client the CI runs and the managed instances use,
-            for what they do not cover. Needs the sealed INSTANCE_ADMIN unless authorization is
-            disabled. A refusal or a failure to connect is a message error and no statusCode.</description>
-        <in-parameters>
-            <parameter name="instanceHostId" required="true"/>
-            <parameter name="method" default-value="GET"/>
-            <parameter name="path" required="true"><description>Under the API version, such as /containers/create</description></parameter>
-            <parameter name="query" type="Map"><description>Query parameters, encoded here</description></parameter>
-            <parameter name="body" type="Object"><description>JSON text sent as it is, or a Map or List sent as JSON</description></parameter>
-            <parameter name="registryAuth"><description>Sent as X-Registry-Auth (an image pull's registry login)</description></parameter>
-            <parameter name="timeoutSeconds" type="Integer"><description>60 when empty, at most 3600</description></parameter>
-        </in-parameters>
-        <out-parameters>
-            <parameter name="statusCode" type="Integer"/>
-            <parameter name="reasonPhrase"/>
-            <parameter name="responseBody" type="Object"><description>A Map or List when the answer is a JSON object or
-                array, else its text</description></parameter>
-        </out-parameters>
-    </service>
     <service verb="start" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::start_run_docker">
         <implements service="org.moqui.dev.InstanceServices.start#InstanceRun"/></service>
     <service verb="inspect" noun="RunDocker" type="rust" location="moqui_git::ci::driver::docker::inspect_run_docker">
@@ -273,8 +247,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="clusterId"/>
             <parameter name="instanceName" required="true"/>
             <parameter name="hostName"/>
-            <parameter name="hostPort"><description>The host's port its service is published on; a database a manager
-                makes databases on needs one</description></parameter>
+            <parameter name="hostPort"><description>The host's port its service is published on, on the host's loopback
+                only</description></parameter>
             <parameter name="databaseInstanceId"/>
             <parameter name="databaseHostId"/>
             <parameter name="searchInstanceId"/>
@@ -387,16 +361,6 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="unreachableCount" type="Integer"/>
             <parameter name="skippedCount" type="Integer"/>
         </out-parameters>
-    </service>
-
-    <service verb="get" noun="RegistryToken" type="rust" location="moqui_core::service::registry_token::get_registry_token"
-            allow-remote="false">
-        <description>The registry token of an image pull: the first output line of the conf's instance-hosting token-command
-            that the image's authTokenCmd names (a name, never a command), run with no shell and only the named
-            environment. Needs the sealed INSTANCE_ADMIN (plans/Security-Review-Medium.md SEC-TLS-03, SEC-SCR-04). The body
-            is Rust (crates/moqui-core/src/service/registry_token.rs).</description>
-        <in-parameters><parameter name="instanceImageId" required="true"/></in-parameters>
-        <out-parameters><parameter name="authToken"/></out-parameters>
     </service>
 
 </services>

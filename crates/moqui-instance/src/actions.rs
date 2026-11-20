@@ -30,13 +30,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::entity::EntityFacade;
+use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_vault_server::lease::{Ask, LeaseRegistry};
 
 use crate::common::{fail, field, now, one, ACTION};
-use crate::plan::{environment_of, instance, lease_limit, operation};
+use crate::plan::{environment_of, instance, lease_limit};
 
 pub const WAITING: &str = "IasWaiting";
 pub const RUNNING: &str = "IasRunning";
@@ -135,12 +135,59 @@ pub fn finish(facade: &EntityFacade, action_id: &str, status: &str, report: &str
 }
 
 /// What lets an action open its items.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct Opened {
     /// The lease it runs under, none when it needs no item.
     pub lease_id: Option<String>,
     /// The lease was opened from the environment's machine access.
     pub machine: bool,
+    /// The lease is this action's while it runs: a second action handed the same lease is refused.
+    _claim: Option<Arc<Claim>>,
+}
+
+/// The leases an action runs under now, on this cluster member.
+static CLAIMED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// A lease claimed by one action; dropped, it is free again.
+#[derive(Debug)]
+struct Claim(String);
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        moqui_lib::sync::lock(&CLAIMED).retain(|claimed| *claimed != self.0);
+    }
+}
+
+/// Claims a lease for one action: two actions do not run under one lease at once.
+fn claim(lease_id: &str) -> Result<Arc<Claim>, LibError> {
+    let mut claimed = moqui_lib::sync::lock(&CLAIMED);
+    if claimed.iter().any(|known| known == lease_id) {
+        return Err(fail(format!(
+            "The lease {lease_id} is in use by another action: one action runs under a lease (reasonCode leaseBusy)"
+        )));
+    }
+    claimed.push(lease_id.to_string());
+    Ok(Arc::new(Claim(lease_id.to_string())))
+}
+
+/// An environment that names an approver group takes its actions only from that group's members, besides
+/// INSTANCE_ADMIN (§3.8: its items serve its own operations); a caller with authorization disabled (a job, the waiting
+/// action of a member who asked) passes.
+pub fn check_caller(environment: &EntityValue) -> Result<(), LibError> {
+    let group = field(environment, "approverUserGroupId");
+    if group.is_empty() {
+        return Ok(());
+    }
+    let disabled =
+        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::authz_disabled)
+            .unwrap_or(false);
+    if disabled || moqui_core::user::is_in_group(&group).unwrap_or(false) {
+        return Ok(());
+    }
+    Err(fail(format!(
+        "Actions in environment {} are taken by members of group {group} (reasonCode notEnvironmentMember)",
+        field(environment, "environmentId")
+    )))
 }
 
 /// What an action needs to open `bindings` of `vault_id` for `operation` (see the module doc). A refusal names what
@@ -170,6 +217,7 @@ pub fn open_authority(
                 "The lease {lease_id} is for {named:?} in vault {vault}, not {operation:?} in vault {vault_id}"
             )));
         }
+        let claimed = claim(lease_id)?;
         registry.wait_open(facade, lease_id, Duration::ZERO).map_err(|_| {
             fail(format!(
                 "The lease {lease_id} is waiting for approval: an approver opens it in the lease dialog"
@@ -178,6 +226,7 @@ pub fn open_authority(
         return Ok(Opened {
             lease_id: Some(lease_id.to_string()),
             machine: false,
+            _claim: Some(claimed),
         });
     }
     if machine_access {
@@ -189,9 +238,11 @@ pub fn open_authority(
             bindings,
             operation,
         )?;
+        let claimed = claim(&lease.lease_id)?;
         return Ok(Opened {
             lease_id: Some(lease.lease_id),
             machine: true,
+            _claim: Some(claimed),
         });
     }
     Err(fail(format!(
@@ -211,12 +262,14 @@ pub fn end_lease(facade: &EntityFacade, registry: &LeaseRegistry, opened: &Opene
     }
 }
 
-/// The vault items an action needs, by binding: a provision's plan, else the host's client key.
-pub fn bindings_of(facade: &EntityFacade, instance_id: &str, verb: &str) -> Result<Vec<String>, LibError> {
+/// The vault items an action needs, by binding, and the operation its lease names (with where each item goes): a
+/// provision's plan, else the host's client key.
+pub fn needs(facade: &EntityFacade, instance_id: &str, verb: &str) -> Result<(Vec<String>, String), LibError> {
     if verb == "provision" {
-        return Ok(crate::plan::build(facade, instance_id)?.lease_bindings);
+        let plan = crate::plan::build(facade, instance_id)?;
+        return Ok((plan.lease_bindings, plan.operation));
     }
-    crate::lifecycle::host_bindings(facade, instance_id)
+    crate::lifecycle::needs(facade, instance_id, verb)
 }
 
 /// Runs an action now: a provision, or start, stop, restart or remove through the host type's services.
@@ -255,7 +308,8 @@ pub fn request(
 ) -> Result<Requested, LibError> {
     let row = instance(facade, instance_id)?;
     let environment = environment_of(facade, &row)?;
-    let bindings = bindings_of(facade, instance_id, verb)?;
+    check_caller(&environment)?;
+    let (bindings, operation) = needs(facade, instance_id, verb)?;
     if bindings.is_empty() || field(&environment, "machineAccess") == "Y" {
         let outcome = run(facade, registry, instance_id, verb, None, remove_volumes)?;
         return Ok(Requested {
@@ -264,7 +318,6 @@ pub fn request(
             lease_id: None,
         });
     }
-    let operation = operation(verb, instance_id);
     let vault_id = field(&environment, "vaultId");
     let lease = registry.ask(
         facade,

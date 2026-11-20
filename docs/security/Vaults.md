@@ -173,7 +173,9 @@ still opens and is sealed again under the new one at its next use. The column is
 field, so no find, cache, export or sync decrypts it. An operation of the environment then uses a lease approved by
 "machine", recorded and used as any other; the environment is the operation's own, which the provision, deploy and
 rotation operations (M1, M3, M5) pass from the `InstanceEnvironment` of the instance they act on, never one a request
-names. When an item is written with a new item key (a client's `item_seal` answers `new_item_key`, and the write says
+names; a CI run reaches its https runner host with the key the host's environment (`InstanceHost.environmentId`) holds,
+under a machine lease for that one call (`moqui_core::vault_hooks::machine_run`). When an item
+is written with a new item key (a client's `item_seal` answers `new_item_key`, and the write says
 `newItemKey`), its machine access goes stale: a lease under it is refused with `machineAccessStale` and the vault's
 page shows it, until machine access is given again. Revoking machine access (`revoke#VaultMachineAccess`) deletes the
 sealed keys, ends the environment's machine leases open on the vault, and names the items to rotate at their source,

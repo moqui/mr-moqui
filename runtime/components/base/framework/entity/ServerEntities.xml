@@ -234,7 +234,10 @@ along with this software (see the LICENSE.md file). If not, see
             vault item</description></field>
         <field name="vaultId" type="id"><description>The operational vault of its client key; the environment's when
             empty</description></field>
+        <field name="environmentId" type="id"><description>For a host that serves a CI runner pool: the environment
+            whose machine access to its client key a CI run (unattended, under no lease) opens it with</description></field>
         <relationship type="one" related="moqui.server.instance.InstanceHostType" short-alias="hostType"/>
+        <relationship type="one-nofk" related="moqui.server.instance.InstanceEnvironment"/>
         <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
     </entity>
     <entity entity-name="InstanceHostType" package="moqui.server.instance" use="configuration">
@@ -353,9 +356,6 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="registryLogin" type="text-indicator" default="'N'"><description>Y: a pull needs the registry-login
             item</description></field>
         <field name="vaultId" type="id"/>
-        <!-- The name of a token-command of the conf's instance-hosting element, which holds the command; never a command
-            itself (get#RegistryToken, plans/Security-Review-Medium.md SEC-TLS-03) -->
-        <field name="authTokenCmd" type="text-medium"/>
         <relationship type="one" related="moqui.server.instance.InstanceKind" short-alias="kind"/>
         <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
     </entity>
@@ -392,8 +392,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="instanceName" type="text-medium"><description>Its container's name; its volumes' and network's start
             with it</description></field>
         <field name="instanceUuid" type="text-medium"><description>Its container's id on the host</description></field>
-        <field name="hostPort" type="number-integer"><description>The host's port its service is published on, none when it
-            is reached only on the environment's network</description></field>
+        <field name="hostPort" type="number-integer"><description>The host's port its service is published on, on the host's
+            loopback only; none when it is reached only on the environment's network</description></field>
         <field name="networkName" type="text-short"/>
         <field name="databaseName" type="text-short"><description>Its own database on its database dependency</description></field>
         <field name="databaseUser" type="text-short"/>

@@ -119,7 +119,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Databases: ${(preview?.databases || []).map(d => d.database + ' and user ' + d.user + ' on ' + d.on).join(', ')}" type="div" condition="preview"/>
                 <label text="Deposited into vault ${preview?.vaultId}: ${(preview?.deposits || []).map(d => d.bindingKey).join(', ')}" type="div" condition="preview"/>
                 <label text="Host names: ${(preview?.hostNames || []).join(', ')}" type="div" condition="preview"/>
-                <label text="${(preview?.leaseBindings || []).length ? 'The lease it needs: ' + preview.leaseBindings.join(', ') + (preview.machineAccess ? ' (the environment has machine access)' : '') : 'It opens no vault item: it needs no lease'}" type="div" condition="preview"/>
+                <label text="${(preview?.leaseBindings || []).length ? 'The lease it needs, and where each login goes: ' + preview.destinations.join(', ') + (preview.machineAccess ? ' (the environment has machine access)' : '') : 'It opens no vault item: it needs no lease'}" type="div" condition="preview"/>
             </box-body></container-box>
 
             <container-box><box-header title="Dependencies"/><box-body>

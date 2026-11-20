@@ -33,7 +33,7 @@ use crate::common::{
     connect_host, fail, field, host_key_binding, host_needs_key, now, one, rows, HOST, HOST_TYPE, INSTANCE_VOLUME,
     SERVICE_PACKAGE,
 };
-use crate::plan::{environment_of, instance, operation};
+use crate::plan::{environment_of, instance};
 use crate::provision::Outcome;
 
 /// How long a stop gives a container before it is killed.
@@ -59,6 +59,26 @@ pub fn host_bindings(facade: &EntityFacade, instance_id: &str) -> Result<Vec<Str
     } else {
         Vec::new()
     })
+}
+
+/// The vault items an action on the instance's container opens and the operation its lease names, with where the host's
+/// client key goes.
+pub fn needs(facade: &EntityFacade, instance_id: &str, verb: &str) -> Result<(Vec<String>, String), LibError> {
+    let row = instance(facade, instance_id)?;
+    let host = host_of(facade, &row)?;
+    let destinations = if host_needs_key(&host) {
+        vec![crate::plan::host_destination(&host)]
+    } else {
+        Vec::new()
+    };
+    let operation = crate::plan::operation(verb, instance_id, &destinations)?;
+    Ok((
+        destinations
+            .into_iter()
+            .map(|destination| destination.binding)
+            .collect(),
+        operation,
+    ))
 }
 
 /// The host type's services an action runs, in order: restart is its stop, then its start.
@@ -119,9 +139,9 @@ pub fn act(
     let row = instance(facade, instance_id)?;
     let environment = environment_of(facade, &row)?;
     let host = host_of(facade, &row)?;
+    actions::check_caller(&environment)?;
     let services = services_of(facade, &host, verb)?;
-    let bindings = host_bindings(facade, instance_id)?;
-    let operation = operation(verb, instance_id);
+    let (bindings, operation) = needs(facade, instance_id, verb)?;
     let opened = match actions::open_authority(
         facade,
         registry,

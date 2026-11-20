@@ -18,13 +18,16 @@
 //!
 //! M1 (§6): instances on one driver, the container driver CI's runs use too ([`moqui_lib::docker`]).
 //!
+//! - [`database`]: a database kind's `create#Database`, its undo and `check#Database`: a one-shot client on the server's
+//!   network, or verified TLS to a database host.
 //! - [`kinds`]: what a kind's container is made of (its templates, its secrets as files, never in its environment,
-//!   labels or command) and a database kind's `create#Database` and `check#Database`, with the identifier and quote
-//!   checks of the services they replace.
-//! - [`plan`]: what a provision makes, dependencies first, and the vault items its lease needs (§4.3, the preview).
+//!   labels or command).
+//! - [`plan`]: what a provision makes, dependencies first, the vault items its lease needs and where each goes (§4.3,
+//!   the preview).
 //! - [`provision`]: the provision under a lease or the environment's machine access: the credentials it makes are
 //!   deposited (no lease needed), the database and user made with the admin login, then the volumes, network and
-//!   container with secrets as files; a provision that needs items and has neither is refused.
+//!   container with secrets as files; a provision that opens items and has neither is refused, and one that fails is
+//!   undone.
 //! - [`lifecycle`]: start, stop, restart, remove and check, through the host type's services by name (the driver
 //!   contract of `InstanceHostType`), each under a lease when its host's key is a vault item.
 //! - [`actions`]: `InstanceAction` rows, and an action asked for from a screen: run now, or a lease asked for and the
@@ -38,6 +41,7 @@ use moqui_core::extension::RustServiceFn;
 
 pub mod actions;
 mod common;
+pub mod database;
 pub mod kinds;
 pub mod lifecycle;
 pub mod plan;

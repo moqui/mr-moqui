@@ -58,7 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </drop-down>
                 </default-field></field>
                 <field name="hostName"><default-field tooltip="The name it is reached by, when it serves the web"><text-line size="40"/></default-field></field>
-                <field name="hostPort"><default-field tooltip="The host's port its service is published on; a database the manager makes databases on needs one">
+                <field name="hostPort"><default-field tooltip="The host's port its service is published on, on the host's loopback only (a proxy on the host reaches it)">
                     <text-line size="8"/></default-field></field>
                 <field name="databaseInstanceId"><default-field title="Database instance">
                     <drop-down allow-empty="true">

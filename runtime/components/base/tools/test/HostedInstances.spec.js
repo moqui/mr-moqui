@@ -82,11 +82,11 @@ feature("an instance's page shows its secret bindings and its provision preview"
     },
 })
 
-feature("the generic tools do not write an InstanceImage, whose authTokenCmd runs on the host", {
+feature("the generic tools do not write an InstanceImage, whose kind and registry decide what runs", {
     when() {
         login("john.doe")
         const res = ec.screen.makeTest().rootScreen("component://tools/screen/Tools.xml").render("Data/Browse/AutoEdit/AutoEditMaster/update",
-            { aen: "moqui.server.instance.InstanceImage", instanceImageId: "SPEC_HI_IMAGE", authTokenCmd: "touch /tmp/spec-hi" }, "post")
+            { aen: "moqui.server.instance.InstanceImage", instanceImageId: "SPEC_HI_IMAGE", imageName: "spec/hi:1", registryLogin: "Y" }, "post")
         ec.message.clearErrors()
         const written = ec.entity.find("moqui.server.instance.InstanceImage").condition("instanceImageId", "SPEC_HI_IMAGE").disableAuthz().count()
         return { errors: res.errorMessages.join(" "), written }

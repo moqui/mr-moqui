@@ -1693,3 +1693,16 @@ fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
     );
     clear_context_stack();
 }
+
+/// SEC-SCR-04, v5.0.0-1.2.5: a script has no way to start a process: no host member runs a command (the old registry
+/// token command, `runTokenCommand`, is gone with the column that named it).
+#[test]
+fn no_script_starts_a_process() {
+    let context = database();
+    let _entered = context.enter();
+    for script in [r#"ec.resource.runTokenCommand("printf tok")"#, r#"ec.resource.runCommand("printf tok")"#] {
+        let err = run_script(script).unwrap_err();
+        assert!(err.message().contains("not a function") || err.message().contains("run"), "{script}: {err}");
+    }
+    clear_context_stack();
+}

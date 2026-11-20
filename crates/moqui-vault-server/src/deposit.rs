@@ -281,3 +281,40 @@ fn deposit_in_tx(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibErro
         },
     )
 }
+
+/// Withdraws an item the server deposited when the operation that made it failed before using it (M1: a provision
+/// undone): the row and its `VeItemDeleted` event in the caller's transaction. Only an item still wrapped to the deposit
+/// key, which no member has taken in, of the vault and binding named; any other is refused, so this deletes nothing a
+/// member wrote or adopted.
+pub fn withdraw_item(facade: &EntityFacade, vault_id: &str, item_id: &str, binding: &str) -> Result<(), LibError> {
+    let _authz = authz_off();
+    let tx = facade.transactions_for(ITEM)?;
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        let row = find(facade, ITEM)?
+            .eq("vaultItemId", Value::string(item_id))
+            .one()?
+            .ok_or_else(|| fail(format!("No item {item_id}")))?;
+        if field(&row, "vaultId") != vault_id
+            || field(&row, "bindingKey") != binding
+            || field(&row, "itemKeyWrapEnumId") != "VwDeposit"
+        {
+            return Err(fail(format!(
+                "Item {item_id} is not the server's deposit of {binding}: it is not withdrawn"
+            )));
+        }
+        let mut vault = vault_row(facade, vault_id, true)?;
+        row.delete(facade)?;
+        bump_revision(facade, &mut vault)?;
+        events::write(
+            facade,
+            Event {
+                kind: "VeItemDeleted",
+                vault_id: Some(vault_id),
+                item_id: Some(item_id),
+                actor: Some("server"),
+                detail: Some(format!("{binding} withdrawn: the operation that deposited it was undone")),
+                ..Event::default()
+            },
+        )
+    })
+}

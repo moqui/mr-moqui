@@ -31,6 +31,14 @@ use moqui_lib::object::Value;
 /// Submit the vault server's [`VaultHooks`]; moqui-vault-server does, once.
 pub use inventory::submit;
 
+/// [`VaultHooks::machine_run`]: an environment, the bindings, the operation the lease names, and the body run under it.
+pub type MachineRun = fn(
+    environment_id: &str,
+    bindings: &[String],
+    operation: &str,
+    body: &mut dyn FnMut() -> Result<(), LibError>,
+) -> Result<(), LibError>;
+
 /// What the framework calls in the vault server.
 pub struct VaultHooks {
     /// The value of the item bound to `binding` in the lease this thread runs under: the item's fields, or the one
@@ -39,6 +47,10 @@ pub struct VaultHooks {
     pub leased: fn(binding: &str, field: Option<&str>) -> Result<Value, LibError>,
     /// Whether `text` holds a secret value a live lease handed out to the operation on this thread.
     pub holds_leased: fn(text: &str) -> bool,
+    /// Runs `body` under a lease of `bindings` opened from the machine access of environment `environment_id` (§3.8),
+    /// approved by "machine", which ends when `body` returns: an unattended operation of that environment, such as a CI
+    /// run's call to its runner host. Refused when the environment holds no machine access to each binding.
+    pub machine_run: MachineRun,
 }
 inventory::collect!(VaultHooks);
 
@@ -69,6 +81,33 @@ pub fn leased(binding: &str, field: Option<&str>) -> Result<Value, LibError> {
             "vault is not built in: this binary has no vault server (the vault feature)",
         )),
     }
+}
+
+/// Runs `body` under a machine-access lease of `bindings` for environment `environment_id`; inside it, [`leased`]
+/// reads their values. The lease ends when `body` returns.
+///
+/// # Errors
+///
+/// When the binary has no vault server, the environment has no machine access to a binding, or `body` fails.
+pub fn machine_run<T>(
+    environment_id: &str,
+    bindings: &[String],
+    operation: &str,
+    body: impl FnOnce() -> Result<T, LibError>,
+) -> Result<T, LibError> {
+    let Some(hooks) = get() else {
+        return Err(LibError::new(
+            "vault is not built in: this binary has no vault server (the vault feature)",
+        ));
+    };
+    let mut body = Some(body);
+    let mut answer = None;
+    (hooks.machine_run)(environment_id, bindings, operation, &mut || {
+        let body = body.take().ok_or_else(|| LibError::new("a machine-access body runs once"))?;
+        answer = Some(body());
+        Ok(())
+    })?;
+    answer.unwrap_or_else(|| Err(LibError::new("the machine-access lease ran nothing")))
 }
 
 /// Refuses `parameters` of a call about to be stored (queued, scheduled, kept in the outbox) when any value in them, at
