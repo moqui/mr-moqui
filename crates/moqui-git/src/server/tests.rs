@@ -2364,6 +2364,82 @@ fn lfs_takes_no_lock_or_object_for_an_archived_repository() {
     }
 }
 
+/// SEC-GIT-84: a repository archived (or marked for deletion) while an upload's body comes in takes no object: the
+/// row is made only after the repository's row is read again under its lock (`Lfs::writing`), as a push stores.
+#[test]
+fn an_lfs_upload_takes_no_object_once_its_repository_is_archived_mid_body() {
+    let fixture = fixture("lfs-archived-race");
+    let _lfs_key = lfs_key("the key of the lfs race test");
+    define(&fixture, "racing", "db");
+    let base = http_server(fixture.context.factory());
+    let writer = format!(
+        "Basic {}",
+        base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            format!("{WRITER}:{PASSWORD}")
+        )
+    );
+    let lfs_json = "application/vnd.git-lfs+json";
+    let content = vec![7u8; 64 * 1024];
+    let oid = moqui_core::resource::blob::blob_id(&content);
+    let body = serde_json::json!({ "operation": "upload", "transfers": ["basic"],
+        "objects": [{ "oid": oid, "size": content.len() }] })
+    .to_string();
+    let (status, _, reply) = http(
+        &base,
+        "POST",
+        "/git/racing.git/info/lfs/objects/batch",
+        &[
+            ("Authorization", &writer),
+            ("Accept", lfs_json),
+            ("Content-Type", lfs_json),
+        ],
+        body.as_bytes(),
+    );
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&reply));
+    let upload = json_of(&reply)["objects"][0]["actions"]["upload"].clone();
+    let href = upload["href"].as_str().unwrap();
+    let token = upload["header"]["Authorization"].as_str().unwrap().to_string();
+    // the request and half its body; the server is reading it, past the write check, when the repository is archived
+    let address = base.trim_start_matches("http://");
+    let mut stream = TcpStream::connect(address).unwrap();
+    let head = format!(
+        "PUT {} HTTP/1.1\r\nHost: {address}\r\nAuthorization: {token}\r\nContent-Length: {}\r\n\r\n",
+        &href[href.find("/git/").unwrap()..],
+        content.len()
+    );
+    stream.write_all(head.as_bytes()).unwrap();
+    stream.write_all(&content[..content.len() / 2]).unwrap();
+    stream.flush().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, crate::GIT_REPOSITORY).unwrap();
+        row.set("repositoryId", Value::string("racing"));
+        row.set("archivedDate", moqui_core::user::now_value());
+        row.update(&fixture.entity).unwrap();
+    }
+    stream.write_all(&content[content.len() / 2..]).unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let response = String::from_utf8_lossy(&response);
+    assert!(response.starts_with("HTTP/1.1 403"), "{response}");
+    assert!(
+        response.contains("or being deleted"),
+        "refused when the row was read again: {response}"
+    );
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    assert!(fixture
+        .entity
+        .find(super::lfs::GIT_LFS_OBJECT)
+        .unwrap()
+        .list()
+        .unwrap()
+        .is_empty());
+}
+
 /// SEC-GIT-85: a repository has at most `git-server` `lfs-max-locks` LFS locks, and a locks page is at most
 /// `lfs-locks-max-page` whatever limit the client asks for.
 #[test]
