@@ -45,11 +45,25 @@ fn alive(pid: u32) -> bool {
     proc.is_dir() && proc.join(pid.to_string()).exists()
 }
 
-/// The most entries [`last_touched`] reads of one directory's tree; past it the directory is taken as touched now.
+/// The most entries [`last_touched`] reads of one directory's tree; past it the top level's age decides.
 const MOST_ENTRIES_READ: usize = 10_000;
 
+/// The newest change of `dir` or of an entry directly in it.
+fn top_level_touched(dir: &Path) -> Option<SystemTime> {
+    let mut newest = std::fs::symlink_metadata(dir).ok()?.modified().ok()?;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if let Some(modified) = entry.metadata().ok().and_then(|meta| meta.modified().ok()) {
+                newest = newest.max(modified);
+            }
+        }
+    }
+    Some(newest)
+}
+
 /// The newest change of `dir` or of anything in its tree (a long import writes nested files while the top stays old),
-/// reading at most [`MOST_ENTRIES_READ`] entries: a tree larger than that is taken as touched now, and kept.
+/// reading at most [`MOST_ENTRIES_READ`] entries: for a tree larger than that, the newest of the directory and what is
+/// directly in it (a tree too large to read is not kept for ever).
 fn last_touched(dir: &Path) -> Option<SystemTime> {
     let mut newest = std::fs::symlink_metadata(dir).ok()?.modified().ok()?;
     let mut pending = vec![dir.to_path_buf()];
@@ -61,7 +75,7 @@ fn last_touched(dir: &Path) -> Option<SystemTime> {
         for entry in entries.flatten() {
             read += 1;
             if read > MOST_ENTRIES_READ {
-                return Some(SystemTime::now());
+                return top_level_touched(dir);
             }
             let Ok(meta) = entry.metadata() else {
                 continue;

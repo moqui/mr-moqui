@@ -67,7 +67,21 @@ fn what_a_dead_process_left_an_hour_ago_is_removed() {
         .unwrap()
         .set_modified(SystemTime::now() - old)
         .unwrap();
+    // a tree past MOST_ENTRIES_READ: its top level's age decides, so an old one goes rather than stay for ever
+    let large = objects.join(format!("incoming-{DEAD}-4"));
+    let many = large.join("many");
+    std::fs::create_dir_all(&many).unwrap();
+    for at in 0..=super::MOST_ENTRIES_READ {
+        std::fs::write(many.join(at.to_string()), b"").unwrap();
+    }
+    for dir in [&many, &large] {
+        std::fs::File::open(dir)
+            .unwrap()
+            .set_modified(SystemTime::now() - old)
+            .unwrap();
+    }
     sweep_at_start(&root);
+    assert!(!large.exists(), "a tree too large to read goes by its top level's age");
     for gone in [&dead_quarantine, &dead_gc, &dead_db, &dead_import] {
         assert!(!gone.exists(), "{} is removed", gone.display());
     }
