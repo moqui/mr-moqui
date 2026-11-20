@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     (clear#EdgeTakeover). Deliver again since (deliver#ItemsAgain) queues again the items delivered to a pairing since a
     time, after a standby was restored from a backup. Ping sends a Ping down a node's down connection and shows the
     round trip; Revoke ends its key and closes its link. Make a pairing code (create#PairingCode, for one named local node when
-    given, which a node paired before with another key needs: SEC-CLU-82) shows the code once,
+    given, which a node revoked or unpaired, or paired before with another key, needs: SEC-CLU-82) shows the code once,
     after the redirect, as the Chat apps screen shows a new app password; only its hash is kept. Near the top is this
     node's link key fingerprint (get#LinkStatus, read by the parent screen), for the operator to compare with what a
     local node's Connect step shows. Below, each pairing's replicated sets as this node has applied them. The parent
@@ -300,7 +300,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <option key="240" text="4 hours"/>
                         <option key="1440" text="A day"/>
                     </drop-down></default-field></field>
-                    <field name="pairedNodeId"><default-field title="For local node" tooltip="The id of the one local node this code pairs; needed to pair again a node paired before with another key (its hosts, ports and queued items go to the new key). Empty for a new node"><text-line size="30"/></default-field></field>
+                    <field name="pairedNodeId"><default-field title="For local node" tooltip="The id of the one local node this code pairs; needed to pair again a node that was revoked or unpaired itself, whatever key it brings, or one paired before with another key (its hosts, ports and queued items go to it). Empty for a new node"><text-line size="30"/></default-field></field>
                     <field name="submitButton"><default-field title="Make the code"><submit/></default-field></field>
                 </form-single>
             </container-dialog>
