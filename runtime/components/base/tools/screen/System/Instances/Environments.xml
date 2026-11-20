@@ -15,12 +15,19 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The environments (plans/Vault-Instances.md §4.1): production, staging, demo; each with its operational vault, approvers,
     required pipeline, machine access, unseal policy, transport and lease limit (store#InstanceEnvironment). Machine access
     here lets the environment's operations use the items the vault gave it (System › Vaults) with no approver: those
-    items are then as strong as this server's own keys. -->
+    items are then as strong as this server's own keys. Deploy (§4.6, M3) posts request#InstanceDeploy for the
+    environment, or one cluster of it: a new image to its instances of that kind, or a component's commit to its mr-moqui
+    instances, one at a time (a cluster member drained over its link); refused without a passed run of the required
+    pipeline for the commit; it runs now or goes to the lease dialog. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Environments" default-menu-index="2">
 
     <transition name="storeEnvironment" method="post"><service-call name="org.moqui.dev.InstanceServices.store#InstanceEnvironment"/>
         <default-response url="."/></transition>
+    <transition name="requestDeploy" method="post"><service-call name="org.moqui.dev.InstanceServices.request#InstanceDeploy"/>
+        <conditional-response url="../../Vaults/Lease"><condition><expression>leaseId</expression></condition>
+            <parameter name="leaseId"/></conditional-response>
+        <default-response url="."/><error-response url="."/></transition>
 
     <actions>
         <entity-find entity-name="moqui.server.instance.InstanceEnvironment" list="environmentList">
@@ -72,6 +79,29 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="machineAccess"><default-field title="Machine access"><display/></default-field></field>
             <field name="requiredPipeline"><default-field title="Pipeline"><display/></default-field></field>
             <field name="leaseLimitMinutes"><default-field title="Lease limit"><display/></default-field></field>
+            <field name="deploy"><default-field title="">
+                <container-dialog id="Deploy_${environmentId}" button-text="Deploy">
+                    <form-single name="DeployEnvironment" transition="requestDeploy">
+                        <field name="environmentId"><default-field><hidden/></default-field></field>
+                        <field name="clusterId"><default-field title="Cluster" tooltip="Empty: every instance of the environment the change is for">
+                            <drop-down allow-empty="true"><entity-options key="${clusterId}" text="${clusterName || clusterId}">
+                                <entity-find entity-name="moqui.server.instance.InstanceCluster"><econdition field-name="environmentId"/>
+                                    <order-by field-name="clusterId"/></entity-find></entity-options></drop-down>
+                        </default-field></field>
+                        <field name="instanceImageId"><default-field title="New image">
+                            <drop-down allow-empty="true"><entity-options key="${instanceImageId}" text="${instanceImageId}: ${imageName}">
+                                <entity-find entity-name="moqui.server.instance.InstanceImage"><order-by field-name="instanceImageId"/></entity-find>
+                            </entity-options></drop-down>
+                        </default-field></field>
+                        <field name="componentName"><default-field title="Or a component"><text-line size="30"/></default-field></field>
+                        <field name="repositoryUrl"><default-field title="Its repository URL"><text-line size="50"/></default-field></field>
+                        <field name="refName"><default-field title="Its branch"><text-line size="20" default-value="main"/></default-field></field>
+                        <field name="commitId"><default-field title="Commit" tooltip="The commit the pipeline passed: the component's, or the one the image was built from"><text-line size="42"/></default-field></field>
+                        <field name="repositoryId"><default-field title="Repository here"><text-line size="30"/></default-field></field>
+                        <field name="submitButton"><default-field title="Deploy"><submit confirmation="Deploy to environment ${environmentId}?"/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </default-field></field>
         </form-list>
     </widgets>
 </screen>

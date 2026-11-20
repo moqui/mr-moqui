@@ -147,7 +147,10 @@ fn on_production_an_internal_or_unknown_deploy_host_is_refused() {
         super::url_host("https://user:secret@127.0.0.1:8443/r.git"),
         Some(("127.0.0.1".to_string(), 8443))
     );
-    assert_eq!(super::url_host("git@10.0.0.5:org/r.git"), Some(("10.0.0.5".to_string(), 22)));
+    assert_eq!(
+        super::url_host("git@10.0.0.5:org/r.git"),
+        Some(("10.0.0.5".to_string(), 22))
+    );
     moqui_core::web::TEST_PRODUCTION.with(|flag| flag.set(Some(true)));
     let checked: Vec<_> = [
         "https://user:secret@127.0.0.1/r.git",
@@ -439,6 +442,7 @@ fn the_gate_refuses_an_unattested_stale_forged_misaddressed_or_unallowed_deploy_
         let _scope = AttestedScope::enter(Attested {
             component: "site".to_string(),
             commit: COMMIT.to_string(),
+            managed: false,
         });
         assert!(gate().is_ok(), "the attestation stands for the permission");
         assert!(gate_commit(factory, "site", COMMIT).is_ok());
@@ -673,6 +677,7 @@ fn deploy_and_update_check_the_attested_component_and_commit() {
         let _scope = AttestedScope::enter(Attested {
             component: "other".to_string(),
             commit: COMMIT.to_string(),
+            managed: false,
         });
         let refused = problems(deploy(factory, "site", crate::deploy::load::Mode::Now, &[]));
         assert!(refused.contains("the attestation is for other, not site"), "{refused}");
@@ -683,6 +688,7 @@ fn deploy_and_update_check_the_attested_component_and_commit() {
         let _scope = AttestedScope::enter(Attested {
             component: "site".to_string(),
             commit: OTHER_COMMIT.to_string(),
+            managed: false,
         });
         let refused = problems(deploy(factory, "site", crate::deploy::load::Mode::Now, &[]));
         assert!(
@@ -694,6 +700,7 @@ fn deploy_and_update_check_the_attested_component_and_commit() {
         let _scope = AttestedScope::enter(Attested {
             component: "site".to_string(),
             commit: COMMIT.to_string(),
+            managed: false,
         });
         // past the gate: the deploy goes on to the staged files, which this test did not write
         let report = problems(deploy(factory, "site", crate::deploy::load::Mode::Now, &[]));
@@ -799,6 +806,7 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
         let _scope = AttestedScope::enter(Attested {
             component: "site".to_string(),
             commit: first.clone(),
+            managed: false,
         });
         let report = update(factory, "site", &[]);
         let problems = report.problems.join("; ");
@@ -820,6 +828,28 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
     assert!(location.join("screen/Site.xml").is_file());
     assert!(gate_restore(factory, "site", &second).is_ok());
     assert!(gate_restore(factory, "site", &first).is_err());
+
+    // a managed deploy (plans/Vault-Instances.md §4.6), its manager's over the pinned link with no signature: back to
+    // the commit before, as a rollback goes, and recorded as the commit a start writes; a text that is not an
+    // attestation of a passed run is refused
+    let (text, _) = signed(SECRET, &attestation(now + 1_000));
+    let mut back: moqui_git::ci::attest::Attestation = serde_json::from_str(&text).unwrap();
+    back.commit_id.clone_from(&first);
+    back.audience = String::new();
+    back.issued_at = now + 1_000;
+    let done = super::deploy_managed(factory, &serde_json::to_string(&back).unwrap()).unwrap();
+    assert_eq!(
+        (done.status.as_str(), done.commit.as_str()),
+        ("deployed", first.as_str())
+    );
+    assert!(!location.join("screen/Site.xml").is_file(), "back at the first commit");
+    assert!(gate_restore(factory, "site", &first).is_ok());
+    let mut failed = back.clone();
+    failed.run_status = "failure".to_string();
+    failed.issued_at = now + 2_000;
+    let err = super::deploy_managed(factory, &serde_json::to_string(&failed).unwrap()).unwrap_err();
+    assert!(err.contains("not an attestation of a passed run"), "{err}");
+    assert!(super::deploy_managed(factory, "not json").is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

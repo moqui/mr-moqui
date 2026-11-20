@@ -131,11 +131,14 @@ pub struct UpdatePreview {
 }
 
 /// The commit an attested deploy on this thread may put in place ([`deploy_attested`]): the attestation, verified with
-/// the secret this server issued, stands for the `COMPONENT_DEPLOY` permission, and pins the component and commit.
+/// the secret this server issued, stands for the `COMPONENT_DEPLOY` permission, and pins the component and commit. A
+/// managed deploy ([`deploy_managed`]) is its manager's, over the pinned manager link: the link stands for both the
+/// permission and `component-deploy` `enabled` (plans/Vault-Instances.md §4.6).
 #[derive(Clone, Debug)]
 struct Attested {
     component: String,
     commit: String,
+    managed: bool,
 }
 
 thread_local! {
@@ -166,6 +169,9 @@ fn attested() -> Option<Attested> {
 /// secret this server issued stands for), and on a production instance `component-deploy` `enabled="true"` too, refused
 /// there with no more said.
 fn gate() -> Result<(), String> {
+    if attested().is_some_and(|attested| attested.managed) {
+        return Ok(());
+    }
     if moqui_core::web::is_production() && moqui_core::context::conf_env::setting("component-deploy@enabled") != "true"
     {
         return Err("Deploying a component is not available on this server".to_string());
@@ -481,6 +487,22 @@ pub fn discard(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<(),
 ///
 /// When the gate refuses, `name` was not deployed from git, or the fetch fails.
 pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<UpdatePreview, String> {
+    preview_update_at(factory, name, None)
+}
+
+/// [`preview_update`] to the commit `at` of the component's repository instead of its branch's head: a managed
+/// deploy's rollback to the commit an instance action recorded (plans/Vault-Instances.md §4.6, step 8). Only a
+/// component kept in the database or a bare repository moves to another commit; a clone moves by a fast-forward to its
+/// branch's head.
+///
+/// # Errors
+///
+/// As [`preview_update`], and when `at` is not a commit of the repository.
+pub fn preview_update_at(
+    factory: &Arc<ExecutionContextFactory>,
+    name: &str,
+    at: Option<&str>,
+) -> Result<UpdatePreview, String> {
     gate()?;
     let row = deployed_row(factory, name)?
         .filter(|row| text(row, "source") == "git" && text(row, "status") == "deployed")
@@ -513,10 +535,11 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
                 }
                 .map_err(|err| err.to_string())?;
             }
-            let to = git
+            let head = git
                 .branch_head(&id)
                 .map_err(|err| err.to_string())?
                 .ok_or_else(|| "the branch has no commits".to_string())?;
+            let to = at.map_or(head, str::to_string);
             preview.to.clone_from(&to);
             if to == from {
                 return Ok(preview);
@@ -539,6 +562,12 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
                 None,
             )?;
             preview.to = to.trim().to_string();
+            if at.is_some_and(|at| at != preview.to) {
+                return Err(format!(
+                    "{name} is kept as a clone, which moves only by a fast-forward to its branch's head, not to another \
+                     commit"
+                ));
+            }
             if preview.to == from {
                 return Ok(preview);
             }
@@ -575,6 +604,16 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
 /// fast-forwarded), its entities relinked, the conf applied, the changed files reloaded, and the changed data files of
 /// `data_types` loaded (`seed` when empty).
 pub fn update(factory: &Arc<ExecutionContextFactory>, name: &str, data_types: &[String]) -> LoadReport {
+    update_at(factory, name, data_types, None)
+}
+
+/// [`update`] to the commit `at` ([`preview_update_at`]) instead of the branch's head.
+pub fn update_at(
+    factory: &Arc<ExecutionContextFactory>,
+    name: &str,
+    data_types: &[String],
+    at: Option<&str>,
+) -> LoadReport {
     let started = std::time::Instant::now();
     let mut report = LoadReport {
         component: name.to_string(),
@@ -585,7 +624,7 @@ pub fn update(factory: &Arc<ExecutionContextFactory>, name: &str, data_types: &[
         report.problems.push(err);
         return report;
     }
-    let preview = match preview_update(factory, name) {
+    let preview = match preview_update_at(factory, name, at) {
         Ok(preview) if preview.from == preview.to => {
             report.status = "deployed".to_string();
             report.problems.push("up to date".to_string());
@@ -888,6 +927,45 @@ pub fn deploy_attested(
         signature,
         moqui_core::service::util::now_millis(),
     )?;
+    deploy_checked(factory, attestation, false)
+}
+
+/// A managed deploy (plans/Vault-Instances.md §4.6): the commit its manager names over the manager link, with no
+/// signature, since the link's pinned keys name the caller and the manager checked the passed run itself; so the
+/// instance needs no `attestation-secret` and no `allow` entry. Not a service: only the link's command handler calls
+/// it, as the link's one identity. The commit may be older than the branch's head (a rollback to the commits an
+/// instance action recorded); otherwise as [`deploy_attested`]: claimed newer than the last the component took, and
+/// put in place under the gate.
+///
+/// # Errors
+///
+/// Why it was refused or did not deploy.
+pub fn deploy_managed(
+    factory: &Arc<ExecutionContextFactory>,
+    attestation_text: &str,
+) -> Result<AttestedDeploy, String> {
+    use moqui_git::ci::attest;
+    if attestation_text.len() > attest::MAX_TEXT {
+        return Err("the deploy is longer than an attestation may be".to_string());
+    }
+    let attestation: attest::Attestation =
+        serde_json::from_str(attestation_text).map_err(|err| format!("the deploy is not an attestation: {err}"))?;
+    if attestation.kind != attest::KIND || attestation.v != attest::VERSION || attestation.run_status != "success" {
+        return Err("the deploy is not an attestation of a passed run".to_string());
+    }
+    if attestation.commit_id.is_empty() || attestation.repository_url.is_empty() {
+        return Err("the deploy names no commit or repository".to_string());
+    }
+    deploy_checked(factory, attestation, true)
+}
+
+/// The deploy of an attestation once it is taken: verified ([`deploy_attested`]), or its manager's over the link
+/// ([`deploy_managed`], which may name an older commit than the branch's head).
+fn deploy_checked(
+    factory: &Arc<ExecutionContextFactory>,
+    attestation: moqui_git::ci::attest::Attestation,
+    managed: bool,
+) -> Result<AttestedDeploy, String> {
     let name = attestation.component.clone();
     check_name(&name)?;
     let facade = factory.entity().ok_or_else(|| "no entity facade".to_string())?;
@@ -902,6 +980,7 @@ pub fn deploy_attested(
     let _scope = AttestedScope::enter(Attested {
         component: name.clone(),
         commit: attestation.commit_id.clone(),
+        managed,
     });
     let mut done = AttestedDeploy {
         component: name.clone(),
@@ -924,7 +1003,9 @@ pub fn deploy_attested(
                     attestation.branch()
                 ));
             }
-            let preview = preview_update(factory, &name)?;
+            // a managed deploy goes to its commit, which a rollback names below the branch's head
+            let at = managed.then_some(attestation.commit_id.as_str());
+            let preview = preview_update_at(factory, &name, at)?;
             if preview.to != attestation.commit_id {
                 return Err(format!(
                     "the branch {} is at {}, the attestation is for {}: deploy its new head",
@@ -936,7 +1017,7 @@ pub fn deploy_attested(
             if preview.from == preview.to {
                 done.status = "up-to-date".to_string();
             } else {
-                let report = update(factory, &name, &data_types);
+                let report = update_at(factory, &name, &data_types, at);
                 if report.status == "failed" {
                     return Err(format!("{name} was not updated: {}", report.problems.join("; ")));
                 }
@@ -967,9 +1048,10 @@ pub fn deploy_attested(
     record_deployed(factory, &attestation);
     tracing::warn!(
         target: moqui_core::live_settings::AUDIT,
-        "Component {name} at {} {} by the attested deployment {} of {} (environment {}, pipeline {} run {})",
+        "Component {name} at {} {} by the {} deployment {} of {} (environment {}, pipeline {} run {})",
         short(&attestation.commit_id),
         done.status,
+        if managed { "managed" } else { "attested" },
         attestation.deployment_id,
         attestation.source,
         attestation.environment,

@@ -3307,6 +3307,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:documentation>On a manager: how long after an instance's link went down a link of it from another
                 address is refused (and told to the administrators) unless an operator confirms the move; while its link
                 is live, such a link is always refused unless confirmed.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deploy-wait-seconds" type="xs:string" default="600"><xs:annotation>
+                <xs:documentation>On a manager: how long a deploy waits for a changed instance to report healthy and
+                unsealed (plans/Vault-Instances.md §4.6) before it puts its old container back and stops the roll. Read at
+                each deploy.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

@@ -138,7 +138,7 @@ The short answer: field encryption keeps secrets out of a stolen database dump o
   - `BasicEntities.xml`: `EmailServer.mailPassword`, `.smtpPassword`, `.oauthRefreshToken`, `EmailServerAccessToken.accessToken`, `EmailOAuthProvider.clientSecret`.
   - `ChatEntities.xml`: `ChatInviteLink.tokenText`, `ChatBridge.configJson`. `DatabaseEntities.xml`: `DatabaseConnection.password`.
   - `EdgeEntities.xml`: `EdgeReplicaValue.pkJson`, `.fieldsJson`, `EdgeReplicaConflict.itemKey`, `.pkJson`, `.fieldsJson`.
-  - `EntityEntities.xml`: `EntitySync.targetPassword`. `GitCiEntities.xml`: `GitCiSecret.secretValue`, `GitCiEnvironment.targetToken`. `LlmEntities.xml`: `LlmEndpoint.apiKey`. `MonitorEntities.xml`: `ScrapeTarget.bearerToken`.
+  - `EntityEntities.xml`: `EntitySync.targetPassword`. `GitCiEntities.xml`: `GitCiSecret.secretValue` (a deploy target's token is an operational vault item since M3, not a field). `LlmEntities.xml`: `LlmEndpoint.apiKey`. `MonitorEntities.xml`: `ScrapeTarget.bearerToken`.
   - `ResourceEntities.xml`: `GitRepository.accessToken`, `GitWebhook.secret`, `GitRepositoryMirror.credential`.
   - `SecurityEntities.xml`: `UserAuthcFactor.factorOption`, `WebPushSubscription.authSecret`, `OauthFlow.secret`, `OidcFlow.secret`, `SamlFlow.keystorePassword`, `.privateKeyPassword`.
   - `ServerEntities.xml`: `DeployedComponent.accessToken`, `AcmeCertificate.privateKeyPem`.

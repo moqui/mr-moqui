@@ -607,6 +607,11 @@ a release, budgets not raised.
   pipeline.
 - On moqui.org: a demo instance deploys main after every green merge; moqui.org itself deploys after a pass and a
   maintainer's approval.
+- **Managed instances** (Vault-Instances M3, [§4.6](Vault-Instances.md#46-deploys)): an environment that names an
+  `InstanceEnvironment` deploys over the manager link to its instances, with no token or attestation, the gate checked
+  by the manager, approval opening the deploy's lease (or the environment's machine access, for the demo), a backup
+  first, a roll one instance at a time with drain, and rollback to recorded versions. A target not managed here keeps
+  the attested call, its token an operational vault item ([Pipelines](../docs/interfaces/Pipelines.md#deployments)).
 
 ---
 

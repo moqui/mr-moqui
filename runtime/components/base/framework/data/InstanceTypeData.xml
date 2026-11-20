@@ -49,6 +49,8 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="IatDrain" enumTypeId="InstanceActionType" enumCode="drain" description="Drain" sequenceNum="8"/>
     <moqui.basic.Enumeration enumId="IatRotate" enumTypeId="InstanceActionType" enumCode="rotate" description="Rotate" sequenceNum="9"/>
     <moqui.basic.Enumeration enumId="IatUnseal" enumTypeId="InstanceActionType" enumCode="unseal" description="Unseal" sequenceNum="10"/>
+    <moqui.basic.Enumeration enumId="IatRollback" enumTypeId="InstanceActionType" enumCode="rollback" description="Rollback" sequenceNum="11"/>
+    <moqui.basic.Enumeration enumId="IatBackup" enumTypeId="InstanceActionType" enumCode="backup" description="Backup" sequenceNum="12"/>
 
     <moqui.basic.EnumerationType enumTypeId="InstanceActionStatus" description="Managed instance action status"/>
     <moqui.basic.Enumeration enumId="IasWaiting" enumTypeId="InstanceActionStatus" enumCode="waiting" description="Waiting for its lease" sequenceNum="1"/>
@@ -104,7 +106,8 @@ along with this software (see the LICENSE.md file). If not, see
 
     <moqui.server.instance.InstanceKind instanceKindId="postgres" description="Postgres" confName="postgres" containerPort="5432"
             runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabasePostgres"
-            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabasePostgres">
+            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabasePostgres"
+            backupService="org.moqui.dev.InstanceServices.backup#DatabaseInstance">
         <vols mountPoint="/var/lib/postgresql" volumeName="${instanceName}-data"/>
         <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="pg_isready -U postgres"/>
@@ -114,7 +117,8 @@ along with this software (see the LICENSE.md file). If not, see
     </moqui.server.instance.InstanceKind>
     <moqui.server.instance.InstanceKind instanceKindId="mysql" description="MySQL" confName="mysql" containerPort="3306"
             runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
-            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabaseMySQL">
+            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabaseMySQL"
+            backupService="org.moqui.dev.InstanceServices.backup#DatabaseInstance">
         <vols mountPoint="/var/lib/mysql" volumeName="${instanceName}-data"/>
         <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="mysqladmin ping -h 127.0.0.1 --silent"/>

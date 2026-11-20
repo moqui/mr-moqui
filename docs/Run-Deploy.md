@@ -2039,9 +2039,10 @@ A server can provision and run other instances, MR Moqui, Postgres, MySQL and Op
 with every credential in an operational vault ([Vaults](security/Vaults.md#operational-vaults)). This is System ›
 Instances, the services of `org.moqui.dev.InstanceServices` (Rust, `crates/moqui-instance`, in the Enterprise and
 Maximal builds) and the container driver CI's runs use too (`moqui_lib::docker`). Every service needs the sealed
-`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/Vault-Instances.md) §4; built so far are M1 and
-the manager link (M2, [below](#the-manager-link)): deploys, Monitor's fleet screen, rotation and a managed sealed start
-come later.
+`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/Vault-Instances.md) §4; built so far are M1,
+the manager link (M2, [below](#the-manager-link)) and deploys (M3: an instance's or an environment's Deploy and Roll back,
+and a pipeline's deployment to an environment, [Component-Deploy](tools/Component-Deploy.md#a-deploy-over-the-link)):
+Monitor's fleet screen, rotation and a managed sealed start come later.
 
 **The rows.** System › Instances has a tab for each:
 
@@ -2194,7 +2195,8 @@ every package; the manager's end needs `instances` too). The instance opens no p
   `manage@bootstrap-wait-seconds`, 120, on a first start).
 - **Commands** (`call#InstanceCommand`): status (version, seal state, schema hash, live cluster members, health), seal,
   restart, drain and undrain, put-secret (`moqui operator secret put`'s rules), deploy-component (Component-Deploy's
-  `deploy#AttestedComponent`, whose attestation stands for the permission; M3 drives it), export-seal (the recovery
+  deploy: with no signature the manager's own, the pinned link standing for the permission, so the instance needs no
+  attestation secret; M3's deploys and rollbacks send it), export-seal (the recovery
   bundle, wrapped values only) and surface-report (Sealed-Secrets S12: "not built"). On the manager each is checked
   against the instance's environment and the caller: INSTANCE_ADMIN, and a member of the environment's approver group
   when it names one. On the instance they run as the link's one identity, which runs only these commands: a command it

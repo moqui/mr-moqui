@@ -422,24 +422,34 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="environmentList" type="List"><description>Maps: environmentId, name,
             targetUrl and cloneUrl (a maintainer's only), dataTypes, requiredPipeline, approvalRequired,
-            approverGroupId, allowedRefs, hasToken (never the token), lastCommitId, lastDeploymentId,
-            lastDeployDate</description></parameter></out-parameters>
+            approverGroupId, allowedRefs, instanceEnvironmentId, vaultId, machineAccess, hasToken (whether the vault
+            holds the token's item; never the token), lastCommitId, lastDeploymentId, lastDeployDate</description></parameter></out-parameters>
     </service>
     <service verb="store" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::secrets::store_ci_environment">
         <description>Make or change an environment of a repository (the delete right, a maintainer's) or of an owner
-            (authorization disabled). The target's token is encrypted and never read back. Its secrets go only to a
-            run of a protected ref or of a branch allowedRefs names, never to a merge request's, and with
-            approvalRequired only to an approved run. For deployments (docs/interfaces/Pipelines.md "Deployments"):
-            the target instance (https, or http to a loopback IP literal), the token it issued (at least 32
-            characters: its component-deploy attestation-secret, which signs each attestation and is never sent), the
-            pipeline with the deploy event that must pass, who approves, and the data types the target loads.</description>
+            (authorization disabled). Its secrets go only to a run of a protected ref or of a branch allowedRefs names,
+            never to a merge request's, and with approvalRequired only to an approved run. For deployments
+            (docs/interfaces/Pipelines.md "Deployments"): the managed instances' environment (instanceEnvironmentId,
+            named by an INSTANCE_ADMIN), or the target instance (https, or http to a loopback IP literal) and the
+            operational vault holding the token it issued (the item GitCiEnvironment:&lt;environmentId&gt;:targetToken,
+            field secret: its component-deploy attestation-secret, which signs each attestation and is never sent),
+            with machineAccess (given by a VAULT_ADMIN) to sign unattended; the pipeline with the deploy event that must
+            pass, who approves, and the data types the target loads.</description>
         <in-parameters>
             <parameter name="repositoryId"/>
             <parameter name="ownerId"/>
             <parameter name="environmentId"/>
             <parameter name="name"/>
             <parameter name="targetUrl"><description>The target instance's base URL</description></parameter>
-            <parameter name="token" allow-html="any"><description>Written, never read back; left out on a change, it stays</description></parameter>
+            <parameter name="token" allow-html="any"><description>Refused: a target's token is an item of the environment's
+                vault, never a parameter (kept so a caller that sends one is told, not ignored)</description></parameter>
+            <parameter name="instanceEnvironmentId"><description>The managed instances' environment it deploys to, over the
+                manager link (plans/Vault-Instances.md §4.6); an INSTANCE_ADMIN's to name</description></parameter>
+            <parameter name="vaultId"><description>A target not managed here: the operational vault holding its token
+                item</description></parameter>
+            <parameter name="machineAccess" type="Boolean"><description>Sign under the vault's machine access for
+                git-ci-&lt;environmentId&gt;, with no approver of a lease; a VAULT_ADMIN's to turn on, and off again when
+                the target or the vault changes</description></parameter>
             <parameter name="cloneUrl"><description>The URL the target fetches the repository from (https or ssh, with
                 no user or password in it); the repository's public clone URL when empty</description></parameter>
             <parameter name="requiredPipeline"><description>The pipeline, with the deploy event, that must pass</description></parameter>
@@ -475,8 +485,11 @@ along with this software (see the LICENSE.md file). If not, see
             the environment's pipeline (requiredPipeline, which must have the deploy event) is queued for the commit
             with the deploy event, so the run check decides as for any run; when it passes the deployment waits for
             decide#GitDeployment if the environment requires approval or no branch rule protects the branch (an
-            approval of the run does not count), then the deploy step posts an attestation of the passed run to
-            the target's Component-Deploy REST. The branch must be protected or named by the environment's
+            approval of the run does not count), then the deploy step deploys it: over the manager link to the managed
+            instances of the InstanceEnvironment the environment names (plans/Vault-Instances.md §4.6), else an
+            attestation of the passed run posted to the target's Component-Deploy REST, signed with the token item of
+            the environment's vault. A deploy that opens vault items waits for approval unless it has machine access,
+            and approving it opens its lease. The branch must be protected or named by the environment's
             allowedRefs; the target deploys the commit only while it is still the branch's head. A repository the
             caller does not view is not found. The status deploy/[environment] of the commit follows each move.</description>
         <in-parameters>
@@ -497,11 +510,17 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="decide" noun="GitDeployment" type="rust" location="moqui_git::ci::service::deploys::decide_git_deployment">
         <description>Approve or refuse a deployment whose pipeline passed and that waits for approval: by a member of
             the environment's approverGroupId who views the repository, else a maintainer (the delete right), or the
-            application with authorization disabled; never by who asked for it. An approved one deploys.</description>
+            application with authorization disabled; never by who asked for it. An approved one deploys. One with a
+            lease (leaseId) is approved by opening it: leaseApproval is the approver's client's approval of the lease,
+            sent to approve#VaultLease under the caller's own rights, unless the lease is open already (an approval in
+            the lease dialog by one who may decide the deployment is its decision too). A refusal ends the
+            lease.</description>
         <in-parameters>
             <parameter name="deploymentId" required="true"/>
             <parameter name="decision" required="true"><description>approve or refuse</description></parameter>
             <parameter name="reason"/>
+            <parameter name="leaseApproval" type="Map"><description>approve#VaultLease's approval of the deployment's
+                lease, made in the approver's client</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="statusId"/></out-parameters>
     </service>

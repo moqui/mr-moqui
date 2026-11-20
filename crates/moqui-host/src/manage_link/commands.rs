@@ -15,9 +15,9 @@
 //! The manager's calls on a managed instance (plans/Vault-Instances.md §4.4, Manager to instance), on the instance:
 //! [`run`] takes a command off the link and answers it. Only the commands of [`CommandKind`] run, as the link's one
 //! system identity ([`Managed`]): status; seal; restart; drain and undrain; put a secret (`moqui operator secret put`'s
-//! rules, Sealed-Secrets S4); Component-Deploy's attested deploy; export the seal bundle; the surface report (S12, "not
-//! built" until then); and a changed approver set, taken only when an approver the instance pinned signed it. A command
-//! that is none of these is refused, and while sealed only status runs.
+//! rules, Sealed-Secrets S4); Component-Deploy's deploy (the manager's own, M3, or an attested one); export the seal
+//! bundle; the surface report (S12, "not built" until then); and a changed approver set, taken only when an approver
+//! the instance pinned signed it. A command that is none of these is refused, and while sealed only status runs.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -42,7 +42,8 @@ pub trait Managed: Send + Sync + 'static {
     fn restart(&self) -> Result<(), String>;
     fn drain(&self, drained: bool) -> Result<(), String>;
     fn put_secret(&self, name: &str, value: &str, force: bool) -> Result<(), String>;
-    /// Component-Deploy's attested deploy; its report.
+    /// Component-Deploy's deploy of the commit the command names; its report. With no signature it is the manager's own
+    /// (plans/Vault-Instances.md §4.6): the link's pinned keys name the caller, so no attestation secret is needed.
     fn deploy_component(&self, deploy: &super::proto::DeployComponentCommand) -> Result<String, String>;
     /// The seal's recovery bundle (`moqui operator export-seal`): wrapped values only.
     fn export_seal(&self) -> Result<String, String>;
@@ -308,7 +309,24 @@ impl Managed for ServerManaged {
     }
 
     fn deploy_component(&self, deploy: &super::proto::DeployComponentCommand) -> Result<String, String> {
-        // the attestation stands for the permission (Component-Deploy, "The gate"): the link runs no deploy without one
+        if deploy.signature.is_empty() {
+            // the manager's own deploy (M3): this link is the authority, as its pinned keys name the manager; not a
+            // service, so no request reaches it
+            let factory = self
+                .factory()
+                .ok_or_else(|| "the server is not running yet".to_string())?;
+            return self.in_context(|_| {
+                let done = moqui_devkit::deploy::git::deploy_managed(&factory, &deploy.attestation)?;
+                Ok(serde_json::json!({
+                    "deployStatus": done.status,
+                    "componentName": done.component,
+                    "commitId": done.commit,
+                    "problems": done.report.map(|report| report.problems).unwrap_or_default(),
+                })
+                .to_string())
+            });
+        }
+        // the attestation stands for the permission (Component-Deploy, "The gate")
         self.in_context(|_| {
             let parameters: std::collections::BTreeMap<String, moqui_lib::object::Value> = [
                 ("attestation", &deploy.attestation),

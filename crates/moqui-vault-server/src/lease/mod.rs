@@ -946,6 +946,89 @@ pub(crate) fn hook_holds_leased(text: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// The entered factory, its entity facade and its registry, for the hooks.
+fn entered() -> Result<(EntityFacade, Arc<LeaseRegistry>), LibError> {
+    let (factory, facade) =
+        moqui_core::context::ExecutionContext::with_current(|ec| (Arc::clone(ec.factory()), ec.factory().entity()))
+            .ok_or_else(|| fail("No execution context is entered"))?;
+    let facade = facade.ok_or_else(|| fail("No entity facade is installed"))?;
+    Ok((facade, registry(&factory)))
+}
+
+/// `moqui_core::vault_hooks::ask_lease`: a lease asked for on the entered factory's registry; its id.
+pub(crate) fn hook_ask_lease(
+    vault_id: &str,
+    bindings: &[String],
+    operation: &str,
+    limit: Option<Duration>,
+) -> Result<String, LibError> {
+    let (facade, registry) = entered()?;
+    let lease = registry.ask(
+        &facade,
+        &Ask {
+            vault_id,
+            bindings,
+            operation,
+            limit,
+            environment_id: None,
+        },
+    )?;
+    Ok(lease.lease_id)
+}
+
+/// `moqui_core::vault_hooks::wait_lease`.
+pub(crate) fn hook_wait_lease(lease_id: &str, timeout: Duration) -> Result<(), LibError> {
+    let (facade, registry) = entered()?;
+    registry.wait_open(&facade, lease_id, timeout)
+}
+
+/// `moqui_core::vault_hooks::run_leased`: `body` under a lease held here, open, whose signed statement (never the row)
+/// names `operation`.
+pub(crate) fn hook_run_leased(
+    lease_id: &str,
+    operation: &str,
+    body: &mut dyn FnMut() -> Result<(), LibError>,
+) -> Result<(), LibError> {
+    let (facade, registry) = entered()?;
+    let Some((named, _)) = registry.statement_of(lease_id) else {
+        return Err(ended());
+    };
+    if named != operation {
+        return Err(fail(format!(
+            "The lease {lease_id} is for {named:?}, not {operation:?}"
+        )));
+    }
+    registry.wait_open(&facade, lease_id, Duration::ZERO).map_err(|_| {
+        fail(format!(
+            "The lease {lease_id} is waiting for approval: an approver opens it in the lease dialog"
+        ))
+    })?;
+    run_under(lease_id, body)
+}
+
+/// `moqui_core::vault_hooks::end_lease`: a failure to mark the row is logged, and the keys are dropped anyway.
+pub(crate) fn hook_end_lease(lease_id: &str) {
+    match entered() {
+        Ok((facade, registry)) => {
+            if let Err(err) = registry.end(&facade, lease_id) {
+                registry.forget(lease_id);
+                tracing::error!("Vault: the lease {lease_id} was not marked ended: {err}");
+            }
+        }
+        Err(err) => tracing::error!("Vault: the lease {lease_id} was not ended: {err}"),
+    }
+}
+
+/// `moqui_core::vault_hooks::holds_lease`.
+pub(crate) fn hook_holds_lease(lease_id: &str) -> bool {
+    moqui_core::context::ExecutionContext::with_current(|ec| {
+        ec.factory()
+            .extension_if_present::<LeaseRegistry>()
+            .is_some_and(|registry| registry.holds(lease_id))
+    })
+    .unwrap_or(false)
+}
+
 /// The registry's cluster listener, kept with the factory: an approval or revoke on another member wakes or ends the
 /// leases held here.
 struct Listener {

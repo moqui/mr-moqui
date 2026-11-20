@@ -51,7 +51,13 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("IatStop", "stop"),
     ("IatRestart", "restart"),
     ("IatRemove", "remove"),
+    // back to the versions the instance's last deploy recorded before it (M3, crate::deploy); Monitor's instance
+    // recovery adapter asks for it too (M4)
+    ("IatRollback", "rollback"),
 ];
+
+/// The actions a deploy records (plans/Vault-Instances.md §4.6), which are not asked for by request#InstanceAction.
+pub const DEPLOY_ACTIONS: &[(&str, &str)] = &[("IatDeploy", "deploy"), ("IatBackup", "backup")];
 
 /// The verb of an action's enumeration id.
 pub fn verb(action_enum: &str) -> Result<&'static str, LibError> {
@@ -61,7 +67,7 @@ pub fn verb(action_enum: &str) -> Result<&'static str, LibError> {
         .map(|(_, verb)| *verb)
         .ok_or_else(|| {
             fail(format!(
-                "{action_enum} is not an instance action: provision, start, stop, restart or remove"
+                "{action_enum} is not an instance action: provision, start, stop, restart, remove or rollback"
             ))
         })
 }
@@ -69,6 +75,7 @@ pub fn verb(action_enum: &str) -> Result<&'static str, LibError> {
 fn action_enum(verb: &str) -> &'static str {
     ACTIONS
         .iter()
+        .chain(DEPLOY_ACTIONS)
         .find(|(_, name)| *name == verb)
         .map_or("IatProvision", |(id, _)| *id)
 }
@@ -269,6 +276,10 @@ pub fn needs(facade: &EntityFacade, instance_id: &str, verb: &str) -> Result<(Ve
         let plan = crate::plan::build(facade, instance_id)?;
         return Ok((plan.lease_bindings, plan.operation));
     }
+    if verb == "rollback" {
+        let plan = crate::deploy::plan(facade, &crate::deploy::rollback_request(facade, instance_id)?)?;
+        return Ok((plan.bindings, plan.operation));
+    }
     crate::lifecycle::needs(facade, instance_id, verb)
 }
 
@@ -283,6 +294,7 @@ pub fn run(
 ) -> Result<crate::provision::Outcome, LibError> {
     match verb {
         "provision" => crate::provision::provision(facade, registry, instance_id, lease_id),
+        "rollback" => crate::deploy::rollback_last(facade, registry, instance_id, lease_id),
         _ => crate::lifecycle::act(facade, registry, instance_id, verb, lease_id, remove_volumes),
     }
 }

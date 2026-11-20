@@ -230,9 +230,10 @@ mod manager {
                 value: required(params, "value")?,
                 force: matches!(text(params, "force").as_str(), "Y" | "true"),
             }),
+            // no signature: the manager's own deploy over the pinned link (M3)
             CommandKind::DeployComponent => Body::DeployComponent(DeployComponentCommand {
                 attestation: required(params, "attestation")?,
-                signature: required(params, "signature")?,
+                signature: text(params, "signature"),
                 data_types: text(params, "dataTypes"),
             }),
             CommandKind::ExportSeal => Body::ExportSeal(Default::default()),
