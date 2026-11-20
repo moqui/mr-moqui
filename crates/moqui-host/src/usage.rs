@@ -27,6 +27,7 @@ Server
   (no command)     [options]                                Start the HTTP server (HTTP port default 8080, HTTPS 8443: moqui help serve)
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
+  operator         status | init | unseal | seal | ...      The sealed start: a server's operator socket
 
 Data
   load             [name=value ...]                         Load data files into the configured database
@@ -753,6 +754,39 @@ moqui conf env [--names] [text]
   moqui_conf__ssh_server__port=2222 moqui
 ";
 
+const OPERATOR: &str = "\
+moqui operator <command> [--socket PATH]
+    The client of a server's operator socket (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md, Sealed
+    start). A server starts sealed: no listener opens until it is unsealed, and while sealed it answers only
+    here. The socket is /run/moqui-operator/moqui.sock (systemd/moqui-operator.socket, or moqui operator bind
+    in a container), else for a user other than root runtime/db/operator.sock, or --socket; no conf names it.
+    The server's own user runs only status; root and the socket's group run the rest. Passphrases and shares are read with echo off, or a line each from
+    standard input when it is not a terminal.
+    status                   The state (sealed, unsealing, unsealed), the method and the recovery shares
+    init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm,
+                             passphrase, shamir or dev (dev is refused on a production instance); default
+                             seal@method
+    init --take-shares       Read, once, the recovery shares an automatic first start holds in memory
+    unseal [--recovery]      Give the passphrase or one share; --recovery a recovery share, which opens any
+                             method's seal; an automatic method unseals with nothing entered
+    seal                     Drop every key from memory now and close the listeners
+    rekey --method M         Wrap the root key under another method (or new input), with the recovery
+                             shares; the root key and the recovery shares stay
+    rotate-root              A new root key: seal.json's wraps, bootstrap secrets and data key rewrapped and
+                             switched in one rename, with the recovery shares
+    export-seal FILE         Write the recovery bundle (seal.json, the database identity), mode 0600: it goes
+                             with the offline backups; a restore needs it and the recovery shares
+    init --from FILE         Restore a recovery bundle on a clean runtime; then unseal --recovery, and rekey
+                             to this host's method
+    bind PATH [--group G] -- COMMAND ...
+                             As root: make the operator socket at PATH (root's, mode 0660 with group G or
+                             0600) and run COMMAND with it open, for a server that then drops to its own user
+
+  moqui operator status
+  moqui operator init --method tpm
+  moqui operator unseal
+";
+
 const VERSION: &str = "\
 moqui version
     The version, the package this binary was built as (lite, enterprise, maximal, or custom), and every
@@ -786,6 +820,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "lsp" => Some(LSP),
         "embedded" => Some(EMBEDDED),
         "conf" => Some(CONF),
+        "operator" => Some(OPERATOR),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
@@ -1054,6 +1089,10 @@ pub fn command_usage(command: &str) -> Error {
         "help" => "moqui help [command]",
         "version" => "moqui version",
         "conf" => "moqui conf env [--names] [text]",
+        "operator" => {
+            "moqui operator status | init [--method M | --take-shares | --from FILE] | unseal [--recovery] | seal \
+             | rekey --method M | rotate-root | export-seal FILE [--socket PATH]"
+        }
         "embedded" => {
             "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
              | unpack [<program>...]"

@@ -437,6 +437,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     for name in [
         // the instance's purpose, id, node role, locale and time zone (plans/archive/Conf-Paths.md §6.1)
         "instance",
+        // the sealed start (plans/Sealed-Secrets.md §3.3)
+        "seal",
         // certificates by ACME (plans/Edge-Node2.md §4.8)
         "acme",
         // the offline clients' logs and uploads (plans/Mobile-Desktop.md MD5)

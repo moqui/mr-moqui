@@ -13,6 +13,21 @@
         zone, and the server's own times (the entity facade's database-time-zone is the zone times are stored in). -->
     <instance purpose="production" id="" node-role="" default-locale="en_US" default-time-zone="UTC"/>
 
+    <!-- The sealed start (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md "Sealed start"): the server opens its
+        listeners only once unsealed; while sealed it answers only on the operator socket (moqui operator). method: the
+        unseal method init uses when none is named (tpm, passphrase, shamir, dev; kms and transit come later), and on a
+        production instance's first start an automatic one (tpm) makes the seal by itself; empty for none. Once
+        runtime/db/seal.json exists its method wins and this is ignored. socket: where a server binds its own operator
+        socket when root hands it none (systemd/moqui-operator.socket, moqui operator bind), relative to the runtime,
+        empty for db/operator.sock: a development setup, not a protection boundary. Who may use the socket is root's to
+        say, on the socket itself. shares and threshold: the recovery shares made at init, threshold of shares recover
+        the root key, and the shamir method's shares. systemd-creds-command: the tpm method's program, an absolute path,
+        empty for /usr/bin/systemd-creds or /bin/systemd-creds. unseal-max-delay-seconds: the longest wait after wrong
+        passphrases or shares, which doubles from one second. socket, systemd-creds-command and
+        unseal-max-delay-seconds are read from the conf files only: an environment name or runtime/.env that sets one
+        is ignored. -->
+    <seal method="" socket="" shares="5" threshold="3" systemd-creds-command="" unseal-max-delay-seconds="300"/>
+
     <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
         nobody set up there. directory-url fills in the authority's directory on that screen, Let's Encrypt's; the screen
         offers its staging directory for a first try and takes any other authority's. account-key is the seed of the ACME

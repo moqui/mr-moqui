@@ -4689,6 +4689,7 @@ dependencies = [
  "moqui-entity",
  "moqui-lib",
  "moqui-tui",
+ "moqui-vault",
  "opentelemetry",
  "opentelemetry-proto",
  "opentelemetry_sdk",
@@ -4710,8 +4711,10 @@ dependencies = [
  "serde_json",
  "sha1 0.11.0",
  "sha2 0.11.1",
+ "subtle",
  "tar",
  "tracing",
+ "zeroize",
  "zip",
 ]
 
@@ -4936,6 +4939,7 @@ dependencies = [
  "url",
  "webpki-roots",
  "yrs",
+ "zeroize",
 ]
 
 [[package]]

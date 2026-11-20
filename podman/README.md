@@ -30,6 +30,16 @@ podman/build.sh --only-build-image --nobuild --chromium --java
 
 The container starts as root so it can chown a new data volume, then drops to uid 1000 before the binary. The binary and the conf are root's and read-only to uid 1000; `/opt/moqui` is root's, group `moqui` and sticky, so the server adds files there but cannot replace the binary or the conf, and `components/` is uid 1000's. Embedded Postgres will not run as root. One volume, mounted at `/var/lib/moqui`, holds `db`, `log`, `cert`, `tmp`, `install`, `txlog`, and the generated secrets file. Those paths are symlinks into `/opt/moqui`, which is the runtime directory.
 
+The server starts sealed ([Run-Deploy, Sealed start](../docs/Run-Deploy.md#sealed-start)): a production container's
+first start opens no port and waits on its operator socket for the seal to be made. The entrypoint makes that socket
+as root, `/run/moqui-operator/moqui.sock` (`moqui operator bind`), and hands it to the server, so only root in the
+container runs its commands; keep the recovery shares and the bundle off the host:
+
+```sh
+podman exec -it -u 0 <container> /opt/moqui/moqui operator init --method passphrase
+podman exec -it -u 0 <container> /opt/moqui/moqui operator unseal    # after each restart
+```
+
 ## Compose
 
 `podman compose` needs a provider on `PATH`. On this layout that provider is Docker Compose, and it talks to the Podman API socket rather than to the `podman` command. Start the socket once per login (rootless):

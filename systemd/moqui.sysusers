@@ -1,3 +1,6 @@
 # systemd-sysusers systemd/moqui.sysusers
 # or copy to /usr/lib/sysusers.d/moqui.conf and run systemd-sysusers.
 u moqui - "MR Moqui" /opt/moqui /usr/sbin/nologin
+# The operator group, which moqui-operator.socket gives the operator socket: its members, and root, run
+# `moqui operator`. Add operators with `usermod -aG moqui-operator <user>`; never the moqui user.
+g moqui-operator -

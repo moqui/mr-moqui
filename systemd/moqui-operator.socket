@@ -1,0 +1,20 @@
+# The operator socket of the sealed start (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md "Sealed start"): made by
+# systemd as root, in a directory of root's the server's user cannot write, and handed to moqui.service (LISTEN_FDS,
+# named "operator"), so a child of the server can neither replace it nor read what an operator enters. Root and the
+# moqui-operator group (systemd/moqui.sysusers) run `moqui operator`; the server's own user runs only status.
+# cp systemd/moqui-operator.socket /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now moqui-operator.socket
+
+[Unit]
+Description=MR Moqui operator socket
+
+[Socket]
+ListenStream=/run/moqui-operator/moqui.sock
+FileDescriptorName=operator
+SocketUser=root
+SocketGroup=moqui-operator
+SocketMode=0660
+DirectoryMode=0755
+Service=moqui.service
+
+[Install]
+WantedBy=sockets.target

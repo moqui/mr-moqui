@@ -1000,6 +1000,39 @@ fn start_seeded_under(
     }
 }
 
+/// A seeded runtime with its own copy of the template's cluster, prepared and not started: for a test that starts its
+/// server itself, such as the sealed start, whose start blocks until it is unsealed. Drop it after the server.
+pub struct Seeded {
+    pub runtime: PathBuf,
+    pub cluster_dir: PathBuf,
+    _runtime: DirGuard,
+    _cluster: DirGuard,
+}
+
+/// A [`Seeded`] runtime with `extra_conf` in its conf.
+pub fn seeded(label: &str, extra_conf: &str) -> Seeded {
+    assert_own_process();
+    let template = template();
+    let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
+    let cluster_dir = temp_dir("moqui-g3-pg");
+    let seeded = Seeded {
+        runtime: runtime.clone(),
+        cluster_dir: cluster_dir.clone(),
+        _runtime: DirGuard(runtime.clone()),
+        _cluster: DirGuard(cluster_dir.clone()),
+    };
+    std::fs::create_dir_all(&runtime).unwrap();
+    std::fs::create_dir_all(&cluster_dir).unwrap();
+    prepare_runtime(&runtime, template, extra_conf);
+    copy_dir(&template.cluster, &cluster_dir);
+    seeded
+}
+
+/// The framework directory the gates start with.
+pub fn framework_dir() -> PathBuf {
+    repo_root().join("runtime/components/base/framework")
+}
+
 pub fn header(headers: &[(String, String)], name: &str) -> Option<String> {
     headers
         .iter()

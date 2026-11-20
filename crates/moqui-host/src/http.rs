@@ -850,6 +850,9 @@ async fn shutdown(mut stop: tokio::sync::oneshot::Receiver<()>, notify: tokio::s
     // systemd waiting for an exit that never comes.
     if restart {
         crate::systemd_notify::notify_reloading();
+    } else if crate::systemd_notify::sealed_stop() {
+        // sealed: the process stays and waits for `moqui operator unseal`, so systemd must not take it as stopping
+        crate::systemd_notify::notify("STATUS=sealed");
     } else {
         crate::systemd_notify::notify("STOPPING=1");
     }

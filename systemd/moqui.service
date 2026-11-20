@@ -1,12 +1,14 @@
 # Run the moqui binary with no container. Unpack an archive (./moq archive) at /opt/moqui so the
 # binary's directory is the runtime: /opt/moqui/moqui, components/, and MoquiConf.xml.
 # Create the user first: systemd-sysusers systemd/moqui.sysusers
-# Then: cp systemd/moqui.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now moqui
+# Then: cp systemd/moqui.service systemd/moqui-operator.socket /etc/systemd/system/ && systemctl daemon-reload \
+#   && systemctl enable --now moqui-operator.socket moqui
 
 [Unit]
 Description=MR Moqui
-After=network-online.target
+After=network-online.target moqui-operator.socket
 Wants=network-online.target
+Requires=moqui-operator.socket
 
 [Service]
 Type=notify
@@ -23,11 +25,17 @@ ExecReload=/bin/kill -HUP $MAINPID
 # MOQUI_CONF, so this is a different file on purpose.
 EnvironmentFile=-/etc/moqui/environment
 KillMode=mixed
+# A server waiting sealed for a passphrase or shares has sent READY=1 with STATUS=sealed, so this does not end it.
 TimeoutStartSec=300
 TimeoutStopSec=60
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
+# No core dumps: an unsealed server holds its root key in memory (plans/Sealed-Secrets.md §3.5).
+LimitCORE=0
+# The operator socket comes from moqui-operator.socket, made by root in /run/moqui-operator: the server starts sealed
+# and answers there until `moqui operator unseal` (docs/Run-Deploy.md, Sealed start).
+Sockets=moqui-operator.socket
 NoNewPrivileges=true
 PrivateTmp=true
 # The whole file system is read-only to the server but its runtime: the database, logs, certificates, the generated
