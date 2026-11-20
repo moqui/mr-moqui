@@ -308,6 +308,13 @@ impl RestClient {
         self
     }
 
+    /// Whether this client refuses internal addresses ([`deny_internal_addresses`](Self::deny_internal_addresses)):
+    /// one that does not is a test's, or one for the private network.
+    #[must_use]
+    pub fn denies_internal_addresses(&self) -> bool {
+        self.guard == AddressGuard::Internal
+    }
+
     /// Refuse only link-local and cloud metadata addresses (`moqui_lib::net::link_local_address`), checked as
     /// [`deny_internal_addresses`](Self::deny_internal_addresses) checks: for a request that may go to the private
     /// network, such as a monitoring scrape of an exporter beside the server. `deny_internal_addresses(true)` refuses

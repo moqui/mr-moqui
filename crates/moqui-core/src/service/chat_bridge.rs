@@ -1287,7 +1287,8 @@ fn deliver_head(
         )?;
         return Ok(Step::Done);
     };
-    if status == "CbsDisabled" {
+    // a disabled bridge, or one whose start failed this round (its settings are refused, SEC-COM-88), holds its rows
+    if status == "CbsDisabled" || !lock(&worker.state).started_bridges.contains(&bridge_id) {
         return Ok(Step::Hold);
     }
     let Some(adapter) = adapter_of(factory, facade, info) else {
