@@ -17,7 +17,7 @@
 
 /// The addresses of `host`, or an error when any is internal: one internal address among public ones could still be
 /// the one connected to. A caller that must not look the name up again (the lookup could answer differently) connects
-/// to an address this returned. An IP literal is that one address, and is not looked up.
+/// to an address this returned.
 ///
 /// # Errors
 ///
@@ -26,7 +26,10 @@ pub fn public_addresses(
     host: &str,
     port: u16,
 ) -> Result<Vec<std::net::SocketAddr>, Box<dyn std::error::Error + Send + Sync>> {
-    let addresses = resolve(host, port)?;
+    use std::net::ToSocketAddrs;
+
+    let name = host.trim_start_matches('[').trim_end_matches(']');
+    let addresses: Vec<std::net::SocketAddr> = (name, port).to_socket_addrs()?.collect();
     if addresses.iter().any(|address| internal_address(address.ip())) {
         return Err(format!("{host} is an internal address and is not allowed here").into());
     }
@@ -35,8 +38,7 @@ pub fn public_addresses(
 
 /// The addresses of `host`, or an error when any is link-local or a cloud metadata address
 /// ([`link_local_address`]): the guard of a request that may go to the private network but never to the metadata
-/// service. A caller connects to an address this returned, as with [`public_addresses`]. An IP literal is that one
-/// address, and is not looked up.
+/// service. A caller connects to an address this returned, as with [`public_addresses`].
 ///
 /// # Errors
 ///
@@ -45,24 +47,14 @@ pub fn non_link_local_addresses(
     host: &str,
     port: u16,
 ) -> Result<Vec<std::net::SocketAddr>, Box<dyn std::error::Error + Send + Sync>> {
-    let addresses = resolve(host, port)?;
+    use std::net::ToSocketAddrs;
+
+    let name = host.trim_start_matches('[').trim_end_matches(']');
+    let addresses: Vec<std::net::SocketAddr> = (name, port).to_socket_addrs()?.collect();
     if addresses.iter().any(|address| link_local_address(address.ip())) {
         return Err(format!("{host} is a link-local address and is never allowed").into());
     }
     Ok(addresses)
-}
-
-/// The addresses of `host` at `port`. An IP literal, brackets included (`[::1]`), is that one address with no lookup:
-/// `getaddrinfo` of a literal on Windows can wait on DNS and then return the same address. A name, and a form only the
-/// resolver accepts (`127.1`), is looked up once.
-fn resolve(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, Box<dyn std::error::Error + Send + Sync>> {
-    use std::net::ToSocketAddrs;
-
-    let name = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(ip) = name.parse::<std::net::IpAddr>() {
-        return Ok(vec![std::net::SocketAddr::new(ip, port)]);
-    }
-    Ok((name, port).to_socket_addrs()?.collect())
 }
 
 /// Whether `address` is not a public unicast address: what `RestClient::deny_internal_addresses` and
@@ -288,18 +280,5 @@ mod tests {
         // Azure's WireServer is in a public range, and the full guard refuses it too
         assert!(internal_address("168.63.129.16".parse().unwrap()));
         assert!(!internal_address("168.63.129.17".parse().unwrap()));
-    }
-
-    /// An IP literal is parsed, not looked up: `getaddrinfo` of `127.0.0.1` on Windows can wait on DNS for seconds.
-    #[test]
-    fn an_ip_literal_is_not_looked_up() {
-        let started = std::time::Instant::now();
-        let found = non_link_local_addresses("127.0.0.1", 1).unwrap();
-        assert_eq!(found, vec!["127.0.0.1:1".parse().unwrap()]);
-        assert!(
-            started.elapsed() < std::time::Duration::from_millis(200),
-            "{:?}",
-            started.elapsed()
-        );
     }
 }
