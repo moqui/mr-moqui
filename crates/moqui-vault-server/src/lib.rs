@@ -30,6 +30,7 @@
 //!   key version (§3.9, decisions (a) and (b) of §9).
 //! - [`deliveries`]: sealed values to one recipient (§3.3).
 //! - [`events`]: the `VaultEvent` rows of §3.13, written in the transaction of their change.
+//! - [`recovery`]: the organization's recovery keys split k of n, recovery on a vault, and recoveries (§3.10).
 
 use std::collections::BTreeMap;
 
@@ -41,6 +42,7 @@ pub mod events;
 pub mod items;
 pub mod members;
 pub mod personal;
+pub mod recovery;
 pub mod vaults;
 
 moqui_core::extension::submit! {
@@ -57,6 +59,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     items::register(map)?;
     members::register(map)?;
     deliveries::register(map)?;
+    recovery::register(map)?;
     events::register(map)
 }
 

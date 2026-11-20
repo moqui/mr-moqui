@@ -156,10 +156,13 @@
         itemSeal(args) { return this.call("item_seal", args); }
         itemOpen(args) { return this.call("item_open", args); }
         leaseApprove(args) { return this.call("lease_approve", args); }
-        recoveryWrap(args) { return this.call("recovery_wrap", args); }
+        recoveryMake(args) { return this.call("recovery_make", args); }
+        recoveryMember(args) { return this.call("recovery_member", args); }
+        recoverySessionStart(args) { return this.call("recovery_session_start", args); }
         recoveryShareDeliver(args) { return this.call("recovery_share_deliver", args); }
         recoveryCombine(args) { return this.call("recovery_combine", args); }
         recoveryOpenVault(args) { return this.call("recovery_open_vault", args); }
+        recoveryRekey(args) { return this.call("recovery_rekey", args); }
     }
 
     global.MoquiVaultClient = MoquiVaultClient;

@@ -26,7 +26,7 @@ use crate::keyversion::{KeyVersion, Member, Remembered, Role};
 use crate::lease::{Lease, LeaseItem};
 use crate::names::ItemLabel;
 use crate::personal::PersonalPublic;
-use crate::recovery::{HolderShare, RecoveryKeyRecord, RecoveryWrap};
+use crate::recovery::{HolderShare, RecoveryKeyRecord, RecoverySession, SessionShare};
 use crate::sign::VerifyingKey;
 use crate::text::{hex, unhex};
 use crate::vault::{DepositPublic, MemberWrap};
@@ -289,49 +289,105 @@ pub fn lease_of(args: &Value) -> Result<Lease, Error> {
     })
 }
 
-pub fn record_of(args: &Value) -> Result<RecoveryKeyRecord, Error> {
-    let record = object_of(args, "record")?;
+/// A recovery key's record from `row` (its fields at the top level).
+pub fn record_from(row: &Value) -> Result<RecoveryKeyRecord, Error> {
     Ok(RecoveryKeyRecord {
-        recovery_key_id: string_of(record, "recovery_key_id")?,
-        public: hpke::PublicKey::from_bytes(&bytes_of(record, "public")?)?,
-        k: u8_of(record, "k")?,
-        n: u8_of(record, "n")?,
-        maker_user_id: string_of(record, "maker_user_id")?,
-        maker_key_id: string_of(record, "maker_key_id")?,
-        signature: bytes_of(record, "signature")?,
+        recovery_key_id: string_of(row, "recovery_key_id")?,
+        public: public_of(row, "public")?,
+        k: u8_of(row, "k")?,
+        n: u8_of(row, "n")?,
+        maker_user_id: string_of(row, "maker_user_id")?,
+        maker_key_id: string_of(row, "maker_key_id")?,
+        signature: bytes_of(row, "signature")?,
     })
 }
 
-pub fn holder_share_of(args: &Value) -> Result<HolderShare, Error> {
-    let held = object_of(args, "held")?;
-    Ok(HolderShare {
-        recovery_key_id: string_of(held, "recovery_key_id")?,
-        holder_user_id: string_of(held, "holder_user_id")?,
-        holder_key_id: string_of(held, "holder_key_id")?,
-        index: u8_of(held, "index")?,
-        sealed: bytes_of(held, "sealed")?,
-        signature: bytes_of(held, "signature")?,
-    })
+/// The recovery key's record under `record`.
+pub fn record_of(args: &Value) -> Result<RecoveryKeyRecord, Error> {
+    record_from(object_of(args, "record")?)
 }
 
-pub fn recovery_wrap_json(wrap: &RecoveryWrap) -> Value {
+pub fn record_json(record: &RecoveryKeyRecord) -> Value {
     json!({
-        "vault_id": wrap.vault_id, "key_version": wrap.key_version, "recovery_key_id": wrap.recovery_key_id,
-        "sealed": hex(&wrap.sealed), "signer_user_id": wrap.signer_user_id, "signer_key_id": wrap.signer_key_id,
-        "signature": hex(&wrap.signature),
+        "recovery_key_id": record.recovery_key_id, "public": hex(&record.public.to_bytes()), "k": record.k,
+        "n": record.n, "maker_user_id": record.maker_user_id, "maker_key_id": record.maker_key_id,
+        "signature": hex(&record.signature),
     })
 }
 
-pub fn recovery_wrap_of(args: &Value) -> Result<RecoveryWrap, Error> {
-    let wrap = object_of(args, "wrap")?;
-    Ok(RecoveryWrap {
-        vault_id: string_of(wrap, "vault_id")?,
-        key_version: u64_of(wrap, "key_version")?,
-        recovery_key_id: string_of(wrap, "recovery_key_id")?,
-        sealed: bytes_of(wrap, "sealed")?,
-        signer_user_id: string_of(wrap, "signer_user_id")?,
-        signer_key_id: string_of(wrap, "signer_key_id")?,
-        signature: bytes_of(wrap, "signature")?,
+/// A holder's share from `row` (its fields at the top level).
+pub fn holder_share_from(row: &Value) -> Result<HolderShare, Error> {
+    Ok(HolderShare {
+        recovery_key_id: string_of(row, "recovery_key_id")?,
+        holder_user_id: string_of(row, "holder_user_id")?,
+        holder_key_id: string_of(row, "holder_key_id")?,
+        index: u8_of(row, "index")?,
+        sealed: bytes_of(row, "sealed")?,
+        signature: bytes_of(row, "signature")?,
+    })
+}
+
+/// The holder's share under `held`.
+pub fn holder_share_of(args: &Value) -> Result<HolderShare, Error> {
+    holder_share_from(object_of(args, "held")?)
+}
+
+pub fn holder_share_json(held: &HolderShare) -> Value {
+    json!({
+        "recovery_key_id": held.recovery_key_id, "holder_user_id": held.holder_user_id,
+        "holder_key_id": held.holder_key_id, "index": held.index, "sealed": hex(&held.sealed),
+        "signature": hex(&held.signature),
+    })
+}
+
+/// A recovery session from `row` (its fields at the top level).
+pub fn session_from(row: &Value) -> Result<RecoverySession, Error> {
+    Ok(RecoverySession {
+        session_id: string_of(row, "session_id")?,
+        recovery_key_id: string_of(row, "recovery_key_id")?,
+        vault_id: string_of(row, "vault_id")?,
+        subject_user_id: string_of(row, "subject_user_id")?,
+        subject_key_id: string_of(row, "subject_key_id")?,
+        subject_public: public_of(row, "subject_public")?,
+        ephemeral: hpke::PublicKey::from_bytes(&bytes_of(row, "ephemeral")?)?,
+        holder_user_id: string_of(row, "holder_user_id")?,
+        holder_key_id: string_of(row, "holder_key_id")?,
+        signature: bytes_of(row, "signature")?,
+    })
+}
+
+/// The recovery session under `session`.
+pub fn session_of(args: &Value) -> Result<RecoverySession, Error> {
+    session_from(object_of(args, "session")?)
+}
+
+pub fn session_json(session: &RecoverySession) -> Value {
+    json!({
+        "session_id": session.session_id, "recovery_key_id": session.recovery_key_id, "vault_id": session.vault_id,
+        "subject_user_id": session.subject_user_id, "subject_key_id": session.subject_key_id,
+        "subject_public": hex(&session.subject_public.to_bytes()), "ephemeral": hex(session.ephemeral.as_bytes()),
+        "holder_user_id": session.holder_user_id, "holder_key_id": session.holder_key_id,
+        "signature": hex(&session.signature),
+    })
+}
+
+/// A share sealed to a session, from `row` (its fields at the top level).
+pub fn session_share_from(row: &Value) -> Result<SessionShare, Error> {
+    Ok(SessionShare {
+        session_id: string_of(row, "session_id")?,
+        recovery_key_id: string_of(row, "recovery_key_id")?,
+        holder_user_id: string_of(row, "holder_user_id")?,
+        holder_key_id: string_of(row, "holder_key_id")?,
+        sealed: bytes_of(row, "sealed")?,
+        signature: bytes_of(row, "signature")?,
+    })
+}
+
+pub fn session_share_json(share: &SessionShare) -> Value {
+    json!({
+        "session_id": share.session_id, "recovery_key_id": share.recovery_key_id,
+        "holder_user_id": share.holder_user_id, "holder_key_id": share.holder_key_id, "sealed": hex(&share.sealed),
+        "signature": hex(&share.signature),
     })
 }
 

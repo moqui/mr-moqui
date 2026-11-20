@@ -216,9 +216,26 @@ fn a_single_secret_vault_refuses_members_and_recovery_and_an_operational_vault_n
                          "vaultName": "prod", "recoveryOn": "N", "entry": entry, "memberWraps": [wrap] });
     let refused = alice.call("create#Vault", create.clone()).unwrap_err();
     assert!(refused.contains("recovery on or at least two members"), "{refused}");
+    // recovery is on only with the recovery key in the member list (tests/recovery.rs), never by the flag alone
     let mut with_recovery = create;
     with_recovery["recoveryOn"] = json!("Y");
-    alice.call("create#Vault", with_recovery).unwrap();
+    let refused = alice.call("create#Vault", with_recovery).unwrap_err();
+    assert!(refused.contains("lists the organization's recovery key"), "{refused}");
+    alice.check("bob");
+    let checks = alice.checks();
+    let members = json!([alice.member("manage"), bob.member("approve")]);
+    let entry = alice
+        .op(json!({ "op": "key_version_first", "vault_id": vault_id, "members": members, "key_checks": checks }))
+        .unwrap();
+    let bob_wrap = alice
+        .op(
+            json!({ "op": "vault_key_wrap_member", "vault_id": vault_id, "key_version": 1, "member_user_id": "bob",
+                    "member_key_id": bob.key_id, "member_public": bob.public, "key_checks": checks }),
+        )
+        .unwrap();
+    let two = json!({ "vaultId": vault_id, "vaultKindEnumId": "VkOperational", "lockEnumId": "VlSharedKey",
+                      "vaultName": "prod", "entry": entry, "memberWraps": [wrap, bob_wrap] });
+    alice.call("create#Vault", two).unwrap();
 
     // an operational item's binding is unique in its vault, on update too, and its clear columns change all together
     super::sys(|| {

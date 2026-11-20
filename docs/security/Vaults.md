@@ -3,8 +3,8 @@
 A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/Vault-Instances.md) has
 the design). This guide grows with each phase; so far it covers the crypto every client and the server share, and what
 the server keeps and serves (V1): personal keys, key checks, vaults of both locks, items, members, deliveries and
-events, with the `moqui vault` command. Operational vaults' leases and machine access (V2), Commons › Vault (V3) and
-organization recovery (V4) are later phases.
+events, with the `moqui vault` command, and organization recovery split k of n (V4). Operational vaults' leases and
+machine access (V2) and Commons › Vault (V3) are later phases.
 
 ## What V1 offers
 
@@ -54,6 +54,48 @@ trust that is not on this server, or on paper with your important papers; keep t
 only copy inside this vault or anywhere on this server. A generated key is long and random, so it cannot be guessed:
 download or print it, then keep it the same way. Commons › Vault (V3) walks through these steps when the vault is made.
 
+## Organization recovery
+
+A shared-key vault can have the organization's **recovery key** on, so that a member who loses both their key
+passphrase and their recovery code gets the vault back (§3.10). Recovery is **off by default for a personal shared-key
+vault** and **on by default for an operational one**, which keeps recovery on or at least two members: making one, and
+removing a member, refuse to leave it with neither. A single-secret vault has no members and never has recovery: only
+its password or key opens it. A vault shows whether recovery is on (`recoveryOn`, and the recovery key in its member
+list), so a person asked to join sees it.
+
+- **The recovery key is split k of n.** A holder with the sealed permission `VAULT_RECOVERY` and a recent sign-in
+  makes it in their client (`moqui vault recovery make`, or `create#VaultRecoveryKey` from a client): the key's seed is
+  split into n shares, one wrapped to each holder's personal key (each holder holds `VAULT_RECOVERY`, and the maker has
+  checked their key), and the seed is dropped. No one holds the whole key, and no k − 1 holders can open a vault. It is
+  kept by user group or by instance (`userGroupId`, `instanceId`). A holder who replaces their personal key can no
+  longer open their share: make a new recovery key while k of the others still can.
+- **Turning recovery on.** A manager checks the key of the holder who made the recovery key, then lists the recovery
+  key in the vault's member list (under `recovery:<id>`, with the manage role) and wraps the vault key to it
+  (`add#VaultMember`, or `moqui vault recovery on`). A client refuses a recovery key whose maker's key its user has not
+  checked, so a server cannot hand out a recovery key of its own. Every rotation wraps the new vault key to the
+  recovery key as to any member. Removing that member (`remove#VaultMember`) turns recovery off and rotates the key.
+- **A recovery takes k holders, each with `VAULT_RECOVERY` and a recent sign-in.** The member makes a new personal
+  key. A holder who has checked that new key (and the key of one of the vault's managers, which anchors the vault's
+  member list for their client) starts a recovery (`moqui vault recovery start`): their client makes an ephemeral key,
+  kept only in its memory, and signs a session naming it, the vault, the member and the new key. k − 1 other holders
+  see what the session recovers and seal their shares to the ephemeral key (`moqui vault recovery share`). The
+  recovering client combines the shares with its own, checks the result against the recovery key's signed public
+  halves, opens the vault key through the recovery key's wrap, signs the next member list as the recovery key (giving
+  the member the new key and changing nothing else, which every member's client checks) and wraps the vault key to the
+  new key (`complete#VaultRecovery`). The shares, the recovery key and the vault key never leave the clients. A session
+  takes shares for a day; the recovering holder or a manager of the vault can cancel it.
+- **Every member is told.** A start, each share, the end and a cancel are `VaultEvent`s (`VeRecoveryStarted`,
+  `VeRecoveryShared`, `VeRecovery`, `VeRecoveryCancelled`; a recovery key made is `VeRecoveryKeyMade`), and a start and
+  the end are notices to every member of the vault (topic `VaultRecovery`), so a member can cancel a recovery they did
+  not ask for.
+- **The limit.** k holders who also hold a copy of the database could open every vault with recovery on with that
+  recovery key; `VAULT_RECOVERY`, the recent sign-in, the event and the notice are rules the server keeps, not
+  cryptography. For a personal shared-key vault with recovery on, k holders acting together are administrators who can
+  open it (§3.12).
+
+BOSS Admin › Security, which shows the recovery keys and holders for each organization, is mr-boss's, on these
+services (`/rest/s1/vault/recoveryKeys` and `/rest/s1/vault/recoveries`).
+
 ## On the server
 
 The tables are `moqui.security.vault` (`framework/entity/VaultEntities.xml`): `Vault`, `VaultKeyVersion` (the signed
@@ -61,8 +103,8 @@ member-list chain), `VaultMember` (a member's wrap of one key version, with thei
 `VaultItemHistory`, `VaultPersonalKey`, `VaultKeyCheck`, `VaultDelivery`, `VaultEvent`, the item types
 (`VaultItemType`, `VaultItemTypeField`, seeded in `framework/data/VaultTypeData.xml`: login, note, card, identity,
 contact, SSH key, API key, database credential, TLS key pair, registry login, recovery code, recovery share), and
-for later phases `VaultLease`, `VaultMachineAccess`, `VaultRecoveryKey`, `VaultRecoveryHolder` and
-`VaultRecoveryWrap`. No column is an entity `encrypt="true"` field: they hold ciphertext and signed records already.
+recovery's `VaultRecoveryKey`, `VaultRecoveryHolder`, `VaultRecoverySession` and `VaultRecoveryDelivery`, and for
+later phases `VaultLease` and `VaultMachineAccess`. No column is an entity `encrypt="true"` field: they hold ciphertext and signed records already.
 
 The services are `org.moqui.security.VaultServices` (`crates/moqui-vault-server`), also at `/rest/s1/vault`
 (`framework/service/vault.rest.xml`). Records cross in the vault crate's JSON shapes, so a client hands an answer to
@@ -89,6 +131,11 @@ second factor and keeps nothing of the sign-in.
 | `key check <username>` | Shows a user's fingerprint to compare with them; on yes, stores your signed check |
 | `list` | Your vaults |
 | `open <vaultId> [--item ID]` | Opens a vault through its member list and lists its items, or prints one |
+| `recovery list` | The organization's recovery keys, and the recoveries you may seal a share to |
+| `recovery make --k K [--group G] <username>...` | Makes a recovery key split K of these holders (each key checked first) |
+| `recovery on <vaultId> [--key ID]` | As a manager: turns recovery on for a vault (the recovery key's maker checked first) |
+| `recovery start <vaultId> <username> [--key ID]` | As a holder: recovers the vault to the member's new key (checked first); waits for the other shares |
+| `recovery share <recoverySessionId>` | As another holder: shows what a recovery recovers and seals your share to it |
 
 What it has accepted of each vault's member list is kept in `~/.config/moqui/vault/state.json` (mode 0600, no keys).
 
@@ -106,7 +153,7 @@ wasm module for the browser, so a vault written on a phone opens the same way in
 | Passwords | Argon2id v1.3. The floor m=64 MiB, t=3, p=1 and the ceiling m=256 MiB, t=6, p=4 are refused below and above; the target starts at the floor, and a wrap under it opens and is wrapped again at the target. The parameters and a 16-byte salt are stored with each wrap |
 | Keys from keys | HKDF-SHA256. A recovery code or a generated key is 256 random bits as Crockford base32 in groups of four, so it needs no Argon2id |
 | Public-key wraps | HPKE (RFC 9180) base mode: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM, single shot, `enc ‖ ciphertext` |
-| Signatures | Ed25519, verified strictly, over a statement: `moqui-vault-signature/1`, its kind and its parts, length-prefixed. The kinds: member wrap, key version, deposit key, recovery key, recovery wrap, recovery share, delivery, lease, lease approval, key check |
+| Signatures | Ed25519, verified strictly, over a statement: `moqui-vault-signature/1`, its kind and its parts, length-prefixed. The kinds: member wrap, key version, deposit key, recovery key, recovery share, recovery session, recovery session share, delivery, lease, lease approval, key check |
 | Shares | Shamir over GF(2^8), constant time, k of n with 1 < k ≤ n ≤ 255. A share's text is `share-<index>-` and base32 of its value with a SHA-256 checksum, so a typo is caught |
 | Fingerprints | Six proquints (five-letter pronounceable words) over 96 bits of SHA-256 of both public keys of a personal key, or of the lease key |
 | Memory | Keys are `Key32` and the types over it: cleared on drop, compared in constant time, `Debug` redacted |
@@ -139,10 +186,13 @@ What each wrap carries and who signs it:
   binding and name, seals it by HPKE to the lease and signs the approval.
 - **Machine access**: an item key under the machine key (HKDF of `entity-facade@crypt-pass` with `vault-machine` until
   Sealed-Secrets S1), with the environment, vault and item ids as associated data.
-- **Recovery key**: its public half signed by its maker; its private half split k of n, each share by HPKE to one
-  holder and signed, and then dropped. A recovery takes k holders: each opens their share and delivers it, signed, to
-  the recovering holder, whose client combines them and checks the result against the signed public half. A vault's
-  wrap to the recovery key is signed by a manager of its key version.
+- **Recovery key**: a key pair of the personal key's shape (X25519 and Ed25519, both by HKDF from one 32-byte seed),
+  its public halves signed by its maker; the seed split k of n, each share by HPKE to one holder and signed, and then
+  dropped. A vault with recovery on lists it as a manager in its member list, and the vault key is wrapped to it as a
+  member wrap. A recovery session is signed by the recovering holder over its ephemeral X25519 key, the vault and the
+  member's new key; each other holder's share goes by HPKE to that ephemeral key, signed by the holder over the
+  session; the recovering client combines them with its own and checks the result against the signed public halves.
+  An entry of a member list signed by the recovery key may only give one person a new key.
 - **Delivery**: a value by HPKE to one user, signed by the sending user or instance. A delivery carries no freshness,
   so a client files each `delivery_id` once and drops a repeat (`delivery::Filed`).
 
@@ -194,7 +244,10 @@ the vault crate's own session: no row of a personal vault holds an item's name, 
 non-member gets no wrap and no body; a removed member has no wrap and a write at the old key version is refused; a
 key version or wrap no manager signed is refused by the server and by a member's client; nothing is wrapped to a
 changed personal key before it is checked again; a delivery goes only to its recipient; a wrapped personal key needs
-a strong, recent sign-in; each change writes its event. `moqui test framework --spec VaultServices` checks the
+a strong, recent sign-in; each change writes its event; k recovery holders recover a vault to a member's new key and
+every member is told, k − 1 cannot, a single-secret vault never gets a recovery wrap, a holder's step without
+`VAULT_RECOVERY` or a recent sign-in is refused, and an operational vault cannot drop to one member with recovery off.
+`moqui test framework --spec VaultServices` checks the
 services' access as a server spec, and `moqui test-client framework --serve --spec VaultShared` the same rules over
 REST with the test client's `vault` member ([JS-Test-Client](../dev/JS-Test-Client.md)), which is the vault crate's
-session run natively.
+session run natively; `--spec VaultRecovery` runs a recovery end to end the same way.

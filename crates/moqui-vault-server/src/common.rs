@@ -35,7 +35,10 @@ pub(crate) const PERSONAL_KEY: &str = "moqui.security.vault.VaultPersonalKey";
 pub(crate) const KEY_CHECK: &str = "moqui.security.vault.VaultKeyCheck";
 pub(crate) const DELIVERY: &str = "moqui.security.vault.VaultDelivery";
 pub(crate) const EVENT: &str = "moqui.security.vault.VaultEvent";
-pub(crate) const RECOVERY_WRAP: &str = "moqui.security.vault.VaultRecoveryWrap";
+pub(crate) const RECOVERY_KEY: &str = "moqui.security.vault.VaultRecoveryKey";
+pub(crate) const RECOVERY_HOLDER: &str = "moqui.security.vault.VaultRecoveryHolder";
+pub(crate) const RECOVERY_SESSION: &str = "moqui.security.vault.VaultRecoverySession";
+pub(crate) const RECOVERY_DELIVERY: &str = "moqui.security.vault.VaultRecoveryDelivery";
 
 pub(crate) const PERSONAL: &str = "VkPersonal";
 pub(crate) const OPERATIONAL: &str = "VkOperational";

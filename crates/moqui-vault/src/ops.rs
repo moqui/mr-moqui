@@ -20,11 +20,11 @@
 //! decides what it trusts by itself, never by the page's say-so:
 //!
 //! - a trust anchor or a key to wrap to is only a key named by a `VaultKeyCheck` row that this session's own personal
-//!   key signed ([`KeyCheck`]), or the session's own key;
+//!   key signed ([`KeyCheck`]), or the session's own key, or a recovery key whose maker's key is so named;
 //! - a vault key opens only through the member-list chain (verified, checked against what the client remembers, and
 //!   the wrap accepted by it), never with a signer key the page names;
 //! - each signed statement is built here from its parts (a key version, a member wrap, a deposit key, a key check
-//!   after the fingerprint the user compared, a recovery wrap, a lease approval); there is no "sign these bytes";
+//!   after the fingerprint the user compared, a recovery key and its session, a lease approval); there is no "sign these bytes";
 //! - a recovery key is combined here and used here: no secret share or key goes back to the page.
 //!
 //! The request's strings are overwritten after the call and the answer is built in a buffer of its exact size.
@@ -36,14 +36,14 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
-use crate::delivery::{self, Delivery, Filed, Sender, To};
+use crate::delivery::{self, Filed, Sender, To};
 use crate::fingerprint::{self, KeyCheck};
 use crate::hpke;
 use crate::keys::Key32;
-use crate::keyversion::{self, Chain, KeyVersion, Member};
+use crate::keyversion::{self, recovery_key_of, recovery_member_id, Chain, KeyVersion, Member, Role};
 use crate::lease::{self, ApproveInput};
 use crate::personal::{self, PersonalKey, PersonalPublic};
-use crate::recovery;
+use crate::recovery::{self, Delivered, HolderShare, RecoveryKeyRecord, RecoverySession, SessionShare};
 use crate::rng::Rng;
 use crate::sign::VerifyingKey;
 use crate::text::{hex, unhex};
@@ -54,10 +54,11 @@ use crate::Error;
 pub mod shapes;
 
 use shapes::{
-    array_of, bytes_of, delivery_json, delivery_of, deposit_json, entries_of, holder_share_of, i64_of, key_check_json,
-    key_checks_of, key_version_json, label_of, lease_of, member_wrap_json, member_wrap_of, members_of, object_of,
-    password_wrap_json, password_wrap_of, public_of, record_of, recovery_wrap_json, recovery_wrap_of, remembered_json,
-    remembered_of, scrub, str_of, to_text, u64_of, verify_of,
+    array_of, bytes_of, delivery_json, delivery_of, deposit_json, entries_of, holder_share_from, holder_share_json,
+    holder_share_of, i64_of, key_check_json, key_checks_of, key_version_json, label_of, lease_of, member_wrap_json,
+    member_wrap_of, members_of, object_of, password_wrap_json, password_wrap_of, public_of, record_json, record_of,
+    remembered_json, remembered_of, scrub, session_from, session_json, session_share_from, session_share_json, str_of,
+    to_text, u64_of, verify_of,
 };
 
 /// The opened personal key and who it is.
@@ -72,7 +73,11 @@ struct Me {
 pub struct Session {
     me: Option<Me>,
     vault_keys: BTreeMap<(String, u64), Key32>,
-    recovery_keys: BTreeMap<String, hpke::SecretKey>,
+    /// Recovery keys combined here, by id.
+    recovery_keys: BTreeMap<String, PersonalKey>,
+    /// The recovery sessions this client started, by id, and the ephemeral key of each until its shares combine.
+    recovery_sessions: BTreeMap<String, RecoverySession>,
+    ephemerals: BTreeMap<String, hpke::SecretKey>,
     /// The deliveries opened in this session: a repeat is refused, never filed twice.
     filed: Filed,
 }
@@ -140,7 +145,8 @@ impl Session {
             .collect())
     }
 
-    /// Trust anchors: this session's own signing key and every key a verified check names.
+    /// Trust anchors: this session's own signing key, every key a verified check names, and each recovery key whose
+    /// maker's key a verified check names (an entry a recovery signed, §3.10).
     fn anchors(&self, args: &Value) -> Result<Vec<VerifyingKey>, Error> {
         let mine = self.me()?.key.public().verify;
         let mut anchors = vec![mine];
@@ -149,12 +155,47 @@ impl Session {
                 .iter()
                 .filter_map(|check| check.checked_verify_key(&mine).ok()),
         );
+        anchors.extend(self.recovery_records(args)?.iter().map(|record| record.public.verify));
         Ok(anchors)
     }
 
-    /// Refuses a personal key that is neither this session's own nor covered by a verified check of it as
-    /// `user_id`'s key.
+    /// The recovery keys the page passed (`recovery_keys`: each `{record, maker_public}`), each signed by a maker
+    /// whose key this session checked. One that is not is refused, never left out: a client refuses a recovery key
+    /// with no signature it can check.
+    fn recovery_records(&self, args: &Value) -> Result<Vec<RecoveryKeyRecord>, Error> {
+        let Some(rows) = args.get("recovery_keys").and_then(Value::as_array) else {
+            return Ok(Vec::new());
+        };
+        rows.iter().map(|row| self.checked_record(args, row)).collect()
+    }
+
+    /// `row`'s recovery key record, after checking its signature by its maker, a key this session checked.
+    fn checked_record(&self, args: &Value, row: &Value) -> Result<RecoveryKeyRecord, Error> {
+        let record = record_of(row)?;
+        let maker = public_of(row, "maker_public")?;
+        self.require_checked_person(args, &record.maker_user_id, &maker)?;
+        record.verify(&maker.verify)?;
+        Ok(record)
+    }
+
+    /// Refuses a key that is neither this session's own, nor covered by a verified check of it as `user_id`'s key,
+    /// nor (for a member list's recovery member) a recovery key whose maker this session checked.
     fn require_checked(&self, args: &Value, user_id: &str, public: &PersonalPublic) -> Result<(), Error> {
+        let Some(recovery_key_id) = recovery_key_of(user_id) else {
+            return self.require_checked_person(args, user_id, public);
+        };
+        let listed = self
+            .recovery_records(args)?
+            .iter()
+            .any(|record| record.recovery_key_id == recovery_key_id && record.public == *public);
+        if !listed {
+            return Err(Error::Refused("a recovery key whose maker's key has not been checked"));
+        }
+        Ok(())
+    }
+
+    /// [`Self::require_checked`] for a person's key.
+    fn require_checked_person(&self, args: &Value, user_id: &str, public: &PersonalPublic) -> Result<(), Error> {
         let me = self.me()?;
         if *public == me.key.public() && user_id == me.user_id {
             return Ok(());
@@ -171,6 +212,8 @@ impl Session {
                 self.me = None;
                 self.vault_keys.clear();
                 self.recovery_keys.clear();
+                self.recovery_sessions.clear();
+                self.ephemerals.clear();
                 Ok(json!({ "locked": true }))
             }
             "status" => {
@@ -303,45 +346,41 @@ impl Session {
                 Ok(json!({ "body": text }))
             }
             "lease_approve" => self.lease_approve(args, rng),
-            "recovery_wrap" => {
-                let record = record_of(args)?;
-                let maker = public_of(args, "maker_public")?;
-                self.require_checked(args, &record.maker_user_id, &maker)?;
-                let vault_id = str_of(args, "vault_id")?;
-                let key_version = u64_of(args, "key_version")?;
-                let key = self.vault_key(vault_id, key_version)?;
-                let wrap =
-                    recovery::wrap_vault_key(key, vault_id, key_version, &record, &maker.verify, self.signer()?, rng)?;
-                Ok(recovery_wrap_json(&wrap))
+            "recovery_make" => self.recovery_make(args, rng),
+            "recovery_member" => {
+                // how a checked recovery key is listed in a member list, to turn recovery on (key_version_next and
+                // vault_key_wrap_member, with the record in recovery_keys)
+                let record = self.checked_record(args, args)?;
+                let member = record.member();
+                Ok(
+                    json!({ "user_id": member.user_id, "role": member.role.as_str(), "key_id": member.key_id,
+                           "public": hex(&member.public.to_bytes()) }),
+                )
             }
+            "recovery_session_start" => self.recovery_session_start(args, rng),
             "recovery_share_deliver" => {
+                let record = self.checked_record(args, args)?;
+                let maker = public_of(args, "maker_public")?;
                 let held = holder_share_of(args)?;
-                let maker = public_of(args, "maker_public")?;
-                let to_public = public_of(args, "to_public")?;
-                self.require_checked(args, str_of(args, "to_user_id")?, &to_public)?;
-                let to = To {
-                    user_id: str_of(args, "to_user_id")?,
-                    key_id: str_of(args, "to_key_id")?,
-                    public: &to_public,
-                };
-                let me = self.me()?;
-                let delivery_id = str_of(args, "delivery_id")?;
-                let sent = recovery::deliver_share(&held, &me.key, &me.user_id, &maker.verify, delivery_id, to, rng)?;
-                Ok(delivery_json(&sent))
+                if held.recovery_key_id != record.recovery_key_id {
+                    return Err(Error::Refused("a share of another recovery key"));
+                }
+                let session = session_from(object_of(args, "session")?)?;
+                let holder_public = public_of(args, "session_holder_public")?;
+                self.require_checked_person(args, &session.holder_user_id, &holder_public)?;
+                let sent = recovery::deliver_share(
+                    &held,
+                    self.signer()?,
+                    &maker.verify,
+                    &session,
+                    &holder_public.verify,
+                    rng,
+                )?;
+                Ok(session_share_json(&sent))
             }
-            "recovery_combine" => {
-                let record = record_of(args)?;
-                let maker = public_of(args, "maker_public")?;
-                self.require_checked(args, &record.maker_user_id, &maker)?;
-                let deliveries = array_of(args, "deliveries")?
-                    .iter()
-                    .map(|row| Ok((delivery_of(row)?, verify_of(row, "sender_verify")?)))
-                    .collect::<Result<Vec<(Delivery, VerifyingKey)>, Error>>()?;
-                let key = recovery::combine_deliveries(&record, &maker.verify, &deliveries, &self.me()?.key)?;
-                self.recovery_keys.insert(record.recovery_key_id.clone(), key);
-                Ok(json!({ "recovery_key_id": record.recovery_key_id }))
-            }
+            "recovery_combine" => self.recovery_combine(args),
             "recovery_open_vault" => self.recovery_open_vault(args),
+            "recovery_rekey" => self.recovery_rekey(args, rng),
             "delivery_send" => self.delivery_send(args, rng),
             "delivery_open" => self.delivery_open(args),
             _ => Err(Error::Format("unknown op")),
@@ -657,24 +696,210 @@ impl Session {
         Ok(answer)
     }
 
-    /// Opens a vault's recovery wrap with the recovery key combined in this session; the wrap's signer must be a
-    /// manager of its key version in the vault's chain.
+    /// Makes the organization's recovery key here (§3.10): split `k` of the holders' count, one share wrapped to each
+    /// holder's key, which must be a key this session checked (or its own), and the seed dropped.
+    fn recovery_make(&self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
+        let rows = array_of(args, "holders")?;
+        let mut listed = Vec::with_capacity(rows.len());
+        for row in rows {
+            let public = public_of(row, "public")?;
+            self.require_checked_person(args, str_of(row, "user_id")?, &public)?;
+            listed.push((str_of(row, "user_id")?, str_of(row, "key_id")?, public));
+        }
+        let holders: Vec<recovery::Holder> = listed
+            .iter()
+            .map(|(user_id, key_id, public)| recovery::Holder {
+                user_id,
+                key_id,
+                public,
+            })
+            .collect();
+        let k = u8::try_from(u64_of(args, "k")?).map_err(|_| Error::Format("k"))?;
+        let recovery_key_id = str_of(args, "recovery_key_id")?;
+        let (record, shares) = recovery::make(recovery_key_id, k, &holders, self.signer()?, rng)?;
+        let shares: Vec<Value> = shares.iter().map(holder_share_json).collect();
+        Ok(json!({ "record": record_json(&record), "shares": shares }))
+    }
+
+    /// Starts a recovery here, as the recovering holder: a new ephemeral key kept in this session, and the session
+    /// signed by this key, naming the vault and the member's new personal key, which must be a key this session
+    /// checked (§3.5: a changed key is checked again before anything is wrapped to it).
+    fn recovery_session_start(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
+        let record = self.checked_record(args, args)?;
+        let held = holder_share_of(args)?;
+        let me = self.me()?;
+        if held.recovery_key_id != record.recovery_key_id || held.holder_user_id != me.user_id {
+            return Err(Error::Refused(
+                "only a holder of this recovery key starts a recovery with it",
+            ));
+        }
+        let subject_public = public_of(args, "subject_public")?;
+        let subject_user_id = str_of(args, "subject_user_id")?;
+        if recovery_key_of(subject_user_id).is_some() {
+            return Err(Error::Refused("a recovery is for a person"));
+        }
+        self.require_checked_person(args, subject_user_id, &subject_public)?;
+        let session_id = str_of(args, "session_id")?;
+        if self.recovery_sessions.contains_key(session_id) {
+            return Err(Error::Refused("that recovery session is already started here"));
+        }
+        let subject = vault::Recipient {
+            user_id: subject_user_id,
+            key_id: str_of(args, "subject_key_id")?,
+            public: &subject_public,
+        };
+        let vault_id = str_of(args, "vault_id")?;
+        let (session, ephemeral) = recovery::start_session(
+            session_id,
+            &record.recovery_key_id,
+            vault_id,
+            subject,
+            self.signer()?,
+            rng,
+        )?;
+        let answer = session_json(&session);
+        self.ephemerals.insert(session_id.to_string(), ephemeral);
+        self.recovery_sessions.insert(session_id.to_string(), session);
+        Ok(answer)
+    }
+
+    /// Combines this holder's own share with the shares delivered to a session it started (each `{share, holder,
+    /// public}`: the sealed share, the sender's holder row and their public key), checked against the signed record.
+    /// The recovery key stays here; the session's ephemeral key is dropped once it has combined.
+    fn recovery_combine(&mut self, args: &Value) -> Result<Value, Error> {
+        let record = self.checked_record(args, args)?;
+        let maker = public_of(args, "maker_public")?;
+        let session_id = str_of(args, "session_id")?;
+        let (Some(session), Some(ephemeral)) =
+            (self.recovery_sessions.get(session_id), self.ephemerals.get(session_id))
+        else {
+            return Err(Error::Refused("that recovery session was not started here"));
+        };
+        let held = holder_share_of(args)?;
+        let me = self.me()?;
+        if held.holder_user_id != me.user_id || held.holder_key_id != me.key_id {
+            return Err(Error::Refused("the share is someone else's"));
+        }
+        let own = recovery::open_share(&held, &me.key, &maker.verify)?;
+        let rows = array_of(args, "deliveries")?;
+        let mut parsed: Vec<(SessionShare, HolderShare, PersonalPublic)> = Vec::with_capacity(rows.len());
+        for row in rows {
+            parsed.push((
+                session_share_from(object_of(row, "share")?)?,
+                holder_share_from(object_of(row, "holder")?)?,
+                public_of(row, "public")?,
+            ));
+        }
+        let delivered: Vec<Delivered> = parsed
+            .iter()
+            .map(|(share, holder, public)| Delivered { share, holder, public })
+            .collect();
+        let key = recovery::combine_session(&record, &maker.verify, session, ephemeral, own, &delivered)?;
+        self.ephemerals.remove(session_id);
+        self.recovery_keys.insert(record.recovery_key_id.clone(), key);
+        Ok(json!({ "recovery_key_id": record.recovery_key_id }))
+    }
+
+    /// Opens the vault key with a recovery key combined here: the recovery member's wrap, accepted by the vault's
+    /// chain like any member's (a chain this session can anchor: a signer whose key it checked).
     fn recovery_open_vault(&mut self, args: &Value) -> Result<Value, Error> {
         let entries = entries_of(args)?;
         let chain = Chain::verify(&entries, &self.anchors(args)?)?;
         keyversion::check_remembered(&chain, remembered_of(args)?.as_ref())?;
-        let record = record_of(args)?;
-        let wrap = recovery_wrap_of(args)?;
-        let Some(recovery_key) = self.recovery_keys.get(&record.recovery_key_id) else {
+        let recovery_key_id = str_of(args, "recovery_key_id")?;
+        let Some(recovery_key) = self.recovery_keys.get(recovery_key_id) else {
             return Err(Error::Refused("that recovery key has not been combined here"));
         };
-        if recovery_key.public()? != record.public {
-            return Err(Error::Refused("the record is not of the recovery key combined here"));
+        let wrap = member_wrap_of(object_of(args, "wrap")?)?;
+        if wrap.member_user_id != recovery_member_id(recovery_key_id) || wrap.member_key_id != recovery_key_id {
+            return Err(Error::Refused("the wrap is not the recovery key's"));
         }
-        let signer = chain.manager_at(wrap.key_version, &wrap.signer_user_id, &wrap.signer_key_id)?;
-        let key = recovery::open_vault_key(&wrap, &record, recovery_key, &signer.public.verify)?;
+        let (_, signer) = chain.accept_wrap(&wrap)?;
+        let key = vault::open_member_wrap(&wrap, recovery_key, &signer)?;
         self.keep_vault_key(&wrap.vault_id, wrap.key_version, key)?;
         Ok(json!({ "vault_id": wrap.vault_id, "key_version": wrap.key_version }))
+    }
+
+    /// The recovery's last step, signed by the recovery key as the vault's recovery member: the next member list,
+    /// with the session's member under their new personal key (checked again here) and nothing else changed, the
+    /// vault key wrapped to that key, and, when that member was a manager whose wraps the change leaves unsigned, the
+    /// other members' wraps remade.
+    fn recovery_rekey(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
+        let session_id = str_of(args, "session_id")?;
+        let Some(session) = self.recovery_sessions.get(session_id) else {
+            return Err(Error::Refused("that recovery session was not started here"));
+        };
+        let Some(recovery_key) = self.recovery_keys.get(&session.recovery_key_id) else {
+            return Err(Error::Refused("that recovery key has not been combined here"));
+        };
+        let entries = entries_of(args)?;
+        let chain = Chain::verify(&entries, &self.anchors(args)?)?;
+        keyversion::check_remembered(&chain, remembered_of(args)?.as_ref())?;
+        self.require_checked_person(args, &session.subject_user_id, &session.subject_public)?;
+        let latest = chain.latest();
+        if latest.vault_id != session.vault_id {
+            return Err(Error::Refused("a chain of another vault than the session's"));
+        }
+        let recovery_user = recovery_member_id(&session.recovery_key_id);
+        if latest
+            .member(&recovery_user, &session.recovery_key_id)
+            .is_none_or(|m| m.public != recovery_key.public() || m.role != Role::Manage)
+        {
+            return Err(Error::Refused(
+                "recovery is not on for this vault with this recovery key",
+            ));
+        }
+        let Some(was) = latest.members.iter().find(|m| m.user_id == session.subject_user_id) else {
+            return Err(Error::Refused("the session's member is not a member of this vault"));
+        };
+        let members: Vec<Member> = latest
+            .members
+            .iter()
+            .map(|m| {
+                if m.user_id != session.subject_user_id {
+                    return m.clone();
+                }
+                Member {
+                    key_id: session.subject_key_id.clone(),
+                    public: session.subject_public,
+                    ..m.clone()
+                }
+            })
+            .collect();
+        let entry = chain.next(
+            latest.version,
+            latest.revision + 1,
+            members,
+            &recovery_user,
+            &session.recovery_key_id,
+            recovery_key,
+        )?;
+        let signer = Signer {
+            user_id: &recovery_user,
+            key_id: &session.recovery_key_id,
+            key: recovery_key,
+        };
+        let vault_key = self.vault_key(&latest.vault_id, latest.version)?;
+        let to = Recipient {
+            user_id: &session.subject_user_id,
+            key_id: &session.subject_key_id,
+            public: &session.subject_public,
+        };
+        let wrap = vault::wrap_vault_key_to_member(vault_key, &latest.vault_id, latest.version, to, signer, rng)?;
+        let mut rewraps = Vec::new();
+        if was.role == Role::Manage {
+            for member in entry.members.iter().filter(|m| m.user_id != session.subject_user_id) {
+                let to = Recipient {
+                    user_id: &member.user_id,
+                    key_id: &member.key_id,
+                    public: &member.public,
+                };
+                let rewrap =
+                    vault::wrap_vault_key_to_member(vault_key, &latest.vault_id, latest.version, to, signer, rng)?;
+                rewraps.push(member_wrap_json(&rewrap));
+            }
+        }
+        Ok(json!({ "entry": key_version_json(&entry), "wrap": member_wrap_json(&wrap), "rewraps": rewraps }))
     }
 }
 
@@ -685,7 +910,8 @@ fn statement_of(name: &str) -> Result<crate::sign::Statement, Error> {
         Statement::KeyVersion,
         Statement::DepositKey,
         Statement::RecoveryKey,
-        Statement::RecoveryWrap,
+        Statement::RecoverySession,
+        Statement::RecoverySessionShare,
         Statement::RecoveryShare,
         Statement::Delivery,
         Statement::Lease,

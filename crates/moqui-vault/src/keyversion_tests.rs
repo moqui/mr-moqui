@@ -415,3 +415,65 @@ fn the_member_list_hash_does_not_depend_on_row_order() {
     assert_eq!(Role::parse("approve").unwrap(), Role::Approve);
     assert!(Role::parse("owner").is_err());
 }
+
+/// An entry the recovery member signs may only give one person a new key: adding a member, changing a role, giving
+/// two members new keys, or rotating the key are refused (§3.10).
+#[test]
+fn a_recovery_entry_only_gives_one_member_a_new_key() {
+    let p = people();
+    let mut rng = TestRng::new("keyversion-recovery");
+    let recovery = PersonalKey::generate(&mut rng);
+    let alice2 = PersonalKey::generate(&mut rng);
+    let alice = member("alice", Role::Manage, &p.alice);
+    let bob = member("bob", Role::Read, &p.bob);
+    let rk = Member {
+        user_id: recovery_member_id("rk"),
+        role: Role::Manage,
+        key_id: "rk".to_string(),
+        public: recovery.public(),
+    };
+    assert_eq!(recovery_key_of(&rk.user_id), Some("rk"));
+    let first = sign(
+        "v",
+        1,
+        1,
+        vec![alice.clone(), bob.clone(), rk.clone()],
+        "alice",
+        "pk-alice",
+        &p.alice,
+    );
+    let by_recovery = |members: Vec<Member>, version: u64, revision: u64| {
+        let entry = sign("v", version, revision, members, "recovery:rk", "rk", &recovery);
+        vec![first.clone(), entry]
+    };
+    let checked = [p.alice.public().verify];
+    let rekeyed = Member {
+        key_id: "pk-alice2".to_string(),
+        public: alice2.public(),
+        ..alice.clone()
+    };
+    let good = by_recovery(vec![rekeyed.clone(), bob.clone(), rk.clone()], 1, 2);
+    assert!(Chain::verify(&good, &checked).is_ok());
+    // the recovery key alone anchors it, for the recovered member's new client
+    assert!(Chain::verify(&good, &[recovery.public().verify]).is_ok());
+
+    let carol = member("carol", Role::Read, &p.carol);
+    let added = by_recovery(vec![rekeyed.clone(), bob.clone(), rk.clone(), carol], 1, 2);
+    assert!(matches!(refused(Chain::verify(&added, &checked)), Error::Refused(_)));
+    let promoted = by_recovery(
+        vec![rekeyed.clone(), member("bob", Role::Manage, &p.bob), rk.clone()],
+        1,
+        2,
+    );
+    assert!(matches!(refused(Chain::verify(&promoted, &checked)), Error::Refused(_)));
+    let nothing = by_recovery(vec![alice.clone(), bob.clone(), rk.clone()], 1, 2);
+    assert!(matches!(refused(Chain::verify(&nothing, &checked)), Error::Refused(_)));
+    let two = by_recovery(
+        vec![rekeyed.clone(), member("bob", Role::Read, &p.carol), rk.clone()],
+        1,
+        2,
+    );
+    assert!(matches!(refused(Chain::verify(&two, &checked)), Error::Refused(_)));
+    let rotated = by_recovery(vec![rekeyed, bob, rk], 2, 1);
+    assert!(matches!(refused(Chain::verify(&rotated, &checked)), Error::Refused(_)));
+}

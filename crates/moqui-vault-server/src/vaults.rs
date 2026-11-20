@@ -19,7 +19,8 @@
 //! - A shared-key vault starts with its first key version (1.1), signed by its maker, a manager in it, and a wrap of
 //!   the vault key to each member it lists, each member's key checked by the maker. An operational vault needs
 //!   `VAULT_ADMIN`, has its name in the clear, and keeps recovery on (its default) or at least two members; a personal
-//!   shared-key vault has recovery off by default (§9, Nov 19).
+//!   shared-key vault has recovery off by default (§9, Nov 19). Recovery is on when the member list lists the
+//!   organization's recovery key (crate::recovery).
 //! - A personal vault's name is in its sealed header; no column of it holds a name in the clear.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,8 +32,7 @@ use serde_json::Value as Json;
 
 use crate::common::{
     authz_off, check_id, fail, field, find, flag, int_field, now, out, required, text, user, value, vault_for, Access,
-    Out, Params, ITEM, ITEM_HISTORY, KEY_VERSION, MEMBER, OPERATIONAL, PERSONAL, RECOVERY_WRAP, SHARED_KEY,
-    SINGLE_SECRET, VAULT,
+    Out, Params, ITEM, ITEM_HISTORY, KEY_VERSION, MEMBER, OPERATIONAL, PERSONAL, SHARED_KEY, SINGLE_SECRET, VAULT,
 };
 use crate::events::{self, Event};
 use crate::members::{
@@ -71,6 +71,8 @@ fn create_vault(params: &Params, facade: &EntityFacade) -> Out {
     if operational && !moqui_core::user::has_permission("VAULT_ADMIN").map_err(|err| fail(err.message()))? {
         return Err(fail("Making an operational vault needs the VAULT_ADMIN permission"));
     }
+    // recovery is on when the first member list lists the organization's recovery key (§3.10): recoveryOn Y without it
+    // is refused, and an operational vault without it keeps two members. A single-secret vault never has it.
     let recovery = flag(params, "recoveryOn").unwrap_or(operational);
     let mut vault = facade.make_value(VAULT)?;
     vault.set("vaultId", Value::string(&vault_id));
@@ -118,9 +120,17 @@ fn create_vault(params: &Params, facade: &EntityFacade) -> Out {
                 return Err(fail("A member is listed once"));
             }
         }
-        if operational && !recovery && entry.members.len() < 2 {
+        crate::recovery::check_one_recovery(&entry)?;
+        let has_recovery = crate::recovery::listed_recovery(&entry).is_some();
+        if flag(params, "recoveryOn") == Some(true) && !has_recovery {
+            return Err(fail(
+                "Recovery on lists the organization's recovery key in the first member list, with its wrap",
+            ));
+        }
+        if operational && !has_recovery && crate::recovery::people(&entry).count() < 2 {
             return Err(fail("An operational vault keeps recovery on or at least two members"));
         }
+        vault.set("recoveryOn", Value::string(if has_recovery { "Y" } else { "N" }));
         let wraps = wraps_param(params, "memberWraps")?;
         let mut wrapped = BTreeSet::new();
         for wrap in &wraps {
@@ -308,7 +318,7 @@ fn get_vault(params: &Params, facade: &EntityFacade) -> Out {
 }
 
 /// `delete#Vault`: a manager (or a single-secret vault's owner) deletes the vault, its items and their history, its
-/// members, key versions and recovery wraps. Its events stay.
+/// members, key versions and recovery sessions. Its events stay.
 fn delete_vault(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
@@ -320,12 +330,13 @@ fn delete_vault(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("Deleting an operational vault needs the VAULT_ADMIN permission"));
     }
     crate::common::require_recent_auth()?;
-    for entity in [ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION, RECOVERY_WRAP] {
+    for entity in [ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION] {
         let rows = find(facade, entity)?.eq("vaultId", Value::string(&vault_id)).list()?;
         for row in rows.iter() {
             row.delete(facade)?;
         }
     }
+    crate::recovery::forget_vault(facade, &vault_id)?;
     vault.delete(facade)?;
     events::write(
         facade,

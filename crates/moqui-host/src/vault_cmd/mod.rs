@@ -23,8 +23,10 @@
 //! - `key check <username>`: compare a user's fingerprint, then store the check signed by this user's key.
 //! - `list`: this user's vaults.
 //! - `open <vaultId> [--item <id>]`: open a vault through its member-list chain and list its items, or print one.
+//! - `recovery ...`: an organization recovery holder's steps, and turning recovery on ([`recovery`]).
 
 pub(crate) mod client;
+mod recovery;
 mod remote;
 mod state;
 
@@ -46,6 +48,15 @@ Usage: moqui vault --server URL --user USERNAME <command>
   key check <username>      Compare a user's key fingerprint with them, then store your signed check
   list                      Your vaults
   open <vaultId> [--item ID]  Open a vault through its member list and list its items, or print one item
+  recovery list             The organization's recovery keys, and the recoveries you can seal a share to
+  recovery make --k K [--group G] <username>...
+                            Make a recovery key split K of these holders (each key checked)
+  recovery on <vaultId> [--key ID]
+                            As a manager: turn recovery on for a vault (the recovery key's maker checked)
+  recovery start <vaultId> <username> [--key ID]
+                            As a holder: recover the vault to the member's new key (checked); waits for the shares
+  recovery share <recoverySessionId>
+                            As another holder: seal your share to a recovery
 
 Each run signs in with your password, and your second factor's code when your account has one: the server sends your
 wrapped personal key only after such a sign-in. The key passphrase never leaves this process. What this client has
@@ -96,6 +107,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         ["key", "check", username] => key_check(&mut remote, &mut client, username),
         ["list"] => list(&mut remote),
         ["open", vault_id] => open(&mut remote, &mut client, vault_id, &item),
+        ["recovery", rest @ ..] => recovery::dispatch(&mut remote, &mut client, &user, rest),
         _ => Err(Error::new(USAGE)),
     }
 }

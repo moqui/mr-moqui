@@ -37,10 +37,10 @@ pub enum Purpose {
     PersonalPassphrase,
     /// A personal key's private halves wrapped by the recovery code.
     PersonalRecoveryCode,
-    /// A vault key wrapped to the organization recovery key.
-    RecoveryKey,
     /// A recovery-key share wrapped to a holder's personal key.
     RecoveryShare,
+    /// A recovery-key share sealed to a recovery session's ephemeral key.
+    RecoverySessionShare,
     /// A delivered value wrapped to its recipient's personal key.
     Delivery,
     /// An item key sealed to a lease's public key.
@@ -59,8 +59,8 @@ impl Purpose {
             Purpose::DepositItemKey => "deposit-item-key",
             Purpose::PersonalPassphrase => "personal-passphrase",
             Purpose::PersonalRecoveryCode => "personal-recovery-code",
-            Purpose::RecoveryKey => "recovery-key",
             Purpose::RecoveryShare => "recovery-share",
+            Purpose::RecoverySessionShare => "recovery-session-share",
             Purpose::Delivery => "delivery",
             Purpose::Lease => "lease",
             Purpose::Machine => "machine",

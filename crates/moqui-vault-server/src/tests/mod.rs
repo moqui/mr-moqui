@@ -29,6 +29,7 @@ use serde_json::{json, Value as Json};
 mod deliveries;
 mod members;
 mod personal;
+mod recovery;
 mod vaults;
 
 const SERVICES: &str = "org.moqui.security.VaultServices.";

@@ -24,6 +24,11 @@
 //! A client with memory keeps the highest entry it has accepted and the hash of its member list ([`Remembered`],
 //! decision (d)): a chain that does not hold that entry with that member list is a rollback or a fork, and is
 //! refused however high it goes.
+//!
+//! A vault with recovery on lists the organization's recovery key as a member with the manage role
+//! ([`recovery_member_id`], §3.10): the vault key is wrapped to it as to any member, and a rotation wraps to it again.
+//! An entry it signs (a recovery, made by k holders' clients) may only give one member a new personal key, with
+//! nothing else changed ([`Chain::verify`]), so a recovery cannot add a member or change a role.
 
 use sha2::{Digest as _, Sha256};
 
@@ -87,6 +92,43 @@ pub struct KeyVersion {
     pub signer_user_id: String,
     pub signer_key_id: String,
     pub signature: Vec<u8>,
+}
+
+/// The user id a recovery key is listed under in a member list: `recovery:` and the recovery key's id. No signed-in
+/// user has it; the server keeps it for recovery keys.
+pub fn recovery_member_id(recovery_key_id: &str) -> String {
+    format!("{RECOVERY_MEMBER_PREFIX}{recovery_key_id}")
+}
+
+const RECOVERY_MEMBER_PREFIX: &str = "recovery:";
+
+/// The recovery key id of a member list's recovery member, or none for a person.
+pub fn recovery_key_of(user_id: &str) -> Option<&str> {
+    user_id.strip_prefix(RECOVERY_MEMBER_PREFIX)
+}
+
+/// Whether `entry`, signed by a recovery member, only gives one person in `before` a new personal key: the same users
+/// with the same roles, and one of them (not a recovery member) under another key.
+fn recovery_change_only(before: &KeyVersion, entry: &KeyVersion) -> bool {
+    if entry.version != before.version || entry.members.len() != before.members.len() {
+        return false;
+    }
+    let mut changed = 0;
+    for member in &entry.members {
+        let Some(was) = before.members.iter().find(|m| m.user_id == member.user_id) else {
+            return false;
+        };
+        if was.role != member.role {
+            return false;
+        }
+        if was.key_id != member.key_id || was.public != member.public {
+            if recovery_key_of(&member.user_id).is_some() {
+                return false;
+            }
+            changed += 1;
+        }
+    }
+    changed == 1
 }
 
 /// The member list in a canonical order (by user, then key id), so its signed bytes and hash do not depend on how
@@ -236,6 +278,13 @@ impl<'a> Chain<'a> {
             let Some(signer) = signers_list.manager(&entry.signer_user_id, &entry.signer_key_id) else {
                 return Err(Error::Refused("signed by someone who did not hold the manage role"));
             };
+            if recovery_key_of(&entry.signer_user_id).is_some()
+                && !previous.is_some_and(|before| recovery_change_only(before, entry))
+            {
+                return Err(Error::Refused(
+                    "a recovery only gives one member a new personal key, with nothing else changed",
+                ));
+            }
             signer
                 .public
                 .verify
@@ -299,13 +348,6 @@ impl<'a> Chain<'a> {
         };
         deposit.verify(&signer.public.verify)?;
         Ok(signer.public.verify)
-    }
-
-    /// A manager of `version`'s last trusted entry: the signer a recovery wrap of that version is checked with.
-    pub fn manager_at(&self, version: u64, user_id: &str, key_id: &str) -> Result<&'a Member, Error> {
-        self.trusted_last_of(version)?
-            .manager(user_id, key_id)
-            .ok_or(Error::Refused("not a manager of that key version"))
     }
 
     /// Signs the entry after the latest: `signer` must be a manager in the latest entry, with this key.

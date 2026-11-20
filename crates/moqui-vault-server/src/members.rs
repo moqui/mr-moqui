@@ -32,7 +32,7 @@ use moqui_core::extension::RustServiceFn;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_vault::fingerprint;
-use moqui_vault::keyversion::{Chain, KeyVersion, Member, Role};
+use moqui_vault::keyversion::{recovery_key_of, Chain, KeyVersion, Member, Role};
 use moqui_vault::ops::shapes;
 use moqui_vault::text::{hex, unhex};
 use moqui_vault::vault::MemberWrap;
@@ -100,13 +100,18 @@ pub(crate) fn require_signed_by_me(facade: &EntityFacade, entry: &KeyVersion, me
 }
 
 /// Checks a member the entry adds: a role of the vault's kind, their active personal key as stored, and, unless the
-/// member is the signer, a check of that key stored by the signer's key.
+/// member is the signer, a check of that key stored by the signer's key. A recovery key is checked as
+/// [`crate::recovery::check_recovery_member`] says.
 pub(crate) fn check_new_member(
     facade: &EntityFacade,
     member: &Member,
     signer: &Member,
     operational: bool,
 ) -> Result<(), LibError> {
+    // the organization's recovery key, listed as a manager when recovery is on (§3.10)
+    if recovery_key_of(&member.user_id).is_some() {
+        return crate::recovery::check_recovery_member(facade, member, signer);
+    }
     if !role_fits(member.role, operational) {
         return Err(fail(format!(
             "The role {} is not a role of this kind of vault",
@@ -268,6 +273,7 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
     if users.len() != entry.members.len() {
         return Err(fail("A member list names each user once"));
     }
+    crate::recovery::check_one_recovery(&entry)?;
     if dropped.iter().any(|d| d.user_id != member.user_id) {
         return Err(fail(
             "A member is removed with remove#VaultMember, which rotates the key",
@@ -346,6 +352,10 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         row.delete(facade)?;
     }
     store_wrap(facade, &wrap, member.role)?;
+    let recovery = recovery_key_of(&member.user_id).is_some();
+    if recovery {
+        vault.set("recoveryOn", Value::string("Y"));
+    }
     bump_revision(facade, &mut vault)?;
     events::write(
         facade,
@@ -355,7 +365,11 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
             subject_user_id: Some(&member.user_id),
             personal_key_id: Some(&member.key_id),
             key_version: Some(version(entry.version)?),
-            detail: Some(format!("role {}", member.role.as_str())),
+            detail: Some(if recovery {
+                "recovery turned on".to_string()
+            } else {
+                format!("role {}", member.role.as_str())
+            }),
             ..Event::default()
         },
     )?;
@@ -365,7 +379,8 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
 /// `remove#VaultMember`: the member's wraps deleted and the vault key rotated, in one transaction that names the
 /// vault's revision: revision 1 of the next key version without the member, every item key rewrapped under it and
 /// every remaining member's wrap remade, all signed by the caller, a manager. A manager does not remove themselves, an
-/// operational vault keeps recovery on or two members, and every vault keeps a manager.
+/// operational vault keeps recovery on or two members, and every vault keeps a manager (a person). Removing the recovery
+/// key's member (`recovery:<id>`) turns recovery off.
 fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
@@ -400,11 +415,12 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
     if !unchanged {
         return Err(fail("A removal changes no other member"));
     }
-    if !entry.members.iter().any(|m| m.role == Role::Manage) {
+    if !crate::recovery::people(&entry).any(|m| m.role == Role::Manage) {
         return Err(fail("A vault keeps at least one manager"));
     }
     let operational = field(&vault, "vaultKindEnumId") == OPERATIONAL;
-    if operational && field(&vault, "recoveryOn") != "Y" && entry.members.len() < 2 {
+    let recovery = crate::recovery::listed_recovery(&entry).is_some();
+    if operational && !recovery && crate::recovery::people(&entry).count() < 2 {
         return Err(fail("An operational vault keeps recovery on or at least two members"));
     }
     entries.push(entry.clone());
@@ -429,7 +445,11 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("Remake the wrap of every remaining member, once each"));
     }
     // every item key rewrapped under the new version
-    let given = json(params, "itemKeys")?;
+    // a vault with no items has no item keys to rewrap (an empty list arrives as none)
+    let given = match params.get("itemKeys") {
+        None | Some(Value::Null) => Json::Array(Vec::new()),
+        Some(_) => json(params, "itemKeys")?,
+    };
     let Some(rows) = given.as_array() else {
         return Err(fail("itemKeys is a list"));
     };
@@ -472,6 +492,7 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         row.update(facade)?;
     }
     vault.set("keyVersion", Value::I64(new_version));
+    vault.set("recoveryOn", Value::string(if recovery { "Y" } else { "N" }));
     bump_revision(facade, &mut vault)?;
     events::write(
         facade,

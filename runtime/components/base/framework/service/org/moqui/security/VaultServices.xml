@@ -141,8 +141,10 @@ along with this software (see the LICENSE.md file). If not, see
             signed by the caller with their active key as a manager in it) and a wrap of the vault key to every member it
             lists (memberWraps, signed by a manager), each member's active key checked by the caller (store#KeyCheck). A
             personal vault's name goes in headerCipher (sealed) and never in vaultName; an operational vault
-            (VkOperational) needs VAULT_ADMIN, has its vaultName, and keeps recovery on (its default; off for a personal
-            vault) or at least two members. An event.</description>
+            (VkOperational) needs VAULT_ADMIN, has its vaultName, and keeps recovery on or at least two members. Recovery is
+            on when the first member list lists the organization's recovery key (recovery:recoveryKeyId, a manager, its
+            maker's key checked by the caller) with a wrap; recoveryOn Y without it is refused, and a single-secret vault
+            never has it. An event.</description>
         <in-parameters>
             <parameter name="vaultId" required="true"/>
             <parameter name="vaultKindEnumId" required="true"/>
@@ -257,7 +259,8 @@ along with this software (see the LICENSE.md file). If not, see
             list at the same key version (entry, signed by the caller with their active key) and the wrap of the current
             vault key to that member (wrap), both accepted by the vault's chain. The member's key is their active one and
             the caller has a stored check of it: nothing is wrapped to a new or changed key before its fingerprint is
-            checked. The change names the vault revision it was made from (expectedRevision). An event.</description>
+            checked. Adding the organization's recovery key (recovery:recoveryKeyId, after checking its maker's key) turns
+            recovery on. The change names the vault revision it was made from (expectedRevision). An event.</description>
         <in-parameters>
             <parameter name="vaultId" required="true"/>
             <parameter name="expectedRevision" type="Long" required="true"/>
@@ -274,15 +277,15 @@ along with this software (see the LICENSE.md file). If not, see
             the vault revision it was made from (expectedRevision): revision 1 of the next key version without the member
             (entry), every item key rewrapped under it (itemKeys: item_id, wrapped_item_key), every remaining member's wrap
             remade (memberWraps). The removed member's wraps are deleted, and a write at the old version is refused from
-            then on; the others' earlier wraps stay until they open the new version (ack#VaultKeyVersion). A vault keeps a
-            manager, and an operational vault recovery on or two members. Two events: the removal and the
-            rotation.</description>
+            then on; the others' earlier wraps stay until they open the new version (ack#VaultKeyVersion). Removing the
+            recovery key's member turns recovery off. A vault keeps a manager, and an operational vault recovery on or two
+            members. Two events: the removal and the rotation.</description>
         <in-parameters>
             <parameter name="vaultId" required="true"/>
             <parameter name="userId" required="true"/>
             <parameter name="expectedRevision" type="Long" required="true"/>
             <parameter name="entry" type="Map" required="true"/>
-            <parameter name="itemKeys" type="List" required="true"/>
+            <parameter name="itemKeys" type="List"><description>Every item's key; none for a vault with no items</description></parameter>
             <parameter name="memberWraps" type="List" required="true"/>
         </in-parameters>
         <out-parameters>
@@ -321,6 +324,98 @@ along with this software (see the LICENSE.md file). If not, see
             event.</description>
         <in-parameters><parameter name="deliveryId" required="true"/></in-parameters>
         <out-parameters><parameter name="deliveryId"/></out-parameters>
+    </service>
+
+    <!-- Organization recovery, split k of n (§3.10). Recovery on a vault is its recovery key listed in its member list
+        (recovery:recoveryKeyId, a manager) with the vault key wrapped to it: create#Vault and add#VaultMember take it,
+        remove#VaultMember turns it off. Each holder's step needs VAULT_RECOVERY and a recent sign-in. -->
+
+    <service verb="create" noun="VaultRecoveryKey" type="rust" location="moqui_vault_server::recovery::keys::create_vault_recovery_key">
+        <description>The organization's recovery key, made in the caller's client (the vault crate's recovery_make): its
+            record (record: id, public halves, k and n, signed by the caller's active key) and one share per holder (shares,
+            each wrapped to the holder's active personal key and signed by the caller), kept by user group (userGroupId) or
+            instance (instanceId). Needs VAULT_RECOVERY and a recent sign-in; each holder holds VAULT_RECOVERY and the
+            caller has a stored check of each other holder's key; 2 ≤ k ≤ n. A taken id is "not available". An
+            event.</description>
+        <in-parameters>
+            <parameter name="record" type="Map" required="true"/>
+            <parameter name="shares" type="List" required="true"/>
+            <parameter name="userGroupId"/>
+            <parameter name="instanceId"/>
+        </in-parameters>
+        <out-parameters><parameter name="recoveryKeyId"/></out-parameters>
+    </service>
+    <service verb="list" noun="VaultRecoveryKeys" type="rust" location="moqui_vault_server::recovery::keys::list_vault_recovery_keys">
+        <description>The recovery keys that have not ended (optionally of one userGroupId): each its signed record, its
+            maker's public halves (makerPublic, which a client checks against a key its user checked) and its holders with
+            their keys' public halves; to a caller with VAULT_RECOVERY also each holder's sealed share (held).</description>
+        <in-parameters><parameter name="userGroupId"/></in-parameters>
+        <out-parameters><parameter name="recoveryKeyList" type="List"/></out-parameters>
+    </service>
+    <service verb="start" noun="VaultRecovery" type="rust" location="moqui_vault_server::recovery::sessions::start_vault_recovery">
+        <description>A holder starts a recovery: the session their client signed (session, the vault crate's
+            recovery_session_start: its id, the recovery key, the vault, the member and their new active personal key, the
+            client's ephemeral public key). The vault lists that recovery key, the member is a person in its member list,
+            the key is new to it, and the caller has a stored check of it. Needs VAULT_RECOVERY and a recent sign-in. An
+            event and a notice to every member of the vault.</description>
+        <in-parameters><parameter name="session" type="Map" required="true"/></in-parameters>
+        <out-parameters><parameter name="recoverySessionId"/></out-parameters>
+    </service>
+    <service verb="list" noun="VaultRecoverySessions" type="rust" location="moqui_vault_server::recovery::sessions::list_vault_recovery_sessions">
+        <description>To a holder with VAULT_RECOVERY: the open recoveries of the recovery keys they hold, each its signed
+            session, the recovering holder's public halves, the new key's fingerprint, the vault, and who has sealed a
+            share to it.</description>
+        <out-parameters><parameter name="sessionList" type="List"/></out-parameters>
+    </service>
+    <service verb="deliver" noun="VaultRecoveryShare" type="rust" location="moqui_vault_server::recovery::sessions::deliver_vault_recovery_share">
+        <description>Another holder's share, sealed in their client to the session's ephemeral key and signed with their
+            active key (share, the vault crate's recovery_share_deliver). Once per holder; never the recovering holder's;
+            only while the session is open (a day). Needs VAULT_RECOVERY and a recent sign-in. An event.</description>
+        <in-parameters>
+            <parameter name="recoverySessionId" required="true"/>
+            <parameter name="share" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="recoverySessionId"/></out-parameters>
+    </service>
+    <service verb="get" noun="VaultRecoverySession" type="rust" location="moqui_vault_server::recovery::sessions::get_vault_recovery_session">
+        <description>To the holder who started it: what their client needs to finish the recovery: the session, the
+            recovery key's record and maker's public halves, their own sealed share (held), the delivered shares (each with
+            its holder's row and public halves), the vault's member-list chain (entries), the recovery member's wrap of the
+            current key version (recoveryWrap), and the vault's revision.</description>
+        <in-parameters><parameter name="recoverySessionId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="session" type="Map"/>
+            <parameter name="statusId"/>
+            <parameter name="record" type="Map"/>
+            <parameter name="makerPublic"/>
+            <parameter name="held" type="Map"/>
+            <parameter name="deliveries" type="List"/>
+            <parameter name="entries" type="List"/>
+            <parameter name="recoveryWrap" type="Map"/>
+            <parameter name="revision" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="complete" noun="VaultRecovery" type="rust" location="moqui_vault_server::recovery::sessions::complete_vault_recovery">
+        <description>The holder who started a recovery ends it, in one transaction that names the vault revision it was
+            made from (expectedRevision): the next member list (entry), signed by the recovery key as the vault's recovery
+            member, giving the session's member their new key and changing nothing else; the vault key wrapped to that key
+            (wrap); and, when the member was a manager, a new wrap for each member whose wrap their old key signed
+            (rewraps). Needs k − 1 other holders' shares in the session, VAULT_RECOVERY and a recent sign-in. The member's
+            wraps to the lost key are deleted. An event and a notice to every member of the vault.</description>
+        <in-parameters>
+            <parameter name="recoverySessionId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="entry" type="Map" required="true"/>
+            <parameter name="wrap" type="Map" required="true"/>
+            <parameter name="rewraps" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
+    <service verb="cancel" noun="VaultRecovery" type="rust" location="moqui_vault_server::recovery::sessions::cancel_vault_recovery">
+        <description>The holder who started a recovery, or a manager of the vault, cancels it before it completes. An
+            event.</description>
+        <in-parameters><parameter name="recoverySessionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="recoverySessionId"/></out-parameters>
     </service>
 
     <!-- Events (§3.13) -->
