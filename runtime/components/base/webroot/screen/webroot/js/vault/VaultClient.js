@@ -10,8 +10,9 @@
  *   const { body } = await vault.itemOpen({ vault_id, key_version, item_id, wrapped_item_key, sealed_body });
  *   await vault.copy(secretText);   // cleared from the clipboard after 30 s
  *
- * The page fetches the worker's script and the module itself, each with its integrity hash when one is given, then
- * starts the worker from a blob: URL (the vault screens' CSP allows worker-src blob: and 'wasm-unsafe-eval') and
+ * The page fetches the worker's script and the module itself, each with its integrity hash when one is given (and that
+ * hash in its URL, ?v=, so a copy cached before an upgrade is not taken), then starts the worker from a blob: URL (the
+ * vault screens' policy, vault@screen-policy, allows worker-src blob: and 'wasm-unsafe-eval') and
  * hands it the module's bytes. The vault locks after `idleMinutes` with no call (15 by default) and on lock(); a lock
  * zeroes the module's memory in the worker.
  *
@@ -29,14 +30,21 @@
         return bridge && bridge.vault && typeof bridge.vault.call === "function" ? bridge.vault : null;
     };
     const here = (global.document && global.document.currentScript && global.document.currentScript.src) || "/js/vault/VaultClient.js";
+    // A file beside this one, named by its integrity hash when it has one (?v=<hash>): a copy the browser cached before an
+    // upgrade is then never asked for under the new hash, which it would fail.
+    const beside = (file, integrity) => {
+        const url = new URL(file, typeof location !== "undefined" && location.href ? new URL(here, location.href) : here);
+        if (integrity) url.searchParams.set("v", String(integrity).replace(/^sha256-/, ""));
+        return url.href;
+    };
 
     class MoquiVaultClient {
         constructor(options) {
             const o = options || {};
-            this.workerUrl = o.workerUrl || new URL("VaultWorker.js", here).href;
-            this.wasmUrl = o.wasmUrl || new URL("moqui_vault.wasm", here).href;
             this.workerIntegrity = o.workerIntegrity || null;
             this.wasmIntegrity = o.wasmIntegrity || null;
+            this.workerUrl = o.workerUrl || beside("VaultWorker.js", this.workerIntegrity);
+            this.wasmUrl = o.wasmUrl || beside("moqui_vault.wasm", this.wasmIntegrity);
             this.idleMs = (o.idleMinutes == null ? 15 : o.idleMinutes) * 60000;
             this.clipboardMs = (o.clipboardSeconds == null ? 30 : o.clipboardSeconds) * 1000;
             this.onLock = o.onLock || null;

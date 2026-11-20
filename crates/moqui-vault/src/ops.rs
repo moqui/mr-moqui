@@ -68,11 +68,18 @@ struct Me {
     key: PersonalKey,
 }
 
-/// A recovery key combined for one session, and the vault key it opened.
+/// A recovery key combined for one session, and the vault key version it opened.
 struct Pending {
     session_id: String,
     key: PersonalKey,
-    opened: Option<(String, u64)>,
+    opened: Option<Opened>,
+}
+
+/// The vault key version a recovery opened, and whether this session held it before (a holder who is also a member),
+/// in which case the recovery's end leaves it open.
+struct Opened {
+    slot: (String, u64),
+    held_before: bool,
 }
 
 /// The calls that may follow a combine without dropping the combined recovery key.
@@ -214,9 +221,16 @@ impl Session {
         fingerprint::require_checked(&self.key_checks(args)?, &me.key.public().verify, user_id, public)
     }
 
-    /// Drops a combined recovery key, and the vault key it opened.
+    /// Drops a combined recovery key, and the vault key it opened unless this session held that key before.
     fn drop_pending(&mut self) {
-        if let Some(Pending { opened: Some(slot), .. }) = self.pending.take() {
+        if let Some(Pending {
+            opened: Some(Opened {
+                slot,
+                held_before: false,
+            }),
+            ..
+        }) = self.pending.take()
+        {
             self.vault_keys.remove(&slot);
         }
     }
@@ -986,7 +1000,9 @@ impl Session {
 
     /// Opens the vault key of a session this module started, with the recovery key combined for it: the recovery
     /// member's wrap of the session's vault, accepted by the vault's chain like any member's (a chain this session can
-    /// anchor: a signer whose key it checked). The vault key is kept only until the rekey.
+    /// anchor: a signer whose key it checked). The vault key is kept only until the rekey. A holder who is also a
+    /// member may have that version open already: the key the wrap opens must then be the same key (compared in
+    /// constant time), which stays open after the rekey as before it; another key is refused.
     fn recovery_open_vault(&mut self, args: &Value) -> Result<Value, Error> {
         let session_id = str_of(args, "session_id")?;
         let Some(session) = self.recovery_sessions.get(session_id) else {
@@ -1015,9 +1031,21 @@ impl Session {
         let (_, signer) = chain.accept_wrap(&wrap)?;
         let key = vault::open_member_wrap(&wrap, &pending.key, &signer)?;
         let (vault_id, key_version) = (wrap.vault_id.clone(), wrap.key_version);
-        self.keep_vault_key(&vault_id, key_version, key)?;
+        let slot = (vault_id.clone(), key_version);
+        let held_before = match self.vault_keys.get(&slot) {
+            Some(held) if *held == key => true,
+            Some(_) => {
+                return Err(Error::Refused(
+                    "the recovery key's wrap opens another key than the one open for that version",
+                ))
+            }
+            None => {
+                self.vault_keys.insert(slot.clone(), key);
+                false
+            }
+        };
         if let Some(pending) = self.pending.as_mut() {
-            pending.opened = Some((vault_id.clone(), key_version));
+            pending.opened = Some(Opened { slot, held_before });
         }
         Ok(json!({ "vault_id": vault_id, "key_version": key_version }))
     }

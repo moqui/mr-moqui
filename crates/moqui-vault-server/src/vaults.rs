@@ -21,7 +21,8 @@
 //!   `VAULT_ADMIN`, has its name in the clear, and keeps recovery on (its default) or at least two members; a personal
 //!   shared-key vault has recovery off by default (§9, Nov 19). Recovery is on when the member list lists the
 //!   organization's recovery key (crate::recovery).
-//! - A personal vault's name is in its sealed header; no column of it holds a name in the clear.
+//! - A personal vault's name is in its sealed header; no column of it holds a name in the clear. A manager (a
+//!   single-secret vault's owner) renames it by sealing the header again (`update#VaultHeader`).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -46,6 +47,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, get_vault)?;
     moqui_core::rust_service!(map, delete_vault)?;
     moqui_core::rust_service!(map, update_vault_secret_wrap)?;
+    moqui_core::rust_service!(map, update_vault_header)?;
     Ok(())
 }
 
@@ -250,6 +252,35 @@ fn update_vault_secret_wrap(params: &Params, facade: &EntityFacade) -> Out {
             kind: "VeSecretRewrapped",
             vault_id: Some(&vault_id),
             detail: Some(secret_kind),
+            ..Event::default()
+        },
+    )?;
+    Ok(out([("revision", Value::I64(revision))]))
+}
+
+/// `update#VaultHeader`: a personal vault's header (its name) sealed again, a rename: a manager of a shared-key vault,
+/// or a single-secret vault's owner, from the vault revision they read. The server stores ciphertext only; the client
+/// seals it under the vault's current key version (`header_seal`). An operational vault's name is in the clear and is
+/// not changed here.
+fn update_vault_header(params: &Params, facade: &EntityFacade) -> Out {
+    let _authz = authz_off();
+    let me = user()?;
+    let vault_id = required(params, "vaultId")?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Manage, true)?;
+    if field(&vault, "vaultKindEnumId") != PERSONAL {
+        return Err(fail("Only a personal vault has a sealed header"));
+    }
+    crate::members::check_revision(params, &vault)?;
+    let header = required(params, "headerCipher")?;
+    crate::common::check_hex("headerCipher", &header, crate::common::MAX_SMALL_TEXT)?;
+    vault.set("headerCipher", Value::string(header));
+    let revision = crate::common::bump_revision(facade, &mut vault)?;
+    events::write(
+        facade,
+        Event {
+            kind: "VeHeaderChanged",
+            vault_id: Some(&vault_id),
+            key_version: Some(int_field(&vault, "keyVersion")),
             ..Event::default()
         },
     )?;

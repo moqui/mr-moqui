@@ -1,11 +1,11 @@
 # Vaults
 
 A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/Vault-Instances.md) has
-the design). This guide grows with each phase; so far it covers the crypto every client and the server share, what
-the server keeps and serves (V1): personal keys, key checks, vaults of both locks, items, members, deliveries and
-events, with the `moqui vault` command; operational vaults (V2): the deposit key, leases, machine access and reveal,
-with System › Vaults and the lease dialog; and organization recovery split k of n (V4). Commons › Vault (V3) is a
-later phase.
+the design). It covers the crypto every client and the server share, what the server keeps and serves (V1): personal
+keys, key checks, vaults of both locks, items, members, deliveries and events, with the `moqui vault` command;
+operational vaults (V2): the deposit key, leases, machine access and reveal, with System › Vaults and the lease dialog;
+organization recovery split k of n (V4); the browser module and the vault screens' policy; and the vault in the
+desktop and mobile apps (V5). Commons › Vault (V3) is mr-boss's, on these services.
 
 ## What V1 offers
 
@@ -72,6 +72,10 @@ ceiling checked; the same call changes the password or moves the vault to a gene
   item's first write after a key-version change makes a new item key (decision (c) of §9): `item_seal` does when given
   `item_key_version` under the current version, and `update#VaultItem` refuses such a write without `newItemKey`.
 - `vault_key_forget` drops one opened vault key version, so a page can undo a `vault_rotate` whose server call failed.
+- A rename seals the header again (`header_seal` under the current key version) and stores it with
+  `update#VaultHeader` (`PUT /rest/s1/vault/vaults/{id}/header`, `{headerCipher, expectedRevision}`): a manager of a
+  shared-key vault or a single-secret vault's owner, from the revision they read, ciphertext only, with a
+  `VeHeaderChanged` event. An operational vault's name is in the clear and is not changed there.
 - `item_summary` answers an item's name, type, URIs, tags and unmasked fields, never a masked field (by its type's
   `masked` names, which the page passes, or a field whose name says it holds a secret) nor its notes: a list view does
   not hold every item's secrets. `copy` clears the clipboard after 30 seconds, and when the page has no focus then,
@@ -191,9 +195,8 @@ operational body to a client.
 
 The operational vaults the user is a member of; a vault's members and roles, its items (names, bindings, types,
 revisions and the days since each changed, never a value), its leases (waiting, open, ended) with Revoke, its machine
-access with Revoke, and its events; the leases waiting for the user's approval; and the lease key's fingerprint. The
-vault screens add `worker-src blob:` and `'wasm-unsafe-eval'` to their Content-Security-Policy for the vault worker;
-no other screen has them. The SSH admin shell lists leases (`leases [vaultId]`) and revokes one (`lease revoke
+access with Revoke, and its events; the leases waiting for the user's approval; and the lease key's fingerprint. Its
+pages run under [the vault screens' policy](#the-vault-screens-policy). The SSH admin shell lists leases (`leases [vaultId]`) and revokes one (`lease revoke
 <leaseId>`) but never approves: the key passphrase would be typed on the server.
 
 ## Organization recovery
@@ -227,7 +230,9 @@ list), so a person asked to join sees it.
   as the recovery key (giving the member the new key, with the same members each once and nothing else changed, which
   every member's client checks) and wraps the vault key to the new key (`complete#VaultRecovery`). The combined key
   lives in that module only from the combine to the rekey: any other call, the rekey itself and a lock drop it, with
-  the vault key it opened. The server takes the end only with k − 1 other holders' shares from holders who still hold
+  the vault key it opened. A holder who is also a member may have that key version open already, and needs to forget
+  nothing first: the recovery key's wrap must then open the same key (another is refused), and the version stays open
+  after the rekey as it was before. The server takes the end only with k − 1 other holders' shares from holders who still hold
   `VAULT_RECOVERY`, and the new key still the member's active one. A session takes shares for a day; the recovering
   holder, the member, or any other person in the vault's member list can cancel it.
 - **Replacing a used recovery key.** Shamir rebuilds the recovery key in the recovering holder's client, so after a
@@ -367,7 +372,8 @@ The browser runs the same crate as a wasm module, `runtime/components/base/webro
   On lock, or when a call traps, the worker overwrites the module's whole memory with zeros (even when the module
   could not answer) and starts a fresh, locked instance; an `init` zeroes the instance it replaces.
 - `VaultClient.js` (`MoquiVaultClient`) is the page side: it fetches the worker's script and the module, each with its
-  integrity hash when given, starts the worker from a `blob:` URL, gives it the module's bytes, and has a typed method
+  integrity hash when given (and that hash in its URL, `?v=`, as the pages load `VaultClient.js` itself, so a copy the
+  browser cached before an upgrade is never asked for under the new hash, which it would fail), starts the worker from a `blob:` URL, gives it the module's bytes, and has a typed method
   for each call (`personalOpen`, `vaultKeyOpen`, `itemOpen`, `leaseApprove`, ...). It locks after 15 minutes with no
   call (a lock never rejects; a worker that cannot answer is ended), and `copy(text)` clears the clipboard after 30
   seconds when it still holds that text.
@@ -391,6 +397,28 @@ the moq test tasks run it first ([Build-Test, Build](../Build-Test.md#build)); a
 runtime built in refuses to build without the module. On a runtime without it, the lease dialog says the module is not
 built, and Commons › Vault gets no integrity hash for it and does not load it. The desktop and mobile shells
 carry their own copy (plans/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
+
+### The vault screens' policy
+
+The worker runs in the page's document, and the `/qapps` shell loads every screen into the one document it was served
+as, so a policy a screen's own answer carried would never reach it. The policy goes by path instead
+(`crates/moqui-core/src/web/vault_policy.rs`): every response to a path under `/qapps/` or `/apps/` that names one of
+`vault@screen-names` (`Vault`, `Vaults`, `VaultKey`, `VaultContacts`, `RecoveryKeys`: the apps' fixed list too), the
+`/qapps` page's included, gets `vault@screen-policy` when it sets no policy of its own:
+
+```
+frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; worker-src 'self' blob:;
+script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'
+```
+
+Scripts come from this origin only, so a theme's script from another host does not load on a vault screen.
+`'unsafe-eval'` is the template compiler's (the runtime build needs none), and `'unsafe-inline'` stays for the
+shell's page script. The shell's client (`WebrootVue.qvt.js`, `setUrl`) loads a vault screen as a new
+page unless the page was served at one, so the worker never runs in a document served without the policy. Leaving a
+vault screen keeps the page, with its policy and the open vault: Commons › Contacts shows the open vault's private
+contacts that way (its `VaultContacts` container reads the open session and starts no worker). A screen with a script
+from another host loads it after the next full load. Lock, the idle time and a lost sign-in drop the keys as before.
+Both settings are read at each response; an empty `screen-policy` leaves the conf's `screen-render` policy.
 
 ## The desktop and mobile apps
 
@@ -461,6 +489,9 @@ HPKE with KEM 0x20, KDF 1 and AEAD 2. After a deliberate format change, `MOQUI_R
 moqui-vault` rewrites the file; read its diff before committing. The module, whose source changed, rebuilds on the
 next `./moq build` or test task.
 
+`cargo test -p moqui-core vault_policy` checks which paths are vault screens' and that the page at one, and its
+screens' answers, get the vault screens' policy while others keep the conf's.
+
 `moqui test-client framework --offline --spec VaultModule` loads the module in its worker in the test browser and
 checks that it makes the same vectors, that an item seals, opens and is forgotten on lock there, and that a vault key
 crosses to a second worker only through a member list checked there; and that in an app the client calls
@@ -485,7 +516,8 @@ access opens only its items for its environment, and its sealed keys moved to an
 a client refuses a lease whose public key or items changed after it was signed, and one signed by a lease key its user
 has not checked; a binding pointed at another item fails at the unwrap; a deposit key with no manager's signature is
 refused; a leased value is not in a job's stored parameters; a restart ends the member's leases; a reveal goes only to
-the reveal role. `moqui test-client framework --serve --spec VaultLease` approves a lease end to end over REST with the
+the reveal role; a rename seals the header again, for a manager or a single-secret vault's owner from the revision
+read. `moqui test-client framework --serve --spec VaultLease` approves a lease end to end over REST with the
 test client's `vault` member. Recovery's: k recovery holders recover a vault to a member's new key and every member
 is told, k − 1 cannot, a single-secret vault never gets a recovery wrap, a holder's step without `VAULT_RECOVERY` or a
 recent sign-in is refused, and an operational vault cannot drop to one member with recovery off. `moqui test

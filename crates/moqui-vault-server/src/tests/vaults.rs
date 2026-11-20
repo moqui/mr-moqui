@@ -442,3 +442,54 @@ fn a_rotation_keeps_the_header_an_old_item_key_is_replaced_and_a_secret_wrap_is_
     assert_eq!(stored["secretWrap"], json!({ "sealed": "abcd" }));
     assert!(event_kinds(&alice, &secret_id).iter().any(|k| k == "VeSecretRewrapped"));
 }
+
+/// A rename seals a personal vault's header again: a manager (a single-secret vault's owner) from the revision they
+/// read, ciphertext only, with its event; a writer, an older revision and a header that is not ciphertext are refused.
+#[test]
+fn a_rename_seals_the_header_again_for_a_manager_from_the_revision_read() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut alice = Client::new(&facade, "alice");
+    let mut bob = Client::new(&facade, "bob");
+    let vault_id = shared_vault(&mut alice, &mut [(&mut bob, "write")]);
+    let header = alice
+        .op(json!({ "op": "header_seal", "vault_id": vault_id, "key_version": 1, "header": "{\"name\":\"Family\"}" }))
+        .unwrap();
+    let rename = |revision: i64| json!({ "vaultId": vault_id, "expectedRevision": revision, "headerCipher": header["header_cipher"] });
+    let refused = bob.call("update#VaultHeader", rename(1)).unwrap_err();
+    assert!(refused.contains("role"), "{refused}");
+    let refused = alice.call("update#VaultHeader", rename(0)).unwrap_err();
+    assert!(refused.contains("changed since"), "{refused}");
+    let clear = json!({ "vaultId": vault_id, "expectedRevision": 1, "headerCipher": "Family" });
+    assert!(alice.call("update#VaultHeader", clear).is_err());
+    let renamed = alice.call("update#VaultHeader", rename(1)).unwrap();
+    assert_eq!(renamed["revision"], json!(2));
+    // the members open the new name with the vault key; no row holds it in the clear
+    open_vault(&mut bob, &vault_id).unwrap();
+    let stored = bob.call("get#Vault", json!({ "vaultId": vault_id })).unwrap();
+    let opened = bob
+        .op(json!({ "op": "header_open", "vault_id": vault_id, "key_version": 1,
+                    "header_cipher": stored["vault"]["headerCipher"] }))
+        .unwrap();
+    assert_eq!(opened["header"], json!("{\"name\":\"Family\"}"));
+    for value in all_text(&facade, "moqui.security.vault.Vault") {
+        assert!(!value.contains("Family"), "{value}");
+    }
+    assert!(event_kinds(&alice, &vault_id).iter().any(|k| k == "VeHeaderChanged"));
+
+    // a single-secret vault's owner renames it; no one else finds it
+    let secret_id = new_id("vault");
+    alice
+        .call(
+            "create#Vault",
+            json!({ "vaultId": secret_id, "vaultKindEnumId": "VkPersonal", "lockEnumId": "VlSingleSecret",
+                    "secretKindEnumId": "VsGenerated", "secretWrap": { "sealed": "00" } }),
+        )
+        .unwrap();
+    let rename = json!({ "vaultId": secret_id, "expectedRevision": 1, "headerCipher": "abcd" });
+    assert!(bob
+        .call("update#VaultHeader", rename.clone())
+        .unwrap_err()
+        .contains("No vault"));
+    assert_eq!(alice.call("update#VaultHeader", rename).unwrap()["revision"], json!(2));
+}

@@ -510,6 +510,45 @@ fn a_recovery_of_k_holders_combines_in_the_module_and_rewraps_to_the_new_key() {
     )
     .unwrap();
     assert_eq!(verified["revision"], json!(3));
+
+    // A holder who is also a member has the version open already: h1 recovers through rs-2 with no forget first. The
+    // recovery key's wrap must open that same key (another is refused, and the combined key is kept for the open), and
+    // the version stays open after the rekey, as before it.
+    h1_checks.push(check_as(
+        &mut holders[1],
+        &mut rng,
+        "alice",
+        "pk-alice",
+        &s.alice_made["public"],
+    ));
+    let start2 = json!({ "op": "recovery_session_start", "session_id": "rs-2", "record": record, "maker_public": maker_public,
+                         "held": shares[1], "vault_id": "v", "subject_user_id": "alice", "subject_key_id": "pk-alice2",
+                         "subject_public": alice2_made["public"], "key_checks": h1_checks });
+    let session2 = call(&mut holders[1], &mut rng, start2).unwrap();
+    let deliver2 = json!({ "op": "recovery_share_deliver", "record": record, "maker_public": maker_public, "held": shares[2],
+                           "session": session2, "session_holder_public": made[1]["public"], "session_holder": shares[1],
+                           "key_checks": h2_checks });
+    let sent2 = call(&mut holders[2], &mut rng, deliver2).unwrap();
+    let slot = ("v".to_string(), 1);
+    let alice_key = s.alice.vault_keys.get(&slot).unwrap().clone();
+    holders[1].vault_keys.insert(slot.clone(), Key32::from_bytes([7; 32]));
+    let combine2 = json!({ "op": "recovery_combine", "session_id": "rs-2", "record": record, "maker_public": maker_public,
+                           "held": shares[1], "key_checks": h1_checks,
+                           "deliveries": [{ "share": sent2, "holder": shares[2], "public": made[2]["public"] }] });
+    call(&mut holders[1], &mut rng, combine2).unwrap();
+    let open2 = json!({ "op": "recovery_open_vault", "entries": entries, "key_checks": h1_checks, "session_id": "rs-2",
+                        "wrap": recovery_wrap });
+    assert!(call(&mut holders[1], &mut rng, open2.clone())
+        .unwrap_err()
+        .contains("another key"));
+    holders[1].vault_keys.insert(slot.clone(), alice_key);
+    assert_eq!(call(&mut holders[1], &mut rng, open2).unwrap()["key_version"], json!(1));
+    let rekey2 = json!({ "op": "recovery_rekey", "session_id": "rs-2", "entries": entries, "key_checks": h1_checks });
+    let rekeyed2 = call(&mut holders[1], &mut rng, rekey2).unwrap();
+    assert_eq!(rekeyed2["entry"]["signer_user_id"], json!("recovery:rk"));
+    let status = call(&mut holders[1], &mut rng, json!({ "op": "status" })).unwrap();
+    assert_eq!(status["vaults"], json!([{ "vault_id": "v", "key_version": 1 }]));
+
     // There is no call that hands back a combined secret.
     let combine_op = json!({ "op": "shamir_combine", "shares": [] });
     assert!(call(&mut holders[2], &mut rng, combine_op)

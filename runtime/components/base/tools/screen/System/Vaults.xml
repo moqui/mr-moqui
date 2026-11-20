@@ -17,15 +17,11 @@ along with this software (see the LICENSE.md file). If not, see
     leases with Revoke, machine access and events (VaultDetail), and the lease dialog (Lease: what a signed lease names,
     approved in the browser through the vault worker). Every list comes from org.moqui.security.VaultServices, which
     shows a vault only to its members; making operational vaults and giving machine access needs VAULT_ADMIN, which the
-    services check. The vault worker needs worker-src blob: and 'wasm-unsafe-eval', which these screens add to their
-    Content-Security-Policy and no other screen has. -->
+    services check. The vault worker needs worker-src blob: and 'wasm-unsafe-eval': a page at a path naming Vaults gets
+    the vault screens' Content-Security-Policy (vault@screen-policy, the /qapps page's too), and the shell loads these
+    screens as a page of their own (docs/security/Vaults.md, "The vault screens' policy"). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Vaults" default-menu-index="26" default-menu-group="Server" menu-image="sym_o_encrypted" menu-image-type="icon">
-    <always-actions>
-        <!-- a page loaded at a vault screen: the worker runs from a blob: URL and compiles the wasm module -->
-        <script>if (ec.web &amp;&amp; ec.web.response) ec.web.response.setHeader("Content-Security-Policy",
-            "frame-ancestors 'none'; form-action 'self'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'")</script>
-    </always-actions>
     <subscreens default-item="VaultList"/>
     <widgets>
         <subscreens-panel id="VaultsPanel" type="tab"/>

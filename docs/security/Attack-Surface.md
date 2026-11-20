@@ -11,7 +11,7 @@ To report an issue that should stay private until it is fixed, write to [moqui-b
 | File | Area | Holds |
 | --- | --- | --- |
 | [Attack-Surface-Web.md](Attack-Surface-Web.md) | Web authentication and controls | How a request is signed in and authorized, parent frames, the session cookie, CSRF, lockout, tarpit, headers, CORS, the client address, web protection, the HTTP and HTTPS listeners, ACME |
-| [Attack-Surface-Routes.md](Attack-Surface-Routes.md) | Routes, screens and REST | The host routes and servlets (`/health`, `/metrics`, the sockets, the proxies), the root screen tree and its public paths, token routes, `/rest` |
+| [Attack-Surface-Routes.md](Attack-Surface-Routes.md) | Routes, screens and REST | The host routes and servlets (`/health`, `/metrics`, the sockets, the proxies), the root screen tree and its public paths, token routes, `/rest` (with the `vault` root) |
 | [Attack-Surface-Admin.md](Attack-Surface-Admin.md) | Administration services | Privileged groups, `org.moqui.admin.*`: access, sessions, shared devices, configuration, sign-in providers, connections, messages, jobs, imports and exports, backups, audit |
 | [Attack-Surface-Tools.md](Attack-Surface-Tools.md) | Tools, System, Monitor and Dashboards | The Tools and System apps, load runs, component deploy and conf reload, Monitor, Dashboards and CalcGrid grants, jobs |
 | [Attack-Surface-AI.md](Attack-Surface-AI.md) | LLM, A2A, MCP and Assist | `/a2a`, `/mcp`, `/llm/v1`, Assist, the agent permissions |
@@ -22,9 +22,9 @@ To report an issue that should stay private until it is fixed, write to [moqui-b
 | [Attack-Surface-Comms.md](Attack-Surface-Comms.md) | Calls, chat and messaging | Call media, call links and guests, captions, recording, TURN, SIP, XMPP, voicemail, chat bridges, texts |
 | [Attack-Surface-Cluster-Edge.md](Attack-Surface-Cluster-Edge.md) | Cluster and edge node | The cluster listener, the edge node and its link |
 | [Attack-Surface-Clients.md](Attack-Surface-Clients.md) | Clients | The desktop and mobile apps |
-| [Attack-Surface-Data.md](Attack-Surface-Data.md) | Data and stored secrets | The database, field encryption, generated secrets, the threat model for stored secrets |
+| [Attack-Surface-Data.md](Attack-Surface-Data.md) | Data and stored secrets | The database, field encryption, where secrets are kept (the sealed start), the threat model for stored secrets and vaults ([Vaults](Vaults.md) has the vaults' design) |
 | [Attack-Surface-Outbound.md](Attack-Surface-Outbound.md) | Outbound requests | Requests the server itself makes |
-| [Attack-Surface-Process.md](Attack-Surface-Process.md) | Processes and build | Child processes, the startup port check, build features |
+| [Attack-Surface-Process.md](Attack-Surface-Process.md) | Processes and build | Child processes, the operator socket, local secret files, the startup port check, build features |
 | [Attack-Surface-Scripts.md](Attack-Surface-Scripts.md) | Scripts, templates and parsers | What a server script can reach, who can author code that runs, rendering and escaping, parsers of untrusted input |
 | [Attack-Surface-Dev.md](Attack-Surface-Dev.md) | Development tools | What loads the dev components, Dev AIDE, the `aide` REST, the demo lock-down, test-only hooks |
 | [Attack-Surface-Apps-BOSS.md](Attack-Surface-Apps-BOSS.md) | Staff applications | mr-boss and the Mantle services it reaches |
@@ -47,7 +47,7 @@ This server terminates TLS itself with rustls (`crates/moqui-host/src/tls.rs`) w
 A production install keeps the default conf's closed switches and does not publish the listeners that are on.
 
 - Do not publish the HTTP port. Empty `webapp-list/webapp[webroot]@http-bind` is every address, and empty `webapp-list/webapp[webroot]@http-port` is 8080.
-- Do not leave `moqui_conf__entity_facade__crypt_pass` or `webapp-list/webapp[webroot]/session-config@cookie-key` as `CHANGEME`. Startup writes generated values into `runtime/.env` when they still end in `CHANGEME`. Keep that file private (mode `0600`). The same generator fills `ssh-server@host-key`, the cluster certificate and key, and `git-server@lfs-token-key`. `entity-facade@crypt-pass-old` stays the sentinel on purpose.
+- Seal the server with a method other than `dev` (`moqui operator init --method tpm`, or `passphrase`, `shamir`, `kms`, `transit`), give the recovery shares to different holders, and keep the recovery bundle (`moqui operator export-seal`) apart from them ([Sealed start](../Run-Deploy.md#sealed-start)). A production instance refuses the `dev` seal, whose `seal.json` holds the root key in the clear. The crypt pass, the session cookie key and the other generated secrets are made into `runtime/db/seal.json` and the `SecretValue` table when the conf leaves them at `CHANGEME`, never into `runtime/.env`; a secret an earlier build left there is ignored once the runtime has a seal other than `dev` ([Secrets](Attack-Surface-Data.md#secrets)). `entity-facade@crypt-pass-old` stays the sentinel on purpose. Add operators to the `moqui-operator` group, never the `moqui` user.
 - Do not load demo users.
 - Leave tarpits on. The dev conf turns them off for screens, transitions, and services.
 - Leave `webapp-list/webapp[webroot]@allow-origins` empty. The dev conf names localhost and 127.0.0.1. A foreign origin is then refused. Own origin stays allowed.

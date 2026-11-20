@@ -198,6 +198,18 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>
+    <service verb="update" noun="VaultHeader" type="rust" location="moqui_vault_server::vaults::update_vault_header">
+        <description>A personal vault's header (its name) sealed again by the client under the vault's current key
+            version (the vault crate's header_seal answers it as header_cipher): a rename. A manager of a shared-key vault,
+            or a single-secret vault's owner; an operational vault's name is in the clear and is refused here. Names the
+            vault revision it was made from (expectedRevision). An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="headerCipher" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
     <service verb="delete" noun="Vault" type="rust" location="moqui_vault_server::vaults::delete_vault">
         <description>A manager (or a single-secret vault's owner) deletes the vault with its items, their history, its
             members, key versions and recovery wraps, after a recent sign-in (require#RecentAuth's rule); an operational
