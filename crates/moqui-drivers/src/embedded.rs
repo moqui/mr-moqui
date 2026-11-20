@@ -1256,17 +1256,21 @@ mod cluster {
 
     /// `pg_ctl stop -m <mode>` for a live postmaster of `data_dir`, with the `pg_ctl` under `install_dir`. True when
     /// no postmaster is left live there.
+    ///
+    /// On Windows `pg_ctl` runs in a new process group. A Ctrl-C that is stopping a test is delivered to every process
+    /// in the console group, and `pg_ctl` would otherwise exit `0xC000013A` before the postmaster released its files.
+    /// A postmaster still live after that is stopped with `taskkill`.
     pub fn stop_postmaster(data_dir: &Path, install_dir: &Path, mode: &str) -> bool {
         if !postmaster_live(data_dir) {
             return true;
         }
         let pg_ctl = pg_ctl_path(install_dir);
-        let stopped = std::process::Command::new(&pg_ctl)
-            .args(["stop", "-m", mode, "-D"])
-            .arg(data_dir)
-            .output();
-        match stopped {
-            Ok(output) if output.status.success() => true,
+        let mut command = std::process::Command::new(&pg_ctl);
+        command.args(["stop", "-m", mode, "-D"]).arg(data_dir);
+        #[cfg(windows)]
+        shield_from_ctrl_c(&mut command);
+        match command.output() {
+            Ok(output) if output.status.success() => {}
             Ok(output) => {
                 tracing::warn!(
                     "pg_ctl stop for {} exited {}: {}",
@@ -1274,12 +1278,76 @@ mod cluster {
                     output.status,
                     String::from_utf8_lossy(&output.stderr)
                 );
-                false
             }
-            Err(err) => {
-                tracing::warn!("could not run {}: {err}", pg_ctl.display());
-                false
+            Err(err) => tracing::warn!("could not run {}: {err}", pg_ctl.display()),
+        }
+        #[cfg(windows)]
+        if postmaster_live(data_dir) {
+            kill_postmaster_tree(data_dir);
+        }
+        !postmaster_live(data_dir)
+    }
+
+    /// `CREATE_NEW_PROCESS_GROUP`. Ctrl-C in this console does not reach the child. Not `DETACHED_PROCESS`,
+    /// `CREATE_NO_WINDOW`, or `CREATE_NEW_CONSOLE`: `pg_ctl` shares this console, which it needs to signal the
+    /// postmaster, and a new console enables Ctrl-C again.
+    #[cfg(windows)]
+    fn shield_from_ctrl_c(command: &mut std::process::Command) {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+
+    /// The pid in `data_dir/postmaster.pid` when that file records this data directory. A pid that names another
+    /// directory is left alone: the number may have been reused.
+    #[cfg(windows)]
+    fn postmaster_pid(data_dir: &Path) -> Option<u32> {
+        let lock = postmaster_lock(data_dir).ok().flatten()?;
+        same_data_dir(&lock.data_dir, data_dir).then_some(lock.pid)
+    }
+
+    #[cfg(windows)]
+    fn same_data_dir(recorded: &Path, data_dir: &Path) -> bool {
+        let fold = |path: &Path| {
+            let text = path.to_string_lossy().replace('\\', "/");
+            let text = text.trim_start_matches("//?/");
+            text.trim_end_matches('/').to_ascii_lowercase()
+        };
+        if fold(recorded) == fold(data_dir) {
+            return true;
+        }
+        match (std::fs::canonicalize(recorded), std::fs::canonicalize(data_dir)) {
+            (Ok(left), Ok(right)) => fold(&left) == fold(&right),
+            _ => false,
+        }
+    }
+
+    /// `taskkill /F /T` for the postmaster `data_dir` still has, then wait until that pid is gone.
+    #[cfg(windows)]
+    fn kill_postmaster_tree(data_dir: &Path) {
+        let Some(pid) = postmaster_pid(data_dir) else {
+            tracing::warn!(
+                "postmaster of {} is still live and its pid file is not this data directory",
+                data_dir.display()
+            );
+            return;
+        };
+        let mut command = std::process::Command::new("taskkill");
+        command
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        shield_from_ctrl_c(&mut command);
+        if let Err(err) = command.status() {
+            tracing::warn!("could not stop postmaster {pid} of {}: {err}", data_dir.display());
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while process_live(pid) {
+            if std::time::Instant::now() >= deadline {
+                tracing::warn!("postmaster {pid} of {} is still live", data_dir.display());
+                return;
             }
+            std::thread::sleep(Duration::from_millis(100));
         }
     }
 
@@ -1452,6 +1520,8 @@ mod cluster {
     }
 
     // Inline `mod cluster` loads children from embedded/cluster/, not from beside embedded.rs.
+    #[cfg(all(test, windows))]
+    mod stop_tests;
     #[cfg(all(test, unix))]
     mod tests;
 }

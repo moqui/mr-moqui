@@ -124,6 +124,9 @@ pub(super) const KEEP_MARK: &str = ".moqui-test-keep";
 /// Remove `dir`. A directory link inside it (a symlink, or a junction on Windows) is taken off first, so the
 /// directory it names stays. What is left, the copied conf and the database, then goes. A directory that is already
 /// gone is not an error. A link that is still there on Windows is left in place: removing the tree would follow it.
+///
+/// On Windows a postmaster that has just been stopped still holds its files for a moment (`ERROR_SHARING_VIOLATION`,
+/// os error 32, or access denied, os error 5). The removal waits those out.
 pub(super) fn remove_scratch(dir: &Path) {
     if !detach_links(dir) {
         tracing::warn!(
@@ -132,12 +135,39 @@ pub(super) fn remove_scratch(dir: &Path) {
         );
         return;
     }
-    match std::fs::remove_dir_all(dir) {
-        Ok(()) => {}
-        // another run's sweep removed it first (test runs start side by side)
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        Err(err) => tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display()),
+    if let Err(err) = remove_tree(dir) {
+        tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display());
     }
+}
+
+/// Remove `dir`. Already gone is success: another run's sweep may have removed it first. On Windows a sharing or
+/// access error is retried for a few seconds.
+fn remove_tree(dir: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        let started = std::time::Instant::now();
+        loop {
+            match std::fs::remove_dir_all(dir) {
+                Ok(()) => return Ok(()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(err) if file_locked(&err) && started.elapsed() < std::time::Duration::from_secs(5) => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    match std::fs::remove_dir_all(dir) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
+    }
+}
+
+/// `ERROR_SHARING_VIOLATION` (32) or `ERROR_ACCESS_DENIED` (5): a file in the tree is still open.
+#[cfg(windows)]
+fn file_locked(err: &std::io::Error) -> bool {
+    matches!(err.raw_os_error(), Some(32 | 5))
 }
 
 /// `true` when every directory link under `dir` is gone. A real directory is left for [`std::fs::remove_dir_all`].
@@ -348,5 +378,56 @@ mod tests {
         assert_eq!(owner_pid("mt-1234-xyz"), None);
         assert_eq!(owner_pid("mt-abc-1a2b"), None);
         assert_eq!(owner_pid("moqui-1234-1a2b"), None);
+    }
+
+    /// A file held open with no share is os error 32. The holder lets go, and the directory goes with it.
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_scratch_directory_is_removed_once_the_holder_exits() {
+        let dir = std::env::temp_dir().join(format!("mt-lock-{}-1", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("held");
+        std::fs::write(&file, b"x").unwrap();
+        let mut holder = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-Command",
+                concat!(
+                    "$f = [System.IO.File]::Open($env:MOQUI_HELD_FILE, [System.IO.FileMode]::Open, ",
+                    "[System.IO.FileAccess]::Read, [System.IO.FileShare]::None); ",
+                    "Start-Sleep -Milliseconds 1200; $f.Dispose()"
+                ),
+            ])
+            .env("MOQUI_HELD_FILE", &file)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !file_is_locked(&file) {
+            assert!(
+                holder.try_wait().unwrap().is_none(),
+                "the holder exited before locking the file"
+            );
+            assert!(std::time::Instant::now() < deadline, "the file was not locked");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        super::remove_scratch(&dir);
+        let _ = holder.kill();
+        let _ = holder.wait();
+        assert!(!dir.exists(), "the scratch directory was left");
+    }
+
+    #[cfg(windows)]
+    fn file_is_locked(path: &std::path::Path) -> bool {
+        match std::fs::OpenOptions::new().read(true).write(true).open(path) {
+            Ok(opened) => {
+                drop(opened);
+                false
+            }
+            Err(err) => matches!(err.raw_os_error(), Some(32 | 5)),
+        }
     }
 }
