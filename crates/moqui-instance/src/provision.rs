@@ -186,8 +186,12 @@ fn execute(facade: &EntityFacade, plan: &Plan, report: &mut Vec<String>) -> Resu
     let mut made: Vec<Made> = Vec::new();
     let ran = (|| -> Result<(), LibError> {
         let mut made_admins: BTreeMap<String, MadeAdmin> = BTreeMap::new();
+        let mut ingest_keys = Vec::new();
         for step in &plan.steps {
             let values = deposit_credentials(facade, plan, step, report, &mut made)?;
+            if let Some(key) = values.get(crate::monitor::INGEST_SECRET) {
+                ingest_keys.push((step.id(), key.clone()));
+            }
             if let Some(admin) = values.get("admin") {
                 let user = if field(&step.kind, "confName") == "postgres" {
                     "postgres"
@@ -207,6 +211,8 @@ fn execute(facade: &EntityFacade, plan: &Plan, report: &mut Vec<String>) -> Resu
             }
             make_container(facade, plan, step, &values, report, &mut made)?;
         }
+        // step 6, register (§4.3, §4.8): each ingest key and scrape target, once every instance is up
+        crate::monitor::register(facade, plan, &ingest_keys, report);
         Ok(())
     })();
     if ran.is_err() {
@@ -335,7 +341,11 @@ fn deposit_credentials(
         let field_name = Some(field(secret, "fieldName"))
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "password".to_string());
-        let value = kinds::credential_for(&kind);
+        let value = if secret_name == crate::monitor::INGEST_SECRET {
+            crate::monitor::new_ingest_key()
+        } else {
+            kinds::credential_for(&kind)
+        };
         let mut fields = serde_json::Map::new();
         match (item_type.as_str(), secret_name.as_str()) {
             ("database-credential", "admin") => {
@@ -824,6 +834,8 @@ fn make_container(
             None,
             Zeroizing::new(token.as_bytes().to_vec()),
         ));
+        // its Monitor identity (§4.8): its instance id, environment and the manager's OTLP address, settings too
+        env.extend(crate::monitor::identity_env(facade, plan, step));
         // where it dials and the key it pins (§4.4): settings, not secrets
         if let Some((url, pin)) = crate::link::manager() {
             env.push(("moqui_conf__manage__url".to_string(), url));

@@ -82,9 +82,11 @@ along with this software (see the LICENSE.md file). If not, see
             hostProtocol="http" hostAddress="127.0.0.1" adminPort="2375"/>
 
     <!-- MR Moqui (podman/build.sh's image): one data volume. Its database password, search password and ingest key are
-        made and deposited at the provision, for the bootstrap bundle and Monitor (M2, M4): none reaches its container,
-        which gets only its one-time pairing token, as a file. -->
+        made and deposited at the provision, for the bootstrap bundle and Monitor (M2, M4): the passwords reach it only in
+        its bootstrap bundle; its container gets its one-time pairing token and its ingest key, each as a file. -->
     <moqui.server.instance.InstanceKind instanceKindId="mr-moqui" description="MR Moqui" containerPort="8080" runAsUser="1000:1000">
+        <!-- its Monitor identity (plans/Vault-Instances.md §4.8): instance@id, the environment and the manager's OTLP
+            address are settings a provision adds (moqui-instance monitor.rs); its ingest key is a file -->
         <envs envName="moqui_conf__instance__purpose" envValue="production"/>
         <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name" envValue="${databaseConf}"/>
         <envs envName="moqui_conf__entity_facade__datasource__TRANSACTIONAL__host" envValue="${databaseHost}"/>
@@ -99,12 +101,14 @@ along with this software (see the LICENSE.md file). If not, see
         <secrets secretName="dbPassword" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:dbPassword"
                 fieldName="password" generated="Y" whenDependency="database" description="Its database user's password, for the bootstrap bundle (M2)"/>
         <secrets secretName="ingestKey" vaultItemTypeId="api-key" bindingPattern="AppInstance:{id}:ingestKey"
-                fieldName="secret" generated="Y" description="Its Monitor ingest key (M4)"/>
+                fieldName="secret" fileName="moqui-ingest-key" envName="moqui_conf__telemetry__otlp_headers_file"
+                generated="Y" description="Its Monitor ingest key (M4): a file its telemetry export reads (otlp-headers-file)"/>
     </moqui.server.instance.InstanceKind>
 
     <moqui.server.instance.InstanceKind instanceKindId="postgres" description="Postgres" confName="postgres" containerPort="5432"
             runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabasePostgres"
-            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabasePostgres">
+            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabasePostgres"
+            scrapeUrlTemplate="http://${instanceName}-exporter:9187/metrics">
         <vols mountPoint="/var/lib/postgresql" volumeName="${instanceName}-data"/>
         <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="pg_isready -U postgres"/>
@@ -114,7 +118,8 @@ along with this software (see the LICENSE.md file). If not, see
     </moqui.server.instance.InstanceKind>
     <moqui.server.instance.InstanceKind instanceKindId="mysql" description="MySQL" confName="mysql" containerPort="3306"
             runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
-            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabaseMySQL">
+            checkDatabaseService="org.moqui.dev.InstanceServices.check#DatabaseMySQL"
+            scrapeUrlTemplate="http://${instanceName}-exporter:9104/metrics">
         <vols mountPoint="/var/lib/mysql" volumeName="${instanceName}-data"/>
         <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="mysqladmin ping -h 127.0.0.1 --silent"/>
@@ -125,7 +130,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- OpenSearch reads no *_FILE setting: its entrypoint is wrapped to read the admin password from its file into the
         setting its demo security configuration takes (crates/moqui-instance/src/kinds.rs), so it is in no container's
         environment, labels or command; the OpenSearch process itself is started with it, as the image requires -->
-    <moqui.server.instance.InstanceKind instanceKindId="opensearch" description="OpenSearch" containerPort="9200" runAsUser="1000:1000">
+    <moqui.server.instance.InstanceKind instanceKindId="opensearch" description="OpenSearch" containerPort="9200" runAsUser="1000:1000"
+            scrapeUrlTemplate="http://${instanceName}-exporter:9114/metrics">
         <envs envName="discovery.type" envValue="single-node"/>
         <envs envName="bootstrap.memory_lock" envValue="false"/>
         <envs envName="OPENSEARCH_JAVA_OPTS" envValue="-Xms512m -Xmx512m"/>
@@ -135,6 +141,10 @@ along with this software (see the LICENSE.md file). If not, see
                 fieldName="password" fileName="opensearch-admin-password" generated="Y"
                 description="The admin user's password, which an mr-moqui instance that searches here is given (M2)"/>
     </moqui.server.instance.InstanceKind>
+    <!-- Monitor (plans/Vault-Instances.md §4.8): a provision adds each database and search instance's exporter as a
+        ScrapeTarget (scrapeUrlTemplate: postgres_exporter, mysqld_exporter, and elasticsearch_exporter for OpenSearch's
+        stats, each as <instance>-exporter on the environment's network); an mr-moqui instance sends its own telemetry by
+        OTLP with its ingest key. -->
     <!-- what each kind depends on, once every kind is there -->
     <moqui.server.instance.InstanceKindDependency instanceKindId="mr-moqui" dependencyRole="database" allowedKindId="postgres" optional="Y"/>
     <moqui.server.instance.InstanceKindDependency instanceKindId="mr-moqui" dependencyRole="database" allowedKindId="mysql" optional="Y"/>

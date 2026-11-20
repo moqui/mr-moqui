@@ -61,6 +61,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, check_database_postgres)?;
     moqui_core::rust_service!(map, check_database_mysql)?;
     moqui_core::rust_service!(map, reconcile_app_instances)?;
+    moqui_core::rust_service!(map, get_instance_fleet)?;
+    moqui_core::rust_service!(map, run_instance_recovery)?;
     Ok(())
 }
 
@@ -867,8 +869,53 @@ fn reconcile_app_instances(_params: &Params, facade: &EntityFacade) -> Out {
     require_instance_admin()?;
     let _authz = authz_off();
     let done = crate::reconcile::reconcile(facade)?;
+    crate::monitor::refresh(facade);
     Ok(crate::reconcile::counts(done)
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
         .collect())
+}
+
+// ----- Monitor (§4.8) -----
+
+fn get_instance_fleet(_params: &Params, facade: &EntityFacade) -> Out {
+    require_instance_admin()?;
+    let _authz = authz_off();
+    let rows = crate::fleet::fleet(facade, moqui_core::user::now_millis())?
+        .into_iter()
+        .map(|row| Value::Map(row.into_iter().collect()))
+        .collect();
+    Ok(out([("fleetList", Value::List(rows))]))
+}
+
+/// Monitor's recovery pass (authorization disabled), a holder of MONITOR_RECOVER, or INSTANCE_ADMIN.
+fn require_recovery() -> Result<(), LibError> {
+    if require_instance_admin().is_ok() || moqui_core::user::has_permission("MONITOR_RECOVER").unwrap_or(false) {
+        return Ok(());
+    }
+    Err(fail(
+        "Recovery of a managed instance needs MONITOR_RECOVER or INSTANCE_ADMIN",
+    ))
+}
+
+fn run_instance_recovery(params: &Params, facade: &EntityFacade) -> Out {
+    require_recovery()?;
+    let _authz = authz_off();
+    let asked = crate::recovery::Asked {
+        action: required(params, "action")?,
+        target: text(params, "target"),
+        incident_instance: text(params, "incidentInstanceId"),
+        automatic: flag(params, "automatic"),
+        recovery_action_id: text(params, "recoveryActionId"),
+    };
+    let answer = crate::recovery::run(&factory()?, facade, &registry()?, &asked)?;
+    Ok(out([
+        ("status", Value::string(answer.status)),
+        (
+            "instanceActionId",
+            answer.instance_action_id.map_or(Value::Null, Value::string),
+        ),
+        ("leaseId", answer.lease_id.map_or(Value::Null, Value::string)),
+        ("state", Value::string(answer.state)),
+    ]))
 }

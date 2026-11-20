@@ -451,7 +451,9 @@ pub static CATALOG: &[Unit] = &[
     single(
         "manage",
         Class::Restart("the manager link is dialed and taken from the start"),
-    ),
+    )
+    // read at each provision (moqui-instance monitor.rs)
+    .attrs(&[("monitor-url", Class::Live)]),
     // read by the desktop and mobile apps, not the server
     single("client-conf", Class::Live),
     sequence(

@@ -1,0 +1,66 @@
+{
+  "id": "instance-sealed",
+  "type": "alert",
+  "title": "Managed instance sealed",
+  "body": {
+    "folder": "Instances",
+    "description": "Fires when a managed instance's link has said it is sealed for more than 15 minutes (moqui.instance.sealed_seconds, by instance): it serves nothing until it is unsealed (plans/Vault-Instances.md §4.8). Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.instance.sealed_seconds\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "moqui.instance.id",
+            "size": 200
+          }
+        },
+        {
+          "id": "value",
+          "type": "max",
+          "role": "metric",
+          "params": {
+            "field": "max"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "field": "value",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 900
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "instances",
+      "severity": "critical",
+      "incident": "true"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

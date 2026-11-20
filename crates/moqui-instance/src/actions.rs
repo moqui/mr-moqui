@@ -107,6 +107,9 @@ pub fn record(
     }
     let id = field(&row, "instanceActionId");
     row.create(facade)?;
+    if machine {
+        crate::monitor::note_machine_access(facade, instance_id, verb);
+    }
     Ok(id)
 }
 
@@ -131,6 +134,7 @@ pub fn finish(facade: &EntityFacade, action_id: &str, status: &str, report: &str
         row.set("endDate", now());
     }
     row.update(facade)?;
+    crate::monitor::note_action_end(facade, &row, status);
     Ok(())
 }
 

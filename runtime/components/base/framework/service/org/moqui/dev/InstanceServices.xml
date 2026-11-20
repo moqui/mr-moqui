@@ -363,4 +363,34 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <!-- Monitor (plans/Vault-Instances.md §4.8) -->
+    <service verb="get" noun="InstanceFleet" type="rust" location="moqui_instance::services::get_instance_fleet"
+            allow-remote="false" transaction="ignore">
+        <description>The fleet screen's rows: each instance (not removed) by environment, with its kind, version, health
+            (its host's check and how fresh its telemetry is), seal and link state, cluster, last deploy, open Monitor
+            incidents and items past their rotation age (M5). From the rows only.</description>
+        <out-parameters><parameter name="fleetList" type="List"/></out-parameters>
+    </service>
+    <service verb="run" noun="InstanceRecovery" type="rust" location="moqui_instance::services::run_instance_recovery"
+            allow-remote="false" transaction="ignore">
+        <description>Monitor's instance recovery adapter (moqui-report calls it by name): restart and rollback as instance
+            actions, which wait for their lease unless the environment has machine access; isolate-instance drains the
+            instance over its link; pause-rollout and promote stop and let go on the environment's rolling deploys. An
+            automatic decision's step that needs a lease runs only under machine access. MONITOR_RECOVER or
+            INSTANCE_ADMIN, or authorization disabled (the recovery pass).</description>
+        <in-parameters>
+            <parameter name="action" required="true"/>
+            <parameter name="target"/>
+            <parameter name="incidentInstanceId"/>
+            <parameter name="automatic" type="Boolean"/>
+            <parameter name="recoveryActionId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="status"><description>done, or waiting for its lease</description></parameter>
+            <parameter name="instanceActionId"/>
+            <parameter name="leaseId"/>
+            <parameter name="state"/>
+        </out-parameters>
+    </service>
+
 </services>

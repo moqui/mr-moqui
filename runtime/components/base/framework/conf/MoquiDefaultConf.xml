@@ -417,12 +417,22 @@
             queue-records="8192" queue-bytes="33554432" tail-traces="1024" tail-trace-spans="512"
             span-retention-days="7" log-retention-days="7" error-retention-days="90"
             minute-retention-days="7" hour-retention-days="90" day-retention-days="730" annotation-retention-days="730"
-            replay-retention-days="7" query-values="names">
+            replay-retention-days="7" query-values="names" service-version="" deployment-environment=""
+            otlp-headers-file="">
         <!-- Business operations: each service call that owns its transaction counts as moqui.operation.runs by name and
              outcome (commit, rollback, retry, pending). The framework's own services are left out. -->
         <!-- The filesystem gauges are one series per filesystem, by where it is mounted. -->
         <metric name="system.filesystem.utilization" attributes="system.filesystem.mountpoint"/>
         <metric name="moqui.system.filesystem.available" attributes="system.filesystem.mountpoint"/>
+        <!-- A manager's instances (plans/Vault-Instances.md §4.8), one series per instance, which the shipped instance
+             alert rules read (tools/report/instance-*.json) -->
+        <metric name="moqui.instance.sealed_seconds" attributes="moqui.instance.id,moqui.instance.environment"/>
+        <metric name="moqui.instance.link_down_seconds" attributes="moqui.instance.id,moqui.instance.environment"/>
+        <metric name="moqui.instance.check_failing" attributes="moqui.instance.id,moqui.instance.environment"/>
+        <metric name="moqui.instance.items_past_rotation" attributes="moqui.instance.environment"/>
+        <metric name="moqui.instance.unseals" attributes="moqui.instance.id,moqui.instance.environment,moqui.instance.new_address"/>
+        <metric name="moqui.instance.deploys_failed" attributes="moqui.instance.id,moqui.instance.environment,moqui.instance.action"/>
+        <metric name="moqui.instance.machine_access" attributes="moqui.instance.id,moqui.instance.environment,moqui.instance.action"/>
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
@@ -1525,7 +1535,7 @@
         address-change-wait-seconds is how long after an instance's link went down a link of it from another address is
         refused unless an operator confirms the move. -->
     <manage url="" pin="" token-file="/run/secrets/moqui-pairing-token" key-store="file" bootstrap-wait-seconds="120"
-            link-url="" ssh-command="ssh" address-change-wait-seconds="300"/>
+            link-url="" ssh-command="ssh" address-change-wait-seconds="300" monitor-url=""/>
 
     <!-- Rust: java names for fresh schemas; set sql-name-style="legacy" before opening an old Rust database.
         crypt-pass is the key of encrypted fields: at CHANGEME it is generated at the first start and kept in runtime/.env

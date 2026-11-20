@@ -346,16 +346,22 @@ pub fn note_state(facade: &EntityFacade, instance_id: &str, link_state: &str, se
         if !address.is_empty() {
             row.set("linkAddress", Value::string(address));
         }
+        // Monitor (§4.8): since when it is sealed, and an unseal with whether its address is new
+        let unsealed = seal_state.and_then(|seal_state| crate::monitor::note_seal(&mut row, seal_state, address));
         if let Some(seal_state) = seal_state {
             row.set("sealState", Value::string(seal_state));
             row.set("sealCheckedDate", moqui_core::user::now_value());
         }
         row.update(facade)?;
+        if let Some(new_address) = unsealed {
+            crate::monitor::count_unseal(instance_id, &field(&row, "environmentId"), new_address);
+        }
         Ok(())
     })();
     if let Err(err) = written {
         tracing::error!("Manager link: the link state of AppInstance {instance_id} was not written: {err}");
     }
+    crate::monitor::refresh(facade);
 }
 
 /// Note that `instance_id` took its bootstrap bundle.

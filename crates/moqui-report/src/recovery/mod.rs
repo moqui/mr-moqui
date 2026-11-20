@@ -1004,7 +1004,7 @@ fn store_adapter(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> 
         .filter(|id| !id.is_empty())
         .ok_or_else(|| fail("adapterId is required"))?;
     if policy::AdapterKind::parse(options["adapterType"].as_str().unwrap_or("")).is_none() {
-        return Err(fail("adapterType is in-process, webhook or manual"));
+        return Err(fail("adapterType is in-process, webhook, manual or instance"));
     }
     if let Some(url) = options["url"].as_str().filter(|url| !url.is_empty()) {
         if !(url.starts_with("https://") || url.starts_with("http://")) || url.contains('@') {

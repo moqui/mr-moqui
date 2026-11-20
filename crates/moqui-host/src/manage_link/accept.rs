@@ -716,14 +716,17 @@ impl ManagerServer {
         }
     }
 
-    /// Keep an instance's status, if `generation` is still its link.
-    fn note_status(&self, instance: &str, generation: u64, status: &InstanceStatus) {
+    /// Keep an instance's status, if `generation` is still its link; true when its cluster's members changed.
+    fn note_status(&self, instance: &str, generation: u64, status: &InstanceStatus) -> bool {
         if let Some(link) = lock(&self.linked)
             .get_mut(instance)
             .filter(|link| link.generation == generation)
         {
+            let members_changed = link.status.cluster_members != status.cluster_members;
             link.status = status.clone();
+            return members_changed;
         }
+        false
     }
 
     /// What the screens show of `instance`'s link.
@@ -859,10 +862,12 @@ impl Manager for Service {
         self.server.register(&self.conn, status.clone())?;
         self.conn.helloed.store(true, Ordering::Release);
         let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
-        let seal_state = status.seal_state.clone();
+        let (seal_state, members) = (status.seal_state.clone(), status.cluster_members.clone());
         self.server
             .on_pool(move |facade| {
                 moqui_instance::link::note_state(facade, &instance, "linked", Some(&seal_state), &remote);
+                // its cluster's live members, which Monitor compares (plans/Vault-Instances.md §4.8)
+                moqui_instance::monitor::note_members(facade, &instance, &members);
                 Ok(())
             })
             .await?;
@@ -887,8 +892,18 @@ impl Manager for Service {
         let status = request.into_inner();
         let sealed = status.seal_state != "unsealed";
         let was = self.conn.sealed.swap(sealed, Ordering::AcqRel);
-        self.server
+        let members_changed = self
+            .server
             .note_status(&self.conn.instance, self.conn.generation, &status);
+        if members_changed {
+            let (instance, members) = (self.conn.instance.clone(), status.cluster_members.clone());
+            self.server
+                .on_pool(move |facade| {
+                    moqui_instance::monitor::note_members(facade, &instance, &members);
+                    Ok(())
+                })
+                .await?;
+        }
         if was != sealed {
             let instance = self.conn.instance.clone();
             let seal_state = status.seal_state.clone();

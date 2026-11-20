@@ -1,0 +1,66 @@
+{
+  "id": "instance-link-down",
+  "type": "alert",
+  "title": "Managed instance link down",
+  "body": {
+    "folder": "Instances",
+    "description": "Fires when a paired managed instance's manager link has been down for more than 5 minutes (moqui.instance.link_down_seconds, by instance): the manager can neither deploy to it nor unseal it. Save a copy, then set the threshold and contact points.",
+    "query": {
+      "datasetId": "otel_metrics",
+      "from": "now-5m",
+      "thru": "now",
+      "queryString": "name:\"moqui.instance.link_down_seconds\"",
+      "aggregations": [
+        {
+          "id": "instance",
+          "type": "terms",
+          "role": "split-rows",
+          "params": {
+            "field": "moqui.instance.id",
+            "size": 200
+          }
+        },
+        {
+          "id": "value",
+          "type": "max",
+          "role": "metric",
+          "params": {
+            "field": "max"
+          }
+        }
+      ],
+      "transformations": [
+        {
+          "type": "organize",
+          "hide": [
+            "count"
+          ]
+        }
+      ]
+    },
+    "field": "value",
+    "reduce": "last",
+    "condition": {
+      "type": "above",
+      "threshold": 300
+    },
+    "intervalSeconds": 60,
+    "pendingSeconds": 0,
+    "keepFiringSeconds": 0,
+    "labels": {
+      "team": "instances",
+      "severity": "major",
+      "incident": "true"
+    },
+    "contactPoints": [
+      {
+        "id": "administrators",
+        "type": "notification",
+        "topic": "ReportAlert",
+        "userGroupId": "ADMIN",
+        "groupWaitSeconds": 0,
+        "repeatSeconds": 3600
+      }
+    ]
+  }
+}

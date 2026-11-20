@@ -26,6 +26,9 @@
         <service-call name="org.moqui.monitor.MonitorServices.approve#RecoveryDecision" in-map="{decisionId:decisionId}"/>
         <default-response url="." parameter-map="{incidentId:incidentId}"/>
     </transition>
+    <!-- an instance adapter's action that waits for its vault lease: the lease dialog, where an approver opens it
+        (plans/Vault-Instances.md §4.8) -->
+    <transition name="vaultLease"><default-response url="../../Vaults/Lease"/></transition>
     <transition name="refuseDecision">
         <service-call name="org.moqui.monitor.MonitorServices.refuse#RecoveryDecision" in-map="{decisionId:decisionId}"/>
         <default-response url="." parameter-map="{incidentId:incidentId}"/>
@@ -249,6 +252,7 @@
                             <field name="manage"><default-field title="">
                                 <link url="completeAction" text="Mark done" condition="active &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId, outcome:'done'}"/>
                                 <link url="completeAction" text="Mark failed" condition="active &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId, outcome:'failed'}"/>
+                                <link url="vaultLease" text="Open lease" condition="active &amp;&amp; vaultLeaseId" parameter-map="{leaseId:vaultLeaseId}"/>
                                 <link url="cancelAction" text="Cancel" condition="active &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId}"/>
                                 <link url="revertAction" text="Revert" condition="revertible &amp;&amp; recoverAllowed" parameter-map="{incidentId:incidentId, actionId:actionId}" confirmation="Revert ${action} ${target || ''}?"/>
                             </default-field></field>
