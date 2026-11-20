@@ -715,7 +715,8 @@
         under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made
         (FileServices ensure#PersonalDrive, create#Drive); a setting, not a user's preference, so a user does not choose
         where their drive is. sftp-max-read: the largest file the SFTP client (SftpClient getText and getBinary, the
-        SystemMessage poll) reads from a remote server, in bytes; a larger one is refused, not read whole. -->
+        SystemMessage poll) reads from a remote server, in bytes; a larger one is refused, not read whole (0 or empty is
+        the default, 64 MiB; there is no setting for no limit). -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
