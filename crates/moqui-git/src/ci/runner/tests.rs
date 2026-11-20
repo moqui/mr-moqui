@@ -157,19 +157,33 @@ fn an_archive_unpacks_within_its_limits_and_only_files_directories_and_inner_lin
     builder
         .append_link(&mut entry(tar::EntryType::Link, 0), "hard-out", "../outside.txt")
         .unwrap();
+    // a .. after a component that does not exist yet, which a later entry makes a link: sub/p would climb out
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "sub/p", "../q/..")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "q", ".")
+        .unwrap();
     builder.into_inner().unwrap().finish().unwrap();
 
     assert_eq!(
         archive::unpack(&archive_file, &to).unwrap(),
-        5,
-        "a.txt, b.txt, dir/in, deep and hard"
+        6,
+        "a.txt, b.txt, dir/in, deep, hard and q"
+    );
+    assert!(
+        to.join("sub/p").symlink_metadata().is_err(),
+        "no link out through a later link"
     );
     assert!(to.join("a.txt").is_file() && to.join("b.txt").is_file());
     assert!(to.join("pipe").symlink_metadata().is_err(), "no FIFO");
     assert!(to.join("out").symlink_metadata().is_err(), "no link out");
     assert!(to.join("dir/in").symlink_metadata().unwrap().file_type().is_symlink());
     assert!(to.join("abs").symlink_metadata().is_err(), "no absolute link");
-    assert!(to.join("esc").symlink_metadata().is_err(), "no link out through a chain");
+    assert!(
+        to.join("esc").symlink_metadata().is_err(),
+        "no link out through a chain"
+    );
     assert!(to.join("hard").is_file());
     assert!(to.join("hard-out").symlink_metadata().is_err(), "no hard link out");
     std::fs::remove_dir_all(&to).unwrap();
@@ -234,7 +248,14 @@ fn a_step_gets_no_runner_token_and_on_a_registered_runner_only_the_base_environm
     let container = Options::default();
     assert_eq!(
         names(&container),
-        ["PATH", "HOME", "LC_ALL", "CARGO_HOME", "AWS_SECRET_ACCESS_KEY", "MOQUI_CI_SERVER_URL"]
+        [
+            "PATH",
+            "HOME",
+            "LC_ALL",
+            "CARGO_HOME",
+            "AWS_SECRET_ACCESS_KEY",
+            "MOQUI_CI_SERVER_URL"
+        ]
     );
 }
 
@@ -774,5 +795,19 @@ fn a_scratch_file_is_made_new_and_never_through_a_link() {
     let fresh = root.join("fresh");
     std::io::Write::write_all(&mut super::create_new(&fresh).unwrap(), b"ours").unwrap();
     assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o600);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// SEC-GIT-95: after an unpack, a link it made that now resolves outside the workspace is removed.
+#[test]
+fn a_link_an_unpack_made_that_leads_out_is_removed() {
+    let root = scratch("unpack-links-out").canonicalize().unwrap();
+    let inside = root.join("inside");
+    let out = root.join("out");
+    std::os::unix::fs::symlink(".", &inside).unwrap();
+    std::os::unix::fs::symlink("..", &out).unwrap();
+    assert_eq!(archive::remove_links_out(&root, &[inside.clone(), out.clone()]), 1);
+    assert!(inside.symlink_metadata().is_ok());
+    assert!(out.symlink_metadata().is_err());
     std::fs::remove_dir_all(&root).unwrap();
 }

@@ -164,8 +164,61 @@ fn resolve(path: &Path) -> Option<PathBuf> {
 /// is read from: a symbolic link's own directory in the workspace, a hard link's the workspace itself. An absolute
 /// target never does. The resolution goes through the links already unpacked, so a chain (`deep -> .`, then
 /// `deep/esc -> ..`) is seen for where it leads.
+///
+/// The target's own components are followed one at a time: one that exists is canonicalized (through a link), and a
+/// `..` after one that does not exist yet is refused, since a later entry could make that component a link and move
+/// where the `..` lands (`sub/p -> ../q/..`, then `q -> .`).
 fn link_inside(root: &Path, from: &Path, target: &Path) -> bool {
-    !target.is_absolute() && resolve(&from.join(target)).is_some_and(|resolved| resolved.starts_with(root))
+    if target.is_absolute() {
+        return false;
+    }
+    let Some(mut at) = resolve(from) else {
+        return false;
+    };
+    let mut missing = false;
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(name) => {
+                let next = at.join(name);
+                if !missing {
+                    if let Ok(real) = next.canonicalize() {
+                        at = real;
+                        continue;
+                    }
+                    missing = true;
+                }
+                at = next;
+            }
+            std::path::Component::ParentDir => {
+                if missing {
+                    return false;
+                }
+                at.pop();
+            }
+            std::path::Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    at.starts_with(root)
+}
+
+/// After an unpack: remove each link it made that now resolves outside `root`, as later entries can move where an
+/// earlier link leads. The count removed.
+pub(crate) fn remove_links_out(root: &Path, made: &[PathBuf]) -> usize {
+    let mut removed = 0;
+    for link in made {
+        let out = link.canonicalize().is_ok_and(|real| !real.starts_with(root));
+        if out {
+            match std::fs::remove_file(link) {
+                Ok(()) => removed += 1,
+                Err(err) => tracing::error!(
+                    "a cache's link out of the workspace, {}, was not removed: {err}",
+                    link.display()
+                ),
+            }
+        }
+    }
+    removed
 }
 
 /// [`unpack`] with the limits: the entries' bytes (`entry.size()`, counted before each is written) and their count.
@@ -184,6 +237,7 @@ pub fn unpack_within(archive: &Path, workspace: &Path, max_bytes: u64, max_entri
         .canonicalize()
         .map_err(|err| format!("{}: {err}", workspace.display()))?;
     let (mut count, mut seen, mut bytes) = (0, 0usize, 0u64);
+    let mut made_links: Vec<PathBuf> = Vec::new();
     for entry in tar
         .entries()
         .map_err(|err| format!("the archive does not read: {err}"))?
@@ -220,12 +274,16 @@ pub fn unpack_within(archive: &Path, workspace: &Path, max_bytes: u64, max_entri
             return Err(format!("the archive unpacks to more than {max_bytes} bytes"));
         }
         // unpack_in answers false for a path that would leave the directory
+        let link = (kind == tar::EntryType::Symlink)
+            .then(|| entry.path().ok().map(|path| root.join(path)))
+            .flatten();
         if entry
             .unpack_in(workspace)
             .map_err(|err| format!("an entry was not written: {err}"))?
         {
             count += 1;
+            made_links.extend(link);
         }
     }
-    Ok(count)
+    Ok(count - remove_links_out(&root, &made_links))
 }
