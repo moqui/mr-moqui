@@ -2342,3 +2342,66 @@ fn a_run_whose_agent_is_disabled_or_whose_user_lost_agent_use_ends_at_its_next_s
         "no model call after either resume"
     );
 }
+
+/// SEC-AI-90: a trigger's run is exempt from `AgentUse` only when it runs as an agent's own account (a `runAsUserId`
+/// or `chatUserId`); a trigger that runs as a person is held to theirs. A user made external after a run started ends
+/// it at its next step.
+#[test]
+fn a_trigger_run_is_exempt_only_as_an_agents_account_and_an_external_user_ends_a_run() {
+    let bed = bed("trigger-standing");
+    let _entered = bed.ctx.enter();
+    for user in ["svc.user", "person.user", "ext.user"] {
+        row(
+            &bed.facade,
+            "moqui.security.UserAccount",
+            &[("userId", user), ("username", user)],
+        );
+    }
+    grant_agent_use(&bed.facade, "ext.user");
+    row(
+        &bed.facade,
+        "moqui.agent.AgentDefinition",
+        &[
+            ("agentId", "helper"),
+            ("agentName", "Helper"),
+            ("featureId", "assist"),
+            ("surfaces", "job"),
+            ("runAsUserId", "svc.user"),
+        ],
+    );
+    // started as a trigger starts its run, with the trigger noted on the run before it is submitted
+    let run = |user: &str, trigger: bool| {
+        fake::script(&bed.endpoint, vec![fake::Reply::text("Done.")]);
+        let started = start_run(
+            &bed.factory,
+            &StartRequest {
+                defer_submit: true,
+                user_id: user.to_string(),
+                ..request("Go")
+            },
+        )
+        .unwrap();
+        if trigger {
+            let mut row = run_row(&bed, &started.run_id);
+            row.set("triggerId", Value::string("TRIGGER_1"));
+            row.update(&bed.facade).unwrap();
+        }
+        if user == "ext.user" {
+            crate::run::test_support::grant(&bed.facade, user, "EXTERNAL_USER");
+        }
+        submit_started(&bed.factory, &started).unwrap();
+        let state = wait_for(&bed.factory, &started.run_id, WAIT).unwrap();
+        (state, text_of(&run_row(&bed, &started.run_id), "errorCode"))
+    };
+    assert_eq!(run("svc.user", true), (RunState::Completed, None), "an agent's account");
+    assert_eq!(
+        run("person.user", true),
+        (RunState::Failed, Some("not_permitted".to_string())),
+        "a trigger that runs as a person without AgentUse"
+    );
+    assert_eq!(
+        run("ext.user", false),
+        (RunState::Failed, Some("not_permitted".to_string())),
+        "a user made external"
+    );
+}

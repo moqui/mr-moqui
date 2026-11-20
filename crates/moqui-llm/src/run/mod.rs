@@ -39,6 +39,10 @@ pub mod stream;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
+pub(crate) use test_support::grant_agent_use;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
@@ -1558,40 +1562,4 @@ pub(crate) fn transition(
         }
         Ok(())
     })
-}
-
-/// Grant `user_id` the `AgentUse` permission, which each step of a run checks, in a test's database.
-#[cfg(test)]
-pub(crate) fn grant_agent_use(facade: &EntityFacade, user_id: &str) {
-    let group = "AGENT_USE_TEST";
-    let rows: [(&str, Vec<(&str, &str)>); 3] = [
-        (
-            "moqui.security.UserGroup",
-            vec![("userGroupId", group), ("description", group)],
-        ),
-        (
-            "moqui.security.UserGroupPermission",
-            vec![
-                ("userGroupId", group),
-                ("userPermissionId", "AgentUse"),
-                ("fromDate", "1265184000000"),
-            ],
-        ),
-        (
-            "moqui.security.UserGroupMember",
-            vec![
-                ("userGroupId", group),
-                ("userId", user_id),
-                ("fromDate", "1265184000000"),
-            ],
-        ),
-    ];
-    for (entity, fields) in rows {
-        let mut value = facade.make_value(entity).expect("a security entity");
-        for (field, text) in fields {
-            value.set(field, Value::string(text));
-        }
-        // the group and its permission are there from an earlier user
-        let _ = value.create(facade);
-    }
 }
