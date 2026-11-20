@@ -480,6 +480,16 @@ pub fn check_pass(pass: &PassChoice, offer: &EdgeOffer) -> Result<(String, Vec<S
     if !valid_id(client) || client.contains('.') {
         return Err(format!("The edge node's PASS client id {client} is not one"));
     }
+    // the id names a client of this node already, which Apply would hand to the edge node's link: never over a direct
+    // client's sites and callback (SEC-CLU-85)
+    let current = crate::pass_authority::Client::edge_client_id();
+    let setting = |name: &str| crate::context::conf_env::setting(&format!("pass-authority/client[{client}]@{name}"));
+    if client_taken(client, &current, &setting("secret"), &setting("sites")) {
+        return Err(format!(
+            "The edge node offers PASS client id {client}, which is a client of this node already (it has a secret or \
+             sites); remove that client or have the edge node offer another id"
+        ));
+    }
     let Some(sites) = pass
         .sites
         .iter()
@@ -505,6 +515,12 @@ pub fn check_pass(pass: &PassChoice, offer: &EdgeOffer) -> Result<(String, Vec<S
         );
     }
     Ok((client.to_string(), sites, callback.to_string()))
+}
+
+/// Whether the PASS client id `client` an edge node offers is another client of this node: it has a secret or sites
+/// (`secret`, `sites`) and is not the edge node's client already (`current`, `edge/node@pass-client` or `edge`).
+fn client_taken(client: &str, current: &str, secret: &str, sites: &str) -> bool {
+    client != current && !(secret.trim().is_empty() && sites.trim().is_empty())
 }
 
 fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) -> SetupLine {

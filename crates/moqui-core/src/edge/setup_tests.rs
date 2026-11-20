@@ -223,6 +223,31 @@ fn pass_needs_sites_and_a_callback_with_a_path() {
     assert!(!env.exists(), "nothing written for a refused choice");
 }
 
+/// SEC-CLU-85: Apply never makes the edge node's link a PASS client this node has already (a secret or sites), unless it
+/// is the edge node's client now; an id with neither is free.
+#[test]
+fn an_offered_pass_client_id_of_another_client_is_refused() {
+    assert!(client_taken("forum", "edge", "s3cret", ""), "a direct client's secret");
+    assert!(client_taken("forum", "edge", "", "FORUM"), "a direct client's sites");
+    assert!(
+        !client_taken("edge", "edge", "", "FORUM"),
+        "the edge node's client again"
+    );
+    assert!(!client_taken("edge2", "edge", " ", ""), "a free id");
+    let offer = EdgeOffer {
+        pass: PassOffer {
+            available: true,
+            client_id: "bad.id".to_string(),
+        },
+        ..EdgeOffer::default()
+    };
+    let choice = PassChoice {
+        sites: vec!["SITE".to_string()],
+        callback: "https://forum.example.com/account/Sso".to_string(),
+    };
+    assert!(check_pass(&choice, &offer).is_err(), "a dot is never a client id");
+}
+
 #[test]
 fn a_local_node_keeps_the_edge_nodes_answer_and_refuses_anything_else() {
     let (ctx, facade) = open();
