@@ -2483,16 +2483,26 @@ pub(crate) fn refused_origin<'a>(
 }
 
 /// The conf's `screen-render` headers on every response, as the baseline under what the response set itself (a vault
-/// screen's path gets the vault screens' policy first: [`vault_policy`]), and `screen-secure` on https; then CORS when
-/// the origin is allowed.
+/// screen's request gets the vault screens' policy built on it: [`vault_policy`]), and `screen-secure` on https; then
+/// CORS when the origin is allowed.
 pub fn finish_response(
     factory: &crate::context::ExecutionContextFactory,
     request: &WebRequest,
     mut response: WebResponse,
     preflight: bool,
 ) -> WebResponse {
-    vault_policy::apply(factory, &request.path, &mut response.headers);
+    let own_policy = response
+        .headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("content-security-policy"));
     apply_conf_headers(Some(factory), "screen-render", &mut response.headers, true);
+    vault_policy::apply(
+        factory,
+        request.header("host").unwrap_or(""),
+        &request.path,
+        own_policy,
+        &mut response.headers,
+    );
     append_csp(&mut response.headers, &factory.webapp_setting("webroot", "csp-append"));
     // HSTS holds for every port of a host (RFC 6797), so on localhost a trusted dev certificate would send the plain
     // dev listener and any other local server to https for a year.

@@ -462,7 +462,13 @@ fn a_rename_seals_the_header_again_for_a_manager_from_the_revision_read() {
     assert!(refused.contains("changed since"), "{refused}");
     let clear = json!({ "vaultId": vault_id, "expectedRevision": 1, "headerCipher": "Family" });
     assert!(alice.call("update#VaultHeader", clear).is_err());
-    let renamed = alice.call("update#VaultHeader", rename(1)).unwrap();
+    let mut stale = rename(1);
+    stale["keyVersion"] = json!(2);
+    let refused = alice.call("update#VaultHeader", stale).unwrap_err();
+    assert!(refused.contains("another key version"), "{refused}");
+    let mut current = rename(1);
+    current["keyVersion"] = json!(1);
+    let renamed = alice.call("update#VaultHeader", current).unwrap();
     assert_eq!(renamed["revision"], json!(2));
     // the members open the new name with the vault key; no row holds it in the clear
     open_vault(&mut bob, &vault_id).unwrap();

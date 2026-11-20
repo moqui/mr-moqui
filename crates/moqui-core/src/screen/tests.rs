@@ -1330,6 +1330,7 @@ mod statics;
 mod stream;
 mod tarpit;
 mod tui;
+mod vault_pages;
 mod walk;
 mod widgets;
 

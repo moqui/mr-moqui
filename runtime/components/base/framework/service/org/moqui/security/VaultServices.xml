@@ -207,6 +207,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="vaultId" required="true"/>
             <parameter name="expectedRevision" type="Long" required="true"/>
             <parameter name="headerCipher" required="true"/>
+            <parameter name="keyVersion" type="Long"><description>The key version it is sealed under; refused when it is not
+                the vault's.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>

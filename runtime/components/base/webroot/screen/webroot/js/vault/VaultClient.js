@@ -54,8 +54,10 @@
             this.idleTimer = null;
             this.native = nativeVault();
             this.nativeReady = false;
-            // a browser keeps no memory of item revisions past this client (§3.12); the app keeps it
+            // the highest revision seen of each item: the app keeps it; a browser in this client, and in localStorage per user
+            // (options.userId) and vault, so a page loaded anew keeps it too (§3.12)
             this.revisions = new Map();
+            this.userId = o.userId || "";
         }
 
         async fetchChecked(url, integrity) {
@@ -194,18 +196,34 @@
 
         /**
          * The items of a list ({vault_id, items: [{item_id, revision}]}) whose revision is lower than one seen before
-         * ({older: [item_id]}), the highest of each kept: by the app across runs, in a browser for this client only.
+         * ({older: [item_id]}), the highest of each kept: by the app across runs, in a browser in localStorage under the
+         * client's userId (for this client only without one).
          */
         async revisionsSeen(args) {
             if (this.native) return this.call("revisions_seen", args);
             const vault = (args && args.vault_id) || "";
-            const seen = this.revisions.get(vault) || new Map();
-            this.revisions.set(vault, seen);
+            const key = this.userId ? "moquiVault.revisions." + this.userId + "." + vault : null;
+            let seen = this.revisions.get(vault);
+            if (!seen) {
+                seen = new Map();
+                try {
+                    const kept = key && global.localStorage ? JSON.parse(global.localStorage.getItem(key) || "{}") : {};
+                    for (const [itemId, revision] of Object.entries(kept || {})) seen.set(itemId, Number(revision) || 0);
+                } catch (e) {
+                    // a private window or a refused store keeps it for this client only
+                }
+                this.revisions.set(vault, seen);
+            }
             const older = [];
             for (const row of (args && args.items) || []) {
                 const kept = seen.get(row.item_id) || 0;
                 if (kept > (row.revision || 0)) older.push(row.item_id);
                 else seen.set(row.item_id, row.revision || 0);
+            }
+            try {
+                if (key && global.localStorage) global.localStorage.setItem(key, JSON.stringify(Object.fromEntries(seen)));
+            } catch (e) {
+                // as above
             }
             return { older };
         }

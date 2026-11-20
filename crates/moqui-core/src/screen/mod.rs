@@ -391,6 +391,10 @@ fn handle(
     web::set_request_info(request);
     web::set_request_locale(request.header("accept-language"));
     web::set_request(Arc::clone(request), body);
+    // a vault screen's request, which the /qapps page tells its client (vault screens' policy, web/vault_policy.rs)
+    if web::vault_policy::is_vault_request(factory, request.header("host").unwrap_or(""), &request.path) {
+        web::set_attribute(web::vault_policy::DOCUMENT_ATTRIBUTE, Some(Value::Bool(true)));
+    }
     // a device's request reads no key, Basic credentials or login parameters: its credential is its only authority
     let (login_error, header_authenticated) = match &device {
         Some(_) => (None, false),

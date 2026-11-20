@@ -927,7 +927,8 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
             && (super::static_files::is_template(factory, file) || super::static_files::is_text(file))
     });
     if let Some(file) = info.file_resource.as_ref().filter(|_| child_content.is_none()) {
-        let versioned = !text_of(job.parameters.get("v")).is_empty();
+        // a version parameter that is the file's digest (an integrity hash) must be this file's for the long cache
+        let versioned = super::static_files::version_holds(factory, file, &text_of(job.parameters.get("v")))?;
         let started = Instant::now();
         if file.ends_with(".qvue") && super::qvue_bundle::asked(job.request) {
             super::qvue_bundle::answer_file(factory, job.request, file, versioned)?;

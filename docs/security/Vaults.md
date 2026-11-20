@@ -75,7 +75,8 @@ ceiling checked; the same call changes the password or moves the vault to a gene
 - A rename seals the header again (`header_seal` under the current key version) and stores it with
   `update#VaultHeader` (`PUT /rest/s1/vault/vaults/{id}/header`, `{headerCipher, expectedRevision}`): a manager of a
   shared-key vault or a single-secret vault's owner, from the revision they read, ciphertext only, with a
-  `VeHeaderChanged` event. An operational vault's name is in the clear and is not changed there.
+  `VeHeaderChanged` event; `keyVersion`, the version it is sealed under, is refused when it is not the vault's. Two
+  renames at once: the last stored wins. An operational vault's name is in the clear and is not changed there.
 - `item_summary` answers an item's name, type, URIs, tags and unmasked fields, never a masked field (by its type's
   `masked` names, which the page passes, or a field whose name says it holds a secret) nor its notes: a list view does
   not hold every item's secrets. `copy` clears the clipboard after 30 seconds, and when the page has no focus then,
@@ -401,24 +402,41 @@ carry their own copy (plans/Vault-Instances.md §3.6): a shell build that bundle
 ### The vault screens' policy
 
 The worker runs in the page's document, and the `/qapps` shell loads every screen into the one document it was served
-as, so a policy a screen's own answer carried would never reach it. The policy goes by path instead
-(`crates/moqui-core/src/web/vault_policy.rs`): every response to a path under `/qapps/` or `/apps/` that names one of
-`vault@screen-names` (`Vault`, `Vaults`, `VaultKey`, `VaultContacts`, `RecoveryKeys`: the apps' fixed list too), the
-`/qapps` page's included, gets `vault@screen-policy` when it sets no policy of its own:
+as, so a policy a screen's own answer carried would never reach it. The policy goes by the screen a request resolves
+to instead (`crates/moqui-core/src/web/vault_policy.rs`): a request whose path names one of `vault@screen-names`
+(`Vault`, `Vaults`, `VaultKey`, `VaultContacts`, `RecoveryKeys`: the apps' fixed list too) among its screens or their
+default subscreens, never an extra-path name such as a Knowledge page called `Vault`, gets the site's `screen-render`
+policy with `vault@screen-policy`'s directives added, when the response sets no policy of its own. The `/qapps` page is
+resolved as the same path under `/apps`, and a host's own root screen is resolved for its host. A directive the site
+sets is kept and given only the worker's `blob:` and `'wasm-unsafe-eval'`; a fetch directive the site leaves to its
+`default-src` starts from it. The site's other headers, `X-Frame-Options` among them, stay. By default the added
+directives are:
 
 ```
-frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; worker-src 'self' blob:;
-script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'
+default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:;
+worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'
 ```
 
-Scripts come from this origin only, so a theme's script from another host does not load on a vault screen.
-`'unsafe-eval'` is the template compiler's (the runtime build needs none), and `'unsafe-inline'` stays for the
-shell's page script. The shell's client (`WebrootVue.qvt.js`, `setUrl`) loads a vault screen as a new
-page unless the page was served at one, so the worker never runs in a document served without the policy. Leaving a
-vault screen keeps the page, with its policy and the open vault: Commons › Contacts shows the open vault's private
-contacts that way (its `VaultContacts` container reads the open session and starts no worker). A screen with a script
-from another host loads it after the next full load. Lock, the idle time and a lost sign-in drop the keys as before.
-Both settings are read at each response; an empty `screen-policy` leaves the conf's `screen-render` policy.
+Everything comes from this origin, so a theme's script, style sheet or font from another host does not load on a vault
+screen. There is no inline script: the shell's page has none (its settings are a JSON block, which runs nothing).
+`'unsafe-eval'` stays because the shell compiles server-merged templates and `.qvue` components at run time (the
+runtime build of `qvt-static-only` would not need it), and `'unsafe-inline'` for styles because Quasar and the
+components set inline styles. So the policy keeps out a script from another host, not one the server sends or markup
+its templates run (§3.12 of the plan). WebSockets go to this origin under `connect-src 'self'`.
+
+The page is told whether it was served that way (`qvtConfig.vaultDocument`, from the request attribute
+`moqui.vault.document`), and the shell's client (`WebrootVue.qvt.js`, `setUrl`) loads a vault screen as a new page
+unless it was, keeping a navigation's body parameters for that page and calling its `onComplete` first. Leaving a vault
+screen keeps the page; Commons › Vault locks its keys when the page goes anywhere but the vault screens and Commons ›
+Contacts, whose `VaultContacts` container reads the open vault and starts no worker, as the apps lock when their page
+leaves the vault screens. Both settings are read at each response; an empty `screen-policy` leaves the site's policy.
+A response that sets its own policy keeps it: only the screen builder's preview of proposed screen text and dev-aide's
+preview overlay do (`frame-ancestors 'self'`, so the dev tools can frame it), and only on a dev instance.
+
+The files carry their integrity hash as `?v=`. A file asked for with a `v` that is a SHA-256 digest gets the year-long
+cache only when it is that file's (`static_files::version_holds`), so a request made with a new hash before the new file
+reached this server does not keep the old bytes under the new name; any other `v` (a start stamp) is cached as before.
 
 ## The desktop and mobile apps
 
@@ -453,7 +471,9 @@ process.
   `recovery_rekey` in place of the page's `remembered`: an older chain, or one that went another way, is refused
   across restarts. It also keeps the highest revision seen of each item (at most 20,000 items of each of 1,000 vaults):
   `item_open` and `item_summary` given a `revision` lower than one seen are refused before the module opens anything,
-  and `revisionsSeen({vault_id, items})` answers a list's older ones. A kept value is never lowered.
+  and `revisionsSeen({vault_id, items})` answers a list's older ones. A kept value is never lowered. In a browser
+  `revisionsSeen` keeps the highest revisions in `localStorage` per user (the client's `userId`) and vault, which tells
+  an older copy but does not refuse it.
 - **Device memory** (§3.5). With the personal key open, the user may have the app remember it for a time
   (`remember(minutes)`, at most 24 hours and at most `vault@device-memory-max-hours`, 8 by default; 0 offers none). It
   needs a click in the vault (the page's user activation, read with the getter the bridge took before any page script

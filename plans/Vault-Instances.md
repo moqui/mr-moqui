@@ -202,8 +202,11 @@ In a personal vault the type and name are inside the body. In an operational vau
   it for one item at a time, to show or to copy, and a copied value is cleared from the clipboard after 30 s where the
   platform allows.
 - A vault locks after 15 minutes idle (a setting), on sign-out, on the device's lock and when the tab closes.
-- The browser module is loaded only by the vault screens, with integrity hashes, and those screens get a strict content
-  security policy. The hashes come from the same server, so they guard against a cache or a proxy, not the server.
+- The browser module is loaded only by the vault screens, with integrity hashes, and a page served as a vault screen
+  gets the vault screens' content security policy (`vault@screen-policy` added to the site's): scripts from this origin
+  only and no inline script, but `'unsafe-eval'`, which the shell's template compiler needs, and inline styles. It
+  keeps out a script from another host, not a script the server sends. The hashes come from the same server, so they
+  guard against a cache or a proxy, not the server.
   The desktop and mobile apps carry their own copy of the module and do not take it from the server.
 - Search runs in the client over the open vault (names, URLs, tags). The server has no index of personal items.
 - Private contacts are `contact` items. Commons › Contacts merges them in, in the client, while the vault is open, and
@@ -359,7 +362,10 @@ The limits, which the vault's About and [Attack-Surface](../docs/security/Attack
   the limit of every web password manager. The desktop and mobile apps carry their own code and are the strong form.
 - **Script in a page of the same origin** while a vault is open can ask the worker for items, as with chat's crypto
   device. Every screen of every app on this server shares the origin, so a script injected into any of them reaches an
-  open vault ([open point](#open-points-from-the-security-review)).
+  open vault ([open point](#open-points-from-the-security-review)). The vault screens' policy does not change that:
+  it allows `'unsafe-eval'`, so markup the server's templates run can still run code, and a same-origin page in
+  another tab or frame reaches the vault's page. Commons › Vault locks when its page leaves the vault screens for
+  anything but Commons › Contacts, as the apps lock when their page leaves them.
 - **The server can withhold or roll back ciphertext.** The apps remember the highest revision they have seen of each
   item and warn when a lower one comes back.
 - **The server cannot help with personal items:** no server search, no CardDAV, and no restore without the keys. A

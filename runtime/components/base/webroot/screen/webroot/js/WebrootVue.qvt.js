@@ -485,12 +485,14 @@
     };
     // The vault screens (docs/security/Vaults.md, "The vault screens' policy"): a path under /qapps/ or /apps/ naming one of
     // vault@screen-names, which /qapps gives as config.vaultScreens, told as the server tells it (moqui-core web/vault_policy.rs).
-    // The server gives a page at such a path the vault screens' Content-Security-Policy, and setUrl loads the page anew to go to a
-    // vault screen from a page that was not served at one (vaultDocument), so the vault worker runs only in a page with that policy.
-    // Leaving a vault screen keeps the page, and the open vault with it (Commons › Contacts shows its private contacts), under that
-    // policy until the next full load. A vault screen's component a page loads into a container (VaultContacts) starts no worker.
+    // The server gives a request that resolves to a vault screen the vault screens' Content-Security-Policy, and tells the page it
+    // served that way (config.vaultDocument); setUrl loads the page anew to go to a vault screen from a page that was not, so the
+    // vault worker runs only in a page with that policy. A name alone (a Knowledge page called Vault) is not a vault screen to the
+    // server; the page served for such a path is not loaded again for it (documentPath), so that never loops. Leaving one keeps the page under that policy until the next full load; the
+    // vault's own page locks its keys on leaving for anything but the vault's screens (and what reads its open session).
     moqui.vaultScreens = [];
     moqui.vaultDocument = false;
+    const PAGE_BODY_KEY = "moqui.pageBody";
     moqui.isVaultPath = (path) => {
         const names = moqui.vaultScreens;
         if (!names || !names.length || !path) return false;
@@ -9937,8 +9939,18 @@
                 // always set bodyParameters, null when there are none, to clear the last ones
                 this.bodyParameters = bodyParameters;
                 url = this.getLinkPath(url);
-                // a vault screen loads as a new page unless this page was served at one, so it runs under the vault screens' policy
-                if (moqui.isVaultPath(url) && !moqui.vaultDocument) {
+                // a vault screen loads as a new page unless this page was served as one, so it runs under the vault screens' policy;
+                // the body parameters go with it (kept for the new page's first setUrl in this tab only) and onComplete is told now
+                if (moqui.isVaultPath(url) && !moqui.vaultDocument && moqui.parseHref(url).path !== moqui.documentPath) {
+                    if (bodyParameters && !moqui.isEmptyObject(bodyParameters)) {
+                        try { root.sessionStorage.setItem(PAGE_BODY_KEY, JSON.stringify({ url, body: bodyParameters })); } catch (e) { /* none kept */ }
+                    }
+                    if (onComplete) {
+                        const target = moqui.parseHref(url);
+                        const names = target.path.split("/").filter((name) => name.length > 0);
+                        onComplete({ name: names[names.length - 1], meta: {}, path: target.path, hash: "", query: moqui.searchToObj(target.search),
+                            params: bodyParameters || {}, fullPath: url, matched: [{ path: target.path }], redirectedFrom: this.currentPath });
+                    }
                     if (pushState) root.location.assign(url);
                     else root.location.replace(url);
                     return;
@@ -10722,7 +10734,14 @@
             const startUrl = moqui.startPath(root.location.pathname, this.linkBasePath, config.startApp) + root.location.search;
             if (startUrl !== root.location.pathname + root.location.search)
                 root.history.replaceState(root.history.state, "", startUrl + root.location.hash);
-            this.setUrl(startUrl, null, null, false);
+            // the body parameters of a setUrl that loaded this page anew (a vault screen), once
+            let startBody = null;
+            try {
+                const kept = JSON.parse(root.sessionStorage.getItem(PAGE_BODY_KEY) || "null");
+                root.sessionStorage.removeItem(PAGE_BODY_KEY);
+                if (kept && kept.url === startUrl) startBody = kept.body;
+            } catch (e) { /* none kept */ }
+            this.setUrl(startUrl, startBody, null, false);
             if (this.notificationClient) {
                 this.notificationClient.registerListener("ALL");
                 this.notificationClient.registerListener("ALL", this.onShellNotification);
@@ -10846,7 +10865,9 @@
         moqui.config = config;
         // the vault screens, which the /qapps page names (not a desktop client's shell, which opens them in a window of their own)
         moqui.vaultScreens = Array.isArray(config.vaultScreens) ? config.vaultScreens : [];
-        moqui.vaultDocument = moqui.isVaultPath(root.location.pathname);
+        moqui.vaultDocument = config.vaultDocument === true;
+        // the path this page was served for: the server already decided about it, so it is never loaded anew for that reason
+        moqui.documentPath = root.location.pathname;
         // The dev/test instance marker (the webapp-list/webapp[webroot]@dev-marker-color conf property): a small square in the corner of the window
         // (the style sheet draws it for a dev or test body class); an empty or invalid color turns it off. It never overrides
         // the theme's colors.

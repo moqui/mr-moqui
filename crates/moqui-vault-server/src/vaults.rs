@@ -260,8 +260,9 @@ fn update_vault_secret_wrap(params: &Params, facade: &EntityFacade) -> Out {
 
 /// `update#VaultHeader`: a personal vault's header (its name) sealed again, a rename: a manager of a shared-key vault,
 /// or a single-secret vault's owner, from the vault revision they read. The server stores ciphertext only; the client
-/// seals it under the vault's current key version (`header_seal`). An operational vault's name is in the clear and is
-/// not changed here.
+/// seals it under the vault's current key version (`header_seal`), which it names (`keyVersion`, refused when it is not
+/// the vault's). Two renames at once: the last stored wins. An operational vault's name is in the clear and is not
+/// changed here.
 fn update_vault_header(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
@@ -271,6 +272,14 @@ fn update_vault_header(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("Only a personal vault has a sealed header"));
     }
     crate::members::check_revision(params, &vault)?;
+    // the version the client sealed it under, when given: one under an older version would not open for the members
+    if let Some(sealed_at) = crate::common::int(params, "keyVersion") {
+        if sealed_at != int_field(&vault, "keyVersion") {
+            return Err(fail(
+                "The header is sealed under another key version than the vault's: open the vault again",
+            ));
+        }
+    }
     let header = required(params, "headerCipher")?;
     crate::common::check_hex("headerCipher", &header, crate::common::MAX_SMALL_TEXT)?;
     vault.set("headerCipher", Value::string(header));

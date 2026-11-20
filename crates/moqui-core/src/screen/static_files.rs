@@ -293,6 +293,56 @@ impl Conditional {
     }
 }
 
+/// Whether `v`, a file's version parameter, names the bytes `content` when it is a SHA-256 digest (a subresource
+/// integrity hash, `sha256-` and base64, or bare base64 or hex): None when it is not one (a server's start stamp), else
+/// whether it is theirs. A digest that is not the file's is never given the year-long cache, so a request made with a
+/// new hash before an upgrade reached this server does not keep the old bytes under it.
+#[must_use]
+pub fn digest_names(content: &[u8], v: &str) -> Option<bool> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    let given = v.trim().strip_prefix("sha256-").unwrap_or(v.trim());
+    let is_hex = given.len() == 64 && given.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let decoded = if is_hex {
+        None
+    } else {
+        base64::engine::general_purpose::STANDARD
+            .decode(given)
+            .ok()
+            .filter(|bytes| bytes.len() == 32)
+    };
+    if !is_hex && decoded.is_none() {
+        return None;
+    }
+    let digest = sha2::Sha256::digest(content);
+    Some(match decoded {
+        Some(bytes) => bytes.as_slice() == digest.as_slice(),
+        None => given.eq_ignore_ascii_case(&digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()),
+    })
+}
+
+/// Whether a request with version parameter `v` for the file at `location` may be cached as versioned: any `v` that
+/// is not a digest, and a digest only when it is the file's ([`digest_names`]).
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read.
+pub fn version_holds(factory: &ExecutionContextFactory, location: &str, v: &str) -> Result<bool, Error> {
+    if v.is_empty() {
+        return Ok(false);
+    }
+    // a start stamp names no content: the file is read only for a digest
+    if digest_names(&[], v).is_none() {
+        return Ok(true);
+    }
+    let Some(opened) = factory.resource().open(location)? else {
+        return Ok(false);
+    };
+    let total = usize::try_from(opened.source.len()).unwrap_or(usize::MAX);
+    let content = opened.source.read_at(0, total)?;
+    Ok(digest_names(&content, v).unwrap_or(true))
+}
+
 /// Write the response for the file at `location` into the thread's web slot.
 ///
 /// # Errors

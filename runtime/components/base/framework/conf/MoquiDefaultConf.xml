@@ -1507,11 +1507,13 @@
         approver checks again. device-memory-max-hours: the longest a desktop or mobile app may remember a user's open
         personal key (§3.5, V5), at most 24; 0 offers no device memory. screen-names: the screen names whose paths under
         /qapps/ and /apps/ are vault screens, comma-separated (the desktop and mobile apps' own list is the same and fixed);
-        screen-policy: the Content-Security-Policy of every response to such a path, the /qapps page's too, where the
-        response sets none of its own; the shell loads a vault screen as a new page. Empty takes none. -->
+        screen-policy: the directives the Content-Security-Policy of a request that resolves to a vault screen (the /qapps page's
+        too) adds to the site's screen-render policy, where the response sets none of its own: a directive the site sets is kept,
+        given only the worker's blob: and 'wasm-unsafe-eval'. No inline script; 'unsafe-eval' is the template compiler's. The
+        shell loads a vault screen as a new page. Empty takes none. -->
     <vault key-fetch-max-age="300" lease-max-hours="4" lease-key="CHANGEME" device-memory-max-hours="8"
             screen-names="Vault,Vaults,VaultKey,VaultContacts,RecoveryKeys"
-            screen-policy="frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"/>
+            screen-policy="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"/>
 
     <!-- Rust: java names for fresh schemas; set sql-name-style="legacy" before opening an old Rust database.
         crypt-pass is the key of encrypted fields: at CHANGEME it is generated at the first start and kept in runtime/.env

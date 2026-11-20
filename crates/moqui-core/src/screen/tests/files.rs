@@ -92,6 +92,36 @@ fn a_file_under_the_screen_is_served_with_a_type_a_validator_and_a_cache_rule() 
         versioned.header("Cache-Control"),
         Some("public, max-age=31536000, immutable")
     );
+
+    // A version that is a digest (an integrity hash) gets the year only when it is this file's: a new hash asked for
+    // before the new file is here is not kept for a year with the old bytes.
+    let digest = {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(b"var b = 2;"))
+    };
+    let with = |v: &str| {
+        let mut asked = request("GET", "/js/app.js");
+        asked.query = vec![("v".to_string(), v.to_string())];
+        serve_at(&world.factory, asked, &site.root)
+            .header("Cache-Control")
+            .map(str::to_string)
+    };
+    assert_eq!(with(&digest).as_deref(), Some("public, max-age=31536000, immutable"));
+    assert_eq!(
+        with(&format!("sha256-{digest}")).as_deref(),
+        Some("public, max-age=31536000, immutable")
+    );
+    let other = with("sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=");
+    assert!(
+        other.as_deref().is_some_and(|cache| !cache.contains("immutable")),
+        "{other:?}"
+    );
+    assert_eq!(crate::screen::static_files::digest_names(b"x", "a1b2"), None);
+    assert_eq!(
+        crate::screen::static_files::digest_names(b"", &"0".repeat(64)),
+        Some(false)
+    );
 }
 
 /// The PWA's service worker is never cached (a browser would keep an old one in charge) and may take the whole site as

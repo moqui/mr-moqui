@@ -3260,15 +3260,18 @@ along with this software (see the LICENSE.md file). If not, see
                 §3.5, V5), in hours, at most 24; 0 offers no device memory. A device asks for its time and gets the
                 shorter. Read at each remember#VaultDeviceMemory.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="screen-names" type="xs:string" default="Vault,Vaults,VaultKey,VaultContacts,RecoveryKeys">
-                <xs:annotation><xs:documentation>The screen names, comma-separated, whose paths under /qapps/ and /apps/
-                are vault screens: a response to such a path gets screen-policy, and the /qapps shell loads a vault screen
-                as a new page, so the vault worker runs only in a document served with it. The desktop and
-                mobile apps' list is the same and fixed. Read at each response.</xs:documentation></xs:annotation></xs:attribute>
+                <xs:annotation><xs:documentation>The screen names, comma-separated, of the vault screens: a request whose
+                path resolves to one (not an extra-path name) gets screen-policy, and the /qapps shell loads a vault screen
+                as a new page, so the vault worker runs only in a document served with it. The desktop and mobile apps'
+                list is the same and fixed. Read at each response.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="screen-policy" type="xs:string"
-                    default="frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'">
-                <xs:annotation><xs:documentation>The Content-Security-Policy of a response to a vault screen's path (the
-                /qapps page's too) that sets none of its own: scripts from this origin only, the vault worker from a blob:
-                URL and its WebAssembly. Empty takes none: the conf's screen-render policy.</xs:documentation></xs:annotation></xs:attribute>
+                    default="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'">
+                <xs:annotation><xs:documentation>The directives a response to a request that resolves to a vault screen
+                (the /qapps page's too) that sets no policy of its own adds to the site's screen-render
+                Content-Security-Policy: a directive the site sets is kept, given only the worker's blob: and
+                'wasm-unsafe-eval', and a fetch directive the site leaves to its default-src starts from it. By default:
+                everything from this origin, no inline script ('unsafe-eval' is the template compiler's), the vault worker
+                from a blob: URL and its WebAssembly. Empty takes none: the site's policy.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
