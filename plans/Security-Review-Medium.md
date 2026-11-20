@@ -1135,8 +1135,12 @@ Medium; reported (likely); fixed.
 
 #### SEC-FIL-99. A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login
 
-Medium; confirmed (lead); fixed in part (what is left: 2026-11-19).
+Medium; confirmed (lead); fixed (its remainder 2026-11-19).
 
+- **Fix (the remainder):** Fixed 2026-11-19 (mr-moqui 11d95c569):
+    - The apps pump counts the input bytes it has sent but the session has not yet taken. A new `moqui_tui::SessionOptions::input_queued` field carries the count, and the loop takes bytes off it as each Input is decoded.
+    - The pump stops reading while 1 MiB is queued, so SSH and socket flow control holds the sender back (`term/apps.rs` `INPUT_QUEUED`).
+  - **Test:** moqui-tui `session_loop::the_loop_counts_down_the_input_it_takes`.
 - **Fix:** Fixed 2026-11-19 (F3, merged `ef992e6e2`): a bracketed paste keeps at most `MAX_PASTE` (1 MiB), each read searching only its new bytes for the end marker; a longer one, a few bytes past included, is delivered cut back to a whole UTF-8 character and logged (`Decoder::push`, `Paste::keep_within`, `crates/moqui-tui/src/decode.rs`). The session's input channel stays unbounded; the decoder is now linear in its input. Test: `decode::tests::a_paste_keeps_at_most_its_limit_and_ends_at_its_marker`.
 - **Where:** `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`, `:471-473`; `crates/moqui-host/src/term/apps.rs:304`, `:378`, `:389-393`. Report: round 3 `B15.md`.
 - **Reached by:** any SSH peer when `ssh-server@port` is set and `login-dialog` is on (its default): a keyboard-interactive connection gets an `apps` session with no user (`Who::Login`, `apps.rs:327-331`) for `LOGIN_WAIT` (120 seconds). Any signed-in user through `/termws` (an `apps` session is open to every signed-in user) or a signed-in SSH `apps` session, with no time limit but the 10-minute idle.
