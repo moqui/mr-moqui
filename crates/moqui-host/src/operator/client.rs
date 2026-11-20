@@ -61,6 +61,37 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
         }
         ["init", options @ ..] => init(&socket, options),
         ["unseal", options @ ..] => unseal(&socket, options),
+        ["rekey", "--method", method] => {
+            let mut request = json!({"command": "rekey", "method": method});
+            if *method == "passphrase" {
+                request["passphrase"] = Value::String(new_passphrase()?.to_string());
+            }
+            with_recovery_shares(&socket, &mut request)?;
+            let answer = call(&socket, &request)?;
+            print_shares(&answer);
+            print_status(&answer["status"]);
+            println!("Export the recovery bundle again: moqui operator export-seal <file>");
+            Ok(())
+        }
+        ["rotate-root"] => {
+            let mut request = json!({"command": "rotate-root"});
+            let status = call(&socket, &json!({"command": "status"}))?;
+            if status["status"]["method"] == "passphrase" {
+                request["passphrase"] = Value::String(read_secret("Passphrase: ")?.to_string());
+            }
+            with_recovery_shares(&socket, &mut request)?;
+            let answer = call(&socket, &request)?;
+            print_shares(&answer);
+            print_status(&answer["status"]);
+            println!("Export the recovery bundle again: moqui operator export-seal <file>");
+            Ok(())
+        }
+        ["export-seal", path] => {
+            let answer = call(&socket, &json!({"command": "export-seal"}))?;
+            write_private(Path::new(path), answer["bundle"].as_str().unwrap_or_default())?;
+            println!("Wrote the recovery bundle to {path}: keep it with the offline backups, apart from the shares.");
+            Ok(())
+        }
         _ => Err(crate::usage::command_usage("operator")),
     }
 }
@@ -128,6 +159,12 @@ fn init(socket: &Path, options: &[&str]) -> Result<(), Error> {
                 let method = words.next().ok_or_else(|| crate::usage::command_usage("operator"))?;
                 request["method"] = Value::String((*method).to_string());
             }
+            "--from" => {
+                let path = words.next().ok_or_else(|| crate::usage::command_usage("operator"))?;
+                let bundle = std::fs::read_to_string(path)
+                    .map_err(|err| Error::new(format!("could not read the bundle {path}")).with_source(err))?;
+                request["bundle"] = Value::String(bundle);
+            }
             _ => return Err(crate::usage::command_usage("operator")),
         }
     }
@@ -160,6 +197,38 @@ fn unseal(socket: &Path, options: &[&str]) -> Result<(), Error> {
     let answer = call(socket, &request)?;
     print_status(&answer["status"]);
     Ok(())
+}
+
+/// Read the threshold of recovery shares the server's seal asks for into `request["shares"]`.
+fn with_recovery_shares(socket: &Path, request: &mut Value) -> Result<(), Error> {
+    let status = call(socket, &json!({"command": "status"}))?;
+    let threshold = status["status"]["recovery"][0].as_u64().unwrap_or(0);
+    if threshold == 0 {
+        return Err(Error::new("this seal has no recovery shares (the dev seal)"));
+    }
+    let mut shares = Vec::new();
+    for number in 1..=threshold {
+        shares.push(Value::String(
+            read_secret(&format!("Recovery share {number} of {threshold}: "))?.to_string(),
+        ));
+    }
+    request["shares"] = Value::Array(shares);
+    Ok(())
+}
+
+/// Write `text` to `path`, readable by its owner only.
+fn write_private(path: &Path, text: &str) -> Result<(), Error> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut out = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|err| Error::new(format!("could not write {}", path.display())).with_source(err))?;
+    out.write_all(text.as_bytes())
+        .and_then(|()| out.write_all(b"\n"))
+        .map_err(|err| Error::new(format!("could not write {}", path.display())).with_source(err))
 }
 
 /// A new passphrase, entered twice.

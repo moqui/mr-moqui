@@ -770,6 +770,14 @@ moqui operator <command> [--socket PATH]
     unseal [--recovery]      Give the passphrase or one share; --recovery a recovery share, which opens any
                              method's seal; an automatic method unseals with nothing entered
     seal                     Drop every key from memory now and close the listeners
+    rekey --method M         Wrap the root key under another method (or new input), with the recovery
+                             shares; the root key and the recovery shares stay
+    rotate-root              A new root key: seal.json's wraps, bootstrap secrets and data key rewrapped and
+                             switched in one rename, with the recovery shares
+    export-seal FILE         Write the recovery bundle (seal.json, the database identity), mode 0600: it goes
+                             with the offline backups; a restore needs it and the recovery shares
+    init --from FILE         Restore a recovery bundle on a clean runtime; then unseal --recovery, and rekey
+                             to this host's method
 
   moqui operator status
   moqui operator init --method tpm
@@ -1078,7 +1086,10 @@ pub fn command_usage(command: &str) -> Error {
         "help" => "moqui help [command]",
         "version" => "moqui version",
         "conf" => "moqui conf env [--names] [text]",
-        "operator" => "moqui operator status | init [--method M] [--take-shares] | unseal [--recovery] | seal [--socket PATH]",
+        "operator" => {
+            "moqui operator status | init [--method M | --take-shares | --from FILE] | unseal [--recovery] | seal \
+             | rekey --method M | rotate-root | export-seal FILE [--socket PATH]"
+        }
         "embedded" => {
             "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
              | unpack [<program>...]"

@@ -18,7 +18,7 @@
 //! Passphrases and shares are moved into zeroizing strings as soon as they are parsed, and never logged.
 
 use moqui_core::context::Error;
-use moqui_core::seal::{Init, Keeper, MethodKind, UnsealInput};
+use moqui_core::seal::{Init, Keeper, MethodKind, Rekey, RotateRoot, UnsealInput};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
@@ -33,6 +33,10 @@ struct Request {
     share: Option<Zeroizing<String>>,
     recovery: bool,
     take_shares: bool,
+    /// The recovery shares of `rekey` and `rotate-root`.
+    shares: Vec<Zeroizing<String>>,
+    /// A recovery bundle to restore (`init --from`).
+    bundle: Option<String>,
 }
 
 impl Request {
@@ -46,6 +50,17 @@ impl Request {
         let method = text("method");
         let passphrase = text("passphrase").map(Zeroizing::new);
         let share = text("share").map(Zeroizing::new);
+        let bundle = text("bundle");
+        let shares = match value.get_mut("shares").map(Value::take) {
+            Some(Value::Array(items)) => items
+                .into_iter()
+                .filter_map(|item| match item {
+                    Value::String(text) => Some(Zeroizing::new(text)),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         Ok(Self {
             command,
             method,
@@ -53,6 +68,8 @@ impl Request {
             share,
             recovery: value["recovery"] == Value::Bool(true),
             take_shares: value["take_shares"] == Value::Bool(true),
+            shares,
+            bundle,
         })
     }
 }
@@ -89,6 +106,10 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
                 let shares = keeper.take_shares()?;
                 return Ok(json!({"ok": true, "recovery_shares": texts(&shares), "status": status(keeper)}));
             }
+            if let Some(bundle) = request.bundle {
+                keeper.restore(&bundle)?;
+                return Ok(json!({"ok": true, "status": status(keeper)}));
+            }
             let method = match request.method.filter(|method| !method.is_empty()) {
                 Some(method) => method,
                 None if !keeper.conf().method.is_empty() => keeper.conf().method,
@@ -124,6 +145,26 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             keeper.seal();
             Ok(json!({"ok": true, "status": status(keeper)}))
         }
+        "rekey" => {
+            let method = request
+                .method
+                .filter(|method| !method.is_empty())
+                .ok_or_else(|| Error::new("name the new unseal method: rekey --method tpm|passphrase|shamir|dev"))?;
+            let issued = keeper.rekey(Rekey {
+                shares: request.shares,
+                method: MethodKind::parse(&method)?,
+                passphrase: request.passphrase,
+            })?;
+            Ok(json!({"ok": true, "method_shares": texts(&issued.method_shares), "status": status(keeper)}))
+        }
+        "rotate-root" => {
+            let issued = keeper.rotate_root(RotateRoot {
+                shares: request.shares,
+                passphrase: request.passphrase,
+            })?;
+            Ok(json!({"ok": true, "method_shares": texts(&issued.method_shares), "status": status(keeper)}))
+        }
+        "export-seal" => Ok(json!({"ok": true, "bundle": keeper.export_bundle()?})),
         other => Err(Error::new(format!("unknown operator command {other:?}"))),
     }
 }

@@ -41,11 +41,16 @@ use zeroize::Zeroizing;
 use crate::context::conf_env::{conf_attribute, PURPOSE};
 use crate::context::Error;
 
+mod bootstrap;
+pub mod export;
 pub mod file;
 pub mod methods;
+mod recovery;
+pub mod rotate;
 
 pub use file::SealFile;
 pub use methods::{Method, MethodKind};
+pub use rotate::{Rekey, RotateRoot};
 
 /// The settings of the `seal` conf element (plans/Sealed-Secrets.md §3.3), read at the gate from the merged conf.
 #[derive(Clone, Debug)]
@@ -62,6 +67,9 @@ pub struct SealConf {
     pub unseal_max_delay: Duration,
     /// `instance@purpose`.
     pub purpose: String,
+    /// What names the database a recovery bundle goes with: `instance@id` and the transactional datasource's
+    /// database conf, host, name and schema (never its password).
+    pub database_identity: Value,
 }
 
 impl SealConf {
@@ -102,6 +110,7 @@ impl SealConf {
             },
             unseal_max_delay: Duration::from_secs(number("seal@unseal-max-delay-seconds", 300)?),
             purpose: conf_attribute(conf, PURPOSE),
+            database_identity: database_identity(conf),
         })
     }
 
@@ -115,6 +124,7 @@ impl SealConf {
             systemd_creds_command: "systemd-creds".to_string(),
             unseal_max_delay: Duration::from_secs(300),
             purpose: purpose.to_string(),
+            database_identity: Value::Null,
         }
     }
 
@@ -129,6 +139,19 @@ impl SealConf {
     pub fn method_kind(&self) -> Option<MethodKind> {
         MethodKind::parse(&self.method).ok()
     }
+}
+
+/// The bundle's database identity from a merged conf.
+fn database_identity(conf: &MNode) -> Value {
+    let datasource =
+        |attribute: &str| conf_attribute(conf, &format!("entity-facade/datasource[transactional]@{attribute}"));
+    serde_json::json!({
+        "instance_id": conf_attribute(conf, "instance@id"),
+        "database_conf_name": datasource("database-conf-name"),
+        "schema_name": datasource("schema-name"),
+        "host": conf_attribute(conf, "entity-facade/datasource[transactional]/inline-other@host"),
+        "database": conf_attribute(conf, "entity-facade/datasource[transactional]/inline-other@database"),
+    })
 }
 
 /// The root key: 256 random bits, in memory only while unsealed, cleared when dropped. `Debug` shows nothing of it.
@@ -731,7 +754,15 @@ impl Keeper {
             return Err(dev_refused());
         }
         let root = RootKey::random()?;
-        let (method, issued) = self.wrap_method(&root, kind, passphrase.as_deref().map(String::as_str), conf)?;
+        let (method, mut issued) = self.wrap_method(&root, kind, passphrase.as_deref().map(String::as_str), conf)?;
+        // recovery shares for every method (§3.3); the dev seal keeps its key in the file, so has nothing to recover
+        let recovery = if kind == MethodKind::Dev {
+            None
+        } else {
+            let (recovery, shares) = recovery::make(&root, conf)?;
+            issued.recovery_shares = shares;
+            Some(recovery)
+        };
         let seal = SealFile {
             format: file::FORMAT.to_string(),
             version: file::VERSION,
@@ -739,7 +770,7 @@ impl Keeper {
             generation: 1,
             root_id: root.id(),
             method,
-            recovery: None,
+            recovery,
             bootstrap: std::collections::BTreeMap::new(),
             secret_value_key: None,
         };
@@ -769,12 +800,30 @@ impl Keeper {
         &self,
         root: &RootKey,
         kind: MethodKind,
-        _passphrase: Option<&str>,
+        passphrase: Option<&str>,
         conf: &SealConf,
     ) -> Result<(Map<String, Value>, Issued), Error> {
-        let mut metadata = methods::automatic(kind)?.wrap(root, conf)?;
+        let (mut metadata, issued) = match kind {
+            MethodKind::Passphrase => {
+                let passphrase = passphrase
+                    .filter(|text| text.chars().count() >= 12)
+                    .ok_or_else(|| Error::new("the passphrase method needs a passphrase of at least 12 characters"))?;
+                (methods::passphrase::wrap(root, passphrase, conf)?, Issued::default())
+            }
+            MethodKind::Shamir => {
+                let wrapped = methods::shamir::wrap(root, conf)?;
+                (
+                    wrapped.metadata,
+                    Issued {
+                        method_shares: wrapped.shares,
+                        ..Issued::default()
+                    },
+                )
+            }
+            _ => (methods::automatic(kind)?.wrap(root, conf)?, Issued::default()),
+        };
         metadata.insert("kind".to_string(), Value::String(kind.name().to_string()));
-        Ok((metadata, Issued::default()))
+        Ok((metadata, issued))
     }
 
     fn unwrap_automatic(&self, inner: &Inner, kind: MethodKind, conf: &SealConf) -> Result<RootKey, Error> {
@@ -840,10 +889,28 @@ impl Keeper {
                 "this seal ({}) is opened by an operator: give the passphrase or a share",
                 kind.name()
             ))),
-            UnsealInput::Passphrase(_) | UnsealInput::Share(_) | UnsealInput::Recovery(_) => Err(Error::new(format!(
-                "the {} method takes no passphrase or share here",
+            UnsealInput::Passphrase(passphrase) if kind == MethodKind::Passphrase => {
+                let file = inner
+                    .file
+                    .as_ref()
+                    .ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+                match methods::passphrase::unwrap(&file.method, &passphrase, &conf)? {
+                    Some(root) => check_root(file, &root).map(|()| Some(root)),
+                    None => Err(self.wrong_entry(&mut inner, &conf, "passphrase")),
+                }
+            }
+            UnsealInput::Passphrase(_) => Err(Error::new(format!(
+                "this seal ({}) takes no passphrase; a recovery share opens any seal (--recovery)",
                 kind.name()
             ))),
+            UnsealInput::Share(share) if kind == MethodKind::Shamir => {
+                self.enter_share(&mut inner, &conf, share, "method")
+            }
+            UnsealInput::Share(_) => Err(Error::new(format!(
+                "this seal ({}) takes no method share; a recovery share opens any seal (--recovery)",
+                kind.name()
+            ))),
+            UnsealInput::Recovery(share) => self.enter_share(&mut inner, &conf, share, "recovery"),
         };
         match opened {
             Ok(Some(root)) => {
@@ -856,8 +923,82 @@ impl Keeper {
         Ok(self.status_of(&inner))
     }
 
+    /// One share toward an unseal: the `shamir` method's (`kind` `method`) or a recovery share. A share that is not
+    /// one of the split's is refused at once and counted; the root key once the threshold is entered.
+    fn enter_share(
+        &self,
+        inner: &mut Inner,
+        conf: &SealConf,
+        share: Zeroizing<String>,
+        kind: &'static str,
+    ) -> Result<Option<RootKey>, Error> {
+        let file = inner
+            .file
+            .clone()
+            .ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+        let (salt, hashes, threshold) = if kind == "recovery" {
+            let recovery = file
+                .recovery
+                .as_ref()
+                .ok_or_else(|| Error::new("this seal has no recovery shares (the dev seal)"))?;
+            (
+                recovery.salt.clone(),
+                recovery.share_hashes.clone(),
+                usize::from(recovery.threshold),
+            )
+        } else {
+            let (salt, hashes) = methods::shamir::hashes(&file.method)?;
+            let threshold = file
+                .method
+                .get("threshold")
+                .and_then(Value::as_u64)
+                .and_then(|threshold| usize::try_from(threshold).ok())
+                .ok_or_else(|| Error::new("seal.json's shamir method has no threshold"))?;
+            (salt, hashes, threshold)
+        };
+        if inner.entering != Some(kind) {
+            // shares of the other kind entered before are dropped: the two do not combine
+            inner.entered.clear();
+            inner.entering = Some(kind);
+        }
+        let what = if kind == "recovery" { "recovery share" } else { "share" };
+        let Some(checked) = recovery::check(&share, &salt, &hashes)? else {
+            if inner.entered.is_empty() {
+                inner.entering = None;
+            }
+            return Err(self.wrong_entry(inner, conf, what));
+        };
+        for entered in &inner.entered {
+            if recovery::check(entered, &salt, &hashes)?.is_some_and(|other| other.index == checked.index) {
+                return Err(Error::new(format!("{what} {} is already entered", checked.index)));
+            }
+        }
+        inner.entered.push(share);
+        if inner.entered.len() < threshold {
+            return Ok(None);
+        }
+        let mut shares = Vec::with_capacity(inner.entered.len());
+        for entered in &inner.entered {
+            if let Some(share) = recovery::check(entered, &salt, &hashes)? {
+                shares.push(share);
+            }
+        }
+        inner.entered.clear();
+        inner.entering = None;
+        let root = if kind == "recovery" {
+            let recovery = file
+                .recovery
+                .as_ref()
+                .ok_or_else(|| Error::new("this seal has no recovery shares"))?;
+            recovery::open_root(&recovery::combine(&shares)?, recovery)?
+        } else {
+            methods::shamir::unwrap(&file.method, &shares)?
+        };
+        check_root(&file, &root)?;
+        Ok(Some(root))
+    }
+
     /// Count a wrong passphrase or share: the wait before the next attempt doubles (§3.3), and an alert is logged.
-    #[allow(dead_code)]
     fn wrong_entry(&self, inner: &mut Inner, conf: &SealConf, what: &str) -> Error {
         inner.failures = inner.failures.saturating_add(1);
         let base = *lock(&self.base_delay);

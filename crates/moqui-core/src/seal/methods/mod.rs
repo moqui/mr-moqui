@@ -25,6 +25,9 @@ use super::{RootKey, SealConf};
 use crate::context::Error;
 
 pub mod dev;
+pub mod passphrase;
+pub mod shamir;
+pub mod tpm;
 
 /// The unseal methods by name, as `seal@method` and `seal.json` name them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,11 +138,11 @@ pub fn automatic(kind: MethodKind) -> Result<Arc<dyn Method>, Error> {
     }
     match kind {
         MethodKind::Dev => Ok(Arc::new(dev::Dev)),
+        MethodKind::Tpm => Ok(Arc::new(tpm::Tpm)),
         MethodKind::Kms | MethodKind::Transit => Err(Error::new(format!(
             "the {} unseal method is not built yet (plans/Sealed-Secrets.md S11)",
             kind.name()
         ))),
-        MethodKind::Tpm => Err(Error::new("the tpm unseal method is not built yet")),
         MethodKind::Passphrase | MethodKind::Shamir => Err(Error::new(format!(
             "the {} method is opened by an operator, not automatically",
             kind.name()
