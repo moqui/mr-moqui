@@ -22,6 +22,7 @@
 //! - `start <vaultId> <username> [--key ID]`: as a holder, recover the vault to the member's new key (checked): start
 //!   the session, wait for K − 1 other holders' shares, combine them here and complete.
 //! - `share <recoverySessionId>`: as another holder, see what the session recovers and seal this holder's share to it.
+//! - `replace <vaultId> --key ID`: as a manager, list a new recovery key in place of a used one, in one rotation.
 
 use std::time::{Duration, Instant};
 
@@ -58,7 +59,12 @@ pub(super) fn dispatch(remote: &mut Remote, client: &mut VaultClient, user: &str
     }
     match positional.as_slice() {
         ["list"] => list(remote),
-        ["make", holders @ ..] if k > 0 && !holders.is_empty() => make(remote, client, k, group, holders),
+        ["make", holders @ ..] if k > 0 && !holders.is_empty() => {
+            let named: Vec<(&str, &str)> = holders.iter().map(|username| ("username", *username)).collect();
+            open_key(remote, client)?;
+            make(remote, client, k, group, &named).map(|_| ())
+        }
+        ["replace", vault_id] if !key.is_empty() => replace(remote, client, vault_id, key),
         ["on", vault_id] => turn_on(remote, client, vault_id, key),
         ["start", vault_id, username] => start(remote, client, user, vault_id, username, key),
         ["share", session_id] => share(remote, client, session_id),
@@ -142,14 +148,20 @@ fn list(remote: &mut Remote) -> Result<(), Error> {
     Ok(())
 }
 
-/// `make`: a recovery key split `k` of the holders named, each holder's key checked by this user.
-fn make(remote: &mut Remote, client: &mut VaultClient, k: u64, group: &str, holders: &[&str]) -> Result<(), Error> {
-    open_key(remote, client)?;
+/// `make`: a recovery key split `k` of the holders named (each `("username", name)` or `("userId", id)`), each
+/// holder's key checked by this user, whose personal key is open. Its id.
+fn make(
+    remote: &mut Remote,
+    client: &mut VaultClient,
+    k: u64,
+    group: &str,
+    holders: &[(&str, &str)],
+) -> Result<String, Error> {
     let mut rows = Vec::with_capacity(holders.len());
-    for username in holders {
-        let key = remote.get("/publicKey", &[("username", username)])?;
+    for (by, holder) in holders {
+        let key = remote.get("/publicKey", &[(by, holder)])?;
         if key["hasKey"] != json!(true) {
-            return Err(Error::new(format!("{username} has no personal vault key")));
+            return Err(Error::new(format!("{holder} has no personal vault key")));
         }
         rows.push(json!({ "user_id": key["userId"], "key_id": key["personalKeyId"], "public": key["public"] }));
     }
@@ -168,6 +180,92 @@ fn make(remote: &mut Remote, client: &mut VaultClient, k: u64, group: &str, hold
         "Recovery key {recovery_key_id}: {k} of {} holders' shares recover a vault.",
         rows.len()
     );
+    Ok(recovery_key_id)
+}
+
+/// `replace`: as a manager, the vault's used recovery key removed and `key` listed in one rotation (its maker's key
+/// checked), so the vault is never without recovery; every item key and member's wrap, the header and an operational
+/// vault's deposit key go to the new key version.
+fn replace(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, key: &str) -> Result<(), Error> {
+    open_key(remote, client)?;
+    let chosen = recovery_keys(remote)?
+        .into_iter()
+        .find(|row| text(row, "recoveryKeyId") == key)
+        .ok_or_else(|| Error::new("No such recovery key"))?;
+    let vault = remote.get(&format!("/vaults/{}", segment(vault_id)), &[])?;
+    let key_checks = checks(remote)?;
+    let version = vault["vault"]["keyVersion"].as_u64().unwrap_or(0);
+    let wrap = vault["wraps"]
+        .as_array()
+        .and_then(|wraps| wraps.iter().find(|wrap| wrap["key_version"].as_u64() == Some(version)))
+        .cloned()
+        .ok_or_else(|| Error::new("You hold no wrap of this vault's current key version"))?;
+    let path = super::state::state_file()?;
+    let state = super::state::State::read(&path);
+    client
+        .call(
+            "vault_key_open",
+            json!({ "entries": vault["entries"], "key_checks": key_checks,
+                    "remembered": state.remembered(remote.base(), vault_id), "wrap": wrap }),
+        )
+        .map_err(vault_err)?;
+    let member = client
+        .call(
+            "recovery_member",
+            json!({ "record": chosen["record"], "maker_public": chosen["makerPublic"], "key_checks": key_checks }),
+        )
+        .map_err(vault_err)?;
+    let latest = vault["entries"]
+        .as_array()
+        .and_then(|e| e.last())
+        .cloned()
+        .unwrap_or(Value::Null);
+    let old = latest["members"]
+        .as_array()
+        .and_then(|members| members.iter().find(|m| text(m, "user_id").starts_with("recovery:")))
+        .map(|m| text(m, "user_id"))
+        .ok_or_else(|| Error::new("This vault has no recovery key to replace: moqui vault recovery on"))?;
+    let mut members: Vec<Value> = latest["members"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| text(m, "user_id") != old)
+        .collect();
+    members.push(member);
+    let items = remote.get(&format!("/vaults/{}/items", segment(vault_id)), &[])?;
+    let rows: Vec<Value> = items["itemList"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter()
+        .map(|item| {
+            let label = match text(item, "itemName") {
+                name if name.is_empty() => Value::Null,
+                name => json!({ "item_type": text(item, "vaultItemTypeId"), "binding": text(item, "bindingKey"), "name": name }),
+            };
+            json!({ "item_id": item["vaultItemId"], "wrapped_item_key": item["wrappedItemKey"], "label": label,
+                    "deposited": text(item, "itemKeyWrapEnumId") == "VwDeposit" })
+        })
+        .collect();
+    let operational = text(&vault["vault"], "vaultKindEnumId") == "VkOperational";
+    let recovery = recovery_keys_arg(&chosen);
+    let rotated = client
+        .call(
+            "vault_rotate",
+            json!({ "entries": vault["entries"], "members": members, "items": rows, "operational": operational,
+                    "key_checks": key_checks, "recovery_keys": recovery, "header_cipher": vault["vault"]["headerCipher"],
+                    "deposit_wrapped_private": vault["depositWrappedPrivate"] }),
+        )
+        .map_err(vault_err)?;
+    remote.post(
+        &format!("/vaults/{}/removeMember", segment(vault_id)),
+        &json!({ "userId": old, "expectedRevision": vault["vault"]["revision"], "entry": rotated["entry"],
+                 "itemKeys": rotated["item_keys"], "memberWraps": rotated["member_wraps"],
+                 "headerCipher": rotated["header_cipher"], "deposit": rotated["deposit"]["deposit"],
+                 "depositWrappedPrivate": rotated["deposit"]["wrapped_private"] }),
+    )?;
+    println!("Recovery key {key} replaces {old} in {vault_id}; the vault key was rotated.");
     Ok(())
 }
 
@@ -327,7 +425,7 @@ fn start(
         .call(
             "recovery_open_vault",
             json!({ "entries": open["entries"], "key_checks": key_checks,
-                    "recovery_key_id": text(&chosen, "recoveryKeyId"), "wrap": open["recoveryWrap"] }),
+                    "session_id": session_id, "wrap": open["recoveryWrap"] }),
         )
         .map_err(vault_err)?;
     let rekeyed = client
@@ -344,6 +442,25 @@ fn start(
                  "rewraps": rekeyed["rewraps"] }),
     )?;
     println!("Recovered: {username} opens {vault_id} with their new key. Every member was told.");
+    // this client held the whole recovery key: offer a new one, split to the same holders, which managers list in place
+    // of the used one (moqui vault recovery replace)
+    let again = ask(
+        "This client held the whole recovery key: make a new one for the same holders now? [y/N]",
+        false,
+    )?;
+    if matches!(again.trim(), "y" | "Y" | "yes") {
+        let ids: Vec<String> = chosen["holders"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+            .iter()
+            .map(|holder| text(holder, "userId"))
+            .collect();
+        let named: Vec<(&str, &str)> = ids.iter().map(|id| ("userId", id.as_str())).collect();
+        let k = chosen["record"]["k"].as_u64().unwrap_or(2);
+        let new_key = make(remote, client, k, &text(&chosen, "userGroupId"), &named)?;
+        println!("Managers of the vaults that list the used key now run  moqui vault recovery replace <vaultId> --key {new_key}");
+    }
     Ok(())
 }
 
@@ -378,12 +495,12 @@ fn share(remote: &mut Remote, client: &mut VaultClient, session_id: &str) -> Res
         .call(
             "recovery_share_deliver",
             json!({ "record": chosen["record"], "maker_public": chosen["makerPublic"], "held": held,
-                    "session": session, "session_holder_public": row["holderPublic"],
+                    "session": session, "session_holder_public": row["holderPublic"], "session_holder": row["holderShare"],
                     "key_checks": checks(remote)? }),
         )
         .map_err(|err| {
             Error::new(format!(
-                "{err} (check the keys of {} and of the recovery key's maker first: moqui vault key check)",
+                "{err} (check the keys of {}, of the member recovered and of the recovery key's maker first: moqui vault key check)",
                 text(session, "holder_user_id")
             ))
         })?;

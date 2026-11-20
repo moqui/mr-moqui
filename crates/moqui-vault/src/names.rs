@@ -29,6 +29,8 @@ pub enum Purpose {
     ItemKey,
     /// An item body under its item key.
     Body,
+    /// A personal vault's header (its name) under the vault key of a version.
+    VaultHeader,
     /// The deposit key's private half wrapped by the vault key.
     DepositKey,
     /// An item key wrapped to the deposit key's public half.
@@ -55,6 +57,7 @@ impl Purpose {
             Purpose::VaultKey => "vault-key",
             Purpose::ItemKey => "item-key",
             Purpose::Body => "body",
+            Purpose::VaultHeader => "vault-header",
             Purpose::DepositKey => "deposit-key",
             Purpose::DepositItemKey => "deposit-item-key",
             Purpose::PersonalPassphrase => "personal-passphrase",

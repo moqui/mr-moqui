@@ -64,10 +64,17 @@ pub(crate) fn authz_off() -> Option<AuthzGuard> {
 
 /// The signed-in user's id.
 pub(crate) fn user() -> Result<String, LibError> {
-    moqui_core::user::current_user_id()
+    let user_id = moqui_core::user::current_user_id()
         .map_err(|err| fail(err.message()))?
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| fail("Sign in first"))
+        .ok_or_else(|| fail("Sign in first"))?;
+    // `recovery:` names a recovery key in a member list (§3.10): no account under such an id acts in a vault
+    if moqui_vault::keyversion::recovery_key_of(&user_id).is_some() {
+        return Err(fail(
+            "A user id that starts with recovery: is reserved for recovery keys",
+        ));
+    }
+    Ok(user_id)
 }
 
 pub(crate) fn find(facade: &EntityFacade, entity: &str) -> Result<EntityFind, LibError> {
@@ -254,6 +261,10 @@ pub(crate) fn membership(
     vault: &EntityValue,
     user_id: &str,
 ) -> Result<Option<EntityValue>, LibError> {
+    // a recovery key is listed as a member, but is no one's membership
+    if moqui_vault::keyversion::recovery_key_of(user_id).is_some() {
+        return Ok(None);
+    }
     find(facade, MEMBER)?
         .eq("vaultId", Value::string(field(vault, "vaultId")))
         .eq("userId", Value::string(user_id))

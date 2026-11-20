@@ -107,10 +107,18 @@ pub fn recovery_key_of(user_id: &str) -> Option<&str> {
     user_id.strip_prefix(RECOVERY_MEMBER_PREFIX)
 }
 
-/// Whether `entry`, signed by a recovery member, only gives one person in `before` a new personal key: the same users
-/// with the same roles, and one of them (not a recovery member) under another key.
+/// Whether `entry`, signed by a recovery member, only gives one person in `before` a new personal key: the same set of
+/// users on both sides, each once, with the same roles, and exactly one of them (not a recovery member) under another
+/// key, so their old key is gone.
 fn recovery_change_only(before: &KeyVersion, entry: &KeyVersion) -> bool {
     if entry.version != before.version || entry.members.len() != before.members.len() {
+        return false;
+    }
+    let users = |list: &KeyVersion| -> std::collections::BTreeSet<String> {
+        list.members.iter().map(|m| m.user_id.clone()).collect()
+    };
+    let (was_users, now_users) = (users(before), users(entry));
+    if was_users.len() != before.members.len() || now_users != was_users {
         return false;
     }
     let mut changed = 0;
@@ -223,14 +231,11 @@ impl KeyVersion {
     }
 }
 
-/// Refuses a member list that names the same personal key of a user twice.
+/// Refuses a member list that names a user twice (with one personal key or two: a member has one key in a list).
 fn check_members(members: &[Member]) -> Result<(), Error> {
     for (at, member) in members.iter().enumerate() {
-        if members[..at]
-            .iter()
-            .any(|m| m.user_id == member.user_id && m.key_id == member.key_id)
-        {
-            return Err(Error::Refused("a member list names one personal key twice"));
+        if members[..at].iter().any(|m| m.user_id == member.user_id) {
+            return Err(Error::Refused("a member list names one user twice"));
         }
     }
     Ok(())
@@ -332,8 +337,12 @@ impl<'a> Chain<'a> {
         Ok((member, signer.public.verify))
     }
 
-    /// Accepts an operational vault's deposit key: of the current key version, signed by a manager of it. Returns
-    /// the signer's key, which [`crate::vault::wrap_item_key_to_deposit`] checks again.
+    /// Accepts an operational vault's deposit key: of the current key version, signed by a manager of it (a person,
+    /// never a recovery key). Returns the signer's key, which [`crate::vault::wrap_item_key_to_deposit`] checks again.
+    ///
+    /// A manager whom a recovery gave a new key (§3.10) still vouches for the deposit key they signed with the key the
+    /// recovery replaced: the signer, with that key, was a manager in a trusted entry of this version, is still a
+    /// manager in its last entry, and every change of their key since was a recovery's.
     pub fn accept_deposit(&self, deposit: &DepositPublic) -> Result<VerifyingKey, Error> {
         let latest = self.latest();
         if deposit.vault_id != latest.vault_id {
@@ -342,12 +351,48 @@ impl<'a> Chain<'a> {
         if deposit.key_version != latest.version {
             return Err(Error::Refused("a deposit key of an earlier key version"));
         }
+        if recovery_key_of(&deposit.signer_user_id).is_some() {
+            return Err(Error::Refused("a deposit key is signed by a person"));
+        }
         let entry = self.trusted_last_of(deposit.key_version)?;
-        let Some(signer) = entry.manager(&deposit.signer_user_id, &deposit.signer_key_id) else {
+        if let Some(signer) = entry.manager(&deposit.signer_user_id, &deposit.signer_key_id) {
+            deposit.verify(&signer.public.verify)?;
+            return Ok(signer.public.verify);
+        }
+        let still_manages = entry
+            .members
+            .iter()
+            .any(|m| m.user_id == deposit.signer_user_id && m.role == Role::Manage);
+        let last = self.entries.len() - 1;
+        let signed = (self.anchor..=last).rev().find_map(|at| {
+            let listed = &self.entries[at];
+            (listed.version == deposit.key_version)
+                .then(|| listed.manager(&deposit.signer_user_id, &deposit.signer_key_id))
+                .flatten()
+                .map(|m| (at, m.public.verify))
+        });
+        let (true, Some((signed_at, verify))) = (still_manages, signed) else {
             return Err(Error::Refused("the deposit key's signer did not hold the manage role"));
         };
-        deposit.verify(&signer.public.verify)?;
-        Ok(signer.public.verify)
+        let key_of = |listed: &KeyVersion| {
+            listed
+                .members
+                .iter()
+                .find(|m| m.user_id == deposit.signer_user_id)
+                .map(|m| (m.key_id.clone(), m.public))
+        };
+        for pair in self.entries[signed_at..=last].windows(2) {
+            let [before, after] = pair else {
+                continue;
+            };
+            if key_of(before) != key_of(after) && recovery_key_of(&after.signer_user_id).is_none() {
+                return Err(Error::Refused(
+                    "the deposit key's signer has another key now: a manager signs it again",
+                ));
+            }
+        }
+        deposit.verify(&verify)?;
+        Ok(verify)
     }
 
     /// Signs the entry after the latest: `signer` must be a manager in the latest entry, with this key.

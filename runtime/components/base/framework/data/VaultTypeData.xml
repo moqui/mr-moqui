@@ -82,6 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="VeRecoveryStarted" enumTypeId="VaultEventType" description="Recovery started" sequenceNum="28"/>
     <moqui.basic.Enumeration enumId="VeRecoveryShared" enumTypeId="VaultEventType" description="Recovery share sealed to a recovery" sequenceNum="29"/>
     <moqui.basic.Enumeration enumId="VeRecoveryCancelled" enumTypeId="VaultEventType" description="Recovery cancelled" sequenceNum="30"/>
+    <moqui.basic.Enumeration enumId="VeSecretRewrapped" enumTypeId="VaultEventType" description="Single-secret vault wrapped again" sequenceNum="31"/>
 
     <moqui.basic.StatusType statusTypeId="VaultRecoverySession" description="Vault recovery"/>
     <moqui.basic.StatusItem statusId="VrsOpen" statusTypeId="VaultRecoverySession" description="Open" sequenceNum="1"/>

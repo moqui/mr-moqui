@@ -55,6 +55,28 @@ trust that is not on this server, or on paper with your important papers; keep t
 only copy inside this vault or anywhere on this server. A generated key is long and random, so it cannot be guessed:
 download or print it, then keep it the same way. Commons › Vault (V3) walks through these steps when the vault is made.
 
+A generated key is 256 random bits, so its wrap is HKDF, not Argon2id (`vault_key_generated_wrap`, which makes the key
+in the module and answers it once to print, and `vault_key_generated_open`); a password's wrap is Argon2id at the
+target. When an open finds a password's wrap under the target it answers a new wrap, which the owner stores with
+`update#VaultSecretWrap` (`PUT /rest/s1/vault/vaults/{id}/secretWrap`): a strong, recent sign-in, the floor and
+ceiling checked; the same call changes the password or moves the vault to a generated key.
+
+### What a client keeps, and what a rotation carries
+
+- A personal vault's name is its **header**, sealed by the vault key of the current version (`header_seal`,
+  `header_open`; the vault's `headerCipher`). A removal's rotation seals it again under the new version
+  (`vault_rotate` takes `header_cipher` and answers the new one), and `remove#VaultMember` refuses a rotation of a vault
+  with a header that does not carry it.
+- An item key is made once and rewrapped at each rotation, so an item row has two versions: `keyVersion`, the version
+  its key is wrapped under, and `itemKeyVersion`, the version the key was made at, which a rotation leaves. The
+  item's first write after a key-version change makes a new item key (decision (c) of §9): `item_seal` does when given
+  `item_key_version` under the current version, and `update#VaultItem` refuses such a write without `newItemKey`.
+- `vault_key_forget` drops one opened vault key version, so a page can undo a `vault_rotate` whose server call failed.
+- `item_summary` answers an item's name, type, URIs, tags and unmasked fields, never a masked field (by its type's
+  `masked` names, which the page passes, or a field whose name says it holds a secret) nor its notes: a list view does
+  not hold every item's secrets. `copy` clears the clipboard after 30 seconds, and when the page has no focus then,
+  when the window has focus again.
+
 ## Operational vaults
 
 An operational vault holds the secrets of deployed instances: database passwords, registry logins, TLS keys. Its
@@ -184,8 +206,8 @@ list), so a person asked to join sees it.
 - **The recovery key is split k of n.** A holder with the sealed permission `VAULT_RECOVERY` and a recent sign-in
   makes it in their client (`moqui vault recovery make`, or `create#VaultRecoveryKey` from a client): the key's seed is
   split into n shares, one wrapped to each holder's personal key (each holder holds `VAULT_RECOVERY`, and the maker has
-  checked their key), and the seed is dropped. No one holds the whole key, and no k − 1 holders can open a vault. It is
-  kept by user group or by instance (`userGroupId`, `instanceId`). A holder who replaces their personal key can no
+  checked their key), and the seed is dropped. No one holds the whole key between recoveries, and no k − 1 holders can
+  open a vault (a recovery rebuilds it in one client: see the limit below). It is kept by user group or by instance (`userGroupId`, `instanceId`). A holder who replaces their personal key can no
   longer open their share: make a new recovery key while k of the others still can.
 - **Turning recovery on.** A manager checks the key of the holder who made the recovery key, then lists the recovery
   key in the vault's member list (under `recovery:<id>`, with the manage role) and wraps the vault key to it
@@ -196,12 +218,23 @@ list), so a person asked to join sees it.
   key. A holder who has checked that new key (and the key of one of the vault's managers, which anchors the vault's
   member list for their client) starts a recovery (`moqui vault recovery start`): their client makes an ephemeral key,
   kept only in its memory, and signs a session naming it, the vault, the member and the new key. k − 1 other holders
-  see what the session recovers and seal their shares to the ephemeral key (`moqui vault recovery share`). The
+  see what the session recovers, check that its starter is a holder (the maker's signature over the starter's share)
+  and the member's new key themselves, and seal their shares to the ephemeral key (`moqui vault recovery share`). The
   recovering client combines the shares with its own, checks the result against the recovery key's signed public
-  halves, opens the vault key through the recovery key's wrap, signs the next member list as the recovery key (giving
-  the member the new key and changing nothing else, which every member's client checks) and wraps the vault key to the
-  new key (`complete#VaultRecovery`). The shares, the recovery key and the vault key never leave the clients. A session
-  takes shares for a day; the recovering holder or a manager of the vault can cancel it.
+  halves, opens the vault key through the recovery key's wrap of that session's vault only, signs the next member list
+  as the recovery key (giving the member the new key, with the same members each once and nothing else changed, which
+  every member's client checks) and wraps the vault key to the new key (`complete#VaultRecovery`). The combined key
+  lives in that module only from the combine to the rekey: any other call, the rekey itself and a lock drop it, with
+  the vault key it opened. The server takes the end only with k − 1 other holders' shares from holders who still hold
+  `VAULT_RECOVERY`, and the new key still the member's active one. A session takes shares for a day; the recovering
+  holder, the member, or any other person in the vault's member list can cancel it.
+- **Replacing a used recovery key.** Shamir rebuilds the recovery key in the recovering holder's client, so after a
+  recovery that client has held the whole key and could have kept it. The key is marked used (`usedDate`;
+  `list#VaultRecoveryKeys` answers `used`, and a screen shows it as "used, replace"), the managers of every vault that
+  lists it are told to replace it, and `moqui vault recovery start` offers to make a new one for the same holders.
+  A manager replaces it with `moqui vault recovery replace <vaultId> --key <new>`: one rotation that removes the used
+  key and lists the new one (`remove#VaultMember` of the old recovery member, with the new one in the entry), so the
+  vault key the recovering client saw is replaced too and an operational vault is never without recovery.
 - **Every member is told.** A start, each share, the end and a cancel are `VaultEvent`s (`VeRecoveryStarted`,
   `VeRecoveryShared`, `VeRecovery`, `VeRecoveryCancelled`; a recovery key made is `VeRecoveryKeyMade`), and a start and
   the end are notices to every member of the vault (topic `VaultRecovery`), so a member can cancel a recovery they did
@@ -209,7 +242,9 @@ list), so a person asked to join sees it.
 - **The limit.** k holders who also hold a copy of the database could open every vault with recovery on with that
   recovery key; `VAULT_RECOVERY`, the recent sign-in, the event and the notice are rules the server keeps, not
   cryptography. For a personal shared-key vault with recovery on, k holders acting together are administrators who can
-  open it (§3.12).
+  open it (§3.12). Shamir rebuilds the whole key in the recovering holder's client at each recovery: a client that
+  has been changed (or a holder who changed it) keeps it, and opens every vault that lists that key until each has
+  replaced it. That is why a used key is replaced, not kept.
 
 BOSS Admin › Security, which shows the recovery keys and holders for each organization, is mr-boss's, on these
 services (`/rest/s1/vault/recoveryKeys` and `/rest/s1/vault/recoveries`).
@@ -257,6 +292,8 @@ second factor and keeps nothing of the sign-in.
 | `recovery on <vaultId> [--key ID]` | As a manager: turns recovery on for a vault (the recovery key's maker checked first) |
 | `recovery start <vaultId> <username> [--key ID]` | As a holder: recovers the vault to the member's new key (checked first); waits for the other shares |
 | `recovery share <recoverySessionId>` | As another holder: shows what a recovery recovers and seals your share to it |
+| `recovery replace <vaultId> --key ID` | As a manager: lists a new recovery key in place of a used one, in one rotation |
+| `export-open FILE [--item ID]` | Opens an encrypted export file of Commons › Vault here, with its password: no server, no sign-in |
 
 What it has accepted of each vault's member list is kept in `~/.config/moqui/vault/state.json` (mode 0600, no keys).
 

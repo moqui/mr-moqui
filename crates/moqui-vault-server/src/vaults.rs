@@ -45,6 +45,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, list_vaults)?;
     moqui_core::rust_service!(map, get_vault)?;
     moqui_core::rust_service!(map, delete_vault)?;
+    moqui_core::rust_service!(map, update_vault_secret_wrap)?;
     Ok(())
 }
 
@@ -195,19 +196,64 @@ fn create_single_secret(
     if !["VsPassword", "VsGenerated"].contains(&secret_kind.as_str()) {
         return Err(fail("A single-secret vault opens by a password or a generated key"));
     }
+    let wrap = secret_wrap_param(params, &secret_kind)?;
+    vault.set("secretKindEnumId", Value::string(secret_kind));
+    vault.set("secretWrap", Value::string(wrap.to_string()));
+    Ok(())
+}
+
+/// A single-secret vault's wrap, as the vault crate writes it for its kind: a password's carries its Argon2id
+/// parameters, refused under the floor or over the ceiling; a generated key's is its HKDF seal (`sealed`, hex).
+fn secret_wrap_param(params: &Params, secret_kind: &str) -> Result<Json, moqui_lib::error::Error> {
     let wrap = crate::common::json(params, "secretWrap")?;
     if !wrap.is_object() || wrap.to_string().len() > crate::common::MAX_SMALL_TEXT {
         return Err(fail("secretWrap is the vault crate's wrap"));
     }
-    // a password's wrap carries its Argon2id parameters: refused under the floor or over the ceiling
     if secret_kind == "VsPassword" {
         let parsed = moqui_vault::ops::shapes::password_wrap_of(&serde_json::json!({ "wrap": wrap }), "wrap")
             .map_err(crate::common::refused)?;
         parsed.params.check().map_err(crate::common::refused)?;
+    } else {
+        let sealed = wrap["sealed"].as_str().unwrap_or_default();
+        crate::common::check_hex("secretWrap.sealed", sealed, crate::common::MAX_SMALL_TEXT)?;
     }
-    vault.set("secretKindEnumId", Value::string(secret_kind));
+    Ok(wrap)
+}
+
+/// `update#VaultSecretWrap`: a single-secret vault's owner stores its vault key wrapped again (a password's wrap
+/// raised to the Argon2id target on an open, a new password or generated key), after a strong, recent sign-in. The
+/// kind may change between a password and a generated key; the wrap is checked as `create#Vault` checks it.
+fn update_vault_secret_wrap(params: &Params, facade: &EntityFacade) -> Out {
+    let _authz = authz_off();
+    let me = user()?;
+    let vault_id = required(params, "vaultId")?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Manage, true)?;
+    if field(&vault, "lockEnumId") != SINGLE_SECRET {
+        return Err(fail("Only a single-secret vault has a secret wrap"));
+    }
+    crate::members::check_revision(params, &vault)?;
+    crate::personal::require_strong_sign_in(facade, &me)?;
+    let secret_kind = match text(params, "secretKindEnumId") {
+        kind if kind.is_empty() => field(&vault, "secretKindEnumId"),
+        kind => kind,
+    };
+    if !["VsPassword", "VsGenerated"].contains(&secret_kind.as_str()) {
+        return Err(fail("A single-secret vault opens by a password or a generated key"));
+    }
+    let wrap = secret_wrap_param(params, &secret_kind)?;
+    vault.set("secretKindEnumId", Value::string(&secret_kind));
     vault.set("secretWrap", Value::string(wrap.to_string()));
-    Ok(())
+    let revision = crate::common::bump_revision(facade, &mut vault)?;
+    events::write(
+        facade,
+        Event {
+            kind: "VeSecretRewrapped",
+            vault_id: Some(&vault_id),
+            detail: Some(secret_kind),
+            ..Event::default()
+        },
+    )?;
+    Ok(out([("revision", Value::I64(revision))]))
 }
 
 fn vault_json(vault: &EntityValue, role: &str, item_count: usize) -> Value {

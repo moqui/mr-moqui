@@ -191,6 +191,61 @@ pub(crate) fn check_one_recovery(entry: &KeyVersion) -> Result<(), LibError> {
     Ok(())
 }
 
+/// Marks a recovery key used: a recovery rebuilt it whole in the recovering holder's client (the limit of Shamir,
+/// §3.12). The managers of every vault that lists it are told to replace it (`remove#VaultMember` of it with a new
+/// recovery key listed in the same rotation), and the key list shows it as used.
+pub(crate) fn mark_used(facade: &EntityFacade, recovery_key_id: &str) -> Result<(), LibError> {
+    if let Some(mut row) = key_row(facade, recovery_key_id)? {
+        row.set("usedDate", crate::common::now());
+        row.update(facade)?;
+    }
+    let listed = find(facade, crate::common::MEMBER)?
+        .eq(
+            "userId",
+            Value::string(moqui_vault::keyversion::recovery_member_id(recovery_key_id)),
+        )
+        .list()?;
+    let mut managers = std::collections::BTreeSet::new();
+    let mut vaults = std::collections::BTreeSet::new();
+    for wrap in listed.iter() {
+        let vault_id = field(wrap, "vaultId");
+        let Ok(vault) = crate::common::vault_row(facade, &vault_id, false) else {
+            continue;
+        };
+        if int_field(&vault, "keyVersion") != int_field(wrap, "keyVersion") || !vaults.insert(vault_id.clone()) {
+            continue;
+        }
+        let rows = find(facade, crate::common::MEMBER)?
+            .eq("vaultId", Value::string(&vault_id))
+            .eq("keyVersion", Value::I64(int_field(&vault, "keyVersion")))
+            .eq("roleEnumId", Value::string("VrManage"))
+            .list()?;
+        for row in rows.iter() {
+            let user_id = field(row, "userId");
+            if recovery_key_of(&user_id).is_none() {
+                managers.insert(user_id);
+            }
+        }
+    }
+    if managers.is_empty() {
+        return Ok(());
+    }
+    let mut message = moqui_lib::object::ValueMap::default();
+    message.insert("recoveryKeyId".to_string(), Value::string(recovery_key_id));
+    let vault_ids: Vec<String> = vaults.into_iter().collect();
+    message.insert("vaultIds".to_string(), Value::string(vault_ids.join(",")));
+    moqui_core::notify::NotificationMessage::new()
+        .topic(TOPIC)
+        .user_ids(managers)
+        .title(format!(
+            "Recovery key {recovery_key_id} was used: replace it in the vaults you manage that list it"
+        ))
+        .message_map(message)
+        .persist(true)
+        .send()
+        .map_err(|err| fail(format!("The notice to replace a used recovery key: {}", err.message())))
+}
+
 /// Deletes a deleted vault's recovery sessions and their shares.
 pub(crate) fn forget_vault(facade: &EntityFacade, vault_id: &str) -> Result<(), LibError> {
     let sessions = find(facade, RECOVERY_SESSION)?

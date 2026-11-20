@@ -127,28 +127,42 @@ fn a_session_takes_k_holders_shares_sealed_to_its_ephemeral_key() {
     };
     let mut rng = TestRng::new("recovery-session");
     let (session, ephemeral) = start_session("rs-1", "rk-1", "vault-1", to, o.signer(0), &mut rng).unwrap();
-    let recovering = o.holders[0].public().verify;
-    session.verify(&recovering).unwrap();
+    let recovering_public = o.holders[0].public();
+    session.verify(&recovering_public.verify).unwrap();
+    let starter = Starter {
+        held: &o.shares[0],
+        public: &recovering_public,
+    };
 
     // Holders 1 and 2 seal their shares to the session; a session its holder did not sign is refused.
     let sent: Vec<SessionShare> = (1..3)
-        .map(|at| deliver_share(&o.shares[at], o.signer(at), &maker, &session, &recovering, &mut rng).unwrap())
+        .map(|at| deliver_share(&o.shares[at], o.signer(at), &maker, &session, starter, &mut rng).unwrap())
         .collect();
-    let stranger = PersonalKey::generate(&mut rng).public().verify;
+    let stranger = PersonalKey::generate(&mut rng).public();
+    let not_holder = Starter {
+        held: &o.shares[0],
+        public: &stranger,
+    };
     assert_eq!(
-        deliver_share(&o.shares[1], o.signer(1), &maker, &session, &stranger, &mut rng).unwrap_err(),
+        deliver_share(&o.shares[1], o.signer(1), &maker, &session, not_holder, &mut rng).unwrap_err(),
         Error::Signature
     );
+    // a session started by someone whose holder row is another's is refused
+    let other_row = Starter {
+        held: &o.shares[3],
+        public: &recovering_public,
+    };
+    assert!(deliver_share(&o.shares[1], o.signer(1), &maker, &session, other_row, &mut rng).is_err());
     let elsewhere = RecoverySession {
         vault_id: "vault-2".to_string(),
         ..session.clone()
     };
     assert_eq!(
-        deliver_share(&o.shares[1], o.signer(1), &maker, &elsewhere, &recovering, &mut rng).unwrap_err(),
+        deliver_share(&o.shares[1], o.signer(1), &maker, &elsewhere, starter, &mut rng).unwrap_err(),
         Error::Signature
     );
     // a holder delivers only their own share
-    assert!(deliver_share(&o.shares[2], o.signer(1), &maker, &session, &recovering, &mut rng).is_err());
+    assert!(deliver_share(&o.shares[2], o.signer(1), &maker, &session, starter, &mut rng).is_err());
 
     let own = || open_share(&o.shares[0], &o.holders[0], &maker).unwrap();
     let publics: Vec<PersonalPublic> = o.holders.iter().map(PersonalKey::public).collect();

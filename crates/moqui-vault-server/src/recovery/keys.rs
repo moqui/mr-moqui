@@ -192,6 +192,7 @@ fn list_vault_recovery_keys(params: &Params, facade: &EntityFacade) -> Out {
             "recoveryKeyId": recovery_key_id, "record": shapes::record_json(&record),
             "makerPublic": hex(&maker.to_bytes()), "userGroupId": field(row, "userGroupId"),
             "instanceId": field(row, "instanceId"), "holders": holders,
+            "used": !field(row, "usedDate").is_empty(), "usedDate": field(row, "usedDate"),
         }));
     }
     Ok(out([("recoveryKeyList", value(&Json::Array(listed)))]))

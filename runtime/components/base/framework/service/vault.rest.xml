@@ -43,6 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
             <resource name="members">
                 <method type="post"><service name="org.moqui.security.VaultServices.add#VaultMember"/></method>
             </resource>
+            <resource name="secretWrap"><method type="put"><service name="org.moqui.security.VaultServices.update#VaultSecretWrap"/></method></resource>
             <resource name="removeMember"><method type="post"><service name="org.moqui.security.VaultServices.remove#VaultMember"/></method></resource>
             <resource name="ack"><method type="post"><service name="org.moqui.security.VaultServices.ack#VaultKeyVersion"/></method></resource>
             <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>

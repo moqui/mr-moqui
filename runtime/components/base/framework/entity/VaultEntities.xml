@@ -126,6 +126,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="itemKeyWrapEnumId" type="id"/>
         <field name="wrappedItemKey" type="text-long"/>
         <field name="keyVersion" type="number-integer"/>
+        <field name="itemKeyVersion" type="number-integer"><description>The key version the item key was made at; a
+            rotation rewraps the item key (keyVersion) and leaves this, so the item's first write after a key-version
+            change makes a new item key (decision (c) of §9)</description></field>
         <field name="bodyCipher" type="text-very-long"/>
         <field name="revision" type="number-integer"/>
         <field name="vaultItemTypeId" type="id"><description>Operational only</description></field>
@@ -218,6 +221,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="signature" type="text-medium"/>
         <field name="userGroupId" type="id"/>
         <field name="instanceId" type="id"/>
+        <field name="usedDate" type="date-time"><description>When a recovery used it: the recovering holder's client held
+            the whole key then (the limit of Shamir, §3.12), so each vault that lists it replaces it with a new
+            one</description></field>
         <field name="fromDate" type="date-time"/>
         <field name="thruDate" type="date-time"/>
     </entity>

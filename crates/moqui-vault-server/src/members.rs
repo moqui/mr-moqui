@@ -274,6 +274,10 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("A member list names each user once"));
     }
     crate::recovery::check_one_recovery(&entry)?;
+    // a person keeps the manage role: a recovery key alone never manages a vault
+    if !crate::recovery::people(&entry).any(|m| m.role == Role::Manage) {
+        return Err(fail("A vault keeps at least one manager"));
+    }
     if dropped.iter().any(|d| d.user_id != member.user_id) {
         return Err(fail(
             "A member is removed with remove#VaultMember, which rotates the key",
@@ -410,10 +414,24 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("A removal rotates the vault key to the next version"));
     }
     let staying: Vec<&Member> = latest.members.iter().filter(|m| m.user_id != removed).collect();
-    let unchanged =
-        entry.members.len() == staying.len() && staying.iter().all(|s| entry.members.iter().any(|m| same(s, m)));
+    let added: Vec<&Member> = entry
+        .members
+        .iter()
+        .filter(|m| !staying.iter().any(|s| same(s, m)))
+        .collect();
+    // replacing a recovery key (one that was used, §3.10): the old one's removal lists its replacement in the same
+    // rotation, so an operational vault is never left without recovery
+    let replacing = recovery_key_of(&removed).is_some()
+        && matches!(added.as_slice(), [new] if recovery_key_of(&new.user_id).is_some() && new.user_id != removed);
+    let unchanged = staying.iter().all(|s| entry.members.iter().any(|m| same(s, m))) && (added.is_empty() || replacing);
     if !unchanged {
         return Err(fail("A removal changes no other member"));
+    }
+    if let [new] = added.as_slice() {
+        let signer = latest
+            .member(&entry.signer_user_id, &entry.signer_key_id)
+            .ok_or_else(|| fail("The signer is not a member"))?;
+        crate::recovery::check_recovery_member(facade, new, signer)?;
     }
     if !crate::recovery::people(&entry).any(|m| m.role == Role::Manage) {
         return Err(fail("A vault keeps at least one manager"));
@@ -466,6 +484,18 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
     if ids != rewrapped.keys().cloned().collect::<BTreeSet<String>>() {
         return Err(fail("Rewrap the key of every item of the vault"));
     }
+    // a personal vault's sealed header (its name) goes to the new version with the items
+    let header = crate::common::text(params, "headerCipher");
+    if !field(&vault, "headerCipher").is_empty() {
+        if header.is_empty() {
+            return Err(fail(
+                "Seal the vault's header again under the new key version (headerCipher)",
+            ));
+        }
+        crate::common::check_hex("headerCipher", &header, crate::common::MAX_SMALL_TEXT)?;
+    } else if !header.is_empty() {
+        return Err(fail("This vault has no header to seal again"));
+    }
 
     store_entry(facade, &entry)?;
     let new_version = version(entry.version)?;
@@ -493,6 +523,9 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
     }
     vault.set("keyVersion", Value::I64(new_version));
     vault.set("recoveryOn", Value::string(if recovery { "Y" } else { "N" }));
+    if !header.is_empty() {
+        vault.set("headerCipher", Value::string(&header));
+    }
     // the new version's deposit key, or none: one of the old version would be refused at a deposit
     if operational {
         crate::deposit::store_rotated(facade, params, &mut vault, &chain, &me)?;

@@ -68,13 +68,24 @@ struct Me {
     key: PersonalKey,
 }
 
+/// A recovery key combined for one session, and the vault key it opened.
+struct Pending {
+    session_id: String,
+    key: PersonalKey,
+    opened: Option<(String, u64)>,
+}
+
+/// The calls that may follow a combine without dropping the combined recovery key.
+const RECOVERY_STEPS: [&str; 3] = ["recovery_open_vault", "recovery_rekey", "status"];
+
 /// What the module holds between calls.
 #[derive(Default)]
 pub struct Session {
     me: Option<Me>,
     vault_keys: BTreeMap<(String, u64), Key32>,
-    /// Recovery keys combined here, by id.
-    recovery_keys: BTreeMap<String, PersonalKey>,
+    /// A recovery key combined here, for the session it was combined in, until that session's rekey (or any other
+    /// call): the whole key exists only between the combine and the rekey.
+    pending: Option<Pending>,
     /// The recovery sessions this client started, by id, and the ephemeral key of each until its shares combine.
     recovery_sessions: BTreeMap<String, RecoverySession>,
     ephemerals: BTreeMap<String, hpke::SecretKey>,
@@ -203,15 +214,26 @@ impl Session {
         fingerprint::require_checked(&self.key_checks(args)?, &me.key.public().verify, user_id, public)
     }
 
+    /// Drops a combined recovery key, and the vault key it opened.
+    fn drop_pending(&mut self) {
+        if let Some(Pending { opened: Some(slot), .. }) = self.pending.take() {
+            self.vault_keys.remove(&slot);
+        }
+    }
+
     fn dispatch(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
-        match str_of(args, "op")? {
+        let op = str_of(args, "op")?;
+        if self.pending.is_some() && !RECOVERY_STEPS.contains(&op) {
+            self.drop_pending();
+        }
+        match op {
             #[cfg(any(test, feature = "test-vectors"))]
             "vectors" => crate::vectors::generate(),
             "lock" => {
                 // Dropping the keys zeroizes them.
                 self.me = None;
+                self.drop_pending();
                 self.vault_keys.clear();
-                self.recovery_keys.clear();
                 self.recovery_sessions.clear();
                 self.ephemerals.clear();
                 Ok(json!({ "locked": true }))
@@ -323,6 +345,50 @@ impl Session {
                     "rewrapped": rewrapped.as_ref().map(password_wrap_json),
                 }))
             }
+            "vault_key_generated_wrap" => {
+                // a single-secret vault's generated key (§3.11): 256 random bits, HKDF, no Argon2id; made here unless
+                // the page passes the one the user keeps
+                let vault_id = str_of(args, "vault_id")?;
+                let key_version = u64_of(args, "key_version")?;
+                let key = self.vault_key(vault_id, key_version)?;
+                let generated = match args.get("generated").and_then(Value::as_str) {
+                    Some(given) => zeroize::Zeroizing::new(given.to_string()),
+                    None => vault::new_generated_key(rng),
+                };
+                let sealed = vault::wrap_vault_key_with_generated(key, vault_id, key_version, &generated, rng)?;
+                Ok(json!({ "generated": generated.as_str(), "wrap": { "sealed": hex(&sealed) } }))
+            }
+            "vault_key_generated_open" => {
+                let vault_id = str_of(args, "vault_id")?;
+                let key_version = u64_of(args, "key_version")?;
+                let sealed = bytes_of(object_of(args, "wrap")?, "sealed")?;
+                let key =
+                    vault::open_vault_key_with_generated(&sealed, vault_id, key_version, str_of(args, "generated")?)?;
+                self.keep_vault_key(vault_id, key_version, key)?;
+                Ok(json!({ "vault_id": vault_id, "key_version": key_version }))
+            }
+            "vault_key_forget" => {
+                // a page undoes a vault_rotate whose server call failed: the version's key is dropped, which zeroes it
+                let slot = (str_of(args, "vault_id")?.to_string(), u64_of(args, "key_version")?);
+                Ok(json!({ "forgotten": self.vault_keys.remove(&slot).is_some() }))
+            }
+            "item_summary" => self.item_summary(args),
+            "header_seal" => {
+                // a personal vault's header (its name), sealed by the vault key of its current version
+                let vault_id = str_of(args, "vault_id")?;
+                let key_version = u64_of(args, "key_version")?;
+                let key = self.vault_key(vault_id, key_version)?;
+                let sealed = vault::seal_header(key, vault_id, key_version, str_of(args, "header")?.as_bytes(), rng)?;
+                Ok(json!({ "header_cipher": hex(&sealed) }))
+            }
+            "header_open" => {
+                let vault_id = str_of(args, "vault_id")?;
+                let key_version = u64_of(args, "key_version")?;
+                let key = self.vault_key(vault_id, key_version)?;
+                let header = vault::open_header(key, vault_id, key_version, &bytes_of(args, "header_cipher")?)?;
+                let text = std::str::from_utf8(&header).map_err(|_| Error::Format("a header is UTF-8"))?;
+                Ok(json!({ "header": text }))
+            }
             "vault_rotate" => self.vault_rotate(args, rng),
             "deposit_key_new" => {
                 let vault_id = str_of(args, "vault_id")?;
@@ -388,14 +454,14 @@ impl Session {
                 let session = session_from(object_of(args, "session")?)?;
                 let holder_public = public_of(args, "session_holder_public")?;
                 self.require_checked_person(args, &session.holder_user_id, &holder_public)?;
-                let sent = recovery::deliver_share(
-                    &held,
-                    self.signer()?,
-                    &maker.verify,
-                    &session,
-                    &holder_public.verify,
-                    rng,
-                )?;
+                // §3.5: this holder, too, has checked the member's new key before their share helps wrap to it
+                self.require_checked_person(args, &session.subject_user_id, &session.subject_public)?;
+                let starter_held = holder_share_from(object_of(args, "session_holder")?)?;
+                let starter = recovery::Starter {
+                    held: &starter_held,
+                    public: &holder_public,
+                };
+                let sent = recovery::deliver_share(&held, self.signer()?, &maker.verify, &session, starter, rng)?;
                 Ok(session_share_json(&sent))
             }
             "recovery_combine" => self.recovery_combine(args),
@@ -612,10 +678,25 @@ impl Session {
             .as_ref()
             .map(|(public, wrapped)| json!({ "deposit": deposit_json(public), "wrapped_private": hex(wrapped) }));
         let key_version = rotated.key_version;
+        // a personal vault's header goes to the new version with its items
+        let header_cipher = match args.get("header_cipher").and_then(Value::as_str) {
+            Some(sealed) if !sealed.is_empty() => {
+                let old_key = self.vault_key(&vault_id, old_version)?;
+                let header = vault::open_header(old_key, &vault_id, old_version, &unhex(sealed)?)?;
+                Value::String(hex(&vault::seal_header(
+                    &rotated.vault_key,
+                    &vault_id,
+                    key_version,
+                    &header,
+                    rng,
+                )?))
+            }
+            _ => Value::Null,
+        };
         self.keep_vault_key(&vault_id, key_version, rotated.vault_key)?;
         Ok(json!({
             "entry": key_version_json(&entry), "key_version": key_version, "item_keys": item_keys,
-            "member_wraps": member_wraps, "deposit": deposit,
+            "member_wraps": member_wraps, "deposit": deposit, "header_cipher": header_cipher,
         }))
     }
 
@@ -630,7 +711,17 @@ impl Session {
         };
         let vault_key = self.vault_key(item.vault_id, item.key_version)?;
         let current = match args.get("wrapped_item_key").and_then(Value::as_str) {
-            Some(wrapped) if u64_of(args, "wrapped_key_version")? == item.key_version => Some(unhex(wrapped)?),
+            // decision (c): an item key made before this key version (item_key_version, which a rotation leaves) is
+            // replaced at this write, though its wrap was moved to this version
+            Some(wrapped)
+                if u64_of(args, "wrapped_key_version")? == item.key_version
+                    && args
+                        .get("item_key_version")
+                        .and_then(Value::as_u64)
+                        .is_none_or(|made_at| made_at >= item.key_version) =>
+            {
+                Some(unhex(wrapped)?)
+            }
             _ => None,
         };
         let (item_key, wrapped, new_item_key) = match current {
@@ -643,6 +734,44 @@ impl Session {
         };
         let sealed = vault::seal_item_body(&item_key, item, str_of(args, "body")?.as_bytes(), rng)?;
         Ok(json!({ "wrapped_item_key": hex(&wrapped), "sealed_body": hex(&sealed), "new_item_key": new_item_key }))
+    }
+
+    /// An item's header for a list view: its name, type, URIs, tags and unmasked fields, never a masked field's value or
+    /// its notes, so a page lists a vault without holding its secrets. A field is masked when its type says so (the
+    /// page passes the type's masked field names, `masked`) or when its name says it holds a secret.
+    fn item_summary(&self, args: &Value) -> Result<Value, Error> {
+        let item = ItemRef {
+            vault_id: str_of(args, "vault_id")?,
+            item_id: str_of(args, "item_id")?,
+            key_version: u64_of(args, "key_version")?,
+            label: label_of(args)?,
+        };
+        let vault_key = self.vault_key(item.vault_id, item.key_version)?;
+        let item_key = vault::unwrap_item_key(vault_key, &bytes_of(args, "wrapped_item_key")?, item)?;
+        let body = vault::open_item_body(&item_key, item, &bytes_of(args, "sealed_body")?)?;
+        let mut parsed: Value = serde_json::from_slice(&body).map_err(|_| Error::Format("a body is UTF-8 JSON"))?;
+        let masked: Vec<&str> = args
+            .get("masked")
+            .and_then(Value::as_array)
+            .map(|names| names.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let mut fields = serde_json::Map::new();
+        if let Some(Value::Object(given)) = parsed.get("fields") {
+            for (name, value) in given {
+                if !masked.contains(&name.as_str()) && !secret_name(name) {
+                    fields.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        let summary = json!({
+            "type": parsed.get("type").cloned().unwrap_or(Value::Null),
+            "name": parsed.get("name").cloned().unwrap_or(Value::Null),
+            "uris": parsed.get("uris").cloned().unwrap_or(Value::Null),
+            "tags": parsed.get("tags").cloned().unwrap_or(Value::Null),
+            "fields": fields,
+        });
+        scrub(&mut parsed);
+        Ok(summary)
     }
 
     fn lease_approve(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
@@ -816,7 +945,8 @@ impl Session {
 
     /// Combines this holder's own share with the shares delivered to a session it started (each `{share, holder,
     /// public}`: the sealed share, the sender's holder row and their public key), checked against the signed record.
-    /// The recovery key stays here; the session's ephemeral key is dropped once it has combined.
+    /// The recovery key stays here for this session's open and rekey only (any other call drops it); the session and
+    /// its ephemeral key stay until the rekey, so a dropped combine can be made again.
     fn recovery_combine(&mut self, args: &Value) -> Result<Value, Error> {
         let record = self.checked_record(args, args)?;
         let maker = public_of(args, "maker_public")?;
@@ -846,43 +976,76 @@ impl Session {
             .map(|(share, holder, public)| Delivered { share, holder, public })
             .collect();
         let key = recovery::combine_session(&record, &maker.verify, session, ephemeral, own, &delivered)?;
-        self.ephemerals.remove(session_id);
-        self.recovery_keys.insert(record.recovery_key_id.clone(), key);
-        Ok(json!({ "recovery_key_id": record.recovery_key_id }))
+        self.pending = Some(Pending {
+            session_id: session_id.to_string(),
+            key,
+            opened: None,
+        });
+        Ok(json!({ "recovery_key_id": record.recovery_key_id, "session_id": session_id }))
     }
 
-    /// Opens the vault key with a recovery key combined here: the recovery member's wrap, accepted by the vault's
-    /// chain like any member's (a chain this session can anchor: a signer whose key it checked).
+    /// Opens the vault key of a session this module started, with the recovery key combined for it: the recovery
+    /// member's wrap of the session's vault, accepted by the vault's chain like any member's (a chain this session can
+    /// anchor: a signer whose key it checked). The vault key is kept only until the rekey.
     fn recovery_open_vault(&mut self, args: &Value) -> Result<Value, Error> {
+        let session_id = str_of(args, "session_id")?;
+        let Some(session) = self.recovery_sessions.get(session_id) else {
+            return Err(Error::Refused("that recovery session was not started here"));
+        };
+        let Some(pending) = self
+            .pending
+            .as_ref()
+            .filter(|p| p.session_id == session_id && p.opened.is_none())
+        else {
+            return Err(Error::Refused("no recovery key is combined here for that session"));
+        };
         let entries = entries_of(args)?;
         let chain = Chain::verify(&entries, &self.anchors(args)?)?;
         keyversion::check_remembered(&chain, remembered_of(args)?.as_ref())?;
-        let recovery_key_id = str_of(args, "recovery_key_id")?;
-        let Some(recovery_key) = self.recovery_keys.get(recovery_key_id) else {
-            return Err(Error::Refused("that recovery key has not been combined here"));
-        };
         let wrap = member_wrap_of(object_of(args, "wrap")?)?;
-        if wrap.member_user_id != recovery_member_id(recovery_key_id) || wrap.member_key_id != recovery_key_id {
-            return Err(Error::Refused("the wrap is not the recovery key's"));
+        let recovery_key_id = &session.recovery_key_id;
+        if wrap.vault_id != session.vault_id
+            || wrap.member_user_id != recovery_member_id(recovery_key_id)
+            || wrap.member_key_id != *recovery_key_id
+        {
+            return Err(Error::Refused(
+                "the wrap is not the recovery key's wrap of the session's vault",
+            ));
         }
         let (_, signer) = chain.accept_wrap(&wrap)?;
-        let key = vault::open_member_wrap(&wrap, recovery_key, &signer)?;
-        self.keep_vault_key(&wrap.vault_id, wrap.key_version, key)?;
-        Ok(json!({ "vault_id": wrap.vault_id, "key_version": wrap.key_version }))
+        let key = vault::open_member_wrap(&wrap, &pending.key, &signer)?;
+        let (vault_id, key_version) = (wrap.vault_id.clone(), wrap.key_version);
+        self.keep_vault_key(&vault_id, key_version, key)?;
+        if let Some(pending) = self.pending.as_mut() {
+            pending.opened = Some((vault_id.clone(), key_version));
+        }
+        Ok(json!({ "vault_id": vault_id, "key_version": key_version }))
     }
 
     /// The recovery's last step, signed by the recovery key as the vault's recovery member: the next member list,
     /// with the session's member under their new personal key (checked again here) and nothing else changed, the
     /// vault key wrapped to that key, and, when that member was a manager whose wraps the change leaves unsigned, the
-    /// other members' wraps remade.
+    /// other members' wraps remade. Then the combined recovery key, the session and the vault key it opened are
+    /// dropped, whatever the answer: the module keeps nothing of the recovery.
     fn recovery_rekey(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
+        let answer = self.rekey(args, rng);
+        if let Ok(session_id) = str_of(args, "session_id") {
+            self.recovery_sessions.remove(session_id);
+            self.ephemerals.remove(session_id);
+        }
+        self.drop_pending();
+        answer
+    }
+
+    fn rekey(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
         let session_id = str_of(args, "session_id")?;
         let Some(session) = self.recovery_sessions.get(session_id) else {
             return Err(Error::Refused("that recovery session was not started here"));
         };
-        let Some(recovery_key) = self.recovery_keys.get(&session.recovery_key_id) else {
-            return Err(Error::Refused("that recovery key has not been combined here"));
+        let Some(pending) = self.pending.as_ref().filter(|p| p.session_id == session_id) else {
+            return Err(Error::Refused("no recovery key is combined here for that session"));
         };
+        let recovery_key = &pending.key;
         let entries = entries_of(args)?;
         let chain = Chain::verify(&entries, &self.anchors(args)?)?;
         keyversion::check_remembered(&chain, remembered_of(args)?.as_ref())?;
@@ -952,6 +1115,17 @@ impl Session {
         }
         Ok(json!({ "entry": key_version_json(&entry), "wrap": member_wrap_json(&wrap), "rewraps": rewraps }))
     }
+}
+
+/// Whether a field's name says it holds a secret, whatever its type registers: a password, passphrase, secret, key,
+/// token, PIN, one-time code seed, card number or security code.
+fn secret_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        "pass", "secret", "key", "token", "pin", "totp", "seed", "code", "number", "cvv", "share",
+    ]
+    .iter()
+    .any(|word| lower.contains(word))
 }
 
 fn statement_of(name: &str) -> Result<crate::sign::Statement, Error> {

@@ -396,13 +396,32 @@ fn a_recovery_of_k_holders_combines_in_the_module_and_rewraps_to_the_new_key() {
         .unwrap_err()
         .contains("fewer shares"));
 
-    // h1 checks h2's key and the maker's, sees the session and seals its share to the session's ephemeral key.
-    let h1_checks: Vec<Value> = vec![
+    // h1 checks h2's key, the maker's and Alice's new key, sees the session (started by a holder: h2's row) and seals
+    // its share to the session's ephemeral key.
+    let mut h1_checks: Vec<Value> = vec![
         check(&mut holders[1], &mut rng, "pk-h0", &maker_public),
         check(&mut holders[1], &mut rng, "pk-h2", &made[2]["public"]),
     ];
     let deliver = json!({ "op": "recovery_share_deliver", "record": record, "maker_public": maker_public, "held": shares[1],
-                          "session": session, "session_holder_public": made[2]["public"], "key_checks": h1_checks });
+                          "session": session, "session_holder_public": made[2]["public"], "session_holder": shares[2],
+                          "key_checks": h1_checks });
+    assert!(call(&mut holders[1], &mut rng, deliver.clone())
+        .unwrap_err()
+        .contains("has not been checked"));
+    h1_checks.push(check_as(
+        &mut holders[1],
+        &mut rng,
+        "alice",
+        "pk-alice2",
+        &alice2_made["public"],
+    ));
+    let mut deliver = deliver;
+    deliver["key_checks"] = json!(h1_checks);
+    let mut not_a_holder_row = deliver.clone();
+    not_a_holder_row["session_holder"] = shares[0].clone();
+    assert!(call(&mut holders[1], &mut rng, not_a_holder_row)
+        .unwrap_err()
+        .contains("not started by a holder"));
     let sent = call(&mut holders[1], &mut rng, deliver.clone()).unwrap();
     assert!(sent.get("value").is_none() && sent.get("share").is_none());
     // another holder's share does not go out under h1's name, and a session someone else signed is refused
@@ -429,18 +448,45 @@ fn a_recovery_of_k_holders_combines_in_the_module_and_rewraps_to_the_new_key() {
         combine(delivered(&shares[1], &made[1]["public"])),
     )
     .unwrap();
-    assert_eq!(combined, json!({ "recovery_key_id": "rk" }));
+    assert_eq!(combined, json!({ "recovery_key_id": "rk", "session_id": "rs-1" }));
 
-    // h2 opens the vault key through the chain (anchored at Alice's old key, which h2 checked) and rekeys Alice.
+    // h2 opens the vault key through the chain (anchored at Alice's old key, which h2 checked) and rekeys Alice. The
+    // combined key serves only the next open and rekey: any other call drops it, and the combine is made again.
     let entries = json!([s.entry, entry2]);
-    let open = json!({ "op": "recovery_open_vault", "entries": entries, "key_checks": h2_checks, "recovery_key_id": "rk",
+    let open = json!({ "op": "recovery_open_vault", "entries": entries, "key_checks": h2_checks, "session_id": "rs-1",
                        "wrap": recovery_wrap });
-    assert_eq!(call(&mut holders[2], &mut rng, open).unwrap()["key_version"], json!(1));
+    call(
+        &mut holders[2],
+        &mut rng,
+        json!({ "op": "fingerprint", "public": made[0]["public"] }),
+    )
+    .unwrap();
+    assert!(call(&mut holders[2], &mut rng, open.clone())
+        .unwrap_err()
+        .contains("no recovery key is combined"));
+    let mut elsewhere = open.clone();
+    elsewhere["session_id"] = json!("rs-other");
+    assert!(call(&mut holders[2], &mut rng, elsewhere).is_err());
+    call(
+        &mut holders[2],
+        &mut rng,
+        combine(delivered(&shares[1], &made[1]["public"])),
+    )
+    .unwrap();
+    assert_eq!(
+        call(&mut holders[2], &mut rng, open.clone()).unwrap()["key_version"],
+        json!(1)
+    );
     let rekey = json!({ "op": "recovery_rekey", "session_id": "rs-1", "entries": entries, "key_checks": h2_checks });
-    let rekeyed = call(&mut holders[2], &mut rng, rekey).unwrap();
+    let rekeyed = call(&mut holders[2], &mut rng, rekey.clone()).unwrap();
     assert_eq!(rekeyed["entry"]["signer_user_id"], json!("recovery:rk"));
     // Alice was a manager: the wraps she signed (Bob's, the recovery key's) are remade
     assert_eq!(rekeyed["rewraps"].as_array().unwrap().len(), 2);
+    // and then h2's module keeps nothing of the recovery: no vault key, no recovery key, no session
+    let status = call(&mut holders[2], &mut rng, json!({ "op": "status" })).unwrap();
+    assert_eq!(status["vaults"], json!([]));
+    assert!(call(&mut holders[2], &mut rng, open).is_err());
+    assert!(call(&mut holders[2], &mut rng, rekey).is_err());
 
     // Alice's new client accepts the chain through the recovery key (its maker checked) and opens the item.
     let alice2_checks = vec![check(&mut alice2, &mut rng, "pk-h0", &maker_public)];
@@ -469,6 +515,128 @@ fn a_recovery_of_k_holders_combines_in_the_module_and_rewraps_to_the_new_key() {
     assert!(call(&mut holders[2], &mut rng, combine_op)
         .unwrap_err()
         .contains("unknown op"));
+}
+
+/// A personal vault's header (its name) is sealed by the vault key of a version, does not open under another, and a
+/// rotation seals it again under the new version.
+#[test]
+fn a_header_is_sealed_by_its_version_and_a_rotation_reseals_it() {
+    let mut rng = TestRng::new("ops-header");
+    let mut s = shared(&mut rng);
+    let sealed = call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "header_seal", "vault_id": "v", "key_version": 1, "header": "{\"name\":\"Family\"}" }),
+    )
+    .unwrap();
+    let open = |version: u64, cipher: &Value| json!({ "op": "header_open", "vault_id": "v", "key_version": version, "header_cipher": cipher });
+    assert_eq!(
+        call(&mut s.alice, &mut rng, open(1, &sealed["header_cipher"])).unwrap()["header"],
+        json!("{\"name\":\"Family\"}")
+    );
+    let checks = vec![check(&mut s.alice, &mut rng, "pk-bob", &s.bob_made["public"])];
+    let members = json!([
+        { "user_id": "alice", "role": "manage", "key_id": "pk-alice", "public": s.alice_made["public"] },
+        { "user_id": "bob", "role": "read", "key_id": "pk-bob", "public": s.bob_made["public"] },
+    ]);
+    let rotated = call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "vault_rotate", "entries": [s.entry], "members": members, "items": [], "key_checks": checks,
+                "header_cipher": sealed["header_cipher"] }),
+    )
+    .unwrap();
+    assert_eq!(rotated["key_version"], json!(2));
+    assert_eq!(
+        call(&mut s.alice, &mut rng, open(2, &rotated["header_cipher"])).unwrap()["header"],
+        json!("{\"name\":\"Family\"}")
+    );
+    // the old version's header does not open as the new version's
+    assert!(call(&mut s.alice, &mut rng, open(2, &sealed["header_cipher"])).is_err());
+}
+
+/// A single-secret vault's generated key wraps by HKDF (no Argon2id) and opens only with that key.
+#[test]
+fn a_generated_key_wraps_and_opens_a_single_secret_vault() {
+    let mut rng = TestRng::new("ops-generated");
+    let mut maker = Session::default();
+    call(
+        &mut maker,
+        &mut rng,
+        json!({ "op": "vault_key_new", "vault_id": "g", "key_version": 1 }),
+    )
+    .unwrap();
+    let wrapped = call(
+        &mut maker,
+        &mut rng,
+        json!({ "op": "vault_key_generated_wrap", "vault_id": "g", "key_version": 1 }),
+    )
+    .unwrap();
+    let generated = wrapped["generated"].as_str().unwrap().to_string();
+    assert_eq!(generated.replace('-', "").len(), 52);
+    let open = |key: &str| {
+        json!({ "op": "vault_key_generated_open", "vault_id": "g", "key_version": 1, "wrap": wrapped["wrap"],
+                "generated": key })
+    };
+    let mut other = Session::default();
+    let wrong = generated.replace(&generated[..4], "0000");
+    assert!(call(&mut other, &mut rng, open(&wrong)).is_err());
+    assert_eq!(
+        call(&mut other, &mut rng, open(&generated)).unwrap()["key_version"],
+        json!(1)
+    );
+    let mut moved = open(&generated);
+    moved["vault_id"] = json!("h");
+    assert!(call(&mut Session::default(), &mut rng, moved).is_err());
+}
+
+/// A list view gets an item's header and unmasked fields only; an item key made before the current key version is
+/// replaced at the next seal; a page forgets a vault key version it opened.
+#[test]
+fn a_summary_holds_no_secret_and_an_old_item_key_is_replaced() {
+    let mut rng = TestRng::new("ops-summary");
+    let mut s = shared(&mut rng);
+    let body = json!({ "v": 1, "type": "login", "name": "Bank", "uris": ["https://bank.example"], "tags": ["money"],
+                       "notes": "the PIN is 1234",
+                       "fields": { "username": "ada", "password": "hunter2", "pin": "1234", "account": "777" } });
+    let sealed = call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "item_seal", "vault_id": "v", "item_id": "i", "key_version": 1, "body": body.to_string() }),
+    )
+    .unwrap();
+    let summary = call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "item_summary", "vault_id": "v", "item_id": "i", "key_version": 1, "masked": ["account"],
+                "wrapped_item_key": sealed["wrapped_item_key"], "sealed_body": sealed["sealed_body"] }),
+    )
+    .unwrap();
+    assert_eq!(summary["name"], json!("Bank"));
+    assert_eq!(summary["fields"], json!({ "username": "ada" }));
+    assert!(!summary.to_string().contains("hunter2") && !summary.to_string().contains("1234"));
+
+    // the same key version with an item key made at it is kept; one made at an earlier version is replaced
+    let reseal = |made_at: u64| {
+        json!({ "op": "item_seal", "vault_id": "v", "item_id": "i", "key_version": 1, "body": "{}",
+                "wrapped_item_key": sealed["wrapped_item_key"], "wrapped_key_version": 1, "item_key_version": made_at })
+    };
+    assert_eq!(
+        call(&mut s.alice, &mut rng, reseal(1)).unwrap()["new_item_key"],
+        json!(false)
+    );
+    assert_eq!(
+        call(&mut s.alice, &mut rng, reseal(0)).unwrap()["new_item_key"],
+        json!(true)
+    );
+
+    let forget = json!({ "op": "vault_key_forget", "vault_id": "v", "key_version": 1 });
+    assert_eq!(
+        call(&mut s.alice, &mut rng, forget.clone()).unwrap()["forgotten"],
+        json!(true)
+    );
+    assert_eq!(call(&mut s.alice, &mut rng, forget).unwrap()["forgotten"], json!(false));
+    assert!(call(&mut s.alice, &mut rng, reseal(1)).unwrap_err().contains("locked"));
 }
 
 #[test]

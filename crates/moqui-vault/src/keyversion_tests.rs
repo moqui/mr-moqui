@@ -474,6 +474,89 @@ fn a_recovery_entry_only_gives_one_member_a_new_key() {
         2,
     );
     assert!(matches!(refused(Chain::verify(&two, &checked)), Error::Refused(_)));
-    let rotated = by_recovery(vec![rekeyed, bob, rk], 2, 1);
+    let rotated = by_recovery(vec![rekeyed.clone(), bob.clone(), rk.clone()], 2, 1);
     assert!(matches!(refused(Chain::verify(&rotated, &checked)), Error::Refused(_)));
+    // the review's case: Bob dropped and Alice listed twice, her old key kept beside the new one
+    // (signed by the recovery key as it stands, so only the rules refuse it)
+    let mut dropped = by_recovery(vec![rekeyed.clone(), bob.clone(), rk.clone()], 1, 2);
+    dropped[1].members = vec![alice.clone(), rekeyed.clone(), rk.clone()];
+    dropped[1].signature = recovery
+        .signing_key()
+        .sign(Statement::KeyVersion, &refs(&dropped[1].signed_parts()))
+        .to_vec();
+    assert!(matches!(refused(Chain::verify(&dropped, &checked)), Error::Refused(_)));
+    // a member list naming one user twice, with two keys, is refused whoever signs it
+    let twice = KeyVersion::sign(
+        "v",
+        1,
+        2,
+        vec![alice.clone(), rekeyed, bob, rk],
+        "alice",
+        "pk-alice",
+        &p.alice,
+    );
+    assert!(matches!(twice, Err(Error::Refused(_))));
+}
+
+/// A deposit key its manager signed stays accepted after a recovery gives that manager a new key, but not after a
+/// manager's key is changed any other way, nor when a recovery key signs it.
+#[test]
+fn a_deposit_key_survives_its_signers_recovery_only() {
+    let p = people();
+    let mut rng = TestRng::new("keyversion-deposit-recovery");
+    let recovery = PersonalKey::generate(&mut rng);
+    let alice2 = PersonalKey::generate(&mut rng);
+    let alice = member("alice", Role::Manage, &p.alice);
+    let bob = member("bob", Role::Manage, &p.bob);
+    let rk = Member {
+        user_id: recovery_member_id("rk"),
+        role: Role::Manage,
+        key_id: "rk".to_string(),
+        public: recovery.public(),
+    };
+    let rekeyed = Member {
+        key_id: "pk-alice2".to_string(),
+        public: alice2.public(),
+        ..alice.clone()
+    };
+    let first = sign(
+        "v",
+        1,
+        1,
+        vec![alice.clone(), bob.clone(), rk.clone()],
+        "alice",
+        "pk-alice",
+        &p.alice,
+    );
+    let vault_key = vault::new_vault_key(&mut rng);
+    let by_alice = Signer {
+        user_id: "alice",
+        key_id: "pk-alice",
+        key: &p.alice,
+    };
+    let (deposit, _) = vault::new_deposit_key(&vault_key, "v", 1, by_alice, &mut rng).unwrap();
+    let members = vec![rekeyed, bob.clone(), rk.clone()];
+    let recovered = vec![
+        first.clone(),
+        sign("v", 1, 2, members.clone(), "recovery:rk", "rk", &recovery),
+    ];
+    let checked = [p.alice.public().verify];
+    let chain = Chain::verify(&recovered, &checked).unwrap();
+    assert_eq!(chain.accept_deposit(&deposit).unwrap(), p.alice.public().verify);
+    // Bob changing Alice's key (as add#VaultMember does) leaves her old key no say over the deposit key
+    let by_bob = vec![first, sign("v", 1, 2, members, "bob", "pk-bob", &p.bob)];
+    let chain = Chain::verify(&by_bob, &checked).unwrap();
+    assert!(matches!(chain.accept_deposit(&deposit), Err(Error::Refused(_))));
+    // a recovery key never signs a deposit key
+    let by_recovery = Signer {
+        user_id: "recovery:rk",
+        key_id: "rk",
+        key: &recovery,
+    };
+    let (signed_by_recovery, _) = vault::new_deposit_key(&vault_key, "v", 1, by_recovery, &mut rng).unwrap();
+    let chain = Chain::verify(&recovered, &checked).unwrap();
+    assert!(matches!(
+        chain.accept_deposit(&signed_by_recovery),
+        Err(Error::Refused(_))
+    ));
 }

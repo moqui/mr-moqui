@@ -271,6 +271,30 @@ pub fn open_item_body(item_key: &Key32, item: ItemRef, sealed: &[u8]) -> Result<
     aead::open_body(item_key, &refs(&parts), sealed)
 }
 
+/// Seals a personal vault's header (its name, as the client writes it) under the vault key of `key_version`, padded:
+/// the server never sees the name. A rotation seals it again under the new version.
+pub fn seal_header(
+    vault_key: &Key32,
+    vault_id: &str,
+    key_version: u64,
+    header: &[u8],
+    rng: &mut dyn Rng,
+) -> Result<Vec<u8>, Error> {
+    let parts = Names::new(Purpose::VaultHeader, vault_id, "", key_version).parts(&[]);
+    aead::seal_body(vault_key, &refs(&parts), header, rng)
+}
+
+/// Opens a header sealed under `key_version`; one moved to another vault or version does not open.
+pub fn open_header(
+    vault_key: &Key32,
+    vault_id: &str,
+    key_version: u64,
+    sealed: &[u8],
+) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let parts = Names::new(Purpose::VaultHeader, vault_id, "", key_version).parts(&[]);
+    aead::open_body(vault_key, &refs(&parts), sealed)
+}
+
 /// An item key moved from one key version to the next at a rotation: unwrapped by the old vault key, wrapped by the
 /// new. The body is not touched.
 pub fn rewrap_item_key(

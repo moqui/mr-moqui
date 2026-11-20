@@ -114,20 +114,22 @@ feature("two of two holders recover a member's vault to the member's new key, wh
         ok(api(r1, "POST", "/recoveries", { session }), "start#VaultRecovery")
         const early = api(r1, "POST", `/recoveries/${sessionId}/complete`, { expectedRevision: 1, entry: { x: 1 }, wrap: { x: 1 } })
 
-        // r2 sees what the session recovers, checks r1's key and seals its share to the session's ephemeral key
+        // r2 sees what the session recovers, checks r1's key and m's new key, and seals its share to the session's
+        // ephemeral key (the session's starter checked as a holder by their holder row)
         check(r2, r1)
+        check(r2, m)
         const row = api(r2, "GET", "/recoveries").sessionList.find(s => s.recoverySessionId === sessionId)
         const share = r2.c.call("recovery_share_deliver", { record: key.record, maker_public: key.makerPublic, held: held(r2),
-            session: row.session, session_holder_public: row.holderPublic, key_checks: checks(r2) })
+            session: row.session, session_holder_public: row.holderPublic, session_holder: row.holderShare, key_checks: checks(r2) })
         ok(api(r2, "POST", `/recoveries/${sessionId}/shares`, { share }), "deliver#VaultRecoveryShare")
 
         // r1 combines the shares in its client, opens the vault key through the recovery key's wrap, and rekeys m
         const open = api(r1, "GET", `/recoveries/${sessionId}`)
         r1.c.call("recovery_combine", { session_id: sessionId, record: open.record, maker_public: open.makerPublic, held: open.held,
             deliveries: open.deliveries, key_checks: checks(r1) })
-        r1.c.call("recovery_open_vault", { entries: open.entries, key_checks: checks(r1), recovery_key_id: recoveryKeyId,
-            wrap: open.recoveryWrap })
-        const rekeyed = r1.c.call("recovery_rekey", { session_id: sessionId, entries: open.entries, key_checks: checks(r1) })
+        const r1Checks = checks(r1)
+        r1.c.call("recovery_open_vault", { entries: open.entries, key_checks: r1Checks, session_id: sessionId, wrap: open.recoveryWrap })
+        const rekeyed = r1.c.call("recovery_rekey", { session_id: sessionId, entries: open.entries, key_checks: r1Checks })
         const completed = api(r1, "POST", `/recoveries/${sessionId}/complete`, { expectedRevision: open.revision,
             entry: rekeyed.entry, wrap: rekeyed.wrap, rewraps: rekeyed.rewraps })
 
@@ -146,9 +148,10 @@ feature("two of two holders recover a member's vault to the member's new key, wh
         const body = m2.call("item_open", { vault_id: vaultId, item_id: itemId, key_version: 1, wrapped_item_key: item.wrappedItemKey,
             sealed_body: item.bodyCipher }).body
         const events = api(m, "GET", `/vaults/${vaultId}/events`).eventList.map(e => e.eventTypeEnumId)
-        return { recoveryOn, early, completed, opened, body: JSON.parse(body), events }
+        const used = api(m, "GET", "/recoveryKeys").recoveryKeyList.find(k => k.recoveryKeyId === recoveryKeyId).used
+        return { recoveryOn, early, completed, opened, body: JSON.parse(body), events, used }
     },
-    then({ recoveryOn, early, completed, opened, body, events }) {
+    then({ recoveryOn, early, completed, opened, body, events, used }) {
         recoveryOn == "Y"
         refused(early, "other holders' shares")
         completed.revision > 0
@@ -157,5 +160,6 @@ feature("two of two holders recover a member's vault to the member's new key, wh
         events.includes("VeRecoveryStarted")
         events.includes("VeRecoveryShared")
         events.includes("VeRecovery")
+        used == true
     }
 })

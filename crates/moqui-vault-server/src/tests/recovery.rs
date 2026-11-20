@@ -261,9 +261,10 @@ fn k_holders_recover_a_vault_to_a_members_new_key_and_every_member_is_told() {
     .unwrap_err();
     assert!(early.contains("0 of the 1 other holders"), "{early}");
 
-    // h2 sees the session, checks h1's key and the maker's, and seals its share to the session
+    // h2 sees the session, checks h1's key, the maker's and Alice's new key, and seals its share to the session
     h2.check("h1");
     h2.check("h0");
+    h2.check("alice");
     let listed = recent("h2", "list#VaultRecoverySessions", json!({})).unwrap();
     let row = listed["sessionList"]
         .as_array()
@@ -277,7 +278,8 @@ fn k_holders_recover_a_vault_to_a_members_new_key_and_every_member_is_told() {
         .op(
             json!({ "op": "recovery_share_deliver", "record": org.record, "maker_public": org.maker_public,
                     "held": held("h2", &org.recovery_key_id), "session": row["session"],
-                    "session_holder_public": row["holderPublic"], "key_checks": checks }),
+                    "session_holder_public": row["holderPublic"], "session_holder": row["holderShare"],
+                    "key_checks": checks }),
         )
         .unwrap();
     let deliver = json!({ "recoverySessionId": session_id, "share": share });
@@ -297,7 +299,7 @@ fn k_holders_recover_a_vault_to_a_members_new_key_and_every_member_is_told() {
     let checks = h1.checks();
     h1.op(
         json!({ "op": "recovery_open_vault", "entries": open["entries"], "key_checks": checks,
-                  "recovery_key_id": org.recovery_key_id, "wrap": open["recoveryWrap"] }),
+                  "session_id": session_id, "wrap": open["recoveryWrap"] }),
     )
     .unwrap();
     let rekeyed = h1
@@ -346,10 +348,13 @@ fn k_holders_recover_a_vault_to_a_members_new_key_and_every_member_is_told() {
     // Bob's wrap, which Alice's old key signed, was remade by the recovery key, and his client still opens the vault
     open_vault(&mut bob, &vault_id).unwrap();
 
-    // every member was told, at the start and at the end, and each step is an event
-    assert_eq!(recovery_notices(&facade, "alice"), 2);
+    // every member was told, at the start and at the end, and Alice, a manager, to replace the used recovery key;
+    // each step is an event
+    assert_eq!(recovery_notices(&facade, "alice"), 3);
     assert_eq!(recovery_notices(&facade, "bob"), 2);
     assert_eq!(recovery_notices(&facade, "h2"), 0);
+    let keys = super::call_as("bob", "list#VaultRecoveryKeys", json!({})).unwrap();
+    assert_eq!(keys["recoveryKeyList"][0]["used"], json!(true));
     let kinds = event_kinds(&bob, &vault_id);
     for kind in ["VeRecoveryStarted", "VeRecoveryShared", "VeRecovery"] {
         assert!(kinds.iter().any(|k| k == kind), "{kind} in {kinds:?}");
@@ -546,4 +551,117 @@ fn a_single_secret_vault_gets_no_recovery_and_an_operational_vault_keeps_it_or_t
         )
         .unwrap_err();
     assert!(off.contains("recovery on or at least two members"), "{off}");
+
+    // replacing the recovery key (after a recovery used it): the old one removed and a new one listed in one rotation
+    let org2 = make_org(&mut [&mut h0, &mut h1], 2);
+    let checks = alice.checks();
+    let member2 = alice
+        .op(
+            json!({ "op": "recovery_member", "record": org2.record, "maker_public": org2.maker_public,
+                    "key_checks": checks }),
+        )
+        .unwrap();
+    // the failed removal's rotation is undone in the client first
+    alice
+        .op(json!({ "op": "vault_key_forget", "vault_id": vault_id, "key_version": 2 }))
+        .unwrap();
+    let rotated = alice
+        .op(
+            json!({ "op": "vault_rotate", "entries": vault["entries"], "members": [alice.member("manage"), member2],
+                    "items": [], "operational": true, "key_checks": checks, "recovery_keys": org2.recovery_keys() }),
+        )
+        .unwrap();
+    alice
+        .call(
+            "remove#VaultMember",
+            json!({ "vaultId": vault_id, "userId": format!("recovery:{}", org.recovery_key_id),
+                    "expectedRevision": vault["vault"]["revision"], "entry": rotated["entry"],
+                    "itemKeys": rotated["item_keys"], "memberWraps": rotated["member_wraps"],
+                    "deposit": rotated["deposit"]["deposit"], "depositWrappedPrivate": rotated["deposit"]["wrapped_private"] }),
+        )
+        .unwrap();
+    let replaced = alice.call("get#Vault", json!({ "vaultId": vault_id })).unwrap();
+    assert_eq!(replaced["vault"]["recoveryOn"], json!("Y"));
+    let listed: Vec<String> = replaced["memberList"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| text(m, "userId"))
+        .collect();
+    assert!(
+        listed.contains(&format!("recovery:{}", org2.recovery_key_id)),
+        "{listed:?}"
+    );
+    assert!(
+        !listed.contains(&format!("recovery:{}", org.recovery_key_id)),
+        "{listed:?}"
+    );
+}
+
+/// Any person of the vault's member list may cancel a recovery they did not ask for, and a user id that names a
+/// recovery key acts in no vault.
+#[test]
+fn a_member_cancels_a_recovery_and_the_recovery_prefix_is_reserved() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut alice = Client::new(&facade, "alice");
+    let mut bob = Client::new(&facade, "bob");
+    let mut h0 = Client::new(&facade, "h0");
+    let mut h1 = Client::new(&facade, "h1");
+    grant(&facade, "VAULT_TEST_HOLDERS", "VAULT_RECOVERY", &["h0", "h1"]);
+    let org = make_org(&mut [&mut h0, &mut h1], 2);
+    let vault_id = shared_vault(&mut alice, &mut [(&mut bob, "read")]);
+    turn_recovery_on(&mut alice, &vault_id, &org, "h0").unwrap();
+    h1.check("bob");
+    h1.check("h0");
+    // Bob makes a new key; h1 checks it and starts a recovery of Bob
+    let mut bob2 = moqui_vault::ops::Session::default();
+    let bob2_key = new_id("pk");
+    let made = super::op(
+        &mut bob2,
+        json!({ "op": "personal_make", "personal_key_id": bob2_key, "user_id": "bob", "passphrase": "another pass phrase" }),
+    )
+    .unwrap();
+    recent(
+        "bob",
+        "replace#PersonalKey",
+        json!({ "personalKeyId": bob2_key, "public": made["public"], "passphraseWrap": made["passphrase_wrap"],
+                "recoveryWrap": made["recovery_wrap"] }),
+    )
+    .unwrap();
+    h1.check("bob");
+    let session_id = new_id("rs");
+    let checks = h1.checks();
+    let session = h1
+        .op(
+            json!({ "op": "recovery_session_start", "session_id": session_id, "record": org.record,
+                    "maker_public": org.maker_public, "held": held("h1", &org.recovery_key_id), "vault_id": vault_id,
+                    "subject_user_id": "bob", "subject_key_id": bob2_key, "subject_public": made["public"],
+                    "key_checks": checks }),
+        )
+        .unwrap();
+    recent("h1", "start#VaultRecovery", json!({ "session": session })).unwrap();
+    // a stranger cannot cancel it; Alice, a member who did not ask for it, can
+    let carol = Client::new(&facade, "carol");
+    let refused = carol
+        .call("cancel#VaultRecovery", json!({ "recoverySessionId": session_id }))
+        .unwrap_err();
+    assert!(refused.contains("No recovery session"), "{refused}");
+    alice
+        .call("cancel#VaultRecovery", json!({ "recoverySessionId": session_id }))
+        .unwrap();
+    let ended = recent(
+        "h0",
+        "deliver#VaultRecoveryShare",
+        json!({ "recoverySessionId": session_id, "share": { "x": 1 } }),
+    )
+    .unwrap_err();
+    assert!(ended.contains("ended"), "{ended}");
+    assert!(event_kinds(&alice, &vault_id)
+        .iter()
+        .any(|k| k == "VeRecoveryCancelled"));
+
+    super::make_user(&facade, "recovery:rk-imposter");
+    let reserved = super::call_as("recovery:rk-imposter", "list#Vaults", json!({})).unwrap_err();
+    assert!(reserved.contains("reserved for recovery keys"), "{reserved}");
 }

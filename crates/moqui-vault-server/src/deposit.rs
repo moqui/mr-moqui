@@ -254,6 +254,7 @@ fn deposit_in_tx(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibErro
     row.set("itemKeyWrapEnumId", Value::string("VwDeposit"));
     row.set("wrappedItemKey", Value::string(hex(&wrapped)));
     row.set("keyVersion", Value::I64(key_version));
+    row.set("itemKeyVersion", Value::I64(key_version));
     row.set("bodyCipher", Value::string(hex(&sealed)));
     row.set("revision", Value::I64(1));
     row.set("vaultItemTypeId", Value::string(deposit.item_type));

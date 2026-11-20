@@ -184,6 +184,20 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="depositWrappedPrivate"/>
         </out-parameters>
     </service>
+    <service verb="update" noun="VaultSecretWrap" type="rust" location="moqui_vault_server::vaults::update_vault_secret_wrap">
+        <description>A single-secret vault's owner stores its vault key wrapped again (secretWrap): a password's wrap
+            raised to the Argon2id target on an open (the vault crate's vault_key_password_open answers it as rewrapped), a
+            new password, or a generated key (secretKindEnumId changes the kind). Needs a strong, recent sign-in, as
+            fetching a wrapped personal key does; a password's wrap under the Argon2id floor or over its ceiling is
+            refused. Names the vault revision it was made from (expectedRevision). An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="secretKindEnumId"/>
+            <parameter name="secretWrap" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
     <service verb="delete" noun="Vault" type="rust" location="moqui_vault_server::vaults::delete_vault">
         <description>A manager (or a single-secret vault's owner) deletes the vault with its items, their history, its
             members, key versions and recovery wraps, after a recent sign-in (require#RecentAuth's rule); an operational
@@ -284,7 +298,8 @@ along with this software (see the LICENSE.md file). If not, see
             (entry), every item key rewrapped under it (itemKeys: item_id, wrapped_item_key), every remaining member's wrap
             remade (memberWraps). The removed member's wraps are deleted, and a write at the old version is refused from
             then on; the others' earlier wraps stay until they open the new version (ack#VaultKeyVersion). Removing the
-            recovery key's member turns recovery off. A vault keeps a manager, and an operational vault recovery on or two
+            recovery key's member turns recovery off; listing a new recovery key in the same rotation replaces it (after
+            a recovery used it). A vault keeps a manager, and an operational vault recovery on or two
             members. An operational vault takes the new version's
             deposit key the rotation made (deposit, depositWrappedPrivate, signed by the caller), else its deposit key is
             cleared. Two events: the removal and the rotation.</description>
@@ -294,6 +309,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="expectedRevision" type="Long" required="true"/>
             <parameter name="entry" type="Map" required="true"/>
             <parameter name="itemKeys" type="List"><description>Every item's key; none for a vault with no items</description></parameter>
+            <parameter name="headerCipher"><description>A personal vault's header sealed again under the new key version
+                (the vault crate's vault_rotate answers it, given the old one): required when the vault has a
+                header</description></parameter>
             <parameter name="memberWraps" type="List" required="true"/>
             <parameter name="deposit" type="Map"/>
             <parameter name="depositWrappedPrivate"/>
@@ -580,8 +598,11 @@ along with this software (see the LICENSE.md file). If not, see
             made from (expectedRevision): the next member list (entry), signed by the recovery key as the vault's recovery
             member, giving the session's member their new key and changing nothing else; the vault key wrapped to that key
             (wrap); and, when the member was a manager, a new wrap for each member whose wrap their old key signed
-            (rewraps). Needs k − 1 other holders' shares in the session, VAULT_RECOVERY and a recent sign-in. The member's
-            wraps to the lost key are deleted. An event and a notice to every member of the vault.</description>
+            (rewraps). Needs k − 1 other holders' shares in the session (from holders who still hold VAULT_RECOVERY), the
+            new key still the member's active one, VAULT_RECOVERY and a recent sign-in. The member's wraps to the lost key
+            are deleted. The recovery key is then marked used (usedDate): the recovering client held it whole, so the
+            managers of every vault that lists it are told to replace it (remove#VaultMember of it, listing the new
+            recovery key in the same rotation). An event and a notice to every member of the vault.</description>
         <in-parameters>
             <parameter name="recoverySessionId" required="true"/>
             <parameter name="expectedRevision" type="Long" required="true"/>
@@ -592,8 +613,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>
     <service verb="cancel" noun="VaultRecovery" type="rust" location="moqui_vault_server::recovery::sessions::cancel_vault_recovery">
-        <description>The holder who started a recovery, or a manager of the vault, cancels it before it completes. An
-            event.</description>
+        <description>The holder who started a recovery, the member it recovers, or any other person in the vault's
+            member list (each is told of the start) cancels it before it completes. An event.</description>
         <in-parameters><parameter name="recoverySessionId" required="true"/></in-parameters>
         <out-parameters><parameter name="recoverySessionId"/></out-parameters>
     </service>

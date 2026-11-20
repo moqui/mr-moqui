@@ -337,18 +337,36 @@ impl SessionShare {
     }
 }
 
-/// A holder's part in a recovery: checks the session's signature by the recovering holder (whose key the caller has
-/// checked), opens their own share (checking the maker's signature) and seals it to the session's ephemeral key,
-/// signed. The share is never shown to the holder or their page.
+/// Who started a session: their holder row (the maker's signature over their key and share) and their public key.
+#[derive(Clone, Copy, Debug)]
+pub struct Starter<'a> {
+    pub held: &'a HolderShare,
+    pub public: &'a PersonalPublic,
+}
+
+/// A holder's part in a recovery: checks that the session's starter is a holder of this recovery key (their holder row,
+/// signed by the maker over their key) and that they signed the session, opens this holder's own share (checking the
+/// maker's signature) and seals it to the session's ephemeral key, signed. The share is never shown to the holder or
+/// their page.
 pub fn deliver_share(
     held: &HolderShare,
     me: Signer,
     maker: &VerifyingKey,
     session: &RecoverySession,
-    session_holder: &VerifyingKey,
+    starter: Starter,
     rng: &mut dyn Rng,
 ) -> Result<SessionShare, Error> {
-    session.verify(session_holder)?;
+    let first = starter.held;
+    if first.recovery_key_id != session.recovery_key_id
+        || first.holder_user_id != session.holder_user_id
+        || first.holder_key_id != session.holder_key_id
+    {
+        return Err(Error::Refused(
+            "the session was not started by a holder of this recovery key",
+        ));
+    }
+    first.verify(starter.public, maker)?;
+    session.verify(&starter.public.verify)?;
     if held.recovery_key_id != session.recovery_key_id {
         return Err(Error::Refused("a share of another recovery key"));
     }

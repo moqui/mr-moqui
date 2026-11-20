@@ -269,6 +269,9 @@ fn list_vault_recovery_sessions(_params: &Params, facade: &EntityFacade) -> Out 
                 "vaultKindEnumId": vault.as_ref().map(|v| field(v, "vaultKindEnumId")).unwrap_or_default(),
                 "vaultName": vault.as_ref().map(|v| field(v, "vaultName")).unwrap_or_default(),
                 "deliveredBy": delivered, "expiresAt": int_field(row, "expiresAt"),
+                // the starter's holder row, which a holder's client checks against the maker's key before sealing
+                "holderShare": holder_row(facade, &field(row, "recoveryKeyId"), &field(row, "holderUserId"))?
+                    .map(|held| holder_share_json(&held)).unwrap_or(Json::Null),
             }));
         }
     }
@@ -428,6 +431,14 @@ fn complete_vault_recovery(params: &Params, facade: &EntityFacade) -> Out {
         .filter(|user_id| *user_id != me)
         .collect();
     let needed = int_field(&key, "sharesNeeded") - 1;
+    // a delivering holder who no longer holds VAULT_RECOVERY, or the share, does not count
+    let mut counted = BTreeSet::new();
+    for user_id in &shares {
+        if super::user_may_hold(user_id)? && holder_row(facade, &session.recovery_key_id, user_id)?.is_some() {
+            counted.insert(user_id.clone());
+        }
+    }
+    let shares = counted;
     if (shares.len() as i64) < needed {
         return Err(fail(format!(
             "{} of the {needed} other holders' shares needed are in this recovery",
@@ -447,6 +458,20 @@ fn complete_vault_recovery(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("A recovery keeps the key version"));
     }
     let subject = &session.subject_user_id;
+    // the new key is still the member's active one
+    let still_active =
+        active_key(facade, subject)?.is_some_and(|row| field(&row, "personalKeyId") == session.subject_key_id);
+    if !still_active {
+        return Err(fail(format!(
+            "The session's new key is no longer {subject}'s active key"
+        )));
+    }
+    // each person once, on both sides, so the member's old key is gone (the chain checks it too)
+    let people: BTreeSet<&str> = entry.members.iter().map(|m| m.user_id.as_str()).collect();
+    let before: BTreeSet<&str> = latest.members.iter().map(|m| m.user_id.as_str()).collect();
+    if people.len() != entry.members.len() || people != before {
+        return Err(fail("A recovery keeps the same members, each once"));
+    }
     let given = entry.member(subject, &session.subject_key_id);
     if given.is_none_or(|m| m.public != session.subject_public) {
         return Err(fail(format!(
@@ -534,6 +559,8 @@ fn complete_vault_recovery(params: &Params, facade: &EntityFacade) -> Out {
     row.set("statusId", Value::string(COMPLETED));
     row.set("endedDate", now());
     row.update(facade)?;
+    // the recovering client held the whole recovery key: it is used, and every vault that lists it should replace it
+    super::mark_used(facade, &session.recovery_key_id)?;
     let mut holders: Vec<String> = shares.into_iter().collect();
     holders.insert(0, me.clone());
     events::write(
@@ -569,11 +596,12 @@ fn cancel_vault_recovery(params: &Params, facade: &EntityFacade) -> Out {
     let session_id = required(params, "recoverySessionId")?;
     let mut row = session_row(facade, &session_id, true)?;
     let vault_id = field(&row, "vaultId");
-    let manages = match vault_row(facade, &vault_id, false) {
-        Ok(vault) => membership(facade, &vault, &me)?.is_some_and(|m| field(&m, "roleEnumId") == "VrManage"),
+    // any person of the vault's member list (the member recovered among them), told of the start, may stop it
+    let member = match vault_row(facade, &vault_id, false) {
+        Ok(vault) => membership(facade, &vault, &me)?.is_some(),
         Err(_) => false,
     };
-    if field(&row, "holderUserId") != me && !manages {
+    if field(&row, "holderUserId") != me && field(&row, "subjectUserId") != me && !member {
         return Err(fail(format!("No recovery session {session_id}")));
     }
     if field(&row, "statusId") != OPEN {
