@@ -14,6 +14,41 @@
 
 use super::*;
 
+/// SEC-CLU-88: a gRPC connection that sends nothing ends after its first-byte wait; one that sent something ends once it
+/// has had no call in flight for the idle period, and not while a call is in flight.
+#[tokio::test]
+async fn a_grpc_connection_with_nothing_sent_or_no_call_in_flight_closes() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let short = std::time::Duration::from_millis(150);
+    let limit = std::time::Duration::from_secs(5);
+    // nothing sent
+    let (_client, server) = tokio::io::duplex(64);
+    let mut silent = Idle::with_limits(server, Arc::new(crate::http::Activity::new()), short, short * 2);
+    let mut buf = [0_u8; 8];
+    let started = std::time::Instant::now();
+    let read = tokio::time::timeout(limit, silent.read(&mut buf))
+        .await
+        .expect("closed")
+        .unwrap();
+    assert_eq!(read, 0, "EOF");
+    assert!(started.elapsed() >= short);
+    // a byte, then a call in flight past the idle period, then none
+    let (mut client, server) = tokio::io::duplex(64);
+    let activity = Arc::new(crate::http::Activity::new());
+    let mut talking = Idle::with_limits(server, Arc::clone(&activity), short, short * 2);
+    client.write_all(b"P").await.unwrap();
+    assert_eq!(talking.read(&mut buf).await.unwrap(), 1);
+    activity.started();
+    let open = tokio::time::timeout(short * 4, talking.read(&mut buf)).await;
+    assert!(open.is_err(), "still open with a call in flight");
+    activity.ended();
+    let read = tokio::time::timeout(limit, talking.read(&mut buf))
+        .await
+        .expect("closed")
+        .unwrap();
+    assert_eq!(read, 0, "EOF once idle");
+}
+
 #[test]
 fn the_pass_authority_serves_plain_h2c_only_on_loopback_unless_told() {
     let public: SocketAddr = "0.0.0.0:4317".parse().unwrap();

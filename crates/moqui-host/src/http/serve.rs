@@ -444,6 +444,7 @@ fn h2_answer(
             peer: remote,
             client: web.guard.client_of(remote.ip(), request.headers()),
             guard: Arc::clone(&web.guard),
+            activity: None,
         };
         request.extensions_mut().insert(caller);
         request.extensions_mut().insert(remote);
