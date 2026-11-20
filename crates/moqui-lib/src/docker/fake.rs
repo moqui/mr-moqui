@@ -19,8 +19,8 @@
 //! files were put ([`FakeEngine::files`], [`FakeEngine::podman_secrets`]).
 //!
 //! What it does on purpose: an image named `missing/...` is not on the host until it is pulled; one named `broken` is
-//! refused at create; on Docker a container of the image `read-only-root` refuses an archive, as Docker refuses one
-//! into a read-only root.
+//! refused at create; a container on the network `absent-net` is refused with a 404 that names no image; on Docker a
+//! container of the image `read-only-root` refuses an archive, as Docker refuses one into a read-only root.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -367,6 +367,9 @@ fn find<'a>(state: &'a mut State, reference: &str) -> Option<&'a mut FakeContain
 fn create(state: &mut State, name: &str, image: &str, body: &serde_json::Value, labels: &serde_json::Value) -> Answer {
     if image == "broken" {
         return message(500, "the daemon is unwell");
+    }
+    if body["HostConfig"]["NetworkMode"] == "absent-net" {
+        return message(404, "network absent-net not found");
     }
     if image.starts_with("missing/") && !state.pulled.contains(image) {
         return message(404, &format!("No such image: {image}"));

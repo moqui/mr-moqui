@@ -76,6 +76,7 @@ fn database() -> ContainerSpec {
         ],
         secrets: vec![secret("postgres-password", PASSWORD)],
         pull: false,
+        allow_host_access: false,
     }
 }
 
@@ -306,7 +307,7 @@ fn on_podman_secrets_are_podman_secrets_and_go_with_their_container() {
     let calls = engine.calls();
     assert_eq!(calls[0], "GET /v1.40/version");
     assert!(
-        calls[1].starts_with("POST /v4.0.0/libpod/secrets/create?name=pg-main-postgres-password-"),
+        calls[1].starts_with("POST /v4.0.0/libpod/secrets/create?name=moqui-"),
         "{calls:?}"
     );
     assert_eq!(calls[2], "POST /v4.0.0/libpod/containers/create");
@@ -319,6 +320,8 @@ fn on_podman_secrets_are_podman_secrets_and_go_with_their_container() {
     let secrets = engine.podman_secrets();
     let (source, value) = secrets.iter().next().unwrap();
     assert_eq!(value, PASSWORD);
+    // a short name of its own, whatever the container's and the file's names
+    assert_eq!(source.len(), "moqui-".len() + 24, "{source}");
     let body = engine.requests()[2].json();
     assert_eq!(
         body["secrets"],
@@ -352,16 +355,178 @@ fn on_podman_secrets_are_podman_secrets_and_go_with_their_container() {
         .calls()
         .last()
         .unwrap()
-        .starts_with("DELETE /v4.0.0/libpod/secrets/pg-main-postgres-password-"));
+        .starts_with("DELETE /v4.0.0/libpod/secrets/moqui-"));
+
+    // a container of the longest name, with a long file name: its secret still goes with it
+    let mut spec = database();
+    spec.name = format!("pg-{}", "x".repeat(125));
+    spec.secrets = vec![secret(&"p".repeat(64), PASSWORD)];
+    let id = host.create_spec(&spec).unwrap();
+    assert_eq!(engine.podman_secrets().len(), 1);
+    host.remove_container(&id, false).unwrap();
+    assert!(engine.podman_secrets().is_empty(), "{:?}", engine.podman_secrets());
+
+    // a label naming a secret this driver did not make (another's, or a forged label) deletes nothing
+    let port = engine.address().port.unwrap();
+    let made = host
+        .client()
+        .post(format!(
+            "http://127.0.0.1:{port}/v4.0.0/libpod/secrets/create?name=keep-me"
+        ))
+        .text("application/octet-stream", "another's")
+        .send(false)
+        .unwrap();
+    assert!(made.status() < 300);
+    let forged = host
+        .create(
+            "forged",
+            &json!({"Image": "postgres:17", "Labels": {SECRETS_LABEL: "keep-me,moqui-not-hex"}}),
+            false,
+        )
+        .unwrap();
+    host.remove_container(&forged, true).unwrap();
+    assert!(engine.podman_secrets().contains_key("keep-me"));
+    assert!(!engine
+        .calls()
+        .iter()
+        .any(|call| call.contains("/secrets/keep-me") && call.starts_with("DELETE")));
+
+    // the host's network, when allowed, is Podman's host namespace
+    let mut spec = database();
+    spec.network = Some("host".to_string());
+    spec.allow_host_access = true;
+    assert_eq!(spec.podman_body(&[])["netns"], json!({"nsmode": "host"}));
+    assert!(spec.podman_body(&[]).get("Networks").is_none());
 
     // a container Podman refuses leaves no secret behind
     let mut spec = database();
     spec.image = "broken".to_string();
     let err = host.create_spec(&spec).unwrap_err();
     assert!(err.message().contains("creating container pg-main: 500"), "{err}");
-    assert!(engine.podman_secrets().is_empty(), "{:?}", engine.podman_secrets());
+    assert!(
+        engine.podman_secrets().keys().all(|name| name == "keep-me"),
+        "{:?}",
+        engine.podman_secrets()
+    );
     // Docker is Docker
     assert_eq!(FakeEngine::docker().host().engine().unwrap(), Engine::Docker);
+}
+
+fn bind(source: &str, target: &str) -> Mount {
+    Mount {
+        kind: MountKind::Bind,
+        source: source.to_string(),
+        target: target.to_string(),
+        read_only: true,
+    }
+}
+
+/// A secret named by its place when it is a setting's name, found with its newline trimmed; no mount where the secret
+/// files go; no engine socket or host network unless the spec allows it; a 404 that names no image is no pull.
+#[test]
+fn names_mounts_sockets_and_the_hosts_network_are_held_to_the_rules() {
+    let text = String::from_utf8(PASSWORD.to_vec()).unwrap();
+    // in a setting's or a label's name: its place, never the name
+    let mut spec = database();
+    spec.env.push((text.clone(), "x".to_string()));
+    let err = spec.check().unwrap_err();
+    assert!(err.message().contains("the name of setting #2"), "{err}");
+    assert!(!err.message().contains(&text), "{err}");
+    let mut spec = database();
+    spec.labels.push((format!("x.{text}"), "x".to_string()));
+    let err = spec.check().unwrap_err();
+    assert!(
+        err.message().contains("the name of label #1") && !err.message().contains(&text),
+        "{err}"
+    );
+    // a value read from a file with its newline is found without it
+    let mut spec = database();
+    spec.secrets = vec![secret("postgres-password", format!("{text}\n").as_bytes())];
+    spec.env.push(("POSTGRES_PASSWORD".to_string(), text.clone()));
+    assert!(spec
+        .check()
+        .unwrap_err()
+        .message()
+        .contains("environment (POSTGRES_PASSWORD)"));
+
+    // a volume or a bind at, inside or around /run/secrets
+    for target in [
+        "/run/secrets",
+        "/run/secrets/",
+        "/run/secrets/postgres-password",
+        "/run",
+        "/",
+        "//run/./secrets",
+    ] {
+        let mut spec = database();
+        spec.mounts.push(bind("/srv/data", target));
+        assert!(
+            spec.check()
+                .unwrap_err()
+                .message()
+                .contains("where its secret files go"),
+            "{target}"
+        );
+    }
+    for target in ["run/x", "/data/../run/secrets"] {
+        let mut spec = database();
+        spec.mounts.push(bind("/srv/data", target));
+        assert!(
+            spec.check().unwrap_err().message().contains("not an absolute path"),
+            "{target}"
+        );
+    }
+    let mut spec = database();
+    spec.mounts.push(bind("/srv/data", "/run/secret-other"));
+    assert!(spec.check().is_ok());
+
+    // an engine's socket, or a directory holding one, and the host's network: only when allowed
+    for source in [
+        "/var/run/docker.sock",
+        "/var/run",
+        "/run/podman/podman.sock",
+        "/run/user/1000/podman/podman.sock",
+        "/run/user/1000",
+        "/home/app/.docker/run/docker.sock",
+        "/",
+    ] {
+        let mut spec = database();
+        spec.mounts.push(bind(source, "/data"));
+        assert!(spec.check().unwrap_err().message().contains("API socket"), "{source}");
+        spec.allow_host_access = true;
+        assert!(spec.check().is_ok(), "{source} allowed");
+    }
+    let mut spec = database();
+    spec.mounts.push(bind("/srv/app/config", "/config"));
+    assert!(spec.check().is_ok());
+    for network in ["host", "HOST", "container:abc"] {
+        let mut spec = database();
+        spec.network = Some(network.to_string());
+        assert!(
+            spec.check()
+                .unwrap_err()
+                .message()
+                .contains("host's or another container's"),
+            "{network}"
+        );
+    }
+    let mut spec = database();
+    spec.network = Some("host".to_string());
+    spec.allow_host_access = true;
+    assert!(spec.check().is_ok());
+
+    // Docker's 404 for a network that is not there is an error, not a pull
+    let engine = FakeEngine::docker();
+    let mut spec = database();
+    spec.network = Some("absent-net".to_string());
+    spec.pull = true;
+    let err = engine.host().create_spec(&spec).unwrap_err();
+    assert!(err.message().contains("404 network absent-net not found"), "{err}");
+    assert!(
+        !engine.calls().iter().any(|call| call.contains("/images/create")),
+        "{:?}",
+        engine.calls()
+    );
 }
 
 #[test]

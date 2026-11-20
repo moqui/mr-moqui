@@ -31,6 +31,17 @@ pub const SECRETS_DIR: &str = "/run/secrets";
 /// A secret this long or longer is refused anywhere inside a value; a shorter one only as a whole value, so a short
 /// secret does not refuse every value it happens to be part of.
 const SUBSTRING_MIN: usize = 8;
+/// The engines' API sockets: a container that binds one, or a directory that holds one, commands the host.
+const ENGINE_SOCKETS: [&str; 6] = [
+    "/var/run/docker.sock",
+    "/run/docker.sock",
+    "/run/podman/podman.sock",
+    "/var/run/podman/podman.sock",
+    "/run/containerd/containerd.sock",
+    "/var/run/containerd/containerd.sock",
+];
+/// The file names of those sockets, wherever they are (a rootless Podman's is under `/run/user/<uid>`).
+const SOCKET_NAMES: [&str; 3] = ["docker.sock", "podman.sock", "containerd.sock"];
 
 /// A secret given to a container as the file `/run/secrets/<name>`, owned by `uid`:`gid` with `mode`. Its value is
 /// zeroized when dropped, and its `Debug` does not show it.
@@ -180,6 +191,43 @@ pub struct ContainerSpec {
     /// The user it runs as (`uid:gid`), when not the image's.
     pub user: Option<String>,
     pub secrets: Vec<SecretFile>,
+    /// Let the container bind an engine's API socket (or a directory holding one) or use the host's network
+    /// ([`Self::check`] refuses both otherwise). The instance kinds never set it.
+    pub allow_host_access: bool,
+}
+
+/// The parts of an absolute path, without empty parts and `.`; `None` when it is not absolute or has a `..`.
+fn path_parts(path: &str) -> Option<Vec<&str>> {
+    if !path.starts_with('/') {
+        return None;
+    }
+    let parts: Vec<&str> = path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect();
+    (!parts.contains(&"..")).then_some(parts)
+}
+
+/// Whether the path `a` is `b`, inside it, or holds it.
+fn overlaps(a: &[&str], b: &[&str]) -> bool {
+    let shorter = a.len().min(b.len());
+    a[..shorter] == b[..shorter]
+}
+
+/// Whether a bind of the host's `source` would reach an engine's API socket: the socket, or a directory that holds
+/// one.
+fn reaches_engine_socket(source: &[&str]) -> bool {
+    let named = source.last().is_some_and(|last| SOCKET_NAMES.contains(last));
+    // a rootless Podman's socket is /run/user/<uid>/podman/podman.sock
+    let rootless = match source {
+        ["run", "user", rest @ ..] => rest.len() < 2 || rest[1] == "podman",
+        _ => false,
+    };
+    let known = ENGINE_SOCKETS
+        .iter()
+        .filter_map(|socket| path_parts(socket))
+        .any(|socket| source.len() <= socket.len() && overlaps(source, &socket));
+    named || rootless || known
 }
 
 /// Whether `name` may be a container's, a volume's or a secret's name, and so a part of an API path or an archive's
@@ -194,17 +242,25 @@ pub fn valid_name(name: &str) -> bool {
 /// Whether `secret` is in `value`: anywhere in it when the secret is [`SUBSTRING_MIN`] bytes or longer, else as the
 /// whole value. Not constant time: both sides are this process's own, and nothing outside it times the check.
 fn holds(value: &[u8], secret: &[u8]) -> bool {
-    if secret.len() < SUBSTRING_MIN {
-        return value == secret;
-    }
-    value.windows(secret.len()).any(|window| window == secret)
+    let one = |secret: &[u8]| {
+        if secret.len() < SUBSTRING_MIN {
+            value == secret
+        } else {
+            value.windows(secret.len()).any(|window| window == secret)
+        }
+    };
+    // a value read from a file often ends in a newline that a setting would not carry
+    let trimmed = secret.trim_ascii();
+    one(secret) || (!trimmed.is_empty() && trimmed.len() != secret.len() && one(trimmed))
 }
 
 impl ContainerSpec {
     /// Refuse a spec that would put a secret where `docker inspect` shows it: a secret's value in an environment
     /// setting (name or value), a label (name or value), the command or the health check's command. Also refuse a
     /// name that is not a valid name, two secrets of one name, a secret with no value or a mode that is not a file
-    /// mode, and a label of the driver's own ([`SECRETS_LABEL`]).
+    /// mode, and a label of the driver's own ([`SECRETS_LABEL`]). A mount at, inside or holding `/run/secrets` is
+    /// refused, so a secret file cannot land in a volume or a host path. Unless [`Self::allow_host_access`], a bind
+    /// that reaches an engine's API socket and the host's network are refused too.
     ///
     /// # Errors
     ///
@@ -222,6 +278,17 @@ impl ContainerSpec {
         if self.labels.iter().any(|(name, _)| name == SECRETS_LABEL) {
             return Err(Error::new(format!(
                 "container {}: the label {SECRETS_LABEL} is the driver's own",
+                self.name
+            )));
+        }
+        self.check_mounts()?;
+        let network = self.network.as_deref().unwrap_or_default();
+        if !self.allow_host_access
+            && (network.eq_ignore_ascii_case("host") || network.to_ascii_lowercase().starts_with("container:"))
+        {
+            return Err(Error::new(format!(
+                "container {}: the network {network} is the host's or another container's, which a container that \
+                 stays does not use",
                 self.name
             )));
         }
@@ -262,15 +329,57 @@ impl ContainerSpec {
         Ok(())
     }
 
-    /// Where `secret` is in what `docker inspect` shows, if anywhere.
+    /// Refuse a mount that overlaps `/run/secrets`, and a bind that reaches an engine's socket unless allowed.
+    fn check_mounts(&self) -> Result<(), Error> {
+        let secrets = path_parts(SECRETS_DIR).unwrap_or_default();
+        for mount in &self.mounts {
+            let Some(target) = path_parts(&mount.target) else {
+                return Err(Error::new(format!(
+                    "container {}: the mount target {:?} is not an absolute path without ..",
+                    self.name, mount.target
+                )));
+            };
+            if overlaps(&target, &secrets) {
+                return Err(Error::new(format!(
+                    "container {}: the mount at {} is at, inside or around {SECRETS_DIR}, where its secret files go",
+                    self.name, mount.target
+                )));
+            }
+            if mount.kind == MountKind::Bind && !self.allow_host_access {
+                let Some(source) = path_parts(&mount.source) else {
+                    return Err(Error::new(format!(
+                        "container {}: the bind source {:?} is not an absolute path without ..",
+                        self.name, mount.source
+                    )));
+                };
+                if reaches_engine_socket(&source) {
+                    return Err(Error::new(format!(
+                        "container {}: the bind of {} reaches a container engine's API socket, which commands the \
+                         host",
+                        self.name, mount.source
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Where `secret` is in what `docker inspect` shows, if anywhere. A setting's or a label's name is told by its
+    /// place, never shown: it may be the secret.
     fn place_of(&self, secret: &[u8]) -> Option<String> {
-        for (name, value) in &self.env {
-            if holds(name.as_bytes(), secret) || holds(value.as_bytes(), secret) {
+        for (index, (name, value)) in self.env.iter().enumerate() {
+            if holds(name.as_bytes(), secret) {
+                return Some(format!("environment (the name of setting #{index})"));
+            }
+            if holds(value.as_bytes(), secret) {
                 return Some(format!("environment ({name})"));
             }
         }
-        for (name, value) in &self.labels {
-            if holds(name.as_bytes(), secret) || holds(value.as_bytes(), secret) {
+        for (index, (name, value)) in self.labels.iter().enumerate() {
+            if holds(name.as_bytes(), secret) {
+                return Some(format!("labels (the name of label #{index})"));
+            }
+            if holds(value.as_bytes(), secret) {
                 return Some(format!("labels ({name})"));
             }
         }
@@ -448,9 +557,13 @@ impl ContainerSpec {
         if let Some(health) = &self.health {
             body["healthconfig"] = health.json();
         }
-        if let Some(network) = &self.network {
-            body["netns"] = json!({ "nsmode": "bridge" });
-            body["Networks"] = json!({ network.clone(): {} });
+        match self.network.as_deref() {
+            Some(network) if network.eq_ignore_ascii_case("host") => body["netns"] = json!({ "nsmode": "host" }),
+            Some(network) => {
+                body["netns"] = json!({ "nsmode": "bridge" });
+                body["Networks"] = json!({ network: {} });
+            }
+            None => {}
         }
         body
     }

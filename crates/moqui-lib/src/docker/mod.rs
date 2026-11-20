@@ -298,7 +298,8 @@ impl DockerHost {
     pub fn create_container(&self, name: &str, body: &serde_json::Value) -> Result<Created, Error> {
         let path = format!("/containers/create?name={}", encode(name));
         let response = self.send(Method::Post, &path, Some(body), CALL_TIMEOUT)?;
-        if response.status() == 404 {
+        // a 404 for something else (a network that is not there) is an error, not a reason to pull
+        if response.status() == 404 && names_an_image(response.body()) {
             return Ok(Created::NoSuchImage);
         }
         if response.status() >= 300 {
@@ -349,7 +350,8 @@ impl DockerHost {
         Ok(())
     }
 
-    /// Remove a container with its anonymous volumes, running or not. One that is not there is removed.
+    /// Remove a container with its anonymous volumes, running or not. One that is not there is removed. This deletes
+    /// no Podman secret: a container made by [`Self::create_spec`] is removed by [`Self::remove_container`].
     ///
     /// # Errors
     ///
@@ -471,6 +473,11 @@ impl DockerHost {
 /// `text` when it is not empty or only white space.
 fn nonempty(text: Option<&str>) -> Option<&str> {
     text.filter(|text| !text.trim().is_empty())
+}
+
+/// Whether a 404 answer's body says an image is missing (Docker's "No such image", Podman's "image not known").
+pub(crate) fn names_an_image(body: &str) -> bool {
+    body.to_ascii_lowercase().contains("image")
 }
 
 /// Percent-encode a query value.

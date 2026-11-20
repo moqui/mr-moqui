@@ -42,8 +42,8 @@ fn header(path: &str, kind: tar::EntryType, size: usize, mode: u32, uid: u32, gi
 }
 
 /// The tar of `secrets`: the directory `run/secrets/` (0755, root's), then each file at its mode and owner. Written
-/// straight into one buffer sized first, so no copy of a value is left behind by a reallocation or a copy loop's
-/// buffer, and zeroized when dropped.
+/// straight into one buffer sized first, so building it leaves no copy behind from a reallocation, and that buffer is
+/// zeroized when dropped. Only this buffer: the HTTP client copies the body into buffers of its own as it sends it.
 ///
 /// # Errors
 ///

@@ -22,7 +22,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use super::archive::secrets_tar;
-use super::podman::{problem_text, read_text};
+use super::podman::{is_source_name, problem_text, read_text};
 use super::spec::{valid_name, ContainerSpec, SECRETS_LABEL};
 use super::{DockerHost, Engine, CALL_TIMEOUT};
 use crate::error::Error;
@@ -30,6 +30,8 @@ use crate::http::{Method, OpenRequest};
 
 /// The longest log tail asked for.
 pub const MAX_LOG_LINES: u32 = 10_000;
+/// The longest grace a stop or restart gives a container before it is killed.
+pub const MAX_GRACE: Duration = Duration::from_secs(10 * 60);
 
 /// What the host says of a container.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -154,18 +156,19 @@ impl DockerHost {
         Ok(())
     }
 
-    /// Stop container `id`, killing it after `grace`; one stopped already is stopped.
+    /// Stop container `id`, killing it after `grace` (at most [`MAX_GRACE`]); one stopped already is stopped.
     ///
     /// # Errors
     ///
     /// When the host refuses it, or has no such container.
     pub fn stop(&self, id: &str, grace: Duration) -> Result<(), Error> {
         let id = checked("container", id)?;
+        let grace = grace.min(MAX_GRACE);
         let response = self.send(
             Method::Post,
             &format!("/containers/{id}/stop?t={}", grace.as_secs()),
             None,
-            CALL_TIMEOUT + grace,
+            CALL_TIMEOUT.saturating_add(grace),
         )?;
         // 304: stopped already
         if response.status() >= 300 && response.status() != 304 {
@@ -174,18 +177,19 @@ impl DockerHost {
         Ok(())
     }
 
-    /// Restart container `id`, killing it after `grace` if it does not stop.
+    /// Restart container `id`, killing it after `grace` (at most [`MAX_GRACE`]) if it does not stop.
     ///
     /// # Errors
     ///
     /// When the host refuses it, or has no such container.
     pub fn restart(&self, id: &str, grace: Duration) -> Result<(), Error> {
         let id = checked("container", id)?;
+        let grace = grace.min(MAX_GRACE);
         let response = self.send(
             Method::Post,
             &format!("/containers/{id}/restart?t={}", grace.as_secs()),
             None,
-            CALL_TIMEOUT + grace,
+            CALL_TIMEOUT.saturating_add(grace),
         )?;
         if response.status() >= 300 {
             return Err(Self::problem(&format!("restarting container {id}"), &response));
@@ -281,7 +285,9 @@ impl DockerHost {
     }
 
     /// Remove container `id`, running or not, with its anonymous volumes when `volumes` (a named volume stays until
-    /// [`Self::remove_volume`]); on Podman its secrets too. One that is not there is removed.
+    /// [`Self::remove_volume`]); on Podman its secrets too: those its [`SECRETS_LABEL`] lists that have the shape of a
+    /// secret this driver made. One that is not there is removed. A container made by [`Self::create_spec`] is removed
+    /// by this, not by [`Self::remove`], which leaves a Podman container's secrets on the host.
     ///
     /// # Errors
     ///
@@ -294,7 +300,7 @@ impl DockerHost {
                 .map(|names| {
                     names
                         .split(',')
-                        .filter(|name| valid_name(name))
+                        .filter(|name| is_source_name(name))
                         .map(str::to_string)
                         .collect()
                 })

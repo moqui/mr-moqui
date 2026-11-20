@@ -21,7 +21,7 @@ use std::io::Read;
 
 use zeroize::Zeroizing;
 
-use super::spec::{ContainerSpec, SecretFile};
+use super::spec::ContainerSpec;
 use super::{Created, DockerHost, CALL_TIMEOUT};
 use crate::error::Error;
 use crate::http::{Method, OpenRequest};
@@ -39,13 +39,30 @@ pub fn is_podman(version: &serde_json::Value) -> bool {
         .is_some_and(|components| components.iter().any(|component| component["Name"] == "Podman Engine"))
 }
 
-/// The Podman secret's name for `secret` of the container `container`: unique, so a secret left by a failed attempt
-/// never stands in the way of the next.
-fn source_name(container: &str, secret: &SecretFile) -> Result<String, Error> {
-    let mut nonce = [0u8; 6];
+/// The prefix of the Podman secrets this driver makes.
+const SOURCE_PREFIX: &str = "moqui-";
+/// The hex digits after it.
+const SOURCE_HEX: usize = 24;
+
+/// A new Podman secret's name: [`SOURCE_PREFIX`] and 24 random hex digits, so it is short whatever the container's and
+/// the file's names, and a secret left by a failed attempt never stands in the way of the next. The file's name in the
+/// container is the mount's target, not this.
+fn source_name() -> Result<String, Error> {
+    let mut nonce = [0u8; SOURCE_HEX / 2];
     getrandom::fill(&mut nonce).map_err(|err| Error::new(format!("no randomness for a secret's name: {err}")))?;
     let nonce: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
-    Ok(format!("{container}-{}-{nonce}", secret.name))
+    Ok(format!("{SOURCE_PREFIX}{nonce}"))
+}
+
+/// Whether `name` has the shape of a Podman secret this driver made ([`source_name`]): only those are deleted when a
+/// label names them.
+pub(crate) fn is_source_name(name: &str) -> bool {
+    name.strip_prefix(SOURCE_PREFIX).is_some_and(|hex| {
+        hex.len() == SOURCE_HEX
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
 }
 
 impl DockerHost {
@@ -117,7 +134,7 @@ impl DockerHost {
             .allow_in_sim(true)
             .json(body)
             .send(false)?;
-        if response.status() == 404 && response.body().contains("image") {
+        if response.status() == 404 && super::names_an_image(response.body()) {
             return Ok(Created::NoSuchImage);
         }
         if response.status() >= 300 {
@@ -136,9 +153,11 @@ impl DockerHost {
         let mut sources: Vec<String> = Vec::new();
         let made = (|| -> Result<String, Error> {
             for secret in &spec.secrets {
-                let source = source_name(&spec.name, secret)?;
+                let source = source_name()?;
+                // listed first, so a create that fails after Podman made it is still cleaned up (a delete of one that
+                // is not there is a delete)
+                sources.push(source.clone());
                 self.create_podman_secret(&source, &secret.bytes)?;
-                sources.push(source);
             }
             let body = spec.podman_body(&sources);
             match self.create_podman_container(&spec.name, &body)? {
