@@ -273,6 +273,12 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     conn.execute("INSERT INTO ext_note VALUES ('from the second database')", &[])
         .unwrap();
     drop(conn);
+    // the cluster's own socket asks for the password in clear text, which the driver sends to no server over TCP (the
+    // relay is TCP to it): the second database asks for scram-sha-256, as an external server does
+    let hba = data.join("pg_hba.conf");
+    let rules = std::fs::read_to_string(&hba).unwrap();
+    std::fs::write(&hba, format!("local ext_spec all scram-sha-256\n{rules}")).unwrap();
+    moqui_core::entity::info::run_sql(&facade, "transactional", "SELECT pg_reload_conf()", 0).unwrap();
     let port = tcp_relay(Path::new(&data).join(".s.PGSQL.5432"));
 
     // a socket host is refused: only TCP
