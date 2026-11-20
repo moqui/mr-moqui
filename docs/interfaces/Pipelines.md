@@ -475,8 +475,9 @@ after it ended or passed its time; 401 for a token that is not a job token of th
 `max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches (counted again once one is
 stored, so uploads sent at once do not each pass it). What a repository, a run's owner and an untrusted run keep is
 capped (`max-repository-upload-bytes`, 10 GiB; `max-owner-upload-bytes`, none; `max-untrusted-run-upload-bytes`, 1 GiB
-over all its jobs; 0, no cap). Caches count toward a cap, so to make room for an upload (its `Content-Length`, else
-its kind's limit) the least recently used caches under the cap are evicted; an artifact or a report never is. An
+over all its jobs; 0, no cap). Caches count toward a cap, so to make room for a trusted run's upload (its `Content-Length`,
+before it is stored; else the bytes it stored, after) the least recently used caches under the cap are evicted; an
+artifact or a report never is, and an untrusted run's upload evicts none. An
 upload still past a cap is
 refused (`GitCiStorageQuota`), one that would pass it is cut there and refused the same way, and an upload is
 counted again once stored, so of two at once the one that went past the cap is taken back. Artifacts stored before

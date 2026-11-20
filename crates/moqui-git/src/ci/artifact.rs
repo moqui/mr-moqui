@@ -234,7 +234,8 @@ pub fn store(
     // the cap that cuts the upload, when one does: an upload past it is refused as the quota's, not the kind's limit
     let mut capped: Option<(&str, &str, u64)> = None;
     // an untrusted run (a fork's, a review push's, an approved one of an account without update) keeps a smaller total
-    let untrusted = (!is_yes(run, "trusted")).then(|| field(run, "pipelineRunId")).flatten();
+    let trusted = is_yes(run, "trusted");
+    let untrusted = (!trusted).then(|| field(run, "pipelineRunId")).flatten();
     let caps = [
         (
             "max-repository-upload-bytes",
@@ -261,17 +262,28 @@ pub fn store(
             backfill_owners(entity);
         }
         let mut used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
-        // caches count toward the cap and are kept while they are used, so room for the upload is made by evicting
-        // the least recently used ones (SEC-GIT-90); an artifact or a report is never evicted
-        let wanted = upload.size.unwrap_or_else(|| upload.kind.max_bytes()).min(cap);
-        if used.saturating_add(wanted) > cap {
-            used = evict_caches(entity, key, id, used, cap.saturating_sub(wanted))?;
+        // caches count toward the cap and are kept while they are used, so room for a trusted run's upload is made by
+        // evicting the least recently used ones (SEC-GIT-90); an artifact or a report is never evicted, and an
+        // untrusted run's upload evicts nothing (the caches are trusted runs'). With its size said, the room is made
+        // before; without, the caches count as room and are evicted for the bytes stored, once they are (below)
+        let mut evictable = 0;
+        if trusted {
+            match upload.size {
+                Some(size) => {
+                    let wanted = size.min(cap);
+                    if used.saturating_add(wanted) > cap {
+                        used = evict_caches(entity, key, id, used, cap.saturating_sub(wanted), None)?;
+                    }
+                }
+                None => evictable = u64::try_from(stored_by_kind(entity, key, id)?.1).unwrap_or(0),
+            }
         }
-        if used >= cap {
+        let kept = used.saturating_sub(evictable);
+        if kept >= cap {
             return Err(quota(what, used, cap, setting));
         }
-        if cap - used < room {
-            room = cap - used;
+        if cap - kept < room {
+            room = cap - kept;
             capped = Some((what, setting, cap));
         }
     }
@@ -338,10 +350,15 @@ pub fn store(
         let Some(id) = id.as_ref().filter(|_| cap > 0) else {
             continue;
         };
-        let used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        let mut used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        // an upload of no said size made room for the bytes it stored (never evicting itself)
+        if used > cap && trusted && upload.size.is_none() {
+            let stored_id = field(&row, "artifactId");
+            used = evict_caches(entity, key, id, used, cap, stored_id.as_deref())?;
+        }
         if used > cap {
             row.delete(entity)?;
-            return Err(quota(what, used - info.size, cap, setting));
+            return Err(quota(what, used.saturating_sub(info.size), cap, setting));
         }
     }
     if upload.kind == Kind::Report {
@@ -355,8 +372,16 @@ pub fn store(
 
 /// Delete the caches kept under `key` `id`, least recently used first (by `lastUsedDate`, else when they were made),
 /// until at most `target` bytes are kept or no cache is left. A cache is rebuilt by the next run that misses it; its
-/// content blob is left to `gc#ContentBlobs`. The bytes kept after.
-fn evict_caches(entity: &EntityFacade, key: &str, id: &str, used: u64, target: u64) -> Result<u64, Error> {
+/// content blob is left to `gc#ContentBlobs`; `keep` (the upload just stored, when it is a cache) is not evicted. The
+/// bytes kept after.
+fn evict_caches(
+    entity: &EntityFacade,
+    key: &str,
+    id: &str,
+    used: u64,
+    target: u64,
+    keep: Option<&str>,
+) -> Result<u64, Error> {
     let mut used = used;
     let caches = entity
         .find(RUN_ARTIFACT)?
@@ -365,7 +390,10 @@ fn evict_caches(entity: &EntityFacade, key: &str, id: &str, used: u64, target: u
         .order_by("lastUsedDate", false)
         .order_by("createdDate", false)
         .list()?;
-    for cache in caches.iter() {
+    for cache in caches
+        .iter()
+        .filter(|cache| keep.is_none() || field(cache, "artifactId").as_deref() != keep)
+    {
         if used <= target {
             break;
         }

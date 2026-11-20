@@ -415,6 +415,51 @@ fn a_jobs_uploads_are_counted_again_once_one_is_stored() {
     assert_eq!(kept, ["A-BESIDE"], "the one past the count was taken back");
 }
 
+/// SEC-GIT-90: an untrusted run's upload evicts no trusted cache, and a trusted upload of no said size evicts caches
+/// for the bytes it stored, not for its kind's whole limit.
+#[test]
+fn only_a_trusted_upload_evicts_caches_and_by_what_it_stored() {
+    let fixture = operator_fixture(
+        "ci-safety-evict",
+        r#"<git-ci max-repository-upload-bytes="100" max-untrusted-run-upload-bytes="0"/>"#,
+    );
+    queued_run(&fixture, Some("acme"));
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("trusted", s("Y"));
+    run.update(&entity).unwrap();
+    let job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
+    let upload = |run: &EntityValue, kind: Kind, name: &str, bytes: &[u8], size: Option<u64>| {
+        let key = format!("key-{name}");
+        let upload = Upload {
+            kind,
+            name,
+            path: None,
+            cache_key: (kind == Kind::Cache).then_some(key.as_str()),
+            retention_days: None,
+            size,
+        };
+        artifact::store(&entity, run, &job, &upload, &mut &bytes[..])
+    };
+    upload(&run, Kind::Cache, "c", &[1u8; 30], None).unwrap();
+    upload(&run, Kind::Cache, "d", &[2u8; 30], None).unwrap();
+    let usage = || super::artifact::stored_by_kind(&entity, "repositoryId", "app").unwrap();
+    assert_eq!(usage(), (0, 60));
+    // an untrusted run's upload: the trusted caches stay, and what is left cuts it
+    let mut untrusted = run.clone();
+    untrusted.set("trusted", s("N"));
+    let refused = upload(&untrusted, Kind::Artifact, "u", &[3u8; 50], Some(50)).unwrap_err();
+    assert!(refused.message().starts_with("GitCiStorageQuota: "), "{refused}");
+    assert_eq!(usage(), (0, 60), "no cache evicted for an untrusted upload");
+    // a trusted upload of no said size: stored, then one cache (the least recently used) evicted for its 50 bytes
+    upload(&run, Kind::Artifact, "a", &[4u8; 50], None).unwrap();
+    assert_eq!(usage(), (50, 30), "one cache, not every one");
+}
+
 /// SEC-GIT-90: an untrusted run keeps at most `git-ci` `max-untrusted-run-upload-bytes` over all its jobs, below the
 /// repository's cap, which has a default now.
 #[test]
