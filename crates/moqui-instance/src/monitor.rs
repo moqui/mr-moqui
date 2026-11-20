@@ -27,7 +27,8 @@
 //!   gets a `ScrapeTarget` per instance, whose metrics carry the instance's id ([`register`]). Removing the instance
 //!   revokes its key and removes its target ([`unregister`]).
 //! - **What the shipped alert rules read** (`tools/report/instance-*.json`): gauges of each instance, from a snapshot of
-//!   the rows that the reconcile job and each link change refresh ([`refresh`]), computed at collection time: how long
+//!   the rows that each member reads again at most every 30 seconds and after a link change ([`refresh`],
+//!   [`mark_changed`]), computed at collection time: how long
 //!   it has been sealed, how long its link has been down, whether its check fails, and the items past their rotation
 //!   age (M5 fills them); and counters of what happened: each unseal (and whether from an address the instance never
 //!   unsealed from before, [`note_seal`]), each failed deploy, and each use of machine access outside a deploy.
@@ -57,6 +58,8 @@ const INGEST_KEY: &str = "moqui.monitor.IngestKey";
 const SCRAPE_TARGET: &str = "moqui.monitor.ScrapeTarget";
 /// How long an instance's ingest key lasts; rotation (M5) makes a new one before it ends.
 const INGEST_KEY_DAYS: i64 = 365;
+/// The most cluster members of an instance's report that its row keeps.
+const MAX_MEMBERS: usize = 256;
 /// The most addresses an instance's row keeps of where it unsealed from.
 const MAX_ADDRESSES: usize = 20;
 
@@ -90,17 +93,63 @@ pub fn scrape_target_id(instance_id: &str) -> String {
     format!("{instance_id}-scrape")
 }
 
-/// Where this manager's instances send their telemetry: `manage@monitor-url`, else the origin of the link's address.
+/// The origin (`scheme://host[:port]`) of a URL and its host, lower case; None when it is none.
+fn origin(url: &str) -> Option<(String, String)> {
+    let (scheme, rest) = url.trim().split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => bracketed.split(']').next().unwrap_or_default(),
+        None => authority.rsplit_once(':').map_or(authority, |(host, _)| host),
+    };
+    Some((
+        format!("{}://{authority}", scheme.to_ascii_lowercase()),
+        host.to_ascii_lowercase(),
+    ))
+}
+
+/// Whether `host` is this machine's loopback, where plain http is allowed.
+fn loopback(host: &str) -> bool {
+    host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Where this manager's instances send their telemetry, with their ingest key: `manage@monitor-url`, else the origin of
+/// `manage@link-url`. It must be https (http only to the loopback), and on the link's host unless
+/// `manage@monitor-other-host` is true in the conf: an instance's ingest key goes nowhere else. None (logged) when it is
+/// not, and when neither is set.
 #[must_use]
 pub fn monitor_url() -> Option<String> {
+    let link = crate::link::manager().and_then(|(url, _)| origin(&url));
     let set = moqui_core::context::conf_env::setting("manage@monitor-url");
-    if !set.trim().is_empty() {
-        return Some(set.trim().trim_end_matches('/').to_string());
+    let (url, host) = if set.trim().is_empty() {
+        link.clone()?
+    } else {
+        let Some(found) = origin(&set) else {
+            tracing::error!("Instances: manage@monitor-url {set:?} is not a URL: provisions give no OTLP address");
+            return None;
+        };
+        found
+    };
+    if !url.starts_with("https://") && !(url.starts_with("http://") && loopback(&host)) {
+        tracing::error!(
+            "Instances: the Monitor address {url} is not https (http only to the loopback): provisions give no OTLP \
+             address"
+        );
+        return None;
     }
-    let (link, _) = crate::link::manager()?;
-    let (scheme, rest) = link.split_once("://")?;
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    (!authority.is_empty()).then(|| format!("{scheme}://{authority}"))
+    let other_host_allowed = moqui_core::context::conf_env::setting("manage@monitor-other-host") == "true";
+    if let Some((_, link_host)) = &link {
+        if *link_host != host && !other_host_allowed {
+            tracing::error!(
+                "Instances: manage@monitor-url's host {host} is not manage@link-url's {link_host} (set \
+                 manage@monitor-other-host to allow it): provisions give no OTLP address"
+            );
+            return None;
+        }
+    }
+    Some(url)
 }
 
 /// The version an instance reports as `service.version`: its image digest's short form and, with component commits,
@@ -254,6 +303,16 @@ fn register_scrape_target(facade: &EntityFacade, step: &Step) -> Result<Option<S
     let url = crate::kinds::expand(&template, &values)?;
     let target_id = scrape_target_id(&instance_id);
     let existing = one(facade, SCRAPE_TARGET, "targetId", &target_id)?;
+    // a target of that id a person made (it names no instance, or another) is theirs: not taken over
+    if let Some(theirs) = existing
+        .as_ref()
+        .filter(|row| field(row, "serviceInstanceId") != instance_id)
+    {
+        return Err(fail(format!(
+            "the scrape target {target_id} is there already and is not this instance's ({:?}): it is left as it is",
+            field(theirs, "url")
+        )));
+    }
     let mut row = match &existing {
         Some(row) => row.clone(),
         None => {
@@ -271,9 +330,8 @@ fn register_scrape_target(facade: &EntityFacade, step: &Step) -> Result<Option<S
     row.set("intervalSeconds", Value::I64(60));
     row.set("timeoutSeconds", Value::I64(10));
     row.set("enabled", Value::string("Y"));
-    if moqui_core::user::has_permission("MONITOR_PRIVATE_NETWORK").unwrap_or(false) {
-        row.set("allowPrivateNetwork", Value::string("Y"));
-    }
+    let private = moqui_core::user::has_permission("MONITOR_PRIVATE_NETWORK").unwrap_or(false);
+    row.set("allowPrivateNetwork", Value::string(if private { "Y" } else { "N" }));
     if existing.is_some() {
         row.update(facade)?;
     } else {
@@ -301,7 +359,9 @@ pub fn unregister(facade: &EntityFacade, instance_id: &str) -> Vec<String> {
                 revoked += 1;
             }
         }
-        let target = one(facade, SCRAPE_TARGET, "targetId", &scrape_target_id(instance_id))?;
+        // only the target the provision made, which names the instance; one a person made of that id stays
+        let target = one(facade, SCRAPE_TARGET, "targetId", &scrape_target_id(instance_id))?
+            .filter(|row| field(row, "serviceInstanceId") == instance_id);
         let removed = target.is_some();
         if let Some(target) = target {
             target.delete(facade)?;
@@ -356,15 +416,37 @@ impl Reading {
     }
 }
 
-/// The last snapshot of the instances, which the gauges read.
-static SNAPSHOT: Mutex<Vec<Reading>> = Mutex::new(Vec::new());
+/// How long a snapshot of the rows serves the gauges before they read the rows again, on each member of a manager
+/// cluster: a member that did not see a link change itself (another member holds that link) is behind by at most this.
+const SNAPSHOT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long after its pairing an instance that never linked counts as down.
+pub const NEVER_LINKED_GRACE_MILLIS: i64 = 10 * 60_000;
+
+/// The last snapshot of the instances, which the gauges read: when it was read, and whether a change was seen since.
+#[derive(Default)]
+struct Snapshot {
+    read_at: Option<std::time::Instant>,
+    dirty: bool,
+    readings: Vec<Reading>,
+}
+
+static SNAPSHOT: Mutex<Snapshot> = Mutex::new(Snapshot {
+    read_at: None,
+    dirty: false,
+    readings: Vec::new(),
+});
+
+/// The facade the gauges read the rows with, set at the start of the server.
+static FACADE: Mutex<Option<EntityFacade>> = Mutex::new(None);
 
 fn millis_of(row: &EntityValue, name: &str) -> Option<i64> {
     row.get(name).and_then(moqui_core::user::value_millis)
 }
 
-/// What the gauges read of each instance that has a container and is not removed.
+/// What the gauges read of each instance that has a container and is not removed. An instance that paired is down
+/// while its link says down or unknown (since then), or never linked past [`NEVER_LINKED_GRACE_MILLIS`].
 pub fn readings(facade: &EntityFacade) -> Result<Vec<Reading>, LibError> {
+    let now = moqui_core::user::now_millis();
     let mut out = Vec::new();
     for row in find(facade, APP_INSTANCE)?.list()?.into_values() {
         if field(&row, "instanceUuid").is_empty() || field(&row, "desiredStateEnumId") == "IdsRemoved" {
@@ -374,10 +456,13 @@ pub fn readings(facade: &EntityFacade) -> Result<Vec<Reading>, LibError> {
         let sealed_since = (!seal.is_empty() && seal != "unsealed")
             .then(|| millis_of(&row, "sealedSince").or_else(|| millis_of(&row, "sealCheckedDate")))
             .flatten();
-        let paired = !field(&row, "linkPairedDate").is_empty();
-        let link_down_since = (paired && field(&row, "linkState") == "down")
-            .then(|| millis_of(&row, "linkCheckedDate"))
-            .flatten();
+        let paired = millis_of(&row, "linkPairedDate");
+        let link_down_since = match (paired, field(&row, "linkState").as_str()) {
+            (None, _) => None,
+            (Some(_), "down" | "unknown") => millis_of(&row, "linkCheckedDate"),
+            (Some(at), "") => Some(at + NEVER_LINKED_GRACE_MILLIS).filter(|since| *since <= now),
+            _ => None,
+        };
         let running = field(&row, "desiredStateEnumId") == "IdsRunning";
         let observed = field(&row, "observedState");
         let check_failing =
@@ -396,15 +481,42 @@ pub fn readings(facade: &EntityFacade) -> Result<Vec<Reading>, LibError> {
 /// Reads the instances again for the gauges; a failure is logged and the last snapshot stays.
 pub fn refresh(facade: &EntityFacade) {
     match readings(facade) {
-        Ok(readings) => *lock(&SNAPSHOT) = readings,
+        Ok(readings) => {
+            let mut snapshot = lock(&SNAPSHOT);
+            snapshot.readings = readings;
+            snapshot.read_at = Some(std::time::Instant::now());
+            snapshot.dirty = false;
+        }
         Err(err) => tracing::error!("Instances: the Monitor snapshot of the instances was not read: {err}"),
     }
+}
+
+/// A link or seal changed: the gauges read the rows again at their next collection, once however many changed (a storm
+/// of reconnects reads them once).
+pub fn mark_changed() {
+    lock(&SNAPSHOT).dirty = true;
+}
+
+/// The snapshot's readings, read again from the rows first when a change was seen or it is older than
+/// [`SNAPSHOT_MAX_AGE`] and the server's facade is known.
+fn current() -> Vec<Reading> {
+    let stale = {
+        let snapshot = lock(&SNAPSHOT);
+        snapshot.dirty || snapshot.read_at.is_none_or(|at| at.elapsed() > SNAPSHOT_MAX_AGE)
+    };
+    if stale {
+        let facade = lock(&FACADE).clone();
+        if let Some(facade) = facade {
+            refresh(&facade);
+        }
+    }
+    lock(&SNAPSHOT).readings.clone()
 }
 
 /// The snapshot's series of one gauge at `now`.
 #[must_use]
 pub fn series(gauge: &str, now: i64) -> Vec<(ValueMap, f64)> {
-    let snapshot = lock(&SNAPSHOT).clone();
+    let snapshot = current();
     match gauge {
         "moqui.instance.items_past_rotation" => {
             // the rotation ages are M5's; until then each environment reports none past its age
@@ -441,15 +553,52 @@ pub const GAUGES: &[&str] = &[
     "moqui.instance.items_past_rotation",
 ];
 
-/// Registers the gauges with this server's telemetry and reads the first snapshot (the extension's start).
+/// Registers the gauges with this server's telemetry, which read the rows through its facade (the extension's start).
 pub fn start(factory: &moqui_core::context::ExecutionContextFactory) {
     let telemetry = moqui_core::telemetry::for_factory(factory);
     for gauge in GAUGES {
         telemetry.observe_gauge_series(gauge, move || series(gauge, moqui_core::user::now_millis()));
     }
     if let Some(facade) = factory.entity() {
+        *lock(&FACADE) = Some(facade.clone());
         refresh(&facade);
     }
+}
+
+/// Once this member's cluster is up: a manager that is alone in its cluster holds no link after its restart, so each
+/// instance its rows say is linked is down until it links again, and the link-down rule sees one that does not. In a
+/// cluster with other live members the links they hold stay as they are.
+pub fn after_cluster_start(factory: &moqui_core::context::ExecutionContextFactory) {
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    let own = moqui_core::cluster::instance_id(factory).unwrap_or_default();
+    let others = moqui_core::cluster::member_report(factory, &facade)
+        .map(|members| members.iter().any(|member| member.live && member.instance_id != own))
+        .unwrap_or(true);
+    if others {
+        return;
+    }
+    let marked = (|| -> Result<usize, LibError> {
+        let mut marked = 0;
+        for mut row in find(&facade, APP_INSTANCE)?
+            .eq("linkState", Value::string("linked"))
+            .list()?
+            .into_values()
+        {
+            row.set("linkState", Value::string("unknown"));
+            row.set("linkCheckedDate", moqui_core::user::now_value());
+            row.update(&facade)?;
+            marked += 1;
+        }
+        Ok(marked)
+    })();
+    match marked {
+        Ok(0) => {}
+        Ok(count) => tracing::info!("Instances: {count} links are unknown until their instances link again"),
+        Err(err) => tracing::error!("Instances: the links held before the restart were not marked: {err}"),
+    }
+    mark_changed();
 }
 
 fn attributes(instance_id: Option<&str>, environment_id: &str, more: &[(&str, &str)]) -> ValueMap {
@@ -489,6 +638,23 @@ pub fn note_action_end(facade: &EntityFacade, action: &EntityValue, status: &str
     let action_enum = field(action, "actionEnumId");
     if status == crate::actions::FAILED && DEPLOY_ACTIONS.contains(&action_enum.as_str()) {
         let instance_id = field(action, "appInstanceId");
+        // a waiting action and the action it ran under its lease are one deploy: counted once, by the first to fail
+        let lease_id = field(action, "leaseId");
+        if !lease_id.is_empty() {
+            let counted = find(facade, crate::common::ACTION)
+                .and_then(|find| find.eq("leaseId", Value::string(&lease_id)).list())
+                .map(|rows| {
+                    rows.into_values().iter().any(|other| {
+                        field(other, "instanceActionId") != field(action, "instanceActionId")
+                            && field(other, "statusEnumId") == crate::actions::FAILED
+                            && field(other, "actionEnumId") == action_enum
+                    })
+                })
+                .unwrap_or(false);
+            if counted {
+                return;
+            }
+        }
         count(
             "moqui.instance.deploys_failed",
             &instance_id,
@@ -553,7 +719,12 @@ pub fn note_members(facade: &EntityFacade, instance_id: &str, members: &[String]
     let _authz = crate::common::authz_off();
     let written = (|| -> Result<(), LibError> {
         let mut row = crate::plan::instance(facade, instance_id)?;
-        let mut sorted = members.to_vec();
+        // an instance's own report: at most MAX_MEMBERS ids of at most 128 characters
+        let mut sorted: Vec<String> = members
+            .iter()
+            .take(MAX_MEMBERS)
+            .map(|member| member.chars().take(128).collect())
+            .collect();
         sorted.sort_unstable();
         let text = sorted.join(",");
         if field(&row, "clusterMembers") != text {

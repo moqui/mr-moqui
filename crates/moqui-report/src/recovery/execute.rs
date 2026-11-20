@@ -228,7 +228,7 @@ pub(crate) fn attempt(
             let adapter = adapter.as_ref().expect("a webhook kind came from an adapter");
             webhook(adapter, row, incident, token)
         }
-        (_, Some(AdapterKind::Instance)) => instance(entity, row, incident),
+        (_, Some(AdapterKind::Instance)) => instance(row, incident),
         (_, None) => Ran::Failed(format!("adapter {adapter_id} does not exist")),
     };
     apply(ec, entity, row, ran, now, attempts)
@@ -527,6 +527,34 @@ fn webhook(adapter: &Adapter, row: &EntityValue, incident: &EntityValue, token: 
 /// The manager's service an `instance` adapter's action runs through, called by name: moqui-report does not depend on
 /// moqui-instance, and a server without the `instances` feature answers that it is not built.
 pub(crate) const INSTANCE_RECOVERY: &str = "org.moqui.dev.InstanceServices.run#InstanceRecovery";
+/// The manager's service that ends what an `instance` action waits on, when it is cancelled or timed out.
+const INSTANCE_CANCEL: &str = "org.moqui.dev.InstanceServices.cancel#InstanceRecovery";
+
+/// An `instance` adapter's action that ended here before the manager's (cancelled, timed out): the manager ends the
+/// instance action it waits on and that action's lease, so it does not run later. A failure is logged.
+fn cancel_on_manager(entity: &EntityFacade, row: &EntityValue, why: &str) {
+    let adapter_id = field(row, "adapterId");
+    let instance_kind = adapters(entity)
+        .map(|adapters| {
+            adapters
+                .iter()
+                .any(|adapter| adapter.id == adapter_id && adapter.kind == AdapterKind::Instance)
+        })
+        .unwrap_or(false);
+    if !instance_kind || field(row, "externalId").is_empty() {
+        return;
+    }
+    let parameters: std::collections::BTreeMap<String, Value> = [
+        ("recoveryActionId", field(row, "actionId")),
+        ("reason", why.to_string()),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), Value::String(value)))
+    .collect();
+    if let Err(error) = call_by_name(INSTANCE_CANCEL, &parameters) {
+        tracing::error!(action = %field(row, "actionId"), %error, "the manager's waiting instance action was not ended");
+    }
+}
 /// The manager's record of an instance action, which a waiting `instance` action is followed on.
 const INSTANCE_ACTION: &str = "moqui.server.instance.InstanceAction";
 
@@ -551,38 +579,21 @@ fn call_by_name(
 }
 
 /// An `instance` adapter's action: the manager's own action on the managed instance (restart, rollback,
-/// isolate-instance, pause-rollout, promote). One that waits for its vault lease is Running, with the `InstanceAction`
-/// as its external id and the lease named, until [`instance_status`] sees it end. A decision no person approved is an
-/// automatic policy's, and the manager refuses its step when it needs a lease and the environment has no machine
-/// access. Nothing here is reverted from Monitor: the manager's actions are its own.
-fn instance(entity: &EntityFacade, row: &mut EntityValue, incident: &EntityValue) -> Ran {
-    let automatic = (|| -> Result<bool, Error> {
-        let decision_id = field(row, "decisionId");
-        Ok(entity
-            .find(super::DECISION)?
-            .eq("decisionId", Value::string(&decision_id))
-            .one()?
-            .is_none_or(|decision| field(&decision, "approvedByUserId").is_empty()))
-    })();
-    let automatic = match automatic {
-        Ok(automatic) => automatic,
-        Err(error) => return Ran::Failed(error.to_string()),
-    };
-    let mut parameters: std::collections::BTreeMap<String, Value> = [
-        ("action", field(row, "action")),
-        ("target", field(row, "target")),
-        ("incidentInstanceId", field(incident, "instanceId")),
-        ("recoveryActionId", field(row, "actionId")),
-    ]
-    .into_iter()
-    .map(|(name, value)| (name.to_string(), Value::String(value)))
-    .collect();
-    parameters.insert("automatic".to_string(), Value::Bool(automatic));
+/// isolate-instance, pause-rollout, promote), named by this action's id alone: the manager reads the step, its approval
+/// and the instance from the rows, and checks the approver against the instance's environment, or for an automatic
+/// policy's decision the environment's automatic recovery and machine access. One that waits for its vault lease is
+/// Running, with the `InstanceAction` as its external id and the lease named, until [`instance_status`] sees it end.
+/// Nothing here is reverted from Monitor: the manager's actions are its own.
+fn instance(row: &mut EntityValue, incident: &EntityValue) -> Ran {
+    let parameters: std::collections::BTreeMap<String, Value> =
+        [("recoveryActionId".to_string(), Value::string(field(row, "actionId")))]
+            .into_iter()
+            .collect();
     row.set(
         "requestJson",
         Value::String(
             json!({"service": INSTANCE_RECOVERY, "action": field(row, "action"), "target": field(row, "target"),
-                   "incidentInstanceId": field(incident, "instanceId"), "automatic": automatic})
+                   "incidentInstanceId": field(incident, "instanceId")})
             .to_string(),
         ),
     );
@@ -714,6 +725,7 @@ pub(crate) fn advance(
     let status = field(row, "statusId");
     if millis(row.get("deadlineDate")).is_some_and(|deadline| now > deadline) {
         row.set("statusId", Value::string("TimedOut"));
+        cancel_on_manager(entity, row, "timed out");
         finish(ec, entity, row, now);
         row.update(entity)?;
         let summary = format!("{} {} timed out", field(row, "action"), field(row, "target"));
@@ -875,6 +887,7 @@ pub(crate) fn cancel(
         return Err(fail("only an active action can be cancelled"));
     }
     row.set("statusId", Value::string("Cancelled"));
+    cancel_on_manager(entity, row, "cancelled");
     finish(ec, entity, row, now);
     row.update(entity)
 }

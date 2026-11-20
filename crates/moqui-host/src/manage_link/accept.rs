@@ -896,13 +896,22 @@ impl Manager for Service {
             .server
             .note_status(&self.conn.instance, self.conn.generation, &status);
         if members_changed {
+            // what Monitor shows of its cluster: a write that fails is logged, and the heartbeat goes on
             let (instance, members) = (self.conn.instance.clone(), status.cluster_members.clone());
-            self.server
+            let written = self
+                .server
                 .on_pool(move |facade| {
                     moqui_instance::monitor::note_members(facade, &instance, &members);
                     Ok(())
                 })
-                .await?;
+                .await;
+            if let Err(status) = written {
+                tracing::error!(
+                    "Manager link: the cluster members of AppInstance {} were not written: {}",
+                    self.conn.instance,
+                    status.message()
+                );
+            }
         }
         if was != sealed {
             let instance = self.conn.instance.clone();

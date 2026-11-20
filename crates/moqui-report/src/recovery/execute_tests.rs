@@ -53,30 +53,56 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
 use serde_json::json;
 
-use super::{advance, attempt, revert, ACTION, ADAPTER, INSTANCE_ACTION};
+use super::{advance, attempt, cancel, revert, ACTION, ADAPTER, INSTANCE_ACTION};
 use crate::regression::field;
 
 /// What the fake manager was asked, each call's parameters.
 static ASKED: Mutex<Vec<BTreeMap<String, Value>>> = Mutex::new(Vec::new());
 
-/// The manager's `run#InstanceRecovery` as moqui-instance registers it, faked: an automatic step is refused (no machine
-/// access), and any other is recorded as an `InstanceAction` that waits for its lease, as a step that opens vault items
-/// does.
+/// A row's field as text.
+fn text_of(row: &EntityValue, name: &str) -> String {
+    row.get(name).map(to_plain_string).unwrap_or_default()
+}
+
+/// The manager's `run#InstanceRecovery` as moqui-instance registers it, faked: it is given the recovery action's id
+/// alone and reads the step from Monitor's rows, as the manager does; an automatic decision's step (no approver) is
+/// refused (no machine access), and any other is recorded as an `InstanceAction` that waits for its lease, as a step
+/// that opens vault items does. What it read is kept in [`ASKED`].
 fn fake_instance_recovery(
     params: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    ASKED.lock().unwrap().push(params.clone());
-    let text = |name: &str| params.get(name).map(to_plain_string).unwrap_or_default();
-    if text("automatic") == "true" {
+    let id = params.get("recoveryActionId").map(to_plain_string).unwrap_or_default();
+    let action = facade.find(ACTION)?.eq("actionId", Value::string(&id)).one()?.unwrap();
+    let decision = facade
+        .find("moqui.monitor.RecoveryDecision")?
+        .eq("decisionId", Value::string(text_of(&action, "decisionId")))
+        .one()?
+        .unwrap();
+    let incident = facade
+        .find(crate::incident::INCIDENT)?
+        .eq("incidentId", Value::string(text_of(&action, "incidentId")))
+        .one()?
+        .unwrap();
+    let asked: BTreeMap<String, Value> = [
+        ("action", text_of(&action, "action")),
+        ("target", text_of(&action, "target")),
+        ("approvedBy", text_of(&decision, "approvedByUserId")),
+        ("incidentInstanceId", text_of(&incident, "instanceId")),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), Value::String(value)))
+    .collect();
+    ASKED.lock().unwrap().push(asked);
+    if text_of(&decision, "approvedByUserId").is_empty() {
         return Err(LibError::new(
-            "An automatic restart opens vault items and has no approver (reasonCode machineAccessRequired)",
+            "An automatic restart has no approver (reasonCode machineAccessRequired)",
         ));
     }
-    let action_id = format!("IA-{}", text("recoveryActionId"));
+    let action_id = format!("IA-{id}");
     let mut row = facade.make_value(INSTANCE_ACTION)?;
     row.set("instanceActionId", Value::string(&action_id));
-    row.set("appInstanceId", Value::string(text("incidentInstanceId")));
+    row.set("appInstanceId", Value::string(text_of(&incident, "instanceId")));
     row.set("statusEnumId", Value::string("IasWaiting"));
     row.set("leaseId", Value::string("LEASE-1"));
     row.create(facade)?;
@@ -86,7 +112,7 @@ fn fake_instance_recovery(
         ("leaseId", Value::string("LEASE-1")),
         (
             "state",
-            Value::string(format!("{} waits for lease LEASE-1", text("action"))),
+            Value::string(format!("{} waits for lease LEASE-1", text_of(&action, "action"))),
         ),
     ]
     .into_iter()
@@ -94,11 +120,33 @@ fn fake_instance_recovery(
     .collect())
 }
 
+/// The manager's `cancel#InstanceRecovery`, faked: the instance action the recovery action names is marked failed.
+fn fake_cancel_instance_recovery(
+    params: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let id = params.get("recoveryActionId").map(to_plain_string).unwrap_or_default();
+    let action = facade.find(ACTION)?.eq("actionId", Value::string(&id)).one()?.unwrap();
+    let mut row = facade
+        .find(INSTANCE_ACTION)?
+        .eq("instanceActionId", Value::string(text_of(&action, "externalId")))
+        .one()?
+        .unwrap();
+    row.set("statusEnumId", Value::string("IasFailed"));
+    row.set(
+        "report",
+        Value::string(params.get("reason").map(to_plain_string).unwrap_or_default()),
+    );
+    row.update(facade)?;
+    Ok(BTreeMap::from([("cancelled".to_string(), Value::Bool(true))]))
+}
+
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["instances"],
         register_services: |map| {
             map.insert("moqui_instance::services::run_instance_recovery", fake_instance_recovery);
+            map.insert("moqui_instance::services::cancel_instance_recovery", fake_cancel_instance_recovery);
             Ok(())
         },
         ..moqui_core::extension::Extension::EMPTY
@@ -187,8 +235,8 @@ fn the_instance_adapter_takes_the_managers_actions_and_waits_for_their_lease() {
         let last = asked.last().unwrap();
         let text = |name: &str| last.get(name).map(to_plain_string).unwrap_or_default();
         assert_eq!(
-            (text("action"), text("incidentInstanceId"), text("automatic")),
-            ("restart".to_string(), "app-1".to_string(), "false".to_string())
+            (text("action"), text("incidentInstanceId"), text("approvedBy")),
+            ("restart".to_string(), "app-1".to_string(), "OPS".to_string())
         );
     }
     advance(&ctx, &facade, &mut restart, &incident, &contact, now + 1000).unwrap();
@@ -215,6 +263,31 @@ fn the_instance_adapter_takes_the_managers_actions_and_waits_for_their_lease() {
     set_status(&facade, "IA-A2", "IasFailed", "the lease was not approved in its time");
     advance(&ctx, &facade, &mut rollback, &incident, &contact, now + 2000).unwrap();
     assert_eq!(field(&rollback, "statusId"), "Failed");
+
+    // a cancelled action ends the manager's waiting action too, so it runs nothing later (and its lease ends there)
+    let mut cancelled = action("A4", "restart", "", Some("OPS"));
+    attempt(&ctx, &facade, &mut cancelled, &incident, &contact, None, now).unwrap();
+    assert_eq!(field(&cancelled, "statusId"), "Running");
+    cancel(&ctx, &facade, &mut cancelled, now + 1000).unwrap();
+    assert_eq!(field(&cancelled, "statusId"), "Cancelled");
+    let waiting = |id: &str| {
+        facade
+            .find(INSTANCE_ACTION)
+            .unwrap()
+            .eq("instanceActionId", Value::string(id))
+            .one()
+            .unwrap()
+            .map(|row| text_of(&row, "statusEnumId"))
+            .unwrap_or_default()
+    };
+    assert_eq!(waiting("IA-A4"), "IasFailed");
+    // and so does one that timed out
+    let mut late = action("A5", "restart", "", Some("OPS"));
+    attempt(&ctx, &facade, &mut late, &incident, &contact, None, now).unwrap();
+    late.set("deadlineDate", crate::regression::stamp(now + 1000));
+    advance(&ctx, &facade, &mut late, &incident, &contact, now + 60_000).unwrap();
+    assert_eq!(field(&late, "statusId"), "TimedOut");
+    assert_eq!(waiting("IA-A5"), "IasFailed");
 
     // an automatic policy's decision: the manager refuses a step that needs a lease without machine access
     let mut automatic = action("A3", "restart", "", None);

@@ -737,7 +737,9 @@ fn an_action_asked_from_a_screen_waits_for_its_lease_then_runs() {
             &requested.action_id,
             "statusEnumId",
         );
-        if status != crate::actions::WAITING || std::time::Instant::now() > until {
+        // a waiting action is running once its lease opens, then done
+        let busy = status == crate::actions::WAITING || status == crate::actions::RUNNING;
+        if !busy || std::time::Instant::now() > until {
             break status;
         }
         std::thread::sleep(Duration::from_millis(100));

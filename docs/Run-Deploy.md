@@ -2106,10 +2106,10 @@ host. A database instance is on the same host as the instances that use it: they
    and a Podman secret on Podman, and the image reads it through its `*_FILE` setting (`POSTGRES_PASSWORD_FILE`,
    `MYSQL_ROOT_PASSWORD_FILE`). OpenSearch reads no such setting: its entrypoint is wrapped to read its admin password
    from the file, so the OpenSearch process has it in its own environment, as the image requires, and `docker inspect`
-   does not. A new MR Moqui instance gets only its one-time pairing token, as the file `moqui-pairing-token`, made after
-   its image is pulled (it works for 15 minutes; the instance's row keeps its SHA-256), and its Monitor ingest key as
-   the file `moqui-ingest-key`, which its telemetry export reads (`telemetry@otlp-headers-file`); its database password
-   reaches it over the manager link (M2), not as a file.
+   does not. A new MR Moqui instance gets two files: its one-time pairing token, `moqui-pairing-token`, made after
+   its image is pulled (it works for 15 minutes; the instance's row keeps its SHA-256), and its Monitor ingest key,
+   `moqui-ingest-key`, which its telemetry export reads (`telemetry@otlp-headers-file`). Its database password reaches
+   it in the bootstrap bundle over the manager link (M2), not as a file.
 8. **All or nothing.** A volume that is there already (an earlier instance's data, with its own credentials) is refused
    before anything is made (`volumeKept`). When a step fails, what the provision made is undone, last first: its
    containers and volumes removed, a database and user it made on a server made before dropped, its deposits withdrawn

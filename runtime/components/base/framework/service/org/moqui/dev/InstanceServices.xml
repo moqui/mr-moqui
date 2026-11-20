@@ -373,17 +373,15 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="run" noun="InstanceRecovery" type="rust" location="moqui_instance::services::run_instance_recovery"
             allow-remote="false" transaction="ignore">
-        <description>Monitor's instance recovery adapter (moqui-report calls it by name): restart and rollback as instance
-            actions, which wait for their lease unless the environment has machine access; isolate-instance drains the
-            instance over its link; pause-rollout and promote stop and let go on the environment's rolling deploys. An
-            automatic decision's step that needs a lease runs only under machine access. MONITOR_RECOVER or
-            INSTANCE_ADMIN, or authorization disabled (the recovery pass).</description>
+        <description>Monitor's instance recovery adapter (moqui-report calls it by name, with authorization disabled):
+            the recovery action's step, read from its RecoveryAction (active) and RecoveryDecision (Approved), never from
+            parameters. Approved by a person: that user must hold INSTANCE_ADMIN and be in the environment's approver
+            group; automatic: the environment must allow automatic recovery and have machine access. restart and rollback
+            are instance actions, which wait for their lease unless the environment has machine access; isolate-instance
+            drains the instance over its link; pause-rollout and promote stop and let go on the environment's rolling
+            deploys. Another caller needs INSTANCE_ADMIN.</description>
         <in-parameters>
-            <parameter name="action" required="true"/>
-            <parameter name="target"/>
-            <parameter name="incidentInstanceId"/>
-            <parameter name="automatic" type="Boolean"/>
-            <parameter name="recoveryActionId"/>
+            <parameter name="recoveryActionId" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="status"><description>done, or waiting for its lease</description></parameter>
@@ -391,6 +389,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="leaseId"/>
             <parameter name="state"/>
         </out-parameters>
+    </service>
+    <service verb="cancel" noun="InstanceRecovery" type="rust" location="moqui_instance::services::cancel_instance_recovery"
+            allow-remote="false" transaction="ignore">
+        <description>Monitor cancelled or timed out an instance adapter's recovery action: the instance action it waits on
+            (its RecoveryAction's externalId) is marked failed and its lease ended, so it runs nothing. One that runs or
+            ended is left as it is.</description>
+        <in-parameters>
+            <parameter name="recoveryActionId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="cancelled" type="Boolean"/></out-parameters>
     </service>
 
 </services>

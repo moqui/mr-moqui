@@ -70,6 +70,8 @@ moqui_core::extension::submit! {
         register_services,
         // the gauges the shipped instance alert rules read (§4.8)
         after_boot: monitor::start,
+        // links held before a restart are unknown until they link again (§4.8)
+        after_cluster_start: monitor::after_cluster_start,
         ..moqui_core::extension::Extension::EMPTY
     }
 }

@@ -79,6 +79,15 @@ pub fn fleet(facade: &EntityFacade, now: i64) -> Result<Vec<BTreeMap<String, Val
         .into_iter()
         .map(|row| (field(&row, "clusterId"), row))
         .collect();
+    // each open incident counted for every instance its instanceId names (a regression's names several)
+    let mut open_incidents: BTreeMap<String, usize> = BTreeMap::new();
+    for incident in find(facade, "moqui.monitor.MonitorIncident")?.list()?.into_values() {
+        if OPEN_INCIDENT.contains(&field(&incident, "statusId").as_str()) {
+            for id in crate::recovery::split(&field(&incident, "instanceId")) {
+                *open_incidents.entry(id).or_default() += 1;
+            }
+        }
+    }
     let mut instances = find(facade, APP_INSTANCE)?.list()?.into_values();
     instances.retain(|row| field(row, "desiredStateEnumId") != "IdsRemoved");
     instances.sort_by_key(|row| (field(row, "environmentId"), field(row, "instanceName")));
@@ -118,13 +127,7 @@ pub fn fleet(facade: &EntityFacade, now: i64) -> Result<Vec<BTreeMap<String, Val
         let last_deploy = deploys
             .iter()
             .max_by_key(|action| millis(action, "startDate").unwrap_or(0));
-        let incidents = find(facade, "moqui.monitor.MonitorIncident")?
-            .eq("instanceId", Value::string(&id))
-            .list()?
-            .into_values()
-            .into_iter()
-            .filter(|incident| OPEN_INCIDENT.contains(&field(incident, "statusId").as_str()))
-            .count();
+        let incidents = open_incidents.get(&id).copied().unwrap_or(0);
         let cluster_id = field(&row, "clusterId");
         let members = field(&row, "clusterMembers");
         let text = |value: String| Value::string(value);

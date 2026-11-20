@@ -14,26 +14,35 @@
 
 //! The manager's end of Monitor's `instance` recovery adapter (plans/Vault-Instances.md §4.8): a recovery action on a
 //! managed instance runs through the manager's own actions, not a webhook to an outside controller. Monitor calls
-//! `run#InstanceRecovery` by name (moqui-report has no dependency on this crate) and follows the `InstanceAction` it
-//! names.
+//! `run#InstanceRecovery` by name with its `RecoveryAction`'s id (moqui-report has no dependency on this crate), and
+//! follows the `InstanceAction` it names; `cancel#InstanceRecovery` ends one that waits.
 //!
-//! - `restart` and `rollback` are instance actions ([`crate::actions::request`]), as a screen asks them: run now when
-//!   they open no vault item or the environment has machine access, else their lease is asked for and they wait for an
-//!   approver, who opens it in the lease dialog (from the incident, beside Approve). A rollback is the deploy path's
-//!   (M3): to the versions recorded on the instance's actions.
-//! - `isolate-instance` drains the instance over its manager link, so its health answers draining and its load
-//!   balancer or edge node stops sending it requests.
+//! What runs, and who it runs for, come from Monitor's rows, never from the call's parameters: the action and its
+//! target from the `RecoveryAction`, which must be active, the approval from its `RecoveryDecision`, which must be
+//! Approved and be of the same incident, action, target and adapter, and the instance from the step's target or the
+//! incident's instance (exactly one managed instance; its id in telemetry is its own, since Monitor's receiver takes it
+//! only under that instance's ingest key).
+//!
+//! - **Approved by a person** (approval mode, or an advisory proposal approved): that user must hold INSTANCE_ADMIN and
+//!   be a member of the environment's approver group when it names one, as a person asking the action on the instance's
+//!   page must.
+//! - **Automatic** (no approver): the environment must allow automatic recovery (`automaticRecovery`, off by default)
+//!   and have machine access, for every action: nobody approves a lease, and nobody chose the action.
+//!
+//! The actions:
+//!
+//! - `restart` and `rollback` are instance actions ([`crate::actions::request`]): run now when they open no vault item
+//!   or the environment has machine access, else their lease is asked for and they wait for an approver, who opens it
+//!   from the incident (Approve goes on to the lease dialog). A rollback is the deploy path's (M3).
+//! - `isolate-instance` drains the instance over its manager link.
 //! - `pause-rollout` stops the environment's rolling deploys at the next member ([`crate::monitor::rollout_paused`]),
 //!   and `promote` lets them go on.
-//!
-//! An automatic policy's action has no person to approve a lease: a step that needs one runs only under the
-//! environment's machine access, and is refused otherwise (`reasonCode machineAccessRequired`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
-use moqui_core::entity::EntityFacade;
+use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_vault_server::lease::LeaseRegistry;
@@ -42,20 +51,9 @@ use crate::actions;
 use crate::common::{fail, field, one, APP_INSTANCE, ENVIRONMENT};
 use crate::plan::{environment_of, instance};
 
-/// What Monitor asks.
-#[derive(Debug, Clone, Default)]
-pub struct Asked {
-    /// restart, rollback, isolate-instance, pause-rollout or promote.
-    pub action: String,
-    /// The step's target: an `AppInstance` id, or for pause-rollout and promote an environment's.
-    pub target: String,
-    /// The incident's instance (its `service.instance.id`, the `AppInstance` id this manager gave it).
-    pub incident_instance: String,
-    /// The decision is an automatic policy's, with no person to approve a lease.
-    pub automatic: bool,
-    /// Monitor's `RecoveryAction`, named in the report.
-    pub recovery_action_id: String,
-}
+const RECOVERY_ACTION: &str = "moqui.monitor.RecoveryAction";
+const RECOVERY_DECISION: &str = "moqui.monitor.RecoveryDecision";
+const INCIDENT: &str = "moqui.monitor.MonitorIncident";
 
 /// What the manager did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -67,58 +65,139 @@ pub struct Answer {
     pub state: String,
 }
 
-/// The `AppInstance` a step acts on: its target, else the incident's instance.
-fn instance_of(facade: &EntityFacade, asked: &Asked) -> Result<String, LibError> {
-    for id in [&asked.target, &asked.incident_instance] {
+/// Monitor's step as its rows say it.
+#[derive(Debug, Clone)]
+struct Step {
+    id: String,
+    action: String,
+    target: String,
+    /// The incident's instances (a regression's may be several).
+    incident_instances: Vec<String>,
+    /// Who approved the decision; empty for an automatic policy's.
+    approved_by: String,
+}
+
+/// Reads a recovery action and its decision: refused when the action is not active, or the decision is not Approved or
+/// not the one the action names.
+fn step_of(facade: &EntityFacade, recovery_action_id: &str) -> Result<Step, LibError> {
+    let row = one(facade, RECOVERY_ACTION, "actionId", recovery_action_id)?
+        .ok_or_else(|| fail(format!("No recovery action {recovery_action_id}")))?;
+    if !matches!(field(&row, "statusId").as_str(), "Persisted" | "Running") {
+        return Err(fail(format!(
+            "Recovery action {recovery_action_id} is {}, not active",
+            field(&row, "statusId")
+        )));
+    }
+    let decision_id = field(&row, "decisionId");
+    let decision = one(facade, RECOVERY_DECISION, "decisionId", &decision_id)?
+        .ok_or_else(|| fail(format!("Recovery action {recovery_action_id} names no decision")))?;
+    if field(&decision, "statusId") != "Approved"
+        || ["incidentId", "action", "target", "adapterId"]
+            .iter()
+            .any(|name| field(&decision, name) != field(&row, name))
+    {
+        return Err(fail(format!(
+            "Recovery decision {decision_id} is not an approved decision of this action"
+        )));
+    }
+    let incident_instances = one(facade, INCIDENT, "incidentId", &field(&row, "incidentId"))?
+        .map(|incident| split(&field(&incident, "instanceId")))
+        .unwrap_or_default();
+    Ok(Step {
+        id: recovery_action_id.to_string(),
+        action: field(&row, "action"),
+        target: field(&row, "target"),
+        incident_instances,
+        approved_by: field(&decision, "approvedByUserId"),
+    })
+}
+
+/// The ids of a comma-separated list.
+pub(crate) fn split(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The one managed instance a step acts on: its target when that is an `AppInstance`, else the incident's instance;
+/// refused when there is none, or several (a version-wide regression names them all: the step must name one).
+fn instance_of(facade: &EntityFacade, step: &Step) -> Result<String, LibError> {
+    if one(facade, APP_INSTANCE, "appInstanceId", &step.target)?.is_some() {
+        return Ok(step.target.clone());
+    }
+    let mut managed = Vec::new();
+    for id in &step.incident_instances {
         if one(facade, APP_INSTANCE, "appInstanceId", id)?.is_some() {
-            return Ok(id.clone());
+            managed.push(id.clone());
         }
     }
-    Err(fail(format!(
-        "{} names no managed instance (target {:?}, the incident's instance {:?})",
-        asked.action, asked.target, asked.incident_instance
-    )))
-}
-
-/// The environment a step acts on: its target when it is one, else the instance's.
-fn environment_for(facade: &EntityFacade, asked: &Asked) -> Result<String, LibError> {
-    if one(facade, ENVIRONMENT, "environmentId", &asked.target)?.is_some() {
-        return Ok(asked.target.clone());
+    match managed.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(fail(format!(
+            "{} names no managed instance (target {:?}, the incident's instances {:?})",
+            step.action, step.target, step.incident_instances
+        ))),
+        several => Err(fail(format!(
+            "The incident names several managed instances ({}): the policy's step must name one as its target",
+            several.join(", ")
+        ))),
     }
-    let instance_id = instance_of(facade, asked)?;
-    Ok(field(&instance(facade, &instance_id)?, "environmentId"))
 }
 
-/// Runs Monitor's recovery step through the manager's actions (see the module doc).
+/// The environment a step acts on: its target when it is one, else its instance's.
+fn environment_for(facade: &EntityFacade, step: &Step) -> Result<EntityValue, LibError> {
+    if let Some(environment) = one(facade, ENVIRONMENT, "environmentId", &step.target)? {
+        return Ok(environment);
+    }
+    let instance_id = instance_of(facade, step)?;
+    environment_of(facade, &instance(facade, &instance_id)?)
+}
+
+/// Whether the step may run in `environment`: its approver's rights, or for an automatic policy's the environment's
+/// automatic recovery and machine access (see the module doc).
+fn authorize(environment: &EntityValue, step: &Step) -> Result<(), LibError> {
+    if !step.approved_by.is_empty() {
+        return actions::check_user(environment, &step.approved_by);
+    }
+    let environment_id = field(environment, "environmentId");
+    if field(environment, "automaticRecovery") != "Y" {
+        return Err(fail(format!(
+            "An automatic {} has no approver, and environment {environment_id} does not allow automatic recovery: \
+             approve the decision instead (reasonCode automaticRecoveryOff)",
+            step.action
+        )));
+    }
+    if field(environment, "machineAccess") != "Y" {
+        return Err(fail(format!(
+            "An automatic {} has no approver, and runs only under environment {environment_id}'s machine access: \
+             approve the decision instead (reasonCode machineAccessRequired)",
+            step.action
+        )));
+    }
+    Ok(())
+}
+
+/// Runs Monitor's recovery action `recovery_action_id` through the manager's actions (see the module doc).
 pub fn run(
     factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
     registry: &Arc<LeaseRegistry>,
-    asked: &Asked,
+    recovery_action_id: &str,
 ) -> Result<Answer, LibError> {
-    let by = format!("recovery action {}", asked.recovery_action_id);
-    match asked.action.as_str() {
+    let step = step_of(facade, recovery_action_id)?;
+    let by = format!("recovery action {}", step.id);
+    match step.action.as_str() {
         "restart" | "rollback" => {
-            let verb = asked.action.as_str();
+            let verb = step.action.as_str();
             if !actions::ACTIONS.iter().any(|(_, known)| *known == verb) {
                 return Err(fail(format!(
                     "{verb} of a managed instance is not built in this server (the deploy path, M3)"
                 )));
             }
-            let instance_id = instance_of(facade, asked)?;
-            let environment = environment_of(facade, &instance(facade, &instance_id)?)?;
-            if asked.automatic && field(&environment, "machineAccess") != "Y" {
-                let (bindings, _) = actions::needs(facade, &instance_id, verb)?;
-                if !bindings.is_empty() {
-                    return Err(fail(format!(
-                        "An automatic {verb} of AppInstance {instance_id} opens vault items ({}) and has no approver: \
-                         it runs only under environment {}'s machine access; approve the decision instead (reasonCode \
-                         machineAccessRequired)",
-                        bindings.join(", "),
-                        field(&environment, "environmentId")
-                    )));
-                }
-            }
+            let instance_id = instance_of(facade, &step)?;
+            authorize(&environment_of(facade, &instance(facade, &instance_id)?)?, &step)?;
             let requested = actions::request(factory, facade, registry, &instance_id, verb, false)?;
             let waiting = requested.status == actions::WAITING;
             Ok(Answer {
@@ -140,9 +219,8 @@ pub fn run(
             })
         }
         "isolate-instance" => {
-            let instance_id = instance_of(facade, asked)?;
-            let environment = environment_of(facade, &instance(facade, &instance_id)?)?;
-            actions::check_caller(&environment)?;
+            let instance_id = instance_of(facade, &step)?;
+            authorize(&environment_of(facade, &instance(facade, &instance_id)?)?, &step)?;
             let action_id = actions::record(facade, &instance_id, "drain", actions::RUNNING, None, false, &by)?;
             // a drain is not one of the actions a screen asks for, so its row is named here
             if let Some(mut row) = one(facade, crate::common::ACTION, "instanceActionId", &action_id)? {
@@ -155,8 +233,7 @@ pub fn run(
             ]
             .into_iter()
             .collect();
-            let drained = call("org.moqui.dev.InstanceLinkServices.call#InstanceCommand", &parameters);
-            match drained {
+            match call("org.moqui.dev.InstanceLinkServices.call#InstanceCommand", &parameters) {
                 Ok(_) => {
                     actions::finish(
                         facade,
@@ -178,11 +255,10 @@ pub fn run(
             }
         }
         "pause-rollout" | "promote" => {
-            let environment_id = environment_for(facade, asked)?;
-            let mut row = one(facade, ENVIRONMENT, "environmentId", &environment_id)?
-                .ok_or_else(|| fail(format!("No InstanceEnvironment {environment_id}")))?;
-            actions::check_caller(&row)?;
-            let pause = asked.action == "pause-rollout";
+            let mut row = environment_for(facade, &step)?;
+            authorize(&row, &step)?;
+            let environment_id = field(&row, "environmentId");
+            let pause = step.action == "pause-rollout";
             if pause {
                 row.set("rolloutPausedDate", moqui_core::user::now_value());
                 row.set("rolloutPausedReason", Value::string(&by));
@@ -206,6 +282,28 @@ pub fn run(
              pause-rollout or promote"
         ))),
     }
+}
+
+/// Monitor cancelled or timed out its recovery action: the instance action it waits on is marked failed and its lease
+/// ended, so nothing runs ([`crate::actions::cancel_waiting`]). True when one was waiting.
+pub fn cancel(
+    facade: &EntityFacade,
+    registry: &LeaseRegistry,
+    recovery_action_id: &str,
+    why: &str,
+) -> Result<bool, LibError> {
+    let row = one(facade, RECOVERY_ACTION, "actionId", recovery_action_id)?
+        .ok_or_else(|| fail(format!("No recovery action {recovery_action_id}")))?;
+    let action_id = field(&row, "externalId");
+    if action_id.is_empty() {
+        return Ok(false);
+    }
+    actions::cancel_waiting(
+        facade,
+        registry,
+        &action_id,
+        &format!("{why} (recovery action {recovery_action_id})"),
+    )
 }
 
 /// Calls a service by name; its message errors are taken and returned as an error.

@@ -110,7 +110,67 @@ pub fn record(
     if machine {
         crate::monitor::note_machine_access(facade, instance_id, verb);
     }
+    // one recorded as failed straight away is a failed deploy too
+    crate::monitor::note_action_end(facade, &row, status);
     Ok(id)
+}
+
+/// Ends an action that waits for its lease (Monitor cancelled or timed out its recovery action): marked failed with
+/// `why`, and its lease ended, so its waiting thread runs nothing. True when it was waiting; an action that runs or
+/// ended is left as it is.
+pub fn cancel_waiting(
+    facade: &EntityFacade,
+    registry: &LeaseRegistry,
+    action_id: &str,
+    why: &str,
+) -> Result<bool, LibError> {
+    let Some(row) = one(facade, ACTION, "instanceActionId", action_id)? else {
+        return Err(fail(format!("No InstanceAction {action_id}")));
+    };
+    if field(&row, "statusEnumId") != WAITING {
+        return Ok(false);
+    }
+    finish(facade, action_id, FAILED, why)?;
+    let lease_id = field(&row, "leaseId");
+    if !lease_id.is_empty() {
+        if let Err(err) = registry.end(facade, &lease_id) {
+            registry.forget(&lease_id);
+            tracing::error!("Instances: the lease {lease_id} of the cancelled action {action_id} was not ended: {err}");
+        }
+    }
+    Ok(true)
+}
+
+/// The caller's check of an action on `instance_id`, run under the caller's own authorization before a service turns it
+/// off (with it off every caller would pass): INSTANCE_ADMIN, and the environment's approver group when it names one.
+pub fn check_instance_caller(facade: &EntityFacade, instance_id: &str) -> Result<(), LibError> {
+    crate::common::require_instance_admin()?;
+    let row = instance(facade, instance_id)?;
+    check_caller(&environment_of(facade, &row)?)
+}
+
+/// Whether `user_id`, another user than the caller (the one who approved a Monitor recovery decision), may take actions
+/// in `environment`: INSTANCE_ADMIN, and a member of its approver group when it names one.
+pub fn check_user(environment: &EntityValue, user_id: &str) -> Result<(), LibError> {
+    if !moqui_core::user::user_has_permission(user_id, crate::common::INSTANCE_ADMIN).unwrap_or(false) {
+        return Err(fail(format!(
+            "{user_id} does not hold {}, which an action on a managed instance needs (reasonCode notInstanceAdmin)",
+            crate::common::INSTANCE_ADMIN
+        )));
+    }
+    let group = field(environment, "approverUserGroupId");
+    if group.is_empty()
+        || moqui_core::user::user_group_ids(Some(user_id))
+            .map(|groups| groups.contains(&group))
+            .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    Err(fail(format!(
+        "Actions in environment {} are taken by members of group {group}, and {user_id} is not one (reasonCode \
+         notEnvironmentMember)",
+        field(environment, "environmentId")
+    )))
 }
 
 /// Changes an action's state, with its report and the instance's version after it.
@@ -363,11 +423,34 @@ pub fn request(
                     tracing::warn!("Instances: the waiting action {waiting_action} runs with no user: {err}");
                 }
             }
+            // the waiting row's state now: an action cancelled while it waited ([`cancel_waiting`]) runs nothing
+            let status_now = || {
+                one(&facade, ACTION, "instanceActionId", &waiting_action)
+                    .ok()
+                    .flatten()
+                    .map(|row| field(&row, "statusEnumId"))
+                    .unwrap_or_default()
+            };
             let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Err(err) = registry.wait_open(&facade, &thread_lease, limit) {
                     registry.forget(&thread_lease);
                     return Err(err);
                 }
+                if status_now() != WAITING {
+                    end_lease(
+                        &facade,
+                        &registry,
+                        &Opened {
+                            lease_id: Some(thread_lease.clone()),
+                            ..Opened::default()
+                        },
+                    );
+                    return Err(fail(format!(
+                        "the action {waiting_action} was cancelled while it waited for its lease"
+                    )));
+                }
+                // running: a cancel from here on leaves it to end as it does
+                finish(&facade, &waiting_action, RUNNING, "its lease is open: running")?;
                 run(
                     &facade,
                     &registry,
@@ -382,6 +465,11 @@ pub fn request(
                 Ok(Err(err)) => (FAILED, err.message().to_string()),
                 Err(_) => (FAILED, "the action failed".to_string()),
             };
+            let now = status_now();
+            if now != WAITING && now != RUNNING {
+                // cancelled while it waited: its row says so already
+                return;
+            }
             if let Err(err) = finish(&facade, &waiting_action, status, &report) {
                 tracing::error!("Instances: the waiting action {waiting_action} was not updated: {err}");
             }

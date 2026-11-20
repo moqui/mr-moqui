@@ -137,6 +137,71 @@ fn a_provision_sets_the_instance_id_and_an_ingest_key() {
     assert!(field_of(&facade, SCRAPE_TARGET, "targetId", &target, "url").is_empty());
 }
 
+/// A user with INSTANCE_ADMIN (and MONITOR_RECOVER) through a group of their own, in no environment's approver group.
+fn outsider(facade: &EntityFacade, user: &str) {
+    create(
+        facade,
+        "moqui.security.UserAccount",
+        json!({ "userId": user, "username": user }),
+    );
+    let group = format!("IT_{user}");
+    create(facade, "moqui.security.UserGroup", json!({ "userGroupId": group }));
+    create(
+        facade,
+        "moqui.security.UserGroupMember",
+        json!({ "userGroupId": group, "userId": user, "fromDate": 0 }),
+    );
+    for permission in ["INSTANCE_ADMIN", "MONITOR_RECOVER"] {
+        create(
+            facade,
+            "moqui.security.UserGroupPermission",
+            json!({ "userGroupId": group, "userPermissionId": permission, "fromDate": 0 }),
+        );
+    }
+}
+
+/// Monitor's rows of a recovery step as the recovery pass leaves them before it calls the manager: an open incident of
+/// `instance`, an Approved decision (by `approver`, or none for an automatic policy's) and its Persisted action.
+fn recovery_step(
+    facade: &EntityFacade,
+    id: &str,
+    action: &str,
+    target: &str,
+    instance: &str,
+    approver: Option<&str>,
+) -> String {
+    create(
+        facade,
+        "moqui.monitor.MonitorIncident",
+        json!({ "incidentId": format!("INC-{id}"), "instanceId": instance, "statusId": "Open", "severity": "major" }),
+    );
+    let mut decision = json!({ "decisionId": format!("D-{id}"), "incidentId": format!("INC-{id}"), "action": action,
+                               "target": target, "adapterId": "MANAGER", "statusId": "Approved" });
+    if let Some(approver) = approver {
+        decision["approvedByUserId"] = json!(approver);
+    }
+    create(facade, "moqui.monitor.RecoveryDecision", decision);
+    create(
+        facade,
+        "moqui.monitor.RecoveryAction",
+        json!({ "actionId": id, "decisionId": format!("D-{id}"), "incidentId": format!("INC-{id}"), "action": action,
+                "target": target, "adapterId": "MANAGER", "statusId": "Persisted" }),
+    );
+    id.to_string()
+}
+
+/// Polls an instance action until it leaves `from` and running, for at most 10 seconds; its status then.
+fn wait_from(facade: &EntityFacade, action_id: &str, from: &str) -> String {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = field_of(facade, ACTION, "instanceActionId", action_id, "statusEnumId");
+        if (status != from && status != crate::actions::RUNNING) || Instant::now() > until {
+            return status;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[test]
 fn the_recovery_restart_waits_for_its_lease_in_approval_mode_and_needs_machine_access_when_automatic() {
     let (ctx, facade) = setup();
@@ -166,16 +231,12 @@ fn the_recovery_restart_waits_for_its_lease_in_approval_mode_and_needs_machine_a
         &fleet.host,
         &[("hostProtocol", "https"), ("tlsClientCert", "a-client-certificate")],
     );
-    let asked = |automatic: bool| crate::recovery::Asked {
-        action: "restart".to_string(),
-        incident_instance: pg.clone(),
-        automatic,
-        recovery_action_id: "RA1".to_string(),
-        ..crate::recovery::Asked::default()
-    };
     let factory = std::sync::Arc::clone(ctx.factory());
+    let maker = fleet.vault.maker.user.clone();
+    let run = |id: &str| sys(|| crate::recovery::run(&factory, &facade, &registry, id));
 
-    // automatic, no machine access: refused, and no lease is asked
+    // automatic: refused unless the environment allows automatic recovery and has machine access, and no lease is
+    // asked
     let leases = || {
         sys(|| {
             facade
@@ -187,12 +248,21 @@ fn the_recovery_restart_waits_for_its_lease_in_approval_mode_and_needs_machine_a
         })
     };
     let before = leases();
-    let refused = sys(|| crate::recovery::run(&factory, &facade, &registry, &asked(true))).unwrap_err();
+    let refused = run(&recovery_step(&facade, "RA0", "restart", "", &pg, None)).unwrap_err();
+    assert!(refused.message().contains("automaticRecoveryOff"), "{refused}");
+    set_row(
+        &facade,
+        "moqui.server.instance.InstanceEnvironment",
+        "environmentId",
+        &fleet.environment,
+        &[("automaticRecovery", "Y")],
+    );
+    let refused = run(&recovery_step(&facade, "RA1", "restart", "", &pg, None)).unwrap_err();
     assert!(refused.message().contains("machineAccessRequired"), "{refused}");
     assert_eq!(leases(), before);
 
     // approval mode: the restart is an instance action that waits for its lease
-    let answer = sys(|| crate::recovery::run(&factory, &facade, &registry, &asked(false))).unwrap();
+    let answer = run(&recovery_step(&facade, "RA2", "restart", "", &pg, Some(&maker))).unwrap();
     assert_eq!(answer.status, "waiting", "{answer:?}");
     let action_id = answer.instance_action_id.clone().unwrap();
     let lease_id = answer.lease_id.clone().unwrap();
@@ -218,15 +288,10 @@ fn the_recovery_restart_waits_for_its_lease_in_approval_mode_and_needs_machine_a
         &[("hostProtocol", "http"), ("tlsClientCert", "")],
     );
     fleet.vault.approve(&lease_id);
-    let until = Instant::now() + Duration::from_secs(10);
-    let status = loop {
-        let status = field_of(&facade, ACTION, "instanceActionId", &action_id, "statusEnumId");
-        if status != crate::actions::WAITING || Instant::now() > until {
-            break status;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    };
-    assert_eq!(status, crate::actions::DONE);
+    assert_eq!(
+        wait_from(&facade, &action_id, crate::actions::WAITING),
+        crate::actions::DONE
+    );
     assert!(
         fleet
             .engine
@@ -238,24 +303,185 @@ fn the_recovery_restart_waits_for_its_lease_in_approval_mode_and_needs_machine_a
     );
 }
 
+/// Monitor cancelled (or timed out) its recovery action while the manager's action waited for its lease: the action is
+/// marked failed and its lease ended, and nothing runs when the lease would have opened.
 #[test]
-fn pause_rollout_and_promote_stop_and_let_go_on_the_environments_rolling_deploys() {
+fn a_cancelled_recovery_ends_the_waiting_action_and_its_lease() {
     let (ctx, facade) = setup();
     let _guard = ctx.enter();
-    let fleet = fleet(&facade, "roll", FakeEngine::docker());
+    let mut fleet = fleet(&facade, "cancel", FakeEngine::docker());
+    let pg = fleet.instance(
+        &facade,
+        NewInstance {
+            instance_image_id: "Postgres18".to_string(),
+            instance_name: "pg-cancel".to_string(),
+            ..NewInstance::default()
+        },
+    );
+    login(&fleet.vault.maker.user);
+    let registry = lease::registry(ctx.factory());
+    crate::provision::provision(&facade, &registry, &pg, None).unwrap();
+    let container = field_of(&facade, INSTANCE, "appInstanceId", &pg, "instanceUuid");
+    let binding = crate::common::host_key_binding(&fleet.host);
+    fleet
+        .vault
+        .item("tls-key-pair", &binding, &json!({ "privateKey": "a-host-client-key" }));
+    set_row(
+        &facade,
+        "moqui.server.instance.InstanceHost",
+        "instanceHostId",
+        &fleet.host,
+        &[("hostProtocol", "https"), ("tlsClientCert", "a-client-certificate")],
+    );
+    let factory = std::sync::Arc::clone(ctx.factory());
+    let maker = fleet.vault.maker.user.clone();
+    let step = recovery_step(&facade, "RC1", "restart", "", &pg, Some(&maker));
+    let answer = sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).unwrap();
+    let action_id = answer.instance_action_id.clone().unwrap();
+    let lease_id = answer.lease_id.clone().unwrap();
+    // Monitor names the action it follows on its row, then cancels it
+    set_row(
+        &facade,
+        "moqui.monitor.RecoveryAction",
+        "actionId",
+        &step,
+        &[("externalId", &action_id), ("statusId", "Running")],
+    );
+    assert!(sys(|| crate::recovery::cancel(&facade, &registry, &step, "cancelled")).unwrap());
+    assert_eq!(
+        field_of(&facade, ACTION, "instanceActionId", &action_id, "statusEnumId"),
+        crate::actions::FAILED
+    );
+    assert!(registry.statement_of(&lease_id).is_none(), "the lease is still held");
+    // nothing ran on the host, and a second cancel finds nothing waiting
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!fleet
+        .engine
+        .calls()
+        .iter()
+        .any(|call| call.contains(&format!("/containers/{container}/stop"))));
+    assert!(!sys(|| crate::recovery::cancel(&facade, &registry, &step, "cancelled")).unwrap());
+}
+
+/// The environment's approver group holds for every way an action reaches an instance: a person's request and action
+/// services under their own authorization (not passed because the service turned it off), and a Monitor recovery
+/// step, by the user who approved it; an automatic policy's step needs automatic recovery and machine access for
+/// every action.
+#[test]
+fn an_instance_admin_outside_the_environments_group_is_refused_everywhere() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let fleet = fleet(&facade, "grp", FakeEngine::docker());
+    let pg = fleet.instance(
+        &facade,
+        NewInstance {
+            instance_image_id: "Postgres18".to_string(),
+            instance_name: "pg-grp".to_string(),
+            ..NewInstance::default()
+        },
+    );
+    set_row(
+        &facade,
+        "moqui.server.instance.InstanceEnvironment",
+        "environmentId",
+        &fleet.environment,
+        &[("approverUserGroupId", "IT_grp")],
+    );
+    outsider(&facade, "grp-outsider");
+    login("grp-outsider");
+    let params = |action: &str| -> crate::common::Params {
+        [
+            ("appInstanceId".to_string(), Value::string(&pg)),
+            ("actionEnumId".to_string(), Value::string(action)),
+        ]
+        .into_iter()
+        .collect()
+    };
+    let refused = crate::services::request_instance_action(&params("IatProvision"), &facade).unwrap_err();
+    assert!(refused.message().contains("notEnvironmentMember"), "{refused}");
+    let refused = crate::services::act(&params(""), &facade, "provision").unwrap_err();
+    assert!(refused.message().contains("notEnvironmentMember"), "{refused}");
+    // the link's commands check the caller the same way (call#InstanceCommand, drain among them)
+    let row = sys(|| crate::link::instance(&facade, &pg)).unwrap();
+    assert!(crate::link::check_caller(&facade, &row).is_err());
+
+    // Monitor's recovery: approved by an outsider (who holds MONITOR_RECOVER and INSTANCE_ADMIN), refused for each
+    // action, before anything is asked or drained; by a member of the group, it runs
     let factory = std::sync::Arc::clone(ctx.factory());
     let registry = lease::registry(ctx.factory());
-    let asked = |action: &str| crate::recovery::Asked {
-        action: action.to_string(),
-        target: fleet.environment.clone(),
-        ..crate::recovery::Asked::default()
-    };
-    sys(|| crate::recovery::run(&factory, &facade, &registry, &asked("pause-rollout"))).unwrap();
+    for (index, action) in ["restart", "isolate-instance", "pause-rollout"].iter().enumerate() {
+        let step = recovery_step(&facade, &format!("RG{index}"), action, "", &pg, Some("grp-outsider"));
+        let refused = sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).unwrap_err();
+        assert!(
+            refused.message().contains("notEnvironmentMember"),
+            "{action}: {refused}"
+        );
+    }
+    let step = recovery_step(&facade, "RG9", "pause-rollout", "", &pg, Some(&fleet.vault.maker.user));
+    sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).unwrap();
     assert!(sys(|| crate::monitor::rollout_paused(&facade, &fleet.environment)).unwrap());
-    sys(|| crate::recovery::run(&factory, &facade, &registry, &asked("promote"))).unwrap();
+
+    // automatic: every action, a drain or a pause too, needs automatic recovery and machine access
+    let step = recovery_step(&facade, "RG10", "promote", "", &pg, None);
+    let refused = sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).unwrap_err();
+    assert!(refused.message().contains("automaticRecoveryOff"), "{refused}");
+    set_row(
+        &facade,
+        "moqui.server.instance.InstanceEnvironment",
+        "environmentId",
+        &fleet.environment,
+        &[("automaticRecovery", "Y"), ("machineAccess", "Y")],
+    );
+    let step = recovery_step(&facade, "RG11", "promote", "", &pg, None);
+    sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).unwrap();
     assert!(!sys(|| crate::monitor::rollout_paused(&facade, &fleet.environment)).unwrap());
-    // a step this adapter does not carry out is refused
-    assert!(sys(|| crate::recovery::run(&factory, &facade, &registry, &asked("pause-job"))).is_err());
+    // a step this adapter does not carry out, and one of a decision not approved, are refused
+    let step = recovery_step(&facade, "RG12", "pause-job", "", &pg, None);
+    assert!(sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).is_err());
+    let step = recovery_step(&facade, "RG13", "promote", "", &pg, Some(&fleet.vault.maker.user));
+    set_row(
+        &facade,
+        "moqui.monitor.RecoveryDecision",
+        "decisionId",
+        "D-RG13",
+        &[("statusId", "AwaitingApproval")],
+    );
+    assert!(sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).is_err());
+}
+
+/// The instance a step acts on is one: an incident naming several managed instances (a version-wide regression) needs
+/// the step to name one.
+#[test]
+fn a_step_acts_on_one_named_instance() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let fleet = fleet(&facade, "two", FakeEngine::docker());
+    let make = |name: &str| {
+        fleet.instance(
+            &facade,
+            NewInstance {
+                instance_image_id: "MoquiLocal".to_string(),
+                instance_name: name.to_string(),
+                ..NewInstance::default()
+            },
+        )
+    };
+    let (a, b) = (make("app-two-a"), make("app-two-b"));
+    let factory = std::sync::Arc::clone(ctx.factory());
+    let registry = lease::registry(ctx.factory());
+    let maker = fleet.vault.maker.user.clone();
+    let step = recovery_step(&facade, "RT1", "restart", "1.2.3", &format!("{a},{b}"), Some(&maker));
+    let refused = sys(|| crate::recovery::run(&factory, &facade, &registry, &step)).unwrap_err();
+    assert!(refused.message().contains("several managed instances"), "{refused}");
+    // the fleet counts the incident for each instance it names
+    let rows = crate::fleet::fleet(&facade, moqui_core::user::now_millis()).unwrap();
+    for id in [&a, &b] {
+        let row = rows
+            .iter()
+            .find(|row| row.get("appInstanceId") == Some(&Value::string(id)))
+            .unwrap();
+        assert_eq!(row.get("openIncidents"), Some(&Value::I64(1)), "{id}");
+    }
 }
 
 #[test]

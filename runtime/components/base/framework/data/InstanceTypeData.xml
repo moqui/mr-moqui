@@ -49,6 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="IatDrain" enumTypeId="InstanceActionType" enumCode="drain" description="Drain" sequenceNum="8"/>
     <moqui.basic.Enumeration enumId="IatRotate" enumTypeId="InstanceActionType" enumCode="rotate" description="Rotate" sequenceNum="9"/>
     <moqui.basic.Enumeration enumId="IatUnseal" enumTypeId="InstanceActionType" enumCode="unseal" description="Unseal" sequenceNum="10"/>
+    <moqui.basic.Enumeration enumId="IatRollback" enumTypeId="InstanceActionType" enumCode="rollback" description="Rollback" sequenceNum="11"/>
 
     <moqui.basic.EnumerationType enumTypeId="InstanceActionStatus" description="Managed instance action status"/>
     <moqui.basic.Enumeration enumId="IasWaiting" enumTypeId="InstanceActionStatus" enumCode="waiting" description="Waiting for its lease" sequenceNum="1"/>

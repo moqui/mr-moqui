@@ -361,7 +361,7 @@ pub fn note_state(facade: &EntityFacade, instance_id: &str, link_state: &str, se
     if let Err(err) = written {
         tracing::error!("Manager link: the link state of AppInstance {instance_id} was not written: {err}");
     }
-    crate::monitor::refresh(facade);
+    crate::monitor::mark_changed();
 }
 
 /// Note that `instance_id` took its bootstrap bundle.

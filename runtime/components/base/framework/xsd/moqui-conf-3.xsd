@@ -405,7 +405,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="otlp-headers" type="xs:string"/>
         <xs:attribute name="otlp-headers-file" type="xs:string"><xs:annotation><xs:documentation>A file whose text is
             the otlp-headers list, read at boot when otlp-headers is empty: a managed instance's ingest key, given as a
-            file by its provision (/run/secrets/moqui-otlp-headers), never in its environment.</xs:documentation>
+            file by its provision (/run/secrets/moqui-ingest-key), never in its environment. A bare key, with no
+            '=', is sent as Authorization: Bearer.</xs:documentation>
             </xs:annotation></xs:attribute>
         <xs:attribute name="service-version" type="xs:string"><xs:annotation><xs:documentation>The service.version of
             this server's telemetry; empty, the binary's version. A manager sets it on its instances at each deploy
@@ -3320,8 +3321,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="monitor-url" type="xs:string" default=""><xs:annotation><xs:documentation>On a manager:
                 where its mr-moqui instances send their telemetry (OTLP/HTTP, telemetry@otlp-endpoint), which a
                 provision gives each with its ingest key (plans/Vault-Instances.md §4.8). Empty: the origin of link-url,
-                this manager's HTTPS listener; empty both, a provision gives none.</xs:documentation></xs:annotation>
+                this manager's HTTPS listener; empty both, a provision gives none. It must be https (http only to the
+                loopback) and on link-url's host unless monitor-other-host is true; else provisions give none, and say
+                so in the log.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="monitor-other-host" type="xs:string" default="false"><xs:annotation><xs:documentation>On
+                a manager: true lets monitor-url name another host than link-url's, where the instances' ingest keys
+                then go.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

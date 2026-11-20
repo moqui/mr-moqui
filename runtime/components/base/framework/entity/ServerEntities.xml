@@ -203,6 +203,10 @@ along with this software (see the LICENSE.md file). If not, see
             pause-rollout, cleared by promote: plans/Vault-Instances.md §4.8); a deploy changes no further member
             meanwhile</description></field>
         <field name="rolloutPausedReason" type="text-medium"/>
+        <field name="automaticRecovery" type="text-indicator" default="'N'"><description>Y: an automatic Monitor recovery
+            policy may act on its instances (restart, isolate, pause-rollout, promote, rollback), with no person
+            approving, and only with machineAccess Y as well (plans/Vault-Instances.md §4.8); N: each needs a person's
+            approval</description></field>
         <relationship type="one" title="EnvironmentType" related="moqui.basic.Enumeration" short-alias="environmentType">
             <key-map field-name="environmentTypeEnumId"/></relationship>
         <relationship type="one" title="UnsealPolicy" related="moqui.basic.Enumeration">

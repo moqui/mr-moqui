@@ -22,8 +22,33 @@
         <service-call name="org.moqui.monitor.MonitorServices.add#IncidentNote"/>
         <default-response url="."/>
     </transition>
+    <!-- Approve runs the decision's action. An instance adapter's step that opens vault items waits for its lease
+        (plans/Vault-Instances.md §4.8): an approver of the lease's vault goes on in the same click to the lease dialog,
+        which approves it in the browser through the vault worker (the signed lease shown, the module loaded with its
+        integrity hashes); anyone else is told who approves it. -->
     <transition name="approveDecision">
         <service-call name="org.moqui.monitor.MonitorServices.approve#RecoveryDecision" in-map="{decisionId:decisionId}"/>
+        <actions><script><![CDATA[
+            approveLeaseId = null
+            if (!ec.message.hasError()) {
+                const started = ec.entity.find('moqui.monitor.RecoveryAction').condition('decisionId', decisionId).disableAuthz().list()
+                const leaseId = started.map(row => row.vaultLeaseId).find(id => !!id)
+                if (leaseId) {
+                    const lease = ec.entity.find('moqui.security.vault.VaultLease').condition('leaseId', leaseId).disableAuthz().one()
+                    const approvers = lease ? ec.entity.find('moqui.security.vault.VaultMember')
+                        .condition('vaultId', lease.vaultId).condition('roleEnumId', 'VrApprove').disableAuthz().list()
+                        .map(row => row.userId).filter((user, at, all) => all.indexOf(user) == at) : []
+                    if (approvers.includes(ec.user.userId)) {
+                        approveLeaseId = leaseId
+                    } else {
+                        ec.message.addPublic(ec.l10n.localize('The action waits for lease') + ' ' + leaseId + ', ' +
+                            ec.l10n.localize('which an approver of its vault opens:') + ' ' + (approvers.join(', ') || '-'), 'warning')
+                    }
+                }
+            }
+        ]]></script></actions>
+        <conditional-response url="../../Vaults/Lease"><condition><expression>approveLeaseId</expression></condition>
+            <parameter name="leaseId" from="approveLeaseId"/></conditional-response>
         <default-response url="." parameter-map="{incidentId:incidentId}"/>
     </transition>
     <!-- an instance adapter's action that waits for its vault lease: the lease dialog, where an approver opens it
