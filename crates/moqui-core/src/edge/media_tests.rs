@@ -95,15 +95,43 @@ fn each_pairings_call_audio_is_kept_apart_and_capped() {
     assert!(super::check_kept_audio(ctx.factory(), "local-a", super::MAX_KEPT_AUDIO + 1).is_err());
     let kept = super::kept_audio_location("local-a", greeting);
     let _authz = ctx.disable_authz();
-    super::super::queue::transaction(&facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
-        ctx.factory()
-            .resource()
-            .write_from(&kept, &mut std::io::Cursor::new(vec![0_u8; 60]), Some(60))
-            .map_err(moqui_lib::error::Error::from)
-    })
-    .unwrap();
+    let keep = |location: &str| {
+        super::super::queue::transaction(&facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+            ctx.factory()
+                .resource()
+                .write_from(location, &mut std::io::Cursor::new(vec![0_u8; 60]), Some(60))
+                .map_err(moqui_lib::error::Error::from)
+        })
+        .unwrap();
+    };
+    // the pairing's fallback names the greeting: it is kept, and the cap holds against it
+    let mut copy = facade.make_value(super::super::replica::VALUE).unwrap();
+    copy.set("pairedNodeId", Value::string("local-a"));
+    copy.set("setName", Value::string("voiceFallbacks"));
+    copy.set("entityName", Value::string("moqui.call.PhoneNumberFallback"));
+    copy.set("pkHash", Value::string("h1"));
+    copy.set("pkJson", Value::string(r#"{"phoneNumber":"+15550160001"}"#));
+    copy.set(
+        "fieldsJson",
+        Value::string(format!(r#"{{"greetingLocation":"{greeting}"}}"#)),
+    );
+    copy.create(&facade).unwrap();
+    keep(&kept);
     let over = super::check_kept_audio(ctx.factory(), "local-a", 60).unwrap_err();
     assert!(over.contains("queue cap"), "{over}");
+    // a greeting no fallback names any more (the box changed it) is removed to make room
+    let stale = super::kept_audio_location("local-a", "dbresource://moqui/call/voicemail/greeting/B1/old.ogg");
+    keep(&stale);
+    copy.set("fieldsJson", Value::string(r#"{"greetingLocation":""}"#));
+    copy.update(&facade).unwrap();
+    super::check_kept_audio(ctx.factory(), "local-a", 60).unwrap();
+    let exists = |location: &str| {
+        super::super::queue::transaction(&facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+            Ok(ctx.factory().resource().stat(location)?.is_some())
+        })
+        .unwrap()
+    };
+    assert!(!exists(&stale) && !exists(&kept), "neither is named now");
     assert!(
         super::check_kept_audio(ctx.factory(), "local-b", 60).is_ok(),
         "another pairing's own"
