@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     view and search form opens Mail with its fields; an action goes back to Mail with the view it was on. A thread link
     (thread=store:threadId, as Mail.qvue takes it) opens that thread above the list, its messages each opening in
     MessageDetail, through get#ThreadView ("not found" for one the user may not see), and marks its row. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Inbox" default-menu-include="false">
 
     <parameter name="view"/>

@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     Beside them: the device's store key (get#ChatDeviceStoreKey), cross-signing (upload#CrossSigningKeys,
     upload#KeySignatures; Matrix keys/device_signing/upload and keys/signatures/upload) and key backup (the
     *#KeyBackupVersion and *#BackupKeys services; Matrix room_keys/version and room_keys/keys). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The user's devices ========== -->
 

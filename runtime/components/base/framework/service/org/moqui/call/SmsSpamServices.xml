@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     §18.3 phase 11; docs/interfaces/SMS.md "Blocked numbers and spam"). The logic is SmsSpam.js beside this file.
     judge#SmsText and note#SmsJudged are internal (receive#Sms); Not spam, Report spam and the banner's reasons act for a
     current member of the phone room; the filter's settings and rules need VoiceAdmin. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="judge" noun="SmsText" allow-remote="false" authenticate="false">
         <description>Internal (receive#Sms, in a transaction of its own, before ensure#PairRoom): the filters a text from

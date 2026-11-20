@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     find#Voicemails) in the Inbox or the Trash (folder), all, unheard or heard, with the unheard count on the tab; each opens
     in Voicemail (the player and transcript), and is marked heard or unheard, deleted (to the Trash, and from it for good) or
     put back; Empty trash. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Calls" default-menu-index="1" menu-image="sym_o_call" menu-image-type="icon">
 
     <parameter name="outcome"/>

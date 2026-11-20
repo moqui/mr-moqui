@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     call component (webroot js/WebrootCall.js), which joins the call over the notification socket and keeps it in the
     LiveCall window when the user goes to another screen. In the terminal a call is not live: CallTui shows its state and
     its people, and Answer, Decline and Leave. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Call" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="callSessionId"/>

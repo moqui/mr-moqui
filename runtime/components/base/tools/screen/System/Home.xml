@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     navigation catalog of template/HomeParts.xml. The period of the Activity strip is the `period` URL parameter;
     nothing is written, so the page works for a view-only administrator. A reading the platform does not report is
     "—" with a tooltip, never zero. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon" default-menu-title="Home">
 
     <parameter name="period"/>

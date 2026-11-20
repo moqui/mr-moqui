@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     (org.moqui.call.VoicemailServices): the email notice with its attachments (off by default; mail cannot be recalled), the
     rings, the PIN (set, changed or removed) and whether there is a greeting, which is recorded or uploaded in the browser and
     can be removed here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Phone" default-menu-include="false">
 
     <transition name="saveNotices">

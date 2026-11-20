@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     provider keeps that sign-in and asks no password). delivery=gateway (hosted, or shared and delivered here) asks for no
     password and no server: the address, the plus-tag note, and that the gateway delivers the mail. The settings shown are
     the URL's (from Address, or from the last save), else the account's, else a new lookup. A password is never shown again. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Connect" default-menu-index="2" menu-image="sym_o_link" menu-image-type="icon">
 
     <parameter name="emailAccountId"/>

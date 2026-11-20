@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     components of WebrootVue.qvt.js, with no header, drawers or login; WebrootPublic.qvt.js mounts the route's screen,
     which it loads as basePath.qvt (or .qvue, .qjs). tokenRoute is in the context, and its context map is what the page
     may show; without it (a request for /PublicShell itself) the page goes to the root. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" screen-theme-type-enum-id="STT_INTERNAL_QUASAR" default-menu-title="Shared" default-menu-include="false">
     <pre-actions><script><![CDATA[
         if (typeof tokenRoute === 'undefined' || !tokenRoute || !tokenRoute.basePath) { sri.sendRedirectAndStopRender('/'); return }

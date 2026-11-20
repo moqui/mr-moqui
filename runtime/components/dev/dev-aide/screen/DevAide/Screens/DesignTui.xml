@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     and its diff) and Extension points. An upstream screen opens in extension mode: every edit goes to the site's
     screen-extend of it, made on its first save. Edits are staged (GuidedEdit.js screenIntent, apply#EditBufferOps);
     Save writes them in kind order. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Design in the terminal" default-menu-include="false">
     <parameter name="rootId"/>
     <parameter name="path"/>

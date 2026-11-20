@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Tokens and cost by day, user, model and source (LlmUsageDaily, rolled up from LlmCall every 15 minutes by the job
     rollup_LlmUsage), with the totals by model and source of the same find, and the quota of a user. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Usage" default-menu-index="3">
 
     <transition name="rollupUsage"><service-call name="org.moqui.agent.AgentAdminServices.rollup#LlmUsage"/>

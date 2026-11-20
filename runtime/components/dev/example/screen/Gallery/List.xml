@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Gallery screen for the 3.2 List archetype of the IronStone BOSS style guide: a find and list screen over
     moqui.basic.Enumeration joined to its type, with inline finds, Find Options, saved finds, column picker, paging,
     exports, row selection with a bulk action, row actions, a status-like chip and a New dialog. Row actions are demonstrations. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="List" default-menu-index="2" menu-image="sym_o_view_list" menu-image-type="icon">
 
     <transition name="detail"><default-response url="../Detail"/></transition>

@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
     error, an acknowledgement queued and a cancel, with the messages it acknowledges and those split from it, its status
     history and its errors whole. Each of its transitions carries raw() as its condition and an app that shows this screen
     takes in only recoverMessage. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="System message" default-menu-include="false">
     <parameter name="systemMessageId" required="true"/>
     <parameter name="showContent"/>

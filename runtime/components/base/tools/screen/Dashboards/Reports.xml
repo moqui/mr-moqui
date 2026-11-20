@@ -8,7 +8,7 @@
     delivery (ScheduledReportDetail, ReportDelivery), where a schedule that is checked for each recipient is made. The
     dashboard playlists are Playlists' (listed, made, shared and played there), which this screen links. This screen is
     not shown by another app. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Reports" default-menu-index="7"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Reports" default-menu-index="7"
         menu-image="sym_o_summarize" menu-image-type="icon">
     <transition name="createSchedule" method="post" authz-action="create">
         <actions><service-call name="org.moqui.report.ReportServices.create#Schedule" in-map="{definitionId:definitionId,cronExpression:cronExpression,emailTemplateId:(delivery==='email' || delivery==='both')?(emailTemplateId || 'DASHBOARD_REPORT'):null,userId:(delivery==='email' || delivery==='both')?(userId || (userGroupId ? null : ec.user.userId)):null,userGroupId:(delivery==='email' || delivery==='both')?userGroupId:null,saveToLocation:delivery==='email'?null:saveToLocation,renderMode:renderMode}"/></actions>

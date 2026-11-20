@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     writes, into its own demo spaces only: EXAMPLE (pages are dbresource files, past versions kept as reverse deltas)
     and EXGIT (pages are files in the database git repository example-wiki, versions are commits), which the screen
     creates on request. Data: data/ExampleWikiData.xml. Guide: docs/data/Revision-Management.md. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Editor" default-menu-index="15" menu-image="sym_o_text_fields" menu-image-type="icon">
 
     <parameter name="wikiSpaceId"/>

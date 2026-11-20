@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
     list this one replaced did past any owner's registration: send every produced message and consume every received one
     now, as the scheduled jobs do, and receive a message typed here. Each of its transitions carries raw() as its condition
     and an app that shows this screen takes in only recoverMessages. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="System messages" default-menu-index="3" menu-image="sym_o_swap_horiz" menu-image-type="icon">
     <parameter name="state"/>
     <parameter name="systemMessageTypeId"/>

@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     System's own, linked for a user who opens System by their own grant. The screen has no part for the instance
     administrator: both transitions are the delegated services', and an app that shows it under its own root at a
     location of its own takes both in (README, "Mounting the administration screens"). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Instance" default-menu-index="1" menu-image="sym_o_tune" menu-image-type="icon">
 
     <!-- the values a preference may take: its allowed values, yes or no, the instance's locales or the time zones matching the

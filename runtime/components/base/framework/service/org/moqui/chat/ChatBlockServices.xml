@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     chat (ChatUserBlock), the rooms out of a member's sight (ChatRoomMember.filterEnumId, Spam & blocked), and the room
     menu's Block. The logic is ChatBlocks.js beside this file. Each service acts on the signed-in user's own blocks and
     rooms; a room they are not in is "not found". set#MemberFilters is internal. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="block" noun="ChatUser">
         <description>Block blockedUserId for the signed-in user: their messages are hidden from the user in shared rooms

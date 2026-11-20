@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     class (live, apply, restart), the default conf's comments, and the values the files hold that are not running yet.
     The component is View.qvue, its data from the confView transition; a source links to Conf › Edit for a holder of
     CONF_EDIT. The terminal shows the same tree. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <transition name="confView" method="get" read-only="true">

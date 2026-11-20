@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     scripts (template/LoadRuns.js planForm, which ../planForm answers), and start#LoadRun checks them again; a secret
     param is asked again. The browser form is NewRun.qvue, posting to ../startRun; the terminal form is NewRun.tui.json,
     posting to start here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="New run" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="scriptLocation"/>

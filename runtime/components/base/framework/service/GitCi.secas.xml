@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     service sends no webhook and still runs. So the engine queues its merge-request pipelines after it, with
     authorization disabled as the event itself is queued. Not after an event that was refused (a caller without the
     update right): nothing happened to the merge request. The pushes and tags are a gitECA rule (Git.gitecas.xml). -->
-<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">
     <seca id="GitCiQueueMergeRequestRuns" service="org.moqui.git.GitReviewServices.queue#MergeRequestEvent" when="post-service">
         <condition><expression>action == 'opened' || action == 'synchronize' || action == 'reopened' || action == 'ready'</expression></condition>
         <actions><service-call name="org.moqui.git.GitCiServices.queue#MergeRequestRuns"

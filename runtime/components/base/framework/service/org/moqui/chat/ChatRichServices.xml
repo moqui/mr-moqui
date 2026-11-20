@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     person's device: it is not signed, and the device may send any text. An app acting on a postback checks the tapped
     message's author and that it was an app's (note#SuggestionReply's authorUserId and fromApp) before it acts; an RCS
     reply (outside) names no message, so its postback is only the device's word. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="send" noun="Rich">
         <description>A rich message from the current user (a member of a room that is not archived and not encrypted), or from

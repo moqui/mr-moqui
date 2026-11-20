@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal twin of Recordings (style-guide §4.8): the call recordings the user may read
     (org.moqui.call.CallRecordingServices find#Recordings): when, who was in the call, its state and length, with Delete for
     the one who recorded it. There is no player in the terminal: a recording plays in the browser. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Recordings" default-menu-include="false">
 
     <parameter name="callSessionId"/>

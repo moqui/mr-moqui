@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     the call kept as an LlmCall. Call captions, voicemail (V2) and recording transcripts (W5) use it. In a binary without the
     agent runtime (the llm feature) the answer is reasonCode notBuiltIn. Both services are internal: the caller checks who
     may send that audio out (the consent policy) before calling. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="transcribe" noun="Audio" type="rust" location="moqui_core::service::speech::transcribe_audio"
             authenticate="false" allow-remote="false" transaction="ignore">

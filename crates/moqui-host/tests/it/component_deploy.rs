@@ -76,7 +76,7 @@ const FILES: &[(&str, &str)] = &[
     ),
     (
         "screen/HotDeploy.xml",
-        r#"<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+        r#"<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <widgets><label text="Hot deployed"/></widgets>
 </screen>"#,
     ),

@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     screens are the files of Settings/, with the sibling names an app that shows them under its own root uses (README,
     "Mounting the administration screens"), so their links to each other are relative. The conf files themselves are
     Configuration (Conf/), System's own. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="5" default-menu-group="Administration" menu-image="sym_o_settings" menu-image-type="icon">
     <subscreens default-item="InstanceSettings"/>
     <widgets>

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- ETL value maps (moqui.etl.EtlValueMap): a mapping field's valueMapId turns a source value into the target's, such as
     "Yes" into Y. Entries are edited as lines of from = to; the value map's owner or a DATABASE_ADMIN holder may change
     or delete it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Value Maps" default-menu-index="3">
 
     <transition name="storeValueMap" method="post" begin-transaction="false" authz-action="all">

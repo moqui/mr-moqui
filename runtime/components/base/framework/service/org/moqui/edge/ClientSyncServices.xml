@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- What a client that queues its requests offline and sends them again after a lost answer relies on
     (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): a request made once by its clientRef (ClientRequestRef), and
     files sent in chunks that go on where an upload was cut off (ClientUpload). Both belong to the user who made them. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== A request made once by its clientRef ========== -->
 

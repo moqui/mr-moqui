@@ -58,7 +58,7 @@ attribute matches. The terminal shows the same tree. Viewing needs the `ADMIN` g
 line. Reading and saving need the sealed `CONF_EDIT` permission, which `ADMIN_ADV` has. The editor is the framework's
 XML code editor:
 
-- completion comes from `moqui-conf-3.xsd`;
+- completion comes from `mr-moqui-conf.xsd`;
 - the gutter marks each element's class: **L** live (in effect when saved), **A** apply (built again when saved) and
   **R** restart (waits for a restart). Its tooltip names the attributes whose class differs, such as a `webapp`'s
   `http-port`;

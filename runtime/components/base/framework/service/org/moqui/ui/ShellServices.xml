@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     plans/archive/Comms-Framework.md §3.3) are called through call#Providers: several apps answer one hook, each as its own app,
     and the framework stays free of what they read. A hook the framework asks for whoever acts, the system included
     (sms-consent), may also be answered by a component's MoquiConf.xml: screen-facade/shell-providers, with no app. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="ShellCounts" type="rust" location="moqui_core::service::shell::get_shell_counts" transaction="ignore">
         <description>The shell counts of a user: the service named by STRT_SHELL_COUNTS_SERVICE in the user's theme for
             STT_INTERNAL_QUASAR (found as a render finds it: the user's, a group's, the type's enumCode, a DEFAULT theme of
@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
     </service>
     <service verb="offer" noun="QuickCreate" type="interface">
-        <description>The contract of a quick-create kind's condition-service (xml-screen-3.xsd quick-create): whether to offer the
+        <description>The contract of a quick-create kind's condition-service (mr-xml-screen.xsd quick-create): whether to offer the
             kind to the session's user. The shell calls it as the app root that declares the kind, in a transaction of its own,
             each time it makes the shell data; offer true offers it, false or no answer leaves it out, and one that fails is
             logged and leaves out that kind alone. It answers about the session's user only.</description>

@@ -6,7 +6,7 @@
     recipient was checked to read what the owner reads), and a link to the rule, which shows their own state after
     sign-in. No data and Error are said as not known. An app gives its audiences a template of its own (BOSS Insights:
     BOSS_INSIGHTS_ALERT). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <parameter name="title"/>
     <parameter name="link"/>
     <parameter name="events"/>

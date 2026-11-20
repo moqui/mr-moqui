@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     which checks the instance purpose and the user's tier. Reads are GETs; writes are POSTs with the session token. The
     terminal shows WorkspaceTui.xml in a dynamic container, with the parameters below: its Code, Changes and Commits tabs
     call the same services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Workspace" default-menu-index="2" render-modes="qvue,tui">
     <!-- the file to open (rootId, path, line, view), and the terminal form's own: its tab, a search, the change, commit
         and page shown, and the diff of the open file -->

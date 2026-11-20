@@ -3,7 +3,7 @@
 <!-- Agent evals (AgentEvalEntities.xml), in AgentEval.js. MONITOR_EVAL edits datasets and scores runs; MONITOR_EVAL_RUN
     starts and cancels experiments. A model call is refused in a transaction, so services that may score are
     transaction="ignore". -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="add" noun="DatasetItem" allow-remote="false">
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="inputText" required="true" allow-html="any"/>
             <parameter name="groundTruth" allow-html="any"/><parameter name="metadataJson"/></in-parameters>

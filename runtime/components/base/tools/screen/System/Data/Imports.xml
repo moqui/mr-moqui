@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
     own (an organization) has a screen of its own: it reads found (find#ImportRuns, with its scopeKey) in its actions,
     includes ImportsPrepare, ImportsHeader, ImportNotes and ImportTargetsBox and extends ImportFind and ImportList
     (README, "Mounting the administration screens"). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Imports" default-menu-index="1" menu-image="sym_o_upload_file" menu-image-type="icon">
     <parameter name="targetId"/>
     <parameter name="state"/>

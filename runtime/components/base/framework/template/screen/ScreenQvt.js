@@ -1344,7 +1344,7 @@
         };
 
         // A visible-when or require-when as a template expression: whether it holds for the form's value now (the
-        // operators of xml-form-3.xsd WhenAttributes); null for an equals with no value, which always holds.
+        // operators of mr-xml-form.xsd WhenAttributes); null for an equals with no value, which always holds.
         const whenExpr = (when) => {
             if (!when) return null;
             const operator = at(when, "operator") || "equals";

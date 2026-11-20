@@ -3,7 +3,7 @@
 <!-- The ScreenOffer spec's parent screen (test only, never mounted): its always-actions set appRoot, as an app root does,
     and its tabs are two screens with no condition (the AiOptOut spec's, here only tabs; the html panel draws tabs for two
     or more) and ScreenOfferHidden, whose own condition does not hold under this appRoot. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-title="Screen offer">
     <always-actions><set field="appRoot" value="Here"/></always-actions>
     <subscreens default-item="Shown">

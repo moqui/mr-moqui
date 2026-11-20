@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     runtime/conf/ConstitutionOrigins.json, separate from the document (a reset leaves it) and from CORS. Exact https://
     origins on the default port; an organization's document cannot add one. A reference of another origin is listed
     but does not open in the dialog. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Origins" default-menu-index="5">
 
     <transition name="addOrigin">

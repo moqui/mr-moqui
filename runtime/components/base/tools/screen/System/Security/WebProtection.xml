@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     clients banned now with what banned them. Lift ends every ban of an address on this server and tells the other
     members of its cluster and the edge node it is paired with (lift#WebBan, ADMIN_OPERATION_MANAGE). Each
     server keeps its own counts; a ban is shared. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Web protection" default-menu-index="5" menu-image="sym_o_shield" menu-image-type="icon">
 
     <transition name="liftBan">

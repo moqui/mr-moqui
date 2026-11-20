@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     new message to people, and a room opened in place (the room view of Comms/Chat, Chat.qvue's chat-room, at 400 px) with a
     back arrow and Open in Chat. It calls the transitions of Comms/Chat and listens to the page's chat store, so a chat push
     updates it rather than reloading the tab. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
     <widgets>
         <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Panel/ChatPanel.qvue" template="false"/>

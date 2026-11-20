@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     shown read only. CONF_EDIT, checked by the services. In the terminal the text is the `code` component (docs/ui/TUI.md,
     Components) over the form's hidden fileText: the problems in its gutter, checked again once the typing stops
     (checkText, check#ConfFile), and Ctrl+S submits the form. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edit as a form" default-menu-include="false">
     <parameter name="fileIndex"/>
 

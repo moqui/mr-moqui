@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     the same answer as for an id that does not exist; a ring group's box is its members' (V3). The audio is read only
     through get#VoicemailAudio (the BasicComms Calls Voicemail screen's transition); no route serves its dbresource://
     locations. The engine's services are internal (allow-remote false). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The owner's: messages ========== -->
 

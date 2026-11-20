@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     ADMIN_ACCESS_VIEW and starting one ADMIN_CONNECTION_MANAGE, checked by the services. SAML sign-in is not available in
     this build: a SAML row an instance administrator made is listed as such. No secret is shown or listed. No part of it
     is the instance administrator's alone, so an app shows it by location. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Identity providers" default-menu-index="3" menu-image="sym_o_passkey" menu-image-type="icon">
     <parameter name="text"/>
     <parameter name="authFlowTypeEnumId"/>

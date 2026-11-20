@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     credentials and keys among them, and the values its enumerations are mapped to. No kind's rule, test or review applies
     there, so each of its transitions carries raw() as its condition and an app that shows a connection takes in only
     storeConnection, testConnection and setEnabled. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Connection" default-menu-include="false">
     <parameter name="adapterKey" required="true"/>
     <parameter name="connectionKey" required="true"/>

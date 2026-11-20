@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- One dataset: its current items, the scorers that score its experiments, and its experiments. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dataset" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Dataset" default-menu-include="false">
     <parameter name="datasetId" required="true"/>
     <transition name="addItem" method="post">
         <service-call name="org.moqui.agent.AgentEvalServices.add#DatasetItem" in-map="{datasetId, inputText, groundTruth, metadataJson}"/>

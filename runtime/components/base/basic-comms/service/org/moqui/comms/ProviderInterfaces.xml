@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     Each answer the framework combines carries provider-qualified ids (the provider's name as sourceId, itemId within it);
     a source pages itself (the usual page fields) and its pages are never joined with another's. A read answers what it has,
     or fails, which call#Providers reports in failedParts; a mutation answers an error. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="inbox" noun="Source" type="interface">
         <description>inbox-source: an app that keeps the user's messages beyond mail answers the Inbox's operations
             (org.moqui.comms.InboxServices.run#Operation names them: get#InboxData, find#InboxRows, get#ThreadView,

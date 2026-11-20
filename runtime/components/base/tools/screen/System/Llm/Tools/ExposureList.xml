@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The services offered to the agents as tools of the lazy catalog (find_tools, describe_tools, run_tool). Only an
     exposed service is a tool; its class is the admin's when set, else the service's own (view is a read, delete is
     destructive, anything else a write; read-only="true" is a read). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Exposed Services" default-menu-index="1">
 
     <transition name="exposureDetail"><default-response url="../ExposureDetail"/></transition>

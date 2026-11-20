@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- A model: what is in effect (the conf with its row over it), its database row, Test (one call) and Probe (a live
     request per capability, stored as verdicts with their evidence), and the capability verdicts, where an admin's
     verdict is kept over any probe. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Model" default-menu-index="2" default-menu-include="false">
 
     <parameter name="modelId" required="true"/>

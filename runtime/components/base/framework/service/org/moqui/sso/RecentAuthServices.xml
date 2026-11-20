@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     guards an action calls check#RecentAuth and refuses when it is not recent (the ChatKeys services answer reasonCode
     reauthRequired); the browser asks with js/WebrootReAuth.js (moqui.reauth) over the /ReAuth transitions. The bodies are
     Rust (crates/moqui-core/src/service/recent_auth.rs, crates/moqui-core/src/user/login.rs). No Java counterpart. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="check" noun="RecentAuth" type="rust" location="moqui_core::service::recent_auth::check_recent_auth"
             authenticate="anonymous-all">

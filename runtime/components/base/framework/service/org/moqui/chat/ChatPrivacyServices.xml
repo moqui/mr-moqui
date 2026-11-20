@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     from outside (Sms.js); its message keeps it as content.otp, its push carries it where the push carries the snippet, and
     it may delete itself after a day (phase 16's expireDate) when every local member of the room asks. The logic is
     ChatOtp.js beside this file. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="detect" noun="OneTimeCode" allow-remote="false">
         <description>Internal: the one-time code of a text, or none: 4 to 8 digits on word boundaries (one space or dash inside

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal twin of Voicemail (style-guide §4.8): one of the user's messages (org.moqui.call.VoicemailServices
     get#Voicemail): who, when, how long, its transcript or the transcript's state, with Mark heard or unheard, Delete or Put
     back, and Retry for a failed transcript. There is no player in the terminal: the message plays in the browser. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Voicemail" default-menu-include="false">
 
     <parameter name="voicemailId"/>

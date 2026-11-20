@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- One provider call, with its request and response when content logging was on (redacted): shown only for the
     viewer's own call, or with AgentAudit, each such read logged in AgentAuditLog (get#LlmCallContent). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Call" default-menu-index="2" default-menu-include="false">
 
     <parameter name="callId" required="true"/>

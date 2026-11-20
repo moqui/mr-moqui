@@ -18,7 +18,7 @@
     key means pairing again). Set edge@public-addresses in .env to this node's public IPv4 and IPv6 addresses, which
     the local node's wizard checks its A and AAAA records against. The local node runs conf/edge/MoquiLocalConf.xml, as
     with a dedicated edge node. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="all-in-one"/>
     <webapp-list><webapp name="webroot"><web-protection enabled="true"/></webapp></webapp-list>
 

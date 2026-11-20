@@ -6,7 +6,7 @@
     and its save, copy and delete are refused under a mount whose policy does not let the viewer set an alert
     (template/ReportAlerts.js requireSet); no app shows it yet (BOSS Insights' rules tell an audience, and its
     alertShared link is null). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Shared alert item" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Shared alert item" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="sharedType"/>
     <transition name="alerts"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alerts')}"/></transition>
     <transition name="rule"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('alertRule')}"/></transition>

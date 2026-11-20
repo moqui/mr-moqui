@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The remote agents and MCP servers agents may call (docs/ai/A2A.md, docs/ai/MCP.md; plans/LLM-A2A-Assist.md 4.15, 4.16,
     4.18). Their addresses come only from here; no credential is shown. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Remote" default-menu-index="15">
     <subscreens default-item="AgentList"/>
     <widgets>

@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     Implementation (read only: the actions and their generated JavaScript, or the script's file), SECA rules (Add one in
     the site's secas file, the service it calls searched by name) and the staged Changes. Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js,
     apply#EditBufferOps); Save writes the files in kind order (save#EditBuffer). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edit in the terminal" default-menu-include="false">
     <parameter name="artifact"/>
     <parameter name="tab"/>

@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     their own phones; a voice admin (VoiceAdmin) may act on anyone's, and another user is refused as "not found" with the
     same parameters. The engine's services and make#SipCredential are internal. docs/interfaces/SIP.md, "Registrar", has the
     phone setup, NAT notes and the settings. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The user's phones ========== -->
 

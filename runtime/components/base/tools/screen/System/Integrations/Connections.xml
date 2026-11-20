@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     An app that narrows the list by data of its own (an organization) has a screen of its own: it reads found
     (find#Connections) in its actions, takes in createConnection, includes ConnectionsPrepare and ConnectionsHeader and
     extends ConnectionFind and ConnectionList (README, "Mounting the administration screens"). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Connections" default-menu-index="1" menu-image="sym_o_hub" menu-image-type="icon">
     <parameter name="text"/>
     <parameter name="adapterKey"/>

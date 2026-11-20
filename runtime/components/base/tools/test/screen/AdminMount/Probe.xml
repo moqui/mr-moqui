@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- The AdminMounts spec's probe: what template/AdminMount.js answers where it stands (under the test mount, or as its own
     root with no mount), and a transition of an instance administrator's part, which carries raw() as its condition. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Probe">
     <transition name="rawOnly">
         <condition><expression>ec.resource.script('component://tools/template/AdminMount.js').raw()</expression></condition>

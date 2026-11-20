@@ -29,7 +29,7 @@ Contents: [the file](#the-file) · [events](#events) · [jobs](#jobs) · [the bu
 
 ## The file
 
-`ci.xml` at the repository's root, read at the commit a run is for. Its schema is `framework/xsd/git-ci-3.xsd`
+`ci.xml` at the repository's root, read at the commit a run is for. Its schema is `framework/xsd/mr-git-ci.xsd`
 (`moqui check` validates it, and the Dev AIDE's XML editing knows it).
 
 ```xml
@@ -810,7 +810,7 @@ the client's address arrives).
 
 ## Limits and conf
 
-`<git-ci>` in the conf (`moqui-conf-3.xsd`; the defaults are in `MoquiDefaultConf.xml`).
+`<git-ci>` in the conf (`mr-moqui-conf.xsd`; the defaults are in `MoquiDefaultConf.xml`).
 
 | Attribute | Default | |
 | --- | --- | --- |

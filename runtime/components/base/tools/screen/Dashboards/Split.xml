@@ -5,7 +5,7 @@
     read, a viewer who reads none and asks for none is told so and nothing is queried (as Explore), and the request rate,
     error and duration charts show only to a viewer who reads Tools' request metric (otel_metrics). Its ranges, when the
     request names none, are the last week and the week before, under a mount too: Explore sends its own. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Compare" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Compare" default-menu-include="false">
     <parameter name="datasetId"/><parameter name="queryString"/><parameter name="from"/><parameter name="thru"/>
     <parameter name="compareFrom"/><parameter name="compareThru"/><parameter name="leftVersion"/><parameter name="rightVersion"/><parameter name="serviceName"/>
     <actions><script><![CDATA[

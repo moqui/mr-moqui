@@ -14,7 +14,7 @@
     request. An app with business parts of its own (which datasets are offered, who may build one, a scope choice with
     its own calendar) shows these sections in a screen of its own with the page from its own service and its own
     saveAnalysis (BOSS Insights › Report builder › Analysis). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Analysis" default-menu-index="3" menu-image="sym_o_query_stats" menu-image-type="icon">
 
     <parameter name="datasetId"/>

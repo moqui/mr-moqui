@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The images, each of a kind (store#InstanceImage). A registry login is the item InstanceImage:<id>:registry of the
     image's vault, leased by the provision that pulls it. MR Moqui's own image is podman/build.sh's localhost/moqui. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Images" default-menu-index="4">
 
     <transition name="storeImage" method="post"><service-call name="org.moqui.dev.InstanceServices.store#InstanceImage"/>

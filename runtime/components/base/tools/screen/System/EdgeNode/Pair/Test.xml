@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     once when the step first shows after Apply, and its result is kept in the session, so a failed Finish shows the
     same result without asking the edge node again; Test again runs it again. Finish goes to the status when the test
     passed, or with "Continue anyway", and forgets the wizard's choices. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Test" default-menu-index="5" menu-image="sym_o_network_check" menu-image-type="icon">
 
     <transition name="confirmTest">

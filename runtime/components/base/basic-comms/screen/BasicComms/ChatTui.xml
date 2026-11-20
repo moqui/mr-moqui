@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
     the user's mentions, replies and reactions, each opening its room) and Threads (chatView threads: find#ChatThreads,
     one row per thread, the threads the user started or replied in); the media grid, the files by type, voice and
     reactions are the browser's. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat" default-menu-include="false">
 
     <parameter name="chatRoomId"/>

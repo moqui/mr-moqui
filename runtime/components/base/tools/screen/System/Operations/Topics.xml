@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     push, digest) and how many users have a setting for it and receive every message of it; a topic opens TopicDetail. No title
     or link template, approval service or email template is shown. Reading needs ADMIN_OPERATION_VIEW or ADMIN_SETTINGS_VIEW,
     checked by the service. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Notification topics" default-menu-index="3" menu-image="sym_o_notifications" menu-image-type="icon">
     <parameter name="term"/>
     <parameter name="pageIndex"/>

@@ -145,7 +145,7 @@ The defaults, in `MoquiDefaultConf.xml`:
 <client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
 ```
 
-The attributes are in `moqui-conf-3.xsd` and
+The attributes are in `mr-moqui-conf.xsd` and
 [Desktop-Client](../../docs/ui/Desktop-Client.md#device-modes-and-client-conf).
 
 ## OS integration

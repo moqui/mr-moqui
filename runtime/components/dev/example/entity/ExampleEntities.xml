@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     size), with a start and end, so the gallery's List views screen (screen/Gallery/Views.xml) has records to show on a board by
     status and on a calendar, and to move through their transitions. The status flow is Java's; the colors are the status
     color map's meanings (style-guide §5.2). -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="Example" package="moqui.example" short-alias="examples">
         <field name="exampleId" type="id" is-pk="true"><description>primary sequenced ID</description></field>
         <field name="exampleTypeEnumId" type="id"/>

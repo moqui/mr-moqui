@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The saved ETL mappings (plans/archive/Tools-Database.md §10.4): find by description or target, copy and delete; a
     mapping's owner or a DATABASE_ADMIN holder may change or delete it, anyone with the Tools app may copy it as their
     own. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Mappings" default-menu-index="1">
 
     <parameter name="term"/>

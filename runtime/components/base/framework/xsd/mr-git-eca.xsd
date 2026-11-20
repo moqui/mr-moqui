@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     docs/interfaces/Git-Hosting.md; the values each event puts in the context are described by the
     org.moqui.GitServices.process#GitEca service interface. -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
-    <xs:include schemaLocation="xml-actions-3.xsd"/>
+    <xs:include schemaLocation="mr-xml-actions.xsd"/>
 
     <xs:element name="gitecas">
         <xs:complexType><xs:sequence><xs:element maxOccurs="unbounded" ref="giteca"/></xs:sequence></xs:complexType>

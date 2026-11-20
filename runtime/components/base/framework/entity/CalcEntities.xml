@@ -3,7 +3,7 @@
 <!-- CalcGrid, database-driven spreadsheets (plans/IronCalc-DB.md; crates/moqui-calc). A document is a report definition
     of type calcgrid; these hold what its editors changed since it was saved, so every room of the document (one for
     each scope of its readers, on any server) applies the same edits in the same order. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="CalcDocumentHead" package="moqui.calc" use="transactional" cache="never">
         <description>The edit log of a CalcGrid document (moqui-calc log.rs). An edit locks this row, so edits of every room
             and server are numbered in one order (lastSeq). savedSeq is the last edit the saved version holds, at

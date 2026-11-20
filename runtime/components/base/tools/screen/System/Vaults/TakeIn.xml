@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     deposited item's key is unwrapped with the deposit key's private half and wrapped by the vault key (deposit_adopt);
     only that wrapped key comes back here (take#VaultDeposit, a member who may write). The passphrase and every key stay
     in the worker; no body crosses. TakeIn.tui.json: the terminal says where to do it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Take in" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
     <parameter name="vaultId" required="true"/>
 

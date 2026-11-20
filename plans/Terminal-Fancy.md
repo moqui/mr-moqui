@@ -328,7 +328,7 @@ with an INFO log line each. What is typed and shown is never recorded. A daily j
 ```
 
 `terminal_command_line` and `terminal_host_sessions` default to `dev`: on for a dev instance. `false` turns one off.
-No value turns one on for another purpose. The attributes go in `moqui-conf-3.xsd`, and `MoquiDevConf.xml` needs no
+No value turns one on for another purpose. The attributes go in `mr-moqui-conf.xsd`, and `MoquiDevConf.xml` needs no
 change.
 
 `terminal_remote` defaults to `false` (D7). To turn remote access on, from the lightest touch up

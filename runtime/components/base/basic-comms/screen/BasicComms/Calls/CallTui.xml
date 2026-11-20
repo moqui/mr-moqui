@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     phase 4): a person on hold (call waiting) shows as On hold; voice to video, picture-in-picture, Move to this device,
     hold and answer and decline with a message are the browser's, as each needs the call's media or (for a message to an
     encrypted room) its encryption, so the terminal has none of them: its Answer, Decline and Leave stay. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Call" default-menu-include="false">
 
     <parameter name="callSessionId"/>

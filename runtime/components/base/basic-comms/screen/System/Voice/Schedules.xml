@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     call handling rules: weekly hours, hours on dates, and holidays (once, or each year), read in the schedule's time zone; with
     whether each is open now. org.moqui.call.CallHandlingServices find#CommsSchedules (shared), store#, delete#CommsSchedule,
     store#, delete#CommsScheduleRule and check#CommsSchedule (the VoiceAdmin permission). A user's own schedules are theirs. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Schedules" default-menu-index="9">
 
     <transition name="storeSchedule">

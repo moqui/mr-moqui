@@ -99,7 +99,7 @@ conf, merged as the framework would); the server does not read it.
 | `store-max-mb` | 512 | the size cap of an account's store; past it the least recently read cached data goes, never unsent items or drafts |
 
 A bad value is logged and its default used; a runtime with no framework conf, or one that does not parse, gives the
-defaults. The element is in `moqui-conf-3.xsd`; the parsing is `moqui_client::conf`.
+defaults. The element is in `mr-moqui-conf.xsd`; the parsing is `moqui_client::conf`.
 
 - **Kept with the account.** The mode is set when the account is created here, from the build's mode or the sign-in's
   choice (password and SSO alike). An account already personal stays personal when shared is chosen: nothing is

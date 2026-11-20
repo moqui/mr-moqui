@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- A result of the SQL screen as an XLSX file: the columns and rows the browser holds (resultJson, in the body), so a
     statement is never run again to download it. The SQL screen posts here with renderMode=xlsx. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="SQL result" default-menu-include="false" render-modes="xlsx">
 
     <actions>

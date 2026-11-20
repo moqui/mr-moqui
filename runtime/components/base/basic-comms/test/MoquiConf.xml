@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     holds call media on a free loopback port, so the client specs' calls have an SFU. A binary without the rtc feature
     logs that it has none, and the specs that need it (requires: ["rtc"]) skip. The BasicCommsTexts spec's call-context
     provider: a test app root (test/screen/TextNamesApp.xml) and its service file. The BasicCommsPeople spec's contacts hook. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <!-- the BasicCommsPeople spec's contacts hook (chat's people, plans/Comms-Messaging.md §11.1) -->
     <chat contact-service="moqui.basiccommstest.PeopleTestServices.find#ContactPeople"/>
     <media-server port="0"/>

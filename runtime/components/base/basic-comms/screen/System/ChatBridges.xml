@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     lets the worker start it again. org.moqui.chat.ChatBridgeServices find#Bridges, store#Bridge and retry#Delivery, which need
     the ChatBridgeAdmin permission. A bridge is made and its rooms mapped by store#Bridge and store#RoomBridge; the networks'
     own setup comes with their adapters (C4 on). basic-comms' MoquiConf.xml mounts this in the tools System app. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat Bridges" default-menu-index="21" menu-image="sym_o_hub" menu-image-type="icon">
 
     <transition name="setDisabled">

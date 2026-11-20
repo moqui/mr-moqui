@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     which Chat's sticker picker offers every user, kept by a holder of the ChatStickerAdmin permission (ADMIN has it):
     New pack, Add a sticker, Remove, Hide (kept, not offered) and Delete (template/StickerPacks.xml, as Settings, Stickers
     keeps a user's own). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat Stickers" default-menu-index="23" menu-image="sym_o_sticky_note_2" menu-image-type="icon">
     <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="createStickerPack" location="component://basic-comms/template/ChatStickerTransitions.xml"/>

@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     services check. The vault worker needs worker-src blob: and 'wasm-unsafe-eval': a page at a path naming Vaults gets
     the vault screens' Content-Security-Policy (vault@screen-policy, the /qapps page's too), and the shell loads these
     screens as a page of their own (docs/security/Vaults.md, "The vault screens' policy"). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Vaults" default-menu-index="26" default-menu-group="Server" menu-image="sym_o_encrypted" menu-image-type="icon">
     <subscreens default-item="VaultList"/>
     <widgets>

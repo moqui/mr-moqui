@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     crates/moqui-core/src/user/device.rs): nobody is signed in. The code is good once and for minutes; redeeming it puts the
     device cookie on the response and sends the browser to its route group's own path. It is the one screen outside its
     route group a registered device may open, where it says what the browser is registered as. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-include="false" require-authentication="false" history="false">
 
     <transition name="redeem">

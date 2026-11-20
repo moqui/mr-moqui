@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     (crates/moqui-core/src/service/chat_expiry.rs) runs expire#DueMessages at the next due time, and the daily
     clean#ChatRetention runs it too. A view-once photo or video opens once for each recipient. A bridged, phone or
     federated room has neither. No Java counterpart. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="set" noun="RoomTimer">
         <description>Set a room's disappearing messages: seconds from 30 to 2419200 (4 weeks), 0 or empty for off. Any member

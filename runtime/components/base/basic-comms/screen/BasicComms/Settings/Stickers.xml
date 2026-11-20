@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Stickers: the user's own sticker packs (plans/Comms-Messaging.md §18.3 phase 20; org.moqui.chat.ChatStickerServices),
     which Chat's sticker picker offers them first: New pack, Add a sticker, Remove, Hide and Delete
     (template/StickerPacks.xml, the same as System, Chat Stickers keeps the server's). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Stickers" default-menu-index="12" menu-image="sym_o_sticky_note_2" menu-image-type="icon">
     <transition-include name="stickerImage" location="component://basic-comms/template/ChatStickerTransitions.xml"/>
     <transition-include name="createStickerPack" location="component://basic-comms/template/ChatStickerTransitions.xml"/>

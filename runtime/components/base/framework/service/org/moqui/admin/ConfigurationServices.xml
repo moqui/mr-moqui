@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     false, reasonCode, reason), never written; a missing permission or a malformed request is an error. A secret is never
     returned. ALL_USERS may call the services named in data/AdminConfigurationData.xml AdminConfigurationServices: each refuses
     without its permission. No dependency on Mantle or an app. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Instance settings (ConfigurationSettings.js; impl-admin P8) ========== -->
 

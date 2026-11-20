@@ -4,7 +4,7 @@
     the contacts hook of chat's people (org.moqui.chat.ChatPeopleServices.find#ContactPeople) for the BasicCommsPeople
     spec's numbers (+1555333....), deterministic, so the people test never depends on another component. Each address it
     is asked about is kept (cache moqui.test.people.asked, by user), so the spec sees what reached the hook. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="find" noun="ContactPeople">
         <in-parameters>
             <parameter name="userId"/>

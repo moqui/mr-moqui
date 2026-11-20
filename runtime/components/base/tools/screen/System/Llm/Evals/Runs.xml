@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Agent runs with their scores: score a run, or save it as a dataset item. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Runs" default-menu-index="4">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Runs" default-menu-index="4">
     <parameter name="agentId"/><parameter name="runId"/><parameter name="scoredOnly"/>
     <transition name="scoreRun" method="post">
         <service-call name="org.moqui.agent.AgentEvalServices.score#Run" in-map="{runId, scorerId}"/>

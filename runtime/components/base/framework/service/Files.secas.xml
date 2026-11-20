@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- After a mirror's fetch, the search documents of the drives over it follow the paths that changed
     (org.moqui.resource.FileServices.index#MirrorDrives; docs/data/Revision-Management.md, "Drives"). -->
-<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">
     <seca id="GitFetchIndexMirrorDrives" service="org.moqui.git.GitServices.fetch#GitRepository" when="post-service">
         <condition><expression>headCommitId</expression></condition>
         <actions><service-call name="org.moqui.resource.FileServices.index#MirrorDrives" in-map="{repositoryId: repositoryId}"/></actions>

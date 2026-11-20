@@ -494,7 +494,7 @@ fn every_keyed_merge_has_its_key_in_the_conf_schema() {
 fn an_add_on_element_merges_as_settings_and_the_frameworks_are_known() {
     let xsd = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../runtime/components/base/framework/xsd/moqui-conf-3.xsd"),
+            .join("../../runtime/components/base/framework/xsd/mr-moqui-conf.xsd"),
     )
     .unwrap();
     let start = xsd.find(r#"<xs:element name="moqui-conf">"#).unwrap();

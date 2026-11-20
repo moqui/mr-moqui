@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- The site's rules on the apps' services: a SECA runs actions before or after a service, here and not in the app. -->
-<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">
 </secas>

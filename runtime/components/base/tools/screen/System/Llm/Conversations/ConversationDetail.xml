@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- One conversation: its metadata and runs for any admin; its transcript (messages with tool calls and results) only for
     its own user or with AgentAudit, each such read logged in AgentAuditLog (get#AgentAuditView). Nobody drives another
     user's conversation from here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Conversation" default-menu-index="2" default-menu-include="false">
 
     <parameter name="conversationId" required="true"/>

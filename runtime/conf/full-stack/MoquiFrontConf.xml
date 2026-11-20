@@ -20,7 +20,7 @@
       members' own with front_edge members; with edge members, which bind none, the front's ports take each local
       node's domain by its front pairing.
     Build and run as conf/front: Maximal (embedded Postgres is enough), the base components only. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="front"/>
     <!-- before anything goes to an edge member; a ban an edge member starts is told up its front link, and the front
         refuses that client for the pairing's names. A ban is not told on: one a local node starts reaches its own edge

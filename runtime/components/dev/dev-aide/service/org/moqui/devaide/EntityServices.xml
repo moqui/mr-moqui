@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The entity modeler (plans/design-dev-aide.md 8): the entities as the server merged them, with each field's origin
     and where an edit goes (the site's extend-entity for an upstream entity, D17), the table against the fields, the
     changes the table check never makes (the full tier, typed confirm, audited) and the load of a modeler's seed data. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="list" noun="Entities" type="rust" location="dev_aide::entities::list_entities" allow-remote="false" read-only="true">
         <description>The entities and view entities of the artifact index by name, with their component, file and how many site extensions each has.</description>
         <in-parameters>

@@ -6,7 +6,7 @@
     and a front node before that: that conf's comments on the shared database, the secrets, admission, balancing,
     work from the pool and draining hold here as they are, and this one says what differs. Use the Enterprise package
     (--enterprise), as for any cluster, with the apps (mr-boss brings mr-mantle). -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- The shared database and .env, as in conf/local-cluster: the transactional datasource's settings and the secrets the first member makes the

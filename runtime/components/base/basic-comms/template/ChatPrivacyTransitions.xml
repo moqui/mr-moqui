@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The transitions of one-time codes and screen security (plans/Comms-Messaging.md §18.3 phase 21;
     org.moqui.chat.ChatPrivacyServices): in Chat.xml keepCode (a code's message kept past its day) and roomScreenSecure (the
     member's own Block screenshots here); in Settings/Chat.xml savePrivacy (the two settings). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="keepCode">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatPrivacyServices.keep#CodeMessage').parameters({chatRoomId: chatRoomId || '',

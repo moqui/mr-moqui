@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Gallery screen for the 3.9 Settings archetype of the style guide: an index of settings groups as cards, then one
     settings page with a form over a read-only snapshot and a plain configuration list. Nothing is written. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="9" menu-image="sym_o_settings" menu-image-type="icon">
 
     <transition name="saveGeneral"><actions>

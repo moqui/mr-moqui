@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.comms.MailSettingsServices.get#RulesView the Rules.qvue client calls; Turn on or off and Delete through the framework's
     update and delete#EmailRule, which check that the user may change the rule; and the blocked senders with Unblock. Writing a
     rule's conditions and actions, the order, Test and Run now are the browser's. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Rules" default-menu-include="false">
 
     <transition name="setEnabled">

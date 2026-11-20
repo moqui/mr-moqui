@@ -3,7 +3,7 @@
 <!-- For moqui test runs of basic-comms only (test/MoquiConf.xml registers this file): the call-context provider of the
     test app root test/screen/TextNamesApp.xml, which names the BasicCommsTexts spec's outside numbers (+1555222....)
     deterministically, so the phone names test never depends on another component. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="CallContext">
         <implements service="org.moqui.comms.ProviderInterfaces.call#Context"/>
         <actions><script><![CDATA[

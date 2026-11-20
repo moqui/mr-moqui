@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     as a direct call is, so a registration adds no right. No parameter of any of them names a service, an entity or an
     index. A scope (an organization, a store) is the owner's to understand and to check: it reaches an owner's service
     only as the scope parameters its registration names. No dependency on Mantle or an app. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="Readiness" allow-remote="false">
         <description>The readiness checks the caller may read: each registered provider whose required permission the
             caller holds, called as the caller, its answer read as checks with a state (ready, warning, failed,

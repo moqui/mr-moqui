@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     (/rest/s1/vault, framework/service/vault.rest.xml) to every signed-in user. The bodies are Rust
     (crates/moqui-vault-server); a binary without the vault feature reports that vault is not built in. No Java
     counterpart. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- Personal keys and key checks (§3.5) -->
 

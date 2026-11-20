@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- A text member taken out of a room (remove#Member by its chatActorId) has its mapping ended, so its texts go to the pair room
     again (org.moqui.call.SmsRoomServices.end#TextMember; plans/Comms-Messaging.md §18.3 phase 18). -->
-<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">
     <seca id="ChatRemoveTextMember" service="org.moqui.chat.ChatServices.remove#Member" when="post-service">
         <condition><expression>chatActorId</expression></condition>
         <actions><service-call name="org.moqui.call.SmsRoomServices.end#TextMember" in-map="{chatRoomId: chatRoomId, chatActorId: chatActorId}" disable-authz="true"/></actions>

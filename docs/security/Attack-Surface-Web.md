@@ -14,7 +14,7 @@ Artifact authorization runs on a stack: each screen, transition, service, REST p
 
 ### Services and `allow-remote`
 
-Nothing reads a service's `allow-remote` attribute; `runtime/components/base/framework/xsd/service-definition-3.xsd` says it is kept for compatibility. There is no general remote service interface (no JSON-RPC or XML-RPC). A service is reached from outside only through a screen transition, a REST resource (`*.rest.xml`), a web script, a token route, the PASS authority's route table, or an agent tool exposure (`AgentToolExposure`). Each of these has its own authentication and authorization. A service's `authenticate` attribute (`anonymous-all`, `anonymous-view`, `false`) decides whether it runs with no user once one of them calls it.
+Nothing reads a service's `allow-remote` attribute; `runtime/components/base/framework/xsd/mr-service-definition.xsd` says it is kept for compatibility. There is no general remote service interface (no JSON-RPC or XML-RPC). A service is reached from outside only through a screen transition, a REST resource (`*.rest.xml`), a web script, a token route, the PASS authority's route table, or an agent tool exposure (`AgentToolExposure`). Each of these has its own authentication and authorization. A service's `authenticate` attribute (`anonymous-all`, `anonymous-view`, `false`) decides whether it runs with no user once one of them calls it.
 
 ### Parent frames
 

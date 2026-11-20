@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     shortcuts. Both sizes in a dashboard, with and without child links, with and without an icon and a text, a card that
     is no link, a card and a child link left out by their conditions, and a card per row of a list. Every link goes to
     another gallery screen. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Nav cards" default-menu-index="19" menu-image="sym_o_dashboard_customize" menu-image-type="icon">
 
     <actions>

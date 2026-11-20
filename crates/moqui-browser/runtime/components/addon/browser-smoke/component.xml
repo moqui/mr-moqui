@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Fixture services for the browser smoke tests and the moqui-browser native tests (plans/archive/Wasm.md W5). -->
-<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd"
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd"
         name="browser-smoke" version="1.0"/>

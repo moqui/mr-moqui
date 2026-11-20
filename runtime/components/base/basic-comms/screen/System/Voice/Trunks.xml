@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     emergency calls. Add and Edit are dialogs; TLS with SRTP is the default, and UDP, TCP or plain RTP only with a profile that
     allows them. The password is never shown: an empty one keeps the old. org.moqui.call.VoiceServices find#, store# and
     delete#VoiceTrunk. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Trunks" default-menu-index="2">
 
     <transition name="storeTrunk">

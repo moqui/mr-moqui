@@ -1,4 +1,4 @@
-// A quick-create kind with a condition-service (xml-screen-3.xsd quick-create; docs/ui/Qvt-Client.md "Shell data and
+// A quick-create kind with a condition-service (mr-xml-screen.xsd quick-create; docs/ui/Qvt-Client.md "Shell data and
 // providers"): the shell data offers it only where its service answers offer true for the session's user, run as the app root
 // that declares it, and leaves the kinds without a condition as they are. The gallery's galleryTask is offered unless the user
 // turned it off (example.ExampleServices.offer#GalleryQuickCreate). A spec-local user who opens the gallery alone keeps the shell

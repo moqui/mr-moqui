@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     docs/ai/A2A.md and docs/ai/MCP.md): the remote agents agents may delegate to and the MCP servers whose tools they may call.
     The bodies are Rust (crates/moqui-core/src/llm/remote.rs). Each needs AgentAdmin. A credential is set by its kind and
     secret and never returned. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="store" noun="AgentRemoteA2a" type="rust" location="moqui_llm::remote::store_remote_agent">
         <description>Create or change a remote A2A agent, the tool a2a__remoteId. The card URL is checked as a delegation

@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     A type is deployed with the integration that speaks it. Reading needs ADMIN_CONNECTION_VIEW, checked by the service.
     For the instance administrator (README, "Mounting the administration screens"): RawTypes, a message type created
     directly, as the Message Types screen this one replaced did; its transition carries raw() as its condition. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Message types" default-menu-index="2" menu-image="sym_o_schema" menu-image-type="icon">
     <parameter name="term"/>
     <parameter name="direction"/>

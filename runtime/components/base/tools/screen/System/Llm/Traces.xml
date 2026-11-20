@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- LLM and Agents › Traces (plans/archive/Tools-Fancy.md 2.5): Monitor › AI, the traces with model calls, mounted a second time
     beside Calls, Runs and Evals. Monitor's screen is the owner; this one adds the menu entry and runs its transitions
     here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Traces" default-menu-index="17">
     <parameter name="from"/><parameter name="thru"/><parameter name="provider"/><parameter name="model"/><parameter name="agent"/><parameter name="errorsOnly"/>
     <transition-include name="traceDetail" location="component://tools/screen/System/Monitor/AgentTraces.xml"/>

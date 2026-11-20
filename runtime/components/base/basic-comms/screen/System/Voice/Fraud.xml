@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     address and never locks an account. Texts (C4-SMS): the texts a person and the users in all send in a day, the system's
     own texts (sign-in codes) in a day, a budget the users' texts do not use, and the number they go from. org.moqui.call.VoiceServices get# and update#VoicePolicy, find# and
     store#VoiceUserSetting (V3: forwardEnabled, calls to them may go to outside numbers), find#AuthBlocks and clear#AuthBlock. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Fraud" default-menu-index="5">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>

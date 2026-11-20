@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     edge node empty, and its link-kept SipNode row takes no new call), with lines for the two replicated sets, the
     row, the phones' realm, the registrar and the numbers' fallbacks; with phones the DNS records add the edge node's
     SIP domain's _sips._tcp, _sip._udp and _sip._tcp records. Next goes on to Test once Apply ran. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Apply" default-menu-index="4" menu-image="sym_o_published_with_changes" menu-image-type="icon">
 
     <transition name="applySetup">

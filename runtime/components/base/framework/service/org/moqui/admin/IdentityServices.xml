@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     organization: a caller that scopes identities checks the target first and asks for ADMIN_IDENTITY_GLOBAL where the
     identity is shared beyond its scope. ALL_USERS may call them (data/SecurityTypeData.xml AdminAccessServices): each refuses
     without its permission. The bodies are Identity.js. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="check" noun="AdministrationPath" allow-remote="false">
         <description>Whether a proposed change keeps a usable instance administration path: an account that, after the change, now

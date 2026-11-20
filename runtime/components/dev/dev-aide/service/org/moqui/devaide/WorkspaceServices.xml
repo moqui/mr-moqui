@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The Workspace's roots, directories and files (plans/design-dev-aide.md 4 and 5.7), implemented in the dev-aide crate
     (src/workspace.rs). Each checks the instance purpose (dev) and the user's tier first: DEV_AIDE_VIEW reads,
     DEV_AIDE_EXTEND writes in site components, DEV_AIDE does everything; paths are confined to their root. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="Roots" type="rust" location="dev_aide::workspace::get_roots" allow-remote="false" read-only="true">
         <description>The roots (repositories and plain directories) with their components and whether each is upstream; whether git runs; the user's tier; the site components.</description>
         <out-parameters>

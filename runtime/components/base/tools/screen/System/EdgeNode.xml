@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     its name and fingerprint to confirm). On an edge node (moqui_conf__instance__node_role=front_edge) and in a build without the edge link, Status
     says so. The menu cannot leave this screen out by node role, so it is listed on every node. Every call goes through
     org.moqui.edge.EdgeServices. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edge Node" default-menu-index="13" default-menu-group="Integration" menu-image="sym_o_cloud_sync" menu-image-type="icon">
     <subscreens default-item="Status"/>
     <widgets>

@@ -7,7 +7,7 @@
     read (list#Datasets, each dataset's own artifact), a new panel starts on the first of them, the types offered, saved and
     copied are the mount's reportDefinitionTypes, import is offered only where the map names a screen for it, and sharing is the
     mount's own (its share link): the editor's save keeps the definition's group as it is, whatever group is posted. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Definition" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Definition" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="definitionType"/><parameter name="leftVersion"/><parameter name="rightVersion"/>
     <transition name="reference"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url(definitionType === 'panel' ? 'panel' : 'definition')}"/></transition>
     <transition name="dashboard"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard')}"/></transition>

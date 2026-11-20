@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     validation errors on their fields as an app's save is. Assist's Edit in screen hands a proposed write on it to the user
     (docs/ai/Assist.md, the hand-off; the browser smoke in crates/moqui-host/tests/gate3_browser.rs). Nothing is written: a
     good save comes back as a message. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Contact" default-menu-include="false">
 
     <transition name="saveContact"><actions><script><![CDATA[

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     (src/worktree.rs): a git worktree of a working tree under the runtime's worktrees directory, on a branch of its own,
     kept as a temporary root bound to an Assist conversation, whose file and git tools are rooted in it. Not loaded: its
     files are checked and committed, not run live. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="Worktrees" type="rust" location="dev_aide::worktree::get_worktrees" allow-remote="false" read-only="true">
         <description>The worktree roots (of rootId, or of a conversation, or all): rootId, label, location, mainRootId,
             conversationId, branch, changes (uncommitted files); note says they are not loaded.</description>

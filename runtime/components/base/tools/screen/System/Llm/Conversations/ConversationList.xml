@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Every user's agent conversations: who, which agent and surface, the status, the active run and the dates. No content:
     a conversation's messages are shown in ConversationDetail, to its own user or with AgentAudit (logged). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Conversations" default-menu-index="1">
 
     <transition name="conversationDetail"><default-response url="../ConversationDetail"/></transition>

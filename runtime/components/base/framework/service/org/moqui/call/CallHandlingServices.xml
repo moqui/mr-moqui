@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     VoiceAdmin permission (notAllowed otherwise). inbound#PhoneCall and advance#CallRoute are internal (the voice services
     and the SIP engine, through receive#PhoneCall and begin#Voicemail); evaluate#CallHandling is internal too: the plan a
     call would get, at atMs, without placing it. No Java counterpart. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Inbound calls (internal) ========== -->
 

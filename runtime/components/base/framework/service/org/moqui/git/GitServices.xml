@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The repositories behind git:// resource locations (moqui.resource.GitRepository). No Java counterpart. The bodies
     are Rust: crates/moqui-git/src/service/mod.rs over crates/moqui-git. Guide:
     docs/data/Revision-Management.md. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="fetch" noun="GitRepository" type="rust" location="moqui_git::service::fetch_repository">
         <description>Fetch the branch of a remote kind repository from its remoteUrl into its bare mirror, created by
             the first fetch. The local branch is replaced by the remote one. Records lastFetchDate, lastFetchError and

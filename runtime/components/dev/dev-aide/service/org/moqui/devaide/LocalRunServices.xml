@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Run locally (plans/design-dev-aide.md 21.5, question 20), implemented in the dev-aide crate (src/local_run.rs):
     one job of the working tree's ci.xml, its script steps and its variables, run in a host session of the Terminal on
     this machine, not in the job's image, with none of its secrets. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="LocalJobs" type="rust" location="dev_aide::local_run::get_local_jobs" allow-remote="false" read-only="true">
         <description>The jobs of the working tree's ci.xml (or why there are none: no file, an error with its line):
             each pipeline, job, image, its matrix combinations (matrixKeys, and combinations: each with its steps,

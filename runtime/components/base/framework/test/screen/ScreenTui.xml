@@ -3,7 +3,7 @@
 <!-- The ScreenTui spec's screen (test only, never mounted): what the tui render mode writes for a list link whose text is a
     localized template, a skip-header list, a section-iterate in a list cell, a show-total row, encode="false" text, an
     html-view with both text and HTML, and a board whose column-order is an expression. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-title="Screen TUI">
     <actions>
         <set field="itemList" from="[{itemId: 'I1', itemName: 'Alpha', amount: 2, stage: 'Won', tags: ['red', 'blue']},

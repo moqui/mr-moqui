@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
     account as a bridge (org.moqui.chat.GroupMeServices get#MyGroupMe, connect#MyGroupMe, disconnect#MyGroupMe;
     docs/interfaces/GroupMe.md): its status, the token (write-only) and Disconnect, unless the property
     chat@groupme-self-service is false. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat" default-menu-index="6" server-static="qvt" menu-image="sym_o_chat" menu-image-type="icon">
 
     <!-- screen security and one-time codes (plans/Comms-Messaging.md §18.3 phase 21) -->

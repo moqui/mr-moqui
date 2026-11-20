@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     behind the table's name typed back), Seed data (each record with Edit and Remove, Add row per entity, Load), Doc and Text (the edit target as staged, read only, and its
     diff against the disk). Every edit is staged in the buffer (GuidedEdit.js, GuidedOps.js, apply#EditBufferOps); a
     Picklist's or Status's records, and the seed records' edits, go to the site's seed file, which loads after Save. Save writes in kind order. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edit in the terminal" default-menu-include="false">
     <parameter name="artifact"/>
     <parameter name="tab"/>

@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     read only flag; git commands run to the end before the answer. Each write goes back to the Workspace with a message;
     what a save or a conflict leaves for the page after it is kept in the session (DevAideTui.*). Branches, tags,
     stashes, merge requests, sessions, review, blame and hunks are the browser's. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Workspace" default-menu-include="false">
     <parameter name="rootId"/>
     <parameter name="path"/>

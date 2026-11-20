@@ -25,7 +25,7 @@
     template and link from the policy and drops any contact point, and only business rules open here; the people an
     audience may name are the holders of the mount's permission (find#ReportRecipients) and its size is the mount's
     recipient cap. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alert rule" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Alert rule" default-menu-include="false">
     <parameter name="definitionId"/>
     <parameter name="dashboardId"/>
     <parameter name="panelId"/>

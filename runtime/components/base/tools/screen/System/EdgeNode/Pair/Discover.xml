@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     away and that the fallback follows no call-handling rules or schedules). Next keeps the choices in the session for Apply, as the earlier steps keep the pairing code; they
     hold no secret, and nothing goes in a URL. Status links here to set a paired node up again. Not paired, an edge
     node, a build without the link, and a link that is down see why instead. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Discover" default-menu-index="3" menu-image="sym_o_travel_explore" menu-image-type="icon">
 
     <transition name="chooseSetup">

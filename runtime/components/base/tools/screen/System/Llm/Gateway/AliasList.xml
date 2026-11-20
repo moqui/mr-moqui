@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The model names the gateway answers to (LlmModelAlias): each a model or a feature whose binding it follows. A row
     replaces a gateway alias of the conf with the same name; Disabled turns either off. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Aliases" default-menu-index="3">
 
     <transition name="storeAlias"><service-call name="store#moqui.llm.LlmModelAlias"/>

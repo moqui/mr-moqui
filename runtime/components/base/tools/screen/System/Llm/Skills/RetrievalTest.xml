@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     best first, with their scores, whether each is a strong match (the tail's "skills that may fit") and what matched;
     the exact answer of skill find= with the query; the tail line a later message would carry; and the catalog a
     conversation that starts with the query on the page would list. Nothing is stored. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Retrieval Test" default-menu-index="3">
 
     <parameter name="query"/>

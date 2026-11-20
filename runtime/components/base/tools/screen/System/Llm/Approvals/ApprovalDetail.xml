@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- One approval: the decision, kind and target for any admin; the arguments, the current → proposed changes, the edited
     arguments, a conflict, the preview and the outcome only for its own user or with AgentAudit, each such read logged
     (get#AgentAuditView). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Approval" default-menu-index="2" default-menu-include="false">
 
     <parameter name="approvalId" required="true"/>

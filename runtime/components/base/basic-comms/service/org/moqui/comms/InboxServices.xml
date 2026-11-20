@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     The screens call run#Operation, which hands an operation to an app's inbox-source provider when there is one (its page is
     the list: IronStone's merges its internal messages and mailboxes with the mail) and else to these services. Links go
     under the comms@app-root property. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The operations of the Inbox screens ========== -->
 

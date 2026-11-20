@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     topic). With no mail account yet, a welcome card leads into the wizard. Below, the user's own removed accounts whose mail
     was kept, to delete with their mail (the Removed screen, which asks first). org.moqui.comms.MailSettingsServices
     get#MailAccountList reads them through the framework's access rules; syncNow is the Inbox's sync#UserAccounts. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Accounts" default-menu-index="1" default-menu-include="false">
 
     <transition name="syncNow">

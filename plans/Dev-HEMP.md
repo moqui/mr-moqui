@@ -35,7 +35,7 @@ Coarchy clone, and `my-site` stands for a site's own component (D17). Every othe
 | H12 | Not taken from Coarchy: organizations as tenants and their entity filter (the component is the scope), invitations, premium gates, credits and Stripe, the public site, agreements, users assigned to actors, task emails and the search documents. | They serve its hosted, multi-tenant business. A component in git replaces the organization. |
 | H13 | Agents come after the screens (P7): skills per HEMP role for the `dev` agent, every write a change set through `propose_edit` (D11). | Decided with the user. The files and their rules have to exist before a skill can be held to them. |
 | H14 | The whole book is in the Dev AIDE component as Markdown, a file per chapter (`DA/book/`), as a re-release of the 2013 book under this repository's CC0 terms: corrected, improved, and adapted so that each chapter says how its step is done on the screens. Its release is the MR Moqui version it ships with, 0.1.0 first. It is the reference, the guide to the HEMP screens, the online help of the HEMP screens, and what the role skills cite. The appendix's examples are also a working HEMP set in the example component. | Asked for: Coarchy shows excerpts, and the book is short (about 21,000 words), so the whole of it explains the process better than a selection. Text that ships with the component is there for the help and for the agents, on any dev instance. The terms, the corrections, the adaptation to the screens and the version were decided by the author, Nov 18, 2026. |
-| H15 | The schema, `hemp-3.xsd`, is with the framework's XSDs, and the HEMP extractor is in the framework's index beside the entity, service and screen extractors. | Answered question 1. The index is one, and `moqui refs`, MCP and the Browser then read HEMP artifacts with no new mechanism. |
+| H15 | The schema, `mr-hemp.xsd`, is with the framework's XSDs, and the HEMP extractor is in the framework's index beside the entity, service and screen extractors. | Answered question 1. The index is one, and `moqui refs`, MCP and the Browser then read HEMP artifacts with no new mechanism. |
 | H16 | The Overview replaces Home. Home's panels move: the restart banner and Publish to the Overview's header, "Your customizations" to Implementation, the create-component dialogs to Repositories, the reload log to the Workspace. | Answered question 2. One landing page. |
 | H17 | The time flow is a story of its own kind: one file whose activities are grouped under periods. Daily, weekly, monthly, quarterly and yearly are built in and sort in that order; a time flow may declare named periods of its own ("Fiscal period close", "Payroll run"), which sort where it places them. It is in the story list beside the summary story and uses the story editor with a period column. | Answered question 3. The book keeps time-triggered activities in a separate flow by period (p. 39), and one place shows everything that happens at month end. |
 | H18 | The site component owns the summary story. Its high-level activities link to detailed stories in itself and in other components, upstream ones included, and the site's Overview follows those links: a card's count includes what the story reaches in other components, with the split shown ("41 activities, 12 upstream"), and its list is by component with upstream items read-only. | Answered question 4. A site is built from several components, and its requirements are one story. |
@@ -142,7 +142,7 @@ once, as a copy (H19).
 
 ## 3. The files
 
-A component's HEMP set is its `hemp/` directory. One schema, `hemp-3.xsd`, in the framework's
+A component's HEMP set is its `hemp/` directory. One schema, `mr-hemp.xsd`, in the framework's
 `xsd/` directory, covers the files (H15).
 
 | Path | Artifact | Holds | Links written here |
@@ -164,7 +164,7 @@ A component's HEMP set is its `hemp/` directory. One schema, `hemp-3.xsd`, in th
 A story file:
 
 ```xml
-<process-story name="Fulfil Order" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/hemp-3.xsd">
+<process-story name="Fulfil Order" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-hemp.xsd">
     <activity id="a1" actors="Customer"><action>places an order</action></activity>
     <activity id="a2" actors="Company"><action>automatically reserves inventory for the order</action></activity>
     <activity id="a3" actors="Packer" detail="PackShipment">

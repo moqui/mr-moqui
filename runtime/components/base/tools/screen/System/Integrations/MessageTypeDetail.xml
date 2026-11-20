@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     directly, as the Message Types screen this one replaced did: any field, its service names typed. No owner registration or
     review applies there, so its transition carries raw() as its condition and an app that shows this screen takes in only
     saveType. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Message type" default-menu-include="false">
     <parameter name="systemMessageTypeId" required="true"/>
 

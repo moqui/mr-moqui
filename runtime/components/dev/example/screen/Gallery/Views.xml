@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     (ExampleDetail with peek=true). The archetypes are §3.6 Board, §3.7 Calendar and §3.8 Split; the .qvue Board and Calendar
     screens stay as the custom path of §4.8. Below, the §3.15 tree list over an inline work breakdown (example.ExampleServices
     get#GalleryWorkItems), whose moves and edits only answer with a message. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Views" default-menu-index="17" menu-image="sym_o_grid_view" menu-image-type="icon">
 
     <!-- a card moved on the board: the field it is grouped by (groupField, from group-fields), the status by default -->

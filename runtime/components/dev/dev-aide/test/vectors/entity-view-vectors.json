@@ -623,8 +623,8 @@
           "builder": "addField"
         }
       ],
-      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/entity-definition-3.xsd\">\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
-      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/entity-definition-3.xsd\">\n</entities>\n",
+      "expected": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-entity-definition.xsd\">\n    <extend-entity entity-name=\"Example\" package=\"moqui.example\">\n        <field name=\"dueDate\" type=\"date\"/>\n    </extend-entity>\n</entities>\n",
+      "input": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-entity-definition.xsd\">\n</entities>\n",
       "name": "the site's extend-entity made in an empty file, then its field",
       "ops": [
         {
@@ -650,7 +650,7 @@
           ],
           [
             "xsi:noNamespaceSchemaLocation",
-            "http://moqui.org/xsd/entity-definition-3.xsd"
+            "http://moqui.org/xsd/mr-entity-definition.xsd"
           ]
         ],
         "column": 1,
@@ -658,7 +658,7 @@
         "line": 2,
         "name": "entities",
         "path": [],
-        "to16": 192
+        "to16": 193
       }
     },
     {

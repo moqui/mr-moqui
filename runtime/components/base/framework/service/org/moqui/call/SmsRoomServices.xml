@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     outside number in a private room, by text. The logic is SmsRoom.js beside this file; Sms.js routes their texts
     (receive#Sms) and checks the room's texts (check#SmsSend in room mode); the SMS adapter sends them ("Ann: ...").
     The SECA in SmsRoom.secas.xml ends a member's mapping when remove#Member takes them out. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="add" noun="TextMember">
         <description>Add an outside number to a private room as a text member (a moderator or owner, with consent Y): it gets each of the room's messages as a text, "Ann: ...", from ourNumber (one of the adder's granted numbers marked for room texts; the first free one when empty), and its replies post to the room as it. One room per outside number on each of our numbers. A welcome text names the room and says how to leave. memberName is the room's name for them. Refused (reasonCode): notAllowed, notFound, roomType (only a private room), encrypted, timerOn, archived, badNumber, emergency, internationalNotEnabled, premiumNotEnabled, consentRequired, blocked (the adder blocked the number), alreadyMember, tooManyMembers (smsRoomMaxMembers), dailyLimit (smsRoomAddsPerDay), noRoomNumber, numberNotGranted, noFreeNumber ("This person is already a text member of the room on this number; another number is needed."), optedOut. warning pairRoomActive: the number's pair room on ours had a text in the last 30 days.</description>

@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     - setEnabled: enable (needs a passing test of the configuration as it is) or disable.
     Each reaches the framework service, which checks ADMIN_CONNECTION_MANAGE whatever opens the screen; every refusal comes
     back as a reason shown here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="storeConnection">
         <actions>
             <set field="rowNumbers" from="Object.keys(ec.web.parameters).filter(key =&gt; /^fieldName_\d+$/.test(key)).map(key =&gt; key.slice(10))"/>

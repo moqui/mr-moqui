@@ -14,7 +14,7 @@
     in. What a new dataset's id starts with, the scope field's words and the name of its parameter under a policy that
     registers none are the mount's policy (template/ReportMount.js), data only: the engine creates a dataset only under an
     id its creator's own grant names. Every read is through template/ReportDatasets.js, which reads no entity. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Datasets" default-menu-index="5"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Datasets" default-menu-index="5"
         menu-image="sym_o_database" menu-image-type="icon">
     <parameter name="status"/>
     <parameter name="text"/>

@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     registered, so nobody is subscribed to a private topic outside it; receiving every message of the topic is never set here,
     only ended. The settings of everyone else are each person's own and are counted. Every refusal comes back as a reason
     shown here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Notification topic" default-menu-include="false">
     <parameter name="topic" required="true"/>
 

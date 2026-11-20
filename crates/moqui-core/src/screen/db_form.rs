@@ -160,7 +160,7 @@ fn db_number(value: &EntityValue, field: &str) -> i64 {
     db_text(value, field).parse().unwrap_or(0)
 }
 
-/// The operators of a `DbFormFieldDependency`, and of `visible-when` and `require-when` (xml-form-3.xsd WhenAttributes).
+/// The operators of a `DbFormFieldDependency`, and of `visible-when` and `require-when` (mr-xml-form.xsd WhenAttributes).
 const OPERATORS: &[&str] = &["equals", "not-equals", "empty", "not-empty"];
 /// The effects of a `DbFormFieldDependency` and the element each becomes on its target field.
 const EFFECTS: &[(&str, &str)] = &[("show", "visible-when"), ("require", "require-when")];

@@ -22,7 +22,7 @@
     // ---------- pure functions ----------
 
     // Whether a rule holds for a field's values (a list: a multiple select or checks have several). equals: any value is
-    // one of the expected; not-equals: none is; empty, not-empty. The rule of xml-form-3.xsd WhenAttributes (DbForms.js
+    // one of the expected; not-equals: none is; empty, not-empty. The rule of mr-xml-form.xsd WhenAttributes (DbForms.js
     // holds).
     const holds = (operator, expected, actual) => {
         const parts = (actual || []).map(String).filter((part) => part !== "");

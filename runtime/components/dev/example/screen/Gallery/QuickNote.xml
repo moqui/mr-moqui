@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The gallery's quick-create kind (shell-providers in Gallery.xml): a dialog screen the shell's + menu opens with the screen
     context as parameters, as BOSS's Commons/QuickCreate does. Saving is a no-op. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Gallery note" default-menu-include="false">
 
     <parameter name="recordEntity"/>

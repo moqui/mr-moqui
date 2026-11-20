@@ -6,7 +6,7 @@
     operator adds, starts the standby, which links with the pairing's key; with none of the pairing's members linked the
     edge node admits it, gives it every name of the pairing, and tells its administrators. Nothing starts the standby by
     itself. Per-host settings go in .env. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- The same .env on both machines: the pairing's (edge/node@url, edge/node@key, edge/node@pin, edge/node@id and

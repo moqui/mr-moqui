@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     operator's. Narrowed to one protocol by protocolKey. A readiness and support summary is linked where the mount has a
     route for one (supportSummary; template/AdminMount.js). Reading needs ADMIN_CONNECTION_VIEW, ADMIN_SETTINGS_VIEW or
     ADMIN_OPERATION_VIEW and a check ADMIN_CONNECTION_MANAGE, checked by the services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Server configuration" default-menu-index="4" menu-image="sym_o_dns" menu-image-type="icon">
     <parameter name="protocolKey"/>
 

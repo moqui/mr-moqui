@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The skills of the agents (plans/LLM-A2A-Assist.md 4.9, 7.5): the index (the framework's and the components' files,
     synced into AgentSkill rows, the site's and the personal skills), one skill with its text, lock and uses, and
     RetrievalTest, what retrieval makes of a query. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Skills" default-menu-index="10">
     <subscreens default-item="SkillList"/>
     <widgets>

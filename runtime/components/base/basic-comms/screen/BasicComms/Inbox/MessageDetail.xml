@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     through get#MessageDetail (org.moqui.comms.InboxServices.run#Operation), which checks the user's accounts and the message's visibility: one the
     user may not see is "not found". Actions: Open in Inbox, Reply, Resend (bounced and system mail, confirmed), Download
     .eml, Print, Link to a record. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Message" default-menu-include="false">
 
     <parameter name="emailMessageId"/>

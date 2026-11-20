@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     For the instance administrator (README, "Mounting the administration screens"): RawGroups, a group of any id and type
     created directly, as the User Groups screen this one replaced did; its transition carries raw() as its condition and
     an app that shows this screen takes in only createGroup. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Groups" default-menu-index="1" menu-image="sym_o_group" menu-image-type="icon">
     <parameter name="text"/>
     <parameter name="appName"/>

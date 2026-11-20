@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     administrator's own address. RelayConsumers lists the email templates sent through it. The server of a mail account never
     opens here: the service answers it as not available on every path. The same record, forms and transitions as
     ConnectionDetail (template/ConnectionParts.xml), for the kind relay alone. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Mail relay" default-menu-include="false">
     <parameter name="connectionKey" required="true"/>
 

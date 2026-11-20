@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <!-- System › Certificates (plans/Edge-Node2.md §4.8), in crates/moqui-host/src/acme. Certificates are files in
         runtime/cert, found by name; these services list them and get a certificate by ACME for a name an operator sets
         up, and only for such a name (moqui.server.AcmeName). A refusal adds an error and answers reasonCode. -->

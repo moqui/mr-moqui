@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- One remote A2A agent: its card URL, the agents that may delegate, its limits, its credential (set, never shown) and
     a test that reads its card as a delegation would. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Remote Agent" default-menu-index="2" default-menu-include="false">
 
     <parameter name="remoteId" required="true"/>

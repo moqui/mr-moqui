@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     STRT_MESSAGES_SCREEN) are the client, and its siblings Compose (the composer as a page) and MessageDetail (one message
     with its source) show in its place: the client loads each screen of the path on its own, and a .qvue screen cannot hold
     the subscreens of its own path. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Inbox" default-menu-index="2" menu-image="sym_o_mail" menu-image-type="icon">
     <subscreens default-item="Mail"/>
     <widgets>

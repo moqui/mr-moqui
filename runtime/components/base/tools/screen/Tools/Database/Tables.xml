@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     vacuum and analyze; Count gives one table's exact rows. Maintenance of the selected tables is planned with
     plan#TableMaintenance as a pending database job, whose page shows the statements before they run; VACUUM FULL and
     CLUSTER lock the table and need that confirmed. Needs DATABASE_ADMIN. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Tables" default-menu-index="4">
 
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>

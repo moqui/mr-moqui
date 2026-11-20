@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- One released version: its regressions against the version before it, with their confidence, data quality and
     locality, and the error groups first seen since it started. MONITOR_INCIDENT is checked by the services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Release" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Release" default-menu-include="false">
     <parameter name="serviceName" required="true"/><parameter name="version" required="true"/>
     <transition name="incident"><default-response url="../IncidentDetail"/></transition>
     <transition name="error"><default-response url="../ErrorDetail"/></transition>

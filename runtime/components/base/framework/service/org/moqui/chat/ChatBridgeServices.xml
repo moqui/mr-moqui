@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Administration (the ChatBridgeAdmin permission): find#Bridges (status, last error, counts, the deliveries that failed),
     store#Bridge, store#RoomBridge and end#RoomBridge. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Inbound ========== -->
 

@@ -8,7 +8,7 @@
     its rows; there is no raw DataDocument view or export. The dataset opens in Explore where the mount has one, with the
     range and the query and without this list's page (Explore's list has its own). Another app shows the screen under its
     own root in a screen of its own, taking in exportDocuments (BOSS Insights › Report builder › DatasetView). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Preview" default-menu-include="false">
     <parameter name="datasetId"/>
     <parameter name="from"/>

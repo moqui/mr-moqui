@@ -12,7 +12,7 @@
     member's .env, as the rest of it is. The front pools the members as one pairing and balances over the live ones.
     Use the Maximal package with an external database, or Enterprise; the runtime has the base components and mr-pass
     (./moq component-get edge), the same on each member. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="front_edge"/>
     <!-- front_edge: the front and edge sets, so the members forward their local nodes' own host names (the apps, as
         erp.example.com) to them, and the front gets those names from the members; a local node has one pairing, with

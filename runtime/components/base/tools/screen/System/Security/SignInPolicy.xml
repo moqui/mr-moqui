@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     ADMIN_SETTINGS_VIEW or ADMIN_ACCESS_VIEW, the groups' rules to ADMIN_ACCESS_VIEW, and a change needs
     ADMIN_ACCESS_MANAGE; each service checks its own. No part of it is the instance administrator's alone, so an app shows
     it by location. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Sign-in policy" default-menu-index="2" menu-image="sym_o_password" menu-image-type="icon">
     <parameter name="text"/>
     <parameter name="rulesOnly"/>

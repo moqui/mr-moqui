@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Find" default-menu-index="2">
 
     <parameter name="aen" required="true"/>
@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="getFormXml" read-only="true">
         <actions><script><![CDATA[
             let xmlText = '<?xml version="1.0" encoding="UTF-8"?>\n'
-            const screenNode = new MNode("screen", {"xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance", "xsi:noNamespaceSchemaLocation": "http://moqui.org/xsd/xml-screen-3.xsd"})
+            const screenNode = new MNode("screen", {"xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance", "xsi:noNamespaceSchemaLocation": "http://moqui.org/xsd/mr-xml-screen.xsd"})
             const actionsNode = screenNode.append("actions", null)
             actionsNode.append("entity-find", {"entity-name": aen, list: "entityValueList"}).append("search-form-inputs", null)
             const widgetsNode = screenNode.append("widgets", null)

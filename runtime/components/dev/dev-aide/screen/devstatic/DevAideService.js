@@ -210,7 +210,7 @@
         return out;
     };
     ops.SECAS_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<secas xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" " +
-        "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/service-eca-3.xsd\">\n</secas>\n";
+        "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-service-eca.xsd\">\n</secas>\n";
 
     // ---- the composer ----
 

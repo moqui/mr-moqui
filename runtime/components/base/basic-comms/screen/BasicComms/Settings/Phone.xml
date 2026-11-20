@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     get#VoicemailGreeting), which act on the signed-in user's own box only, so these transitions run with authorization off as
     the call transitions do. The component is Phone.qvue next to this file; the terminal twin (PhoneTui) has the same settings
     but records no greeting. A section of desk and soft phones (V4) is a screen of its own. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Phone" default-menu-index="8" menu-image="sym_o_voicemail" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 

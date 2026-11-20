@@ -13,9 +13,9 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
-    <xs:include schemaLocation="common-types-3.xsd"/>
-    <xs:include schemaLocation="xml-actions-3.xsd"/>
-    <xs:include schemaLocation="xml-form-3.xsd"/>
+    <xs:include schemaLocation="mr-common-types.xsd"/>
+    <xs:include schemaLocation="mr-xml-actions.xsd"/>
+    <xs:include schemaLocation="mr-xml-form.xsd"/>
 
     <!-- ================ Shared Elements ================ -->
     <xs:group name="section-elements"><xs:sequence>
@@ -39,7 +39,7 @@ along with this software (see the LICENSE.md file). If not, see
                 shows "Not shared with AI" in place of its widgets and the subscreens rendered in them, and in the
                 browser its rich-text fields offer no text actions, Assist leaves its forms out of the page state,
                 and the Assist drawer does not dictate while it is shown. As the field attribute of the same name
-                (xml-form-3.xsd), for the whole screen.</xs:documentation></xs:annotation>
+                (mr-xml-form.xsd), for the whole screen.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="standalone" type="boolean" default="false">
             <xs:annotation><xs:documentation>
@@ -307,8 +307,8 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:documentation>These actions run before any of the screens (this screen or any parent screens)
             are rendered, allowing you to set parameters used by parent screens or other general reasons.</xs:documentation>
     </xs:annotation></xs:element>
-    <!-- The actions of a screen and of its sections, with client-context (xml-form-3.xsd, as row-actions has it). A
-         transition's and a tree's are the actions element of xml-actions-3.xsd. -->
+    <!-- The actions of a screen and of its sections, with client-context (mr-xml-form.xsd, as row-actions has it). A
+         transition's and a tree's are the actions element of mr-xml-actions.xsd. -->
     <xs:complexType name="screen-actions">
         <xs:group minOccurs="0" maxOccurs="unbounded" ref="AllOperations"/>
         <xs:attributeGroup ref="client-context"/>
@@ -1024,7 +1024,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:annotation><xs:documentation>True for a section whose content no AI model may read: an agent's
                 render runs nothing of it and shows "Not shared with AI" in its place, and in the browser its
                 rich-text fields offer no text actions and Assist leaves its forms out of the page state. As
-                the field attribute of the same name (xml-form-3.xsd), for every field and text in the
+                the field attribute of the same name (mr-xml-form.xsd), for every field and text in the
                 section.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="condition" type="xs:string">

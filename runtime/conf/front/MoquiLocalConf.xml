@@ -8,7 +8,7 @@
     edge node's place: that conf's comments on the database, the secrets, admission and draining hold here as they are,
     and this one says what differs. A front has none of the edge set, so the cluster keeps its own mail, chat, calls,
     phones and PASS, or has none. Use the Enterprise package (--enterprise), as for any cluster. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- The shared database, as in conf/local-cluster: Postgres (or MySQL with the default cluster transport), its

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     user, ring group (V3), IVR menu or queue (V5) a call to it goes to, the emergency location its calls report, and its
     messaging (C4-SMS: the SMS bridge its texts go through, which needs no trunk).
     org.moqui.call.VoiceServices find#, store# and delete#PhoneNumber. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Numbers" default-menu-index="3">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>

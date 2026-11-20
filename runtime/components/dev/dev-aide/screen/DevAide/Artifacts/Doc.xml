@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     extra path (Doc/entity/mantle/order/OrderHeader.md), so the doc's relative links open the docs they name here, as in
     an exported tree; artifactId (an id, or a name such as OrderHeader) opens an artifact's doc. A plain markdown-view,
     so the terminal reads it too. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Docs" default-menu-index="5" allow-extra-path="true">
     <parameter name="artifactId"/>
     <parameter name="includeSource"/>

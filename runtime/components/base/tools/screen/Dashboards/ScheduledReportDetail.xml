@@ -14,7 +14,7 @@
     Another app shows the screen under its own root, by location (BOSS Insights › Scheduled reports): the people
     proposed and accepted as recipients, the EmailTemplate of a save and its recipient cap are the mount's policy
     (template/ReportMount.js), read by the transitions here and never from a request. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Scheduled report" default-menu-include="false">
     <parameter name="screenScheduledId" required="true"/>
 

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Gallery: the 3.12 Report archetype of the style guide, over a report query on otel_metrics. Parameters in the URL
     (a form-single submitting to "."), number cards, two m-chart charts whose colors are read from the brand CSS
     variables in the browser, and a result table with the export menu and a totals row. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Report" default-menu-index="12" menu-image="sym_o_report" menu-image-type="icon">
 
     <actions>

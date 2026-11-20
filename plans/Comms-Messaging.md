@@ -4088,7 +4088,7 @@ its data an adapter's, and mr-mantle has the calendars (`mantle.work.calendar.Ca
 `WorkEffortParty` per attendee, `CalendarWorkEffort`). mr-boss already puts a mail invitation on a user's calendar
 through the `invitation` provider hook (`ironstone.comms.InboxServices.respond#Invitation`). So:
 - **A new provider hook `chat-calendar`** (`PROVIDER_HOOKS` in `crates/moqui-core/src/screen/shell.rs`, its element in
-  `xml-screen-3.xsd`, the interface `org.moqui.comms.ProviderInterfaces.chat#CalendarEntry`). It takes only `chatRoomId`,
+  `mr-xml-screen.xsd`, the interface `org.moqui.comms.ProviderInterfaces.chat#CalendarEntry`). It takes only `chatRoomId`,
   `eventSeq` and `action` (`answer`, `change`, `cancel`). The provider reads `ChatCalEvent` and the caller's
   `ChatCalAnswer` itself, so no title, time or user passed in is trusted. On `answer` it puts, changes or removes the
   current user's entry. On `change` and `cancel` it updates or cancels the entries it made for that event (UID
@@ -4178,7 +4178,7 @@ notifications, the terminal, XMPP, SMS and every bridge show it. A change messag
 - `Chat.xml`: the six `transition-include` lines.
 - `Chat.qvue`: the card in `messageTemplate`, the More menu, the box.
 - `ChatTui.xml`: none (it shows the body).
-- `shell.rs`, `xml-screen-3.xsd`, `ProviderInterfaces.xml`: the hook.
+- `shell.rs`, `mr-xml-screen.xsd`, `ProviderInterfaces.xml`: the hook.
 - After phase 16 merges: its expiry's delete list calls `forget#CalEvent`.
 
 **Bridges and encryption.**

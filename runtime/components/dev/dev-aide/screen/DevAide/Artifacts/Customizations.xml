@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Customizations (plans/design-dev-aide.md 7.2, D17): every extension the site components make (an extend-entity, a
     screen-extend and each anchor it names, an ECA rule on an upstream service or entity), with whether what it extends is
     still there: the upgrade checklist after a pull. Broken first. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Customizations" default-menu-index="3">
     <transition name="refs"><default-response url="../Refs"/></transition>
 

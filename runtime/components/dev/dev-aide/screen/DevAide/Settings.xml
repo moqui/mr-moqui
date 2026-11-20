@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     shared dev server (an admin's), and the group servers (21.2): Connect signs in at the server as an installed app
     (its page comes back to serverSignedIn here) or takes a pasted token, then sets what the user confirms. The services
     check the tier; the page shows what the user may change. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="11">
 
     <parameter name="serverId"/>

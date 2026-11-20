@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Failure tolerant (AGENTS.md): each account of the list, each member added and each part of a view stands alone; one that
     fails is logged by name and the rest is answered. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Providers and discovery ========== -->
 

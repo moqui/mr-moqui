@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal twin of Devices (style-guide §4.8): the browsers that hold the user's encryption keys, with Rename and
     Remove (org.moqui.chat.ChatKeyServices). The terminal has no crypto device of its own, so verification and the key
     backup (C7) are the browser's; it says so. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="My devices" default-menu-include="false">
 
     <transition name="rename">

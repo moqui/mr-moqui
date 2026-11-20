@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Access. open#PairRoom, find#MyTextNumbers and find#PhoneNames are the current user's; the rest are internal (allow-remote
     false). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="open" noun="PairRoom">
         <description>Text a number: the room of the current user's number fromNumber (one they are granted that has messaging;

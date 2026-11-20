@@ -10,7 +10,7 @@
     rebuilt. The operators and functions offered are the engine's (get#BusinessDatasetOptions). Another app shows the
     screen under its own root in a screen of its own, taking in storeFields and storeConditions (BOSS Insights › Report
     builder › DatasetFields). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Fields" default-menu-include="false">
     <parameter name="datasetId" required="true"/>
 

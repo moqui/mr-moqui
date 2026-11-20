@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Search the artifact index (plans/design-dev-aide.md 7.2): a name with camel case or segments (OrdHdr, place#Order), a
     kind and a component; each result opens in the Workspace at its line, or its references. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Search" default-menu-index="1">
     <parameter name="text"/>
     <parameter name="kind"/>

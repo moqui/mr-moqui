@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     claims (claim#HeldMessage) and reports (complete#HeldMessage). A reminder keeps the room and the message's number only
     and comes back at its time as an Activity row, a ChatReminder notification and a push (send#DueReminders). Each
     service acts on the signed-in user's own rows: another's is "not found". A refusal has a reasonCode. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="schedule" noun="Message">
         <description>A message from the signed-in user for sendDate (a minute to a year ahead; at most 100 waiting), with

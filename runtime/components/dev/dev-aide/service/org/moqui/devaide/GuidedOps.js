@@ -588,7 +588,7 @@ function addFieldSpec(element, entityName, add) {
 }
 const ENTITIES_TEXT =
     '<?xml version="1.0" encoding="UTF-8"?>\n<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
-    'xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">\n</entities>\n'
+    'xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">\n</entities>\n'
 const SEED_TEXT = '<?xml version="1.0" encoding="UTF-8"?>\n<entity-facade-xml type="seed">\n</entity-facade-xml>\n'
 
 // ---- the service view (DevAideService.js) ----
@@ -710,7 +710,7 @@ function tryParameters(values, parameters) {
 }
 const SECAS_TEXT =
     '<?xml version="1.0" encoding="UTF-8"?>\n<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
-    'xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">\n</secas>\n'
+    'xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">\n</secas>\n'
 
 // ---- the screen view (DevAideScreen.js) ----
 
@@ -822,7 +822,7 @@ function screenFieldOf(outline, path) {
 }
 const EXTEND_TEXT =
     '<?xml version="1.0" encoding="UTF-8"?>\n<screen-extend xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" ' +
-    'xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">\n</screen-extend>\n'
+    'xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">\n</screen-extend>\n'
 function fieldWidget(widget) {
     return (
         {

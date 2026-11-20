@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     runs). Run starts exactly the planned statements (run#DatabaseJob, on a worker); Cancel stops it
     (cancel#DatabaseJob); a blocker can be cancelled or ended. Running, cancelling and ending need DATABASE_ADMIN. The
     component is JobDetail.qvue; the terminal twin is JobDetailTui.xml. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Job" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="jobId" required="true"/>

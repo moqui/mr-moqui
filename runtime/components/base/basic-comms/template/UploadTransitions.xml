@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     at another offset than the bytes held is not taken and received says where to go on. uploadStatus answers {found,
     received, total, complete} of an upload, for a client that starts again after a restart. Once complete, the screen's
     upload takes the file by its uploadId. Only the user's own uploads are reached. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="uploadChunk">
         <actions><script><![CDATA[
             const number = (value) => value == null || value === '' ? null : Number(value)

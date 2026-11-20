@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     links its own page, and a successful item is never replayed. Reading needs ADMIN_OPERATION_VIEW, checked by the service.
     For the instance administrator (README, "Mounting the administration screens"): RawRun, the run as it is stored, with its
     parameters, results, messages and errors whole, and its logs in Monitor: read only, shown only where there is no mount. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Job run" default-menu-include="false">
     <parameter name="jobRunId" required="true"/>
 

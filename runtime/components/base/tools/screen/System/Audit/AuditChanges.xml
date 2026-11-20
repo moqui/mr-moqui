@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
     (moqui.entity.EntityAuditLog) by entity, field, key, value, user and visit, registered or not and with its values as
     stored, as the Audit Log screen this one replaced did, shown in place of the changes with log=Y (one list at a time:
     two lists on a page would share pageIndex); read only, and nothing is listed until something is asked for. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Changes" default-menu-index="1" menu-image="sym_o_history_edu" menu-image-type="icon">
     <parameter name="category"/>
     <parameter name="auditProjectionId"/>

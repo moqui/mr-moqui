@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
     serves it back at the same URL; the token is the capability to read it, as XEP-0363 has it. A message linking it
     gets it as a chat file (attach#Upload); a chat file sent to an XMPP client gets such a URL (get#AttachmentUrls), its
     token derived from the file id and the property xmpp-server/upload@secret. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Sign-in (internal) ========== -->
 

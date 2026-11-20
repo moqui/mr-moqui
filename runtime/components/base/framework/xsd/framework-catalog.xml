@@ -18,18 +18,18 @@ along with this software (see the LICENSE.md file). If not, see
 <catalog xmlns="urn:oasis:names:tc:entity:xmlns:xml:catalog">
     <!-- <public publicId="-//W3C//DTD SVG 1.0//EN" uri="svg10.dtd"/> -->
 
-    <system systemId="http://moqui.org/xsd/email-eca-3.xsd" uri="email-eca-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/git-eca-3.xsd" uri="git-eca-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/entity-definition-3.xsd" uri="entity-definition-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/entity-eca-3.xsd" uri="entity-eca-3.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-email-eca.xsd" uri="mr-email-eca.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-git-eca.xsd" uri="mr-git-eca.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-entity-definition.xsd" uri="mr-entity-definition.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-entity-eca.xsd" uri="mr-entity-eca.xsd"/>
 
-    <system systemId="http://moqui.org/xsd/moqui-conf-3.xsd" uri="moqui-conf-3.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-moqui-conf.xsd" uri="mr-moqui-conf.xsd"/>
 
-    <system systemId="http://moqui.org/xsd/rest-api-3.xsd" uri="rest-api-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/service-definition-3.xsd" uri="service-definition-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/service-eca-3.xsd" uri="service-eca-3.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-rest-api.xsd" uri="mr-rest-api.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-service-definition.xsd" uri="mr-service-definition.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-service-eca.xsd" uri="mr-service-eca.xsd"/>
 
-    <system systemId="http://moqui.org/xsd/xml-actions-3.xsd" uri="xml-actions-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/xml-form-3.xsd" uri="xml-form-3.xsd"/>
-    <system systemId="http://moqui.org/xsd/xml-screen-3.xsd" uri="xml-screen-3.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-xml-actions.xsd" uri="mr-xml-actions.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-xml-form.xsd" uri="mr-xml-form.xsd"/>
+    <system systemId="http://moqui.org/xsd/mr-xml-screen.xsd" uri="mr-xml-screen.xsd"/>
 </catalog>

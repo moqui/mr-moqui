@@ -315,7 +315,7 @@
     };
 
     const ENTITIES_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entities xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" " +
-        "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/entity-definition-3.xsd\">\n</entities>\n";
+        "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-entity-definition.xsd\">\n</entities>\n";
     const SEED_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<entity-facade-xml type=\"seed\">\n</entity-facade-xml>\n";
     ops.ENTITIES_TEXT = ENTITIES_TEXT;
     ops.SEED_TEXT = SEED_TEXT;

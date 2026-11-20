@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     kind unless chosen), and for a shared account the people who share it and what they may do. Next saves them
     (org.moqui.comms.MailSettingsServices.save#AccountOptions; each member added on its own). The folders the sync maps are shown
     after the test and on the account's page. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Options" default-menu-index="4" menu-image="sym_o_tune" menu-image-type="icon">
 
     <parameter name="emailAccountId"/>

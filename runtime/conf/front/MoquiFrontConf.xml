@@ -12,7 +12,7 @@
     (conf/full-stack), whose members are its pool and forward to their local nodes.
     Build, archive and run with the release flag of ./moq: Maximal (embedded Postgres is enough), or Enterprise with an
     external database. The runtime needs the base components only. Per-host settings go in .env. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="front"/>
     <!-- takes links from the nodes behind it on the HTTPS listener, told from browsers by ALPN; its Hello names the role
         front and offers web access and ports only, so a node pairing with it keeps it as its front pairing

@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     save the global (instance) document, and serve references. An organization's own document is Mantle's
     (mantle.party.ConstitutionServices), read here through constitution-provider services. The bodies are Rust:
     crates/moqui-llm/src/constitution/services.rs, in builds with the llm feature. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="ScopedConstitution" type="interface">
         <description>What a constitution-provider implements (a component names its implementation in a

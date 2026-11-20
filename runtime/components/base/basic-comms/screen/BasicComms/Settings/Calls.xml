@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     the server for the user (org.moqui.call.CallServices.set#CallPreferences; plans/Comms-Messaging.md §8.3 item 15): it
     keeps their one-to-one calls on the media server, off the direct path. In the terminal there are no devices: the
     twin says so. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Calls" default-menu-index="7" menu-image="sym_o_call" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
     <transition name="callPreferences" method="get" read-only="true">

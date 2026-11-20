@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     the repository's rights (org.moqui.git.GitServices.get#GitRepositoryAccess): viewers see, comment and request
     changes, users who may push (update) approve and only their approvals count, the author or a user with update
     changes one, update merges. Guide: docs/interfaces/Git-Hosting.md, Merge requests. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="create" noun="MergeRequest">
         <description>Open a merge request into a target branch (the default branch when empty), as the current user:
             of a source branch of the same repository, by a user who may push to it; or of a branch of another

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     directly. System's own, the instance administrator's: no app shows it under its root, and its transition that writes
     carries raw() as its condition (README, "Mounting the administration screens"). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Artifact groups" default-menu-index="4" menu-image="sym_o_key" menu-image-type="icon">
 
     <transition name="artifactGroupDetail"><default-response url="../ArtifactGroupDetail"/></transition>

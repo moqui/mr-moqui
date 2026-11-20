@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     references, the site's customizations) and Settings. Mounted under
     apps as dev by the component's MoquiConf.xml; only on a dev instance, for ADMIN, DEV_AIDE_USERS and DEV_AIDE_EXTENDERS
     (the DEV_AIDE_APP artifact group). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         include-child-content="true" menu-image="sym_o_code" menu-image-type="icon">
     <subscreens default-item="Home">
         <subscreens-item name="Home" menu-title="Home" menu-index="1" location="component://dev-aide/screen/DevAide/Home.xml"/>

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     failed, the approvals they wait for, the AI tasks that ended and the trigger breakers that opened. Only the viewer's
     own messages (D12: an admin has no implicit access to another user's agent content); another user's runs are read
     in Runs, with AgentAudit and an AgentAuditLog row. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="My Inbox" default-menu-index="13">
     <widgets>
         <form-list name="InboxList" list="inboxList" skip-form="true" header-dialog="true">

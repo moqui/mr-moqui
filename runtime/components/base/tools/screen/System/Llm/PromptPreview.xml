@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     prompt variant, a model and a user, the frozen prefix section by section with its characters, calibrated tokens, cap
     and share of the model's budget, the tools with their schema sizes, a sample tail for a page, and the request as
     the model's protocol sends it ("copy as sent"). get#PromptPreview builds it; nothing is stored. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Prompt Preview" default-menu-index="5">
 
     <parameter name="agentId"/>

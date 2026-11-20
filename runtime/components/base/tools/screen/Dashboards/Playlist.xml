@@ -7,7 +7,7 @@
     another app (BOSS Insights › Wall display) takes in its data transition, which the player calls at that screen's path,
     and its dashboard links open the app's Dashboard (the reportLinks map of its root, "Mounting the report screens");
     Tools' Dashboards app keeps its own. What it shows is template/ReportPlaylists.js (player, playerData). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Playlist">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Playlist">
     <parameter name="definitionId" required="true"/><parameter name="from"/><parameter name="thru"/>
     <transition name="data" method="get" read-only="true">
         <actions><script>ec.web.sendJsonResponse(ec.resource.script('component://tools/template/ReportPlaylists.js').playerData({definitionId:definitionId, index:(typeof index === 'undefined' ? null : index), from:from, thru:thru}))</script></actions>

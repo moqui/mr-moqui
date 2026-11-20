@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::{Duration, Instant};
 
 const SERVICES: &str = r#"<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="place" noun="Order" authenticate="anonymous-all" operation="order.place" operation-ref="orderId">
         <in-parameters><parameter name="orderId" required="true"/></in-parameters>
         <actions><set field="placed" value="Y"/></actions>

@@ -33,7 +33,7 @@ component) whose actions-extend appends an entry to appSuites:
 - A render mode with no template, or a template that fails (logged), shows the suite as a titled group of tiles.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="true" default-menu-include="false" default-menu-title="App List">
 
     <actions>

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     always-actions; a screen that acts on the chosen database includes the selectDatabase transition and the
     DatabasePicker section. `db` is `group:<groupName>`, the first of the groups on that database
     (org.moqui.dev.DatabaseServices.get#DatabaseList, with label); the last choice is the user preference database.selected. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="selectDatabase">
         <actions><script><![CDATA[
             // the posted value: the section's always-actions have already put a known database in place of an unknown one

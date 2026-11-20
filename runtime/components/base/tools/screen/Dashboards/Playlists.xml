@@ -11,7 +11,7 @@
     template/ReportPlaylists.js, over ReportServices as the viewer.
     Another app shows it in a screen of its own around these sections (BOSS Insights › Wall display, with its devices),
     taking in the transitions it offers. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Playlists" default-menu-index="9"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Playlists" default-menu-index="9"
         menu-image="sym_o_slideshow" menu-image-type="icon">
     <transition name="createPlaylist" method="post" authz-action="create">
         <actions><set field="createdId" from="ec.resource.script('component://tools/template/ReportPlaylists.js').create({playlistId:playlistId,

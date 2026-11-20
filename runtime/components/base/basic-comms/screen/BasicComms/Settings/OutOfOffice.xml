@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     it, as IronStone BOSS sets its contact books), and without one only people inside); and the same reply on every account at
     once. The framework sends it from the sync (send#OutOfOfficeReplies: never to lists, bulk mail, other
     automatic replies or spam). org.moqui.comms.MailSettingsServices get and store#OutOfOffice; the access is the framework's. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Out of office" default-menu-index="4" server-static="qvt" menu-image="sym_o_do_not_disturb_on" menu-image-type="icon">
 
     <parameter name="emailAccountId"/>

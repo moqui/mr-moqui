@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Step 1 of the gallery wizard: who the customer is. The form has no submit button of its own: the wizard's Next submits it
     to saveCustomer, whose answer without errors moves the wizard to Options. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Customer" default-menu-index="1">
 
     <transition name="saveCustomer"><actions><script><![CDATA[

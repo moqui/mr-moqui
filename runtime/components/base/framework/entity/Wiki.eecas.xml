@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-eca.xsd">
     <!-- A wiki space's settings that decide what its pages may do, however the row is written (create#WikiSpace, a
         screen's entity-auto update with the whole context), plans/Security-Review.md SEC-SCR-81:
         - allowScriptPages Y (a .fancy page renders as server script for its viewers, render#WikiPage) and a

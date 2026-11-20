@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Database servers not managed here (store#DatabaseHost), each served by its kind's create#Database. The admin login is
     the database-credential item DatabaseHost:<id>:admin of its vault, leased by the provision that makes a database on
     it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Database Hosts" default-menu-index="5">
 
     <transition name="storeDatabaseHost" method="post"><service-call name="org.moqui.dev.InstanceServices.store#DatabaseHost"/>

@@ -13,13 +13,13 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Conf › Edit (guide docs/tools/Component-Deploy.md, "Viewing and editing the conf"): one conf file at a time, by its
-    place in the merge (fileIndex), in the XML code editor of Edit.qvue: completion from moqui-conf-3.xsd, each element's
+    place in the merge (fileIndex), in the XML code editor of Edit.qvue: completion from mr-moqui-conf.xsd, each element's
     class (live, apply, restart) in the gutter, the default conf's comments above the elements they describe, and the
     problems and the changes that would wait for a restart as the text changes (check#ConfFile). Review and save shows the
     diff and the changes a reload makes; saving writes the file and reloads the conf (save#ConfFile). The default conf
     opens read only: its settings are overridden in the runtime conf. Reading and saving need the sealed CONF_EDIT
     permission, which the services check. The terminal edits the file as a form (EditTui). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edit" default-menu-index="2" render-modes="vue,qvue,tui" server-static="vue,qvue">
     <parameter name="fileIndex"/>
     <parameter name="line"/>

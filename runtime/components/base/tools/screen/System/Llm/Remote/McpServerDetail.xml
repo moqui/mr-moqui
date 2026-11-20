@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- One remote MCP server: its URL, agents, limits and credential (set, never shown); the tools rows allow, each with
     its classification; and a test that lists the server's tools now, with Allow for each. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="MCP Server" default-menu-index="4" default-menu-include="false">
 
     <parameter name="mcpServerId" required="true"/>

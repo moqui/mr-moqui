@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     are the browser's own encrypted sends); in Settings/Stickers.xml and System/ChatStickers.xml the pack management
     (createStickerPack, updateStickerPack, deleteStickerPack, addSticker, removeSticker), which go back to
     the screen with its message. A JSON refusal is answered with its reasonCode and the errors, as send's is. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="stickerPacks" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.get#StickerPacks').call() || {}

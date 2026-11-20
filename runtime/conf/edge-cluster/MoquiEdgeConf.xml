@@ -8,7 +8,7 @@
     item claimed by lease, so delivered once), receipts, replicated copies, mail delivery rows, MMS files and PASS
     visitor sessions as rows. Use the Maximal package with an external database, or Enterprise; the runtime has the base
     components and mr-pass (./moq component-get edge), the same on each member. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="front_edge"/>
     <!-- takes links from paired local nodes on the HTTPS listener: the front and edge sets, as an edge node as built.
         System › Edge Clients › Edge cluster lists the members with their link addresses; Clients shows the links to the

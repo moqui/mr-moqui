@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <!-- A service implemented in Rust: the location is the function the component's catalogue binds (src/services.rs).
         The XML defines the service; the Rust function is only its body. -->
     <service verb="echo" noun="Message" type="rust" location="example::services::echo">
@@ -23,7 +23,7 @@
         </actions>
     </service>
 
-    <!-- The condition of the gallery's quick-create kind galleryTask (screen/Gallery.xml; xml-screen-3.xsd quick-create
+    <!-- The condition of the gallery's quick-create kind galleryTask (screen/Gallery.xml; mr-xml-screen.xsd quick-create
         condition-service): the shell offers the kind only when this answers offer true for the session's user. Here it is
         offered unless the user turned it off (their preference GALLERY_QUICK_TASK set to N), as an app offers Clock in only to
         someone who clocks. -->

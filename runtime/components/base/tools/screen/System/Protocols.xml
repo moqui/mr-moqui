@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.admin.OperationServices (ADMIN_OPERATION_VIEW and ADMIN_OPERATION_MANAGE), which check the permissions
     themselves. Its screens are the files of Protocols/, with the sibling names an app that shows them under its own root
     uses (README, "Mounting the administration screens"), so their links to each other are relative. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Mail and protocols" default-menu-index="11" default-menu-group="Integration" menu-image="sym_o_mail" menu-image-type="icon">
     <subscreens default-item="Home"/>
     <widgets>

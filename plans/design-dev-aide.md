@@ -208,7 +208,7 @@ kept by their XML text (`core/script/actions.rs`), so new text compiles anew.
 | Element positions | Each `MNode` has its file, line and column; the reader is hand-written, no XML crate | `lib/node/` |
 | Widget fragments | Cached as re-serialized text (`node.write_string()`), so their positions are lost | `core/screen/definition.rs` `XmlFragment` |
 | Vendored libraries | Vue 3.5.44 and its compiler for QuickJS, Quasar 2.35.1, Tiptap 3.31.4 with ProseMirror and Yjs in one bundle, highlight.js, Marked, DOMPurify, Mermaid, Chart.js, SortableJS, xterm.js; no code editor | `webroot/libs/refresh.mjs` |
-| Read-only code | `code-view` (highlight.js) and the `moqui-diff` table | `fw/xsd/xml-screen-3.xsd`, docs/data/Revision-Management.md |
+| Read-only code | `code-view` (highlight.js) and the `moqui-diff` table | `fw/xsd/mr-xml-screen.xsd`, docs/data/Revision-Management.md |
 | Git hosting | Hosted `local`, `db` and `remote` repositories over gitoxide, merge requests, branch rules, gitECA rules; the `git` feature, which today's default package (Lite) leaves out | docs/interfaces/Git-Hosting.md, docs/Build-Test.md |
 | Co-editing | Yjs rooms on the notification socket (`yrs`), `m-coedit` | `core/collab/`, `docs/ui/Qvt-Client.md` |
 | XSDs | 12 schemas, 7,319 lines, with documentation; nothing reads them | `fw/xsd/` |
@@ -980,7 +980,7 @@ The view of an entity file's tab, one entity at a time, chosen from the file's o
   dev-aide runs it for the changed entities whatever the group's `runtime-add-missing`, and the report lists the DDL.
   This additive DDL is all the `DEV_AIDE_EXTEND` tier ever runs.
 - What the check does not change is said: a removed field leaves its column, a type change leaves the column's type,
-  a renamed field adds a column. Moqui keeps no migrations (`change-set` is tabled in `entity-definition-3.xsd`), so
+  a renamed field adds a column. Moqui keeps no migrations (`change-set` is tabled in `mr-entity-definition.xsd`), so
   for `DEV_AIDE` users the view offers what a developer would do by hand on a dev database, each with its SQL shown
   first and a confirm that has the table's name typed back: drop the column, change its type, rename the column keeping
   its data, drop and create the table losing its rows. A rename defaults to "add the new column and keep the old"; the
@@ -1431,7 +1431,7 @@ tabs, layout and unsaved text (IndexedDB) per user. File edits proposed by agent
 kind `file`); the index and the observed calls are the framework's `moqui.devtools` rows (§7.1), since the index is
 the framework's (D8).
 
-**Conf**: a `dev-aide` element (added to `moqui-conf-3.xsd`) in the component's `MoquiConf.xml`, and `dev-reload` in the
+**Conf**: a `dev-aide` element (added to `mr-moqui-conf.xsd`) in the component's `MoquiConf.xml`, and `dev-reload` in the
 framework's:
 
 ```xml
@@ -1454,7 +1454,7 @@ framework's:
 
 | # | Change | Where |
 | --- | --- | --- |
-| F1 | `purpose` on `component-dir`, `component` and `component.xml`; the effective purpose before discovery; the WARN per component left out; the dependency check; `components/dev` in the default `component-list` | `core/context/component.rs`, `factory.rs`, `fw/conf/MoquiDefaultConf.xml`, `moqui-conf-3.xsd` |
+| F1 | `purpose` on `component-dir`, `component` and `component.xml`; the effective purpose before discovery; the WARN per component left out; the dependency check; `components/dev` in the default `component-list` | `core/context/component.rs`, `factory.rs`, `fw/conf/MoquiDefaultConf.xml`, `mr-moqui-conf.xsd` |
 | F2 | The Dev package as `./moq`'s default (feature `dev`, Cargo profile `develop`, `target/develop/moqui`) and `--lite` for Lite; the `devtools` feature (the dev crates, the watcher) in Dev and Debug; the dev-aide's crate a workspace member linked under `devtools`, a user's dev crates through the generated crate; `--dev` for the component tasks, `runtime/components/dev` in the git tasks; the docs and help that name the default package | `moq`, `.cargo/config.toml`, `Cargo.toml`, `crates/moqui-host/Cargo.toml`, `crates/moqui/Cargo.toml`, docs/Build-Test.md, README.md |
 | F3 | Reload the service registry: rebuilt from every service file as `lint` replaces it, the changed file's new text included, and swapped in; a per-file merge (its services replaced or removed, includes and implements resolved again) only if the rebuild measures slow | `core/service/define.rs` |
 | F4 | Rebuild the SECA, EmECA and gitECA rule sets, and the EECA rules | `core/service/eca_rules.rs`, `core/entity/load_feed/eca.rs` |
@@ -1462,14 +1462,14 @@ framework's:
 | F6 | `core/devtools/reload.rs`, and the dev watcher under `devtools`; `ScreenFacade::forget(location)`; single-entry drops of text, template and script caches; REST roots and skill sync on demand; `DevReload` notifications; restart from the app (a re-exec, §6.5) | `core/devtools/`, `core/screen/cache.rs`, `core/script/`, `crates/moqui-host/src/` |
 | F7 | The lossless XML layer and its vectors, Rust only; `xml_edit` exposed in the WASM build of `moqui-lib` for the views, and `POST xml-op` until then | `lib/xml_edit.rs`, `crates/moqui-lib/testdata/xml-edit-vectors.json`, `crates/moqui-browser` |
 | F8 | The XSD digest and the reference rules, served to clients | `core/devtools/schema.rs`, `refs.rs` |
-| F9 | The CodeMirror bundle; `WebrootCode.js` with `m-code-editor`, `m-file-tree` and `m-diff-view`; `text-area editor-type="code"` with `language` | `webroot/libs/refresh.mjs`, `webroot/js/`, `fw/xsd/xml-form-3.xsd`, the qvt macros |
+| F9 | The CodeMirror bundle; `WebrootCode.js` with `m-code-editor`, `m-file-tree` and `m-diff-view`; `text-area editor-type="code"` with `language` | `webroot/libs/refresh.mjs`, `webroot/js/`, `fw/xsd/mr-xml-form.xsd`, the qvt macros |
 | F10 | Source stamps: widget positions kept through `XmlFragment` on dev instances, with the file that wrote each element (the base screen, a `screen-extend`, a DbForm), `data-m-src` in `ScreenQvt.js` for a stamped render, a stamped `.qvue` template, `frame-ancestors 'self'` for those renders | `core/screen/definition.rs`, `fw/template/screen/ScreenQvt.js`, `core/screen/` |
 | F11 | The artifact index and the observed calls, in the `moqui.devtools` tables (question 11) | `core/devtools/index.rs`, `core/context/artifact.rs`, `fw/entity/DevToolsEntities.xml` |
 | F12 | Assist: approval target kind `file` with its hand-off to the editor and its card as artifacts with Preview (§13.3); the page state's `editor` part in the tail; `moqui.assist.codeActions`; the `$bridge` mixin for `.qvue` screens (P9). The shell: a page may keep the app drawer closed while it is the page; "Customize this screen" in the page menu and the drawer's header on dev instances (D18) | `core/llm/approval/`, `core/llm/assist/state.rs`, `webroot/js/WebrootAssist.js`, `WVQ` |
 | F13 | `moqui refs` and `moqui check` (`--json`, `--extensions`, a stable exit code, the changed files by default) and the coding-agent skill; later `moqui lsp`, under `devtools` | `crates/moqui-host/src/`, `fw/skill/` |
 | F14 | A request-scoped location overlay: a screen renders from unsaved or proposed text standing at its location for one request (the Preview of §13.3, the builder's buffer of §11.2, the dialects of §13.5), in P4; services from proposed text later | `core/context/resource.rs`, `core/screen/cache.rs` |
 | F15 | Later: Yjs out of the Tiptap bundle into its own, for co-editing code with `y-codemirror.next` on the existing rooms | `webroot/libs/refresh.mjs`, `core/collab/` |
-| F16 | `screen-extend` strengthened (D17): `widgets-extend where="prepend|append"` inside a named container (the XSD's FUTURE); a form merge that places a merged field in the form's `field-layout`, and a merged `form-list-column`, by `after="fieldName"`; the order of several components' extensions of one screen stated (component load order, as entities); stamps carry the writing file (F10); a `moqui lint --screens` rule for unnamed containers in base screens, so upstream authors add anchors | `core/screen/definition.rs`, `core/screen/form.rs`, `fw/xsd/xml-screen-3.xsd`, `core/script/screen_lint.rs` |
+| F16 | `screen-extend` strengthened (D17): `widgets-extend where="prepend|append"` inside a named container (the XSD's FUTURE); a form merge that places a merged field in the form's `field-layout`, and a merged `form-list-column`, by `after="fieldName"`; the order of several components' extensions of one screen stated (component load order, as entities); stamps carry the writing file (F10); a `moqui lint --screens` rule for unnamed containers in base screens, so upstream authors add anchors | `core/screen/definition.rs`, `core/screen/form.rs`, `fw/xsd/mr-xml-screen.xsd`, `core/script/screen_lint.rs` |
 | F17 | §21.2: a dev instance signs in to a group server as an installed app does (`core/service/sso_app.rs`), with a loopback redirect URI, and after the server's own login where it has no identity provider; it gets a login key as the Desktop app gets a device key | `core/service/sso_app.rs`, `crates/moqui-host/src/sso.rs` |
 | F18 | §21.3, §21.7: REST on the hosting side for what a client asks first: what the server offers, the repository of a clone URL with the caller's rights and its settings, and whether an author has signed a repository's agreement. The merge request, thread and pipeline resources are [Dogfood](Dogfood.md#12-framework-changes) F9 | `runtime/components/base/tools/service/moqui.rest.xml`, `crates/moqui-git/src/service/hosting.rs` |
 | F19 | §21.5, §21.7: `ci.xml` in the XSD digest and in `moqui check`; `moqui check --agreement` for a pre-commit hook | `crates/moqui-devkit/src/schema.rs`, `check.rs` |
@@ -2273,7 +2273,7 @@ reopen, a comment on a line, a review); open threads of the checked-out merge re
 source branch) in the editor's gutter; check chips on Commits and Branches, a commit's checks (statuses, runs, jobs), a
 job's log followed while it runs, its failed tests as links to the working tree's file and line, Re-run and Retry; the
 agreement warning in Changes and Sign (`AUTHORS.md` under both lists, committed alone; refused while the file has
-changes, from a header login, and to agents). F19: `ci.xml` is checked by `moqui check` against `git-ci-3.xsd`;
+changes, from a header login, and to agents). F19: `ci.xml` is checked by `moqui check` against `mr-git-ci.xsd`;
 `moqui check --agreement` asks the group server (`MOQUI_GROUP_SERVER`, `MOQUI_GROUP_TOKEN`) and fails a commit by an
 author who has not signed unless it stages only `AUTHORS.md`. With the P11 review's fixes: the REST names no keeper of
 a repository the caller may not view, a hidden merge request is its author's and answers as a missing number, the

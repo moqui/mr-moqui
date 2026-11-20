@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
     membership with its dates. No registered bundle, delegation rule, revision or review applies there, so each of its
     transitions carries raw() as its condition and is never taken in by an app; the choice of a user in AddMember
     (getUserList, every account of the instance) is the instance administrator's too. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Group" default-menu-include="false">
     <parameter name="userGroupId" required="true"/>
     <!-- a grant change to preview (GroupCapabilities): add or end a bundle, one of its permissions or one of its bindings -->

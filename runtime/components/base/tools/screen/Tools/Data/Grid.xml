@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     that opens, in the grid (gridColumns) or the terminal, is put first in the user's recent entities, the preference
     tools.recent (template/ToolsRecent.js). Calc mode shows the source as the data sheet of a workbook
     (plans/IronCalc-DB.md), over the calc transitions and org.moqui.calc.CalcServices. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Grid" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="entityName"/>

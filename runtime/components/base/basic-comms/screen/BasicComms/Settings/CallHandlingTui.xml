@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal twin of Call handling (style-guide §4.8): do not disturb, call waiting, the mobile that rings too and Hide my
     number; the rules in order with Turn on or off and Remove, Add a rule; the caller lists with their numbers
     (org.moqui.call.CallHandlingServices, the signed-in user's own). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Call handling" default-menu-include="false">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>

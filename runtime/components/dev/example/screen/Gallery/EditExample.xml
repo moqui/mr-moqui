@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Edit one moqui.example.Example: the form at the left saves through update#moqui.example.Example, the facts at the
     right, side by side on a wide screen. The Search screen's New dialog opens it on the example it created. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edit Example" default-menu-include="false">
 
     <parameter name="exampleId" required="true"/>

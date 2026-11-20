@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- One ETL run (get#EtlRun): its status and counts as it goes, the first errors, the error file of every failed row as
     a download, and a rerun (rerun#EtlRun: the saved mapping from the run's nextStartRow, reading the location that run
     read), offered only when get#EtlRun says canRerun. Only the run's user or a DATABASE_ADMIN holder sees it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Run" default-menu-include="false">
 
     <parameter name="runId" required="true"/>

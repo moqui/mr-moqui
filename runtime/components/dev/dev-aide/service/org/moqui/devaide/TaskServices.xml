@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The task panel (plans/design-dev-aide.md 14), implemented in the dev-aide crate (src/tasks.rs): the user's open tasks
     from a task source (this instance's Mantle tasks, or another Moqui instance over REST), the apps a task opens in, Quick
     create and a branch named for a task. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="Tasks" type="rust" location="dev_aide::tasks::get_tasks" allow-remote="false" read-only="true">
         <description>The user's open tasks from their source, each with its link in the chosen app; an unreachable source answers its error.</description>
         <out-parameters>

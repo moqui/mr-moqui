@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The admin services of the models and their usage (plans/LLM-A2A-Assist.md 4.18 and 6; the System > LLM screens).
     The bodies are Rust: crates/moqui-core/src/llm/services.rs, in builds with the llm feature (a build without it says
     so). The configuration services need AgentAdmin. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="EffectiveConfig" type="rust" location="moqui_llm::services::get_effective_config"
             transaction="ignore">

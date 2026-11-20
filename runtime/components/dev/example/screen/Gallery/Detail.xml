@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     title row (identifier, status bar, primary action, secondary actions), boxes for its parts and a Chatter column (the
     chatter and record-files elements, which load the gallery's Chatter and RecordFiles screens when the theme names them).
     Every action posts to a no-op transition; nothing is written. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Detail" default-menu-index="3" menu-image="sym_o_description" menu-image-type="icon">
 
     <parameter name="enumId"/>

@@ -411,7 +411,7 @@ fn service_reload_phases_as_loaded_files_grow() {
     }
 }
 
-/// A repository's `ci.xml` is checked by its schema (`git-ci-3.xsd`, F19): a typo in an attribute or an element is a
+/// A repository's `ci.xml` is checked by its schema (`mr-git-ci.xsd`, F19): a typo in an attribute or an element is a
 /// warning, a missing required attribute too, and a good file has no problem; its `service` containers are not
 /// service references.
 #[test]

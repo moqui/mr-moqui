@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
     (System, Push Health; a device that never acknowledged one is not alerted on). A call's ring is not in the outbox: it
     goes after the commit straight to send#WebPush, and to the desk and soft phones, for the users filter#RingUsers keeps
     during do not disturb (all of them when that check fails, logged). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="wake" noun="ChatPush" type="rust" location="moqui_core::service::chat_push::wake_chat_push"
             allow-remote="false" transaction="ignore">

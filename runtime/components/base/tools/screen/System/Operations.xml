@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.admin.ReadinessServices, which check each provider's permission and ADMIN_OVERVIEW_VIEW. Its screens are
     the files of Operations/, with the sibling names an app that shows them under its own root uses (README, "Mounting the
     administration screens"), so their links to each other are relative. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Operations" default-menu-index="6" default-menu-group="Administration" menu-image="sym_o_monitor_heart" menu-image-type="icon">
     <subscreens default-item="Jobs"/>
     <widgets>

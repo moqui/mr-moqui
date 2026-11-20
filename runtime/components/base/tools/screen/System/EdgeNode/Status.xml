@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
     says the rest is this node's own, and there is no queue or replication, which a front pairing carries none of. With
     both pairings, the Front node box shows the front's link beside the edge one. Not paired: the way to the Pair wizard. A build without the edge link (state notBuilt), a process
     where it is not running (notStarted: no HTTPS listener started it), and an edge node see a notice instead. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Status" default-menu-index="1" default-menu-include="false">
 
     <transition name="pauseDelivery">

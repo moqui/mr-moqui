@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     Refusals carry reasonCode: recordingOff, notFound, notAllowed, callEnded, notRecording, notSignedIn, notInCall,
     mediaUnavailable. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== The recording of a call ========== -->
 

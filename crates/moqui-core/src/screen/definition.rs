@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The screen definition: all of `xml-screen-3.xsd`, parsed once per cached screen.
+//! The screen definition: all of `mr-xml-screen.xsd`, parsed once per cached screen.
 //!
 //! `MNode` is `Rc`, so a cached definition holds XML text and plain fields and is `Send + Sync`.
 //! Widget subtrees and forms stay as [`XmlFragment`] text. [`XmlFragment::node`] parses one back

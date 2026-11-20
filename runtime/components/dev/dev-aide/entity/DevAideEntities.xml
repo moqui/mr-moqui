@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The dev-aide's records (plans/design-dev-aide.md 16): an audit row for every write, the roots and settings Settings
     adds over the conf, and the tokens a shared dev server's admin sets for network git. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="DevAideAudit" package="moqui.dev" use="transactional" cache="never">
         <description>A write of the dev-aide: a save, create, move, delete, or a git command that writes, with who, where,
             the file's hashes before and after, and a JSON detail.</description>

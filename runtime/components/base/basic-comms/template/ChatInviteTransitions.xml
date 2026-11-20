@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     inviteQr (the QR code of a link's URL, on the conf's own scheme and host, never the request's Host), setRoomListed,
     joinRequests, joinRequestCount, decideJoinRequest, cancelJoinRequest, listedRooms (Browse) and requestJoin. A refusal is
     an answer with its reasonCode and the errors. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="inviteLinks" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatInviteServices.find#InviteLinks').parameter('chatRoomId', chatRoomId || '').call() || {}

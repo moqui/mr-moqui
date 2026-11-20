@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- One skill: its Markdown (a site or personal skill is edited here; a file's text is the file's, so only its lock
     changes), its status, its sections with what each holds, the risk that counts, whether another skill is in effect
     for its name, and its recent uses. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Skill" default-menu-index="2" default-menu-include="false">
 
     <parameter name="skillId" required="true"/>

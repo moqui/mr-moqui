@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- One session replay: the qvt client plays it with rrweb's Replayer (m-session-replay, which reads the events transition);
     the terminal client lists its page and the traces it touched. MONITOR_REPLAY is checked by the services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Replay" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Replay" default-menu-include="false">
     <parameter name="replayId" required="true"/>
     <transition name="events" read-only="true" begin-transaction="false">
         <parameter name="replayId" required="true"/>

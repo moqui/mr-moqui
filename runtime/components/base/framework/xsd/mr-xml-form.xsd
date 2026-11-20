@@ -13,8 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
-    <xs:include schemaLocation="common-types-3.xsd"/>
-    <xs:include schemaLocation="xml-actions-3.xsd"/>
+    <xs:include schemaLocation="mr-common-types.xsd"/>
+    <xs:include schemaLocation="mr-xml-actions.xsd"/>
 
     <xs:element name="AllWidgets" abstract="true"/>
     <xs:element name="StandaloneFields" abstract="true"/>
@@ -551,7 +551,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attributeGroup ref="client-context"/>
     </xs:complexType></xs:element>
     <!-- On row-actions here, and on a screen's always-actions, pre-actions and actions, a section's and a section-iterate's
-         actions, and a screen-extend's actions-extend (xml-screen-3.xsd). -->
+         actions, and a screen-extend's actions-extend (mr-xml-screen.xsd). -->
     <xs:attributeGroup name="client-context">
         <xs:attribute name="client-context" type="xs:string"><xs:annotation><xs:documentation>
             Context names these actions set that are always sent to the client in the data of a server-static screen

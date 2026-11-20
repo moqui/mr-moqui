@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     cancelScheduled, dismissScheduled, sendScheduledNow, claimHeld, sendHeld, reportHeld and completeHeld (an encrypted
     room's message, sent by the device that holds it), setReminder and cancelReminder. A refusal is an answer with its reasonCode and the errors,
     as send's is. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="chatSchedule" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.chat.ChatScheduleServices.get#ChatSchedule').call() || {}

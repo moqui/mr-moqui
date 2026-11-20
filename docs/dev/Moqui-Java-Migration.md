@@ -109,6 +109,27 @@ Positive Pay jobs). Reload the data that defines them, or update the names with 
 example `regexp_replace(consume_service_name, '^mantle\.account\.(Nacha|PositivePay|Bai|Ofx)Services\.',
 'mantle.ext.account.\1Services.')`.
 
+## Schema files
+
+The framework's XSDs, in `runtime/components/base/framework/xsd/`, are named `mr-<name>.xsd` with no `-3` suffix, so
+they are not taken for Moqui Java's schemas of the same vocabulary: `xml-screen-3.xsd` is `mr-xml-screen.xsd`,
+`moqui-conf-3.xsd` is `mr-moqui-conf.xsd`, and so on for `xml-form`, `xml-actions`, `common-types`,
+`entity-definition`, `entity-eca`, `service-definition`, `service-eca`, `email-eca` and `rest-api` (`git-eca` and
+`git-ci` are MR Moqui's own). A file's schema URL is `http://moqui.org/xsd/mr-xml-screen.xsd`, which
+`framework-catalog.xml` maps to the local file.
+
+A file that still names `http://moqui.org/xsd/xml-screen-3.xsd` loads and checks the same: `moqui check` and the
+loaders pick the schema by the root element, not by the URL. Only an IDE follows the URL. To rewrite a component's
+files:
+
+```sh
+git grep -lzE '[a-z-]+-3\.xsd' | xargs -0 sed -i -E \
+  's#(xml-screen|xml-form|xml-actions|common-types|entity-definition|entity-eca|service-definition|service-eca|email-eca|rest-api|moqui-conf)-3\.xsd#mr-\1.xsd#g'
+```
+
+The conf has no `repository-list`: JCR content repositories are not supported. A `repository-list` left in a conf file
+is kept as an unknown element and nothing reads it, so delete it.
+
 ## Files and the content entities
 
 `DbResource`, `DbResourceFile`, `DbResourceFileHistory` and the git and blob storage entities are in a database of

@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- One API client: its scopes, aliases and limits (store#LlmApiClient), a new login key for it, and its recent calls.
     The credential is shown only by its kind. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Client" default-menu-index="2" default-menu-include="false">
 
     <parameter name="clientId" required="true"/>

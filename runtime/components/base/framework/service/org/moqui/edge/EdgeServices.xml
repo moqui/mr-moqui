@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     host", except get#LinkStatus, which answers state notBuilt (or notStarted in a binary with the link but no HTTP
     listener). All are internal (allow-remote false) and for an administrator: pairing writes keys to runtime/.env. The
     model is framework/entity/EdgeEntities.xml. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="LinkStatus" type="rust" location="moqui_core::service::edge::get_link_status"
             allow-remote="false" transaction="ignore">

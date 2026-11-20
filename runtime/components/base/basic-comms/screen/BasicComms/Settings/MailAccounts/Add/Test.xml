@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     step shows (Test again reloads it). An account with no incoming server (hosted, or shared and delivered here) is not
     signed in to: the step says the gateway delivers, and Next goes on. Otherwise Next goes on when the test passed, or with
     "Continue anyway" (the account stays as it is and its sync reports the problem). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Test" default-menu-index="3" menu-image="sym_o_network_check" menu-image-type="icon">
 
     <parameter name="emailAccountId"/>

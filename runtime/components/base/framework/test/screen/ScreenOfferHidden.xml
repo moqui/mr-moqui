@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- The ScreenOffer spec's screen offered only under another appRoot (test only, never mounted): its own condition, with no
     fail-widgets, leaves it out of its parent's tabs, and a request naming it runs none of its actions. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-title="Hidden screen">
     <condition><expression>appRoot == 'Elsewhere'</expression></condition>
     <actions><script>ec.message.addError('The hidden screen actions ran')</script></actions>

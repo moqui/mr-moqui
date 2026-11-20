@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.call.SmsRoomServices), each included by name in Chat.xml: textMembers, textMemberChoices, addTextMember and
     renameTextMember (taking one out is removeMember with its chatActorId). A refusal is an answer with its reasonCode and
     the errors. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="textMembers" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.call.SmsRoomServices.find#TextMembers').parameter('chatRoomId', chatRoomId || '').call() || {}

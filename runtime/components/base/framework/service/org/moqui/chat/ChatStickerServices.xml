@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Sticker packs (plans/Comms-Messaging.md §18.3 phase 20): the server's packs (ChatStickerAdmin keeps them) and each
     user's own; a sent sticker is a copy of its picture in the room. Local only, no outside service. Each service checks
     the caller: another user's pack is "not found". The logic is ChatSticker.js beside this file. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="StickerPacks">
         <description>The caller's own offered packs, then the server's offered ones, each {chatStickerPackId, packName, own,

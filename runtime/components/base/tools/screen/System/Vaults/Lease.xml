@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     own names, sealed to the lease and signed; only that approval comes back here (approve#VaultLease, the approve role
     and a recent sign-in). The passphrase and every key stay in the worker. Lease.tui.json: the terminal says where to
     approve. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Lease" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
     <parameter name="leaseId" required="true"/>
 

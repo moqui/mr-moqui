@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     approver, the requester or VAULT_ADMIN), its machine access with Revoke (revoke#VaultMachineAccess, VAULT_ADMIN,
     which names the items to rotate) and its events. Take in opens TakeIn for the items the server deposited (a
     provision's credentials, a rotation's new values), which a lease names only once a member took them in. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Vault" default-menu-include="false">
     <parameter name="vaultId" required="true"/>
 

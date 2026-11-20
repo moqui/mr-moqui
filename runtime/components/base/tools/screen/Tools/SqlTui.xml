@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     and their result sets, through org.moqui.dev.DatabaseServices.run#Sql, read only unless Allow changes, which first
     lists the statements that may change data (classify#Sql) and runs them with that confirmation. Needs SQL_RUNNER_WEB
     and authorization for all actions on this screen. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="SQL" default-menu-include="false" begin-transaction="false">
 
     <always-actions>

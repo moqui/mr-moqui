@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The gallery's stand-in for BOSS's Shared/RecordFiles (design-drawers-commons §9): the subscreen the record-files element
     loads, named by the theme value STRT_RECORD_FILES_SCREEN (BOSS seeds RecordFiles), under the current app root with the
     record. It lists sample files with who added them; nothing is stored. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Files" default-menu-include="false">
 
     <parameter name="recordEntity"/>

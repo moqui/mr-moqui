@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     get#CommsHome through org.moqui.comms.InboxServices.run#Operation (an app's own Home data when it answers the inbox), which
     reads each part on its own: one that fails is left out and said so. An app adds its boxes with a screen-extend into
     HomeMain (before the rooms) and after HomeShortcuts. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Home" default-menu-index="1" menu-image="sym_o_dashboard" menu-image-type="icon">
 
     <actions>

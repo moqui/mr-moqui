@@ -13,7 +13,7 @@
     some viewers may not see, a scope choice) shows these sections in a screen of its own, with the page from its own
     service (BOSS Insights › Drill): a record's row then links the screen the app gives it (recordUrl). The screen has
     no transition. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Drill" default-menu-include="false">
 
     <parameter name="definitionId" required="true"/>

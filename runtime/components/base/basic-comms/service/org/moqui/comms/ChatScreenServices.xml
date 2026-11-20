@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     record (the theme value STRT_RECORD_VISIBLE_SERVICE), so a room the user may not reach, and a file of one, is "not found".
     Nothing here takes the current user's id from the caller: the users these services name are the other members of a direct
     room, the members to add, or the member a moderator changes, which ChatServices checks against the room's roles. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Preferences ========== -->
 

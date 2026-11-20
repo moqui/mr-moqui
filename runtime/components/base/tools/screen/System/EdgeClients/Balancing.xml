@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     node started: each member's requests in flight and in all, its failures in a row, the times it was set aside and
     until when it is now, and whether it takes new work (linked, live and not set aside). Read only: a host's cookie is
     set on Domains, and a member is drained on Clients. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Balancing" default-menu-index="4">
 
     <actions><script><![CDATA[

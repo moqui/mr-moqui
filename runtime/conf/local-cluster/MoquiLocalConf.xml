@@ -7,7 +7,7 @@
     can serve any request; scheduled jobs take a lock row, so each runs on one member at a time.
     Use the Enterprise package (--enterprise): it has no embedded Postgres, so a member cannot start on a database of its
     own by mistake. With an edge node in the load balancer's place, the members run MoquiPooledConf.xml. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- The shared database: Postgres, or MySQL (mysql8) with the default cluster transport. The rest in .env, the same

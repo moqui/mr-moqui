@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     captions never downgrade), mediaUnavailable (no media node), noProvider (no speech to text set up). Like the call
     services, these check the signed-in user's part in the call themselves; the Calls screen's transitions call them with
     authorization off, each in its own transaction. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="start" noun="Captions">
         <description>Turn on a call's captions, as someone in it. Every leg is told they are on and who transcribes. When

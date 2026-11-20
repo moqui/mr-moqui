@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     users and the reads by user stay one find; an external actor's rows have no userId, and no key holds a userId. The
     bridge layer's entities are at the end: ChatBridge, ChatRoomBridge, ChatExternalUser, ChatEventExternal,
     ChatBridgeInbound and ChatBridgeDelivery (org.moqui.chat.ChatBridgeServices, crates/moqui-core/src/service/chat_bridge.rs). -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
     <entity entity-name="ChatRoom" package="moqui.chat" use="transactional" cache="never">
         <description>A room: a direct message between two or more users (CrtDirect, one per set of users, reused), a private

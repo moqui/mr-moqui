@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     shown only to a user Dashboards' own grant opens. A job run carries no organization, so there is no organization filter.
     Reading needs ADMIN_OPERATION_VIEW, checked by the service; another reader is told it is not available to them.
     For the instance administrator (README, "Mounting the administration screens"): the scheduler's own state, read only. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Jobs" default-menu-index="1" menu-image="sym_o_schedule" menu-image-type="icon">
     <parameter name="state"/>
     <parameter name="ownerApp"/>

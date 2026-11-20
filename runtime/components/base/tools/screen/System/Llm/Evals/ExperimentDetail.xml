@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- One experiment: each item and trial with its output, run and scores. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Experiment" default-menu-include="false">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Experiment" default-menu-include="false">
     <parameter name="experimentId" required="true"/>
     <transition name="advanceNow" method="post">
         <service-call name="org.moqui.agent.AgentEvalServices.advance#Experiments" in-map="{experimentId}"/>

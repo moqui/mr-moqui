@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     (chat/stickers@root, dbresource://chat-stickers by default). A sent sticker is a copy of its picture in the room, an
     ordinary ChatAttachment (stickerOf), so removing a pack never breaks a message and a user's pack stays its owner's. No
     outside service. No Java counterpart. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
     <entity entity-name="ChatStickerPack" package="moqui.chat" use="transactional" cache="never">
         <description>A pack of stickers: the server's (no ownerUserId), offered to every chat user, or a user's own, offered to

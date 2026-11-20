@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Gallery: the 3.14 Panel archetype of the style guide, the content of the tray panel's Today tab rendered as a
     normal screen in a 400 px column: groups with captions, dense list items with an icon by kind and two flat
     quick actions, the open approvals line, an empty group, and the quick-create dialog with its context chip. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Panel" default-menu-index="13" menu-image="sym_o_right_panel_open" menu-image-type="icon">
 
     <!-- the quick actions and the quick create write nothing: a message comes back and the panel stays -->

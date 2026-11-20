@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Mounts the Dev AIDE app under the apps root (/apps/dev, /qapps/dev), and the dev-aide settings: the site components
     (whose files the extend tier writes; the others are upstream and read only), shared mode for a team dev server, and
     the git command and its timeouts (plans/design-dev-aide.md 16). -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <screen-facade>
         <screen location="component://webroot/screen/webroot/apps.xml">
             <subscreens-item name="dev" menu-title="Dev AIDE" menu-index="97" location="component://dev-aide/screen/DevAide.xml"/>

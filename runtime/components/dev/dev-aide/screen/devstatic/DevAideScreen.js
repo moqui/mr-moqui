@@ -110,7 +110,7 @@
     // ---- pure: the operations ----
 
     ops.EXTEND_TEXT = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen-extend xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" " +
-        "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/xml-screen-3.xsd\">\n</screen-extend>\n";
+        "xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-xml-screen.xsd\">\n</screen-extend>\n";
     // A widget of a field: display, text-line, a drop-down of enumerations, a check or a date-time.
     ops.fieldWidget = (widget) => ({
         "text-line": "<text-line/>", "text-area": "<text-area/>", "date-time": "<date-time type=\"date\"/>", check: "<check><option key=\"Y\"/></check>",

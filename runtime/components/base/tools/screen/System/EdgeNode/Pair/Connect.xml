@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     features, and whether its link protocol fits this node's. Next (pair#EdgeNode) pairs with the code from step 1, kept
     in the session, refusing an edge node whose fingerprint is not the one shown here; it writes the link's settings to
     runtime/.env, brings the link up, and goes on to Discover. When the session lost the code, it is asked for here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Connect" default-menu-index="2" menu-image="sym_o_link" menu-image-type="icon">
 
     <parameter name="url"/>

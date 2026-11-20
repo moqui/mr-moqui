@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     route is no link. Reading needs ADMIN_TRANSFER_VIEW or ADMIN_TRANSFER_RUN, checked by the service; a refusal is shown
     as its reason. Nothing is changed here: the screen has no transition and no part for the instance administrator, so
     an app shows it by location (README, "Mounting the administration screens"). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Exports" default-menu-index="2" menu-image="sym_o_file_download" menu-image-type="icon">
     <parameter name="kind"/>
     <parameter name="targetId"/>

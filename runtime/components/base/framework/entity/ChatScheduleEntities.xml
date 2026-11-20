@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     device, which keeps the draft sealed and encrypts it at the time: the server keeps a placeholder with no text, the
     device that holds it and the lease of the device that sends it. A reminder keeps the room and the message's number
     only, never its text. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
     <entity entity-name="ChatScheduledMessage" package="moqui.chat" use="transactional" cache="never">
         <description>A message its sender scheduled for sendDate. statusEnumId: CsmScheduled (waiting), CsmSent (sentEventSeq is

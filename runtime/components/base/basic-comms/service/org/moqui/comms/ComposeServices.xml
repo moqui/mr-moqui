@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.mail.EmailClientServices, which checks the user's access to the account. The screens call
     org.moqui.comms.InboxServices.run#Operation, which hands an operation to an app's inbox-source provider when there is one
     (internal messages, contact books and filing on records are IronStone's). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="Identities" allow-remote="false">
         <description>The identities the user may send as: each identity of an account the user may send from ({value

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     (where it renders, where its edits go: the base file in place, or the site's screen-extend of an upstream screen,
     D17), the Design frame's canvas buffers (its buffer:<id> preview token, F14), the stamps of a stamped render
     resolved to their files (F10), and a new subscreen from a gallery archetype. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="ScreenChildren" type="rust" location="dev_aide::screens::get_screen_children" allow-remote="false" read-only="true">
         <description>The subscreens of a screen (the apps under the shell by default), one level, each with its path, file and how it is mounted.</description>
         <in-parameters>

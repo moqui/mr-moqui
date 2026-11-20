@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <!-- The services without actions have Rust bodies, in crates/moqui-core/src/service/system_sync/entity_sync.rs. JSON-RPC
         is not part of this port, so a remote call is REST through RestClient: a POST of the parameters as JSON to
         /rest/s1/moqui/entity/syncs/data/get or .../put (moqui.rest.xml) under EntitySync.targetServerUrl, which is the root

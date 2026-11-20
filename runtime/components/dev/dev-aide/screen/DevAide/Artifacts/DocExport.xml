@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     a site repository's autodoc/ by default, as moqui autodoc writes them. Only the files whose text changed are written;
     the directory's .autodoc.json lists what was, so a later export can remove the docs of artifacts that are gone, and
     never a file written by hand. The extend tier, with the checks of every save. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Export docs" default-menu-index="6">
     <transition name="exportDocs">
         <actions>

@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- An entity in its view (plans/design-dev-aide.md 8, D18 guided): the artifact resolved to its file through the index
     and opened in the Workspace's client with no tree or tabs; the Workspace's transitions answer it. The terminal's twin is EditTui.xml. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edit" default-menu-include="false" render-modes="qvue,tui">
     <parameter name="artifact"/>
     <parameter name="tab"/>

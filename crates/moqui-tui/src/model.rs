@@ -1006,7 +1006,7 @@ pub struct VisibleWhen {
     /// One value or a comma-separated list.
     #[serde(default)]
     pub value: String,
-    /// equals (the default), not-equals, empty or not-empty (xml-form-3.xsd WhenAttributes).
+    /// equals (the default), not-equals, empty or not-empty (mr-xml-form.xsd WhenAttributes).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub operator: String,
 }

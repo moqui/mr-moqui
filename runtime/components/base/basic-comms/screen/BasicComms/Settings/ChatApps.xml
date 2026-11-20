@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     Dino, Gajim) to chat in this server's rooms, and the app passwords those apps sign in with. NewXmppPassword makes a new
     one that only XMPP takes (scope xmpp, shown once, after the redirect), and Revoke ends one. org.moqui.chat.XmppServices.get#ClientSettings,
     org.moqui.impl.UserServices create# and revoke#UserAppPassword. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat apps" default-menu-index="11" server-static="qvt" menu-image="sym_o_forum" menu-image-type="icon">
 
     <transition name="createXmppPassword">

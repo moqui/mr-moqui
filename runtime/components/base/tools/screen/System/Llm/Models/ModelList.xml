@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The endpoints, models and feature bindings in effect: the llm-facade conf with the database rows over it. A row
     overrides the conf entry with its id field by field, so saving a conf entry here makes a row that changes only what
     is set in it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Models" default-menu-index="1">
 
     <transition name="modelDetail"><default-response url="../ModelDetail"/></transition>

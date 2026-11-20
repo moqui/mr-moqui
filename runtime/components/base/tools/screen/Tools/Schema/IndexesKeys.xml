@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.dev.DatabaseServices.compare#Schema. A selection of tables, one table, every missing index or every foreign
     key is planned with plan#SchemaChanges, which keeps the plan as a pending database job; its page (Database › Job)
     shows the statements and runs exactly those. Planning needs DATABASE_ADMIN. Download DDL is get#SchemaDdl. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Indexes and keys" default-menu-index="2">
 
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>

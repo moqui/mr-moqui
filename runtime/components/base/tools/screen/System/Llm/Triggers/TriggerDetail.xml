@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- One agent trigger: its settings (store#AgentTrigger keeps its cron job and its document's feed link), Fire Now,
     Reset Breaker, its waiting events and its runs. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Trigger" default-menu-index="2" default-menu-include="false">
 
     <parameter name="triggerId"/>

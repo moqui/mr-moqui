@@ -285,7 +285,7 @@ reads DIR as a Java Moqui checkout whatever its sources. With neither, a Java ch
 MOQUI_RUNTIME is its runtime or the working directory is in it. With --server, the project is a
 directory on the server's machine, read there into memory on first use and kept fresh with its files
 (no restart). A definition that does not resolve is logged and left out. A repository's ci.xml is checked
-against git-ci-3.xsd as any other.
+against mr-git-ci.xsd as any other.
 
 --agreement asks the repository's group server whether the next commit's author (git's user.email) has
 signed its contributor agreement (AUTHORS.md; /rest/s1/moqui/hosting/agreement): the server is

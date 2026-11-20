@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     signatures, Rules, Out of office (on or off), Text blocks, Chat, Phone, Call handling, Desk and soft phones, Chat apps (XMPP) and My devices. An app that mounts Settings adds its own cards to the
     SettingsCards row with a screen-extend (widgets-extend where="append"). The counts are failure tolerant: a part that
     fails leaves its line out. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="All settings" default-menu-include="false" server-static="qvt">
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)

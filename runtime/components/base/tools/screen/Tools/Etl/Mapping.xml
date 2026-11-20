@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     whole source, a schedule (a ServiceJob that calls run#EtlMapping with mappingId) and the mapping's runs. The
     component is Mapping.qvue, over the JSON transitions of Etl.xml; the terminal shows the mapping, its fields and its
     runs. With no mappingId it is a new mapping. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Mapping" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="mappingId"/>

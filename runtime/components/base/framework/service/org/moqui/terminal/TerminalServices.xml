@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <!-- The browser terminal's kept sessions (plans/Terminal-Fancy.md §5.7), in crates/moqui-host/src/term under the
         host's tui feature. No entity holds a session: a running one is in the memory of the process that runs it, and
         the socket (/termws?session=) attaches to it by id. Each service works on the signed-in user's own sessions,

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- A text-area with editor-type="code" in a form: an example's description edited as JSON in the code editor
     (m-code-editor, js/WebrootCode.js) and saved through update#moqui.example.Example. A plain text area in the terminal,
     and when the editor's library cannot load. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Code Field" default-menu-include="false">
 
     <parameter name="exampleId" required="true"/>

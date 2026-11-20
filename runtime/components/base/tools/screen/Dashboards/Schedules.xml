@@ -16,7 +16,7 @@
     permission, a schedule saved here is delivered with the mount's EmailTemplate and saved with its recipient cap, and
     the definitions of the components the mount hides are not scheduled. With no mount they are the engine's own, and
     the screen links Reports, where a report is previewed and scheduled in owner mode. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Scheduled reports" default-menu-index="8"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Scheduled reports" default-menu-index="8"
         menu-image="sym_o_schedule" menu-image-type="icon">
     <parameter name="view"/>
     <parameter name="definitionId"/>

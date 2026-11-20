@@ -308,7 +308,7 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 
 | Rust file | Primary basis | Status |
 |---|---|---|
-| `screen/definition.rs` | `ScreenDefinition`, `ScreenSection`, `ScreenWidgets`, `xml-screen-3.xsd`. Widget subtrees stay XML text until the walker reads them. | Port |
+| `screen/definition.rs` | `ScreenDefinition`, `ScreenSection`, `ScreenWidgets`, `mr-xml-screen.xsd`. Widget subtrees stay XML text until the walker reads them. | Port |
 | `screen/form.rs` | `ScreenForm.initForm` (`extends`, `auto-fields-entity`, `auto-fields-service`, `DbForm`). | Port |
 | `screen/render.rs` | `ScreenRenderImpl.internalRender`, `ScreenRender`, `WebFacadeStub` via `make_render`. | Port |
 | `screen/url.rs` | `ScreenUrlInfo.initUrl`. | Port |

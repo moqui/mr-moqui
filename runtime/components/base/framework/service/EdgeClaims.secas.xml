@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     and phone numbers must not be ones its paired node holds: after each create or update writes, check#ReplicaClaim
     reads the record and adds an error naming the item and the node when the paired node's replica has it, so the
     service's transaction rolls back. On any other node the check returns at once. -->
-<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">
     <seca id="EdgeClaimCreateEmailAccount" service="org.moqui.mail.EmailClientServices.create#EmailAccount" when="post-service">
         <condition><expression>emailAccountId</expression></condition>
         <actions><service-call name="org.moqui.edge.EdgeServices.check#ReplicaClaim" disable-authz="true" in-map="{itemType: 'EmailAccount', itemId: emailAccountId}"/></actions>

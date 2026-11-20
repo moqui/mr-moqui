@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     first. A terminate host's requests are balanced over its pairing's members sticky by a cookie (plans/Edge-Node2.md
     §4.4): its own (EdgeHost.stickyCookie, add#EdgeHost's stickyCookie, set in the add dialog or a row's Sticky cookie)
     or the edge conf's sticky-cookie; a passthrough host's connections are sticky by the client's address. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Domains" default-menu-index="2">
 
     <transition name="addHost">

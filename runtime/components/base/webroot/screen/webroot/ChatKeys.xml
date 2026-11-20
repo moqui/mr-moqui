@@ -13,7 +13,7 @@
     services check (a device of another user is "not found"), so authorization is not asked; without a user it is 401.
     Posts need the session's CSRF token. Each runs its service in its own transaction, so a refusal answers as JSON
     ({errors, reasonCode} and the refusal's own fields, such as current_version; ChatKeys.js web). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="device" method="post" begin-transaction="false">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/chat/ChatKeys.js').execute('web', {verb: 'create#ChatDevice', names: ['displayName', 'automatic']})</script></actions>

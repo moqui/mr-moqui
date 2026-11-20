@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal twin of PhoneDevices (style-guide §4.8): the user's desk and soft phones with their live registrations,
     Add a phone, New password and Remove (org.moqui.call.SipDeviceServices). A new phone's or a new password's credentials
     show once, as the message after the change; they are not kept. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Desk and soft phones" default-menu-include="false">
 
     <transition name="add">

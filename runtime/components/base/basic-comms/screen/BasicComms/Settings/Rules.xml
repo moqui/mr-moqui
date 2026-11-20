@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     mail. The component is Rules.qvue next to this file (qvue render mode); its JSON transitions below are
     org.moqui.comms.MailSettingsServices get#RulesView, store#Rule and test#Rule and the framework's rule services, which check that
     the user may change each rule (its owner, or a manager of its account) and normalize them. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Rules" default-menu-index="3" render-modes="vue,qvue,tui" server-static="vue,qvue" menu-image="sym_o_rule" menu-image-type="icon">
 
     <transition name="rulesData" method="get" read-only="true">

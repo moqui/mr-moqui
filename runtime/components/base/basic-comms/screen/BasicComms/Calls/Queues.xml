@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     or all). A queue offers its calls to its free agents (logged in, not paused, not in a call, out of wrap-up), ringing their
     tabs and phones as any call does. org.moqui.call.CallQueueServices find#MyCallQueues and set#QueueAgentStatus, which act
     on the signed-in user only. An XML screen, so it is the same in the terminal (tui). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Queues" default-menu-index="6" menu-image="sym_o_support_agent" menu-image-type="icon">
 
     <transition name="setStatus">

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     ResourceEntities.xml. No Java counterpart. Entity filters do not apply to moqui.* entities: these rows are read
     through the services of org.moqui.git.GitCiServices, which check the repository's rights, and written by the
     engine (crates/moqui-git/src/ci). States are plain codes, as GitCommitStatus.state is. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="GitPipelineRun" package="moqui.resource" use="nontransactional" cache="never">
         <description>One run of a pipeline for a commit of a repository: its jobs are GitJobRun rows.</description>
         <field name="pipelineRunId" type="id" is-pk="true"/>

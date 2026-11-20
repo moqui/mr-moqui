@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     framework/entity/VoiceEntities.xml; the logic is CallQueues.js beside this file. The queue services need the VoiceAdmin
     permission (notAllowed otherwise); an agent changes only their own status; tick#QueueCall is internal. No Java
     counterpart. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="tick" noun="QueueCall" authenticate="false" allow-remote="false">
         <description>Internal (the SIP engine, every calls/queue@tick-seconds while a call waits): an offer that rang the

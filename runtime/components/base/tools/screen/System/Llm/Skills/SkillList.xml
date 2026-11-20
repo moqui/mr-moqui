@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Every skill in the index: from a file of the framework or a component (sourceLocation; its text is the file's), a
     site skill an admin wrote, or a user's personal skill (owner), which shadows the site skill of its name unless that
     one is locked. Sync reads the files again; a file that does not read is listed by name. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Skills" default-menu-index="1">
 
     <transition name="skillDetail"><default-response url="../SkillDetail"/></transition>

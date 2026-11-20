@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- One run: the state box (status, pause, lease, attempts, budgets, counts, tokens, cost) with Cancel, which stops it and
     keeps the partial answer, and its steps and tool calls by name for any admin; the tool arguments and results, the
     events and the approvals only for its own user or with AgentAudit, each such read logged (get#AgentAuditView). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Run" default-menu-index="2" default-menu-include="false">
 
     <parameter name="runId" required="true"/>

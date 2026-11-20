@@ -16,5 +16,5 @@ along with this software (see the LICENSE.md file). If not, see
     directories with an editor, git and live reload, at /qapps/dev. It gives its users code execution as the server's OS
     user, so it loads only when instance@purpose is dev: runtime/components/dev is a dev-only component directory, and this
     purpose keeps a copy elsewhere out too. -->
-<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd"
+<component xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd"
         name="dev-aide" version="${moqui_version}" purpose="dev"/>

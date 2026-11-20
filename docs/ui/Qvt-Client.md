@@ -277,7 +277,7 @@ once per page load:
   root that does not load, or whose providers fail, is logged by name and location and left out; the others are answered. `menu` lists
   what the drawer would to depth two, with the menu data's checks (`menu-include`, which may be an expression run per request, authorization, a required
   parameter left out); a disabled entry is left out. The menu entries are the palette's Screens group.
-- `providers` are the app root's `<shell-providers>` (`xml-screen-3.xsd`): labels localized, each list in `sequence` order (none counts as
+- `providers` are the app root's `<shell-providers>` (`mr-xml-screen.xsd`): labels localized, each list in `sequence` order (none counts as
   0), absent text as null. A quick-create kind with no `screen` opens the theme's `STRT_QUICK_CREATE` screen with `kind` added to its query;
   with neither it is left out. `parameter` children are added to a link's query. A provider whose screen the user may not view is left out,
   and one whose screen does not exist is logged and left out. `requiresRecord` kinds are offered only while `screenContext.record` is set.
@@ -677,7 +677,7 @@ IronStone impl-drawers-commons M3: the framework pieces Chatter and record files
 behind them; BOSS supplies the screens and the transitions.
 
 **Record panels.** `<chatter record-entity record-id default-tab hide id/>` and `<record-files record-entity record-id id/>`
-(`xml-screen-3.xsd`) are an `m-chatter` and an `m-record-files`; in a server-static screen their attributes are bound over the
+(`mr-xml-screen.xsd`) are an `m-chatter` and an `m-record-files`; in a server-static screen their attributes are bound over the
 actions data. Each loads, into an `m-dynamic-container`, the subscreen of the current app root (`currentAppName`, the first name of
 the path) that the theme names (`shell.chatterScreen`, `shell.recordFilesScreen`) as that app's `recordScreens` entry gives it,
 as its own request, so the app's authorization and entity filters apply (R5):
@@ -802,7 +802,7 @@ no image but `data:`; the text and print modes write the text (or the HTML's tex
 
 ## List views: board, calendar and tree
 
-style-guide §3.6, §3.7 and §8.2: `<form-list views="board,list,calendar">` with a `view-board` and a `view-calendar` (xml-form-3.xsd)
+style-guide §3.6, §3.7 and §8.2: `<form-list views="board,list,calendar">` with a `view-board` and a `view-calendar` (mr-xml-form.xsd)
 is an `m-list-views` around the list. The views are a client switch over the rows of the list's page (a calendar with `range-find` asks for the rows of its dates, below), so a filter of Find Options or the
 head, a sort, a saved find, another page or page size change what each shows; the list's nav row (and a head with find fields) stays
 above the board and calendar, its rows are hidden. The switch (`q-btn-toggle`, list, board and calendar icons) is above the list; the view
@@ -810,7 +810,7 @@ is the URL's `view` parameter, else the one chosen for the form in this tab, els
 (set through `$root.setPreference` on a switch), else the first of `views`. Back to the list after a move, the screen is loaded again
 (`reloadContainer` of the screen's container, else `reloadSubscreens`; an m-static-form-list fetches its rows), so the list has what changed.
 A board or tree without `transition` does not move; the macros leave it out when the view has no `transition`, when the user may not
-use it, or when the view's `move-condition` (xml-form-3.xsd) is false for the render (a server-static template binds `transition` to
+use it, or when the view's `move-condition` (mr-xml-form.xsd) is false for the render (a server-static template binds `transition` to
 the condition over the scope). The same way a form-list's `row-selection` `condition` that is false leaves out the selection: the
 server-merged macros write no m-checkbox-set, checkbox column or actions, and a server-static template binds `selection-id-field`
 of m-static-form-list to the condition, so the component draws no selection.
@@ -881,7 +881,7 @@ again), so a peeked row is a link; the peeked row is the list's selected row.
 
 ## Scan input
 
-The `scan-input` form field (`xml-form-3.xsd`; IronStone style-guide §8.1, Warehouse WH-SCAN) is a field for a keyboard-wedge
+The `scan-input` form field (`mr-xml-form.xsd`; IronStone style-guide §8.1, Warehouse WH-SCAN) is a field for a keyboard-wedge
 barcode scanner and for typed codes. Its `resolver` names a service; the client never names it. Every screen has the implicit
 transition **`scanResolve`** (`crates/moqui-core/src/screen/scan.rs`, the screen's view authorization). It is a read, so it takes
 any method, as a `dynamic-options` transition does: the browser clients POST, which must carry the session token, and the
@@ -1156,7 +1156,7 @@ A listener may unregister itself, or another, while it is called: the other list
 ## Declared actions and panels
 
 A component adds actions and panels to a screen it does not own with `<ext-action>` and `<ext-panel>` in a `screen-extend`
-of that screen (`xml-screen-3.xsd`; `crates/moqui-core/src/screen/ext.rs`; plans/archive/Comms-Framework.md §3.3). Each names a
+of that screen (`mr-xml-screen.xsd`; `crates/moqui-core/src/screen/ext.rs`; plans/archive/Comms-Framework.md §3.3). Each names a
 `slot` of the screen; the screen's `.qvue` decides where a slot's items show:
 
 ```html

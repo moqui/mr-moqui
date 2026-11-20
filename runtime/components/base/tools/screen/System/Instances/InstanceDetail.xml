@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     change); each runs now or goes to the lease dialog, as the actions do. Rotate on a secret binding (§4.7, M5) posts
     request#InstanceRotation: a new value at its source, on each instance that uses it, then the item's next revision; it
     runs now or goes to the lease dialog, and one the manager cannot change is refused with what to do by hand. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Instance" default-menu-include="false">
 
     <parameter name="appInstanceId" required="true"/>

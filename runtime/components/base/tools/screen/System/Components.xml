@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     restarts the server right after. Load Data loads a loaded component's data files again (load#ComponentData). A
     working clone with changes asks again before Remove sets it aside. Deploying needs the sealed COMPONENT_DEPLOY
     permission, and on a production instance moqui_conf__component_deploy__enabled=true. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Components" default-menu-index="20" default-menu-group="Server" menu-image="sym_o_extension" menu-image-type="icon">
 
     <transition name="loadComponent" authz-action="update">

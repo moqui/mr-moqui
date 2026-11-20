@@ -2,7 +2,7 @@
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- The AiOptOut spec's screen (test only, never mounted): a form field, a hidden value, a list column and a section opted
     out of AI (ai-opt-out, design-people PE-21), beside a field and a column that are not; the list's text and CSV exports. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-title="AI opt-out">
     <transition name="save"><default-response type="none"/></transition>
     <actions>

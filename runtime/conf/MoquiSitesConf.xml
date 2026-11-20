@@ -26,7 +26,7 @@
 
     Each host needs a DNS record and a certificate for its name (runtime/cert, docs/Run-Deploy.md, Certificates); behind
     an edge node each is an EdgeHost of the pairing (System › Edge Node). -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <entity-facade query-stats="true"/>
 
     <webapp-list>

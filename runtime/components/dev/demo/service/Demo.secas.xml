@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     for a user in demo@shared-user-ids stops it (demo.DemoServices.refuse#SharedAccountChange). Mantle's update#Account
     and update#PartyUserAccount go through update#UserAccount. Any active sign-in factor makes the login ask for a
     second one, so creating a factor is refused too. -->
-<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-eca-3.xsd">
+<secas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-eca.xsd">
     <seca id="DemoSharedPassword" service="org.moqui.impl.UserServices.update#Password" when="pre-service">
         <actions><service-call name="demo.DemoServices.refuse#SharedAccountChange" in-map="context"/></actions>
     </seca>

@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     settings, a secret only set or not. Each section is read with the viewer's own permissions and says so when it is not
     available to them. No environment, host facts, listeners, paths, users, fix places or diagnostics. The presentation
     is template/AdminReadiness.js. No part is the instance administrator's alone. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Support summary" default-menu-include="false">
 
     <transition name="summaryJson" read-only="true">

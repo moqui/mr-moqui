@@ -8,7 +8,7 @@
     Lite, the smallest, is enough, since the authority does the images and sign-in. Embedded Postgres is enough.
     Change the example names (forum.example.com, boss.example.com, FORUM_SITE, forum) to yours. Mail, media, workers,
     imports and the transports in detail: mr-pass's docs/Deployment.md. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
     <!-- rate limits, connection limits and bans by client address. Behind a proxy set webapp-list/webapp[webroot]@trusted-proxies and
         webapp-list/webapp[webroot]@client-ip-header (.env) as well: each call to the authority carries the visitor's address, which its

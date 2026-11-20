@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The kinds (seed data, framework/data/InstanceTypeData.xml): what each needs from a vault (its secrets: made and deposited
     by a provision, or leased; each given to its container as a file) and what it depends on. Read only. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Kinds" default-menu-index="6">
 
     <actions>

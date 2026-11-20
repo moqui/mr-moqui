@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     never a secret's value. Its screen is a file of Audit/, with the name an app that shows it under its own root uses
     (README, "Mounting the administration screens"); an app adds its own screens beside it (an access log). Nothing is
     changed here: the area has no transition. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Audit" default-menu-index="8" default-menu-group="Administration" menu-image="sym_o_policy" menu-image-type="icon">
     <subscreens default-item="AuditChanges"/>
     <widgets>

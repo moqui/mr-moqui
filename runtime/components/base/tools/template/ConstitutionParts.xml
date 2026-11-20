@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     (org.moqui.admin.ConstitutionServices.get#Constitution with scope global) and the reading language into `locale`,
     then includes ConstitutionSource and ConstitutionLanguage. An organization's own document is edited in its
     application (IronStone Admin), through Mantle's services. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <widgets>
         <!-- where the global document comes from, its hash and what was passed over -->
         <section name="ConstitutionSource"><actions><script><![CDATA[

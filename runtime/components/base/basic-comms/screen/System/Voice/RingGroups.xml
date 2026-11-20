@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     the email a new message is told to, with its audio or transcript attached (VoicemailServices get# and
     update#VoicemailSettings, store#, delete# and get#VoicemailGreeting with ringGroupId, for voice admins). Its members read its
     messages in Calls, Voicemail; it has no PIN, as no phone reaches a group's box. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Ring groups" default-menu-index="8">
 
     <transition-include name="searchUsers" location="component://basic-comms/template/VoiceTransitions.xml"/>

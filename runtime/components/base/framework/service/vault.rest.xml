@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The vault services over REST (/rest/s1/vault; org.moqui.security.VaultServices, docs/security/Vaults.md): what a client
     off the server's pages calls, the moqui vault command and the test client's vault member among them. Each service
     checks its caller; VaultTypeData.xml grants the path to every signed-in user. -->
-<resource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
+<resource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-rest-api.xsd"
         name="vault" displayName="Vault REST API" version="${moqui_version}"
         description="Vaults: personal keys, key checks, vaults, items, members, deliveries, deposit keys, leases and machine access, as ciphertext and signed records">
     <resource name="personalKey">

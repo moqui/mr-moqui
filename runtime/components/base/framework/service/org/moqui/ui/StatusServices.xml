@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     the columns of a form-list board and the colors of a calendar (view-board, view-calendar), which the macros call and the
     browser asks the listViewColumns transition for. StatusItem and StatusFlowTransition are configuration and are read from
     the cache. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="StatusColors" authenticate="false" allow-remote="false" transaction="ignore">
         <description>The color of each status (a Quasar color name: grey-7, primary, warning, positive, negative or info) by

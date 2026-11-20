@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     its counts (sent, acknowledged, failed, waiting), the devices whose pushes of the last day went unacknowledged first,
     marked; and the totals. org.moqui.ui.NotificationServices.find#PushHealth, which needs the PushHealthAdmin permission.
     basic-comms' MoquiConf.xml mounts this in the tools System app. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Push Health" default-menu-index="22" menu-image="sym_o_notifications_active" menu-image-type="icon">
 
     <actions><script><![CDATA[

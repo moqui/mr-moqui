@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     knows: the caller IDs, the recent numbers, and a search for a person or a number (CallHandlingServices search#Dialable:
     the recipient-source providers, or the framework's users with a number), with what a typed number becomes in E.164. To
     talk, the user calls from the browser. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Dialer" default-menu-include="false">
 
     <parameter name="text"/>

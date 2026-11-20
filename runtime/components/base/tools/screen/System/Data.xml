@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     The entity data of the instance itself (any entity, data documents, whole snapshots) is not a registered target's:
     it is Tools' Data export, Data load and Snapshots, linked here for a user who opens Tools by their own grant. The
     links are this area's own, so an app that shows the screens under its root does not show them. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Data" default-menu-index="7" default-menu-group="Administration" menu-image="sym_o_swap_vert" menu-image-type="icon">
     <subscreens default-item="Imports">
         <!-- a user who reads only the backups starts at them -->

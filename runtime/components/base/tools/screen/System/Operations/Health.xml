@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     read is left out, and nothing unavailable shows as ready. The presentation is template/AdminReadiness.js. An app that
     adds a scope of its own (an organization) shows a screen of its own around ReadinessFind, ReadinessHeader and
     ReadinessChecks. No part is the instance administrator's alone. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Health" default-menu-index="4" menu-image="sym_o_health_and_safety" menu-image-type="icon">
     <parameter name="healthGroupEnumId"/>
     <parameter name="state"/>

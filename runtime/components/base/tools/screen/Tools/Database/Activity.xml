@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     this server's own sessions, idle in a transaction for over a minute, running for over ten seconds. Cancel stops a
     session's statement and End closes the session; both need DATABASE_ADMIN; a session of this server is refused until
     a second question confirms it (force). Below, the index checks of get#IndexHealth. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Activity" default-menu-index="2">
 
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>

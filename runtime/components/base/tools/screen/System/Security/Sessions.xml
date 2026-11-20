@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     README, "Mounting the administration screens").
     For the instance administrator: RawVisits, the users with visits in a period (moqui.server.VisitUserSummary), as the
     Active Users screen this one replaced did, shown in place of the sessions with visits=Y; read only. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Sessions" default-menu-index="4" menu-image="sym_o_devices" menu-image-type="icon">
     <parameter name="text"/>
     <parameter name="recent"/>

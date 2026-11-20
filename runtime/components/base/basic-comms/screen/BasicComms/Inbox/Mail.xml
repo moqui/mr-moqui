@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     line of text for them, because it is the default subscreen of Inbox, the default of the Comms root: a request for
     /apps/Comms.qvt or /apps/Comms/Inbox.qvt (the shell loading those levels) resolves to this screen as its target, and the
     framework refuses a render mode the target does not name. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Inbox" default-menu-include="false" render-modes="vue,qvue,qvt,html,tui" server-static="vue,qvue">
 
     <!-- ========== Reads ========== -->

@@ -14,7 +14,7 @@
     counts, CPU and bandwidth.
     Build, archive and run with the release flag of ./moq: the Maximal package, or Enterprise with an external database.
     The runtime has the base components and mr-pass only (./moq component-get edge). Per-host settings go in .env. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="front_edge"/>
     <!-- takes links from paired local nodes on the HTTPS listener, told from browsers by ALPN; an edge node has no items
         of its own, so every item has an owner among the pairings -->

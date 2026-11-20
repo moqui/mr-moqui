@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     renewing (Renew again) and Remove. The renewal job renews only names set up here, and nothing is ever asked for a
     name nobody set up. A failed order shows here and on the System home. The box at the top says what an ACME
     certificate is and is not. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Certificates" default-menu-index="25" default-menu-group="Server" menu-image="sym_o_verified_user" menu-image-type="icon">
 
     <transition name="setUp">

@@ -948,7 +948,7 @@ fn alerts_deliver_real_smtp_and_webhooks_retry_failures_and_resolve_live_credent
             ),
             (
                 "components/addon/m6_wire/screen/AlertEmail.xml",
-                r#"<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"><parameter name="title"/><parameter name="ruleId"/><widgets><render-mode><text type="html,html-print"><![CDATA[<html><body><p>Alert ${html(title)} / ${html(ruleId)}</p></body></html>]]></text><text type="text"><![CDATA[Alert ${title} / ${ruleId}]]></text></render-mode></widgets></screen>"#,
+                r#"<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"><parameter name="title"/><parameter name="ruleId"/><widgets><render-mode><text type="html,html-print"><![CDATA[<html><body><p>Alert ${html(title)} / ${html(ruleId)}</p></body></html>]]></text><text type="text"><![CDATA[Alert ${title} / ${ruleId}]]></text></render-mode></widgets></screen>"#,
             ),
         ],
     );

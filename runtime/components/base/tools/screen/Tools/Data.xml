@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- Records of the entities: the grid and record form, browsing related records, data views, loading, exporting and snapshots. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Data" default-menu-index="2" menu-image="sym_o_table" menu-image-type="icon">
     <always-actions>
         <!-- the database: db, else the last choice, else the default group's (template/DatabaseParts.xml) -->

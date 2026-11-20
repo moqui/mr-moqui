@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Step 3 of the gallery wizard: the review with one primary. The wizard's Create customer submits createCustomer, which
     clears the draft and answers with the first step again (url="../Customer"), a screen other than this step, so the
     wizard goes there. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Review" default-menu-index="3">
 
     <transition name="createCustomer"><actions><script><![CDATA[

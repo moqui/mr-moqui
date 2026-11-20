@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="SourceStatus" type="rust" location="moqui_core::monitor::source_status"><out-parameters><parameter name="counters" type="Map"/><parameter name="sources" type="List"/></out-parameters></service>
     <service verb="list" noun="IngestKeys" type="rust" location="moqui_core::monitor::list_keys"><out-parameters><parameter name="keys" type="List"/></out-parameters></service>
     <service verb="create" noun="IngestKey" type="rust" location="moqui_core::monitor::create_key"><in-parameters><parameter name="source" required="true"/><parameter name="expireDays" type="Double"/></in-parameters><out-parameters><parameter name="keyId"/><parameter name="accessToken"/></out-parameters></service>

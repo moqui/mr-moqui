@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Location messages (plans/Comms-Messaging.md §18.3 phase 20): a message with content.location (coordinates, an address
     or both, a label) whose body is its words and an OpenStreetMap link, so every client, bridge and text shows it. No map,
     no geocoding, no outside request. The logic is ChatLocation.js beside this file. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="send" noun="Location">
         <description>A location from the current user in a plain room (a member, not archived): location {latitude, longitude

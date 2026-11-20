@@ -1078,7 +1078,7 @@
             return found ? found.message : null;
         };
         // A visible-when or require-when as the JSON moqui-form-when.js reads: the form, the field, the operator and the
-        // values (xml-form-3.xsd WhenAttributes).
+        // values (mr-xml-form.xsd WhenAttributes).
         const whenData = (when) => {
             if (!when) return null;
             let value = at(when, "from") ? ec.resource.expression(at(when, "from"), "") : x(at(when, "value"));

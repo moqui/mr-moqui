@@ -13,7 +13,7 @@
     and a holder of the Tools app may use its own access (every source, no filter). Another app shows this screen under
     its own root: its reportPolicy.calcProfile names the profile, and its root sets what the profile's filters read (an
     organization scope); with no mount the always-actions below ask Mantle's, where Mantle is there. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="CalcGrid" default-menu-index="12" menu-image="sym_o_grid_on" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 

@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     its fraud policy, caller-ID grants and emergency path). The same component is the tray's Dialer tab (Panel/Dialer). The
     component is Dialer.qvue next to this file; in the terminal a call is not live, so DialerTui shows the recent numbers and
     the search, and says to call from the browser. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Dialer" default-menu-index="2" menu-image="sym_o_dialpad" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 

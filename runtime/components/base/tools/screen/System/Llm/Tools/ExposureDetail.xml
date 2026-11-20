@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- One exposed service: its row, saved with the version it was read at (a row someone else saved since is refused, and
     the form shows it as it is now), the class the service has of its own, and Remove. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Exposed Service" default-menu-index="2" default-menu-include="false">
 
     <parameter name="toolName" required="true"/>

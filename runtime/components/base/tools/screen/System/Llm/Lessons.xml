@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     its author's alone; Approve makes it every user's, Reject (or Withdraw of an approved one) its author's no more. A
     lesson shows only with a skill load or a screen answer on its anchor, as untrusted text, never in the frozen prefix:
     read it as text that may carry an injected instruction before approving it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Lessons" default-menu-index="11">
 
     <transition name="reviewLesson"><service-call name="org.moqui.agent.AgentAdminServices.review#AgentLesson"/>

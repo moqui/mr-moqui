@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     session, never in a query string), Join or Ask to join with a note, or Open the room; on Android, Open in the MR Moqui
     app (org.moqui.mobile:/join). There are no guests: a person needs an account here. Each transition checks the token
     again (the route gives it as the token parameter, whatever the request says). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-include="false" default-menu-title="Join" render-modes="qvue,tui" server-static="qvue">
 
     <!-- the signed-in person joins, or asks to -->

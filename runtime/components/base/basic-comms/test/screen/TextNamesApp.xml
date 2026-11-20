@@ -3,7 +3,7 @@
 <!-- For moqui test runs of basic-comms only (test/MoquiConf.xml mounts it under the apps root as textNamesTest): an app
     root whose providers are call-context and chat-target (test/service/moqui/basiccommstest/TextNamesServices.xml), so the
     BasicCommsTexts spec's phone names come from a provider of this component's own tests. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="true" default-menu-title="Text names test">
     <shell-providers>
         <call-context name="basicCommsTest.callContext" service="moqui.basiccommstest.TextNamesServices.get#CallContext" sequence="99"/>

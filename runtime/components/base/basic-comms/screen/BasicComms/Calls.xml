@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     transaction so that a refusal is an answer and not a failed request; an answer carries the call as the user sees it, or
     reasonCode and errors. The media goes over the notification socket (notws rtc frames),
     not these. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Calls" default-menu-index="4" menu-image="sym_o_call" menu-image-type="icon">
 
     <subscreens default-item="History"/>

@@ -169,7 +169,7 @@ along with this software (see the LICENSE.md file). If not, see
     a message that went to a bridge whose adapter does not carry it is refused before the change (reasonCode
     bridgeUnsupported). get#Room and find#Rooms say whether a room is bridged and whether a bridge is not connected;
     get#Timeline gives each message's delivery state (ChatBridgeServices.get#EventDeliveries). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Access ========== -->
 

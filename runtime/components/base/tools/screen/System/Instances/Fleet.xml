@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     cluster, last deploy, open incidents and items past their rotation age, from get#InstanceFleet (INSTANCE_ADMIN; rows
     only, nothing reaches a host). Each instance links to its page, to Monitor › Services narrowed to it (its
     service.instance.id is its AppInstance id) and to Monitor › Releases of the versions it reports. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Fleet" default-menu-index="0">
 
     <transition name="instanceDetail"><default-response url="../InstanceDetail"/></transition>

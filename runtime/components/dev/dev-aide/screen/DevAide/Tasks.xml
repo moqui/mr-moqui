@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     a root's commits) and Branch (a local branch named for it); Quick create on this instance; the source and the app
     are picked here, a remote source added with its own access token. The Workspace's rail has the same list. A list, so
     the terminal reaches it. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Tasks" default-menu-index="10">
 
     <transition name="setCurrent"><service-call name="org.moqui.devaide.VcsServices.set#CurrentTask"/>

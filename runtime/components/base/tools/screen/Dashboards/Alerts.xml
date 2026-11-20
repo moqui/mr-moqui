@@ -17,7 +17,7 @@
     are Mine, Received and Templates, only business rules are listed, a copy has the mount's fixed parts and the series
     states and shared items are not shown. The links to a rule and to a shared item are the mount's (alertRule,
     alertShared). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Alerts" default-menu-index="6"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Alerts" default-menu-index="6"
         menu-image="sym_o_notifications_active" menu-image-type="icon">
     <parameter name="view"/>
     <parameter name="state"/>

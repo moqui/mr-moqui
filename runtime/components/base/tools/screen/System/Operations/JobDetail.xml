@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     directly, as the Service Jobs screen this one replaced did: any field of the job, any parameter, the users notified, and
     a run now on this thread's pool. No owner registration, bound or review applies there, so each of its transitions
     carries raw() as its condition and an app that shows this screen takes in only saveJob and runJob. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Job" default-menu-include="false">
     <parameter name="jobName" required="true"/>
 

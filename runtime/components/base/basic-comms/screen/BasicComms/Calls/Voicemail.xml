@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     which answers nothing for anyone but the box's owner. The services check the user themselves, so these transitions run with
     authorization off as the call transitions do. The component is Voicemail.qvue next to this file; the terminal twin
     (VoicemailTui) shows the transcript and the actions, with no player. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Voicemail" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="voicemailId"/>

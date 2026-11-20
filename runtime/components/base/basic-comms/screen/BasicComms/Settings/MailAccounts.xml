@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     options, members, folders, import and remove). SignIn, SyncProgress and Removed are .qvue parts the others load (the
     provider's sign-in button, a sync's live progress, the removed accounts to delete). Every read and write goes through
     org.moqui.comms.MailSettingsServices and the framework's EmailClientServices, which check the user's access to each account (R21). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Mail accounts" default-menu-index="1" menu-image="sym_o_alternate_email" menu-image-type="icon">
     <subscreens default-item="List"/>
     <widgets>

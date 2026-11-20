@@ -13,7 +13,7 @@
  */
 
 //! The pipeline file: `ci.xml` at a repository's root, read at the commit a run is for (plans/Dogfood.md §8.1,
-//! `framework/xsd/git-ci-3.xsd`, docs/interfaces/Pipelines.md). The reader is strict: an element or attribute the
+//! `framework/xsd/mr-git-ci.xsd`, docs/interfaces/Pipelines.md). The reader is strict: an element or attribute the
 //! schema does not have is an error with its line, so a run of a file that is not valid is an `error` status that
 //! says where.
 

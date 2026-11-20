@@ -10,7 +10,7 @@
     FORUM_SITE, forum.example.com) to yours, and add a set of three lines for each further client. Then create the
     sites and bind their hosts and mounts with mantle.public.SiteServices.create#Site and store#Mounts (mr-pass's
     docs/Deployment.md, Provisioning). -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- The client forum: its secret goes in .env, never here, as

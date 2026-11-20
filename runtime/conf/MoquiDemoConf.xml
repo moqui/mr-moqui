@@ -5,7 +5,7 @@
     production: on dev the Dev AIDE would load too.
         ./moq load -c conf/MoquiDemoConf.xml               all data, the demo users and the lock-down
         ./moq run-production -c conf/MoquiDemoConf.xml -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <!-- a first start on an empty database loads the demo data too, with the john.doe login -->
     <tools empty-db-load="all"/>
 

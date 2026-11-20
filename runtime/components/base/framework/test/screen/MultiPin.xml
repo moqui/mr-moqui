@@ -3,7 +3,7 @@
 <!-- The MultiPin spec's screen (test only, never mounted), shaped as a My Account screen: its always-actions pin the
     record to the user (testId, as an account screen pins userId) and its transition is a service-call shortcut with the
     whole context. No multi form posts to updateMine, so a post with _isMulti=true is still one call (SEC-RTE-81). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-title="Multi pin">
     <always-actions><set field="testId" from="'MP_' + ec.user.username"/></always-actions>
     <transition name="updateMine" require-session-token="false">

@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The global Constitution for reading: where it comes from, its title and provenance, each rule with its description and
     references in a chosen language (a reference opens in the app's reference dialog when its origin is trusted). An
     editor starts the instance's own document here (Customize) or goes back to the shipped one (Reset). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Rules" default-menu-index="1">
     <parameter name="locale"/>
 

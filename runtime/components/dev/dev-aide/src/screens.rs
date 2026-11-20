@@ -192,7 +192,7 @@ fn extend_subscreens(
     let target = site::site_path(context, &format!("screen-extend/{after}"))
         .ok_or_else(|| LibError::new("the parent is upstream and there is no site component to extend it in"))?;
     let site_root = context.root(&target.root_id)?.clone();
-    let empty = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen-extend xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/xml-screen-3.xsd\">\n</screen-extend>\n";
+    let empty = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen-extend xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-xml-screen.xsd\">\n</screen-extend>\n";
     let item = format!(
         "<subscreens-item name=\"{name}\"{}/>",
         attributes
@@ -760,7 +760,7 @@ fn create_subscreen(
             .ok_or_else(|| LibError::new(format!("the {archetype} archetype is not in the example component")))?
     } else {
         format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/xml-screen-3.xsd\"\n        default-menu-title=\"{}\">\n    <widgets>\n    </widgets>\n</screen>\n",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<screen xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:noNamespaceSchemaLocation=\"http://moqui.org/xsd/mr-xml-screen.xsd\"\n        default-menu-title=\"{}\">\n    <widgets>\n    </widgets>\n</screen>\n",
             title.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
         )
     };

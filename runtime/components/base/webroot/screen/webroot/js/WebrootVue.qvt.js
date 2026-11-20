@@ -1101,7 +1101,7 @@
             }
         },
         // Whether a visible-when or require-when holds: equals (the value, or one of a comma list or collection; with
-        // several actual values, any one), not-equals, empty or not-empty. The rule of xml-form-3.xsd WhenAttributes (DbForms.js holds).
+        // several actual values, any one), not-equals, empty or not-empty. The rule of mr-xml-form.xsd WhenAttributes (DbForms.js holds).
         holds: (expected, actual, operator) => {
             const parts = (Array.isArray(actual) ? actual : actual === null || actual === undefined ? [] : [actual]).map(String).filter((part) => part !== "");
             if (operator === "empty") return !parts.length;

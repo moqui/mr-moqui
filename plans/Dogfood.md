@@ -497,7 +497,7 @@ reputation of senders across mail and posts, and filtering of mail inside moqui.
 ### 8.1 Pipelines
 
 A pipeline is defined in the repository, in `ci.xml` at its root, read at the commit it runs for. A sketch (the XSD,
-`git-ci-3.xsd` beside `git-eca-3.xsd`, is F7's):
+`mr-git-ci.xsd` beside `mr-git-eca.xsd`, is F7's):
 
 ```xml
 <ci>
@@ -700,7 +700,7 @@ them.
 | F4 | Forks: `forkOfRepositoryId`; objects shared with the parent (a `db` fork reads its network's rows, a `local` one its parent's objects); collection that keeps what any fork of the network reaches; `GitMergeRequest.sourceRepositoryId`, and merges across the two. | `git/db.rs`, `fs.rs`, `gc.rs`, `hosting.rs`, `merge.rs` |
 | F5 | Push-to-review: `refs/for/*` accepted from an account that may view, `refs/merge-requests/*` kept and fetched by name, push options for the title and the topic. The same for a commit made by the services, so a page's edit can be a proposal ([§5.7](#57-editing-a-file-on-its-page)). | `git/server/receive.rs`, `upload.rs`, `git/service/hosting.rs` |
 | F6 | `push#GitRepository`: a push client over HTTPS, and over SSH on `russh`; mirror rows; a queue and retries. | `git/`, `fw/service/Git.gitecas.xml` |
-| F7 | The CI engine: `ci.xml` and `git-ci-3.xsd`, the records, the queue, job tokens, the runner's REST, logs and artifacts, `moqui ci-run`. | `git/`, `host/`, `fw/` |
+| F7 | The CI engine: `ci.xml` and `mr-git-ci.xsd`, the records, the queue, job tokens, the runner's REST, logs and artifacts, `moqui ci-run`. | `git/`, `host/`, `fw/` |
 | F8 | Runner drivers: host type services for a run that ends (start with limits and an environment, remove, clean up); the Docker Engine API on Docker and on Podman, over a socket or TLS; the `moqui-build` image in `podman/`; registered runners. | `fw/service/org/moqui/dev/InstanceServices.xml`, `fw/entity/ServerEntities.xml` |
 | F9 | REST for repositories, merge requests, reviews, threads and pipeline runs, in OpenAPI, for the Dev AIDE and for anyone's tools. | `runtime/components/base/tools/service/moqui.rest.xml` |
 | F10 | Built (Nov 13, 2026, [Edge-Node2](Edge-Node2.md#48-certificates-and-acme) E15): an ACME client used only from System › Certificates, for moqui.org and for a site's own host names (TLS-ALPN-01; HTTP-01 and wildcards not built). | `host/acme/`, `host/tls.rs` |
@@ -797,7 +797,7 @@ suites within budget, and its **Built** note here; the acceptance test a phase n
   a real `git push` to a fork and to `refs/for/` is in the framework's git-client tests only). Not built: a
   GitHub login recorded at sign-in, REST for these (P11), the per-node sets and guards across a cluster.
 - **DG5**, Nov 14, 2026: pipelines. Framework (F7, F8, [Pipelines](../docs/interfaces/Pipelines.md)): `ci.xml` with
-  `git-ci-3.xsd` and the built-in pipeline of a component; the records, the queue and its ServiceJobs, a
+  `mr-git-ci.xsd` and the built-in pipeline of a component; the records, the queue and its ServiceJobs, a
   `ci/<pipeline>/<job>` status for each job, job tokens that fetch their own commit alone, the runner REST and `moqui ci-run`
   (registered runners too); the `docker` host type over the Docker Engine API, on Docker and on Podman, by socket,
   HTTP or TLS with a client certificate, each job hardened; `moqui-build` (`podman/build.sh --build-image`); MR

@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     hosted repository of a working tree, and its merge requests: listed, opened, proposed by a push to refs/for and
     checked out; Fork where the server offers forks. Every call goes to the server's REST as the connected user, and the
     server decides; a header login reads and never connects or writes. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== connections (21.2) ========== -->
 

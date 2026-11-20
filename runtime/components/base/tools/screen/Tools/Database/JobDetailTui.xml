@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The terminal twin of JobDetail (style-guide §4.8): the job, its statements and the running one's progress and
     blockers, as they are when the page is shown (show it again to follow a running job); Run and Cancel as JobDetail. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Job" default-menu-include="false">
 
     <parameter name="jobId" required="true"/>

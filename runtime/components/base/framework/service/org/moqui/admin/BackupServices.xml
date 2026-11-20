@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     is no download and no restore here: an archive is the whole instance's data, and its download is later, under the
     sealed ADMIN_BACKUP_DOWNLOAD. A state is what the job's runs recorded, never what a person reports. No dependency on
     Mantle or an app. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="Coverage" allow-remote="false">
         <description>What is backed up and how it last went (coverage): the database (embedded, external, both or

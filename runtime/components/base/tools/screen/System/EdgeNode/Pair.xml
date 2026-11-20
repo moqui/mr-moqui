@@ -21,7 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     the steps the URL carries the address only. The pairing code is a secret: it is kept in the session for Connect,
     as the Chat apps screen keeps a new app password, and never put in a URL; Discover's choices are kept in the
     session too. Status links to Discover to set a paired node up again. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Pair" default-menu-index="2" default-menu-include="false">
 
     <parameter name="url"/>

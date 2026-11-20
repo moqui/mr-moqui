@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The operational vaults the user is a member of (list#Vaults), the leases waiting for their approval and those they
     asked for (list#VaultLeases, each opening the lease dialog), and the server's lease key fingerprint, which a member
     compares once by another channel before approving (get#VaultLeaseKey). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Operational vaults" default-menu-index="1">
 
     <transition name="vaultDetail"><default-response url="../VaultDetail"/></transition>

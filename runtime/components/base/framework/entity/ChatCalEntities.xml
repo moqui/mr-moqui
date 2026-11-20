@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     ChatCal.js). An event is a message (CetMessage, content.calEvent {title}) whose body is the event in words, so every
     client, bridge and text shows it; its state and the members' answers are these rows, as a poll's are ChatPoll's. A
     calendar entry is an app's (the chat-calendar provider hook), or the event's .ics file. No Java counterpart. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
     <entity entity-name="ChatCalEvent" package="moqui.chat" use="transactional" cache="never">
         <description>An event: the message eventSeq of chatRoomId. startDate and endDate are instants, shown and written in

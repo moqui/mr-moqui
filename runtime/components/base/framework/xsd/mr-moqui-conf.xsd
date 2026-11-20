@@ -13,8 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" elementFormDefault="qualified">
-    <xs:include schemaLocation="common-types-3.xsd"/>
-    <xs:include schemaLocation="xml-actions-3.xsd"/>
+    <xs:include schemaLocation="mr-common-types.xsd"/>
+    <xs:include schemaLocation="mr-xml-actions.xsd"/>
 
     <xs:element name="moqui-conf">
         <xs:complexType>
@@ -1332,7 +1332,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" name="shell-providers"><xs:complexType>
                     <xs:annotation><xs:documentation>Providers of the hooks the framework asks for whoever acts, the system
                         with no user included, registered by a component apart from any app root (an app root's
-                        shell-providers are in xml-screen-3.xsd): asked by call#Providers after the apps' providers, for
+                        shell-providers are in mr-xml-screen.xsd): asked by call#Providers after the apps' providers, for
                         every caller, with authorization disabled, since this conf names them. Only sms-consent; another
                         element is logged and left out. Merged by hook and name. No Java counterpart.</xs:documentation></xs:annotation>
                     <xs:sequence>

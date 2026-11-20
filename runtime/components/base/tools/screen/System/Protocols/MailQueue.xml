@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
     Reading needs ADMIN_OPERATION_VIEW (a holder of ADMIN_CONNECTION_VIEW alone reads the mail the instance itself sent
     through its relays, never a mail account's) and an action ADMIN_OPERATION_MANAGE, checked by the services; every refusal
     comes back as a reason shown here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Mail queue" default-menu-index="3" menu-image="sym_o_outbox" menu-image-type="icon">
     <parameter name="state"/>
     <parameter name="binding"/>

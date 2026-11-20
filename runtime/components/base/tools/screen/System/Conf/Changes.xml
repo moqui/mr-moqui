@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     conf and is listed under Waiting for a Restart until the server restarts. Restart Now restarts the server
     (restart#Server) where it can for this user: a dev instance, DEV_AIDE or the ADMIN group, a server that can restart
     itself. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Changes" default-menu-index="3">
 
     <transition name="reloadConf" authz-action="update">

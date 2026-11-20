@@ -4,7 +4,7 @@
     of a signed-in page and answers {matches: [{index, score, meaning, words}]}, best first, from
     org.moqui.search.SearchServices.rank#Texts. With no embedding model it answers 503 and the page finds by words. The
     session and its CSRF token are checked as for any post. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="rank" method="post" begin-transaction="false">
         <actions><script><![CDATA[

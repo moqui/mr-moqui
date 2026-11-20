@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     runs' result files, newest first, found by script, status and start date. Compare takes two to four selected runs;
     Import result keeps a result file from another machine (moqui test-load's result.json) as a run of its own
     (import#LoadRunResult, which checks that it is a result). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Runs" default-menu-index="2">
 
     <parameter name="scriptLocation"/>

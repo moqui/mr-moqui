@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     the gateway delivers, becomes active with no sync: the review says Hosted or Shared and that the gateway delivers.
     The account's page says the sync is under way when one starts, with the way to the Inbox and how far it is (the
     SyncProgress screen on the emailSyncProgress topic, here too while a sync of the account runs). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Finish" default-menu-index="5" server-static="qvt" menu-image="sym_o_check_circle" menu-image-type="icon">
 
     <parameter name="emailAccountId"/>

@@ -265,7 +265,7 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
 
 ## gitECA rules
 
-A `*.gitecas.xml` file in a component's `service` directory (schema `framework/xsd/git-eca-3.xsd`):
+A `*.gitecas.xml` file in a component's `service` directory (schema `framework/xsd/mr-git-eca.xsd`):
 
 ```xml
 <gitecas>

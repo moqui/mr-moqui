@@ -15,7 +15,7 @@
     (reportPolicy.shareGroups), or makes it private again (share; template/ReportShare.js), where the mount's policy lets
     the viewer share (features.share; with no mount Tools does, beside the definition editor's group field). The transition
     holds the feature and the engine's save checks the owner, the version read and the group. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-title="Dashboard">
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
         <actions><script><![CDATA[

@@ -53,7 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
     {kind: 'call', action: 'rekey'} when a device is named or a leg binds again. The browsers send each other their SFrame
     keys over Olm to-device messages, which the server only passes on. Such a call rings no desk phone or number, takes no
     guest, phone leg, recording or captions, and is not merged. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== Calls ========== -->
 

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     counterpart. The bodies are Rust: crates/moqui-git/src/ci/service.rs. Reading a run follows viewing its
     repository; a run of a hidden merge request's head is read with authorization disabled and includeHidden, or by
     the user it is for. The moves need the update right on the repository, or authorization disabled. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <!-- ========== what the rules and the ServiceJobs call ========== -->
     <service verb="queue" noun="PushRuns" type="rust" location="moqui_git::ci::service::queue_push_runs">

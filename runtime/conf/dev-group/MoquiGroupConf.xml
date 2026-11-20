@@ -6,7 +6,7 @@
     a dev instance loads Dev AIDE, which gives its users code execution as the server's OS user. The runtime has mr-boss,
     which brings mr-mantle (./moq component-get mr-boss), on Maximal, or on Enterprise as a cluster (conf/local-cluster/;
     then make the repositories db ones). Set it up as one production server (docs/Run-Deploy.md). -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- Git hosting (docs/interfaces/Git-Hosting.md). HTTPS clones work as soon as HTTPS does:

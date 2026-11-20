@@ -4,7 +4,7 @@
     whether this browser is subscribed, /WebPush/store and /WebPush/delete keep or forget its subscription. Each works on
     the session's user only (org.moqui.ui.NotificationServices), so authorization is not asked; the session and its
     CSRF token are checked as for any post. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="status" begin-transaction="false">
         <actions><script><![CDATA[

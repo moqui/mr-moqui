@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     included by Settings/Stickers.xml (the user's own, server false) and System/ChatStickers.xml (the server's, server
     true, for ChatStickerAdmin): New pack, each pack's stickers with Remove, Hide or Offer and Delete, and Add a sticker to
     a pack. Its transitions are the including screen's (ChatStickerTransitions.xml). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <actions><script><![CDATA[
         const out = ec.service.sync().name('org.moqui.chat.ChatStickerServices.get#StickerPacks').parameter('manage', true).call() || {}
         ec.message.clearErrors()

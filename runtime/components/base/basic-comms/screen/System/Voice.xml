@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     org.moqui.call.IvrServices, CallQueueServices), and Spam (the spam filter of texts and its rules, plans/Comms-Messaging.md §18.3
     phase 11: org.moqui.call.SmsSpamServices). Every read and write goes through org.moqui.call.VoiceServices, whose
     administration services need the VoiceAdmin permission. These are XML screens, so they render in the terminal (tui) too. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Voice" default-menu-index="20" menu-image="sym_o_call" menu-image-type="icon">
     <subscreens default-item="Status">
         <subscreens-item name="Status" menu-index="1" location="component://basic-comms/screen/System/Voice/Status.xml"/>

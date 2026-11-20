@@ -23,7 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
     transitions below: startSignIn (org.moqui.comms.MailSettingsServices.start#MailSignIn) and signInStatus
     (org.moqui.mail.EmailClientServices.get#OAuthStatus by signInId only, which answers only a sign-in of this user's
     session). No token ever reaches the page. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Sign in" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <transition name="startSignIn">

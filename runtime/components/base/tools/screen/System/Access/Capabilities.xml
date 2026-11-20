@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     still be narrowed by record policy, a deny, factor or IP rules or a row rule (RowRules). Reading needs
     ADMIN_ACCESS_VIEW and applying ADMIN_ACCESS_MANAGE, checked by the services. No part of it is the instance
     administrator's alone, so an app shows it by location. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Capabilities" default-menu-index="2" menu-image="sym_o_rule" menu-image-type="icon">
     <parameter name="appName"/>
     <parameter name="groups"/>

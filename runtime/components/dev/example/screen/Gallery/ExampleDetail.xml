@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Gallery: one example record, the detail the Views list's peek pane loads (form-list peek-url, style-guide §3.8) with peek=true,
     where it renders compact: the title, the facts and the time since its start (m-elapsed, through render-mode), without the
     description box and the link back to the views. Opened on its own (Open full) it has both. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Example" default-menu-include="false">
 
     <parameter name="exampleId" required="true"/>

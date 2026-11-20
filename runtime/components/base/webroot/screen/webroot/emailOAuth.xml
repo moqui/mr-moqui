@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     checks the state against the user's session, exchanges the code and stores the sign-in, and sends the popup's page,
     which tells its opener (this server's own origin only) how it ended. A deployment registers
     {its webroot URL}/emailOAuth/callback at the providers, or sets email-client@oauth-redirect-uri. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" track-artifact-hit="false" default-menu-include="false">
 
     <!-- A GET from the provider: no session token (the state is the check), and the user is the session's -->

@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     The route's token check has run first: tokenRoute.context is what the link shows (name, sharer, note). The files
     transition calls the public-share service, which checks the token again before it reads the folder. The form posts to
     it and the back transition returns to the page: both stay under /<route>/<token>, the root of the screen's links. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-include="false" default-menu-title="Shared">
     <transition name="files" read-only="true">
         <parameter name="path"/><parameter name="grant"/>

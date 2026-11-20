@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Configuration › Logging and telemetry (plans/archive/Tools-Fancy.md 2.5): Monitor › Settings mounted a second time, beside the
     conf it overrides for a while. Monitor's screen is the owner; this one adds the tab and runs its transitions here.
     Changing still needs MONITOR_SETTINGS, which the services check. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Logging and telemetry" default-menu-index="4">
     <parameter name="changeKey"/>
     <transition-include name="setSetting" location="component://tools/screen/System/Monitor/Settings.xml"/>

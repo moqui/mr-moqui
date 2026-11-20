@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     provider a lookup found the mail at (oauthProvider, for a company domain at Google or Microsoft); hosted, and shared
     delivered here, carry delivery=gateway and no servers. When the wizard already made the account for this address, its
     own settings go on instead of a new lookup. fresh=Y starts a new account. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Address" default-menu-index="1" server-static="qvt" menu-image="sym_o_contact_mail" menu-image-type="icon">
 
     <parameter name="emailAccountId"/>

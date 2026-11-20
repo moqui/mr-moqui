@@ -7,7 +7,7 @@
     alone on its edge node is that each name must be its own: the edge node refuses a host name, XMPP domain, SIP realm,
     number or PASS site another local node claimed first ("another node has this name"), and the wizard's Apply and
     Test say which. Per-host settings go in .env. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- Web access (.env): webapp-list/webapp[webroot]@http-host, this node's own public name, such as erp.branch-a.example.com; the wizard

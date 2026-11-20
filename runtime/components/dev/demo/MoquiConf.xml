@@ -3,7 +3,7 @@
 <!-- Merged into the conf whenever the demo component loads, before the runtime conf, so a runtime conf that sets one of
     these elements again wins. The security data (data/DemoSecurityData.xml) and the SECAs (service/Demo.secas.xml)
     are the other half; README.md lists what stays open. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <!-- shared-user-ids: the users whose password, sign-in factors, username and enabled state cannot be changed
         (comma-separated userIds; refuse#SharedAccountChange): the shared login of the Login screen's Test Login button. -->
     <!-- test-login: the Login screen's Test Login button, which a production instance otherwise leaves out (SEC-RTE-17;

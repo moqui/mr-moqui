@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     repository's refs, from a push, a mirror fetch, an import or a write through Moqui (create#GitRef, merge#GitRefs,
     a wiki save). Each runs even after another rule of the change failed. Branch rules are not rules here: the git
     server enforces them, so no component can remove them. -->
-<gitecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/git-eca-3.xsd">
+<gitecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-git-eca.xsd">
     <giteca rule-name="Merge requests follow their branches" id="FrameworkRefreshMergeRequests" event="ref-update"
             ref-type="branch" source="push,fetch,import,write" priority="7" run-on-error="true">
         <actions><service-call name="org.moqui.git.GitReviewServices.refresh#MergeRequests" in-map="context"/></actions>

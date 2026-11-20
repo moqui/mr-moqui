@@ -40,7 +40,7 @@ along with this software (see the LICENSE.md file). If not, see
     (plans/Comms-Messaging.md §7.4). Chat messages reach the devices through the chat push worker
     (org.moqui.chat.ChatPushServices), not send#WebPush. A device acknowledges a push it showed (ack#Push,
     /qapps/ackClientPush), and System, Push Health shows each device's counts (find#PushHealth). -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="get" noun="UserNotifications">
         <description>The current user's notifications, newest first, with their topic, inbox, reason, record, actor and app,
             and the counts the screens show beside them. Filters: inboxEnumId (NinNotifications by default; 'all' for both),

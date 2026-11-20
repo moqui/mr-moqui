@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
     message actions with ext-action slot="chat-message-actions" (the item: chatRoomId, eventSeq). A client that queues them offline
     gives edit, redact, react, votePoll and markRead a clientRef (ClientSyncServices.call#ClientRequest): one sent again
     answers what the first did, with duplicate true, and does nothing more. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Chat" default-menu-index="3" menu-image="sym_o_chat" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 

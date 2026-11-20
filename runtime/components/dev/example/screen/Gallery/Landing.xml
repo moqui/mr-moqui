@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Gallery screen for the 3.1 Landing archetype of the IronStone BOSS style guide: counters, my-work lists, shortcuts
     and a chart over framework data (enumerations by type stand in for orders by status). Every counter and list row
     links into the List screen with its filter. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Landing" default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon">
 
     <transition name="list"><default-response url="../List"/></transition>

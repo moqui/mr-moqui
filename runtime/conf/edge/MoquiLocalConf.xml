@@ -6,7 +6,7 @@
     and edge/node@id to runtime/.env and brings the link up, and unpairing removes them. The wizard then writes the
     rest of this node's part, listed below, so an operator sets these by hand only for a part the wizard does not run.
     It is the production conf with the backup job running; any production conf works. Per-host settings go in .env. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- Web access (.env): webapp-list/webapp[webroot]@http-host, this node's public name, which the wizard offers as its first host name

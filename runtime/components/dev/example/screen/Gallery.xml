@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     (runtime/components/addon/mr-boss/plan/style-guide.md, sections 3, 4 and 10): one screen per archetype, rendered
     with the real qvt widgets over framework data, so a style decision is checked against the actual render mode in
     light and dark. Mounted under the apps root by this component's MoquiConf.xml. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="true" default-menu-title="Gallery" menu-image="sym_o_apps" menu-image-type="icon">
 
     <subscreens default-item="Landing">

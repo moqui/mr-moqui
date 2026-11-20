@@ -1,4 +1,4 @@
-// A screen's own condition (xml-screen-3.xsd screen; docs/dev/JS-Screen-Scripts.md "The order of a render"): with no
+// A screen's own condition (mr-xml-screen.xsd screen; docs/dev/JS-Screen-Scripts.md "The order of a render"): with no
 // fail-widgets it says whether the screen is offered under its parent, read in the context the parent renders with (its
 // always-actions' appRoot). A screen whose condition is false is left out of its parent's tab bar, and a request that
 // names it says it is not offered there, with none of its actions run. The browser's menu data and a condition that

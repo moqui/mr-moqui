@@ -3,7 +3,7 @@
 <!-- The MultiPin spec's multi form screen (test only, never mounted): a multi form-list posts its rows to saveRows, whose
     service-call shortcut is then a multi call; the always-actions pin value, which a posted value_N does not replace
     (SEC-RTE-81). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" default-menu-title="Multi rows">
     <always-actions><set field="value" value="pinned"/></always-actions>
     <transition name="saveRows" require-session-token="false">

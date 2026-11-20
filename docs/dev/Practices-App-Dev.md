@@ -99,8 +99,8 @@ Each component is its own git repository. Commit in each repository that a chang
   [JS-Test-Client](JS-Test-Client.md), [TUI](../ui/TUI.md), [Moqui-Java-Migration](Moqui-Java-Migration.md) (with the
   deliberate differences listed in [Parity-Diffs](../../plans/Parity-Diffs.md)), [Native-Components](Native-Components.md),
   [Web-Scripts](../interfaces/Web-Scripts.md).
-- **Schemas:** `runtime/components/base/framework/xsd/xml-screen-3.xsd`, `xml-form-3.xsd`, `service-definition-3.xsd`,
-  `entity-definition-3.xsd`. Their documentation elements describe MR Moqui's behavior where it differs.
+- **Schemas:** `runtime/components/base/framework/xsd/mr-xml-screen.xsd`, `mr-xml-form.xsd`, `mr-service-definition.xsd`,
+  `mr-entity-definition.xsd`. Their documentation elements describe MR Moqui's behavior where it differs.
 - **Building:** [.agents/skills/building/SKILL.md](../../.agents/skills/building/SKILL.md), and the rules in
   [AGENTS.md](../../AGENTS.md) (failure tolerance, no Node dependency).
 
@@ -271,7 +271,7 @@ same path, `moqui_conf__chat__view_once_days` ([Run-Deploy](../Run-Deploy.md#set
   mr-mantle's `mantle`, basic-comms' `comms`. Another component that reads it gets null when that one is absent. Group a
   set of related settings as a child element (`chat/stickers`), not as prefixes on one element's attributes.
 - **A framework setting** goes on the framework element it belongs to in `MoquiDefaultConf.xml` (a new element when no
-  existing one fits), with its attribute in `moqui-conf-3.xsd` and its element in the conf schema
+  existing one fits), with its attribute in `mr-moqui-conf.xsd` and its element in the conf schema
   (`crates/moqui-core/src/context/conf_schema.rs`: its reload class, its key when it repeats, a secret's mark), and a
   merge rule in `conf.rs` for a new top-level element or a new child.
 - **Reading it:** a script reads `ec.factory.getConfValue('chat@view-once-days')` (null for a secret; a secret is named

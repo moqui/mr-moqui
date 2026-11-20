@@ -6,7 +6,7 @@
     pairing and balances its host names over the live ones, so no load balancer of your own is needed, and the members
     need no open port, port forward or fixed address. It is MoquiLocalConf.xml's cluster with the edge node in the load
     balancer's place; what differs is said here. Use the Enterprise package (--enterprise), as for any cluster. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production"/>
 
     <!-- The shared database, as in MoquiLocalConf.xml: Postgres (or MySQL with the default cluster transport), its

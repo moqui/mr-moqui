@@ -11,7 +11,7 @@
     root in a screen of its own, taking in storeDataset, admitDataset, retireDataset and rebuildIndex (BOSS Insights ›
     Report builder › DatasetDetail). The scope field's words, and the name of its parameter under a policy that registers
     none, are the mount's policy (template/ReportMount.js). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Dataset" default-menu-include="false">
     <parameter name="datasetId" required="true"/>
 

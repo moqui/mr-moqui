@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Every user's agent runs: who, which agent and surface, the status and pause, the dates, the counts, tokens and cost.
     No content: a run's tool arguments, results and events are shown in RunDetail to its own user or with AgentAudit. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Runs" default-menu-index="1">
 
     <transition name="runDetail"><default-response url="../RunDetail"/></transition>

@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     server's CPU load and memory. A run that is not here (no such run, or a load running on another server) is "Not
     available". The browser page is Run.qvue, which asks ../runStatus for the run, and again every 2 seconds while it
     runs; the terminal page is Run.tui.json, the run as it is when shown, with Refresh and the transitions here. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Run" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="runId" required="true"/>

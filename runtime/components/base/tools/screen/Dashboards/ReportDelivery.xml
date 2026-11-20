@@ -11,7 +11,7 @@
     delivery alone. Export status: the same statuses and safe reasons as CSV, recorded. Every read and write is through
     template/ReportDelivery.js, which reads no entity. Another app shows the screen under its own root, by location
     (BOSS Insights › Scheduled reports). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Report delivery" default-menu-include="false">
     <parameter name="occurrenceId" required="true"/>
 

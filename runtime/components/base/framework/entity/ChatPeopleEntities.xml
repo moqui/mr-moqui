@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     and the app's contacts (the contacts hook, ChatPeopleServices.find#ContactPeople); these rows hold only what the user
     changed: a merge, a split, a name. They are the owner's alone: no service reads another user's rows, and nothing in
     them reaches the person. The services are org.moqui.chat.ChatPeopleServices (ChatPeople.js). -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
 
     <entity entity-name="ChatPerson" package="moqui.chat" use="transactional" cache="never">
         <description>One person in a user's own list (ownerUserId), made by a merge, a split or a rename. displayName is the

@@ -18,7 +18,7 @@
 use super::{parse, Event, Limits};
 
 const VALID: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<ci xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/git-ci-3.xsd">
+<ci xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-git-ci.xsd">
     <pipeline name="check" on="push merge-request" branches="main release/*">
         <env name="RUSTFLAGS" value="-D warnings"/>
         <job name="build" image="moqui-build:${matrix.rust}" pool="linux" timeout-minutes="30" fetch-depth="5">

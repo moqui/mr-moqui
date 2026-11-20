@@ -8,7 +8,7 @@
     An account without a password otherwise signs in again
     by a POST of /sso/reauth (with the session token) and a returnTo. Each answers JSON ({errors} on a refusal); without a user it is 401.
     Posts need the session's CSRF token. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="check" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[

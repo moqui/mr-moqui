@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- The framework's artifact index (plans/design-dev-aide.md 7, F11) as the dev-aide shows it: each artifact with the root
     and path that open it in the Workspace and whether it is the site's or upstream. The view tier and above. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="search" noun="Artifacts" type="rust" location="dev_aide::artifacts::search_artifacts" allow-remote="false" read-only="true">
         <description>The artifacts whose names match a text, best first (OrdHdr, place#Order), by kind and component.</description>
         <in-parameters>

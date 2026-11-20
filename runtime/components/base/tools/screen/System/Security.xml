@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     IdentityProviderDetail) and the sessions of every account (Sessions). The last four have the sibling names an app that
     shows them under its own root uses (README, "Mounting the administration screens"), so their links to each other are
     relative. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-index="4" default-menu-group="Administration" menu-image="sym_o_security" menu-image-type="icon">
     <subscreens default-item="UserAccount"/>
     <widgets>

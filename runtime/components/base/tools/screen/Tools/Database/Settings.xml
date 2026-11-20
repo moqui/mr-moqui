@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     from and whether a change waits for a restart, MySQL and MariaDB SHOW VARIABLES. On the embedded cluster the memory
     settings the datasource conf sets show the conf's value and whether the running one differs: a restart of the server
     applies a changed conf value. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="6">
 
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>

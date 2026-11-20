@@ -26,7 +26,7 @@ along with this software (see the LICENSE.md file). If not, see
     of the front's members, its state, round trip, last connect and last error; Unpair front is on Edge Node. On a node
     with the edge set and no front pairing, one line in Members says how to pair with one; a front node dials none, so it has no such
     box. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Edge cluster" default-menu-index="5">
 
     <actions><script><![CDATA[

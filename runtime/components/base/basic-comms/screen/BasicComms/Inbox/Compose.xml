@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     saveDraft and send take baseStamp, the draftStamp of the copy the client edited (composeData and each save answer it):
     a draft saved elsewhere since is kept, and they answer conflict true with compose, the server's draft. A file may come
     in chunks (uploadChunk, uploadStatus) and then upload takes it by uploadId. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Compose" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
     <parameter name="emailMessageId"/>

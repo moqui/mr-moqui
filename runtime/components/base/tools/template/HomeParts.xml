@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
             navCatalog.push({path: 'MyScreen', group: 'Integration'})
         ]]></script></actions-extend></screen-extend>
 -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <widgets>
         <!-- the featured screens, size md: an icon, a title and one line, with up to three secondary links -->
         <section name="NavFeatured"><actions>

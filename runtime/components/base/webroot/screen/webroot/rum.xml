@@ -4,7 +4,7 @@
     OTLP/JSON spans and logs, /rum/replay masked rrweb replay chunks. The session and its CSRF token are checked as for any
     post; the services replace the page's identity with the session's and hold each post to the browser limits. Neither a
     request span (the host skips /rum/) nor artifact spans are written for these, so reporting does not report itself. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="traces" method="post" begin-transaction="false">
         <actions><script><![CDATA[

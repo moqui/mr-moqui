@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     authorization off as the call transitions do. A separate subscreen from Settings/Phone (V2's voicemail and numbers).
     The component is PhoneDevices.qvue next to this file; the terminal twin is PhoneDevicesTui, where the credentials show
     once as a message. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Desk and soft phones" default-menu-index="9" menu-image="sym_o_deskphone" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 

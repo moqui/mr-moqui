@@ -27,7 +27,7 @@ along with this software (see the LICENSE.md file). If not, see
     organization's name, its wizard's context) has a screen of its own: it sets detail (get#ImportDetail's answer, or
     the same names of its own) in its actions, takes in retry and results, and includes ImportDetailView (README,
     "Mounting the administration screens"). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Import" default-menu-include="false">
     <parameter name="targetId" required="true"/>
     <parameter name="operationKey" required="true"/>

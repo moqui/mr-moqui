@@ -16,7 +16,7 @@
     taken in (BOSS Insights › WallDisplay): the device's route group and the display account's grant name that location
     and its data transition alone, so this file opens nothing for a device, and the app's root sets the range for a
     device's request. Tools' own is opened by a Dashboards user from Playlists (Play full screen), as themselves. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Wall display" default-menu-include="false" standalone="true" history="false"
         screen-theme-type-enum-id="STT_INTERNAL_QUASAR">
 

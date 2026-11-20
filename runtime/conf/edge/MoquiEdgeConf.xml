@@ -10,7 +10,7 @@
     Build, archive and run with the release flag of ./moq: the Maximal package, or Enterprise with an external database;
     both have the link. The runtime has the base components and mr-pass only (./moq component-get edge). Per-host
     settings (names, addresses, ports) go in .env, which an upgrade keeps. -->
-<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
     <instance purpose="production" node-role="front_edge"/>
     <!-- takes links from paired local nodes on the HTTPS listener, told from browsers by ALPN; System › Edge Clients
         makes pairing codes, lists the paired nodes, pings and revokes them -->

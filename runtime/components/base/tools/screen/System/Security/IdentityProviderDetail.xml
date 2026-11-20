@@ -24,7 +24,7 @@ along with this software (see the LICENSE.md file). If not, see
     and shows what a test identity's roles would give. The configuration needs ADMIN_CONNECTION_MANAGE; the role mappings,
     the link rule, the default group and enabling ADMIN_ACCESS_MANAGE; the service checks each, and every refusal comes
     back as a reason shown here. No part of it is the instance administrator's alone, so an app shows it by location. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Identity provider" default-menu-include="false">
     <parameter name="authFlowId" required="true"/>
 

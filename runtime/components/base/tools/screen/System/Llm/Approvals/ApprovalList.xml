@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Every user's approvals: the decision, the kind and target, who and when. The arguments, the snapshot and the outcome
     are in ApprovalDetail, for its own user or with AgentAudit (logged). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Approvals" default-menu-index="1">
 
     <transition name="approvalDetail"><default-response url="../ApprovalDetail"/></transition>

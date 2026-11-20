@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     a trunk) and active (a SIP server up and a trunk working), each on its own with why not (plans/archive/Comms-Framework.md §3.1);
     whether emergency calls are ready for the signed-in admin; the servers whose SIP engine is up and the media servers. From
     org.moqui.call.VoiceServices.get#VoiceStatus. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Status" default-menu-index="1">
     <actions><script><![CDATA[
         const L = (text) => ec.l10n.localize(text)

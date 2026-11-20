@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     the site's Customizations, all from the framework's artifact index, plain forms and lists so the terminal reaches
     them; the Browser, the canvas of the same references (a qvue page, P9, with BrowseTui its terminal twin); and Docs and Export docs, the Markdown docs
     of the artifacts (plans/archive/Autodoc.md). -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Artifacts" default-menu-index="4">
     <subscreens default-item="Search">
         <subscreens-item name="Search" menu-title="Search" menu-index="1" location="component://dev-aide/screen/DevAide/Artifacts/Search.xml"/>

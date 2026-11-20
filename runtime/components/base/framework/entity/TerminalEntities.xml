@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- The terminal's audit (plans/Terminal-Fancy.md §5.7): one row per command line and host session of the browser terminal
     (crates/moqui-host/src/term), written when it is opened and when it ends. What is typed and shown is never recorded.
     clean#TerminalSessions removes rows older than 90 days, each day. -->
-<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
     <entity entity-name="TerminalSession" package="moqui.terminal" use="transactional" cache="never">
         <field name="terminalSessionId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>

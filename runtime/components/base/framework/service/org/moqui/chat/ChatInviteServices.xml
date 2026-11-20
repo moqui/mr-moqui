@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     links of a room (ChatInviteLink, /join/<token>), the join requests (ChatJoinRequest) and their queue, and the private rooms
     listed in Browse. The logic is ChatInvites.js beside this file. Each service checks the caller's access in the room
     (get#RoomAccess); check#InviteToken and join#ByInvite take a token instead. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="get" noun="RefusedUsersAs" type="rust" location="moqui_core::service::chat::get_refused_users_as"
             allow-remote="false" transaction="ignore">

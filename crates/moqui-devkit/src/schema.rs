@@ -32,18 +32,18 @@ use serde::Serialize;
 
 /// The root elements of Moqui XML files and the XSD that defines each.
 pub const ROOTS: &[(&str, &str)] = &[
-    ("screen", "xml-screen-3.xsd"),
-    ("screen-extend", "xml-screen-3.xsd"),
-    ("widget-templates", "xml-form-3.xsd"),
-    ("entities", "entity-definition-3.xsd"),
-    ("services", "service-definition-3.xsd"),
-    ("secas", "service-eca-3.xsd"),
-    ("eecas", "entity-eca-3.xsd"),
-    ("emecas", "email-eca-3.xsd"),
-    ("gitecas", "git-eca-3.xsd"),
-    ("ci", "git-ci-3.xsd"),
-    ("resource", "rest-api-3.xsd"),
-    ("moqui-conf", "moqui-conf-3.xsd"),
+    ("screen", "mr-xml-screen.xsd"),
+    ("screen-extend", "mr-xml-screen.xsd"),
+    ("widget-templates", "mr-xml-form.xsd"),
+    ("entities", "mr-entity-definition.xsd"),
+    ("services", "mr-service-definition.xsd"),
+    ("secas", "mr-service-eca.xsd"),
+    ("eecas", "mr-entity-eca.xsd"),
+    ("emecas", "mr-email-eca.xsd"),
+    ("gitecas", "mr-git-eca.xsd"),
+    ("ci", "mr-git-ci.xsd"),
+    ("resource", "mr-rest-api.xsd"),
+    ("moqui-conf", "mr-moqui-conf.xsd"),
 ];
 
 /// The digest of one root element's schema.
@@ -626,7 +626,7 @@ mod tests {
         }
         assert!(!service.doc.is_empty() || service.attribute("verb").is_some());
         assert!(service.attribute("verb").unwrap().required);
-        // An action from a substitution group of xml-actions-3.xsd, with its enumerated values.
+        // An action from a substitution group of mr-xml-actions.xsd, with its enumerated values.
         let find = services.element("entity-find").unwrap();
         assert!(find.attribute("entity-name").unwrap().required);
         let actions = services.element("actions").unwrap();

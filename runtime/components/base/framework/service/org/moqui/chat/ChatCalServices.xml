@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     answer#, update# and cancel#CalEvent commit their own writes, in a transaction of their own, before they call the
     providers (each in a transaction of its own, which reads only what is committed).
     The logic is ChatCal.js beside this file. -->
-<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
 
     <service verb="create" noun="CalEvent">
         <description>An event from the current user, a member of a room that is not archived or encrypted: title (1 to 200

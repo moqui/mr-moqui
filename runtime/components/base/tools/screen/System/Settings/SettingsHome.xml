@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     System lists the framework's own and an app those of its apps too. Readiness opens Health narrowed to the entry's
     provider, where Health opens to the viewer. SettingsFind searches by text, app and group. The presentation is
     template/AdminReadiness.js. It has no transition and no part that is the instance administrator's alone. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings index" default-menu-index="3" menu-image="sym_o_list_alt" menu-image-type="icon">
     <parameter name="text"/>
     <parameter name="ownerApp"/>

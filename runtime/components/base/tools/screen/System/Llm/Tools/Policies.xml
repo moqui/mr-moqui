@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- An agent's tool policy: its rules in sequence order, the first whose pattern matches a tool (or a catalog name)
     deciding. A tool no rule matches is offered with its writes asked for; a destructive one needs a rule that allows it.
     A rule naming a lazy add-on tool exactly pins it, so it is a tool of its own. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Policies" default-menu-index="3">
 
     <parameter name="agentId"/>

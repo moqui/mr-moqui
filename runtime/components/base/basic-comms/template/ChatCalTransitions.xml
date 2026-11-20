@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     each included by name in Chat.xml: calEventFields (the time zones, and whether an app keeps calendars), createCalEvent,
     answerCalEvent, updateCalEvent, cancelCalEvent and calEventIcs (the event's .ics file, a download). A refusal is an
     answer with its reasonCode and the errors, as send's is. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd">
     <transition name="calEventFields" method="get" read-only="true">
         <actions><script><![CDATA[
             const providers = ec.service.sync().name('org.moqui.ui.ShellServices.get#Providers').parameters({hook: 'chat-calendar'}).call() || {}

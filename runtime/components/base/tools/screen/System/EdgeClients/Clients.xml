@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
     local node's Connect step shows. Below, each pairing's replicated sets as this node has applied them. The parent
     screen shows this only on a node that takes links. Pairing codes, Revoke, Ping and Drain go through the link, so
     they are left out while it is not running. -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Clients" default-menu-index="1">
 
     <transition name="makePairingCode">
