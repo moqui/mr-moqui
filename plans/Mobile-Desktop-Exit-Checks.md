@@ -339,3 +339,57 @@ as the local node of the edge node and the all-in-one node of [Setup](#setup), w
      the edge node.
    - Record: the page shows the pause, then goes on from where it was with no line repeated or lost (resumed by its
      byte count, not replayed), and the session's audit row says through the edge node.
+
+## V5: the vault in the apps
+
+The checks that close [Vault-Instances](Vault-Instances.md) V5 on installed apps ([Vaults](../docs/security/Vaults.md#the-desktop-and-mobile-apps)).
+Record the results in Vault-Instances §6's V5 row notes (a line per check), and file what fails as a fix.
+
+Set up the remote server of [Setup](#setup) with BOSS and a user who has a personal vault key, a shared-key vault with an
+item, and a second factor (the vault key is fetched only after a strong sign-in). The desktop app in its client mode
+(the installed bundle, its keys in the OS key store: not a development run, which keeps them in a file), and the
+Android phone of MD6 (Android 11 or later) with a screen lock and a fingerprint enrolled.
+
+1. **The native vault, not the server's module.** In the desktop app, open Commons › Vault in an app window and open
+   the vault key with the passphrase; open an item. With the DevTools protocol off (a bundle), read the app's log, and
+   on the server the access log.
+   - Record: the item opens; the server's log has no request for `/js/vault/VaultWorker.js` or `moqui_vault.wasm`
+     from the app (the app refuses them, 403, if a page asks); the page works the same as in a browser.
+2. **Locking.** With the vault open: wait the idle time (the setting, 15 minutes); then open it again and close the app
+   window; then open it again and lock the screen (macOS: ⌃⌘Q); then open it again and sleep the computer for two
+   minutes; then open it again and go to another screen of the app (Commons › Calendar) and back by the app's menu. On
+   the phone: open it, then press the power button and unlock again.
+   - Record: each time the page shows the vault locked on its next call, and an item no longer opens without the
+     passphrase (or device memory). On Linux and Windows record what the screen lock does (not watched there yet).
+3. **Only the vault screens.** With the vault open in one app window, open another screen of the same account in a
+   second window, and in its DevTools console (a development run with `MOQUI_DESKTOP_DEVTOOLS_PORT`) call
+   `moquiDesktop.vault.call("status", {})`; also in the vault window after navigating to another screen.
+   - Record: both are refused ("Only the vault's own screens may use the vault"), and the vault window's session is
+     locked after it left.
+4. **Device memory on the desktop.** Open the vault key, choose to remember it for 15 minutes. Quit the app and start it
+   again; open Commons › Vault and click its open-from-this-device button. In Vault key settings (or
+   `/rest/s1/vault/deviceMemories` in a browser signed in as the user) look for the device. Wait the 15 minutes, then
+   open Commons › Vault again.
+   - Record: after the restart the key opens with the click and no passphrase (and not without a click); the device is
+     listed with its name and end time; after the time the passphrase is asked again and `vault/<account>.memory.json`
+     (under the app's config directory's `client/`) and the Keychain entry `<account>.vault-memory` are gone.
+5. **Device memory on the phone.** Open the vault key, choose to remember it for an hour: the phone asks for the
+   fingerprint (or the PIN). Leave the app, come back, open Commons › Vault and open from the device.
+   - Record: the phone asks for the fingerprint or PIN each time (not the passphrase) and the key opens; cancelling
+     the prompt leaves it locked; enrolling a new fingerprint in Settings, then opening, asks for the passphrase (the
+     Keystore key invalidated).
+6. **Revoked while the app is not running.** With device memory set on the desktop (or phone), quit the app; in a
+   browser, revoke the device in the user's Apps and devices. Start the app and open Commons › Vault. Do it again, this
+   time taking the device off the list of devices that remember the key (Vault key settings), with the device still
+   signed in.
+   - Record: the key does not open from memory in either case; the first signs the account out of the app; the second
+     asks for the passphrase and the memory files are gone. With the key open from memory, take the device off the
+     list: within five minutes the app's vault locks.
+7. **Sign-out and Lock.** With device memory set, use the page's Lock (with forget), and separately sign out.
+   - Record: both forget the memory (the device is off the server's list), and after signing in again the
+     passphrase is asked.
+8. **Rollback memory.** With the vault opened in the app (its key version and member list seen), have an
+   administrator restore the vault's rows from a backup taken before the last member change (or on a test server, put
+   back the older `VaultKeyVersion` rows), then open the vault in the app, also after an app restart.
+   - Record: the app refuses the older chain ("an older key version than one already seen"), where a fresh browser
+     would not know.

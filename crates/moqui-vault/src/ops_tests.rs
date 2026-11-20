@@ -720,3 +720,75 @@ fn a_new_passphrase_rewraps_the_open_key() {
         .unwrap_err()
         .contains("locked"));
 }
+
+/// V5: device memory opens the personal key in a new session only with the key both halves make (the device's and the
+/// server's), and only for its memory, user, time and personal key; a locked session has nothing to keep, and no call
+/// of the module hands a page anything of it.
+#[test]
+fn device_memory_opens_the_personal_key_only_with_its_key_and_memory() {
+    let mut rng = TestRng::new("ops-device-memory");
+    let mut session = Session::default();
+    let device_key = Key32::random(&mut rng);
+    let server_secret = Key32::random(&mut rng);
+    let wrap_key = personal::device_wrap_key(&device_key, &server_secret, "m1");
+    assert!(
+        Session::default().device_seal("m1", 1000, &wrap_key, &mut rng).is_err(),
+        "a locked session keeps nothing"
+    );
+    let made = make(&mut session, &mut rng, "alice");
+    let kept = session.device_seal("m1", 1000, &wrap_key, &mut rng).unwrap();
+    assert!(
+        !format!("{kept:?}").contains(&hex(&kept.sealed)),
+        "Debug shows no bytes"
+    );
+
+    let mut later = Session::default();
+    let opened = later.device_open(&kept, "m1", &wrap_key).unwrap();
+    assert_eq!(opened["public"], made["public"]);
+    assert_eq!(later.personal_key_id(), Some("pk-alice"));
+    let status = call(&mut later, &mut rng, json!({ "op": "status" })).unwrap();
+    assert_eq!(status["personal"], json!("pk-alice"));
+
+    // either half alone, or another memory's key, opens nothing
+    let other = Key32::random(&mut rng);
+    for wrong in [
+        personal::device_wrap_key(&device_key, &other, "m1"),
+        personal::device_wrap_key(&other, &server_secret, "m1"),
+        personal::device_wrap_key(&device_key, &server_secret, "m2"),
+    ] {
+        assert!(Session::default().device_open(&kept, "m1", &wrong).is_err());
+    }
+    assert!(
+        Session::default().device_open(&kept, "m2", &wrap_key).is_err(),
+        "another memory"
+    );
+    let mut renamed = kept.clone();
+    renamed.personal_key_id = "pk-mallory".to_string();
+    assert!(
+        Session::default().device_open(&renamed, "m1", &wrap_key).is_err(),
+        "another personal key id"
+    );
+    let mut other_user = kept.clone();
+    other_user.user_id = "mallory".to_string();
+    assert!(
+        Session::default().device_open(&other_user, "m1", &wrap_key).is_err(),
+        "another user"
+    );
+    let mut longer = kept.clone();
+    longer.until += 1;
+    assert!(
+        Session::default().device_open(&longer, "m1", &wrap_key).is_err(),
+        "a time made longer"
+    );
+    let mut changed = kept.clone();
+    let last = changed.sealed.len() - 1;
+    changed.sealed[last] ^= 1;
+    assert!(
+        Session::default().device_open(&changed, "m1", &wrap_key).is_err(),
+        "a changed wrap"
+    );
+    for op in ["device_seal", "device_open"] {
+        let refused = call(&mut session, &mut rng, json!({ "op": op, "memory_id": "m1" })).unwrap_err();
+        assert_eq!(refused, "bad format: unknown op");
+    }
+}

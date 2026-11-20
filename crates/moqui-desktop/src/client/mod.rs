@@ -42,6 +42,7 @@
 mod conf;
 pub(crate) mod keystore;
 mod scheme;
+mod screen_lock;
 pub(crate) mod sockets;
 pub(crate) mod windows;
 
@@ -95,6 +96,9 @@ impl Client {
         });
         let keys = keystore::open_keys(&dir.join("keys"));
         let core = Arc::new(moqui_client::app::Client::new(dir, keys, read_conf)?);
+        // the vault's device memory keys, in the same store as the device keys (none offered where it is a file)
+        core.vault()
+            .set_memory_keys(Box::new(keystore::open_memory_keys(&dir.join("keys"))));
         let host: Arc<dyn ClientHost> = Arc::new(DesktopHost { app: app.clone() });
         let shell_load = Arc::new(ShellLoad::default());
         let shell: Arc<dyn ShellHost> = Arc::new(windows::DesktopShell {
@@ -204,6 +208,10 @@ pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     windows::add_capabilities(app);
     windows::shell_window(app)?;
     moqui_client::renewal::start(&core, &host);
+    moqui_client::vault::start(&core);
+    // the device's lock and sleep lock the vault, as the OS tells them (where it can: screen_lock.rs)
+    let locking = Arc::clone(&core);
+    screen_lock::watch(Box::new(move || locking.vault().lock_all()));
     moqui_client::sync::flush::start(&core, &host);
     Ok(())
 }

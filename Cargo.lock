@@ -4645,6 +4645,7 @@ dependencies = [
  "getrandom 0.4.3",
  "jiff",
  "moqui-lib",
+ "moqui-vault",
  "rcgen",
  "reqwest",
  "rusqlite",
@@ -4656,6 +4657,7 @@ dependencies = [
  "tracing",
  "tungstenite",
  "url",
+ "zeroize",
 ]
 
 [[package]]

@@ -3255,6 +3255,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="lease-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into
                 the seal's store: the seed of the server's Ed25519 lease key, which signs each lease. Members check its
                 fingerprint once; a new value is a new key, which they check again.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="device-memory-max-hours" type="xs:string" default="8"><xs:annotation><xs:documentation>
+                The longest a desktop or mobile app may remember a user's open personal key (plans/Vault-Instances.md
+                §3.5, V5), in hours, at most 24; 0 offers no device memory. A device asks for its time and gets the
+                shorter. Read at each remember#VaultDeviceMemory.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

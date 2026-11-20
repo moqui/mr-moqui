@@ -38,6 +38,7 @@
 //! - [`events`]: the `VaultEvent` rows of §3.13, written in the transaction of their change; a lease's use in its own,
 //!   before the value is returned.
 //! - [`recovery`]: the organization's recovery keys split k of n, recovery on a vault, and recoveries (§3.10).
+//! - [`device_memory`]: the record of each desktop or mobile app that remembers its user's personal key (§3.5, V5).
 
 use std::collections::BTreeMap;
 
@@ -46,6 +47,7 @@ use moqui_core::extension::RustServiceFn;
 mod common;
 pub mod deliveries;
 pub mod deposit;
+pub mod device_memory;
 pub mod events;
 pub mod items;
 pub mod lease;
@@ -82,6 +84,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     deliveries::register(map)?;
     recovery::register(map)?;
     deposit::register(map)?;
+    device_memory::register(map)?;
     lease::services::register(map)?;
     machine::register(map)?;
     reveal::register(map)?;

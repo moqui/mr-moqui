@@ -392,6 +392,67 @@ runtime built in refuses to build without the module. On a runtime without it, t
 built, and Commons › Vault gets no integrity hash for it and does not load it. The desktop and mobile shells
 carry their own copy (plans/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
 
+## The desktop and mobile apps
+
+The apps (the desktop app's client mode and the mobile app, [Desktop-Client](../ui/Desktop-Client.md)) run the vault
+crate natively (`moqui_client::vault`) in place of the browser's worker, one session per page (an app window, or the
+phone's one webview), as a browser has one worker per tab. The vault screens are still the server's, but
+`VaultClient.js` finds the page bridge's `moquiDesktop.vault` and sends it the same calls; the keys stay in the app's
+process.
+
+- **The module is the app's.** The app never loads the server's module: its schemes refuse `VaultWorker.js` and
+  `moqui_vault.wasm` on every origin, the shell's too (`moqui_client_tauri::scheme`, by path, so best effort), the
+  shell's staged files leave out `js/vault`, and `VaultClient.js` in an app loads no worker. The page is still code the
+  server sends (§3.12's limit), so the module decides what it trusts by itself, as in the browser.
+- **Only a vault screen calls it.** Every screen of every app shares the app origin, so the app lets a page call the
+  vault only while its window's top-level document was loaded at a vault screen (a path under `/qapps/` or `/apps/`
+  naming `Vault`, `Vaults`, `VaultKey`, `VaultContacts` or `RecoveryKeys`) and it has loaded no other screen or frame
+  since (WebrootVue's screen loads and frames are seen by the scheme), and its current URL is still a vault screen.
+  Leaving, or loading anything else into the page, locks its session; each new document starts a fresh one. The app's
+  scripts run in the main frame only, and since a same-origin frame could reach its parent's adapter, any frame that
+  is not a vault screen ends the page's right too. A script injected into the vault screen itself is still §3.12's
+  limit.
+- **Locking.** A page's session locks after its idle time with no call (the page's `idleMinutes`, 15 by default, at
+  most 60; the app sweeps every 30 seconds whether or not a page calls), on the page's Lock, when the page leaves the
+  vault screens or its window closes, on sign-out, revocation and removal, and when another account becomes current. On
+  macOS also when the screen locks, the session is switched, or the computer goes to sleep (the OS's notices); on
+  macOS, Linux and Android when the client's clocks show a sleep; on the phone when the app leaves the screen (the phone
+  locked or another app in front). Not done yet: the screen lock on Linux and Windows, and a sleep on Windows (whose
+  monotonic clock counts through it), where only the idle time locks.
+- **Rollback memory** (decision (d) of §9). The app keeps, per account and vault, the highest key version and revision
+  it accepted with the hash of that member list (`vault/<account>.seen.json` in the client's directory, owner-only),
+  and hands it to `chain_verify`, `vault_key_open`, `key_version_next`, `vault_rotate`, `recovery_open_vault` and
+  `recovery_rekey` in place of the page's `remembered`: an older chain, or one that went another way, is refused
+  across restarts. It also keeps the highest revision seen of each item (at most 20,000 items of each of 1,000 vaults):
+  `item_open` and `item_summary` given a `revision` lower than one seen are refused before the module opens anything,
+  and `revisionsSeen({vault_id, items})` answers a list's older ones. A kept value is never lowered.
+- **Device memory** (§3.5). With the personal key open, the user may have the app remember it for a time
+  (`remember(minutes)`, at most 24 hours and at most `vault@device-memory-max-hours`, 8 by default; 0 offers none). It
+  needs a click in the vault (the page's user activation, read with the getter the bridge took before any page script
+  ran). The private halves are wrapped (`personal::wrap_with_device_key`; the memory's id, user and end time in the
+  associated data) into `vault/<account>.memory.json`, under a key made by HKDF of two halves
+  (`personal::device_wrap_key`): the device's, kept in its key store, and the server record's 32-byte secret
+  (`memorySecret`, an encrypted field), which `check#VaultDeviceMemory` hands only to a device's key and only while the
+  record is live. The device's key store is the desktop's OS key store (Keychain, Credential Manager, Secret Service),
+  opened by the computer's sign-in, or on Android a Keystore key the user authorizes at each use with a strong
+  biometric or the lock screen (BiometricPrompt with the cipher), only while the phone is unlocked, and which a new
+  biometric enrolled invalidates (Android 11 and later, with a secure lock screen). Where the keys are in a plain file
+  (a desktop with no key store, a development run), no device memory is offered. The user's Vault key settings list
+  the devices that remember the key (`list#VaultDeviceMemories`) and can take one off (`forget#VaultDeviceMemory`).
+- **When it ends.** At its time (the memory, its key and the sessions opened from it go), on the page's Lock with
+  `forget`, on `forget()`, on sign-out and removal, and whenever the server's record ends: taken off the list, past its
+  time, the personal key replaced, or the device's key no longer taken. Since the record's secret is half of the key,
+  this is cryptographic, not only the app's rule: a revoked device opens nothing even when the app was not running at
+  the revocation. While a session opened from memory is open the app asks the server every five minutes and locks it
+  when the record has ended. A server that cannot be reached gives no secret: the memory is kept and not opened. A
+  restore needs a click too; on the desktop it opens with no further prompt (macOS LocalAuthentication and Windows Hello
+  would need bindings the app does not carry), so it relies on that click, the vault-screen rule and the OS key store's
+  own access control. There is no iOS app yet; the passkey slot (WebAuthn PRF) waits for passkeys, as another kind of
+  memory key store (`MemoryKeys`).
+
+The desktop app's node modes (the node in this process or as a sidecar) serve the vault screens from the app's own
+bundled runtime, so their pages use the browser module from the app's own files.
+
 ## Tests and vectors
 
 `cargo test -p moqui-vault` runs the crate's tests, one for each refusal above, and compares the known-answer
@@ -402,7 +463,15 @@ next `./moq build` or test task.
 
 `moqui test-client framework --offline --spec VaultModule` loads the module in its worker in the test browser and
 checks that it makes the same vectors, that an item seals, opens and is forgotten on lock there, and that a vault key
-crosses to a second worker only through a member list checked there.
+crosses to a second worker only through a member list checked there; and that in an app the client calls
+`moquiDesktop.vault` and fetches no worker or module.
+
+The apps' vault: `cargo test -p moqui-client vault` (device memory ends at its time and when the device is revoked,
+needs a key store and an open key, waits for the device's lock; rollback memory is the app's, not the page's; idle
+locking), `cargo test -p moqui-vault-server device_memory` (the server's record), `./moq test-clients tauri` (the
+server's module refused in the app), `./moq test-clients desktop` and `./moq test-clients mobile` (the phone's
+Keystore key of the device's lock, with a stand-in for the Keystore). The hand checks on installed apps are in
+[Mobile-Desktop-Exit-Checks](../../plans/Mobile-Desktop-Exit-Checks.md#v5-the-vault-in-the-apps).
 
 `cargo test -p moqui-vault-server` runs the server's rules against the in-memory entity facade, with clients that are
 the vault crate's own session: no row of a personal vault holds an item's name, type or value in the clear; a

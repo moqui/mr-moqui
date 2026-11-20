@@ -51,6 +51,8 @@ const COMMANDS: &[&str] = &[
     "draft_put",
     "draft_remove",
     "file_save",
+    "vault_call",
+    "vault_memory",
     "scheme_fetch",
     "client_show_shell",
     "open_in_shell",

@@ -41,6 +41,7 @@ pub(crate) const RECOVERY_SESSION: &str = "moqui.security.vault.VaultRecoverySes
 pub(crate) const RECOVERY_DELIVERY: &str = "moqui.security.vault.VaultRecoveryDelivery";
 pub(crate) const LEASE: &str = "moqui.security.vault.VaultLease";
 pub(crate) const MACHINE_ACCESS: &str = "moqui.security.vault.VaultMachineAccess";
+pub(crate) const DEVICE_MEMORY: &str = "moqui.security.vault.VaultDeviceMemory";
 
 pub(crate) const PERSONAL: &str = "VkPersonal";
 pub(crate) const OPERATIONAL: &str = "VkOperational";

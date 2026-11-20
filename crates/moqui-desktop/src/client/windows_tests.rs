@@ -82,6 +82,15 @@ fn an_app_window_has_the_outbox_but_none_of_the_shells_commands() {
     assert!(!APP_PERMISSIONS.contains(&"allow-outbox-unsent"));
 }
 
+/// V5: the vault the app runs natively is the app windows' (Commons › Vault, the lease dialog), not the shell's.
+#[test]
+fn the_native_vault_is_an_app_windows_command() {
+    for permission in ["allow-vault-call", "allow-vault-memory"] {
+        assert!(APP_PERMISSIONS.contains(&permission), "{permission}");
+        assert!(!SHELL_PERMISSIONS.contains(&permission), "{permission}");
+    }
+}
+
 #[test]
 fn the_comms_screens_the_shell_bundles_are_shown_there_and_the_rest_in_an_app_window() {
     for path in [

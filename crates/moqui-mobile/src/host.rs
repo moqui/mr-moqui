@@ -697,6 +697,13 @@ impl ShellHost for MobileHost {
     }
 
     fn close_remotes(&self, account: Option<&str>) {
+        // the vault of the account whose pages go locks with them (V5)
+        if let Some(core) = self.core() {
+            match account {
+                Some(account) => core.vault().lock(account),
+                None => core.vault().lock_all(),
+            }
+        }
         // the server pages are the bound account's: they are no account's, and go, before the current account changes
         let theirs = self.page.unbind_app(account);
         if theirs {

@@ -120,6 +120,8 @@ pub fn run() {
             moqui_client_tauri::draft_put,
             moqui_client_tauri::draft_remove,
             moqui_client_tauri::file_save,
+            moqui_client_tauri::vault_call,
+            moqui_client_tauri::vault_memory,
             scheme::scheme_fetch,
             commands::client_show_shell,
             commands::open_in_shell,
@@ -171,6 +173,8 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
     let dir = app.path().app_data_dir()?.join("client");
     // the process's one client: a push that started the process may have made it already
     let core = native::core_in(&dir)?;
+    // the vault's device memory keys, in the Keystore key that needs the phone's lock (V5)
+    keystore::set_vault_memory_keys(&core, &dir);
     let host = Arc::new(MobileHost::new(app.clone(), network, dir.clone()));
     *moqui_lib::sync::lock(&host.client) = Some(Arc::clone(&core));
     let client_host: Arc<dyn ClientHost> = host.clone();
@@ -223,6 +227,7 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
     }
     core.warm();
     shell_webview(app, &host)?;
+    moqui_client::vault::start(&core);
     if network {
         moqui_client::renewal::start(&core, &client_host);
         moqui_client::sync::flush::start(&core, &client_host);

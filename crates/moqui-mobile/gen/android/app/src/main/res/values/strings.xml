@@ -59,4 +59,7 @@
     <string name="dial_not_called">This number cannot be called through MR Moqui</string>
     <string name="dial_handoff_title">Call through MR Moqui</string>
     <string name="dial_handoff_text">Tap to open %1$s in the Dialer</string>
+    <!-- the vault's device memory (KeyVault.authenticated, plans/Vault-Instances.md V5) -->
+    <string name="vault_unlock_title">Open your vault key</string>
+    <string name="vault_unlock_reason">Confirm it is you to use the vault key this phone remembers</string>
 </resources>

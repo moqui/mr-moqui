@@ -118,7 +118,9 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             moqui_client_tauri::draft_list,
             moqui_client_tauri::draft_put,
             moqui_client_tauri::draft_remove,
-            moqui_client_tauri::file_save
+            moqui_client_tauri::file_save,
+            moqui_client_tauri::vault_call,
+            moqui_client_tauri::vault_memory
         ])
 }
 
