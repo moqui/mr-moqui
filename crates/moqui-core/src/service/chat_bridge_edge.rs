@@ -538,16 +538,15 @@ impl EdgeRates {
     /// whether it may go. Both are taken or neither: the bridge's bucket is asked first, so while it is empty no
     /// client bucket is made (many source addresses cannot fill the table), and a client over its share spends
     /// nothing of the bridge's (SEC-COM-89).
-    fn take(&self, key: &str, per_minute: u32, client: &str, per_client_minute: u32, now: i64) -> bool {
+    fn take(&self, bridge: Rate<'_>, client: Rate<'_>, now: i64) -> bool {
         let mut buckets = moqui_lib::sync::lock(&self.buckets);
-        for name in [key, client] {
+        for Rate { key: name, per_minute } in [bridge, client] {
             if !buckets.contains_key(name) && buckets.len() >= MAX_BUCKETS {
                 buckets.retain(|_, bucket| now.saturating_sub(bucket.at) < 60_000);
                 if buckets.len() >= MAX_BUCKETS {
                     return false;
                 }
             }
-            let per_minute = if name == key { per_minute } else { per_client_minute };
             let bucket = buckets
                 .entry(name.to_string())
                 .or_insert_with(|| Bucket::full(per_minute, now));
@@ -557,13 +556,20 @@ impl EdgeRates {
             }
             bucket.tokens += 1.0;
         }
-        for name in [key, client] {
+        for name in [bridge.key, client.key] {
             if let Some(bucket) = buckets.get_mut(name) {
                 bucket.tokens -= 1.0;
             }
         }
         true
     }
+}
+
+/// A bucket's key and its rate a minute, named so a bridge's and a client's cannot be passed the wrong way round.
+#[derive(Clone, Copy)]
+struct Rate<'a> {
+    key: &'a str,
+    per_minute: u32,
 }
 
 /// What an edge node checks of a webhook it cannot verify (the network signs with a secret only the local node holds,
@@ -592,7 +598,15 @@ pub(super) fn deferred_checks(
     }
     let now = request.now_millis;
     let client = format!("{key}|{}", request.client_ip);
-    if !rates.take(key, limits.per_minute, &client, limits.per_client_minute, now) {
+    let bridge = Rate {
+        key,
+        per_minute: limits.per_minute,
+    };
+    let from = Rate {
+        key: &client,
+        per_minute: limits.per_client_minute,
+    };
+    if !rates.take(bridge, from, now) {
         // not logged at warn: a flood would flood the log too
         tracing::debug!(
             "chat bridge {key}: webhooks over its rate from {}; refused for now (429)",
