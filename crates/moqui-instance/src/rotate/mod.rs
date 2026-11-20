@@ -17,34 +17,40 @@
 //!
 //! The kind's `rotate#Credential` ([`InstanceKindSecret.rotateService`]) runs, for each credential, in this order:
 //!
-//! 0. **Before anything changes**: the vault's deposit key is checked (the last step deposits), and each instance that
-//!    uses the credential must be up and unsealed on its link (until M6 ties "unsealed" to the transit unseal, that is
-//!    the instance's own claim; a rotated value goes only to an instance the manager would deploy to).
-//! 1. **The source** ([`source`]): a new value made here and set where the credential is checked: a database user's
-//!    password on its database (a one-shot on the database's network, or verified TLS to a database host, with the
-//!    admin login leased), a database's admin password (signed in as the admin with the value it replaces), an
-//!    OpenSearch admin password (its security API).
-//! 2. **The instances**: the value put on each mr-moqui instance that uses it (`moqui operator secret put` over its
+//! 0. **Before anything changes**: the binding is claimed (one rotation of an item at a time across a cluster,
+//!    [`claim`]); the vault's deposit key is checked; each instance that uses the credential must be up and unsealed on
+//!    its link (until M6 ties "unsealed" to the transit unseal, that is the instance's own claim; a rotated value goes
+//!    only to an instance the manager would deploy to); and the value it holds now must be one that could go back.
+//! 1. **Staged**: a new value made here and deposited before anything else
+//!    ([`moqui_vault_server::lease::LeaseRegistry::stage_rotation`]): the item's body, opened under the lease with only
+//!    the rotated field changed, sealed under a new item key wrapped to the deposit key, a pending revision the manager
+//!    cannot read back; the item's revision then is the one the rotation started from.
+//! 2. **The source** ([`source`]): the value set where the credential is checked: a database user's password on its
+//!    database (a one-shot on the database's network, or verified TLS to a database host, with the admin login
+//!    leased), a database's admin password (signed in as the admin with the value it replaces), an OpenSearch admin
+//!    password (its security API).
+//! 3. **The instances**: the value put on each mr-moqui instance that uses it (`moqui operator secret put` over its
 //!    link, or SSH, never a service's parameter), then the instance restarted (over its link; over SSH its container,
 //!    through its host) so it reads the value.
-//! 3. **The check**: the source takes the new value, and each instance comes back up and unsealed within
+//! 4. **The check**: the source takes the new value, and each instance comes back up and unsealed within
 //!    `manage@deploy-wait-seconds`.
-//! 4. **The item**: the new value deposited as the item's next revision
-//!    ([`moqui_vault_server::deposit::deposit_revision`]): a new item key wrapped to the vault's deposit key, so the
-//!    manager writes it with no lease and cannot read it back. The revision before stays in `VaultItemHistory`, the way
-//!    back. A member takes the new revision in (`deposit_adopt`) before a lease names the item again, and an
-//!    environment's machine access to it must be given again.
+//! 5. **The item**: the staged value becomes the item's next revision
+//!    ([`moqui_vault_server::deposit::promote_revision`]), only from the revision the rotation started from. The
+//!    revision before stays in `VaultItemHistory`, the way back. A member takes the new revision in (`take#VaultDeposit`)
+//!    before a lease names the item again, and an environment's machine access to it must be given again.
 //!
 //! **When a step after the source fails** (an instance refused the value, did not come back, the source did not take
-//! the value, or the deposit failed), the old value is put back at the source and on each instance that took the new
-//! one, which is restarted; the item is not changed. Each credential of a rotation is its own `InstanceAction`
-//! (`IatRotate`, on the instance whose secret it is): one that fails is reported and the rest go on. A database user's
-//! credential is rotated before its database's admin login in the same rotation, since its change signs in with the
-//! admin login the lease holds.
+//! the value, or the item was written meanwhile), the old value is put back at the source and on each instance that
+//! took the new one, which is restarted; the item is not changed and the staged value is dropped. When the old value
+//! cannot be put back everywhere, the staged value is kept for a member to recover (the source may hold it). Each
+//! credential of a rotation is its own `InstanceAction` (`IatRotate`, on the instance whose secret it is): one that
+//! fails is reported and the rest go on. A database user's credential is rotated before its database's admin login in
+//! the same rotation, since its change signs in with the admin login the lease holds.
 //!
 //! A credential the manager cannot change (an item with no rotate service: a registry token, a host's client key, a
 //! database host's admin login, an ingest key) is never rotated here; [`due`] shows it as due with what to do by hand.
 
+pub mod claim;
 pub mod due;
 pub(crate) mod services;
 pub mod source;
@@ -58,7 +64,6 @@ use moqui_core::seal::secrets::{DATASOURCE_PASSWORD, SEARCH_CLUSTER_PASSWORD};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_vault_server::lease::{Ask, LeaseRegistry};
-use serde_json::{json, Value as Json};
 use zeroize::Zeroizing;
 
 use crate::actions::{self, Requested};
@@ -693,8 +698,19 @@ impl Outcome {
     }
 }
 
+/// How long a run's claim of a binding holds when its manager stops before it lets it go: the longest a lease runs.
+const CLAIM_MILLIS: i64 = 4 * 3_600_000;
+
+/// A token of a run under machine access, which has no lease asked for before it.
+fn run_token() -> String {
+    let mut bytes = [0_u8; 8];
+    moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut bytes);
+    format!("run-{}", moqui_vault::text::hex(&bytes))
+}
+
 /// Runs a rotation's plan under the lease `lease_id`, or the environment's machine access (see the module doc). Its
-/// error is a refusal before anything changed; a credential that fails is in the outcome's `failed`.
+/// error is a refusal before anything changed; a credential that fails, or that another rotation holds, is in the
+/// outcome's `failed`.
 pub fn run(
     facade: &EntityFacade,
     registry: &LeaseRegistry,
@@ -726,7 +742,7 @@ pub fn run(
         )?;
         Err(err)
     };
-    // its last step deposits: a vault whose deposit key is gone or unsigned is refused before any source changes
+    // it deposits before it changes a source: a vault whose deposit key is gone or unsigned is refused first
     if let Err(err) = moqui_vault_server::deposit::check_deposit_key(facade, &plan.vault_id) {
         return refuse(fail(format!(
             "A rotation deposits each new value into vault {}, which cannot take a deposit now: {}",
@@ -747,8 +763,31 @@ pub fn run(
         Ok(opened) => opened,
         Err(err) => return refuse(err),
     };
+    let Some(open_lease) = opened.lease_id.clone() else {
+        return refuse(fail("A rotation opens its items under a lease"));
+    };
+    // a request's claims are its lease's; a run under machine access takes its own
+    let token = lease_id.map_or_else(run_token, str::to_string);
     let mut outcome = Outcome::default();
     for credential in &plan.credentials {
+        let until = moqui_core::user::now_millis() + CLAIM_MILLIS;
+        if let Err(err) = claim::claim(facade, &plan.vault_id, &credential.binding, &token, until) {
+            if let Ok(id) = actions::record(
+                facade,
+                &credential.instance_id,
+                "rotate",
+                actions::REFUSED,
+                opened.lease_id.as_deref(),
+                opened.machine,
+                err.message(),
+            ) {
+                outcome.action_ids.push(id);
+            }
+            outcome
+                .failed
+                .push((credential.binding.clone(), err.message().to_string()));
+            continue;
+        }
         let action_id = match actions::record(
             facade,
             &credential.instance_id,
@@ -764,20 +803,25 @@ pub fn run(
                     "Instances: the rotation of {} was not recorded: {err}",
                     credential.binding
                 );
+                claim::release(facade, &plan.vault_id, &credential.binding, &token, None);
                 outcome
                     .failed
                     .push((credential.binding.clone(), err.message().to_string()));
                 continue;
             }
         };
+        claim::note_action(facade, &plan.vault_id, &credential.binding, &token, &action_id);
         outcome.action_ids.push(action_id.clone());
         let mut report = vec![format!("rotate {}", credential.binding)];
-        let ran = match &opened.lease_id {
-            Some(lease_id) => moqui_vault_server::lease::run_under(lease_id, || {
-                rotate_one(facade, &plan.vault_id, instances, credential, options, &mut report)
-            }),
-            None => rotate_one(facade, &plan.vault_id, instances, credential, options, &mut report),
+        let one = One {
+            facade,
+            registry,
+            lease_id: &open_lease,
+            vault_id: &plan.vault_id,
+            instances,
+            options,
         };
+        let ran = moqui_vault_server::lease::run_under(&open_lease, || one.rotate(credential, &mut report));
         let status = match ran {
             Ok(revision) => {
                 outcome.rotated.push((credential.binding.clone(), revision));
@@ -795,120 +839,180 @@ pub fn run(
         if let Err(err) = actions::finish(facade, &action_id, status, &report.join("\n")) {
             tracing::error!("Instances: the rotation action {action_id} was not updated: {err}");
         }
+        claim::release(
+            facade,
+            &plan.vault_id,
+            &credential.binding,
+            &token,
+            Some((status, &action_id)),
+        );
         outcome.report.extend(report);
     }
     actions::end_lease(facade, registry, &opened);
     Ok(outcome)
 }
 
-/// Rotates one credential under the thread's lease (see the module doc): its new revision.
-fn rotate_one(
-    facade: &EntityFacade,
-    vault_id: &str,
-    instances: &dyn Instances,
-    credential: &Credential,
-    options: &Options,
-    report: &mut Vec<String>,
-) -> Result<i64, LibError> {
-    // 0. each instance that uses it is up and unsealed now, before anything changes
-    for used in &credential.uses {
-        let status = instances.status(&used.instance_id)?;
-        if !status.ready() {
+/// What one credential's rotation runs with.
+struct One<'a> {
+    facade: &'a EntityFacade,
+    registry: &'a LeaseRegistry,
+    lease_id: &'a str,
+    vault_id: &'a str,
+    instances: &'a dyn Instances,
+    options: &'a Options,
+}
+
+impl One<'_> {
+    /// Rotates one credential under the lease (see the module doc): its new revision.
+    fn rotate(&self, credential: &Credential, report: &mut Vec<String>) -> Result<i64, LibError> {
+        let instances = self.instances;
+        // 0. each instance that uses it is up and unsealed now, before anything changes
+        for used in &credential.uses {
+            let status = instances.status(&used.instance_id)?;
+            if !status.ready() {
+                return Err(fail(format!(
+                    "AppInstance {} is {} ({}): a rotated value goes only to an instance that is up and unsealed; \
+                     nothing was changed",
+                    used.instance_id, status.seal_state, status.health
+                )));
+            }
+        }
+        // the revision it starts from: its new value becomes the next only from this one
+        let expected = one(self.facade, VAULT_ITEM, "vaultItemId", &credential.item_id)?
+            .map(|row| field(&row, "revision"))
+            .and_then(|revision| revision.parse::<i64>().ok())
+            .ok_or_else(|| fail(format!("No item {}", credential.item_id)))?;
+        // the item's value it replaces and its user, from the lease
+        let fields = match moqui_core::vault_hooks::leased(&credential.binding, None)? {
+            Value::Map(map) => map,
+            _ => return Err(fail(format!("The item bound to {} has no fields", credential.binding))),
+        };
+        let text_of = |name: &str| Zeroizing::new(fields.get(name).map(to_plain_string).unwrap_or_default());
+        let old = text_of(&credential.field_name);
+        let user = text_of("username");
+        drop(fields);
+        if old.is_empty() {
             return Err(fail(format!(
-                "AppInstance {} is {} ({}): a rotated value goes only to an instance that is up and unsealed; nothing \
-                 was changed",
-                used.instance_id, status.seal_state, status.health
+                "The item bound to {} has no {}",
+                credential.binding, credential.field_name
             )));
         }
-    }
-    // the item as it is: its fields (the value it replaces among them), from the lease
-    let fields = match moqui_core::vault_hooks::leased(&credential.binding, None)? {
-        Value::Map(map) => map,
-        _ => return Err(fail(format!("The item bound to {} has no fields", credential.binding))),
-    };
-    let text_of = |name: &str| Zeroizing::new(fields.get(name).map(to_plain_string).unwrap_or_default());
-    let old = text_of(&credential.field_name);
-    let user = text_of("username");
-    if old.is_empty() {
-        return Err(fail(format!(
-            "The item bound to {} has no {}",
-            credential.binding, credential.field_name
-        )));
-    }
-    if let Source::DatabaseAdmin(network) = &credential.source {
-        // the login goes only to the server its own item names
-        source::own_admin(network, &credential.binding)?;
-    }
-    let new = crate::kinds::credential_for(&credential.source_kind);
-    // 1. the source
-    match source::set(&credential.source, &user, &old, &new) {
-        Ok(lines) => report.extend(lines),
-        Err(err) => {
+        if let Source::DatabaseAdmin(network) = &credential.source {
+            // the login goes only to the server its own item names
+            source::own_admin(network, &credential.binding)?;
+        }
+        // the old value can go back where the new one goes, or nothing starts
+        source::check_put_back(&credential.source, &user, &old)?;
+        let new = crate::kinds::credential_for(&credential.source_kind);
+        // the new value is deposited before the source changes, so it is never only in this process
+        let pending = self.registry.stage_rotation(
+            self.facade,
+            self.lease_id,
+            &credential.binding,
+            &credential.field_name,
+            &new,
+            expected,
+        )?;
+        report.push(format!(
+            "staged the new value of {} as pending revision {pending}",
+            credential.binding
+        ));
+        // 1. the source
+        if let Err(err) = source::set(&credential.source, &user, &old, &new) {
             // a set can fail after part of it applied (MySQL's admin is two users): the old value is set again where the
-            // source takes it, and where it does not, it kept the old one
-            if source::set(&credential.source, &user, &new, &old).is_ok() {
+            // source takes it; where that fails too, the source may hold the new one, which stays pending
+            let back = source::set(&credential.source, &user, &new, &old).is_ok();
+            if back {
                 report.push(format!(
                     "set the old value of {} again at its source",
                     credential.binding
                 ));
             }
+            self.settle(credential, &pending, back, report);
             return Err(fail(format!(
-                "the new value was not set at its source, nothing else was changed: {}",
+                "the new value was not set at its source: {}",
                 err.message()
             )));
         }
+        report.push(format!("set the new value of {} at its source", credential.binding));
+        // 2. each instance that uses it, then 3. the check, then 4. the item; a failure puts the old value back
+        let mut took: Vec<&Use> = Vec::new();
+        let changed = (|| -> Result<i64, LibError> {
+            for used in &credential.uses {
+                instances.put_secret(&used.instance_id, used.name, &new)?;
+                took.push(used);
+                report.push(format!("put {} on AppInstance {}", used.name, used.instance_id));
+                instances.restart(&used.instance_id)?;
+                report.push(format!("restarted AppInstance {}", used.instance_id));
+            }
+            report.extend(source::check(&credential.source, &user, &new)?);
+            let ids: Vec<String> = credential.uses.iter().map(|used| used.instance_id.clone()).collect();
+            wait_ready(instances, &ids, self.options.wait)?;
+            if !ids.is_empty() {
+                report.push(format!("up and unsealed: {}", ids.join(", ")));
+            }
+            let revision = moqui_vault_server::deposit::promote_revision(
+                self.facade,
+                self.vault_id,
+                &credential.item_id,
+                &credential.binding,
+                &pending,
+            )?;
+            report.push(format!(
+                "deposited revision {revision} of {}; the one before is in its history, and a member takes the new one \
+                 in",
+                credential.binding
+            ));
+            Ok(revision)
+        })();
+        match changed {
+            Ok(revision) => Ok(revision),
+            Err(err) => {
+                let back = put_back(instances, credential, &user, &old, &new, &took, self.options, report);
+                self.settle(credential, &pending, back, report);
+                Err(fail(format!(
+                    "{}; {}",
+                    err.message(),
+                    if back {
+                        "the old value was put back"
+                    } else {
+                        "the old value was NOT put back everywhere, and the new one is kept as a pending revision"
+                    }
+                )))
+            }
+        }
     }
-    // 2. each instance that uses it, then 3. the check, then 4. the item; a failure puts the old value back
-    let mut took: Vec<&Use> = Vec::new();
-    let changed = (|| -> Result<i64, LibError> {
-        for used in &credential.uses {
-            instances.put_secret(&used.instance_id, used.name, &new)?;
-            took.push(used);
-            report.push(format!("put {} on AppInstance {}", used.name, used.instance_id));
-            instances.restart(&used.instance_id)?;
-            report.push(format!("restarted AppInstance {}", used.instance_id));
-        }
-        report.extend(source::check(&credential.source, &user, &new)?);
-        let ids: Vec<String> = credential.uses.iter().map(|used| used.instance_id.clone()).collect();
-        wait_ready(instances, &ids, options.wait)?;
-        if !ids.is_empty() {
-            report.push(format!("up and unsealed: {}", ids.join(", ")));
-        }
-        let mut fields_after: serde_json::Map<String, Json> = fields
-            .iter()
-            .map(|(name, value)| (name.clone(), moqui_lib::json::to_json(value)))
-            .collect();
-        fields_after.insert(credential.field_name.clone(), json!(new.as_str()));
-        let body = Zeroizing::new(
-            json!({ "v": 1, "type": credential.item_type, "name": credential.item_name, "fields": fields_after })
-                .to_string(),
-        );
-        let revision = moqui_vault_server::deposit::deposit_revision(
-            facade,
-            &moqui_vault_server::deposit::Revision {
-                vault_id,
-                item_id: &credential.item_id,
-                binding: &credential.binding,
-                body: body.as_bytes(),
-            },
-        )?;
-        report.push(format!(
-            "deposited revision {revision} of {}; the one before is in its history, and a member takes the new one in",
-            credential.binding
-        ));
-        Ok(revision)
-    })();
-    match changed {
-        Ok(revision) => Ok(revision),
-        Err(err) => {
-            put_back(instances, credential, &user, &old, &new, &took, options, report);
-            Err(fail(format!("{}; the old value was put back", err.message())))
+
+    /// A staged value after a failure: dropped when the old value is back everywhere, else kept for a member to
+    /// recover (a revealer opens it with reveal#VaultItem's pendingId).
+    fn settle(&self, credential: &Credential, pending: &str, back: bool, report: &mut Vec<String>) {
+        let done = if back {
+            moqui_vault_server::deposit::drop_pending(self.facade, &credential.item_id, pending)
+        } else {
+            report.push(format!(
+                "the new value stays pending revision {pending} of {}: a member with the reveal role opens it to set \
+                 it in the vault",
+                credential.binding
+            ));
+            moqui_vault_server::deposit::keep_pending(
+                self.facade,
+                &credential.item_id,
+                pending,
+                "the rotation could not put the old value back everywhere: the source may hold this value",
+            )
+        };
+        if let Err(err) = done {
+            tracing::error!(
+                "Instances: the pending revision {pending} of {} was not settled: {err}",
+                credential.binding
+            );
         }
     }
 }
 
 /// Puts the old value back at the source (signed in with the new one where the source needs it) and on each instance
-/// that took the new one, which is restarted; each failure is reported, and the rest go on.
+/// that took the new one, which is restarted; each failure is reported, and the rest go on. Whether it is back
+/// everywhere.
 #[allow(clippy::too_many_arguments)]
 fn put_back(
     instances: &dyn Instances,
@@ -919,7 +1023,8 @@ fn put_back(
     took: &[&Use],
     options: &Options,
     report: &mut Vec<String>,
-) {
+) -> bool {
+    let mut back = true;
     match source::set(&credential.source, user, new, old) {
         Ok(lines) => {
             report.extend(lines);
@@ -929,28 +1034,29 @@ fn put_back(
             ));
         }
         Err(err) => {
+            back = false;
             tracing::error!(
                 "Instances: the old value of {} was not put back at its source: {err}",
                 credential.binding
             );
             report.push(format!(
-                "NOT put back at its source: {}; its source holds a value the vault does not: rotate it again or set \
-                 it by hand",
+                "NOT put back at its source: {}; the source may hold the new value, kept as a pending revision",
                 err.message()
             ));
         }
     }
     let mut restarted = Vec::new();
     for used in took {
-        let back = instances
+        let put = instances
             .put_secret(&used.instance_id, used.name, old)
             .and_then(|()| instances.restart(&used.instance_id));
-        match back {
+        match put {
             Ok(()) => {
                 report.push(format!("put the old value back on AppInstance {}", used.instance_id));
                 restarted.push(used.instance_id.clone());
             }
             Err(err) => {
+                back = false;
                 tracing::error!(
                     "Instances: the old value of {} was not put back on AppInstance {}: {err}",
                     credential.binding,
@@ -967,13 +1073,15 @@ fn put_back(
     if let Err(err) = wait_ready(instances, &restarted, options.wait) {
         report.push(err.message().to_string());
     }
+    back
 }
 
 // ----- asked for -----
 
 /// `request#InstanceRotation`: rotates `bindings` of the environment now under its machine access, or asks for the
-/// lease and runs the rotation on this member once an approver opens it (its waiting action on the first credential's
-/// instance). What is not rotated, and why, comes back beside it.
+/// lease, claims each binding for it (one rotation of an item at a time) and runs the rotation on this member once an
+/// approver opens it (its waiting action on the first credential's instance). What is not rotated, and why, comes back
+/// beside it.
 pub fn request(
     factory: &Arc<ExecutionContextFactory>,
     facade: &EntityFacade,
@@ -1016,6 +1124,10 @@ pub fn request(
             plan,
         ));
     }
+    // a binding another rotation holds asks the approvers for nothing
+    for credential in &plan.credentials {
+        claim::check_free(facade, &plan.vault_id, &credential.binding)?;
+    }
     let lease = registry.ask(
         facade,
         &Ask {
@@ -1027,6 +1139,21 @@ pub fn request(
         },
     )?;
     let lease_id = lease.lease_id.clone();
+    // each binding is this request's while it waits: a second rotation of one is refused, and this one gives up its lease
+    let mut claimed: Vec<&str> = Vec::new();
+    for credential in &plan.credentials {
+        if let Err(err) = claim::claim(facade, &plan.vault_id, &credential.binding, &lease_id, lease.expires_at) {
+            for binding in claimed {
+                claim::release(facade, &plan.vault_id, binding, &lease_id, None);
+            }
+            if let Err(ended) = registry.end(facade, &lease_id) {
+                registry.forget(&lease_id);
+                tracing::error!("Instances: the lease {lease_id} of a refused rotation was not ended: {ended}");
+            }
+            return Err(err);
+        }
+        claimed.push(&credential.binding);
+    }
     let action_id = actions::record(
         facade,
         &first.instance_id,

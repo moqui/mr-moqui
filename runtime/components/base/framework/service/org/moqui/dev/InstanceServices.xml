@@ -564,12 +564,17 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>The job at the policy age (rotate_DueInstanceCredentials): in each environment, the items past their
             age that the manager rotates and a member has taken in are rotated under its machine access, or one lease of
-            them is asked for, not again while a rotation waits for its lease. An environment that fails is logged and
-            the rest go on. INSTANCE_ADMIN, or authorization disabled (the job).</description>
+            them is asked for, not again while a rotation waits for its lease. An item whose last rotation failed within
+            manage@rotate-retry-days is held back and told to the administrators (topic InstanceRotationFailed). An
+            environment that fails is logged and the rest go on. INSTANCE_ADMIN, or authorization disabled (the job); a
+            caller with authorization on rotates only the environments whose approver group they are in, or that name
+            none.</description>
         <out-parameters>
             <parameter name="rotatedCount" type="Long"/>
             <parameter name="askedCount" type="Long"/>
             <parameter name="failedCount" type="Long"/>
+            <parameter name="heldBackCount" type="Long"/>
+            <parameter name="skippedCount" type="Long"/>
         </out-parameters>
     </service>
 

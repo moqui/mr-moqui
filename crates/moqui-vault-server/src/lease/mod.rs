@@ -557,16 +557,16 @@ impl LeaseRegistry {
         Ok(())
     }
 
-    /// The value of the item bound to `binding` in the lease (§3.7, step 3): the item's fields, or the one named. The
-    /// item row must be the one the lease names; the `VeLeaseUsed` event is written and committed before the value is
-    /// decrypted and returned, and when it cannot be written nothing is returned.
-    pub fn leased(
+    /// Opens the body of the item bound to `binding` in the lease, after the lease's checks and the item row's (the one
+    /// the lease names): its item, its row and its parsed body. The `VeLeaseUsed` event (`detail`) is written and
+    /// committed first; when it cannot be written nothing is opened.
+    fn open_body(
         &self,
         facade: &EntityFacade,
         lease_id: &str,
         binding: &str,
-        field_name: Option<&str>,
-    ) -> Result<Value, LibError> {
+        detail: &str,
+    ) -> Result<(LeaseItem, EntityValue, Json), LibError> {
         let _authz = authz_off();
         // the row's state each time: a revoke on another member ends the lease here too, message or none
         let row = find(facade, LEASE)?
@@ -637,7 +637,7 @@ impl LeaseRegistry {
                 item_id: Some(&item.item_id),
                 lease_id: Some(lease_id),
                 actor,
-                detail: Some(format!("{binding} read")),
+                detail: Some(detail.to_string()),
                 ..Event::default()
             },
         )?;
@@ -659,6 +659,21 @@ impl LeaseRegistry {
         let body = moqui_vault::vault::open_item_body(&item_key, item_ref, &sealed).map_err(refused)?;
         let parsed: Json =
             serde_json::from_slice(&body).map_err(|_| fail(format!("The item bound to {binding} is not JSON")))?;
+        Ok((item, item_row, parsed))
+    }
+
+    /// The value of the item bound to `binding` in the lease (§3.7, step 3): the item's fields, or the one named. The
+    /// item row must be the one the lease names; the `VeLeaseUsed` event is written and committed before the value is
+    /// decrypted and returned, and when it cannot be written nothing is returned.
+    pub fn leased(
+        &self,
+        facade: &EntityFacade,
+        lease_id: &str,
+        binding: &str,
+        field_name: Option<&str>,
+    ) -> Result<Value, LibError> {
+        let _authz = authz_off();
+        let (item, _, parsed) = self.open_body(facade, lease_id, binding, &format!("{binding} read"))?;
         let Some(fields) = parsed.get("fields").and_then(Json::as_object) else {
             return Err(fail(format!("The item bound to {binding} has no fields")));
         };
@@ -696,6 +711,50 @@ impl LeaseRegistry {
             entry.handed.extend(handed);
         }
         Ok(answer)
+    }
+
+    /// Stages a rotation's new value of the item bound to `binding` (plans/Vault-Instances.md §4.7): the item's body,
+    /// opened under the lease, with `fields[field_name]` set to `value` and the rest as it was (its other fields, notes,
+    /// tags and URIs), deposited as a pending revision ([`crate::deposit::stage_revision`]). The body goes to no caller.
+    /// Refused unless the item is at `expected_revision`. Its pending id.
+    pub fn stage_rotation(
+        &self,
+        facade: &EntityFacade,
+        lease_id: &str,
+        binding: &str,
+        field_name: &str,
+        value: &str,
+        expected_revision: i64,
+    ) -> Result<String, LibError> {
+        let _authz = authz_off();
+        let (item, _, mut parsed) = self.open_body(
+            facade,
+            lease_id,
+            binding,
+            &format!("{binding} read to stage its rotation"),
+        )?;
+        let Some(fields) = parsed.get_mut("fields").and_then(Json::as_object_mut) else {
+            return Err(fail(format!("The item bound to {binding} has no fields")));
+        };
+        if !fields.contains_key(field_name) {
+            return Err(fail(format!("The item bound to {binding} has no field {field_name}")));
+        }
+        fields.insert(field_name.to_string(), Json::String(value.to_string()));
+        let body = Zeroizing::new(parsed.to_string());
+        let vault_id = lock(&self.held)
+            .get(lease_id)
+            .map(|entry| entry.lease.vault_id.clone())
+            .ok_or_else(ended)?;
+        crate::deposit::stage_revision(
+            facade,
+            &crate::deposit::Staged {
+                vault_id: &vault_id,
+                item_id: &item.item_id,
+                binding,
+                expected_revision,
+                body: body.as_bytes(),
+            },
+        )
     }
 
     /// The opened item keys of a lease held here, for a machine-access grant to seal ([`crate::machine`]).

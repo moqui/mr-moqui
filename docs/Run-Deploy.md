@@ -2247,44 +2247,62 @@ approver opens or the environment's machine access, as a provision does.
 
 **The order**, for each credential (an `InstanceAction`, `IatRotate`, on the instance whose secret it is):
 
-1. Before anything changes: the vault's deposit key is checked (the last step deposits), and each instance that uses
-   the credential must be up and unsealed on its link. Until M6 ties "unsealed" to the transit unseal, that is the
-   instance's claim ([The manager link](#the-manager-link)); a new value goes only to an instance the manager would
-   deploy to. Otherwise nothing is changed.
-2. A new value is made and set at the source, as the table says. The value it replaces, read from the lease, signs the
-   change in where the source needs it.
-3. The value is put on each instance that uses it (`moqui operator secret put` over its link from the manager's own
+1. Before anything changes: no other rotation of the item runs or waits for its lease (one at a time, on any cluster
+   member: its `InstanceRotation` row's claim, `rotationRunning`); the vault's deposit key is checked; each instance
+   that uses the credential must be up and unsealed on its link (until M6 ties "unsealed" to the transit unseal, that
+   is the instance's claim, [The manager link](#the-manager-link); a new value goes only to an instance the manager
+   would deploy to); and the value it holds now could go back where the new one goes (a MySQL password with a quote or
+   a backslash, or an OpenSearch one a netrc file cannot hold, is changed by hand). Otherwise nothing is changed.
+2. A new value is made and **staged before the source changes**: the item's body opened under the lease with only the
+   rotated field changed (its other fields, notes, tags and URIs stay), deposited as a `VaultItemPending` row, a new
+   item key wrapped to the vault's deposit key, so the manager writes it with no lease and cannot read it back, and the
+   new value is never only in the manager's memory.
+3. The value is set at the source, as the table says. The value it replaces, read from the lease, signs the change in
+   where the source needs it.
+4. The value is put on each instance that uses it (`moqui operator secret put` over its link from the manager's own
    Rust path, never a service's parameter; over SSH on standard input) and the instance is restarted (over its link;
    over SSH, its container through its host).
-4. The check: the source takes the new value (a sign-in as the user or admin with it), and each instance comes back up
+5. The check: the source takes the new value (a sign-in as the user or admin with it), and each instance comes back up
    and unsealed within `manage@deploy-wait-seconds` (600).
-5. The item's next revision is deposited: a new item key wrapped to the vault's deposit key, so the manager writes it
-   with no lease and cannot read it back (`VeItemRotated`). The revision before stays in `VaultItemHistory`, with its
+6. The staged value becomes the item's next revision (`VeItemRotated`), only from the revision the rotation read
+   (another write meanwhile refuses it, `itemChanged`). The revision before stays in `VaultItemHistory`, with its
    wrapped key and body as they were: the way back, which a member opens in their client. A member takes the new
-   revision in (`deposit_adopt`, as a provision's deposits are) before a lease names the item again, and an
-   environment's machine access to the item is marked stale and given again ([Vaults](security/Vaults.md#machine-access)).
+   revision in before a lease names the item again (System › Vaults, the vault's *Take in*, below), and an environment's
+   machine access to the item is marked stale and given again ([Vaults](security/Vaults.md#machine-access)). Staging
+   and the new revision each move the vault's revision, so a member removal computed before the rotation is refused.
 
 When a step after the source fails (an instance refuses the value or does not come back, the source does not take it,
-the deposit fails), the old value is put back at the source and on each instance that took the new one, which is
-restarted, and the item is not changed. Each step and each put-back is in the action's report, never a value. One
-credential that fails is reported and the rest of the rotation goes on. A database's users are rotated before its
-admin login in one rotation, since their change signs in with the admin login the lease holds. A manager that stops
-between the source and the deposit leaves the source with a value the vault does not hold; its action stays running,
-and the item is rotated again or set by hand.
+the item was written meanwhile), the old value is put back at the source and on each instance that took the new one,
+which is restarted, the item is not changed, and the staged value is dropped. **When the old value cannot be put back
+everywhere** (the source refuses the change back, an instance the old value), the staged value is kept
+(`keptDate`, a `VeItemUpdated` event): the source may hold it, and a member with the reveal role opens it
+(`list#VaultItemHistory`'s `pendingList`, then `reveal#VaultItem` with its `pendingId`) and sets it in the vault. This
+matters most for a database's admin password, which no one else holds: the value is not lost. A manager that stops
+mid-rotation leaves its staged value pending with no `keptDate`, and its claim until the lease's time (or four hours)
+passes. Each step and each put-back is in the action's report, never a value. One credential that fails is reported
+and the rest of the rotation goes on. A database's users are rotated before its admin login in one rotation, since
+their change signs in with the admin login the lease holds.
 
 **When.**
 
 - **At the policy age.** An operational item is due past its rotation age: its own (`VaultItem.rotationDays`, set by a
   manager of the vault with `set#VaultItemRotation`), else its type's (`VaultItemType.rotationDays`: 90 days for a
   database credential and a login, 180 for a registry login, 365 for an API key, an SSH key and a TLS key pair), from
-  when its value last changed at its source (`rotatedDate`: made, deposited, rotated, or written with `rotated`). The job
+  when its value last changed at its source (`rotatedDate`: made, deposited, rotated, or written with `rotated`). An
+  item written before rotation ages has none: each start gives such items the time of the start, so after an upgrade
+  their age counts from it, and the job does not find every older item due at once. The job
   `rotate_DueInstanceCredentials` (daily, `rotate#DueCredentials`) rotates each environment's due items that the
   manager rotates and a member has taken in: at once under its machine access, else it asks one lease of them, and not
-  again while a rotation waits for its lease. The fleet screen's *Items past rotation* column and the gauge
-  `moqui.instance.items_past_rotation` (the shipped alert rule `instance-item-past-rotation`) count the due items.
+  again while a rotation waits for its lease. An item whose last rotation failed within `manage@rotate-retry-days` (7)
+  is held back and told to the administrators (topic `InstanceRotationFailed`) instead of being tried each night. Run
+  by a person (authorization on), it rotates only the environments whose approver group they are in. The fleet
+  screen's *Items past rotation* column and the gauge `moqui.instance.items_past_rotation` (the shipped alert rule
+  `instance-item-past-rotation`) count the due items.
 - **By hand from a page.** An instance's page has Rotate on each secret binding, and System › Instances › Rotation
   lists an environment's items with their age, rotation age and whether each is due, with Rotate, Rotate due and
-  Rotate all (`request#InstanceRotation`; under machine access it runs at once, else it goes to the lease dialog).
+  Rotate all (`request#InstanceRotation`; under machine access it runs at once, else it goes to the lease dialog). The
+  list shows each item's name and binding (never a value) to INSTANCE_ADMIN in the environment's approver group,
+  whether or not they are a member of its vault: metadata the instance pages show too.
 - **On removing a member** from an operational vault: the removal's answer (`remove#VaultMember`, `rotationOffer`)
   lists the vault's items, which the manager can rotate and what to do by hand for the rest, since a removed member may
   have kept values ([Vaults](security/Vaults.md)). Rotate them with `request#InstanceRotation` (`bindingList`) or on
@@ -2292,16 +2310,26 @@ and the item is rotated again or set by hand.
 - **After an incident** (Sealed-Secrets §3.12): Rotate all on the Rotation tab (`all`), every item of the environment
   that has a rotate service, and the list says what to do by hand for the others.
 
+**Taking new values in.** A rotation's new revision, like a provision's credentials, is wrapped to the deposit key.
+A vault's page in System › Vaults offers *Take in* when it has such items: in the browser's vault worker (as the lease
+dialog loads it, with integrity hashes) the member's key passphrase opens their personal key and the vault key, each
+item's key is rewrapped from the deposit key to the vault key (`deposit_adopt`), and only that wrapped key goes back
+(`take#VaultDeposit`, a member who may write; the body stays as it is).
+
 **What the manager cannot change** shows as due with what to do by hand: the kind's `rotateByHand` (an ingest key: a
 new key in Monitor › Sources, then a deploy of the instance's image so its new container has the file), or by what the
 binding is (a host's client key, a registry token, a database host's admin login, an SSH key). Change it at its source,
-then write the new value to the item in your vault client with `rotated` (`update#VaultItem`), which starts its age
-again; taking a deposit in or editing notes does not.
+then write the new value to the item in your vault client with `rotated` (`update#VaultItem`, its event says so),
+which starts its age again; taking a deposit in or editing notes does not.
 
 **Limits.** The OpenSearch image's demo configuration serves a self-signed certificate, so the one-shot that changes
-its admin password does not verify it: that call stays on the environment's own network. The OpenSearch path is
-checked against the fake engine only, not a real OpenSearch. Over SSH an instance is restarted through its container's
-host; one with no container this manager made is restarted by hand.
+its admin password does not verify it. The call stays on the environment's own network, but a container on that
+network with `NET_RAW` (Docker's default capability set has it) can spoof ARP and read the old and new admin passwords
+in transit; give the environment's network only the instances that belong on it, or drop `NET_RAW` from them. The
+OpenSearch path is checked against the fake engine only, not a real OpenSearch, and the security plugin may refuse a
+reserved admin's change through the account API: the action then says so (403), and the admin is changed with the
+plugin's own tools by hand. Over SSH an instance is restarted through its container's host; one with no container this
+manager made is restarted by hand.
 
 Tests: `cargo test -p moqui-instance rotate` (the fake engine and a fake of the instances' link), and the opt-in real
 engine test of [Managed instances](#managed-instances).

@@ -141,14 +141,47 @@ fn kind_secrets(facade: &EntityFacade) -> Result<KindSecrets, LibError> {
         .collect())
 }
 
+/// What the ages are read against, read once for any number of vaults: the item types' ages, the kinds' secrets, each
+/// instance's kind and each instance secret's binding (so a vault's ages are one query of its items).
+struct Lookup {
+    type_days: BTreeMap<String, i64>,
+    kinds: KindSecrets,
+    /// Each instance's kind, by id.
+    instances: BTreeMap<String, String>,
+    /// Each instance secret's binding, by instance and secret.
+    bound: BTreeMap<(String, String), String>,
+}
+
+impl Lookup {
+    fn read(facade: &EntityFacade) -> Result<Lookup, LibError> {
+        let instances = find(facade, APP_INSTANCE)?
+            .list()?
+            .into_values()
+            .into_iter()
+            .map(|row| (field(&row, "appInstanceId"), field(&row, "instanceKindId")))
+            .collect();
+        let bound = find(facade, INSTANCE_SECRET)?
+            .list()?
+            .into_values()
+            .into_iter()
+            .map(|row| {
+                (
+                    (field(&row, "appInstanceId"), field(&row, "secretName")),
+                    field(&row, "bindingKey"),
+                )
+            })
+            .collect();
+        Ok(Lookup {
+            type_days: type_days(facade)?,
+            kinds: kind_secrets(facade)?,
+            instances,
+            bound,
+        })
+    }
+}
+
 /// The ages of every item of the operational vault `vault_id` at `now`.
-fn vault_ages(
-    facade: &EntityFacade,
-    vault_id: &str,
-    now: i64,
-    type_days: &BTreeMap<String, i64>,
-    kinds: &KindSecrets,
-) -> Result<Vec<ItemAge>, LibError> {
+fn vault_ages(facade: &EntityFacade, vault_id: &str, now: i64, lookup: &Lookup) -> Result<Vec<ItemAge>, LibError> {
     let mut out = Vec::new();
     let items = find(facade, VAULT_ITEM)?
         .eq("vaultId", Value::string(vault_id))
@@ -159,7 +192,7 @@ fn vault_ages(
         let binding = field(&item, "bindingKey");
         let item_type = field(&item, "vaultItemTypeId");
         let own: Option<i64> = field(&item, "rotationDays").parse().ok().filter(|days| *days > 0);
-        let rotation_days = own.or_else(|| type_days.get(&item_type).copied());
+        let rotation_days = own.or_else(|| lookup.type_days.get(&item_type).copied());
         let since = millis(&item, "rotatedDate")
             .or_else(|| millis(&item, "createdDate"))
             .unwrap_or(now);
@@ -168,19 +201,11 @@ fn vault_ages(
         let (mut instance_id, mut secret_name) = (String::new(), String::new());
         let mut service_hint: Option<(String, String)> = None;
         if let Some((id, secret)) = super::instance_binding(&binding) {
-            if let Some(instance) = one(facade, APP_INSTANCE, "appInstanceId", id)? {
-                let bound = find(facade, INSTANCE_SECRET)?
-                    .eq("appInstanceId", Value::string(id))
-                    .eq("secretName", Value::string(secret))
-                    .one()?
-                    .is_some_and(|row| field(&row, "bindingKey") == binding);
-                if bound {
-                    instance_id = id.to_string();
-                    secret_name = secret.to_string();
-                    service_hint = kinds
-                        .get(&(field(&instance, "instanceKindId"), secret.to_string()))
-                        .cloned();
-                }
+            let bound = lookup.bound.get(&(id.to_string(), secret.to_string())) == Some(&binding);
+            if let (true, Some(kind)) = (bound, lookup.instances.get(id)) {
+                instance_id = id.to_string();
+                secret_name = secret.to_string();
+                service_hint = lookup.kinds.get(&(kind.clone(), secret.to_string())).cloned();
             }
         }
         let rotatable = service_hint
@@ -231,34 +256,39 @@ pub fn list(facade: &EntityFacade, environment_id: &str, now: i64) -> Result<Vec
     if vault_id.is_empty() {
         return Ok(Vec::new());
     }
-    vault_ages(facade, &vault_id, now, &type_days(facade)?, &kind_secrets(facade)?)
+    vault_ages(facade, &vault_id, now, &Lookup::read(facade)?)
 }
 
 /// The items past their age in each environment's vault at `now`: (environment, count), for every environment with a
 /// vault. One vault that fails to read is logged and counted as none.
 pub fn past_by_environment(facade: &EntityFacade, now: i64) -> Result<Vec<(String, usize)>, LibError> {
-    let (types, kinds) = (type_days(facade)?, kind_secrets(facade)?);
+    let lookup = Lookup::read(facade)?;
+    // each vault once, however many environments share it
+    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut out = Vec::new();
     for environment in find(facade, ENVIRONMENT)?.list()?.into_values() {
         let (id, vault_id) = (field(&environment, "environmentId"), field(&environment, "vaultId"));
         if vault_id.is_empty() {
             continue;
         }
-        let count = match vault_ages(facade, &vault_id, now, &types, &kinds) {
-            Ok(ages) => ages.iter().filter(|age| age.due).count(),
-            Err(err) => {
-                tracing::error!("Instances: the rotation ages of vault {vault_id} were not read: {err}");
-                0
-            }
-        };
-        out.push((id, count));
+        if !counts.contains_key(&vault_id) {
+            let count = match vault_ages(facade, &vault_id, now, &lookup) {
+                Ok(ages) => ages.iter().filter(|age| age.due).count(),
+                Err(err) => {
+                    tracing::error!("Instances: the rotation ages of vault {vault_id} were not read: {err}");
+                    0
+                }
+            };
+            counts.insert(vault_id.clone(), count);
+        }
+        out.push((id, counts[&vault_id]));
     }
     Ok(out)
 }
 
 /// The items past their age bound to each instance at `now` (`AppInstance:<id>:...` in its environment's vault).
 pub fn past_by_instance(facade: &EntityFacade, now: i64) -> Result<BTreeMap<String, usize>, LibError> {
-    let (types, kinds) = (type_days(facade)?, kind_secrets(facade)?);
+    let lookup = Lookup::read(facade)?;
     let mut out: BTreeMap<String, usize> = BTreeMap::new();
     let mut vaults: Vec<String> = find(facade, ENVIRONMENT)?
         .list()?
@@ -270,7 +300,7 @@ pub fn past_by_instance(facade: &EntityFacade, now: i64) -> Result<BTreeMap<Stri
     vaults.sort_unstable();
     vaults.dedup();
     for vault_id in vaults {
-        match vault_ages(facade, &vault_id, now, &types, &kinds) {
+        match vault_ages(facade, &vault_id, now, &lookup) {
             Ok(ages) => {
                 for age in ages.into_iter().filter(|age| age.due) {
                     if let Some((id, _)) = super::instance_binding(&age.binding) {
@@ -295,13 +325,7 @@ pub fn offer(facade: &EntityFacade, vault_id: &str) -> Vec<Value> {
         if !operational {
             return Ok(Vec::new());
         }
-        vault_ages(
-            facade,
-            vault_id,
-            moqui_core::user::now_millis(),
-            &type_days(facade)?,
-            &kind_secrets(facade)?,
-        )
+        vault_ages(facade, vault_id, moqui_core::user::now_millis(), &Lookup::read(facade)?)
     })();
     match ages {
         Ok(ages) => ages.iter().map(ItemAge::to_value).collect(),

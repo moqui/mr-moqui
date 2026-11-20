@@ -279,9 +279,29 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="list" noun="VaultItemHistory" type="rust" location="moqui_vault_server::items::list_vault_item_history">
-        <description>An item's earlier revisions, newest first, to a member of its vault.</description>
+        <description>An item's earlier revisions, newest first, to a member of its vault; and a rotation's new values
+            staged or kept as pending (pendingList, plans/Vault-Instances.md §4.7). An operational item's bodies are left
+            out: reveal#VaultItem sends one to the reveal role.</description>
         <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
-        <out-parameters><parameter name="historyList" type="List"/></out-parameters>
+        <out-parameters>
+            <parameter name="historyList" type="List"/>
+            <parameter name="pendingList" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="take" noun="VaultDeposit" type="rust" location="moqui_vault_server::items::take_vault_deposit">
+        <description>A member who may write takes in an item the server deposited (a provision's credential, or a
+            rotation's new revision): its item key, which their client unwrapped with the deposit key's private half and
+            wrapped by the vault key (the vault crate's deposit_adopt), at the vault's current keyVersion, naming the
+            revision it was made from (expectedRevision). The body stays as it is; the revision before is kept in
+            VaultItemHistory. A lease can name the item after this. Refused for an item that is not a deposit. An
+            event.</description>
+        <in-parameters>
+            <parameter name="vaultItemId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="keyVersion" type="Long" required="true"/>
+            <parameter name="wrappedItemKey" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>
     <service verb="set" noun="VaultItemRotation" type="rust" location="moqui_vault_server::items::set_vault_item_rotation">
         <description>An operational item's own rotation age in days (1 to 3650), over its type's
@@ -557,10 +577,16 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="reveal" noun="VaultItem" type="rust" location="moqui_vault_server::reveal::reveal_vault_item">
         <description>One operational item's wrapped key and sealed body, with its type, binding and name, to a member with
             the reveal role, whose client opens it with the vault key. The VeReveal event is written first, in the same
-            transaction. Otherwise the server sends no operational body to any client.</description>
-        <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
+            transaction. Otherwise the server sends no operational body to any client. With pendingId: a rotation's new
+            value of the item kept as pending (list#VaultItemHistory's pendingList), wrapped to the deposit key, to
+            recover it when the rotation could not put the old value back (plans/Vault-Instances.md §4.7).</description>
+        <in-parameters>
+            <parameter name="vaultItemId" required="true"/>
+            <parameter name="pendingId"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="vaultItemId"/>
+            <parameter name="pendingId"/>
             <parameter name="vaultId"/>
             <parameter name="itemKeyWrapEnumId"/>
             <parameter name="wrappedItemKey"/>

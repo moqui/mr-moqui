@@ -171,6 +171,10 @@ along with this software (see the LICENSE.md file). If not, see
             serviceName="org.moqui.dev.InstanceServices.reconcile#AppInstances" cronExpression="0 0/5 * * * ?" paused="N"/>
     <!-- Rotation at the policy age (plans/Vault-Instances.md §4.7): each environment's items past their age that have a
         rotate service are rotated under its machine access, or a lease of them is asked for (once while one waits) -->
+    <!-- A due item whose last rotation failed is not tried again for manage@rotate-retry-days: told to the administrators -->
+    <moqui.security.user.NotificationTopic topic="InstanceRotationFailed" inboxEnumId="NinUpdates"
+            description="Managed instance: a due credential's last rotation failed" typeString="warning" showAlert="Y"
+            persistOnSend="Y" receiveNotifications="N" isPrivate="Y" linkTemplate="/qapps/system/Instances/Rotation"/>
     <moqui.service.job.ServiceJob jobName="rotate_DueInstanceCredentials" description="Rotate managed credentials past their age"
             serviceName="org.moqui.dev.InstanceServices.rotate#DueCredentials" cronExpression="0 30 3 * * ?" paused="N"/>
 </entity-facade-xml>

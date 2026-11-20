@@ -210,31 +210,64 @@ pub(crate) fn get_instance_rotations(params: &Params, facade: &EntityFacade) -> 
     ]))
 }
 
+/// The notification topic of a credential the job does not retry after its rotation failed.
+pub const FAILED_TOPIC: &str = "InstanceRotationFailed";
+
 /// `rotate#DueCredentials`, the job at the policy age: in each environment, the items past their age that the manager
 /// rotates and a member has taken in are rotated under its machine access, or a lease of them is asked for, once while
-/// one waits. One environment that fails is logged and the rest go on.
+/// one waits. An item whose last rotation failed within `manage@rotate-retry-days` (7) is not tried again: the
+/// administrators are told (topic `InstanceRotationFailed`). Called with authorization on, only the environments whose
+/// approver group the caller is in (or that name none) are rotated. One environment that fails is logged and the rest go
+/// on.
 pub(crate) fn rotate_due_credentials(_params: &Params, facade: &EntityFacade) -> Out {
     require_instance_admin()?;
+    let as_job = ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false);
+    let environments = {
+        let _authz = authz_off();
+        find(facade, ENVIRONMENT)?.list()?.into_values()
+    };
+    // the caller's own authorization, before it is turned off: a person runs the job only where they take actions
+    let allowed: Vec<bool> = environments
+        .iter()
+        .map(|environment| as_job || crate::actions::check_caller(environment).is_ok())
+        .collect();
     let _authz = authz_off();
     let factory = factory()?;
     let registry = moqui_vault_server::lease::registry(&factory);
     let now = moqui_core::user::now_millis();
-    let (mut rotated, mut asked, mut failed) = (0_i64, 0_i64, 0_i64);
-    for environment in find(facade, ENVIRONMENT)?.list()?.into_values() {
-        let environment_id = field(&environment, "environmentId");
-        if field(&environment, "vaultId").is_empty() {
+    let retry_days: i64 = moqui_core::context::conf_env::setting("manage@rotate-retry-days")
+        .parse()
+        .unwrap_or(7);
+    let (mut rotated, mut asked, mut failed, mut held, mut skipped) = (0_i64, 0_i64, 0_i64, 0_i64, 0_i64);
+    for (environment, allowed) in environments.iter().zip(allowed) {
+        let environment_id = field(environment, "environmentId");
+        let vault_id = field(environment, "vaultId");
+        if vault_id.is_empty() {
+            continue;
+        }
+        if !allowed {
+            skipped += 1;
             continue;
         }
         let ran = (|| -> Result<(), LibError> {
-            let due: Vec<String> = super::due::list(facade, &environment_id, now)?
-                .into_iter()
-                .filter(|age| age.due && age.rotatable && !age.deposited)
-                .map(|age| age.binding)
-                .collect();
+            let mut due: Vec<String> = Vec::new();
+            for age in super::due::list(facade, &environment_id, now)? {
+                if !(age.due && age.rotatable && !age.deposited) {
+                    continue;
+                }
+                let since = now - retry_days.max(0) * 86_400_000;
+                match super::claim::failed_since(facade, &vault_id, &age.binding, since)? {
+                    Some(action_id) => {
+                        held += 1;
+                        tell_failed(&environment_id, &age.binding, &action_id, retry_days);
+                    }
+                    None => due.push(age.binding),
+                }
+            }
             if due.is_empty() {
                 return Ok(());
             }
-            if field(&environment, "machineAccess") != "Y" && rotation_waits(facade, &environment_id)? {
+            if field(environment, "machineAccess") != "Y" && rotation_waits(facade, &environment_id)? {
                 return Ok(());
             }
             let (requested, _) = super::request(&factory, facade, &registry, &environment_id, &due)?;
@@ -254,7 +287,44 @@ pub(crate) fn rotate_due_credentials(_params: &Params, facade: &EntityFacade) ->
         ("rotatedCount", Value::I64(rotated)),
         ("askedCount", Value::I64(asked)),
         ("failedCount", Value::I64(failed)),
+        ("heldBackCount", Value::I64(held)),
+        ("skippedCount", Value::I64(skipped)),
     ]))
+}
+
+/// Tells the administrators that a due credential is not rotated again because its last rotation failed; a failure to
+/// tell is logged.
+fn tell_failed(environment_id: &str, binding: &str, action_id: &str, retry_days: i64) {
+    tracing::warn!(
+        "Instances: {binding} of environment {environment_id} is due, and its last rotation failed (action {action_id}): \
+         not retried for {retry_days} days"
+    );
+    let mut message = ValueMap::default();
+    for (name, value) in [
+        ("environmentId", environment_id),
+        ("bindingKey", binding),
+        ("instanceActionId", action_id),
+    ] {
+        message.insert(name.to_string(), Value::string(value));
+    }
+    let clean = |text: &str| text.replace(['$', '{', '}'], "");
+    let sent = moqui_core::notify::NotificationMessage::new()
+        .topic(FAILED_TOPIC)
+        .user_group_id("ADMIN")
+        .notification_type("warning")
+        .message_map(message)
+        .title(format!(
+            "{} is due and its last rotation failed (action {}): see its report, then rotate it again",
+            clean(binding),
+            clean(action_id)
+        ))
+        .send();
+    if let Err(err) = sent {
+        tracing::error!(
+            "Instances: the administrators were not told of {binding}'s failed rotation: {}",
+            err.message()
+        );
+    }
 }
 
 /// Whether a rotation of an instance of the environment waits for its lease now.

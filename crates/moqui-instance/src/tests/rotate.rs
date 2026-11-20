@@ -37,6 +37,7 @@ use crate::rotate::{self, Instances, Options};
 
 const ITEM: &str = "moqui.security.vault.VaultItem";
 const HISTORY: &str = "moqui.security.vault.VaultItemHistory";
+const PENDING: &str = "moqui.security.vault.VaultItemPending";
 const ACTION: &str = "moqui.server.instance.InstanceAction";
 
 /// The instances as a rotation sees them: each call in order, each value put, whether an instance comes back up after
@@ -48,6 +49,10 @@ struct FakeInstances<'a> {
     binding: String,
     up_before: bool,
     up_after_restart: bool,
+    /// At the first put, another write of the item moves its revision.
+    write_meanwhile: bool,
+    /// At the first put, every one-shot from then on fails (the check, and the old value's put-back at the source).
+    shots_fail_after_put: bool,
     restarted: RefCell<bool>,
     calls: RefCell<Vec<String>>,
     puts: RefCell<Vec<String>>,
@@ -62,6 +67,8 @@ impl<'a> FakeInstances<'a> {
             binding: binding.to_string(),
             up_before: true,
             up_after_restart: true,
+            write_meanwhile: false,
+            shots_fail_after_put: false,
             restarted: RefCell::new(false),
             calls: RefCell::new(Vec::new()),
             puts: RefCell::new(Vec::new()),
@@ -87,7 +94,26 @@ impl Instances for FakeInstances<'_> {
 
     fn put_secret(&self, instance_id: &str, name: &str, value: &str) -> Result<(), LibError> {
         self.calls.borrow_mut().push(format!("put {instance_id} {name}"));
+        let first = self.puts.borrow().is_empty();
         self.puts.borrow_mut().push(value.to_string());
+        if first && self.write_meanwhile {
+            sys(|| {
+                let mut row = self
+                    .facade
+                    .find(ITEM)
+                    .unwrap()
+                    .eq("bindingKey", Value::string(&self.binding))
+                    .one()
+                    .unwrap()
+                    .unwrap();
+                let revision: i64 = crate::common::field(&row, "revision").parse().unwrap();
+                row.set("revision", Value::I64(revision + 1));
+                row.update(self.facade).unwrap();
+            });
+        }
+        if first && self.shots_fail_after_put {
+            self.engine.one_shot(6, "moqui: refused");
+        }
         self.seen_at_put.borrow_mut().push((
             shots(self.engine, "password.sql").len(),
             logins(self.engine),
@@ -141,8 +167,8 @@ fn sets_password(sql: &str, password: &str) -> bool {
     crate::database::scram_verifier_with(password, &salt, iterations.parse().unwrap()) == verifier
 }
 
-/// A member takes a deposited item in, as their client does: its key unwrapped with the deposit key and wrapped by the
-/// vault key, its body as it is.
+/// A member takes a deposited item in, as their client does (`take#VaultDeposit`): its key unwrapped with the deposit
+/// key and wrapped by the vault key, its body as it is.
 pub(super) fn take_in(vault_of: &mut Vault, facade: &EntityFacade, binding: &str) {
     let vault_id = vault_of.vault_id.clone();
     let vault = vault_of
@@ -162,15 +188,47 @@ pub(super) fn take_in(vault_of: &mut Vault, facade: &EntityFacade, binding: &str
     vault_of
         .maker
         .call(
-            "update#VaultItem",
+            "take#VaultDeposit",
             json!({ "vaultItemId": text("vaultItemId"), "expectedRevision": text("revision").parse::<i64>().unwrap(),
-                    "keyVersion": 1, "wrappedItemKey": adopted["wrapped_item_key"], "bodyCipher": text("bodyCipher") }),
+                    "keyVersion": 1, "wrappedItemKey": adopted["wrapped_item_key"] }),
         )
         .unwrap();
 }
 
 /// The item's fields, opened in the maker's client (once it is taken in).
 fn opened(fleet: &mut Fleet, facade: &EntityFacade, binding: &str) -> Json {
+    body_of(fleet, facade, binding)["fields"].clone()
+}
+
+/// A member writes notes and tags on the item, in their client: a new item key, the fields as they were.
+fn with_notes(fleet: &mut Fleet, facade: &EntityFacade, binding: &str) {
+    let text = |name: &str| field_of(facade, ITEM, "bindingKey", binding, name);
+    let label = json!({ "item_type": text("vaultItemTypeId"), "binding": binding, "name": text("itemName") });
+    let mut body = body_of(fleet, facade, binding);
+    body["notes"] = json!("rotate with care");
+    body["tags"] = json!(["db"]);
+    let sealed = fleet
+        .vault
+        .maker
+        .op(
+            json!({ "op": "item_seal", "vault_id": fleet.vault.vault_id, "item_id": text("vaultItemId"), "key_version": 1,
+                    "label": label, "body": body.to_string() }),
+        )
+        .unwrap();
+    fleet
+        .vault
+        .maker
+        .call(
+            "update#VaultItem",
+            json!({ "vaultItemId": text("vaultItemId"), "expectedRevision": text("revision").parse::<i64>().unwrap(),
+                    "keyVersion": 1, "wrappedItemKey": sealed["wrapped_item_key"], "bodyCipher": sealed["sealed_body"],
+                    "newItemKey": true }),
+        )
+        .unwrap();
+}
+
+/// The item's whole body, opened in the maker's client (once it is taken in).
+fn body_of(fleet: &mut Fleet, facade: &EntityFacade, binding: &str) -> Json {
     let text = |name: &str| field_of(facade, ITEM, "bindingKey", binding, name);
     let label = json!({ "item_type": text("vaultItemTypeId"), "binding": binding, "name": text("itemName") });
     let body = fleet
@@ -181,7 +239,7 @@ fn opened(fleet: &mut Fleet, facade: &EntityFacade, binding: &str) -> Json {
                     "label": label, "wrapped_item_key": text("wrappedItemKey"), "sealed_body": text("bodyCipher") }),
         )
         .unwrap();
-    serde_json::from_str::<Json>(body["body"].as_str().unwrap()).unwrap()["fields"].clone()
+    serde_json::from_str::<Json>(body["body"].as_str().unwrap()).unwrap()
 }
 
 /// A Postgres and an mr-moqui instance on it, provisioned, with the app's database password and the database's admin
@@ -260,6 +318,8 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
     let registry = lease::registry(ctx.factory());
     let (pg, app) = provisioned(&facade, &mut fleet, &registry, "rot");
     let binding = format!("AppInstance:{app}:dbPassword");
+    // a member's notes and tags on the item, which a rotation keeps: revision 3
+    with_notes(&mut fleet, &facade, &binding);
     let old = opened(&mut fleet, &facade, &binding)["password"]
         .as_str()
         .unwrap()
@@ -275,6 +335,12 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
         plan.operation
     );
     let lease_id = approved(&mut fleet.vault, &facade, &registry, &plan);
+    let vault_revision = fleet
+        .vault
+        .maker
+        .call("get#Vault", json!({ "vaultId": fleet.vault.vault_id }))
+        .unwrap()["vault"]["revision"]
+        .clone();
     let instances = FakeInstances::new(&facade, &fleet.engine, &binding);
     let outcome = sys(|| {
         rotate::run(
@@ -290,7 +356,7 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
     })
     .unwrap();
     assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
-    assert_eq!(outcome.rotated, [(binding.clone(), 3)]);
+    assert_eq!(outcome.rotated, [(binding.clone(), 4)]);
 
     // the instance was up before, then took the value and was restarted, then came back
     let calls = instances.calls.borrow().clone();
@@ -309,7 +375,7 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
     // and the item was still the revision a member took in
     assert_eq!(
         instances.seen_at_put.borrow()[0],
-        (1, 0, "2".to_string(), "VwVault".to_string())
+        (1, 0, "3".to_string(), "VwVault".to_string())
     );
     let set = shots(&fleet.engine, "password.sql");
     assert_eq!(set.len(), 1);
@@ -334,7 +400,7 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
     );
 
     // then the item: its next revision, deposited (a member takes it in), the one before in its history
-    assert_eq!(field_of(&facade, ITEM, "bindingKey", &binding, "revision"), "3");
+    assert_eq!(field_of(&facade, ITEM, "bindingKey", &binding, "revision"), "4");
     assert_eq!(
         field_of(&facade, ITEM, "bindingKey", &binding, "itemKeyWrapEnumId"),
         "VwDeposit"
@@ -356,11 +422,37 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
             })
             .collect()
     });
-    assert!(kept.contains(&("2".to_string(), "VwVault".to_string())), "{kept:?}");
+    assert!(kept.contains(&("3".to_string(), "VwVault".to_string())), "{kept:?}");
+    assert!(
+        all_text(&facade, PENDING).is_empty(),
+        "the staged value became the revision"
+    );
+    // the provision's withdraw does not take a rotated deposit
+    let refused =
+        sys(|| moqui_vault_server::deposit::withdraw_item(&facade, &fleet.vault.vault_id, &item_id, &binding))
+            .unwrap_err();
+    assert!(refused.message().contains("not withdrawn"), "{refused}");
+    // a member removal computed before the rotation is refused: the rotation moved the vault's revision
+    let refused = fleet
+        .vault
+        .maker
+        .call(
+            "remove#VaultMember",
+            json!({ "vaultId": fleet.vault.vault_id, "userId": fleet.vault.approver.user,
+                    "expectedRevision": vault_revision, "entry": { "version": 2 }, "memberWraps": [{ "user_id": "x" }] }),
+        )
+        .unwrap_err();
+    assert!(refused.contains("The vault changed since you read it"), "{refused}");
     take_in(&mut fleet.vault, &facade, &binding);
-    let fields = opened(&mut fleet, &facade, &binding);
-    assert_eq!(fields["password"], json!(new));
-    assert_eq!(fields["username"], json!("app_rot"), "the item's other fields stay");
+    let body = body_of(&mut fleet, &facade, &binding);
+    assert_eq!(body["fields"]["password"], json!(new));
+    assert_eq!(
+        body["fields"]["username"],
+        json!("app_rot"),
+        "the item's other fields stay"
+    );
+    assert_eq!(body["notes"], json!("rotate with care"), "its notes stay");
+    assert_eq!(body["tags"], json!(["db"]), "its tags stay");
     // no row holds the new value in the clear; the action says what was done and ran under the lease
     for entity in [ACTION, "moqui.security.vault.VaultEvent", ITEM, HISTORY] {
         assert!(
@@ -372,7 +464,7 @@ fn a_rotation_changes_the_source_then_the_instances_then_the_item() {
     assert_eq!(done.len(), 1);
     assert_eq!(done[0].0, "IasDone");
     assert_eq!(done[0].2, lease_id);
-    assert!(done[0].1.contains("deposited revision 3"), "{}", done[0].1);
+    assert!(done[0].1.contains("deposited revision 4"), "{}", done[0].1);
     // the lease ended with the rotation
     assert!(!registry.holds(&lease_id));
 }
@@ -449,6 +541,10 @@ fn a_failed_check_puts_the_old_value_back() {
         "VwVault"
     );
     assert_eq!(opened(&mut fleet, &facade, &binding)["password"], json!(old));
+    assert!(
+        all_text(&facade, PENDING).is_empty(),
+        "the staged value is dropped once the old one is back"
+    );
     let failed = actions(&facade, &app);
     assert_eq!(failed.len(), 2);
     assert!(failed.iter().all(|(status, _, _)| status == "IasFailed"), "{failed:?}");
@@ -599,6 +695,38 @@ fn an_item_past_its_age_shows_on_the_fleet_screen() {
     );
     assert!(!write(&mut fleet.vault, true), "a write marked rotated starts it again");
 
+    // an item written before rotation ages has no rotatedDate: the start gives it the upgrade's time, so it is not due
+    let ingest_binding = format!("AppInstance:{app}:ingestKey");
+    let set_date = |binding: &str, value: Value| {
+        sys(|| {
+            let mut row = facade
+                .find(ITEM)
+                .unwrap()
+                .eq("bindingKey", Value::string(binding))
+                .one()
+                .unwrap()
+                .unwrap();
+            row.set("rotatedDate", value);
+            row.update(&facade).unwrap();
+        });
+    };
+    set_date(&ingest_binding, Value::Null);
+    moqui_vault_server::items::backfill_rotated_dates(ctx.factory());
+    assert!(!field_of(&facade, ITEM, "bindingKey", &ingest_binding, "rotatedDate").is_empty());
+
+    // the job backs off an item whose last rotation failed lately, and tells the administrators instead
+    set_date(&db_password, long_ago.clone());
+    create(
+        &facade,
+        "moqui.server.instance.InstanceRotation",
+        json!({ "vaultId": fleet.vault.vault_id, "bindingKey": db_password, "lastStatusEnumId": "IasFailed",
+                "lastEndDate": moqui_core::user::now_millis(), "lastActionId": "an-earlier-try" }),
+    );
+    let (errors, ran) = sys(|| call("rotate#DueCredentials", &[]));
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(ran["heldBackCount"], Value::I64(1), "{ran:?}");
+    assert_eq!(ran["askedCount"], Value::I64(0), "{ran:?}");
+
     // the environment's approver group: an INSTANCE_ADMIN who is not in it is refused, and nothing is asked
     create(
         &facade,
@@ -621,6 +749,10 @@ fn an_item_past_its_age_shows_on_the_fleet_screen() {
     assert!(refused.contains("notEnvironmentMember"), "{refused}");
     let (refused, _) = call("get#InstanceRotations", &[("environmentId", &fleet.environment)]);
     assert!(refused.contains("notEnvironmentMember"), "{refused}");
+    // the job, run by such a caller, leaves the environment alone
+    let (errors, ran) = call("rotate#DueCredentials", &[]);
+    assert!(errors.is_empty(), "{errors}");
+    assert_eq!(ran["skippedCount"], Value::I64(1), "{ran:?}");
     assert_eq!(
         all_text(&facade, "moqui.security.vault.VaultLease").len(),
         leases_before
@@ -645,6 +777,162 @@ fn an_item_past_its_age_shows_on_the_fleet_screen() {
     assert_eq!(actions(&facade, &app).len(), 1);
     // let the waiting thread go
     assert!(sys(|| crate::actions::cancel_waiting(&facade, &registry, &waiting, "test over")).unwrap());
+}
+
+/// One rotation of an item at a time, and only from the revision it read: a binding another rotation holds is refused
+/// before anything changes; an item written while it ran is not overwritten (the old value goes back and the staged
+/// one is dropped); and when the old value cannot be put back at the source, the new one is kept as a pending revision
+/// for a member to recover.
+#[test]
+fn a_rotation_is_one_at_a_time_and_keeps_a_value_it_cannot_take_back() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fleet = fleet(&facade, "once", FakeEngine::docker());
+    let registry = lease::registry(ctx.factory());
+    let (_pg, app) = provisioned(&facade, &mut fleet, &registry, "once");
+    let binding = format!("AppInstance:{app}:dbPassword");
+    let plan = sys(|| rotate::plan(&facade, &fleet.environment, std::slice::from_ref(&binding))).unwrap();
+    let options = Options { wait: Duration::ZERO };
+
+    // another rotation of it runs (its claim, on any cluster member): refused, nothing changed
+    let until = moqui_core::user::now_millis() + 60_000;
+    sys(|| rotate::claim::claim(&facade, &fleet.vault.vault_id, &binding, "another-run", until)).unwrap();
+    let lease_id = approved(&mut fleet.vault, &facade, &registry, &plan);
+    let instances = FakeInstances::new(&facade, &fleet.engine, &binding);
+    let outcome = sys(|| rotate::run(&facade, &registry, &instances, &plan, Some(&lease_id), &options)).unwrap();
+    assert!(outcome.failed[0].1.contains("rotationRunning"), "{:?}", outcome.failed);
+    assert!(shots(&fleet.engine, "password.sql").is_empty());
+    assert!(instances.calls.borrow().is_empty());
+    sys(|| rotate::claim::release(&facade, &fleet.vault.vault_id, &binding, "another-run", None));
+    // and a request while one waits for its lease is refused with no second lease
+    login(&fleet.vault.maker.user);
+    let (_first, _) = sys(|| {
+        rotate::request(
+            ctx.factory(),
+            &facade,
+            &registry,
+            &fleet.environment,
+            std::slice::from_ref(&binding),
+        )
+    })
+    .unwrap();
+    let lease_rows = || {
+        sys(|| {
+            facade
+                .find("moqui.security.vault.VaultLease")
+                .unwrap()
+                .list()
+                .unwrap()
+                .len()
+        })
+    };
+    let leases = lease_rows();
+    let refused = sys(|| {
+        rotate::request(
+            ctx.factory(),
+            &facade,
+            &registry,
+            &fleet.environment,
+            std::slice::from_ref(&binding),
+        )
+    })
+    .map(|_| ())
+    .unwrap_err();
+    assert!(refused.message().contains("rotationRunning"), "{refused}");
+    assert_eq!(lease_rows(), leases, "no second lease is asked");
+    let waiting = actions(&facade, &app)
+        .into_iter()
+        .filter(|(status, _, _)| status == "IasWaiting")
+        .count();
+    assert_eq!(waiting, 1);
+    let waiting_id = sys(|| {
+        facade
+            .find(ACTION)
+            .unwrap()
+            .eq("appInstanceId", Value::string(&app))
+            .eq("statusEnumId", Value::string("IasWaiting"))
+            .one()
+            .unwrap()
+            .map(|row| crate::common::field(&row, "instanceActionId"))
+            .unwrap()
+    });
+    assert!(sys(|| crate::actions::cancel_waiting(&facade, &registry, &waiting_id, "test")).unwrap());
+    // its claim held until its lease's time; the test lets it go
+    let token = sys(|| {
+        facade
+            .find("moqui.server.instance.InstanceRotation")
+            .unwrap()
+            .eq("bindingKey", Value::string(&binding))
+            .one()
+            .unwrap()
+            .map(|row| crate::common::field(&row, "claimToken"))
+            .unwrap()
+    });
+    sys(|| rotate::claim::release(&facade, &fleet.vault.vault_id, &binding, &token, None));
+
+    // the item is written while the rotation runs: its new value is not written over it, the old one goes back
+    let revision = field_of(&facade, ITEM, "bindingKey", &binding, "revision");
+    let lease_id = approved(&mut fleet.vault, &facade, &registry, &plan);
+    let mut meanwhile = FakeInstances::new(&facade, &fleet.engine, &binding);
+    meanwhile.write_meanwhile = true;
+    let outcome = sys(|| rotate::run(&facade, &registry, &meanwhile, &plan, Some(&lease_id), &options)).unwrap();
+    assert!(outcome.failed[0].1.contains("itemChanged"), "{:?}", outcome.failed);
+    assert!(
+        outcome.failed[0].1.contains("the old value was put back"),
+        "{:?}",
+        outcome.failed
+    );
+    let written: i64 = revision.parse::<i64>().unwrap() + 1;
+    assert_eq!(
+        field_of(&facade, ITEM, "bindingKey", &binding, "revision"),
+        written.to_string()
+    );
+    assert_eq!(
+        field_of(&facade, ITEM, "bindingKey", &binding, "itemKeyWrapEnumId"),
+        "VwVault"
+    );
+    assert!(all_text(&facade, PENDING).is_empty());
+    let puts = meanwhile.puts.borrow().clone();
+    let set = shots(&fleet.engine, "password.sql");
+    assert!(
+        set.iter().any(|sql| sets_password(sql, &puts[1])),
+        "the old value is back at the source"
+    );
+
+    // the check fails and so does the old value's put-back at the source: the new value is kept, pending
+    let plan = sys(|| rotate::plan(&facade, &fleet.environment, std::slice::from_ref(&binding))).unwrap();
+    let lease_id = approved(&mut fleet.vault, &facade, &registry, &plan);
+    let mut stuck = FakeInstances::new(&facade, &fleet.engine, &binding);
+    stuck.shots_fail_after_put = true;
+    let outcome = sys(|| rotate::run(&facade, &registry, &stuck, &plan, Some(&lease_id), &options)).unwrap();
+    fleet.engine.one_shot(0, "");
+    assert!(
+        outcome.failed[0].1.contains("NOT put back everywhere"),
+        "{:?}",
+        outcome.failed
+    );
+    assert_eq!(
+        field_of(&facade, ITEM, "bindingKey", &binding, "revision"),
+        written.to_string()
+    );
+    let kept = field_of(&facade, PENDING, "bindingKey", &binding, "keptDate");
+    assert!(!kept.is_empty(), "the new value is kept for a member");
+    let item_id = field_of(&facade, ITEM, "bindingKey", &binding, "vaultItemId");
+    let history = fleet
+        .vault
+        .maker
+        .call("list#VaultItemHistory", json!({ "vaultItemId": item_id }))
+        .unwrap();
+    assert_eq!(history["pendingList"].as_array().unwrap().len(), 1, "{history}");
+    assert!(
+        history["pendingList"][0].get("bodyCipher").is_none(),
+        "no operational body in a list"
+    );
+    let events = all_text(&facade, "moqui.security.vault.VaultEvent").join("\n");
+    assert!(events.contains("kept as pending revision"), "{events}");
+    // the rotation's claim is let go, with its failure for the job to back off from
+    let failed = sys(|| rotate::claim::failed_since(&facade, &fleet.vault.vault_id, &binding, 0)).unwrap();
+    assert!(failed.is_some());
 }
 
 fn call(service: &str, parameters: &[(&str, &str)]) -> (String, BTreeMap<String, Value>) {

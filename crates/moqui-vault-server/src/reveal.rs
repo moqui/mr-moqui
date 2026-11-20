@@ -15,7 +15,8 @@
 //! Reveal (plans/Vault-Instances.md §3.7): a member with the reveal role sees one operational value. The server sends
 //! that item's ciphertext and wrapped key to the member's client, which opens it with the vault key there, and the
 //! reveal is a `VeReveal` event, written before the ciphertext is answered. Otherwise no operational body goes to any
-//! client (`list#VaultItems` leaves it out).
+//! client (`list#VaultItems` leaves it out). A rotation's new value kept as pending, when its source may hold it, is
+//! revealed the same way (`pendingId`), to recover it (plans/Vault-Instances.md §4.7).
 
 use std::collections::BTreeMap;
 
@@ -53,13 +54,29 @@ fn reveal_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     }
     vault_for(facade, &vault_id, &me, Access::Reveal, false)
         .map_err(|_| fail("Seeing an operational value needs the reveal role in its vault"))?;
+    // a rotation's new value kept as pending (§4.7), when its source may hold it: revealed the same way, to recover it
+    let pending_id = crate::common::text(params, "pendingId");
+    let row = if pending_id.is_empty() {
+        row
+    } else {
+        find(facade, crate::common::ITEM_PENDING)?
+            .eq("vaultItemId", Value::string(&item_id))
+            .eq("pendingId", Value::string(&pending_id))
+            .one()?
+            .ok_or_else(|| fail(format!("No pending revision {pending_id} of item {item_id}")))?
+    };
+    let what = if pending_id.is_empty() {
+        String::new()
+    } else {
+        format!(" (pending revision {pending_id})")
+    };
     events::write(
         facade,
         Event {
             kind: "VeReveal",
             vault_id: Some(&vault_id),
             item_id: Some(&item_id),
-            detail: Some(format!("{} revealed", field(&row, "bindingKey"))),
+            detail: Some(format!("{} revealed{what}", field(&row, "bindingKey"))),
             ..Event::default()
         },
     )?;
@@ -72,6 +89,7 @@ fn reveal_vault_item(params: &Params, facade: &EntityFacade) -> Out {
         "keyVersion",
         "bodyCipher",
         "revision",
+        "pendingId",
         "vaultItemTypeId",
         "bindingKey",
         "itemName",

@@ -531,6 +531,21 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="hostConfigValue" type="text-medium"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
     </entity>
+    <entity entity-name="InstanceRotation" package="moqui.server.instance" use="transactional" cache="never">
+        <description>One operational item's rotation (plans/Vault-Instances.md §4.7): while one runs or waits for its lease,
+            its claim (claimToken, the lease's id or the run's own, until claimedUntil), which a second rotation of the
+            same binding is refused by, on any cluster member (the row's key is the binding); and how the last one
+            ended, which the job at the policy age backs off from after a failure (manage@rotate-retry-days).</description>
+        <field name="vaultId" type="id" is-pk="true"/>
+        <field name="bindingKey" type="text-medium" is-pk="true"/>
+        <field name="claimToken" type="id"/>
+        <field name="claimedUntil" type="date-time"/>
+        <field name="instanceActionId" type="id"/>
+        <field name="lastStatusEnumId" type="id"><description>IasDone or IasFailed</description></field>
+        <field name="lastEndDate" type="date-time"/>
+        <field name="lastActionId" type="id"/>
+        <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
+    </entity>
     <entity entity-name="InstanceAction" package="moqui.server.instance" use="nontransactional" cache="never">
         <description>A change to an instance (§4.1): provision, deploy, upgrade, start, stop, restart, drain, rotate,
             unseal or remove; its state, the lease it ran under (or the environment's machine access), the deploy when

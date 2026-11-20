@@ -217,6 +217,30 @@ pub fn check(source: &Source, user: &str, value: &str) -> Result<Vec<String>, Li
     }
 }
 
+/// Whether the old value can go back where the new one goes, checked before anything changes: a MySQL password with
+/// a quote or a backslash, or an OpenSearch one a netrc file cannot hold, would not go back (and is changed by hand).
+pub fn check_put_back(source: &Source, user: &str, old: &str) -> Result<(), LibError> {
+    let refused = |err: LibError| {
+        fail(format!(
+            "the value it holds now could not be put back if the rotation failed, so nothing was changed: {} (change \
+             it by hand)",
+            err.message()
+        ))
+    };
+    match source {
+        Source::DatabaseUser { database, .. } => {
+            database::password_statements(&database.conf_name, &database.user, old, Whose::User).map_err(refused)?;
+        }
+        Source::DatabaseAdmin(network) => {
+            database::password_statements(&network.conf_name, user, old, Whose::Admin).map_err(refused)?;
+        }
+        Source::SearchAdmin(_) => {
+            netrc_password(old).map_err(refused)?;
+        }
+    }
+    Ok(())
+}
+
 /// The admin login of a database instance's own item, refused unless it names that server (§4.3: a login goes only
 /// where its item says).
 pub fn own_admin(network: &Network, binding: &str) -> Result<AdminLogin, LibError> {
@@ -279,6 +303,8 @@ fn search_account(network: &Network, from: &str, to: &str) -> Result<OneShot, Li
     let script = format!(
         "set -u\n{}\
          if [ \"$code\" = 401 ]; then echo 'moqui: the admin login was refused'; exit 5; fi\n\
+         if [ \"$code\" = 403 ]; then echo 'moqui: the security plugin refused the change (403): a reserved admin is \
+         changed with its own tools (securityadmin), by hand'; exit 6; fi\n\
          if [ \"$code\" != 200 ]; then echo \"moqui: changing the admin password failed ($code)\"; exit 6; fi\n\
          echo 'moqui: set the password of admin'\n",
         curl(network, "PUT", "/_plugins/_security/api/account", true)?
