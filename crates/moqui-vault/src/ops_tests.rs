@@ -510,6 +510,45 @@ fn a_recovery_of_k_holders_combines_in_the_module_and_rewraps_to_the_new_key() {
     )
     .unwrap();
     assert_eq!(verified["revision"], json!(3));
+
+    // A holder who is also a member has the version open already: h1 recovers through rs-2 with no forget first. The
+    // recovery key's wrap must open that same key (another is refused, and the combined key is kept for the open), and
+    // the version stays open after the rekey, as before it.
+    h1_checks.push(check_as(
+        &mut holders[1],
+        &mut rng,
+        "alice",
+        "pk-alice",
+        &s.alice_made["public"],
+    ));
+    let start2 = json!({ "op": "recovery_session_start", "session_id": "rs-2", "record": record, "maker_public": maker_public,
+                         "held": shares[1], "vault_id": "v", "subject_user_id": "alice", "subject_key_id": "pk-alice2",
+                         "subject_public": alice2_made["public"], "key_checks": h1_checks });
+    let session2 = call(&mut holders[1], &mut rng, start2).unwrap();
+    let deliver2 = json!({ "op": "recovery_share_deliver", "record": record, "maker_public": maker_public, "held": shares[2],
+                           "session": session2, "session_holder_public": made[1]["public"], "session_holder": shares[1],
+                           "key_checks": h2_checks });
+    let sent2 = call(&mut holders[2], &mut rng, deliver2).unwrap();
+    let slot = ("v".to_string(), 1);
+    let alice_key = s.alice.vault_keys.get(&slot).unwrap().clone();
+    holders[1].vault_keys.insert(slot.clone(), Key32::from_bytes([7; 32]));
+    let combine2 = json!({ "op": "recovery_combine", "session_id": "rs-2", "record": record, "maker_public": maker_public,
+                           "held": shares[1], "key_checks": h1_checks,
+                           "deliveries": [{ "share": sent2, "holder": shares[2], "public": made[2]["public"] }] });
+    call(&mut holders[1], &mut rng, combine2).unwrap();
+    let open2 = json!({ "op": "recovery_open_vault", "entries": entries, "key_checks": h1_checks, "session_id": "rs-2",
+                        "wrap": recovery_wrap });
+    assert!(call(&mut holders[1], &mut rng, open2.clone())
+        .unwrap_err()
+        .contains("another key"));
+    holders[1].vault_keys.insert(slot.clone(), alice_key);
+    assert_eq!(call(&mut holders[1], &mut rng, open2).unwrap()["key_version"], json!(1));
+    let rekey2 = json!({ "op": "recovery_rekey", "session_id": "rs-2", "entries": entries, "key_checks": h1_checks });
+    let rekeyed2 = call(&mut holders[1], &mut rng, rekey2).unwrap();
+    assert_eq!(rekeyed2["entry"]["signer_user_id"], json!("recovery:rk"));
+    let status = call(&mut holders[1], &mut rng, json!({ "op": "status" })).unwrap();
+    assert_eq!(status["vaults"], json!([{ "vault_id": "v", "key_version": 1 }]));
+
     // There is no call that hands back a combined secret.
     let combine_op = json!({ "op": "shamir_combine", "shares": [] });
     assert!(call(&mut holders[2], &mut rng, combine_op)
@@ -719,4 +758,76 @@ fn a_new_passphrase_rewraps_the_open_key() {
     assert!(call(&mut Session::default(), &mut rng, locked)
         .unwrap_err()
         .contains("locked"));
+}
+
+/// V5: device memory opens the personal key in a new session only with the key both halves make (the device's and the
+/// server's), and only for its memory, user, time and personal key; a locked session has nothing to keep, and no call
+/// of the module hands a page anything of it.
+#[test]
+fn device_memory_opens_the_personal_key_only_with_its_key_and_memory() {
+    let mut rng = TestRng::new("ops-device-memory");
+    let mut session = Session::default();
+    let device_key = Key32::random(&mut rng);
+    let server_secret = Key32::random(&mut rng);
+    let wrap_key = personal::device_wrap_key(&device_key, &server_secret, "m1");
+    assert!(
+        Session::default().device_seal("m1", 1000, &wrap_key, &mut rng).is_err(),
+        "a locked session keeps nothing"
+    );
+    let made = make(&mut session, &mut rng, "alice");
+    let kept = session.device_seal("m1", 1000, &wrap_key, &mut rng).unwrap();
+    assert!(
+        !format!("{kept:?}").contains(&hex(&kept.sealed)),
+        "Debug shows no bytes"
+    );
+
+    let mut later = Session::default();
+    let opened = later.device_open(&kept, "m1", &wrap_key).unwrap();
+    assert_eq!(opened["public"], made["public"]);
+    assert_eq!(later.personal_key_id(), Some("pk-alice"));
+    let status = call(&mut later, &mut rng, json!({ "op": "status" })).unwrap();
+    assert_eq!(status["personal"], json!("pk-alice"));
+
+    // either half alone, or another memory's key, opens nothing
+    let other = Key32::random(&mut rng);
+    for wrong in [
+        personal::device_wrap_key(&device_key, &other, "m1"),
+        personal::device_wrap_key(&other, &server_secret, "m1"),
+        personal::device_wrap_key(&device_key, &server_secret, "m2"),
+    ] {
+        assert!(Session::default().device_open(&kept, "m1", &wrong).is_err());
+    }
+    assert!(
+        Session::default().device_open(&kept, "m2", &wrap_key).is_err(),
+        "another memory"
+    );
+    let mut renamed = kept.clone();
+    renamed.personal_key_id = "pk-mallory".to_string();
+    assert!(
+        Session::default().device_open(&renamed, "m1", &wrap_key).is_err(),
+        "another personal key id"
+    );
+    let mut other_user = kept.clone();
+    other_user.user_id = "mallory".to_string();
+    assert!(
+        Session::default().device_open(&other_user, "m1", &wrap_key).is_err(),
+        "another user"
+    );
+    let mut longer = kept.clone();
+    longer.until += 1;
+    assert!(
+        Session::default().device_open(&longer, "m1", &wrap_key).is_err(),
+        "a time made longer"
+    );
+    let mut changed = kept.clone();
+    let last = changed.sealed.len() - 1;
+    changed.sealed[last] ^= 1;
+    assert!(
+        Session::default().device_open(&changed, "m1", &wrap_key).is_err(),
+        "a changed wrap"
+    );
+    for op in ["device_seal", "device_open"] {
+        let refused = call(&mut session, &mut rng, json!({ "op": op, "memory_id": "m1" })).unwrap_err();
+        assert_eq!(refused, "bad format: unknown op");
+    }
 }

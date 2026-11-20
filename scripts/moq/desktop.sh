@@ -551,8 +551,10 @@ stage_client_shell() {
     run_cmd mkdir -p "$stage/webroot/libs" || die "could not create $(rel "$stage")"
     run_cmd rsync -a --delete --exclude '.DS_Store' --exclude bundled-screens.txt --exclude screens \
         "$ROOT/crates/moqui-desktop/shell/" "$stage/shell/" || die "could not stage the shell"
+    # not the browser's vault module (js/vault): the apps run the vault natively (moqui_client::vault, V5), and the
+    # shell's pages never load it
     for lib in js css; do
-        run_cmd rsync -a --delete --exclude '.DS_Store' "$webroot/$lib/" "$stage/webroot/$lib/" \
+        run_cmd rsync -a --delete --delete-excluded --exclude '.DS_Store' --exclude '/vault/' "$webroot/$lib/" "$stage/webroot/$lib/" \
             || die "could not stage webroot/$lib"
     done
     while IFS= read -r lib; do

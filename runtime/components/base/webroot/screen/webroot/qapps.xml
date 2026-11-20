@@ -237,6 +237,9 @@ along with this software (see the LICENSE.md file). If not, see
         // desktop client's clientConfig (above) shares, with this page's session token added.
         qvtConfig = qvtLib.build(ec, sri, { staticOnly: staticOnly, localeTag: localeTag, quasarLang: quasarLang, rumSettings: rumSettings })
         qvtConfig.sessionToken = ec.web.sessionToken
+        // the vault screens' names (vault@screen-names): this page loads a vault screen as a new page, which the
+        // server serves with the vault screens' policy (docs/security/Vaults.md, "The vault screens' policy")
+        qvtConfig.vaultScreens = String(ec.factory.getConfValue('vault@screen-names') || '').split(',').map((name) => name.trim()).filter((name) => name.length > 0)
         // conditional QZ Tray scripts, only for a user who turned printing on; the client loads them
     ]]></script></pre-actions>
 

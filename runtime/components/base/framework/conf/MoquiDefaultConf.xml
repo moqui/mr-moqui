@@ -1504,8 +1504,14 @@
         a lease runs (§3.7), at most 4, which a client refuses past. lease-key: the seed of the server's Ed25519 lease key,
         which signs each lease and which members check once by its fingerprint; at CHANGEME it is generated at its first
         read and kept in the seal's store (a SecretValue, Sealed-Secrets S4). A new value is a new lease key, which every
-        approver checks again. -->
-    <vault key-fetch-max-age="300" lease-max-hours="4" lease-key="CHANGEME"/>
+        approver checks again. device-memory-max-hours: the longest a desktop or mobile app may remember a user's open
+        personal key (§3.5, V5), at most 24; 0 offers no device memory. screen-names: the screen names whose paths under
+        /qapps/ and /apps/ are vault screens, comma-separated (the desktop and mobile apps' own list is the same and fixed);
+        screen-policy: the Content-Security-Policy of every response to such a path, the /qapps page's too, where the
+        response sets none of its own; the shell loads a vault screen as a new page. Empty takes none. -->
+    <vault key-fetch-max-age="300" lease-max-hours="4" lease-key="CHANGEME" device-memory-max-hours="8"
+            screen-names="Vault,Vaults,VaultKey,VaultContacts,RecoveryKeys"
+            screen-policy="frame-ancestors 'none'; form-action 'self'; base-uri 'self'; object-src 'none'; worker-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"/>
 
     <!-- The manager link (plans/Vault-Instances.md §4.4, docs/Run-Deploy.md "Managed instances"). On a managed instance:
         url is its manager's HTTPS address and pin the SHA-256 fingerprint of the manager's link key, which a provision

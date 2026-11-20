@@ -44,6 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <method type="post"><service name="org.moqui.security.VaultServices.add#VaultMember"/></method>
             </resource>
             <resource name="secretWrap"><method type="put"><service name="org.moqui.security.VaultServices.update#VaultSecretWrap"/></method></resource>
+            <resource name="header"><method type="put"><service name="org.moqui.security.VaultServices.update#VaultHeader"/></method></resource>
             <resource name="removeMember"><method type="post"><service name="org.moqui.security.VaultServices.remove#VaultMember"/></method></resource>
             <resource name="ack"><method type="post"><service name="org.moqui.security.VaultServices.ack#VaultKeyVersion"/></method></resource>
             <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>
@@ -65,6 +66,14 @@ along with this software (see the LICENSE.md file). If not, see
         <method type="get"><service name="org.moqui.security.VaultServices.list#VaultMachineAccess"/></method>
         <method type="post"><service name="org.moqui.security.VaultServices.ask#VaultMachineAccess"/></method>
         <resource name="revoke"><method type="post"><service name="org.moqui.security.VaultServices.revoke#VaultMachineAccess"/></method></resource>
+    </resource>
+    <resource name="deviceMemories">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#VaultDeviceMemories"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.remember#VaultDeviceMemory"/></method>
+        <id name="deviceMemoryId">
+            <method type="get"><service name="org.moqui.security.VaultServices.check#VaultDeviceMemory"/></method>
+            <method type="delete"><service name="org.moqui.security.VaultServices.forget#VaultDeviceMemory"/></method>
+        </id>
     </resource>
     <resource name="items">
         <id name="vaultItemId">

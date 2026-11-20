@@ -58,6 +58,7 @@ pub mod reserved;
 pub mod servlet;
 pub mod stream;
 pub(crate) mod upstream;
+pub mod vault_policy;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
 use crate::entity::query_rest;
@@ -2481,14 +2482,16 @@ pub(crate) fn refused_origin<'a>(
     (!origin::origin_allowed_by(Some(factory), Some(origin), &own)).then_some(origin)
 }
 
-/// The conf's `screen-render` headers on every response, as the baseline under what the response set itself, and
-/// `screen-secure` on https; then CORS when the origin is allowed.
+/// The conf's `screen-render` headers on every response, as the baseline under what the response set itself (a vault
+/// screen's path gets the vault screens' policy first: [`vault_policy`]), and `screen-secure` on https; then CORS when
+/// the origin is allowed.
 pub fn finish_response(
     factory: &crate::context::ExecutionContextFactory,
     request: &WebRequest,
     mut response: WebResponse,
     preflight: bool,
 ) -> WebResponse {
+    vault_policy::apply(factory, &request.path, &mut response.headers);
     apply_conf_headers(Some(factory), "screen-render", &mut response.headers, true);
     append_csp(&mut response.headers, &factory.webapp_setting("webroot", "csp-append"));
     // HSTS holds for every port of a host (RFC 6797), so on localhost a trusted dev certificate would send the plain

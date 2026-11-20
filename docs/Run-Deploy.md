@@ -1153,8 +1153,9 @@ The embedded Postgres password is handed to the cluster's tools in their environ
 that is removed once it ran, or failed; no `pgpass` is kept. A `pgpass` or `db/edge_member_key` an earlier build left
 is moved into `seal.json` at the next start; one that holds another value than the seal's is kept, and named in an
 error. A member's own edge key is not in the recovery bundle: a member restored from a bundle makes its own. A runtime from before has its
-other secrets in `runtime/.env`: they are still read, each named in a warning, and no migration moves them; put each
-with `moqui operator secret put` and remove its line, or start a new runtime.
+other secrets in `runtime/.env`: under the `dev` seal, or before a seal is made, they are still read, each named in a
+warning; under any other seal they are ignored, each named in an error, since the server's own user can write `.env`.
+No migration moves them; put each with `moqui operator secret put` and remove its line, or start a new runtime.
 
 The members of a cluster share the `SecretValue` rows through their database, and each needs the same bootstrap
 secrets and SecretValue data key in its own `seal.json`: start a new member from the first one's recovery bundle

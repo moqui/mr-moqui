@@ -354,6 +354,25 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
     </entity>
 
+    <entity entity-name="VaultDeviceMemory" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A desktop or mobile app that remembers its user's open personal key for a time (§3.5, V5). The key
+            stays on the device, wrapped by a key made of two halves: one in the device's own key store, and this row's
+            memorySecret, which check#VaultDeviceMemory hands the device only while the row is live. So a row deleted here
+            (the user took the device off the list), past its time, or for a replaced personal key is a memory that cannot
+            open again. The user's Vault key settings list them (list#VaultDeviceMemories).</description>
+        <field name="deviceMemoryId" type="id" is-pk="true"><description>The device's id of the memory, which is in the
+            wrap's associated data</description></field>
+        <field name="userId" type="id"/>
+        <field name="personalKeyId" type="id"/>
+        <field name="deviceName" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="thruStamp" type="number-integer"><description>When the memory ends, epoch millis</description></field>
+        <field name="memorySecret" type="text-medium" encrypt="true"><description>The server's half of the memory's key,
+            32 random bytes as hex; no use without the device's half</description></field>
+        <relationship type="one-nofk" related="moqui.security.UserAccount"/>
+        <index name="VAULT_DEVMEM_USER"><index-field name="userId"/></index>
+    </entity>
+
     <entity entity-name="VaultEvent" package="moqui.security.vault" use="transactional" cache="never">
         <description>An event of §3.13 (VaultEventType), written in the transaction of the change it records: a vault made
             or deleted, a wrapped key fetched, a member added or removed, a key rotation, a delivery sent or filed, and the

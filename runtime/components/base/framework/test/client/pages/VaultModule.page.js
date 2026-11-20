@@ -78,3 +78,33 @@ test("a vault key crosses from one worker to another only through a checked memb
     assert.equal(opened.remembered.version, 1);
     bob.terminate();
 });
+
+test("in the desktop or mobile app the client calls the app's native vault and loads no module from the server", async () => {
+    const calls = [];
+    const fetched = [];
+    const pageFetch = window.fetch;
+    window.fetch = (url, init) => { fetched.push(String(url)); return pageFetch(url, init); };
+    window.moquiDesktop = { vault: {
+        call: async (op, args) => { calls.push([op, args]); return op === "status" ? { personal: "pk-app", vaults: [] } : { op }; },
+        memory: async (action, minutes) => ({ action, minutes }),
+    } };
+    try {
+        const app = new window.MoquiVaultClient({ idleMinutes: 5 });
+        assert.equal((await app.status()).personal, "pk-app");
+        await app.itemOpen({ vault_id: "v" });
+        await app.lock({ forget: true });
+        assert.deepEqual(calls.map(([op]) => op), ["configure", "status", "item_open", "lock"]);
+        assert.equal(calls[0][1].idle_minutes, 5);
+        assert.equal(calls[3][1].forget, true);
+        assert.deepEqual(await app.remember(30), { action: "remember", minutes: 30 });
+        assert.equal(fetched.filter((url) => /\/js\/vault\//.test(url)).length, 0, "no worker or module fetched");
+        // in a browser there is no device memory, and an older item revision is told for this client's life
+        assert.equal((await vault.deviceMemory()).available, false);
+        const list = (revision) => ({ vault_id: "v", items: [{ item_id: "i", revision }] });
+        assert.deepEqual((await vault.revisionsSeen(list(3))).older, []);
+        assert.deepEqual((await vault.revisionsSeen(list(2))).older, ["i"]);
+    } finally {
+        delete window.moquiDesktop;
+        window.fetch = pageFetch;
+    }
+});

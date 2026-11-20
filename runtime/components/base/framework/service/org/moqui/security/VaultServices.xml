@@ -198,6 +198,18 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>
+    <service verb="update" noun="VaultHeader" type="rust" location="moqui_vault_server::vaults::update_vault_header">
+        <description>A personal vault's header (its name) sealed again by the client under the vault's current key
+            version (the vault crate's header_seal answers it as header_cipher): a rename. A manager of a shared-key vault,
+            or a single-secret vault's owner; an operational vault's name is in the clear and is refused here. Names the
+            vault revision it was made from (expectedRevision). An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="headerCipher" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
     <service verb="delete" noun="Vault" type="rust" location="moqui_vault_server::vaults::delete_vault">
         <description>A manager (or a single-secret vault's owner) deletes the vault with its items, their history, its
             members, key versions and recovery wraps, after a recent sign-in (require#RecentAuth's rule); an operational
@@ -481,6 +493,48 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="rotateItemIds" type="List"/>
         </out-parameters>
     </service>
+    <!-- Devices that remember the personal key (§3.5, V5) -->
+
+    <service verb="remember" noun="VaultDeviceMemory" type="rust" location="moqui_vault_server::device_memory::remember_vault_device_memory">
+        <description>The calling desktop or mobile app remembers the caller's active personal key (personalKeyId, refused
+            when it is not that key) for minutes, at most vault@device-memory-max-hours; the key stays on the device. Only
+            a device's key may ask. Answers when the record ends (thruStamp, epoch millis), which the device takes as its
+            limit, and the record's secret (memorySecret), the server's half of the memory's key.</description>
+        <in-parameters>
+            <parameter name="deviceMemoryId" required="true"/>
+            <parameter name="personalKeyId" required="true"/>
+            <parameter name="deviceName"/>
+            <parameter name="minutes" type="Long" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deviceMemoryId"/>
+            <parameter name="thruStamp" type="Long"/>
+            <parameter name="memorySecret"/>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="VaultDeviceMemory" type="rust" location="moqui_vault_server::device_memory::check_vault_device_memory">
+        <description>Whether the caller's device memory is still good (live): before its time and for their active
+            personal key; while it is, its thruStamp and secret (memorySecret), without which the device cannot open the
+            key from memory. Only a device's key may ask. A device forgets the memory when the answer is no.</description>
+        <in-parameters><parameter name="deviceMemoryId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="live" type="Boolean"/>
+            <parameter name="thruStamp" type="Long"/>
+            <parameter name="memorySecret"/>
+        </out-parameters>
+    </service>
+    <service verb="forget" noun="VaultDeviceMemory" type="rust" location="moqui_vault_server::device_memory::forget_vault_device_memory">
+        <description>Ends the caller's device memory record: the device forgot the key, or the user takes the device off
+            the list, after which it does not open the key from memory again.</description>
+        <in-parameters><parameter name="deviceMemoryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="ended" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="list" noun="VaultDeviceMemories" type="rust" location="moqui_vault_server::device_memory::list_vault_device_memories">
+        <description>The caller's devices that remember their personal key now (deviceMemoryId, deviceName, createdDate,
+            thruStamp), for the Vault key settings.</description>
+        <out-parameters><parameter name="deviceMemoryList" type="List"/></out-parameters>
+    </service>
+
     <service verb="reveal" noun="VaultItem" type="rust" location="moqui_vault_server::reveal::reveal_vault_item">
         <description>One operational item's wrapped key and sealed body, with its type, binding and name, to a member with
             the reveal role, whose client opens it with the vault key. The VeReveal event is written first, in the same

@@ -37,7 +37,9 @@ use tauri::{AppHandle, Webview};
 use crate::{state, ClientState};
 
 /// Run `work` off the main thread and the async runtime; a panic in it is an error, not the app's end.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
     let caught = move || {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(work))
             .unwrap_or_else(|_| Err("The request failed unexpectedly".to_string()))
@@ -432,7 +434,16 @@ async fn revoke(state: &ClientState, account: &Account, key: String) {
     let shell = Arc::clone(&state.shell);
     let leaving = account.clone();
     let sent = key.clone();
+    // the vault's device memory goes, and its record on the server while the key is still taken there (V5)
+    let forgotten = state.core.vault().signed_out(&account.id);
     let revoked = blocking(move || {
+        if let Some(memory_id) = forgotten {
+            let server = moqui_client::vault::server::RestMemoryServer {
+                server: &leaving.server,
+                key: &sent,
+            };
+            moqui_client::vault::forget_on(&server, &memory_id);
+        }
         shell.account_signing_out(&leaving, &sent);
         moqui_client::login::sign_out(&leaving.server, &sent).map_err(|err| err.to_string())
     })
@@ -560,6 +571,7 @@ fn remove_account(state: &ClientState, id: &str) -> Result<(), String> {
     if let Err(err) = &saved {
         tracing::error!("The account list without {id} was not saved: {err}");
     }
+    state.core.vault().removed(id);
     state.core.stores().forget(id);
     if let Err(err) = state.core.keys().forget_chat_store_keys(id) {
         tracing::error!("The chat store keys of {id} were not removed from the key store: {err}");
@@ -595,6 +607,8 @@ pub(crate) fn signed_out_in(state: &ClientState, id: &str, forget: bool) {
     if let Err(err) = state.core.keys().delete(id) {
         tracing::error!("The key of {id} was not removed from the key store: {err}");
     }
+    // the vault locks and its device memory goes, whatever signed the account out (the user, a revoked key: V5)
+    state.core.vault().signed_out(id);
     state.shell.account_signed_out(id);
     state.shell.close_remotes(Some(id));
     let (current, mode) = {
@@ -628,6 +642,8 @@ pub(crate) fn signed_out_in(state: &ClientState, id: &str, forget: bool) {
 /// The current account changed: the other account's pages and sockets close, what they kept in the pages' origin goes
 /// (SEC-CLI-81), a sign-in still waiting for the browser is given up, and the shell loads it.
 pub(crate) fn switched(state: &ClientState) {
+    // no account's vault stays open behind another's pages
+    state.core.vault().lock_all();
     *moqui_lib::sync::lock(&state.sso) = None;
     // a link kept for the other account's shell
     *moqui_lib::sync::lock(&state.open_pending) = None;

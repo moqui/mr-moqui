@@ -68,11 +68,18 @@ struct Me {
     key: PersonalKey,
 }
 
-/// A recovery key combined for one session, and the vault key it opened.
+/// A recovery key combined for one session, and the vault key version it opened.
 struct Pending {
     session_id: String,
     key: PersonalKey,
-    opened: Option<(String, u64)>,
+    opened: Option<Opened>,
+}
+
+/// The vault key version a recovery opened, and whether this session held it before (a holder who is also a member),
+/// in which case the recovery's end leaves it open.
+struct Opened {
+    slot: (String, u64),
+    held_before: bool,
 }
 
 /// The calls that may follow a combine without dropping the combined recovery key.
@@ -214,9 +221,16 @@ impl Session {
         fingerprint::require_checked(&self.key_checks(args)?, &me.key.public().verify, user_id, public)
     }
 
-    /// Drops a combined recovery key, and the vault key it opened.
+    /// Drops a combined recovery key, and the vault key it opened unless this session held that key before.
     fn drop_pending(&mut self) {
-        if let Some(Pending { opened: Some(slot), .. }) = self.pending.take() {
+        if let Some(Pending {
+            opened: Some(Opened {
+                slot,
+                held_before: false,
+            }),
+            ..
+        }) = self.pending.take()
+        {
             self.vault_keys.remove(&slot);
         }
     }
@@ -986,7 +1000,9 @@ impl Session {
 
     /// Opens the vault key of a session this module started, with the recovery key combined for it: the recovery
     /// member's wrap of the session's vault, accepted by the vault's chain like any member's (a chain this session can
-    /// anchor: a signer whose key it checked). The vault key is kept only until the rekey.
+    /// anchor: a signer whose key it checked). The vault key is kept only until the rekey. A holder who is also a
+    /// member may have that version open already: the key the wrap opens must then be the same key (compared in
+    /// constant time), which stays open after the rekey as before it; another key is refused.
     fn recovery_open_vault(&mut self, args: &Value) -> Result<Value, Error> {
         let session_id = str_of(args, "session_id")?;
         let Some(session) = self.recovery_sessions.get(session_id) else {
@@ -1015,9 +1031,21 @@ impl Session {
         let (_, signer) = chain.accept_wrap(&wrap)?;
         let key = vault::open_member_wrap(&wrap, &pending.key, &signer)?;
         let (vault_id, key_version) = (wrap.vault_id.clone(), wrap.key_version);
-        self.keep_vault_key(&vault_id, key_version, key)?;
+        let slot = (vault_id.clone(), key_version);
+        let held_before = match self.vault_keys.get(&slot) {
+            Some(held) if *held == key => true,
+            Some(_) => {
+                return Err(Error::Refused(
+                    "the recovery key's wrap opens another key than the one open for that version",
+                ))
+            }
+            None => {
+                self.vault_keys.insert(slot.clone(), key);
+                false
+            }
+        };
         if let Some(pending) = self.pending.as_mut() {
-            pending.opened = Some((vault_id.clone(), key_version));
+            pending.opened = Some(Opened { slot, held_before });
         }
         Ok(json!({ "vault_id": vault_id, "key_version": key_version }))
     }
@@ -1114,6 +1142,88 @@ impl Session {
             }
         }
         Ok(json!({ "entry": key_version_json(&entry), "wrap": member_wrap_json(&wrap), "rewraps": rewraps }))
+    }
+}
+
+/// The open personal key as a desktop or mobile app's device memory keeps it (§3.5, V5): its private halves wrapped by a
+/// device memory key ([`personal::wrap_with_device_key`]), with who it is. `Debug` shows no bytes.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DeviceSealed {
+    pub personal_key_id: String,
+    pub user_id: String,
+    /// Both public halves, encrypt then verify (64 bytes).
+    pub public: Vec<u8>,
+    /// When the memory ends, epoch millis: in the associated data.
+    pub until: i64,
+    pub sealed: Vec<u8>,
+}
+
+impl std::fmt::Debug for DeviceSealed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSealed")
+            .field("personal_key_id", &self.personal_key_id)
+            .field("user_id", &self.user_id)
+            .field("until", &self.until)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Device memory (§3.5, V5). These are not calls of [`Session::call`]: no page can ask the module for its personal key
+/// in any form. A shell calls them natively, and keeps the device memory key in the OS key store.
+impl Session {
+    /// The open personal key wrapped by `wrap_key` ([`personal::device_wrap_key`]) for the memory `memory_id`, which
+    /// ends at `until` (epoch millis).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Refused`] when the personal key is locked.
+    pub fn device_seal(
+        &self,
+        memory_id: &str,
+        until: i64,
+        wrap_key: &Key32,
+        rng: &mut dyn Rng,
+    ) -> Result<DeviceSealed, Error> {
+        let me = self.me()?;
+        let memory = personal::DeviceMemory {
+            memory_id,
+            user_id: &me.user_id,
+            until,
+        };
+        Ok(DeviceSealed {
+            personal_key_id: me.key_id.clone(),
+            user_id: me.user_id.clone(),
+            public: me.key.public().to_bytes().to_vec(),
+            until,
+            sealed: personal::wrap_with_device_key(&me.key, &me.key_id, memory, wrap_key, rng),
+        })
+    }
+
+    /// Opens the personal key from device memory, as `personal_open` does with the passphrase; answers as it does.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Open`] for another key or memory, or a changed wrap.
+    pub fn device_open(&mut self, kept: &DeviceSealed, memory_id: &str, wrap_key: &Key32) -> Result<Value, Error> {
+        let public = PersonalPublic::from_bytes(&kept.public)?;
+        let memory = personal::DeviceMemory {
+            memory_id,
+            user_id: &kept.user_id,
+            until: kept.until,
+        };
+        let key = personal::open_with_device_key(&kept.sealed, &kept.personal_key_id, memory, &public, wrap_key)?;
+        let answer = opened_json(&kept.personal_key_id, &key);
+        self.me = Some(Me {
+            key_id: kept.personal_key_id.clone(),
+            user_id: kept.user_id.clone(),
+            key,
+        });
+        Ok(answer)
+    }
+
+    /// Which personal key is open, if one is.
+    pub fn personal_key_id(&self) -> Option<&str> {
+        self.me.as_ref().map(|me| me.key_id.as_str())
     }
 }
 

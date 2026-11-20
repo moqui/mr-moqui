@@ -80,8 +80,9 @@ const SHELL_PERMISSIONS: [&str; 35] = [
 ];
 
 /// An app window's: the sockets of its page, the outbox and drafts of its account (which reach nothing its requests do
-/// not), and the notification plugin's check its `window.Notification` makes.
-const APP_PERMISSIONS: [&str; 15] = [
+/// not), the vault module the app runs for its account (V5), and the notification plugin's check its
+/// `window.Notification` makes.
+const APP_PERMISSIONS: [&str; 17] = [
     "allow-socket-open",
     "allow-socket-send",
     "allow-socket-close",
@@ -96,6 +97,8 @@ const APP_PERMISSIONS: [&str; 15] = [
     "allow-draft-remove",
     "allow-file-save",
     "allow-open-in-shell",
+    "allow-vault-call",
+    "allow-vault-memory",
     "notification:allow-is-permission-granted",
 ];
 
@@ -590,6 +593,11 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
         *windows = kept;
         closing.into_iter().map(|(label, _)| label).collect()
     };
+    // the vault of an account whose pages close locks with them
+    match account {
+        Some(account) => client.core.vault().lock(account),
+        None => client.core.vault().lock_all(),
+    }
     for label in closing {
         client.core.sockets().close_for(&label);
         if let Some(window) = app.get_webview_window(&label) {
@@ -598,13 +606,18 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
     }
 }
 
-/// An app window closed: its sockets go, and it is no longer the account's.
+/// An app window closed: its sockets go, and it is no longer the account's. Its vault session locks, as a browser's
+/// worker goes with its tab (plans/Vault-Instances.md §3.6).
 pub(crate) fn closed(app: &AppHandle, label: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;
     };
     client.core.sockets().close_for(label);
     moqui_lib::sync::lock(&client.windows).retain(|(window, _)| window != label);
+    client.core.vault().lock_label(label);
+    if let Some(state) = app.try_state::<moqui_client_tauri::ClientState>() {
+        moqui_lib::sync::lock(&state.vault_pages).remove(label);
+    }
 }
 
 #[cfg(test)]

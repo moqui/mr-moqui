@@ -90,13 +90,14 @@ module.exports = {
                 this.data = json;
             }, (err) => { this.error = String(err && err.message || err); });
         },
-        // VaultClient.js with its integrity hash; it loads the worker and the module with theirs
+        // VaultClient.js with its integrity hash, also in its URL (?v=) so a copy cached before an upgrade is not taken; it
+        // loads the worker and the module with theirs the same way
         startClient() {
             if (this.client) return Promise.resolve(this.client);
             const integrity = this.data.integrity;
             const ready = window.MoquiVaultClient ? Promise.resolve() : new Promise((resolve, reject) => {
                 const script = document.createElement('script');
-                script.src = '/js/vault/VaultClient.js';
+                script.src = '/js/vault/VaultClient.js?v=' + encodeURIComponent(String(integrity.client).replace(/^sha256-/, ''));
                 script.integrity = integrity.client;
                 script.crossOrigin = 'anonymous';
                 script.onload = resolve;

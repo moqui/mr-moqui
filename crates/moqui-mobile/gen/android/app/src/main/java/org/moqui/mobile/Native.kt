@@ -47,6 +47,20 @@ object Native {
     @JvmStatic external fun chatReply(dataDir: String, account: String, chatRoomId: String, text: String): String?
     @JvmStatic external fun chatRead(dataDir: String, account: String, chatRoomId: String, eventSeq: Long): String?
     @JvmStatic external fun ackPush(dataDir: String, account: String, ackId: String)
+    @JvmStatic external fun vaultLock()
+
+    /**
+     * The app's screen went (the phone locked, or another app came to the front): every vault session locks
+     * (plans/Vault-Instances.md V5). Nothing to lock before the library is loaded.
+     */
+    fun lockVault() {
+        if (ready != true) return
+        try {
+            vaultLock()
+        } catch (err: Throwable) {
+            Log.e(TAG, "The vault was not locked", err)
+        }
+    }
 
     /** The library loaded and given the context; whether it may make requests (its TLS verifier started). */
     @Synchronized

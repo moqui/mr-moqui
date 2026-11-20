@@ -25,6 +25,7 @@
 //! - [`commands`]: the shell's commands (the accounts, sign-in and SSO, sign-out), [`outbox`]: the outbox and drafts,
 //!   [`sockets`]: the sockets of a page whose sockets are all the server's (the mobile app; the desktop app has its
 //!   own, with the node's in process).
+//! - [`vault`]: the page's vault, the module run natively for it (`moquiDesktop.vault`, plans/Vault-Instances.md V5).
 //!
 //! The commands are `pub` at the crate root, where `tauri::command` puts the macros `generate_handler!` looks for, so an
 //! app lists them as `moqui_client_tauri::client_state`.
@@ -34,6 +35,7 @@ pub mod outbox;
 pub mod scheme;
 pub mod shell_load;
 pub mod sockets;
+pub mod vault;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -54,6 +56,7 @@ pub use outbox::{
     outbox_retry, outbox_unsent,
 };
 pub use sockets::{socket_close, socket_open, socket_send};
+pub use vault::{vault_call, vault_memory};
 
 /// The scheme of the shell, and its origin (`http://<scheme>.localhost` on CEF and on Android's WebView).
 pub const SHELL_SCHEME: &str = "moqui-shell";
@@ -181,6 +184,9 @@ pub struct ClientState {
     /// The token of the shell's last load by the host with a query ([`Self::load_shell`]), which the shell's
     /// `client_state` answers once: the shell takes its query (signIn, failed, server) only from such a load.
     pub load_token: Mutex<Option<String>>,
+    /// Which pages (by webview label) may call the vault: those whose top-level document is a vault screen's and that
+    /// loaded no other screen or frame since ([`vault::note_request`]).
+    pub vault_pages: Mutex<HashMap<String, bool>>,
 }
 
 impl ClientState {
@@ -201,6 +207,7 @@ impl ClientState {
             sso: Mutex::new(None),
             open_pending: Mutex::new(None),
             load_token: Mutex::new(None),
+            vault_pages: Mutex::new(HashMap::new()),
         }
     }
 

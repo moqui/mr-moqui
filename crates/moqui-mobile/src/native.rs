@@ -204,6 +204,14 @@ pub(crate) fn hang_up(id: &str) {
     }
 }
 
+/// The app's screen went (`MainActivity.onStop`: the phone locked, or the app left for another): every vault session
+/// locks (plans/Vault-Instances.md §3.6, V5); a key the user had the app remember opens again with the lock or biometrics.
+pub(crate) fn vault_lock() {
+    if let Some(core) = moqui_lib::sync::lock(&CORE).as_ref() {
+        core.vault().lock_all();
+    }
+}
+
 /// The client of `dir` (the app's data directory's `client`): the one this process has, unless it was stopped, else
 /// a new one.
 pub(crate) fn core_in(dir: &Path) -> Result<Arc<Client>, String> {
@@ -948,6 +956,19 @@ mod entries {
     ) {
         env.with_env(|env| -> Result<(), jni::errors::Error> {
             super::hang_up(&call_session_id.try_to_string(env)?);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
+    }
+
+    /// `Native.vaultLock()`: the app's screen went; the vault sessions lock.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_vaultLock<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+    ) {
+        env.with_env(|_env| -> Result<(), jni::errors::Error> {
+            super::vault_lock();
             Ok(())
         })
         .resolve::<LogErrorAndDefault>();

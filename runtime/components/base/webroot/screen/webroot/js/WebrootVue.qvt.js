@@ -483,6 +483,28 @@
         if (rootVm() && rootVm().setUrl) rootVm().setUrl(path);
         else if (location) location.href = path;
     };
+    // The vault screens (docs/security/Vaults.md, "The vault screens' policy"): a path under /qapps/ or /apps/ naming one of
+    // vault@screen-names, which /qapps gives as config.vaultScreens, told as the server tells it (moqui-core web/vault_policy.rs).
+    // The server gives a page at such a path the vault screens' Content-Security-Policy, and setUrl loads the page anew to go to a
+    // vault screen from a page that was not served at one (vaultDocument), so the vault worker runs only in a page with that policy.
+    // Leaving a vault screen keeps the page, and the open vault with it (Commons › Contacts shows its private contacts), under that
+    // policy until the next full load. A vault screen's component a page loads into a container (VaultContacts) starts no worker.
+    moqui.vaultScreens = [];
+    moqui.vaultDocument = false;
+    moqui.isVaultPath = (path) => {
+        const names = moqui.vaultScreens;
+        if (!names || !names.length || !path) return false;
+        let bare = String(path).split(/[?#]/)[0];
+        const appRoot = (moqui.config && moqui.config.appRootPath) || "";
+        if (appRoot && bare.indexOf(appRoot + "/") === 0) bare = bare.slice(appRoot.length);
+        const segments = bare.split("/").filter((segment) => segment.length > 0);
+        if (segments[0] !== "qapps" && segments[0] !== "apps") return false;
+        return segments.slice(1).some((segment) => {
+            let name = segment;
+            try { name = decodeURIComponent(segment); } catch (e) { /* a malformed escape is kept as written */ }
+            return names.indexOf(name.split(".")[0]) >= 0;
+        });
+    };
     // The Quasar Notify action of a message with a link: a button that follows it.
     moqui.linkNotifyAction = (link, linkText) => ({ label: linkText || (moqui.l10n ? moqui.l10n.localize("Open") : "Open"), color: "white", noCaps: true,
         handler: () => moqui.openLink(link) });
@@ -9915,6 +9937,12 @@
                 // always set bodyParameters, null when there are none, to clear the last ones
                 this.bodyParameters = bodyParameters;
                 url = this.getLinkPath(url);
+                // a vault screen loads as a new page unless this page was served at one, so it runs under the vault screens' policy
+                if (moqui.isVaultPath(url) && !moqui.vaultDocument) {
+                    if (pushState) root.location.assign(url);
+                    else root.location.replace(url);
+                    return;
+                }
                 // a navigation span of real-user monitoring (WebrootRum.js), whose requests are its children
                 if (moqui.rum && moqui.rum.navigate) moqui.rum.navigate(url);
                 if (this.currentLinkUrl === url && url !== this.linkBasePath) {
@@ -10816,6 +10844,9 @@
         const config = given || JSON.parse(doc.getElementById("moqui-config").textContent);
         qvt.config = config;
         moqui.config = config;
+        // the vault screens, which the /qapps page names (not a desktop client's shell, which opens them in a window of their own)
+        moqui.vaultScreens = Array.isArray(config.vaultScreens) ? config.vaultScreens : [];
+        moqui.vaultDocument = moqui.isVaultPath(root.location.pathname);
         // The dev/test instance marker (the webapp-list/webapp[webroot]@dev-marker-color conf property): a small square in the corner of the window
         // (the style sheet draws it for a dev or test body class); an empty or invalid color turns it off. It never overrides
         // the theme's colors.

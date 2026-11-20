@@ -146,3 +146,149 @@ fn the_chat_store_passphrases_are_sealed_by_the_key_of_an_unlocked_phone() {
     assert!(!dir.join("server_abc.chat-store.unlocked").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A stand-in for the Keystore key that needs the device's lock at each use: it opens only while `confirmed` (the user
+/// answered the prompt), and opens to nothing once `invalidated` (a new biometric enrolled).
+#[derive(Default)]
+struct LockKey {
+    confirmed: AtomicBool,
+    invalidated: AtomicBool,
+}
+
+impl super::AuthSealer for std::sync::Arc<LockKey> {
+    fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
+        Ok(plain.iter().map(|byte| !byte).collect())
+    }
+
+    fn open(&self, sealed: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        if self.invalidated.load(Ordering::SeqCst) {
+            return Ok(Some(Vec::new()));
+        }
+        if !self.confirmed.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        Ok(Some(sealed.iter().map(|byte| !byte).collect()))
+    }
+}
+
+/// The server's records of the memories and their secrets, for the vault (`moqui_client::vault::server`).
+#[derive(Default)]
+struct Records {
+    live: std::sync::Mutex<Vec<(String, [u8; 32])>>,
+    revoked: AtomicBool,
+}
+
+impl moqui_client::vault::server::MemoryServer for Records {
+    fn register(
+        &self,
+        memory_id: &str,
+        _key: &str,
+        _device: &str,
+        minutes: u32,
+    ) -> Result<moqui_client::vault::server::Registered, moqui_client::vault::server::ServerError> {
+        let secret = [7u8; 32];
+        self.live.lock().unwrap().push((memory_id.to_string(), secret));
+        Ok(moqui_client::vault::server::Registered {
+            until: T0 + i64::from(minutes) * 60_000,
+            secret: moqui_client::vault::memory::Key32::from_bytes(secret),
+        })
+    }
+
+    fn check(
+        &self,
+        memory_id: &str,
+    ) -> Result<Option<moqui_client::vault::memory::Key32>, moqui_client::vault::server::ServerError> {
+        if self.revoked.load(Ordering::SeqCst) {
+            return Err(moqui_client::vault::server::ServerError::Revoked);
+        }
+        Ok(self
+            .live
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(id, _)| id == memory_id)
+            .map(|(_, secret)| moqui_client::vault::memory::Key32::from_bytes(*secret)))
+    }
+
+    fn forget(&self, memory_id: &str) -> Result<(), moqui_client::vault::server::ServerError> {
+        self.live.lock().unwrap().retain(|(id, _)| id != memory_id);
+        Ok(())
+    }
+}
+
+const T0: i64 = 1_800_000_000_000;
+const ACCOUNT: &str = "example.com-0123456789ab";
+const PAGE: &str = "main";
+
+/// V5 on the phone: the device's half of the memory's key is sealed by the Keystore key the user authorizes at each
+/// use, so the key opens from memory only once they confirm; the memory ends at its time limit, when the server no
+/// longer takes the device's key, and when the Keystore invalidated its key.
+#[test]
+fn device_memory_on_the_phone_needs_the_lock_and_ends_at_its_limit_and_on_revocation() {
+    use moqui_client::vault::{Restore, Vaults};
+    let base = std::env::temp_dir().join(format!("moqui-mobile-vault-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let lock = std::sync::Arc::new(LockKey::default());
+    let open_vaults = || {
+        let vaults = Vaults::new(&base.join("client"));
+        vaults.set_memory_keys(Box::new(super::DeviceLockKeys::new(
+            &base.join("vault-keys"),
+            std::sync::Arc::clone(&lock),
+        )));
+        vaults
+    };
+    let remembered = |server: &Records| {
+        let vaults = open_vaults();
+        vaults
+            .call_at(
+                ACCOUNT,
+                PAGE,
+                "personal_make",
+                serde_json::json!({ "personal_key_id": "pk-a", "user_id": "a", "passphrase": "pass phrase" }),
+                T0,
+            )
+            .unwrap();
+        vaults.remember_at(ACCOUNT, PAGE, 30, "Pixel", server, T0).unwrap();
+        assert_eq!(vaults.memory_kind(), Some("device-lock"));
+    };
+    let sealed_file = base.join("vault-keys").join(format!("{ACCOUNT}.vault-memory.sealed"));
+
+    let server = Records::default();
+    remembered(&server);
+    assert!(sealed_file.exists());
+    let phone = open_vaults();
+    assert_eq!(
+        phone.restore_at(ACCOUNT, PAGE, true, &server, T0 + 60_000),
+        Restore::NeedsUnlock
+    );
+    lock.confirmed.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        phone.restore_at(ACCOUNT, PAGE, true, &server, T0 + 60_000),
+        Restore::Opened(_)
+    ));
+    assert!(phone.is_open(ACCOUNT, PAGE));
+    // its time limit: the session opened from it locks, and the sealed key goes
+    phone.sweep_at(T0 + 30 * 60_000);
+    assert!(!phone.is_open(ACCOUNT, PAGE));
+    assert!(!sealed_file.exists());
+
+    // the server no longer takes the device's key: nothing opens, and the sealed key goes
+    let server = Records::default();
+    remembered(&server);
+    server.revoked.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        open_vaults().restore_at(ACCOUNT, PAGE, true, &server, T0 + 60_000),
+        Restore::Ended(_)
+    ));
+    assert!(!sealed_file.exists());
+
+    // the Keystore invalidated its key: the memory ends
+    let server = Records::default();
+    remembered(&server);
+    lock.invalidated.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        open_vaults().restore_at(ACCOUNT, PAGE, true, &server, T0 + 60_000),
+        Restore::Ended(_)
+    ));
+    let _ = std::fs::remove_dir_all(&base);
+}

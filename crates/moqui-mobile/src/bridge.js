@@ -285,8 +285,35 @@
         window.__moquiCryptoInShell = true;
         if (Array.isArray(page.clearScopes) && page.clearScopes.length) clearScopes(page.clearScopes);
         const backToShell = () => ask("client_show_shell");
+        // the vault module the app runs natively for the page's account (moqui_client_tauri::vault, plans/Vault-Instances.md
+        // V5), which VaultClient.js calls in place of its wasm worker; memory is device memory (state, remember, restore,
+        // forget), opened with the phone's lock or biometrics
+        // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a
+    // script cannot fake it: remembering or opening the key from device memory needs one (moqui_client_tauri::vault)
+    const userGesture = ((nav) => {
+        let getter = null;
+        try {
+            const described = Object.getOwnPropertyDescriptor(Navigator.prototype, "userActivation");
+            getter = described && described.get;
+        } catch (err) {
+            getter = null;
+        }
+        return () => {
+            try {
+                const activation = getter && getter.call(nav);
+                return !!(activation && activation.isActive);
+            } catch (err) {
+                return false;
+            }
+        };
+    })(navigator);
+    const vault = Object.freeze({
+            call: (op, args) => ask("vault_call", { op: String(op || ""), args: args || {} }),
+            memory: (action, minutes) => ask("vault_memory", { action: String(action || ""), minutes: minutes == null ? null : Math.max(0, Math.floor(Number(minutes)) || 0),
+            gesture: userGesture() })
+        });
         // pushDelivers: the chat's notifications come by FCM, not from the page's socket (plans/Comms-Messaging.md §7.2 rule 7)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, notify, windowSeen, pushDelivers: true,
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, notify, windowSeen, pushDelivers: true,
             storageScope: String(page.storageScope || ""),
             openInShell: (path) => ask("open_in_shell", { path: String(path || "") }),
             openExternal: (url) => invoke("open_external", { url: String(url || "") }),

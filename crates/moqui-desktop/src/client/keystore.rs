@@ -117,6 +117,18 @@ pub(crate) fn open_keys(dir: &Path) -> Keys {
     Keys::new(store, kind)
 }
 
+/// The vault's device memory keys (plans/Vault-Instances.md §3.5, V5) in the store the device keys are in: the OS key
+/// store, opened by the computer's sign-in; where that is the file in `dir`, it says so and device memory is not offered
+/// (a key in a file beside the wrap it opens would guard nothing).
+pub(crate) fn open_memory_keys(dir: &Path) -> moqui_client::vault::memory::StoreMemoryKeys {
+    let (store, kind) = open(dir);
+    let kind = match kind {
+        "os" => moqui_client::vault::memory::KIND_OS,
+        _ => moqui_client::vault::memory::KIND_FILE,
+    };
+    moqui_client::vault::memory::StoreMemoryKeys::new(store, kind)
+}
+
 /// The key store, and `os` or `file` for which it is. The OS store unless it is not there, then the file in `dir`.
 fn open(dir: &Path) -> (Box<dyn KeyStore>, &'static str) {
     let variable = std::env::var("MOQUI_DESKTOP_KEY_STORE").ok();
@@ -269,6 +281,24 @@ mod tests {
         assert_eq!(left, vec!["accounts.json".to_string()]);
         assert_eq!(move_file_keys(&dir, &store), 0);
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// V5: the vault's device memory keys follow the device keys' store; a store in a file (a development run, a Linux
+    /// desktop with no Secret Service) says so, and the vault offers no device memory there. The memory's own rules (its
+    /// time limit, revocation) are moqui_client::vault's tests, over this same adapter.
+    #[test]
+    fn device_memory_is_not_offered_when_the_keys_are_in_a_file() {
+        use moqui_client::vault::memory::{MemoryKeys, KIND_FILE};
+        let dir = std::env::temp_dir().join(format!("moqui-desktop-memory-keys-{}", std::process::id()));
+        let keys = super::open_memory_keys(&dir);
+        // a test build is a development run, which keeps its keys in a file unless MOQUI_DESKTOP_KEY_STORE says os
+        if std::env::var("MOQUI_DESKTOP_KEY_STORE").is_err() {
+            assert_eq!(keys.kind(), KIND_FILE);
+            let vaults = moqui_client::vault::Vaults::new(&dir);
+            vaults.set_memory_keys(Box::new(keys));
+            assert_eq!(vaults.memory_kind(), None);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
