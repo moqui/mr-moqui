@@ -1,0 +1,171 @@
+// This software is in the public domain under CC0 1.0 Universal plus a
+// Grant of Patent License.
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to the
+// public domain worldwide. This software is distributed without any
+// warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software (see the LICENSE.md file). If not, see
+// <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+// The manager link (plans/Vault-Instances.md §4.4, crates/moqui-host/src/manage_link/): a managed instance dials its
+// manager's HTTPS port with ALPN moqui-manage/1 and keeps one connection open, on which it is the HTTP/2 client of
+// Manager. The manager's calls of the instance go down the Serve stream. Both keys are pinned by SHA-256 of their public
+// keys. Changes are additive only; a change that cannot be is a new link version.
+
+syntax = "proto3";
+
+package moqui.manage.v1;
+
+// On the manager. A pairing connection (role P) serves Pair alone; a link connection (role U) the rest. While the
+// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap and Unseal are answered.
+service Manager {
+  // Pair with the one-time token a provision gave the instance as a file, or a code made in System › Instances.
+  rpc Pair(PairRequest) returns (PairReply);
+  // The first call of a link connection: the instance's status, the manager's answer with the link's generation.
+  rpc Hello(HelloRequest) returns (HelloReply);
+  // The instance's status, as it changes and every so often.
+  rpc Status(InstanceStatus) returns (StatusReply);
+  // The bootstrap bundle on a first start, sealed to the bundle key the instance pinned at pairing.
+  rpc Bootstrap(BootstrapRequest) returns (BootstrapReply);
+  // Unseal by transit (M6): answered "not built" until then.
+  rpc Unseal(UnsealRequest) returns (UnsealReply);
+  // An event of the instance: started, unsealed, failed. Only while unsealed.
+  rpc Event(EventRequest) returns (EventReply);
+  // The manager's calls of the instance: each Command down, each CommandReply up. Only while unsealed.
+  rpc Serve(stream CommandReply) returns (stream Command);
+}
+
+message InstanceStatus {
+  string binary_version = 1;
+  // sealed, unsealing or unsealed
+  string seal_state = 2;
+  // the schema hash of its entity definitions, empty while sealed
+  string schema_hash = 3;
+  repeated string cluster_members = 4;
+  // ok, draining, starting or sealed
+  string health = 5;
+  bool drained = 6;
+  // the instance has not stored a bootstrap bundle yet
+  bool first_start = 7;
+  uint32 link_version = 8;
+}
+
+message Approver {
+  string user_id = 1;
+  // the Ed25519 key of the approver's personal key (plans/Vault-Instances.md §3.5)
+  bytes verify_public = 2;
+}
+
+// The environment's approvers as the instance pins them: unsigned at pairing, signed by an approver of the pinned set
+// for every change after (moqui_vault::approvers).
+message ApproverSet {
+  uint64 version = 1;
+  repeated Approver approvers = 2;
+  bytes signer_public = 3;
+  bytes signature = 4;
+}
+
+message PairRequest {
+  uint32 link_version = 1;
+  // the pairing token or code
+  string secret = 2;
+  // the X25519 public key the bootstrap bundle is sealed to, derived from the instance's link key
+  bytes bundle_key = 3;
+  string binary_version = 4;
+}
+
+message PairReply {
+  string app_instance_id = 1;
+  string environment_id = 2;
+  ApproverSet approvers = 3;
+  string manager_id = 4;
+}
+
+message HelloRequest {
+  InstanceStatus status = 1;
+}
+
+message HelloReply {
+  uint32 link_version = 1;
+  string manager_id = 2;
+  string app_instance_id = 3;
+  uint64 generation = 4;
+  // a bootstrap bundle waits for the instance
+  bool bootstrap_ready = 5;
+}
+
+message StatusReply {}
+
+message BootstrapRequest {}
+
+message BootstrapReply {
+  // HPKE to the pinned bundle key; empty when there is none (an instance the manager did not make)
+  bytes sealed = 1;
+}
+
+message UnsealRequest {
+  bytes wrapped_root = 1;
+  bytes ephemeral_public = 2;
+}
+
+message UnsealReply {
+  bytes sealed_root = 1;
+}
+
+message EventRequest {
+  // started, unsealed or failed
+  string kind = 1;
+  string message = 2;
+}
+
+message EventReply {}
+
+message StatusCommand {}
+message SealCommand {}
+message RestartCommand {}
+message DrainCommand {
+  bool drain = 1;
+}
+// operator secret put (plans/Sealed-Secrets.md S4)
+message PutSecretCommand {
+  string name = 1;
+  string value = 2;
+  bool force = 3;
+}
+// Component-Deploy's attested deploy, deploy#AttestedComponent, as the link's caller (docs/tools/Component-Deploy.md
+// "The gate", M3): the attestation, signed with the secret the instance issued, stands for the permission
+message DeployComponentCommand {
+  string attestation = 1;
+  string signature = 2;
+  string data_types = 3;
+}
+message ExportSealCommand {}
+// the surface report (Sealed-Secrets S12): answered "not built" until then
+message SurfaceReportCommand {}
+
+message Command {
+  uint64 id = 1;
+  oneof body {
+    StatusCommand status = 2;
+    SealCommand seal = 3;
+    RestartCommand restart = 4;
+    DrainCommand drain = 5;
+    PutSecretCommand put_secret = 6;
+    DeployComponentCommand deploy_component = 7;
+    ExportSealCommand export_seal = 8;
+    SurfaceReportCommand surface_report = 9;
+    ApproverSet approvers = 10;
+  }
+}
+
+message CommandReply {
+  uint64 id = 1;
+  bool ok = 2;
+  string error = 3;
+  InstanceStatus status = 4;
+  // a command's text answer: the seal bundle, a deploy's report
+  string text = 5;
+}

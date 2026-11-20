@@ -211,6 +211,57 @@ Beyond forwarded requests, tunnels, delegated calls and queued items, a local no
 - The edge member list names up to 64 addresses the node dials (Edge clusters above).
 - At the wizard's Apply (`apply#EdgeSetup`, an administrator's step) the offer's chat address is written to `.env` as `channels@public-url` (an `http` or `https` URL), and the offer's PASS client id names the properties `edge/node@pass-client`, `pass-authority/client[<id>]@sites` and `pass-authority/client[<id>]@callback` written there (`crates/moqui-core/src/edge/setup.rs`). The id is checked for its syntax (1 to 63 letters, digits, `_` and `-`, no `.`; empty is `edge`), and Apply refuses an id whose `pass-authority/client[<id>]@secret` is set, since the link never has a secret (a direct client named `edge` while `edge/node@pass-client` is unset included), and an id with sites unless it is already the edge node's client (`client_taken`); the review step names the id with the sites and the callback. The names written always end in `_sites` or `_callback`, so no other property is hit. This code's own edge node always offers `edge`. The `.env` writer refuses a value with a line break (`crates/moqui-lib/src/env.rs`).
 
+## Manager link
+
+A manager's HTTPS listener takes ALPN `moqui-manage/1` in a binary with the `manage` and `instances` features (Maximal,
+Enterprise), when it is not an edge node (an edge node's listener reads the ClientHello for the edge link and takes no
+manager link). Every build with `manage` (all packages) dials it as a managed instance when `manage@url` is set or it
+paired. `crates/moqui-host/src/manage_link/`, [Run-Deploy, The manager link](../Run-Deploy.md#the-manager-link),
+plans/Vault-Instances.md §4.4.
+
+- **`moqui-manage/1`** on the manager: the manager presents a certificate from its link key (`runtime/db/manage_link_key`,
+  mode 0600, or a `systemd-creds` credential) and requires a client certificate; any key passes the handshake, which
+  proves its possession, and is looked up after it. The listener reads each ClientHello before choosing settings
+  (`link::read_hello`, at most 64 KiB); any other ALPN gets the listener's own settings and is never asked for a
+  certificate, and `acme-tls/1` its challenge answer. The role byte has 10 s.
+  - Role `P` (pairing): `Manager.Pair` alone, for 30 s with at most 2 streams; Pair is limited to 10 tries per source
+    address in 10 minutes. The secret is a provision's token or a System › Instances code (32 letters and digits from
+    the OS's randomness, about 190 bits), kept only as its SHA-256 on the `AppInstance` row with a 15-minute end; the row
+    is found by that hash and compared again in constant time, and the hash is cleared at its one use, an expired one
+    too. Every refusal is one message. Pairing pins the presented key and the instance's X25519 bundle key on the row,
+    replacing a key pinned before (a code is made only by INSTANCE_ADMIN, in the environment's group when it names one).
+  - Role `U` (link): the key's SHA-256 must be an `AppInstance.linkKeyFingerprint`, read on a request worker by an
+    indexed equality find; an unknown key is refused before any call, and nothing is written. Hello must come within
+    10 s. While the instance's last Hello or Status says sealed, only Hello, Status, Bootstrap and Unseal are answered
+    (Unseal: "not built", M6); Event and the Serve stream need it unsealed. Each new link of an instance has a higher
+    generation and closes the one before. Pair is refused on a link connection.
+  - What a holder of a pinned key (a stolen instance disk) can do: report a status and events for that instance, take
+    its bootstrap bundle if one is still held (the manager holds it in memory only, until taken, a restart or 15
+    minutes), and answer the manager's commands. Until M6 the manager's view of "unsealed" is the instance's claim, so
+    such a holder can claim unsealed and be sent put-secret values and deploy attestations; a link of the instance from
+    a new address is refused while its link is live or within `manage@address-change-wait-seconds` of it going down,
+    and told to the administrators, unless an operator confirms (`confirm#InstanceLinkAddress`). A holder at the same
+    address, or after the wait, is not stopped. Under the plan's automatic unseal policy (M6) it would get the root key:
+    the limit of the link key the plan names (§4.4). Revoke (`revoke#InstanceLink`) unpins it, clears an unused pairing
+    code, and closes the link; the key is looked up again at each Hello. A pairing takes the row's token under a row
+    lock in a transaction, so one token pairs once.
+- **On the instance** the link opens no listener. It pins the manager's key from `manage@pin` (a provision's setting, or
+  what a code is shown with); a manager that presents another key is refused before any secret is sent. The manager's
+  commands run as the link's one identity and only these: status, seal, restart, drain, undrain, put-secret (the
+  operator's rules: the crypt pass only with force), deploy-component (`deploy#AttestedComponent`, whose attestation
+  stands for `COMPONENT_DEPLOY`), export-seal (wrapped values only), surface-report (not built) and a changed approver
+  set (taken only when signed by an approver the instance pinned, at a higher version); an unknown command is refused,
+  and while sealed only status runs. The bootstrap bundle is HPKE to the pinned bundle key, its instance id as
+  associated data, and goes into `seal.json`, never `.env`.
+- **What a compromised manager can do** (§4.9): every command above on every instance it manages, including put-secret
+  and seal; it cannot change a pinned approver set without an approver's signature, nor read a value an instance does
+  not send it. A manager compromised at pairing chooses the approver set the instance pins.
+- **SSH transport**: the manager runs `ssh` (`manage@ssh-command`) with `-F /dev/null`, `GlobalKnownHostsFile=/dev/null`
+  and `StrictHostKeyChecking=yes` against the host key pinned on the row (one key line, checked), the user by `-l` and
+  the host after `--` (each checked to be a plain name, host name or address, so none is read as an option), the key (an `ssh-key` vault item under a lease or machine access) in a file of mode 0600 in a
+  directory of its own, removed after; the remote command is `moqui operator` with single-quoted words (a secret name
+  with a quote, space or control character is refused), and a secret's value goes on standard input.
+
 ## Integration-fix cluster rollout
 
 The compact `collab-update` envelope carries the update once, in `body.frame.update`. Receivers apply that update before broadcasting the frame to local editors. Incoming notification socket messages are capped at 16 MiB, and a collaboration update whose complete cluster envelope exceeds that limit is refused before local application or acknowledgement.

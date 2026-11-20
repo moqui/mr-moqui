@@ -4967,6 +4967,7 @@ dependencies = [
  "moqui-vault-server",
  "serde_json",
  "sha2 0.11.1",
+ "subtle",
  "tracing",
  "zeroize",
 ]

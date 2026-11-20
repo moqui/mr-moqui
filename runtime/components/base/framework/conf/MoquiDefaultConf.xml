@@ -1515,6 +1515,18 @@
             screen-names="Vault,Vaults,VaultKey,VaultContacts,RecoveryKeys"
             screen-policy="default-src 'self'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self' data: blob:; worker-src 'self' blob:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"/>
 
+    <!-- The manager link (plans/Vault-Instances.md §4.4, docs/Run-Deploy.md "Managed instances"). On a managed instance:
+        url is its manager's HTTPS address and pin the SHA-256 fingerprint of the manager's link key, which a provision
+        sets in the container's settings (neither is a secret); token-file is the one-time pairing token a provision gives
+        it as a file; key-store is where its link key is kept, file (runtime/db/manage_link_key, mode 0600) or
+        systemd-creds (bound to the host's TPM2, with seal@systemd-creds-command); bootstrap-wait-seconds is how long a
+        first start waits for its bootstrap bundle once unsealed. On a manager: link-url is the address its instances
+        dial (its HTTPS listener), which a provision gives them; ssh-command is the ssh program of the SSH transport;
+        address-change-wait-seconds is how long after an instance's link went down a link of it from another address is
+        refused unless an operator confirms the move. -->
+    <manage url="" pin="" token-file="/run/secrets/moqui-pairing-token" key-store="file" bootstrap-wait-seconds="120"
+            link-url="" ssh-command="ssh" address-change-wait-seconds="300"/>
+
     <!-- Rust: java names for fresh schemas; set sql-name-style="legacy" before opening an old Rust database.
         crypt-pass is the key of encrypted fields: at CHANGEME it is generated at the first start and kept in runtime/.env
         (moqui_conf__entity_facade__crypt_pass), which must be kept with the database's backups. crypt-pass-old is the

@@ -32,6 +32,7 @@ use serde_json::{json, Value as Json};
 mod database;
 mod docker_real;
 mod kinds;
+mod link;
 mod provision;
 
 pub(super) fn setup() -> (ExecutionContext, EntityFacade) {

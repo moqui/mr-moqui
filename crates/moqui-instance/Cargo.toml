@@ -26,6 +26,8 @@ base64.workspace = true
 hmac.workspace = true
 tracing.workspace = true
 zeroize.workspace = true
+# the pairing token compared in constant time (link.rs)
+subtle.workspace = true
 
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open.

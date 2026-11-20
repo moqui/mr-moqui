@@ -17,8 +17,12 @@
 //! (plans/archive/Edge-Node.md §5.1: a key per local node, pinned both ways). The handshake's signature is still checked against
 //! the presented certificate, so a pin proves possession of the key.
 
-// the public key pins and their hex form are the edge link's
-#![cfg_attr(not(feature = "edge"), allow(dead_code))]
+// the public key pins and their hex form are the edge link's and the manager link's; a deferred pin is an accepting
+// end's (an edge node, a manager)
+#![cfg_attr(
+    not(any(feature = "edge", all(feature = "manage", feature = "instances"))),
+    allow(dead_code)
+)]
 
 use std::sync::Arc;
 

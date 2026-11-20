@@ -261,6 +261,7 @@ fn undo(facade: &EntityFacade, made: Vec<Made>, report: &mut Vec<String>) {
                 let done = connect_host(&host)
                     .and_then(|host| host.remove_container(&container, true))
                     .and_then(|()| {
+                        crate::link::drop_bundle(&instance_id);
                         let mut row = plan::instance(facade, &instance_id)?;
                         for name in [
                             "instanceUuid",
@@ -782,7 +783,7 @@ fn make_container(
         report.push(format!("volume {name} on host {host_id}"));
         volumes.push((field(&volume, "mountPoint"), name));
     }
-    let env = rows(facade, INSTANCE_ENV, "appInstanceId", &id)?
+    let mut env: Vec<(String, String)> = rows(facade, INSTANCE_ENV, "appInstanceId", &id)?
         .iter()
         .map(|row| (field(row, "envName"), field(row, "envValue")))
         .filter(|(name, _)| !name.is_empty())
@@ -823,6 +824,25 @@ fn make_container(
             None,
             Zeroizing::new(token.as_bytes().to_vec()),
         ));
+        // where it dials and the key it pins (§4.4): settings, not secrets
+        if let Some((url, pin)) = crate::link::manager() {
+            env.push(("moqui_conf__manage__url".to_string(), url));
+            env.push(("moqui_conf__manage__pin".to_string(), pin));
+        } else {
+            report.push(format!(
+                "AppInstance {id}: this manager's link has no address (manage@link-url), so the instance does not \
+                 dial it; pair it with a code from System › Instances"
+            ));
+        }
+        // its bootstrap secrets wait in memory for its link, sealed to its key when it takes them (§4.5)
+        let mut bundle = crate::link::BundleValues::new();
+        if let Some(password) = values.get("dbPassword") {
+            bundle.insert(
+                moqui_core::seal::secrets::DATASOURCE_PASSWORD.to_string(),
+                password.clone(),
+            );
+        }
+        crate::link::hold_bundle(&id, bundle, expires);
     }
     let port = |name: &str, row: &EntityValue| field(row, name).parse::<u16>().ok();
     let spec = kinds::container_spec(ContainerInput {

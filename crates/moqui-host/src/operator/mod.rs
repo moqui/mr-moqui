@@ -84,8 +84,11 @@ mod server {
                 watches.push((request.runtime_dir.to_path_buf(), watch));
             }
         }
+        // a managed instance dials its manager while sealed: no listener opens (plans/Vault-Instances.md §4.4)
+        crate::manage_link::dial::start_for_gate(request.runtime_dir, request.conf);
         match keeper.start(Mode::Operator)? {
             Start::Unsealed => {
+                crate::manage_link::dial::after_unseal(request.runtime_dir, request.conf);
                 crate::systemd_notify::notify("STATUS=unsealed");
                 Ok(())
             }
@@ -102,6 +105,8 @@ mod server {
                 };
                 crate::systemd_notify::notify(&format!("READY=1\nSTATUS={status}"));
                 keeper.wait_unsealed()?;
+                // a first start's bootstrap bundle into the seal before the boot reads the datasource password
+                crate::manage_link::dial::after_unseal(request.runtime_dir, request.conf);
                 crate::systemd_notify::notify("STATUS=unsealed");
                 Ok(())
             }

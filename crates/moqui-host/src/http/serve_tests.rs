@@ -128,6 +128,7 @@ async fn listen(label: &str, web: impl FnOnce(Router, ListenLimits) -> WebApp, h
         Some(super::super::Tls {
             acceptor: tokio_rustls::TlsAcceptor::from(Arc::new(config)),
             edge: None,
+            manage: None,
             factory: std::sync::Weak::new(),
         }),
         web,
