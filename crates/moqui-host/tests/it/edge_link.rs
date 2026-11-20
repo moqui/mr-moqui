@@ -499,7 +499,8 @@ fn stranger_up(rt: &tokio::runtime::Runtime, port: u16) -> (u8, String) {
 }
 
 /// SEC-CLU-84: an address past `edge@up-refusals` refused up connections of keys no pairing has is refused before the
-/// look-up, but a paired node's key from the same address still links: a busy source never blocks a paired node.
+/// look-up, but a paired node's key from the same address still links: a busy source never blocks a paired node, also
+/// right after the edge node restarts (its paired keys are read at its start).
 #[test]
 fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
     if !crate::common::own_process() {
@@ -508,7 +509,7 @@ fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
     let certs = certs();
     let port = crate::common::free_port();
     let port_text = port.to_string();
-    let gate = crate::common::start_with_files(
+    let mut gate = crate::common::start_with_files(
         "edge-refusals",
         None,
         &[
@@ -529,6 +530,8 @@ fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
     let paired = rt
         .block_on(pair(&pair_config(&url, &code(&gate), "local-r", &certs)))
         .unwrap();
+    // a restart: what this process paired is gone from memory, the pairing's row is not
+    gate = gate.restart();
     for _ in 0..3 {
         let (answer, message) = stranger_up(&rt, port);
         assert_eq!(answer, 1, "{message}");

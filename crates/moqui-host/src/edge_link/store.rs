@@ -75,6 +75,25 @@ fn run<T>(
     tx.run(attribute, Some(Duration::from_secs(30)), body)
 }
 
+/// The key fingerprints of the active pairings, in one query: what an edge member knows of its paired nodes from its
+/// start, so a source refused often lately never blocks a real node's links after a restart (SEC-CLU-84).
+pub(crate) fn active_keys(factory: &ExecutionContextFactory) -> Result<Vec<String>, Error> {
+    let facade = facade(factory)?;
+    transaction(&facade, CLIENT, || {
+        Ok(facade
+            .find(CLIENT)?
+            .eq("statusId", Value::string(ACTIVE))
+            .select_field("keyFingerprint")
+            .disable_authz()
+            .list()?
+            .values()
+            .iter()
+            .map(|row| text(row.get("keyFingerprint")))
+            .filter(|key| !key.is_empty())
+            .collect())
+    })
+}
+
 /// The paired node of an active key, with its next generation saved: the up connection's identity.
 pub(crate) fn link_up(
     factory: &ExecutionContextFactory,

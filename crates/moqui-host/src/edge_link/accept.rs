@@ -652,6 +652,12 @@ impl EdgeServer {
             admitting: Mutex::new(HashSet::new()),
             links_write: Mutex::new(()),
         });
+        // the active pairings' keys from the start, in one query, so a busy source never blocks a real node's links
+        // right after a restart (SEC-CLU-84); a read that fails is logged and the set fills as nodes pair and link
+        match store::active_keys(factory) {
+            Ok(keys) => keys.iter().for_each(|key| server.note_known_key(key)),
+            Err(err) => tracing::error!("Edge node: the paired keys were not read at start: {err}"),
+        }
         telemetry.observe_gauge("moqui.edgelink.tunnels.active", move || {
             Some(active.load(Ordering::Acquire) as f64)
         });
