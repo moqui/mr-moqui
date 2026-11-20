@@ -280,13 +280,15 @@ pub fn to_string_clean_bom(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// A CSV cell's text that a spreadsheet will not run as a formula: text that starts with `=`, `+`, `-`, `@`, a tab
-/// or a CR, and is not a plain number such as `-12.50` or `+1,234`, gets a leading apostrophe (CSV injection). The
-/// same rule as the screen csv render mode's `$csv` (`ScreenCsv.js`), for a file made for a person to open; a CSV
-/// that is a data format to load back (the entity writers) keeps its text as it is.
+/// A CSV cell's text that a spreadsheet will not run as a formula: text that starts with a tab or a CR, or whose first
+/// character after leading white space is `=`, `+`, `-` or `@` and that is not a plain number such as `-12.50` or
+/// `+1,234`, gets a leading apostrophe (CSV injection). The one rule of every CSV made for a person to open: the screen
+/// csv render mode's `$csv` (`ScreenCsv.js`), the report exports, the data grid; a CSV that is a data format to load
+/// back (the entity writers) keeps its text as it is.
 pub fn csv_formula_guarded(text: &str) -> std::borrow::Cow<'_, str> {
+    let lead = text.trim_start();
     let plain_number = || {
-        let rest = text.strip_prefix(['+', '-']).unwrap_or(text);
+        let rest = lead.strip_prefix(['+', '-']).unwrap_or(lead);
         let (whole, last) = rest.split_once('.').unwrap_or(("", rest));
         let decimal = rest.contains('.');
         whole.bytes().all(|byte| byte.is_ascii_digit() || byte == b',')
@@ -295,7 +297,7 @@ pub fn csv_formula_guarded(text: &str) -> std::borrow::Cow<'_, str> {
                 .all(|byte| byte.is_ascii_digit() || (byte == b',' && !decimal))
             && last.ends_with(|ch: char| ch.is_ascii_digit())
     };
-    if text.starts_with(['=', '+', '-', '@', '\t', '\r']) && !plain_number() {
+    if text.starts_with(['\t', '\r']) || (lead.starts_with(['=', '+', '-', '@']) && !plain_number()) {
         std::borrow::Cow::Owned(format!("'{text}"))
     } else {
         std::borrow::Cow::Borrowed(text)
@@ -315,6 +317,8 @@ mod tests {
             ("-cmd", "'-cmd"),
             ("\t=1", "'\t=1"),
             ("-", "'-"),
+            (" =1+1", "' =1+1"),
+            ("\n@SUM(A1)", "'\n@SUM(A1)"),
             ("-1.", "'-1."),
             ("-12.50", "-12.50"),
             ("+1", "+1"),

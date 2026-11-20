@@ -591,8 +591,9 @@ fn csv_cell(v: &Json) -> String {
     } else {
         v.to_string()
     };
-    let text = if v.is_string() && text.trim_start().starts_with(['=', '+', '-', '@', '\t', '\r']) {
-        format!("'{text}")
+    // a text cell by the one rule of CSV made for a person (SEC-SCR-89); a number is a number
+    let text = if v.is_string() {
+        moqui_lib::string::csv_formula_guarded(&text).into_owned()
     } else {
         text
     };
@@ -1646,7 +1647,8 @@ mod tests {
         assert!(csv.contains("\"<name>\",\"\""));
         assert_eq!(escape("<script>"), "&lt;script&gt;");
         assert_eq!(csv_cell(&json!(-3)), "\"-3\"");
-        assert_eq!(csv_cell(&json!("-3")), "\"'-3\"");
+        assert_eq!(csv_cell(&json!("-3x")), "\"'-3x\"");
+        assert_eq!(csv_cell(&json!(" =1")), "\"' =1\"");
         assert!(frames_empty(&[json!({"fields":[{"name":"value","values":[null]}]})]));
         assert!(!frames_empty(&[json!({"fields":[{"name":"value","values":[0]}]})]));
     }
