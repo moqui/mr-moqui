@@ -743,6 +743,25 @@ fn a_waiting_push_is_dropped_when_its_message_room_or_account_is_gone() {
     assert!(bed.net.take().is_empty(), "the deleted message is not pushed");
 }
 
+/// SEC-COM-92: a user whose terminateDate passed (which no entity ECA sees) gets no push, sent at once or later.
+#[test]
+fn a_user_past_the_terminate_date_is_pushed_nothing() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    update(
+        &bed.facade,
+        "moqui.security.UserAccount",
+        &[("userId", "bob")],
+        &[("terminateDate", crate::user::stamp_value(bed.now - 1_000))],
+    );
+    login("alice");
+    send(&bed.room, "<p>hello</p>", &[]);
+    run(bed.now);
+    let posts = devices(&bed.net.take());
+    assert!(!posts.contains("BOB-PHONE") && !posts.contains("BOB-WEB"), "{posts:?}");
+    assert!(posts.contains("DAVE-UP"), "{posts:?}");
+}
+
 /// Rule 2: the push is after the commit: a message that rolls back pushes nothing.
 #[test]
 fn a_rolled_back_message_pushes_nothing() {

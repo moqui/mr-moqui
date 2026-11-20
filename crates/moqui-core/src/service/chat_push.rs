@@ -912,7 +912,9 @@ fn fan_out_job(
         return Ok(0);
     };
     let recipients = recipients(facade, &room, &event)?;
-    let users: Vec<String> = recipients.keys().cloned().collect();
+    // only users who may still sign in: an account disabled for good, or whose terminateDate passed (which no entity
+    // ECA sees), gets nothing, sent at once or later (SEC-COM-92)
+    let users = signing_in(facade, recipients.keys().cloned().collect(), now)?;
     let devices = if users.is_empty() {
         Vec::new()
     } else {
@@ -1284,18 +1286,33 @@ fn gone_since_queued(
     if !in_room {
         return Ok(Some("left"));
     }
-    let account = facade
-        .find("moqui.security.UserAccount")?
-        .eq("userId", Value::string(user))
-        .disable_authz()
-        .one()?;
-    let signs_in = account.is_some_and(|account| {
-        let disabled =
-            text_of(&account, "disabled").as_deref() == Some("Y") && text_of(&account, "disabledDateTime").is_none();
-        let terminated = millis_of(&account, "terminateDate").is_some_and(|end| end <= now);
-        !disabled && !terminated
-    });
+    let signs_in = !signing_in(facade, vec![user.to_string()], now)?.is_empty();
     Ok((!signs_in).then_some("accountDisabled"))
+}
+
+/// Of `users`, those whose account may sign in at `now`, in one query: not disabled for good (a lockout after failed
+/// logins, which has a disabledDateTime, ends by itself) and not past its terminateDate.
+fn signing_in(facade: &EntityFacade, users: Vec<String>, now: i64) -> Result<Vec<String>, LibError> {
+    if users.is_empty() {
+        return Ok(users);
+    }
+    let accounts = facade
+        .find("moqui.security.UserAccount")?
+        .condition(Condition::is_in("userId", users.iter().map(Value::string).collect()))
+        .disable_authz()
+        .list()?;
+    let may: std::collections::HashSet<String> = accounts
+        .values()
+        .iter()
+        .filter(|account| {
+            let disabled =
+                text_of(account, "disabled").as_deref() == Some("Y") && text_of(account, "disabledDateTime").is_none();
+            let terminated = millis_of(account, "terminateDate").is_some_and(|end| end <= now);
+            !disabled && !terminated
+        })
+        .filter_map(|account| text_of(account, "userId"))
+        .collect();
+    Ok(users.into_iter().filter(|user| may.contains(user)).collect())
 }
 
 /// Whether the device has a newer push of the room than `seq` that the user has not read: one waiting, or one shown
