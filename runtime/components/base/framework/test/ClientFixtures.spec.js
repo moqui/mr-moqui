@@ -8,7 +8,9 @@
 // password login is not tried here) and sec.tap.user (a service tarpit and the setPreference transition), plus the
 // SEC_SMT_TEST system-message remotes. The security proofs (test/proofs) also get sec.pw.proof and sec.pw.long, whose
 // passwords they change, and sec.mfa.proof (two single-use codes) and sec.mfa.burst (one), which they lock with wrong
-// codes, so these are set again on every run. moqui test-client framework --serve runs this spec on
+// codes, so these are set again on every run. The vault spec (test/client/VaultShared) gets sec.vault.a, .b and .c, each
+// with one single-use code, set again on every run, so its REST sign-ins are strong ones (a password and a second
+// factor). moqui test-client framework --serve runs this spec on
 // its server's scratch database; for another server run it on that server's database:
 //     moqui test framework --spec ClientFixtures --db existing
 // Each row is made only when it is missing, so a database kept between runs takes it again. These users are not demo
@@ -40,6 +42,12 @@ const MFA_CODE = "87654321"
 // sec.mfa.proof's two single-use codes (test/proofs/V6Authentication 6.6.3): one signs in, the other is refused once wrong
 // codes have locked the account
 const MFA_PROOF_CODES = { SEC_MFA_PROOF_A: "70316001", SEC_MFA_PROOF_B: "70316002" }
+// the vault spec's users (test/client/VaultShared.spec.js): username, password, factor and single-use code
+const VAULT_USERS = [
+    ["sec.vault.a", "SecVaultA1!!", "SEC_VAULT_A", "70318001"],
+    ["sec.vault.b", "SecVaultB1!!", "SEC_VAULT_B", "70318002"],
+    ["sec.vault.c", "SecVaultC1!!", "SEC_VAULT_C", "70318003"],
+]
 // AT_SERVICE push name is the service's own name. The transition frame for POST /apps/setPreference is
 // "{screen.location}/{transition}" (screen/render.rs), this location, not the "location#name" artifact-hit name.
 const TAP_SVC = "org.moqui.impl.UserServices.set#Preference"
@@ -193,6 +201,12 @@ spec({
             const mfaBurstId = ensureUser({ username: "sec.mfa.burst", password: "SecMfaBurst1!!", group: "SEC_NONE_GROUP" })
             ensureMfa(mfaBurstId, "SEC_MFA_BURST", "70316003")
             updateAccount({ userId: mfaBurstId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
+            // the vault spec signs each in with the password and its code: the code comes back on every run
+            for (const [username, password, factorId, code] of VAULT_USERS) {
+                const vaultUserId = ensureUser({ username, password, group: "SEC_NONE_GROUP" })
+                ensureMfa(vaultUserId, factorId, code)
+                updateAccount({ userId: vaultUserId, disabled: "N", successiveFailedLogins: 0, disabledDateTime: null })
+            }
 
             ensure("moqui.service.message.SystemMessageType", { systemMessageTypeId: "SEC_SMT_TEST" },
                 { description: "Security test message type" })

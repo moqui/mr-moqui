@@ -155,7 +155,7 @@ the user services call.
 | `endVisit(visitId)` | Ends another session of the signed-in user; how many web sessions ended. An error for the current visit or another user's |
 | `getClientIp()` | The request's client address; empty outside a request |
 | `loginUser(username, password)` | Whether the user is logged in. A failure adds its message to `ec.message` and returns false; false with no message when a second factor is still needed |
-| `internalLoginUser(username)` | Logs the user in without a password; a failure is a message and false. A job's login borrows the account: it leaves `UserAccount.hasLoggedOut` as it is (a person's sign-in, a second factor's code, clears it) |
+| `internalLoginUser(username, secondFactorVerified)` | Logs the user in without a password; a failure is a message and false. A job's login borrows the account: it leaves `UserAccount.hasLoggedOut` as it is (a person's sign-in, a second factor's code, clears it). `secondFactorVerified` true, from a screen that has just verified the second factor's code of a sign-in whose password this session checked, makes it a strong sign-in (the vault's wrapped key needs one) |
 | `loginUserKey(loginKey)` | Whether the login key logged its user in; a key that does not adds an error message |
 | `loginAnonymousIfNoUser()` | With nobody logged in the session becomes anonymous; whether this call did that |
 | `logoutUser()` | Logs out; true unless it failed. It marks the account `hasLoggedOut`, which ends its sessions in every browser |

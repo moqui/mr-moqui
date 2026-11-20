@@ -7,19 +7,19 @@
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
      Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Board               │ ┌─ All enumerations ───┐ ┌─ Screen Theme Resour─┐
-     Calendar            │ │ 579                  │ │ 35                   │
+     Calendar            │ │ 624                  │ │ 35                   │
      Split               │ └──────────────────────┘ └──────────────────────┘
-     Settings            │                          ┌─ DB Form Field Type ─┐
-     Wizard              │                          │ 20                   │
+     Settings            │                          ┌─ Vault event ────────┐
+     Wizard              │                          │ 25                   │
      Dialog              │                          └──────────────────────┘
-     Report              │                          ┌─ UOM Type ───────────┐
-     Panel               │                          │ 16                   │
+     Report              │                          ┌─ DB Form Field Type ─┐
+     Panel               │                          │ 20                   │
      Widgets             │                          └──────────────────────┘
-     Editor              │                          ┌─ Entity Comparison O─┐
-     Message             │                          │ 14                   │
+     Editor              │                          ┌─ UOM Type ───────────┐
+     Message             │                          │ 16                   │
      Views               │                          └──────────────────────┘
-     Handheld            │                          ┌─ Call End Reason ────┐
-     Nav cards           │                          │ 13                   │
+     Handheld            │                          ┌─ Entity Comparison O─┐
+     Nav cards           │                          │ 14                   │
  ◂ Home                  │                          └──────────────────────┘
                          │ ┌─ Assigned to me ─────────────────────────────────────────────────────────────────────┐ ┌─ Shortcuts ────────────────────────────────────────────────┐
                          │ │ All enumerations                                                                     │ │ New enumeration  Find enumerations  Theme type detail      │
@@ -28,21 +28,21 @@
                          │ │   Approve Made Up                       Example Type                   Yesterday     │ ┌─ Enumerations by type ─────────────────────────────────────┐
                          │ │   Retire Real World                     Example Type                   Fri           │ │                           Enumerations                     │
                          │ │   Check QZ Print Enabled (true/false)   User Preference Key (optional) Mon           │ │ Screen Theme Resource T…            35  ██████████████████ │
-                         │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ DB Form Field Type                  20  ██████████         │
-                         │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ UOM Type                            16  ████████           │
-                         │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ Entity Comparison Opera…            14  ███████            │
-                         │ ┌─ Changed last ───────────────────────────────────────────────────────────────────────┐ │ Call End Reason                     13  ███████            │
-                         │ │ All enumerations                                                                     │ │ Chat Bridge Type                    13  ███████            │
-                         │ │   Contrived                      Example Type                   <today> hh:mm     │ │ Geo Type                            13  ███████            │
-                         │ │   Inspired                       Example Type                   <today> hh:mm     │ │ OpenID Connect JWS Algo…            13  ███████            │
+                         │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ Vault event                         25  █████████████      │
+                         │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ DB Form Field Type                  20  ██████████         │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ UOM Type                            16  ████████           │
+                         │ ┌─ Changed last ───────────────────────────────────────────────────────────────────────┐ │ Entity Comparison Opera…            14  ███████            │
+                         │ │ All enumerations                                                                     │ │ Call End Reason                     13  ███████            │
+                         │ │   Contrived                      Example Type                   <today> hh:mm     │ │ Chat Bridge Type                    13  ███████            │
+                         │ │   Inspired                       Example Type                   <today> hh:mm     │ │ Geo Type                            13  ███████            │
                          │ │   Made Up                        Example Type                   <today> hh:mm     │ │ One series, one brand color; the table behind it is the    │
                          │ │   Real World                     Example Type                   <today> hh:mm     │ │ List screen.                                               │
                          │ │   QZ Print Enabled (true/false)  User Preference Key (optional) <today> hh:mm     │ └────────────────────────────────────────────────────────────┘
                          │ │   QZ Active Label Printer Name   User Preference Key (optional) <today> hh:mm     │
                          │ │   QZ Active Main Printer Name    User Preference Key (optional) <today> hh:mm     │
                          │ │   Internal Applications - Quasar Screen Theme Type              <today> hh:mm     │
-                         │ │   Business setup                 Admin Health group             <today> hh:mm     │
-                         │ │   Identity                       Admin Health group             <today> hh:mm     │
+                         │ │   Delivery filed                 Vault event                    <today> hh:mm     │
+                         │ │   Delivery sent                  Vault event                    <today> hh:mm     │
                          │ │   Rows 1–10 of 10 · Page 1/1                                                         │
                          │ └──────────────────────────────────────────────────────────────────────────────────────┘
 ─────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

@@ -1682,6 +1682,7 @@ pub struct Identity {
     factor_required: Option<Json>,
     /// The recent sign-in stamps (`login.rs`), so a local login does not take or drop the session user's.
     last_auth: Option<Json>,
+    last_strong_auth: Option<Json>,
     reauth_password: Option<Json>,
     login_key_kind: Option<super::login::LoginKeyKind>,
     device_key: Option<String>,
@@ -1699,6 +1700,7 @@ pub fn identity() -> Identity {
         pre_authc: session.attributes.get(super::login::PRE_AUTHC_USERNAME).cloned(),
         factor_required: session.attributes.get(super::login::AUTHC_FACTOR_REQUIRED).cloned(),
         last_auth: session.attributes.get(super::login::LAST_AUTH).cloned(),
+        last_strong_auth: session.attributes.get(super::login::LAST_STRONG_AUTH).cloned(),
         reauth_password: session.attributes.get(super::login::REAUTH_PASSWORD).cloned(),
         login_key_kind: session.login_key_kind,
         device_key: session.device_key.clone(),
@@ -1724,6 +1726,7 @@ pub fn restore_identity(identity: &Identity) {
             (super::login::PRE_AUTHC_USERNAME, &identity.pre_authc),
             (super::login::AUTHC_FACTOR_REQUIRED, &identity.factor_required),
             (super::login::LAST_AUTH, &identity.last_auth),
+            (super::login::LAST_STRONG_AUTH, &identity.last_strong_auth),
             (super::login::REAUTH_PASSWORD, &identity.reauth_password),
         ] {
             match value {

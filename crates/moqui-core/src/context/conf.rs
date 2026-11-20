@@ -473,6 +473,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         // attested deploys and the gate (docs/tools/Component-Deploy.md): a runtime conf's allow entries replace the
         // default's (none)
         "component-deploy",
+        // vaults (plans/Vault-Instances.md §3)
+        "vault",
     ] {
         base.merge_single_child(over, name);
     }

@@ -47,9 +47,18 @@ fn a_key_check_is_signed_and_covers_only_the_key_checked() {
     let mut rng = TestRng::new("fingerprint-check");
     let alice = PersonalKey::generate(&mut rng);
     let bob = PersonalKey::generate(&mut rng).public();
-    let check = KeyCheck::of_personal("alice", "pk-a", &alice, "pk-b", &bob, 1_700_000_000_000);
+    let check = KeyCheck::of_personal("alice", "pk-a", &alice, "bob", "pk-b", &bob, 1_700_000_000_000);
     let alice_verify = alice.public().verify;
     assert!(check.covers_personal(&alice_verify, &bob).is_ok());
+    // it is Bob's key: a check of it compared with Bob does not vouch for it as Carol's
+    assert!(require_checked(std::slice::from_ref(&check), &alice_verify, "bob", &bob).is_ok());
+    assert!(require_checked(std::slice::from_ref(&check), &alice_verify, "carol", &bob).is_err());
+    let mut relabelled = check.clone();
+    relabelled.checked_user_id = "carol".to_string();
+    assert_eq!(
+        relabelled.covers_personal(&alice_verify, &bob).unwrap_err(),
+        Error::Signature
+    );
 
     // Bob's key changed: checked again before anything is wrapped to it.
     let new_bob = PersonalKey::generate(&mut rng).public();
@@ -77,6 +86,8 @@ fn a_lease_key_check_covers_only_that_lease_key() {
     let check = KeyCheck::of_lease_key("alice", "pk-a", &alice, &lease, 1);
     let alice_verify = alice.public().verify;
     assert!(check.covers_lease_key(&alice_verify, &lease).is_ok());
+    // a lease-key check covers no personal key
+    assert!(check.covers_personal(&alice_verify, &alice.public()).is_err());
     let changed = SigningKey::random(&mut rng).verifying_key();
     assert!(matches!(
         check.covers_lease_key(&alice_verify, &changed),

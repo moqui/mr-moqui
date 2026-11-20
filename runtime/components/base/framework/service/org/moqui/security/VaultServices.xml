@@ -1,0 +1,337 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Vaults (plans/Vault-Instances.md §3, docs/security/Vaults.md; framework/entity/VaultEntities.xml). The server stores and
+    serves what a client made with the vault crate: public keys, signed records and ciphertext. It never decrypts a
+    personal item or holds a vault key; what it can check it checks (a key version signed by a manager of the version
+    before, a wrap by a manager of its version, a key check and a delivery by their maker's active key, a member's key
+    checked by the signer before anything is wrapped to it), and a client checks it all again.
+
+    Records cross in the vault crate's JSON shapes (crates/moqui-vault ops_json.rs: snake_case fields, bytes as hex), so a
+    client hands the server's answer to its vault module as it came. Each service checks its caller itself (a member's
+    role, a delivery's recipient, a personal key's own user); VaultTypeData.xml grants the services and their REST paths
+    (/rest/s1/vault, framework/service/vault.rest.xml) to every signed-in user. The bodies are Rust
+    (crates/moqui-vault-server); a binary without the vault feature reports that vault is not built in. No Java
+    counterpart. -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- Personal keys and key checks (§3.5) -->
+
+    <service verb="setup" noun="PersonalKey" type="rust" location="moqui_vault_server::personal::setup_personal_key">
+        <description>The caller's first personal key, made in their client: both public halves (public, the vault crate's
+            64 bytes as hex), the private halves wrapped by the key passphrase (passphraseWrap, refused under the Argon2id
+            floor or over its ceiling) and by the recovery code (recoveryWrap). personalKeyId is the client's (it is bound
+            into the wraps). Needs a strong, recent sign-in as get#WrappedPersonalKey does, so a weak session or a key
+            cannot plant a key for a user who has none. Refused when the caller has an active key (replace#PersonalKey). A
+            taken id, or one a deleted record had, is "not available". An event.</description>
+        <in-parameters>
+            <parameter name="personalKeyId" required="true"/>
+            <parameter name="public" required="true"/>
+            <parameter name="passphraseWrap" type="Map" required="true"/>
+            <parameter name="recoveryWrap" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="personalKeyId"/>
+            <parameter name="fingerprint"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="PersonalKey" type="rust" location="moqui_vault_server::personal::get_personal_key">
+        <description>The caller's active personal key: its public halves and fingerprint, never a wrap; and whether
+            get#WrappedPersonalKey would send its wraps now (fetchAllowed); the caller's userId, which their client signs
+            as.</description>
+        <out-parameters>
+            <parameter name="hasKey" type="Boolean"/>
+            <parameter name="userId"/>
+            <parameter name="personalKeyId"/>
+            <parameter name="public"/>
+            <parameter name="fingerprint"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="fetchAllowed" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="WrappedPersonalKey" type="rust" location="moqui_vault_server::personal::get_wrapped_personal_key">
+        <description>The caller's own wrapped personal key (the passphrase wrap and the recovery code's wrap), only after a
+            strong sign-in in the last vault@key-fetch-max-age seconds: a password and a second factor, SSO, or a paired
+            device's key with a recent sign-in on it; never an app password or a login, API or scoped key, never a password
+            alone (plans/Vault-Instances.md §9). Refused otherwise, saying to set up a second factor (reasonCode
+            strongAuthNeedsFactor) or to confirm it is you (strongAuthRequired). An event.</description>
+        <out-parameters>
+            <parameter name="hasKey" type="Boolean"/>
+            <parameter name="userId"/>
+            <parameter name="personalKeyId"/>
+            <parameter name="public"/>
+            <parameter name="fingerprint"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="passphraseWrap" type="Map"/>
+            <parameter name="recoveryWrap"/>
+        </out-parameters>
+    </service>
+    <service verb="rewrap" noun="PersonalKey" type="rust" location="moqui_vault_server::personal::rewrap_personal_key">
+        <description>A new key passphrase: the caller's active key's new passphrase wrap (and, when given, a new recovery
+            code's wrap), after a strong, recent sign-in as for get#WrappedPersonalKey. An event.</description>
+        <in-parameters>
+            <parameter name="personalKeyId" required="true"/>
+            <parameter name="passphraseWrap" type="Map" required="true"/>
+            <parameter name="recoveryWrap"/>
+        </in-parameters>
+        <out-parameters><parameter name="personalKeyId"/></out-parameters>
+    </service>
+    <service verb="replace" noun="PersonalKey" type="rust" location="moqui_vault_server::personal::replace_personal_key">
+        <description>A new personal key in place of the caller's active one (the passphrase and the recovery code both
+            lost), after a strong, recent sign-in. The old key is marked replaced; nothing is wrapped to the new key until a
+            member, or the recovery key, has checked its fingerprint (add#VaultMember). An event.</description>
+        <in-parameters>
+            <parameter name="personalKeyId" required="true"/>
+            <parameter name="public" required="true"/>
+            <parameter name="passphraseWrap" type="Map" required="true"/>
+            <parameter name="recoveryWrap" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="personalKeyId"/>
+            <parameter name="fingerprint"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="UserPublicKey" type="rust" location="moqui_vault_server::personal::get_user_public_key">
+        <description>Another user's active personal key, by userId or username: its public halves and fingerprint, to
+            compare by another channel before adding them as a member or sending them a delivery.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="username"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="userId"/>
+            <parameter name="hasKey" type="Boolean"/>
+            <parameter name="personalKeyId"/>
+            <parameter name="public"/>
+            <parameter name="fingerprint"/>
+            <parameter name="fromDate" type="Timestamp"/>
+        </out-parameters>
+    </service>
+    <service verb="store" noun="KeyCheck" type="rust" location="moqui_vault_server::personal::store_key_check">
+        <description>A key check the caller made after comparing a fingerprint (check, the vault crate's shape), signed by
+            their own active key, of a personal key as it is stored (both halves) or of the lease key. Refused otherwise. A
+            later check of the same key by the same key replaces the earlier.</description>
+        <in-parameters><parameter name="check" type="Map" required="true"/></in-parameters>
+        <out-parameters><parameter name="keyCheckId"/></out-parameters>
+    </service>
+    <service verb="list" noun="KeyChecks" type="rust" location="moqui_vault_server::personal::list_key_checks">
+        <description>The caller's own key checks, in the vault crate's shape (with keyCheckId), for their client to verify
+            with its own key and use; optionally those of one checked key.</description>
+        <in-parameters><parameter name="checkedKeyId"/></in-parameters>
+        <out-parameters><parameter name="keyCheckList" type="List"/></out-parameters>
+    </service>
+
+    <!-- Vaults (§3.1, §3.10, §3.11) -->
+
+    <service verb="create" noun="Vault" type="rust" location="moqui_vault_server::vaults::create_vault">
+        <description>A vault. vaultId is the client's (it is bound into the wraps). Single-secret (lockEnumId
+            VlSingleSecret): personal only, its vault key wrapped by the password or generated key (secretKindEnumId,
+            secretWrap); a member list or recovery is refused. Shared-key (VlSharedKey): the first key version (entry, 1.1,
+            signed by the caller with their active key as a manager in it) and a wrap of the vault key to every member it
+            lists (memberWraps, signed by a manager), each member's active key checked by the caller (store#KeyCheck). A
+            personal vault's name goes in headerCipher (sealed) and never in vaultName; an operational vault
+            (VkOperational) needs VAULT_ADMIN, has its vaultName, and keeps recovery on (its default; off for a personal
+            vault) or at least two members. An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="vaultKindEnumId" required="true"/>
+            <parameter name="lockEnumId" required="true"/>
+            <parameter name="vaultName"/>
+            <parameter name="headerCipher"/>
+            <parameter name="recoveryOn"/>
+            <parameter name="secretKindEnumId"/>
+            <parameter name="secretWrap" type="Map"/>
+            <parameter name="entry" type="Map"/>
+            <parameter name="memberWraps" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="vaultId"/>
+            <parameter name="revision" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="Vaults" type="rust" location="moqui_vault_server::vaults::list_vaults">
+        <description>The vaults the caller is a member of (their role), and their single-secret vaults: kind, lock, key
+            version, revision, item count, an operational vault's name and a personal vault's sealed header.</description>
+        <out-parameters><parameter name="vaultList" type="List"/></out-parameters>
+    </service>
+    <service verb="get" noun="Vault" type="rust" location="moqui_vault_server::vaults::get_vault">
+        <description>To a member (or a single-secret vault's owner): the vault, its member-list chain (entries, oldest
+            first, in the vault crate's shape), its current members and roles, the caller's own wraps of every key version
+            they hold (wraps), and a single-secret vault's wrapped key (secretWrap). Anyone else is told there is no such
+            vault.</description>
+        <in-parameters><parameter name="vaultId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="vault" type="Map"/>
+            <parameter name="entries" type="List"/>
+            <parameter name="memberList" type="List"/>
+            <parameter name="wraps" type="List"/>
+            <parameter name="secretWrap" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="delete" noun="Vault" type="rust" location="moqui_vault_server::vaults::delete_vault">
+        <description>A manager (or a single-secret vault's owner) deletes the vault with its items, their history, its
+            members, key versions and recovery wraps, after a recent sign-in (require#RecentAuth's rule); an operational
+            vault also needs VAULT_ADMIN. Its events stay, and its id is never given to another vault. An
+            event.</description>
+        <in-parameters><parameter name="vaultId" required="true"/></in-parameters>
+        <out-parameters><parameter name="vaultId"/></out-parameters>
+    </service>
+
+    <!-- Items (§3.2 to §3.4) -->
+
+    <service verb="create" noun="VaultItem" type="rust" location="moqui_vault_server::items::create_vault_item">
+        <description>An item, by a member who may write (manage or write in a personal vault, manage in an operational
+            one; a single-secret vault's owner): its item key wrapped by the vault key and its sealed body, at the vault's
+            current keyVersion (another version is refused). vaultItemId is the client's. A personal vault's item gives no
+            type, binding or name (they are in its body); an operational item gives all three, the binding unique in its
+            vault. At most 64 KiB. An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="vaultItemId" required="true"/>
+            <parameter name="keyVersion" type="Long" required="true"/>
+            <parameter name="wrappedItemKey" required="true"/>
+            <parameter name="bodyCipher" required="true"/>
+            <parameter name="vaultItemTypeId"/>
+            <parameter name="bindingKey"/>
+            <parameter name="itemName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="vaultItemId"/>
+            <parameter name="revision" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="update" noun="VaultItem" type="rust" location="moqui_vault_server::items::update_vault_item">
+        <description>A new revision of an item, naming the revision it was made from (expectedRevision; a stale one is
+            refused), at the vault's current keyVersion (after a removal, a write at the old version is refused). The
+            revision before is kept in VaultItemHistory. An operational item keeps its type, binding and name unless all
+            three are given, a new binding free in the vault. Every item write moves the vault's revision, so a removal
+            made from an earlier read is refused. An event.</description>
+        <in-parameters>
+            <parameter name="vaultItemId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="keyVersion" type="Long" required="true"/>
+            <parameter name="wrappedItemKey" required="true"/>
+            <parameter name="bodyCipher" required="true"/>
+            <parameter name="vaultItemTypeId"/>
+            <parameter name="bindingKey"/>
+            <parameter name="itemName"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
+    <service verb="list" noun="VaultItems" type="rust" location="moqui_vault_server::items::list_vault_items">
+        <description>A vault's items, to a member: each wrapped item key, its key version and revision, and a personal
+            item's sealed body; an operational item's type, binding and name, and no body (a reveal is by role,
+            V2).</description>
+        <in-parameters><parameter name="vaultId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="itemList" type="List"/>
+            <parameter name="keyVersion" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="VaultItemHistory" type="rust" location="moqui_vault_server::items::list_vault_item_history">
+        <description>An item's earlier revisions, newest first, to a member of its vault.</description>
+        <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
+        <out-parameters><parameter name="historyList" type="List"/></out-parameters>
+    </service>
+    <service verb="delete" noun="VaultItem" type="rust" location="moqui_vault_server::items::delete_vault_item">
+        <description>An item and its history, by a member who may write, after a recent sign-in. An event.</description>
+        <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
+        <out-parameters><parameter name="vaultItemId"/></out-parameters>
+    </service>
+
+    <!-- Members and key versions (§3.9) -->
+
+    <service verb="add" noun="VaultMember" type="rust" location="moqui_vault_server::members::add_vault_member">
+        <description>A manager adds a member, or changes one member's role or personal key: the next revision of the member
+            list at the same key version (entry, signed by the caller with their active key) and the wrap of the current
+            vault key to that member (wrap), both accepted by the vault's chain. The member's key is their active one and
+            the caller has a stored check of it: nothing is wrapped to a new or changed key before its fingerprint is
+            checked. The change names the vault revision it was made from (expectedRevision). An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="entry" type="Map" required="true"/>
+            <parameter name="wrap" type="Map" required="true"/>
+            <parameter name="rewraps" type="List"><description>When the change demotes a manager or changes a manager's
+                key: a new wrap, by a manager of the new list, for each member whose wrap of this key version that manager
+                signed; the change is refused without them.</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
+    <service verb="remove" noun="VaultMember" type="rust" location="moqui_vault_server::members::remove_vault_member">
+        <description>A manager removes another member (userId) and rotates the vault key, all in one transaction that names
+            the vault revision it was made from (expectedRevision): revision 1 of the next key version without the member
+            (entry), every item key rewrapped under it (itemKeys: item_id, wrapped_item_key), every remaining member's wrap
+            remade (memberWraps). The removed member's wraps are deleted, and a write at the old version is refused from
+            then on; the others' earlier wraps stay until they open the new version (ack#VaultKeyVersion). A vault keeps a
+            manager, and an operational vault recovery on or two members. Two events: the removal and the
+            rotation.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="userId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="entry" type="Map" required="true"/>
+            <parameter name="itemKeys" type="List" required="true"/>
+            <parameter name="memberWraps" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="keyVersion" type="Long"/>
+            <parameter name="revision" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="ack" noun="VaultKeyVersion" type="rust" location="moqui_vault_server::members::ack_vault_key_version">
+        <description>The caller opened keyVersion of the vault key: their wraps of earlier versions are deleted. An
+            event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="keyVersion" type="Long" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="dropped" type="Long"/></out-parameters>
+    </service>
+
+    <!-- Deliveries (§3.3) -->
+
+    <service verb="send" noun="VaultDelivery" type="rust" location="moqui_vault_server::deliveries::send_vault_delivery">
+        <description>A delivery the caller sealed to a user's active personal key and signed with their own active key
+            (delivery, the vault crate's shape; its delivery_id is the client's). Refused when the signature is not the
+            caller's, or the key is not the recipient's active one. An event.</description>
+        <in-parameters><parameter name="delivery" type="Map" required="true"/></in-parameters>
+        <out-parameters><parameter name="deliveryId"/></out-parameters>
+    </service>
+    <service verb="list" noun="IncomingDeliveries" type="rust" location="moqui_vault_server::deliveries::list_incoming_deliveries">
+        <description>The caller's deliveries (not yet filed, unless includeFiled), each with the sender key's public halves,
+            which the client checks against a key its user checked before it opens the value. Only the recipient lists
+            a delivery.</description>
+        <in-parameters><parameter name="includeFiled" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="deliveryList" type="List"/></out-parameters>
+    </service>
+    <service verb="file" noun="VaultDelivery" type="rust" location="moqui_vault_server::deliveries::file_vault_delivery">
+        <description>The recipient filed a delivery's value into a vault in their client. Only the recipient. An
+            event.</description>
+        <in-parameters><parameter name="deliveryId" required="true"/></in-parameters>
+        <out-parameters><parameter name="deliveryId"/></out-parameters>
+    </service>
+
+    <!-- Events (§3.13) -->
+
+    <service verb="list" noun="VaultEvents" type="rust" location="moqui_vault_server::events::list_vault_events">
+        <description>A vault's events, newest first, to a member of it; with no vaultId, the events the caller made or that
+            were about them.</description>
+        <in-parameters>
+            <parameter name="vaultId"/>
+            <parameter name="limit" type="Integer" default="200"/>
+        </in-parameters>
+        <out-parameters><parameter name="eventList" type="List"/></out-parameters>
+    </service>
+</services>

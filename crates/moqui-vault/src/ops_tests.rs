@@ -37,7 +37,10 @@ fn make(session: &mut Session, rng: &mut TestRng, user: &str) -> Value {
 fn check(session: &mut Session, rng: &mut TestRng, key_id: &str, public: &Value) -> Value {
     let fingerprint =
         call(session, rng, json!({ "op": "fingerprint", "public": public })).unwrap()["fingerprint"].clone();
-    let request = json!({ "op": "key_check_make", "checked_key_id": key_id, "checked_public": public, "fingerprint": fingerprint, "checked_at": 1 });
+    // the tests' key ids are pk-<user>
+    let user = key_id.strip_prefix("pk-").unwrap_or(key_id);
+    let request = json!({ "op": "key_check_make", "checked_key_id": key_id, "checked_user_id": user, "checked_public": public,
+                          "fingerprint": fingerprint, "checked_at": 1 });
     call(session, rng, request).unwrap()
 }
 
@@ -175,7 +178,7 @@ fn nothing_is_wrapped_to_an_unchecked_key_and_a_check_needs_the_right_fingerprin
     assert!(call(&mut s.alice, &mut rng, wrap)
         .unwrap_err()
         .contains("not been checked"));
-    let wrong = json!({ "op": "key_check_make", "checked_key_id": "pk-carol", "checked_public": carol_made["public"],
+    let wrong = json!({ "op": "key_check_make", "checked_key_id": "pk-carol", "checked_user_id": "carol", "checked_public": carol_made["public"],
                         "fingerprint": s.bob_made["fingerprint"], "checked_at": 1 });
     assert!(call(&mut s.alice, &mut rng, wrong).unwrap_err().contains("fingerprint"));
     // There is no call that signs arbitrary bytes.
@@ -426,4 +429,65 @@ fn verify_and_bad_requests() {
     assert!(call(&mut session, &mut rng, json!({})).is_err());
     let answer: Value = serde_json::from_str(&session.call("not json", &mut rng)).unwrap();
     assert_eq!(answer["ok"], json!(false));
+}
+
+#[test]
+fn a_delivery_opens_only_for_its_recipient_under_a_checked_sender_and_once() {
+    let mut rng = TestRng::new("ops-delivery");
+    let mut s = shared(&mut rng);
+    let alice_checks_bob = check(&mut s.alice, &mut rng, "pk-bob", &s.bob_made["public"]);
+    let send = json!({
+        "op": "delivery_send", "delivery_id": "d1", "to_user_id": "bob", "to_key_id": "pk-bob",
+        "to_public": s.bob_made["public"], "purpose": "item", "value": "{\"v\":1}", "key_checks": [alice_checks_bob],
+    });
+    let sent = call(&mut s.alice, &mut rng, send.clone()).unwrap();
+    assert_eq!(sent["sender_id"], json!("alice"));
+    // nothing is sealed to a key the sender has not checked
+    let mut unchecked = send;
+    unchecked["key_checks"] = json!([]);
+    assert!(call(&mut s.alice, &mut rng, unchecked).unwrap_err().contains("checked"));
+
+    let open = json!({ "op": "delivery_open", "delivery": sent, "sender_public": s.alice_made["public"],
+                       "key_checks": [s.bob_checks_alice] });
+    // a sender key Bob has not checked, and a changed signature, are refused
+    let mut no_check = open.clone();
+    no_check["key_checks"] = json!([]);
+    assert!(call(&mut s.bob, &mut rng, no_check).unwrap_err().contains("checked"));
+    let mut forged = open.clone();
+    let mut signature = forged["delivery"]["signature"].as_str().unwrap().to_string();
+    let flipped = if signature.starts_with('0') { "1" } else { "0" };
+    signature.replace_range(0..1, flipped);
+    forged["delivery"]["signature"] = json!(signature);
+    assert!(call(&mut s.bob, &mut rng, forged).unwrap_err().contains("signature"));
+    // the recipient opens it once; a repeat is refused, and Alice cannot open what is sealed to Bob
+    let opened = call(&mut s.bob, &mut rng, open.clone()).unwrap();
+    assert_eq!(opened["value"], json!("{\"v\":1}"));
+    assert!(call(&mut s.bob, &mut rng, open.clone())
+        .unwrap_err()
+        .contains("already"));
+    assert!(call(&mut s.alice, &mut rng, open).unwrap_err().contains("someone else"));
+}
+
+#[test]
+fn a_new_passphrase_rewraps_the_open_key() {
+    let mut rng = TestRng::new("ops-rewrap");
+    let mut session = Session::default();
+    let made = make(&mut session, &mut rng, "alice");
+    let rewrapped = call(
+        &mut session,
+        &mut rng,
+        json!({ "op": "personal_rewrap", "passphrase": "new phrase" }),
+    )
+    .unwrap();
+    let open = |phrase: &str| {
+        json!({ "op": "personal_open", "personal_key_id": "pk-alice", "user_id": "alice", "public": made["public"],
+                "passphrase_wrap": rewrapped["passphrase_wrap"], "passphrase": phrase })
+    };
+    let opened = call(&mut Session::default(), &mut rng, open("new phrase")).unwrap();
+    assert_eq!(opened["public"], made["public"]);
+    assert!(call(&mut Session::default(), &mut rng, open("pass phrase")).is_err());
+    let locked = json!({ "op": "personal_rewrap", "passphrase": "x" });
+    assert!(call(&mut Session::default(), &mut rng, locked)
+        .unwrap_err()
+        .contains("locked"));
 }

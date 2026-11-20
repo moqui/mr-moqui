@@ -60,13 +60,17 @@ pub fn lease_key(key: &VerifyingKey) -> String {
 }
 
 /// A checked key, as `VaultKeyCheck` stores it: who checked, with which personal key, which key (a personal key
-/// with both its public halves, or the lease key, whose `checked_encrypt` is empty), when, and their signature.
+/// with both its public halves and the user whose key the checker compared it with, or the lease key, whose
+/// `checked_encrypt` and `checked_user_id` are empty), when, and their signature. A check binds a key to a person: a
+/// client relies on it only for that user's key ([`require_checked`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyCheck {
     pub checker_user_id: String,
     pub checker_key_id: String,
     /// A `personalKeyId`, or `lease-key`.
     pub checked_key_id: String,
+    /// The user whose personal key it is; empty for the lease key.
+    pub checked_user_id: String,
     pub checked_encrypt: Vec<u8>,
     pub checked_verify: Vec<u8>,
     /// Milliseconds since the epoch.
@@ -80,17 +84,19 @@ impl KeyCheck {
             self.checker_user_id.as_bytes().to_vec(),
             self.checker_key_id.as_bytes().to_vec(),
             self.checked_key_id.as_bytes().to_vec(),
+            self.checked_user_id.as_bytes().to_vec(),
             self.checked_encrypt.clone(),
             self.checked_verify.clone(),
             self.checked_at.to_be_bytes().to_vec(),
         ]
     }
 
-    /// Records a check of a personal key.
+    /// Records a check of `checked_user_id`'s personal key.
     pub fn of_personal(
         checker_user_id: &str,
         checker_key_id: &str,
         checker: &PersonalKey,
+        checked_user_id: &str,
         checked_key_id: &str,
         checked: &PersonalPublic,
         checked_at: i64,
@@ -99,7 +105,7 @@ impl KeyCheck {
             checker_user_id,
             checker_key_id,
             checker,
-            checked_key_id,
+            (checked_user_id, checked_key_id),
             checked.encrypt.as_bytes().to_vec(),
             checked.verify.as_bytes().to_vec(),
             checked_at,
@@ -118,7 +124,7 @@ impl KeyCheck {
             checker_user_id,
             checker_key_id,
             checker,
-            "lease-key",
+            ("", "lease-key"),
             Vec::new(),
             lease_key.as_bytes().to_vec(),
             checked_at,
@@ -129,7 +135,7 @@ impl KeyCheck {
         checker_user_id: &str,
         checker_key_id: &str,
         checker: &PersonalKey,
-        checked_key_id: &str,
+        (checked_user_id, checked_key_id): (&str, &str),
         checked_encrypt: Vec<u8>,
         checked_verify: Vec<u8>,
         checked_at: i64,
@@ -138,6 +144,7 @@ impl KeyCheck {
             checker_user_id: checker_user_id.to_string(),
             checker_key_id: checker_key_id.to_string(),
             checked_key_id: checked_key_id.to_string(),
+            checked_user_id: checked_user_id.to_string(),
             checked_encrypt,
             checked_verify,
             checked_at,
@@ -152,8 +159,12 @@ impl KeyCheck {
 
     /// The client's check of a stored row with the checker's own key; then whether it covers `public`, the key it
     /// is about to rely on. A check is for one key: a changed key is checked again (§3.5).
+    /// A lease-key check never covers a personal key.
     pub fn covers_personal(&self, checker: &VerifyingKey, public: &PersonalPublic) -> Result<(), Error> {
         checker.verify(Statement::KeyCheck, &refs(&self.signed_parts()), &self.signature)?;
+        if self.checked_key_id == "lease-key" {
+            return Err(Error::Refused("a lease-key check covers no personal key"));
+        }
         if self.checked_encrypt != public.encrypt.as_bytes() || self.checked_verify != public.verify.as_bytes() {
             return Err(Error::Refused("the key changed since it was checked"));
         }
@@ -177,12 +188,18 @@ impl KeyCheck {
     }
 }
 
-/// Whether any of `checks`, signed by `checker`, covers `public`: nothing is wrapped to a personal key, or trusted
-/// as one, before this holds (§3.5).
-pub fn require_checked(checks: &[KeyCheck], checker: &VerifyingKey, public: &PersonalPublic) -> Result<(), Error> {
+/// Whether any of `checks`, signed by `checker`, covers `public` as `user_id`'s key: nothing is wrapped to a personal
+/// key, or trusted as someone's, before this holds (§3.5). A check of the same key compared with another user does
+/// not count, so a server cannot relabel a checked key as someone else's.
+pub fn require_checked(
+    checks: &[KeyCheck],
+    checker: &VerifyingKey,
+    user_id: &str,
+    public: &PersonalPublic,
+) -> Result<(), Error> {
     if checks
         .iter()
-        .any(|check| check.covers_personal(checker, public).is_ok())
+        .any(|check| check.checked_user_id == user_id && check.covers_personal(checker, public).is_ok())
     {
         Ok(())
     } else {

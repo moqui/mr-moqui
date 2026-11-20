@@ -434,6 +434,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastAuthDate" type="date-time"><description>A device's key only: when its user last proved who they
             are in a request signed in by it (a re-authentication), which the key's next requests, each a session of its
             own, take as the session's (plans/Security-Review.md SEC-CLI-107)</description></field>
+        <field name="strongAuthDate" type="date-time"><description>A device's key only: when the strong sign-in that made
+            it (a second factor, SSO), or the last strong re-authentication in a request it signed in, was. A device's key
+            counts toward a strong sign-in (strong_recent_auth, the vault's wrapped key) only with it; one made after a
+            password alone never does until such a re-authentication</description></field>
         <field name="reauthPasswordDate" type="date-time"><description>A device's key only: when a re-authentication
             checked the password in a request signed in by it, while it waits for the second factor's code</description></field>
         <field name="scope" type="text-short"><description>A key that opens one service alone (create#UserScopedKey):

@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <service-call name="org.moqui.impl.UserServices.validate#ExternalUserAuthcCode"
                             in-map="{code:code}" out-map="validateOut"/>
                     <if condition="validateOut.verified"><then>
-                        <script>ec.user.internalLoginUser(validateOut.username)</script>
+                        <script>ec.user.internalLoginUser(validateOut.username, true)</script>
                         <script>ec.web.sendJsonResponse({loggedIn:true})</script>
                         <return/>
                     </then><else>
@@ -91,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="ec.message.hasError() || !validateOut?.verified"><then>
                 <script>ec.web.sendJsonError(403, (ec.message.hasError() ? ec.message.errorsString : ec.l10n.localize("Authentication code is not valid")), null)</script>
             </then><else>
-                <set field="loggedIn" from="ec.user.internalLoginUser(validateOut.username)"/>
+                <set field="loggedIn" from="ec.user.internalLoginUser(validateOut.username, true)"/>
                 <script>ec.web.sendJsonResponse({loggedIn:loggedIn})</script>
             </else></if>
         </actions>

@@ -435,6 +435,8 @@ pub static CATALOG: &[Unit] = &[
     .secrets(&[("attestation-secret", Secret::Kept)]),
     // the registry token commands of hosted instances, read at each image pull (service/registry_token.rs)
     single("instance-hosting", Class::Live).children(&[keyed("token-command", &["name"], Class::Live)]),
+    // vaults (plans/Vault-Instances.md §3): read at each call of the vault services
+    single("vault", Class::Live),
     // read by the desktop and mobile apps, not the server
     single("client-conf", Class::Live),
     sequence(
