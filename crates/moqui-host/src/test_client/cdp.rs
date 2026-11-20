@@ -25,7 +25,6 @@ use base64::Engine as _;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -163,15 +162,10 @@ impl Browser {
     ///
     /// Returns why the browser did not start or answer.
     pub fn start(launch: &Launch) -> Result<Browser, String> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        let profile = std::env::temp_dir().join(format!(
-            "{}-{}-{}",
-            launch.profile_prefix,
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&profile);
-        std::fs::create_dir_all(&profile).map_err(|err| format!("{}: {err}", profile.display()))?;
+        // a new directory of this user (0700, a random name, never one already there), so the DevTools address read
+        // from it is the browser's, not a file another local user planted in the shared temp directory (SEC-DEV-84)
+        let profile = moqui_lib::private_fs::new_dir_in(&std::env::temp_dir(), &launch.profile_prefix)
+            .map_err(|err| format!("{}: {err}", std::env::temp_dir().display()))?;
         let mut args: Vec<String> = crate::chromium::launch_args()
             .iter()
             .filter(|arg| !launch.headed || !arg.starts_with("--headless"))

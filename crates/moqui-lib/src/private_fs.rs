@@ -18,7 +18,7 @@
 
 use std::fs::OpenOptions;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Open options that create a file with mode `0600`. The mode applies only to a file the open creates.
 #[must_use]
@@ -47,6 +47,34 @@ pub fn create_dir_all(dir: &Path) -> io::Result<()> {
         builder.mode(0o700);
     }
     builder.create(dir)
+}
+
+/// A new directory of this user alone (`0700`) in `parent` (the shared temp directory, say), named `prefix-` and 16
+/// random hex characters, made by this call: a name already there (planted by another local user, or left over) is
+/// never taken, so what is read from the directory was written there by this process or its child.
+///
+/// # Errors
+///
+/// The error of the directory that could not be made, or no new name after a few tries.
+pub fn new_dir_in(parent: &Path, prefix: &str) -> io::Result<PathBuf> {
+    for _ in 0..8 {
+        let mut bytes = [0u8; 8];
+        getrandom::fill(&mut bytes).map_err(|err| io::Error::other(err.to_string()))?;
+        let suffix: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+        let dir = parent.join(format!("{prefix}-{suffix}"));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        match builder.create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no new directory name"))
 }
 
 /// Make the file at `path` readable and writable by this user only (`0600`).
@@ -87,6 +115,10 @@ mod tests {
         std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o664)).unwrap();
         super::restrict(&open).unwrap();
         assert_eq!(mode(&open), 0o600);
+        // a new directory is this user's and never one already there (SEC-DEV-84)
+        let fresh = super::new_dir_in(&base, "fresh").unwrap();
+        assert_eq!(mode(&fresh), 0o700);
+        assert_ne!(super::new_dir_in(&base, "fresh").unwrap(), fresh);
         let _ = std::fs::remove_dir_all(&base);
     }
 }
