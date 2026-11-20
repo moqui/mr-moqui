@@ -624,19 +624,21 @@ pub(super) fn deliver_edge_outbound_mail(
     } else {
         format!("{BOUNCE_PREFIX}{item}@{domain}")
     };
+    // a paired node never sends as the server's or another pairing's addresses or domains, whichever MTA sends it: the
+    // MTA beside the node may sign for any domain it is set up for (SEC-MAIL-90)
+    #[cfg(feature = "imap")]
+    let paired = super::auth::paired_domains(facade, &node)?;
+    #[cfg(feature = "imap")]
+    if let Some(why) = refused_sender(&factory, facade, &original_from, &raw, &paired)? {
+        tracing::warn!("Edge outbound mail item {item} of paired node {node} refused: {why}");
+        refuse(&factory, facade, &node, &item, &why)?;
+        return Ok(BTreeMap::new());
+    }
     #[cfg(feature = "imap")]
     if super::mx::mta() == super::mx::Mta::Moqui {
         // the MTA in moqui (E5b): signed here, recorded per recipient domain in this item's transaction, delivered to
         // the MX by the delivery thread; the answers come back as mailStatus from there
         let all_in_one = moqui_core::edge::settings(&factory).all_in_one();
-        // signed only for this node's own domains: a paired node never sends signed as the server or another node
-        let paired = super::auth::paired_domains(facade, &node)?;
-        // on a dedicated edge node too: a paired node never sends as another pairing's domain (SEC-MAIL-90)
-        if let Some(why) = refused_sender(&factory, facade, &original_from, &raw, &paired)? {
-            tracing::warn!("Edge outbound mail item {item} of paired node {node} refused: {why}");
-            refuse(&factory, facade, &node, &item, &why)?;
-            return Ok(BTreeMap::new());
-        }
         // internal mail: from the paired node's own domain (on a dedicated edge node, whatever it sent)
         let internal = !all_in_one || super::auth::from_domain(&raw).is_some_and(|domain| paired.contains(&domain));
         let signed = if internal {
@@ -839,7 +841,7 @@ fn refused_sender(
     }
     // the server's own accounts' domains (on an all-in-one node) and every pairing's (SEC-MAIL-90); the paired
     // node's own are taken out by `sender_refusal`
-    let own_domains = super::auth::hosted_domains(facade, moqui_core::edge::settings(factory).role)?;
+    let own_domains = super::auth::kept_hosted_domains(facade, moqui_core::edge::settings(factory).role)?;
     sender_refusal(&senders, paired, &own_domains, &bounce_domain(), |address| {
         moqui_core::edge::claims::own_claim(
             factory,

@@ -486,36 +486,47 @@ const HOSTED_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 /// not read every account (an account added is signed for within the minute).
 #[must_use]
 pub fn is_hosted_domain(facade: &moqui_core::entity::EntityFacade, domain: &str) -> bool {
-    type Kept = Option<(
-        moqui_core::edge::NodeRole,
-        std::time::Instant,
-        std::collections::BTreeSet<String>,
-    )>;
-    static KEPT: Mutex<Kept> = Mutex::new(None);
-    // kept by role: an edge node's, an all-in-one node's and a normal node's domains differ for one database
     let role = sending_role(
         moqui_core::context::ExecutionContext::with_current(|ec| moqui_core::edge::settings(ec.factory()).role)
             .unwrap_or_default(),
     );
-    {
-        let kept = lock(&KEPT);
-        if let Some((kept_role, at, domains)) = kept.as_ref() {
-            if *kept_role == role && at.elapsed() < HOSTED_TTL {
-                return domains.contains(domain);
-            }
-        }
-    }
-    match hosted_domains(facade, role) {
-        Ok(domains) => {
-            let hosted = domains.contains(domain);
-            *lock(&KEPT) = Some((role, std::time::Instant::now(), domains));
-            hosted
-        }
+    match kept_hosted_domains(facade, role) {
+        Ok(domains) => domains.contains(domain),
         Err(err) => {
             tracing::warn!("The hosted accounts' domains were not read: {err}");
             false
         }
     }
+}
+
+/// [`hosted_domains`] of `role`, kept a minute ([`HOSTED_TTL`]), so a send, or each item of a paired node's outbound
+/// pass (SEC-MAIL-90), does not read every account and copy (a domain added is seen within the minute).
+///
+/// # Errors
+///
+/// Returns why when the accounts could not be read.
+pub fn kept_hosted_domains(
+    facade: &moqui_core::entity::EntityFacade,
+    role: moqui_core::edge::NodeRole,
+) -> Result<Arc<std::collections::BTreeSet<String>>, moqui_lib::error::Error> {
+    type Kept = Vec<(
+        moqui_core::edge::NodeRole,
+        std::time::Instant,
+        Arc<std::collections::BTreeSet<String>>,
+    )>;
+    // by role: an edge node's, an all-in-one node's and a normal node's domains differ for one database
+    static KEPT: Mutex<Kept> = Mutex::new(Vec::new());
+    if let Some((_, _, domains)) = lock(&KEPT)
+        .iter()
+        .find(|(kept_role, at, _)| *kept_role == role && at.elapsed() < HOSTED_TTL)
+    {
+        return Ok(Arc::clone(domains));
+    }
+    let domains = Arc::new(hosted_domains(facade, role)?);
+    let mut kept = lock(&KEPT);
+    kept.retain(|(kept_role, _, _)| *kept_role != role);
+    kept.push((role, std::time::Instant::now(), Arc::clone(&domains)));
+    Ok(domains)
 }
 
 /// The ports this process's SMTP listeners are bound to.
