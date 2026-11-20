@@ -913,3 +913,76 @@ fn a_deployment_moves_on_inside_a_cached_transaction() {
         }
     }
 }
+
+/// SEC-GIT-91: who widens which runs an environment gives its secrets to (a ref `allowedRefs` did not name, approval
+/// no longer required) gives them again: their values are cleared, as a secret moved to another environment takes a
+/// new value; and a new target URL takes no token given for the old one. A change that widens nothing keeps them.
+#[test]
+fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, _commit) = site("ci-deploy-widen");
+    let id = environment(&fixture, "https://target.example.com", TOKEN, true);
+    let store = format!("{DEPLOYMENTS}.store#CiEnvironment");
+    let secret = |secret_id: Option<&str>| {
+        let mut parameters = vec![
+            ("repositoryId", s("site")),
+            ("name", s("PROD_KEY")),
+            ("scope", s("environment")),
+            ("environmentId", s(&id)),
+            ("value", s("the-prod-key")),
+        ];
+        if let Some(secret_id) = secret_id {
+            parameters.push(("secretId", s(secret_id)));
+        }
+        let out = ok(&fixture, WRITER, &format!("{DEPLOYMENTS}.store#CiSecret"), &parameters);
+        to_plain_string(&out["secretId"])
+    };
+    let value = || {
+        let row = rows(&fixture, crate::ci::CI_SECRET, &[("environmentId", &id)]).remove(0);
+        text(&row, "secretValue")
+    };
+    let token = || {
+        text(
+            &rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", &id)])[0],
+            "targetToken",
+        )
+    };
+    let change = |fields: &[(&str, Value)]| {
+        let mut parameters = vec![("repositoryId", s("site")), ("environmentId", s(&id))];
+        parameters.extend(fields.iter().cloned());
+        to_plain_string(&ok(&fixture, WRITER, &store, &parameters)["cleared"])
+    };
+    let secret_id = secret(None);
+    assert_eq!(
+        change(&[("dataTypes", s("seed")), ("allowedRefs", s("main"))]),
+        "",
+        "nothing cleared"
+    );
+    assert_eq!(value(), "the-prod-key", "narrowing or keeping nothing new keeps it");
+    let cleared = change(&[("allowedRefs", s("main feature/*"))]);
+    assert!(cleared.contains("the values of its 1 secrets"), "{cleared}");
+    assert_eq!(value(), "", "a ref allowedRefs did not name");
+    secret(Some(&secret_id));
+    // another group may approve the runs that are given the secrets
+    change(&[("approverGroupId", s("GIT_WRITERS"))]);
+    assert_eq!(value(), "", "another approver group");
+    secret(Some(&secret_id));
+    // a caller with no groups sends null on every save: the stored group stays, and so do the secrets
+    assert_eq!(change(&[("approverGroupId", Value::Null)]), "", "nothing cleared");
+    assert_eq!(value(), "the-prod-key");
+    assert_eq!(
+        text(
+            &rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", &id)])[0],
+            "approverGroupId"
+        ),
+        "GIT_WRITERS"
+    );
+    change(&[("approvalRequired", Value::Bool(false))]);
+    assert_eq!(value(), "", "approval no longer required");
+    assert_eq!(token(), TOKEN);
+    change(&[("targetUrl", s("https://elsewhere.example.com"))]);
+    assert_eq!(token(), "", "a new target takes no old token");
+}

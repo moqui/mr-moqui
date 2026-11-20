@@ -16,10 +16,7 @@
         <default-response url="."><parameter name="datasetId"/></default-response>
     </transition>
     <transition name="attachScorer" method="post">
-        <actions><script><![CDATA[
-            if (!ec.user.hasPermission('MONITOR_EVAL')) { ec.message.addError(ec.l10n.localize('This needs the MONITOR_EVAL permission')); return }
-            ec.service.sync().name('create#moqui.agent.AgentScorerAttach').parameters({scorerId, datasetId, fromDate: ec.user.nowTimestamp}).disableAuthz().call()
-        ]]></script></actions>
+        <service-call name="org.moqui.agent.AgentEvalServices.attach#Scorer" in-map="{scorerId, datasetId}"/>
         <default-response url="."><parameter name="datasetId"/></default-response>
     </transition>
     <transition name="detachScorer" method="post">

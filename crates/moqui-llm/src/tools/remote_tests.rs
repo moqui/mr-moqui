@@ -451,6 +451,7 @@ fn bed(name: &str, rows: &[(&str, Vec<(&str, String)>)]) -> Bed {
             ("userFullName", "Remote Tester".to_string()),
         ],
     );
+    crate::run::grant_agent_use(&facade, USER);
     row(
         &facade,
         "moqui.agent.AgentDefinition",

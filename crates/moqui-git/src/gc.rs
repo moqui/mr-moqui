@@ -243,6 +243,11 @@ impl GitProvider {
                 .filter_map(|row| text(row.get("repositoryId")))
                 .collect(),
         };
+        // what a killed push, copy or import left in runtime/tmp (the repositories' own objects directories are swept by
+        // their collection)
+        if !options.dry_run {
+            super::leftovers::sweep_tmp(&self.inner.runtime_dir);
+        }
         let mut outcomes = Vec::with_capacity(ids.len());
         for id in ids {
             let outcome = self.gc_one(&entity, &id, options);

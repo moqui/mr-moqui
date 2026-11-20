@@ -344,6 +344,15 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         return none();
     }
     let creating = existing.is_none();
+    // what gave the secrets before: a change that widens it takes them away (below)
+    let before = existing.as_ref().map(|row| {
+        (
+            field(row, "allowedRefs").unwrap_or_default(),
+            is_yes(row, "approvalRequired"),
+            field(row, "targetUrl"),
+            field(row, "approverGroupId"),
+        )
+    });
     let mut row = match existing {
         Some(row) => row,
         None => {
@@ -355,17 +364,15 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
     };
     row.set("name", Value::string(&name));
-    for field_name in [
-        "targetUrl",
-        "cloneUrl",
-        "requiredPipeline",
-        "allowedRefs",
-        "approverGroupId",
-        "dataTypes",
-    ] {
+    for field_name in ["targetUrl", "cloneUrl", "requiredPipeline", "allowedRefs", "dataTypes"] {
         if parameters.contains_key(field_name) {
             row.set(field_name, opt(text(parameters, field_name)));
         }
+    }
+    // an approver group absent, empty or null on a change keeps the stored one: a caller that has no groups (Smithy sends
+    // null on every save) does not clear one set elsewhere, nor clear the secrets with it (SEC-GIT-91)
+    if let Some(group) = text(parameters, "approverGroupId") {
+        row.set("approverGroupId", Value::string(group));
     }
     // the target and the clone URL are checked when stored, and again when a deployment calls the target
     for field_name in ["targetUrl", "cloneUrl"] {
@@ -405,12 +412,56 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     if let Some(token) = text(parameters, "token") {
         row.set("targetToken", Value::string(token));
     }
+    let mut cleared = Vec::new();
+    if let Some((refs_before, approval_before, target_before, approvers_before)) = &before {
+        // a new address takes no token given for the old one (SEC-TLS-116's rule)
+        if text(parameters, "token").is_none()
+            && field(&row, "targetUrl") != *target_before
+            && field(&row, "targetToken").is_some()
+        {
+            row.set("targetToken", Value::Null);
+            cleared.push("the target's token".to_string());
+        }
+        // a secret is given to the runs the environment allows: who widens that (a ref allowedRefs did not name, or
+        // approval no longer required) gives it again, so whoever edits does not hand on a value another maintainer
+        // stored, as store#CiSecret refuses to move a secret without a new value (SEC-GIT-91)
+        let named: Vec<&str> = refs_before.split_whitespace().collect();
+        let refs_now = field(&row, "allowedRefs").unwrap_or_default();
+        let widened = refs_now.split_whitespace().any(|pattern| !named.contains(&pattern));
+        let relaxed = *approval_before && !is_yes(&row, "approvalRequired");
+        // who may approve a run that is given them changed: another group widens it as well
+        let approvers = is_yes(&row, "approvalRequired") && field(&row, "approverGroupId") != *approvers_before;
+        if widened || relaxed || approvers {
+            let id = field(&row, "environmentId").unwrap_or_default();
+            let emptied = facade
+                .find(CI_SECRET)?
+                .eq("environmentId", Value::string(&id))
+                .condition(Condition::is_not_null("secretValue"))
+                .update_all([("secretValue".to_string(), Value::Null)])?;
+            if emptied > 0 {
+                cleared.push(format!("the values of its {emptied} secrets"));
+            }
+        }
+    }
     if creating {
         row.create(facade)?;
     } else {
         row.update(facade)?;
     }
-    Ok(out([("environmentId", field_value(&row, "environmentId"))]))
+    // said as a message and as the result's `cleared`, which an application's own page (Smithy's notice) shows
+    let notice = (!cleared.is_empty()).then(|| {
+        format!(
+            "The change cleared {}: give them again for the environment as it is now",
+            cleared.join(" and ")
+        )
+    });
+    if let Some(notice) = &notice {
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message(notice.clone()));
+    }
+    Ok(out([
+        ("environmentId", field_value(&row, "environmentId")),
+        ("cleared", notice.map_or(Value::Null, Value::string)),
+    ]))
 }
 
 /// `delete#CiEnvironment`: refused while a secret is scoped to it. Out: `deleted`.

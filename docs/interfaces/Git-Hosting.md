@@ -248,7 +248,10 @@ fetches, edit pushes new refs and fast-forwards on a drive that is not read only
   refers to must be in it or the repository, a parent commit and a ref's new value among the commits the
   repository's refs reach ([Reachability](#reachability)); only an accepted push moves it in (a `local` repository keeps the pack in
   `objects/pack`, a `db` one writes each object as a row). Each ref is then moved by compare-and-set: a ref another
-  push moved first is refused with `stale info`.
+  push moved first is refused with `stale info`. A quarantine (or a gc, copy or import scratch directory) that a
+  killed process left is removed at start and by `gc#GitRepositories` once nothing in it changed for an hour and its
+  process is not
+  running here (with no `/proc` to see processes, the age alone decides).
 - Clones and pushes run on a pool of their own (`git-server` `max-concurrent`, 4, and `git-server` `max-queued` waiting), not on the
   request workers of the screens, and are exempt from `webapp-list/webapp[webroot]/web-protection/requests@request-timeout`; `git-server` `idle-timeout` (120 seconds) of
   silence in a request body ends it. Limits: `git-server` `max-request` (64 MB) for a fetch request, `git-server` `max-push-size` (2 GB),
@@ -1345,6 +1348,9 @@ login),
 and force unlocking another user's lock `delete`. The batch's actions carry a token signed with `git-server@lfs-token-key`
 (generated into `runtime/.env`; `git-server@lfs-token-key-previous` still reads while it is changed) that says who the user
 is, for 15 minutes, and each request is authorized again. Objects are at most `git-server` `lfs-max-object-size` (5 GiB).
+A repository has at most `lfs-max-locks` locks (1000; one more is 409), and a locks or locks/verify page is at most
+`lfs-locks-max-page` (100) whatever `limit` asks. An archived repository, or one being deleted, takes no object and no
+lock, as it takes no push.
 
 **A quota for uploads.** An LFS upload is not a push, so no pre-receive rule sees it. `git-server`
 `lfs-upload-check-service` names a service (none by default; the interface is

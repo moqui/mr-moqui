@@ -89,3 +89,55 @@ feature("attaching a live scorer and a scorer of another service need AgentAudit
  then({attach,other,own,judge,audited,auditedOther,logs}){attach.includes('AgentAudit');other.includes('AgentAudit');own=='';judge==''
   audited=='';auditedOther=='';logs.length==1},
 })
+// SEC-AI-95: a service an experiment names runs with authorization on as its starter, never with it off for whoever named
+// it; and Check now (advance#Experiments) needs MONITOR_EVAL_RUN as a start does
+feature("an experiment's target service runs with the starter's authorization, and Check now needs MONITOR_EVAL_RUN",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  call('create#moqui.security.UserAccount',{userId:'EVAL_T_RUNNER',username:'eval.runner',userFullName:'Eval runner',currentPassword:'16ac58bbfa332c1c55bd98b53e60720bfa90d394',passwordHashType:'SHA'})
+  call('create#moqui.security.UserGroup',{userGroupId:'EVAL_T_RUN',description:'Eval runners'})
+  call('create#moqui.security.UserGroupPermission',{userGroupId:'EVAL_T_RUN',userPermissionId:'MONITOR_EVAL_RUN',fromDate:'2000-01-01T00:00:00Z'})
+  call('create#moqui.security.UserGroupMember',{userGroupId:'EVAL_T_RUN',userId:'EVAL_T_RUNNER',fromDate:'2000-01-01T00:00:00Z'})
+  // the runner may start experiments but may not open System, so a service the evals would call past authorization is refused
+  login('eval.runner');ec.artifactExecution.disableAuthz();let started;try{started=call(S+'start#Experiment',{datasetId:'EVAL_T_DS',serviceName:S+'score#ExactMatch',trials:1})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  login('eval.viewer');ec.artifactExecution.disableAuthz();let checked;try{checked=invoke(S+'advance#Experiments',{experimentId:started.experimentId})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  return{results:list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId}),checked}},
+ then({results,checked}){results.length==3;results.every(r=>r.statusId==='EvrFailed'&&r.outputText==null&&r.errorText.includes('not authorized'));checked.error.includes('MONITOR_EVAL_RUN')},
+})
+// SEC-AI-96: an item's text may be another user's (a saved run, whose owner the item names), so an agent experiment's
+// runs are asked without approval.policy, and the agent's policy approves none of their writes, unless policyWrites=Y
+feature("an agent experiment's runs have no policy approval unless the starter asks for it",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  const caps=(policyWrites)=>{const started=call(S+'start#Experiment',{datasetId:'EVAL_T_DS',agentId:'EVAL_T_AGENT',trials:1,policyWrites})
+   const runs=list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId}).map(r=>r.runId).filter(Boolean)
+   call(S+'cancel#Experiment',{experimentId:started.experimentId})
+   return runs.map(runId=>String(ec.entity.find('moqui.agent.AgentRun').condition({runId}).disableAuthz().one()?.capsText??''))}
+  const saved=list('moqui.agent.AgentDatasetItem',{datasetId:'EVAL_T_DS'}).find(i=>i.sourceRunId)
+  return{held:caps('N'),allowed:caps('Y'),saved}},
+ then({held,allowed,saved}){held.length==3;held.every(c=>!c.includes('approval.policy'));allowed.length==3;allowed.every(c=>c.includes('approval.policy'))
+  JSON.parse(saved.metadataJson).runUserId!=null},
+})
+// SEC-AI-96: a run that does not start fails its result and the experiment ends; the start's error is not left on the
+// message to refuse the write that records it, which kept the experiment running for ever
+feature("an agent experiment whose runs do not start ends failed",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  call('create#moqui.agent.AgentDefinition',{agentId:'EVAL_T_DRAWER',agentName:'Drawer only',surfaces:'drawer'})
+  const started=call(S+'start#Experiment',{datasetId:'EVAL_T_DS',agentId:'EVAL_T_DRAWER',trials:1})
+  return{e:one('moqui.agent.AgentExperiment',{experimentId:started.experimentId}),results:list('moqui.agent.AgentExperimentResult',{experimentId:started.experimentId})}},
+ then({e,results}){e.statusId=='EvFailed';results.length==3;results.every(r=>r.statusId==='EvrFailed'&&r.errorText.includes('does not serve'))},
+})
+// SEC-AI-95: live scoring in the job (no user) runs a scorer of another service as whoever attached it; one whose attach
+// names no one is not run, and its runs wait; and attaching such a scorer to a dataset needs AgentAudit too
+feature("live scoring runs another service's scorer as its attacher, and such an attach needs AgentAudit",{
+ when(){login('john.doe');ec.artifactExecution.disableAuthz()
+  call('create#moqui.agent.AgentScorer',{scorerId:'EVAL_T_OTHER',scorerName:'Another service',scorerTypeEnumId:'AgstService',serviceName:'org.moqui.impl.BasicServices.noop'})
+  call('create#moqui.agent.AgentDefinition',{agentId:'EVAL_T_LIVE',agentName:'Live',surfaces:'job'})
+  const runId=call('create#moqui.agent.AgentRun',{agentId:'EVAL_T_LIVE',userId:ec.user.userId,statusId:'AgrCompleted',submittedDate:'2026-01-01T00:00:00Z',endedDate:new Date(Date.now()-1000).toISOString(),resultJson:JSON.stringify({text:'Done.'})}).runId
+  const attach=(by)=>call('create#moqui.agent.AgentScorerAttach',Object.assign({scorerId:'EVAL_T_OTHER',agentId:'EVAL_T_LIVE',samplingRate:1,fromDate:'2000-01-01T00:00:00Z',lastScoredDate:'2026-01-01T00:00:00Z'},by?{attachedByUserId:by}:{})).attachId
+  const byJohn=attach('EX_JOHN_DOE'),byNobody=attach(null),before=String(one('moqui.agent.AgentScorerAttach',{attachId:byNobody}).lastScoredDate)
+  ec.user.logoutLocal();let live;try{live=call(S+'score#LiveRuns',{})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
+  const refused=invoke(S+'attach#Scorer',{scorerId:'EVAL_T_OTHER',datasetId:'EVAL_T_DS'})
+  const shown=screenTest('apps').render('system/Llm/Evals/Scorers',{},'get').output||''
+  return{live,before,shown,scores:list('moqui.agent.AgentScore',{runId}),john:one('moqui.agent.AgentScorerAttach',{attachId:byJohn}),nobody:one('moqui.agent.AgentScorerAttach',{attachId:byNobody}),refused}},
+ then({live,before,shown,scores,john,nobody,refused}){shown.includes('No attacher: not run. Attach it again.');scores.length==1;scores[0].errorText.includes('no score');!scores[0].errorText.includes('not authorized')
+  String(john.lastScoredDate)!=before;String(nobody.lastScoredDate)==before;refused.error.includes('AgentAudit')},
+})

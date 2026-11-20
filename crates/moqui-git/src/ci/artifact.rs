@@ -17,8 +17,9 @@
 //! and expiry. A report's failed tests become `GitRunTestFailure` rows. A cache is per repository and key, kept apart
 //! for protected refs: a run for a protected ref reads only caches such a run wrote, an untrusted run reads only
 //! caches no protected run wrote and writes none. What a repository and an owner keep is capped (`git-ci`
-//! `max-repository-upload-bytes`, `max-owner-upload-bytes`), and every upload a job makes counts toward
-//! `max-artifacts`. The daily retention removes what expired; `gc#ContentBlobs` then deletes the blobs.
+//! `max-repository-upload-bytes`, `max-owner-upload-bytes`, and for an untrusted run `max-untrusted-run-upload-bytes`),
+//! and every upload a job makes counts toward `max-artifacts`. The daily retention removes what expired;
+//! `gc#ContentBlobs` then deletes the blobs.
 
 use std::io::Read;
 
@@ -31,6 +32,16 @@ use moqui_core::resource::blob::{BlobInfo, BlobStore, Expected};
 use super::{field, int, is_yes, long, millis, opt, yes_no, JOB_RUN, LOG_CHUNK, RUN_ARTIFACT, TEST_FAILURE};
 
 const DAY_MILLIS: i64 = 24 * 60 * 60 * 1000;
+/// `git-ci` `max-repository-upload-bytes` when the conf does not say: 10 GiB.
+const DEFAULT_REPOSITORY_UPLOAD_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+/// `git-ci` `max-untrusted-run-upload-bytes` when the conf does not say: 1 GiB.
+const DEFAULT_UNTRUSTED_RUN_UPLOAD_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// A storage cap of the conf: its number, 0 for no cap, or `default` when it is not a number.
+fn cap_setting(name: &str, default: u64) -> u64 {
+    super::setting(name).trim().parse::<u64>().unwrap_or(default)
+}
+
 /// The failed tests kept of one job.
 const MAX_FAILURES: usize = 500;
 
@@ -80,6 +91,9 @@ pub struct Upload<'a> {
     /// A cache's key, as the runner expanded it.
     pub cache_key: Option<&'a str>,
     pub retention_days: Option<i64>,
+    /// The size the upload says it is (its `Content-Length`), when it says: the room a cap makes for it by evicting
+    /// caches.
+    pub size: Option<u64>,
 }
 
 fn days(name: &str, default: u64) -> i64 {
@@ -219,29 +233,57 @@ pub fn store(
     let mut room = upload.kind.max_bytes();
     // the cap that cuts the upload, when one does: an upload past it is refused as the quota's, not the kind's limit
     let mut capped: Option<(&str, &str, u64)> = None;
+    // an untrusted run (a fork's, a review push's, an approved one of an account without update) keeps a smaller total
+    let trusted = is_yes(run, "trusted");
+    let untrusted = (!trusted).then(|| field(run, "pipelineRunId")).flatten();
     let caps = [
         (
             "max-repository-upload-bytes",
             "repositoryId",
             field(run, "repositoryId"),
             "repository",
+            DEFAULT_REPOSITORY_UPLOAD_BYTES,
         ),
-        ("max-owner-upload-bytes", "ownerId", owner.clone(), "owner"),
+        ("max-owner-upload-bytes", "ownerId", owner.clone(), "owner", 0),
+        (
+            "max-untrusted-run-upload-bytes",
+            "pipelineRunId",
+            untrusted,
+            "untrusted run",
+            DEFAULT_UNTRUSTED_RUN_UPLOAD_BYTES,
+        ),
     ];
-    for (setting, key, id, what) in &caps {
-        let cap = super::number_setting(setting, 0);
+    for (setting, key, id, what, default) in &caps {
+        let cap = cap_setting(setting, *default);
         let Some(id) = id.as_ref().filter(|_| cap > 0) else {
             continue;
         };
         if *key == "ownerId" {
             backfill_owners(entity);
         }
-        let used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
-        if used >= cap {
+        let mut used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        // caches count toward the cap and are kept while they are used, so room for a trusted run's upload is made by
+        // evicting the least recently used ones (SEC-GIT-90); an artifact or a report is never evicted, and an
+        // untrusted run's upload evicts nothing (the caches are trusted runs'). With its size said, the room is made
+        // before; without, the caches count as room and are evicted for the bytes stored, once they are (below)
+        let mut evictable = 0;
+        if trusted {
+            match upload.size {
+                Some(size) => {
+                    let wanted = size.min(cap);
+                    if used.saturating_add(wanted) > cap {
+                        used = evict_caches(entity, key, id, used, cap.saturating_sub(wanted), None)?;
+                    }
+                }
+                None => evictable = u64::try_from(stored_by_kind(entity, key, id)?.1).unwrap_or(0),
+            }
+        }
+        let kept = used.saturating_sub(evictable);
+        if kept >= cap {
             return Err(quota(what, used, cap, setting));
         }
-        if cap - used < room {
-            room = cap - used;
+        if cap - kept < room {
+            room = cap - kept;
             capped = Some((what, setting, cap));
         }
     }
@@ -291,16 +333,32 @@ pub fn store(
     row.create(entity)?;
     // two uploads at once may each have fit what was left: counted again with this one stored, the one that went past
     // a cap is taken back. Its content blob is left to gc#ContentBlobs, which deletes a blob no row references: blobs
-    // are kept by their content, so the same bytes may be another upload's
-    for (setting, key, id, what) in &caps {
-        let cap = super::number_setting(setting, 0);
+    // are kept by their content, so the same bytes may be another upload's. The job's count is read again the same
+    // way, so uploads sent at once do not each pass max-artifacts (SEC-GIT-90)
+    let uploads = entity
+        .find(RUN_ARTIFACT)?
+        .eq("jobRunId", Value::string(&job_run_id))
+        .count()?;
+    if uploads > max {
+        row.delete(entity)?;
+        return Err(Error::new(format!(
+            "a job uploads at most {max} artifacts, reports and caches"
+        )));
+    }
+    for (setting, key, id, what, default) in &caps {
+        let cap = cap_setting(setting, *default);
         let Some(id) = id.as_ref().filter(|_| cap > 0) else {
             continue;
         };
-        let used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        let mut used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        // an upload of no said size made room for the bytes it stored (never evicting itself)
+        if used > cap && trusted && upload.size.is_none() {
+            let stored_id = field(&row, "artifactId");
+            used = evict_caches(entity, key, id, used, cap, stored_id.as_deref())?;
+        }
         if used > cap {
             row.delete(entity)?;
-            return Err(quota(what, used - info.size, cap, setting));
+            return Err(quota(what, used.saturating_sub(info.size), cap, setting));
         }
     }
     if upload.kind == Kind::Report {
@@ -310,6 +368,49 @@ pub fn store(
         }
     }
     Ok(field(&row, "artifactId"))
+}
+
+/// Delete the caches kept under `key` `id`, least recently used first (by `lastUsedDate`, else when they were made),
+/// until at most `target` bytes are kept or no cache is left. A cache is rebuilt by the next run that misses it; its
+/// content blob is left to `gc#ContentBlobs`; `keep` (the upload just stored, when it is a cache) is not evicted. The
+/// bytes kept after.
+fn evict_caches(
+    entity: &EntityFacade,
+    key: &str,
+    id: &str,
+    used: u64,
+    target: u64,
+    keep: Option<&str>,
+) -> Result<u64, Error> {
+    let mut used = used;
+    let caches = entity
+        .find(RUN_ARTIFACT)?
+        .eq(key, Value::string(id))
+        .eq("artifactKind", Value::string("cache"))
+        .order_by("lastUsedDate", false)
+        .order_by("createdDate", false)
+        .list()?;
+    for cache in caches
+        .iter()
+        .filter(|cache| keep.is_none() || field(cache, "artifactId").as_deref() != keep)
+    {
+        if used <= target {
+            break;
+        }
+        let size = u64::try_from(long(cache, "sizeBytes").unwrap_or(0)).unwrap_or(0);
+        match cache.delete(entity) {
+            Ok(()) => {
+                tracing::info!(
+                    "the cache {} of {key} {id} was evicted to make room under its upload cap",
+                    field(cache, "cacheKey").unwrap_or_default()
+                );
+                used = used.saturating_sub(size);
+            }
+            // another upload evicted it first, or it could not go: the next one is tried
+            Err(err) => tracing::warn!("a cache of {key} {id} was not evicted: {}", err.message()),
+        }
+    }
+    Ok(used)
 }
 
 /// The refusal of an upload past a storage cap.
