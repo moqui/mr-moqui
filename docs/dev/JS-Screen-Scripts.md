@@ -244,16 +244,18 @@ a form's or tree's data are covered as the render is. The code may call:
 |---|---|
 | Entities | `ec.entity.find`, `findOneXml`, `makeValue`, `conditionFactory`; `EntityFind`, `EntityList`, `EntityValue`, `EntityListIterator`, `EntityCondition`; authorization and entity filters apply, and no `disableAuthz()` |
 | Services | `ec.service.sync()` and its builder, `callXml`; the service's authorization applies, and no `disableAuthz()` |
-| Messages and text | `ec.message`, `ec.l10n`, `ec.logger`; `ec.resource.expand`, `expandNoL10n`, `expression` and `condition`, which run more of the same text on the same host, their value copied out as data |
+| Messages and text | `ec.message`, `ec.l10n`, `ec.logger`; `ec.resource.expand`, `expandNoL10n`, `expression` and `condition`, which run more of the same text on the same host, their value copied out as data; `ec.resource.script` of a `component://` location, which runs inside the same region on the same list |
+| Settings | `ec.factory.getConfValue` (a secret one reads as null) |
 | Context | names read and written, `ec.context`, its shared map, `ec.user.context` reads |
 | The user | `ec.user` `userId`, `username`, `hasPermission`, `isInGroup`, `getUserGroupIdSet`, `getPreference`, `getPreferences`, `nowTimestamp`, `timestampMillis`, `locale`, `timeZone`, `getLocale`, `getTimeZone`, `userAccount` |
 | Helpers | `StringUtilities`, `CollectionUtilities`, the pure `WebUtilities` encoders, `compare`, the decimal and date globals |
 | `sri` | the reads of the render, its field values, options and validations, and the URL builders (`buildUrl`, `makeUrlByType`, `UrlInstance`); no render, write or redirect |
-| The lock | `ec.artifactExecution.authzLocked()` |
+| Authorization | `ec.artifactExecution.authzLocked()`, `isPermitted`, `isPermittedOwn` |
 
 Anything else throws "... is not available in a preview of proposed screen text": every `ec.web` member (the
 response's writes, headers, redirects, errors and status, cookies, the session and the request's parameters), the rest
-of `ec.resource` (files, locations, `script`, `template`), `ec.cache`, `ec.factory`, the rest of
+of `ec.resource` (files, locations, a `script` of another location, `template`), `ec.cache`, the rest of `ec.factory`,
+the rest of
 `ec.artifactExecution`, raw SQL and the other `tools`, the user's switches (sign in and out, `runAsUser`) and the
 effective time, `ec.screen`, the search index and notifications. A service the code calls, and the entity filters and
 ECA rules its finds and writes reach, run their own code on the whole host, and an entity filter's map reads only

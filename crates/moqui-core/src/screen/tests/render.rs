@@ -2340,7 +2340,7 @@ fn a_previewed_screen_reaches_no_sql_file_cache_clock_or_response() {
             probe("ec.resource.getLocationText('component://webroot/screen/webroot.xml')"),
         ),
         ("cache", probe("ec.cache.getCache('test.preview').get('x')")),
-        ("factory", probe("ec.factory.getConfValue('webapp@name')")),
+        ("factory", probe("ec.factory.isConfValueSet('webapp@name')")),
         ("disabled", probe("ec.artifactExecution.authzDisabled()")),
         ("clock", probe("ec.user.setEffectiveTime(1)")),
         (
@@ -2754,6 +2754,97 @@ fn a_previewed_render_runs_definition_finds_and_expansions_as_regions() {
     let previewed = crate::screen::overlay::with(overlay, render);
     assert!(!previewed.contains("<i>PWNEDROOT"), "{previewed}");
     assert!(!previewed.contains("<i>PWNEDOPT"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview renders under trusted parents that read through members of the region's list: a
+/// subscreens-item `menu-include` running a component's script, a subscreen's `default-menu-include` reading a conf
+/// value, a section `condition` asking `isPermittedOwn` and a `conditional-default` asking `isPermitted` (as mr-boss's
+/// Prices and Development, and tools' EdgeClients and Data, do). The proposed text runs a component's script inside its
+/// region, where the script's own `sri.write` is refused; a script of a file location is refused.
+#[test]
+fn a_preview_renders_under_parents_that_read_and_runs_a_component_script_in_its_region() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-parents-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let library = dir.join("pvlib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(library.join("Reader.js"), "({ value: 'LIBOK' })").unwrap();
+    std::fs::write(
+        library.join("Writer.js"),
+        "sri.write('<i>PWNEDLIB</i>'); ({ value: 'WROTE' })",
+    )
+    .unwrap();
+    let mut components = world.factory.components().as_ref().clone();
+    components.push(crate::context::ComponentInfo {
+        name: "pvlib".to_string(),
+        version: String::new(),
+        location: library.clone(),
+        depends_on: Vec::new(),
+        purposes: Vec::new(),
+    });
+    world.factory.replace_components(components);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let child = dir.join("Root/Child.xml");
+    let root_text = format!(
+        r#"<screen require-authentication="false">
+        <subscreens default-item="Edge">
+            <subscreens-item name="Child" location="{child}"
+                menu-include="ec.resource.script('component://pvlib/Reader.js').value == 'LIBOK'"/>
+            <conditional-default condition="!ec.artifactExecution.isPermitted('{root}', 'AT_XML_SCREEN', 'view')" item="Edge"/>
+        </subscreens>
+        <widgets>
+            <section name="Links" condition="ec.artifactExecution.isPermittedOwn('{root}') || true">
+                <widgets><label text="SECTIONSHOWN"/></widgets></section>
+            <subscreens-menu/><subscreens-active/>
+        </widgets></screen>"#,
+        child = child.to_string_lossy()
+    );
+    std::fs::write(&root, &root_text).unwrap();
+    std::fs::write(
+        dir.join("Root/Edge.xml"),
+        r#"<screen require-authentication="false" default-menu-title="EdgeTab"
+            default-menu-include="String(ec.factory.getConfValue('instance@node-role') ?? '') !== 'none-such'">
+            <widgets><label text="EDGE"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let child_text = r#"<screen require-authentication="false" default-menu-title="ChildTab"><actions><script><![CDATA[
+            const tried = []
+            for (const [name, at] of [['reader', 'component://pvlib/Reader.js'], ['writer', 'component://pvlib/Writer.js'],
+                    ['file', 'file://' + libraryDir + '/Reader.js']]) {
+                try { tried.push(name + '=' + ec.resource.script(at).value) }
+                catch (e) { tried.push(name + '=' + (String(e.message).includes('not available in a preview') ? 'REFUSED' : 'OTHER ' + e.message)) }
+            }
+            out = tried.join(' ')
+        ]]></script></actions><widgets><label text="CHILD ${out}"/></widgets></screen>"#;
+    std::fs::write(&child, child_text).unwrap();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("Child")
+            .render_mode("html")
+            .parameters(BTreeMap::from([(
+                "libraryDir".to_string(),
+                Value::string(library.to_string_lossy()),
+            )]))
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&child.to_string_lossy(), None, child_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(previewed.contains("SECTIONSHOWN"), "{previewed}");
+    assert!(
+        previewed.contains("EdgeTab") && previewed.contains("ChildTab"),
+        "the menu: {previewed}"
+    );
+    assert!(
+        previewed.contains("CHILD reader=LIBOK writer=REFUSED file=REFUSED"),
+        "{previewed}"
+    );
+    assert!(!previewed.contains("<i>PWNEDLIB"), "{previewed}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -244,6 +244,9 @@ const SRI_READS: &[&str] = &[
 /// the entity definitions a find reads.
 const TOOLS: &[&str] = &[
     "authzLocked",
+    // authorization's reads, which a trusted parent's menu-include or section condition asks (SEC-AI-102)
+    "isPermitted",
+    "isPermittedOwn",
     "contextPush",
     "contextPop",
     "contextPushContext",
@@ -412,6 +415,8 @@ pub(crate) fn allowed(path: &str) -> bool {
         "ec.message" | "ec.l10n" | "ec.logger" => true,
         "ec.user" => USER_READS.contains(&name),
         "ec.user.context" => matches!(name, "read" | "names"),
+        // a conf value, which a trusted parent's default-menu-include reads; a secret one reads as null
+        "ec.factory" => name == "getConfValue",
         "global" | "StringUtilities" | "CollectionUtilities" => true,
         "WebUtilities" => WEB_UTILITIES.contains(&name),
         "UrlInstance" => true,

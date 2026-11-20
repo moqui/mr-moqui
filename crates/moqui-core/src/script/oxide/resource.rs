@@ -48,11 +48,12 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
         let function = context.new_function(
             FunctionOptions::new(name).length(length),
             move |scope: &mut Scope<'_>| -> JsResult<Value> {
-                // a preview's proposed text runs no script file, and its render units only a component's (SEC-AI-102)
+                // in a preview, a script file runs only at a component's location, the proposed text's and the render
+                // units' alike; in a region it runs inside it, on the region's list (SEC-AI-102)
                 if name == "script" {
                     let component = matches!(scope.arg(0), Value::String(text)
                         if text.to_utf8_lossy().trim_start().starts_with("component://"));
-                    if crate::script::preview::restricted() || (crate::script::preview::unit_restricted() && !component)
+                    if (crate::script::preview::restricted() || crate::script::preview::unit_restricted()) && !component
                     {
                         let refusal = crate::script::preview::refusal("ec.resource.script");
                         return Err(
