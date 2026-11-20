@@ -298,6 +298,7 @@ pub(crate) fn status_to_proto(state: MemberState, members: &[ClusterMemberInfo])
                 heartbeat_age_ms: member.heartbeat_age_ms,
                 live: member.live,
                 version: member.version.clone(),
+                key_fingerprint: member.key_fingerprint.clone(),
             })
             .collect(),
     }
@@ -314,6 +315,7 @@ pub(crate) fn status_from_proto(status: &proto::MemberStatus) -> (Option<MemberS
             heartbeat_age_ms: member.heartbeat_age_ms,
             live: member.live,
             version: member.version.clone(),
+            key_fingerprint: member.key_fingerprint.clone(),
         })
         .collect();
     (MemberState::parse(&status.state), members)

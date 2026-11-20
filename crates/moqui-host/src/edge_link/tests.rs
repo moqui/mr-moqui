@@ -313,6 +313,7 @@ fn a_member_status_crosses_the_link_and_back() {
         heartbeat_age_ms: 1200,
         live: true,
         version: "0.1.0".to_string(),
+        key_fingerprint: "ab".repeat(32),
     }];
     let status = super::status_to_proto(MemberState::Draining, &members);
     assert_eq!(status.state, "draining");

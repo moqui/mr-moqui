@@ -2290,6 +2290,24 @@ impl EdgeServer {
         store::create_code(&*self.factory()?, valid_minutes)
     }
 
+    /// Tell the administrators that member `member` of pairing `node` was pinned on a list naming no key for it
+    /// (SEC-CLU-81), within the takeover notices' limit; a failure is logged.
+    async fn tell_first_pin(&self, node: &str, member: &str, remote: &str) {
+        if !self.notice_allowed(node) {
+            tracing::warn!(
+                "Edge node: pairing {node} is past its notices for the hour; the first pin of {member} is only logged"
+            );
+            return;
+        }
+        let (node, member, remote) = (node.to_string(), member.to_string(), remote.to_string());
+        let told = self
+            .on_pool(move |_| pool::notify_first_pin(&node, &member, &remote))
+            .await;
+        if let Err(err) = told {
+            tracing::error!("Edge node: the administrators were not told of a first pin: {err}");
+        }
+    }
+
     /// Tell the administrators that `to` took pairing `node` over from `from`, or is held for their approval
     /// (plans/Edge-Node2.md §4.5); a failure is logged.
     async fn tell_takeover(&self, node: &str, from: &str, to: &str, remote: &str, held: bool) {
@@ -2530,6 +2548,7 @@ impl LinkService {
                 pinned,
                 displaced: &row.displaced,
                 forgotten: pool::forgotten(&row.pins, member),
+                member_key,
             })
         };
         // a live member of the edge cluster whose links are not known yet (it has written no row since another member
@@ -2671,6 +2690,22 @@ impl LinkService {
         };
         // named now, before anything else is awaited: a call dropped from here on still leaves no link behind
         let _ = named.set(member.to_string());
+        // a first pin with other members linked, on a list that names no key for the id: the administrators hear of it,
+        // since a node with only the pairing's key could have named it (SEC-CLU-81)
+        let unkeyed = listed.as_deref().is_some_and(|list| {
+            list.iter()
+                .any(|listed| listed.instance_id == member && listed.key_fingerprint.is_empty())
+        });
+        if pinned.is_none() && takeover.is_none() && unkeyed {
+            tracing::warn!(
+                "Edge link of {node}: member {member} from {remote} linked for the first time; its cluster names no key \
+                 for it, so its key was pinned on its own word"
+            );
+            let server = Arc::clone(&self.server);
+            let (key, to) = (node.to_string(), member.to_string());
+            let address = remote.clone();
+            tokio::spawn(async move { server.tell_first_pin(&key, &to, &address).await });
+        }
         // the serial writer keeps this edge member's row from now on (plans/Edge-Node2.md §4.6)
         self.server.member_links.notify_one();
         if let Some(from) = takeover {

@@ -290,6 +290,7 @@ fn put_member(
             ssh_fp: String::new(),
             version: String::new(),
             edge_link_url: String::new(),
+            edge_member_key: String::new(),
         },
     )
     .unwrap();
@@ -1643,6 +1644,7 @@ fn a_live_member_with_another_ssh_host_key_is_named() {
         ssh_fp: ssh_fp.to_string(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     let members = [
         member("self", Some(1_000), "SHA256:a"),
@@ -1670,6 +1672,7 @@ fn messages_go_only_to_a_row_of_this_members_material() {
         ssh_fp: String::new(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     let own = super::Member {
         instance_id: "self".to_string(),
@@ -1680,6 +1683,7 @@ fn messages_go_only_to_a_row_of_this_members_material() {
         ssh_fp: String::new(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     assert!(super::same_material(&row("S", "C"), Some(&own)));
     assert!(!super::same_material(&row("S", "other"), Some(&own)));

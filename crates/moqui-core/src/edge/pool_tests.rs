@@ -20,6 +20,7 @@ fn member(id: &str, live: bool, version: &str) -> ClusterMemberInfo {
         heartbeat_age_ms: if live { 1_000 } else { 600_000 },
         live,
         version: version.to_string(),
+        key_fingerprint: String::new(),
     }
 }
 
@@ -63,6 +64,51 @@ fn a_member_list_is_checked_as_input() {
     assert!(check_member_list(&twice).unwrap_err().contains("twice"));
     assert!(check_member_list(&[member("a", true, &"9".repeat(41))]).is_err());
     assert!(check_member_list(&[member("a", true, "1\u{0}")]).is_err());
+}
+
+/// SEC-CLU-81: a list that names a member's own key admits that id only with that key, with members linked and from
+/// the kept list with none linked; a node with only the pairing's key naming a listed id is refused, or with none
+/// linked takes the pairing over (told). A row with no key (a member that publishes none) admits as before.
+#[test]
+fn a_listed_member_is_admitted_only_with_the_key_its_cluster_names() {
+    let key = "ab".repeat(32);
+    let other = "cd".repeat(32);
+    let keyed = |id: &str| ClusterMemberInfo {
+        key_fingerprint: key.clone(),
+        ..member(id, true, "")
+    };
+    let linked_a = vec!["a".to_string()];
+    let list = vec![keyed("a"), keyed("b"), member("c", true, "")];
+    let facts = |id, member_key| AdmissionFacts {
+        member: id,
+        linked: &linked_a,
+        listed: Some(&list),
+        last_member: "a",
+        member_key,
+        ..AdmissionFacts::default()
+    };
+    assert_eq!(admission(&facts("b", &key)), Admission::Admit);
+    assert_eq!(
+        admission(&facts("b", &other)),
+        Admission::Refuse(JOIN_FIRST.to_string()),
+        "another key naming a listed id"
+    );
+    assert_eq!(admission(&facts("c", &other)), Admission::Admit, "no key named");
+    let known = vec![keyed("b")];
+    let none = |member_key| AdmissionFacts {
+        member: "b",
+        known: &known,
+        last_member: "a",
+        member_key,
+        ..AdmissionFacts::default()
+    };
+    assert_eq!(admission(&none(&key)), Admission::Admit);
+    assert_eq!(admission(&none(&other)), Admission::TakeOver { from: "a".to_string() });
+    assert!(check_member_list(&[ClusterMemberInfo {
+        key_fingerprint: "not hex".to_string(),
+        ..member("a", true, "")
+    }])
+    .is_err());
 }
 
 #[test]
