@@ -590,8 +590,21 @@ Medium; reported (likely); fixed.
 
 #### SEC-TLS-92. A dataset steward rewrites the fields and conditions of any DataDocument that is in a data feed
 
-Medium; reported (likely); fixed in part (what is left: 2026-11-19).
+Medium; reported (likely); fixed (its remainder 2026-11-19).
 
+- **Fix (the remainder):** Fixed 2026-11-19 (mr-moqui `4868b05f2`, `7ca18f798`, `67dc097f0`). `store#BusinessDatasetFields` checks every new or changed path, the document's own fields included. Each reader group of the document (`document_groups`, the same query `reads_document` uses) must be one the steward may widen (`may_widen`):
+  - ADMIN passes, since it already reads every entity.
+  - ALL_USERS never passes.
+  - A group the steward is a member of passes.
+  - Any other group passes only by `org.moqui.report.widen.<userGroupId>` (update) in the steward's own grant. The share artifacts no longer count.
+  - New `REPORT_WIDEN_ADMIN` (`MonitoringSecurityData.xml`) gives ADMIN the `org.moqui.report.widen.*` pattern.
+  - **Test:** BusinessDatasets.spec.js:
+  - fields of the document's own entity and of a related one are refused;
+  - a field is allowed when the steward's group is the only reader;
+  - ALL_USERS is refused;
+  - with ADMIN and BDS_READER reading, the steward is refused without BDS_READER's widen grant (one group counted) and allowed with it.
+  - **Not done:** mr-boss's rows.
+  - mr-boss grants `BOSS_INSIGHTS_DATA` the widen artifacts for the Insights groups only, by the owner's decision: stewards add fields to the three Insights-only documents, and the documents app groups also read stay closed to them.
 - **Fix:** Fixed 2026-11-19 (F1, merged `2be698e23`): `create#BusinessDataset` and the field and condition stores need a `DataDocumentUserGroup` row for the document in one of the steward's groups, and a field or condition change needs the steward to steward every other dataset over the document (the refusal counts them and names none). A field or condition is changed or removed only by the dataset that added it (`BusinessDataset.fieldSeqIds`, `conditionSeqIds`, cleared when a dataset is created), never one shipped with the document or made in Tools: the owner's decision is that a shipped dataset's seeded fields stay as the component ships them. `index#BusinessDataset` needs only the dataset's steward, since a rebuild widens nothing (BOSS's People datasets). `get#BusinessDatasetOptions` offers only documents the caller's groups read (`check_document_steward`, `crates/moqui-report/src/business.rs`; `fedDocuments`, `ReportReads.js`). Left open: a field of a related entity a steward adds widens what the document's other reader groups read from the index. Tests: `framework/test/BusinessDatasets.spec.js`.
 - **Where:** `crates/moqui-report/src/business.rs:529-595`, `:679-719`, `:838-977`, `:981-1099`
 - **Reached by:** a holder of `org.moqui.report.dataset` (update) and of `org.moqui.report.dataset.<id>` (update) for some id: `ADMIN` in the seed (`REPORT_DATASETS_ADMIN`); in mr-boss the group `BOSS_INSIGHTS_DATA` ("Insights dataset steward"), which holds `org.moqui.report.dataset` and the pattern `org\.moqui\.report\.dataset\.insights-.*` (`BossSetupData.xml:2626-2629`, `:3385`). Routes: `Dashboards/Datasets.xml:24-31` `createDataset`, `DatasetFields.xml:17-31` `storeFields` and `storeConditions`, `DatasetDetail.xml:39-44` `rebuildIndex`, and the same transitions taken in by mr-boss `screen/Insights/ReportBuilder/Datasets.xml:29`, `DatasetFields.xml:25-26` and `DatasetDetail.xml:29`.
