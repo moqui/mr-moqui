@@ -1,7 +1,8 @@
-// System › Instance (framework/service/org/moqui/dev/InstanceServices.xml): hosted instances run an image's
-// authTokenCmd, start containers and make databases, so every InstanceServices service asks the sealed INSTANCE_ADMIN,
-// which an ADMIN outside ADMIN_ADV does not have; and the configuration rows that hold a command, a script or a
-// service name are not written through the generic tools (plans/Security-Review.md SEC-TLS-02).
+// System › Instances (framework/service/org/moqui/dev/InstanceServices.xml, crates/moqui-instance): managed instances
+// start containers and make databases on the hosts their rows name, so every InstanceServices service asks the sealed
+// INSTANCE_ADMIN, which an ADMIN outside ADMIN_ADV does not have; the configuration rows that hold a command, a script or
+// a service name are not written through the generic tools, nor an instance's environment or secret bindings
+// (plans/Security-Review.md SEC-TLS-02, plans/Vault-Instances.md §4.1).
 // Run: ./moq test tools --spec HostedInstances
 const ADMIN_ONLY = "SPEC_HI_ADMIN"
 const HOLDER = "SPEC_HI_HOLDER"
@@ -11,11 +12,11 @@ const make = (entityName, fields) => {
     row.setFields(fields, true, null, null)
     row.create()
 }
-// a System › Instance transition as the user, as its button posts it: the services run under the screen's authorization
+// a System › Instances transition as the user, as its button posts it: the services run under the screen's authorization
 function as(userId, transition, parameters) {
     ec.user.internalLoginUser(userId.toLowerCase().replace(/_/g, "."))
     const res = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml")
-        .render("Instance/InstanceList/" + transition, parameters, "post")
+        .render("Instances/InstanceList/" + transition, parameters, "post")
     const error = res.errorMessages.join(" ")
     ec.message.clearErrors()
     ec.user.logoutUser()
@@ -38,16 +39,46 @@ spec({
 
 feature("an ADMIN without INSTANCE_ADMIN is refused by the instance services; a holder passes the check", {
     when() {
-        const refused = as(ADMIN_ONLY, "initAppInstance", { appInstanceId: "SPEC_HI_NONE" })
-        const database = as(ADMIN_ONLY, "createAppDatabase", { appInstanceId: "SPEC_HI_NONE" })
-        const held = as(HOLDER, "initAppInstance", { appInstanceId: "SPEC_HI_NONE" })
-        return { refused, database, held }
+        const provision = { appInstanceId: "SPEC_HI_NONE", actionEnumId: "IatProvision" }
+        const refused = as(ADMIN_ONLY, "requestInstanceAction", provision)
+        const created = as(ADMIN_ONLY, "createAppInstance", { instanceImageId: "Postgres18", instanceHostId: "LocalDocker",
+            environmentId: "SPEC_HI_ENV", instanceName: "spec-hi" })
+        const held = as(HOLDER, "requestInstanceAction", provision)
+        return { refused, created, held }
     },
-    then({ refused, database, held }) {
+    then({ refused, created, held }) {
         refused.error.includes("INSTANCE_ADMIN")
-        database.error.includes("INSTANCE_ADMIN")
+        created.error.includes("INSTANCE_ADMIN")
         !held.error.includes("INSTANCE_ADMIN")
-        held.error.includes("No InstanceHostType")
+        held.error.includes("No AppInstance SPEC_HI_NONE")
+    },
+})
+
+// an instance made from its kind: its page names each secret by its binding, never a value, and previews what a
+// provision makes and the lease it needs (rendered once, in html: the screen has no mode-specific template)
+feature("an instance's page shows its secret bindings and its provision preview", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.server.instance.InstanceEnvironment", { environmentId: "SPEC_HI_ENV", vaultId: "SPEC_HI_VAULT" })
+        ec.artifactExecution.enableAuthz()
+        const created = as(HOLDER, "createAppInstance", { instanceImageId: "Postgres18", instanceHostId: "LocalDocker",
+            environmentId: "SPEC_HI_ENV", instanceName: "spec-hi-pg", hostPort: "25499" })
+        ec.user.internalLoginUser("spec.hi.holder")
+        const res = ec.screen.makeTest().rootScreen("component://tools/screen/System.xml").renderMode("html")
+            .render("Instances/InstanceDetail", { appInstanceId: "spec-hi-pg" }, null)
+        const out = { created: created.error, errors: res.errorMessages.join(" "), output: String(res.output || "") }
+        ec.message.clearErrors()
+        ec.user.logoutUser()
+        return out
+    },
+    then({ created, errors, output }) {
+        created == ""
+        errors == ""
+        output.includes("AppInstance:spec-hi-pg:admin")
+        output.includes("/run/secrets/postgres-password")
+        output.includes("POSTGRES_PASSWORD_FILE")
+        output.includes("It opens no vault item")
+        output.includes("Deposited into vault SPEC_HI_VAULT")
     },
 })
 
@@ -83,21 +114,27 @@ feature("Service Run does not call the entity-auto services of a hosted-instance
         const hostType = run({ serviceName: "create#moqui.server.instance.InstanceHostType", hostTypeId: "SPEC_HI_HOST",
             startService: "org.moqui.impl.SystemMessageServices.send#AllProducedSystemMessages" })
         const ingest = run({ serviceName: "create#moqui.monitor.IngestKey", keyId: "SPEC_HI_KEY", source: "spec" })
+        // an instance's secret binding decides which vault item its provision opens
+        const binding = run({ serviceName: "create#moqui.server.instance.AppInstanceSecret", appInstanceId: "SPEC_HI_AI",
+            secretName: "admin", bindingKey: "DatabaseHost:other:admin" })
         const allowed = run({ serviceName: "create#moqui.basic.EnumerationType", enumTypeId: "SPEC_HI_RUN", description: "Spec Service Run" })
         ec.artifactExecution.disableAuthz()
         const count = (entityName, field, value) => ec.entity.find(entityName).condition(field, value).count()
         const written = { hostType: count("moqui.server.instance.InstanceHostType", "hostTypeId", "SPEC_HI_HOST"),
             ingest: count("moqui.monitor.IngestKey", "keyId", "SPEC_HI_KEY"),
+            binding: count("moqui.server.instance.AppInstanceSecret", "appInstanceId", "SPEC_HI_AI"),
             type: count("moqui.basic.EnumerationType", "enumTypeId", "SPEC_HI_RUN") }
         ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "SPEC_HI_RUN").deleteAll()
         ec.entity.find("moqui.server.instance.InstanceHostType").condition("hostTypeId", "SPEC_HI_HOST").deleteAll()
         ec.entity.find("moqui.monitor.IngestKey").condition("keyId", "SPEC_HI_KEY").deleteAll()
         ec.artifactExecution.enableAuthz()
-        return { hostType, ingest, allowed, written }
+        return { hostType, ingest, binding, allowed, written }
     },
-    then({ hostType, ingest, allowed, written }) {
+    then({ hostType, ingest, binding, allowed, written }) {
         written.hostType == 0
         written.ingest == 0
+        written.binding == 0
+        binding.errors.includes("written only by its own services")
         hostType.errors.includes("written only by its own services")
         ingest.errors.includes("written only by its own services")
         allowed.errors.trim() == ""

@@ -670,7 +670,7 @@ fn crypt(pass: &str) -> crate::entity::crypto::CryptConfig {
 /// record that does not decrypt is skipped.
 #[test]
 fn encrypted_fields_are_rewritten_in_key_pages() {
-    const ENV: &str = "moqui.server.instance.InstanceImageTypeEnv";
+    const ENV: &str = "moqui.agent.AgentMcpUserToken";
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
@@ -687,17 +687,17 @@ fn encrypted_fields_are_rewritten_in_key_pages() {
     keys.pop();
     for (image, env) in &keys {
         let mut value = facade.make_value(ENV).unwrap();
-        value.set("imageTypeId", Value::string(*image));
-        value.set("envName", Value::string(*env));
-        value.set("envValue", Value::string(format!("{image}-{env}")));
+        value.set("mcpServerId", Value::string(*image));
+        value.set("userId", Value::string(*env));
+        value.set("tokenJson", Value::string(format!("{image}-{env}")));
         value.create(&facade).unwrap();
     }
     // Sealed under a key the rewrite does not have.
     facade.set_crypt(crypt("Unknown:CHANGEME"), Vec::new());
     let mut lost = facade.make_value(ENV).unwrap();
-    lost.set("imageTypeId", Value::string("A"));
-    lost.set("envName", Value::string("E9"));
-    lost.set("envValue", Value::string("lost"));
+    lost.set("mcpServerId", Value::string("A"));
+    lost.set("userId", Value::string("E9"));
+    lost.set("tokenJson", Value::string("lost"));
     lost.create(&facade).unwrap();
 
     facade.set_crypt(new.clone(), vec![old]);
@@ -709,13 +709,13 @@ fn encrypted_fields_are_rewritten_in_key_pages() {
         let row = facade
             .find(ENV)
             .unwrap()
-            .eq("imageTypeId", Value::string(*image))
-            .eq("envName", Value::string(*env))
+            .eq("mcpServerId", Value::string(*image))
+            .eq("userId", Value::string(*env))
             .one()
             .unwrap()
             .unwrap();
         assert_eq!(
-            row.get("envValue").map(to_plain_string).as_deref(),
+            row.get("tokenJson").map(to_plain_string).as_deref(),
             Some(format!("{image}-{env}").as_str())
         );
     }
@@ -726,28 +726,28 @@ fn encrypted_fields_are_rewritten_in_key_pages() {
 /// then it reads as it is and the rewrite seals it.
 #[test]
 fn plain_text_in_an_encrypted_field_is_read_only_for_a_migration() {
-    const ENV: &str = "moqui.server.instance.InstanceImageTypeEnv";
+    const ENV: &str = "moqui.agent.AgentMcpUserToken";
     let (facade, context) = setup();
     let _entered = context.enter();
     let _authz = context.disable_authz();
     facade.set_disable_fk_create(true);
     // written before a key was set, as a writer of the database would: the text itself
     let mut planted = facade.make_value(ENV).unwrap();
-    planted.set("imageTypeId", Value::string("A"));
-    planted.set("envName", Value::string("PLANTED"));
-    planted.set("envValue", Value::string("attacker-chosen"));
+    planted.set("mcpServerId", Value::string("A"));
+    planted.set("userId", Value::string("PLANTED"));
+    planted.set("tokenJson", Value::string("attacker-chosen"));
     planted.create(&facade).unwrap();
     facade.set_crypt(crypt("Current:CHANGEME"), Vec::new());
     let read = || {
         let row = facade
             .find(ENV)
             .unwrap()
-            .eq("imageTypeId", Value::string("A"))
-            .eq("envName", Value::string("PLANTED"))
+            .eq("mcpServerId", Value::string("A"))
+            .eq("userId", Value::string("PLANTED"))
             .one()
             .unwrap()
             .unwrap();
-        row.get("envValue").map(to_plain_string).unwrap_or_default()
+        row.get("tokenJson").map(to_plain_string).unwrap_or_default()
     };
     assert_eq!(read(), crate::entity::field_rw::DECRYPT_FAILED);
     let out = super::rewrite_encrypted_in_pages(ENV, &facade, 10).unwrap();

@@ -218,7 +218,7 @@ along with this software (see the LICENSE.md file). If not, see
             artifactGroupId="GitRepositories" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     <moqui.security.UserPermission userPermissionId="LOAD_RUNNER" description="Tools: Load testing (run load scripts against this or an allowed server)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="LOAD_RUNNER" fromDate="0"/>
-    <!-- System › Instance (org.moqui.dev.InstanceServices): runs an image's authTokenCmd, starts containers and makes
+    <!-- System › Instances (org.moqui.dev.InstanceServices): runs an image's authTokenCmd, starts containers and makes
         databases on the hosts the rows name. Sealed; each service asks it (plans/Security-Review.md SEC-TLS-02). -->
     <moqui.security.UserPermission userPermissionId="INSTANCE_ADMIN" description="System: Hosted instances (start containers and databases on the configured hosts and run their commands)"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="INSTANCE_ADMIN" fromDate="0"/>

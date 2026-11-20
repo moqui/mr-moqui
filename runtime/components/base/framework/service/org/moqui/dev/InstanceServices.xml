@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <!-- ========== Instance Interfaces ========== -->
+    <!-- ========== Instance interfaces: an InstanceHostType's container services (the driver contract) ========== -->
 
     <service verb="init" noun="Instance" type="interface" authz-action="all">
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
@@ -41,7 +41,10 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="remove" noun="Instance" type="interface" authz-action="all">
-        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="removeVolumes" type="Boolean"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="instanceRemoved" type="Boolean"/>
             <parameter name="instanceExists" type="Boolean"/>
@@ -54,11 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="instanceExists" type="Boolean"/>
             <parameter name="instanceRunning" type="Boolean"/>
             <parameter name="statusString"/>
-            <parameter name="errorString"/>
-            <parameter name="startedAt" type="Timestamp"/>
-            <parameter name="finishedAt" type="Timestamp"/>
-            <parameter name="inspectMap" type="Map"/>
-            <parameter name="instanceLog"/>
+            <parameter name="healthString"/>
         </out-parameters>
     </service>
 
@@ -128,12 +127,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- The Docker Engine API, which Podman serves on its socket too (crates/moqui-git/src/ci/driver/docker.rs): the host
         is reached over a Unix socket (hostProtocol unix, hostAddress the socket's path), HTTPS with the host's
-        tlsCaCert, tlsClientCert and tlsClientKey, or plain HTTP to this machine only (localhost, 127.0.0.0/8, ::1);
+        tlsCaCert and tlsClientCert, its client key the item InstanceHost:<id>:tlsClientKey of the lease the call runs under,
+        or plain HTTP to this machine only (localhost, 127.0.0.0/8, ::1);
         plain HTTP to another host is refused (plans/Security-Review-Medium.md SEC-OUT-08). -->
     <service verb="call" noun="DockerApi" type="rust" location="moqui_git::ci::driver::docker::call_docker_api"
             allow-remote="false">
-        <description>One Docker Engine API call to an InstanceHost, on the client the CI runs use: what the hosted-instance
-            services (init#InstanceDocker and the others) send. Needs the sealed INSTANCE_ADMIN unless authorization is
+        <description>One Docker Engine API call to an InstanceHost, on the client the CI runs and the managed instances use,
+            for what they do not cover. Needs the sealed INSTANCE_ADMIN unless authorization is
             disabled. A refusal or a failure to connect is a message error and no statusCode.</description>
         <in-parameters>
             <parameter name="instanceHostId" required="true"/>
@@ -171,9 +171,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="cleanup" noun="RunsFake" type="rust" location="moqui_git::ci::driver::fake::cleanup_runs_fake">
         <implements service="org.moqui.dev.InstanceServices.cleanup#InstanceRuns"/></service>
 
-    <!-- ========== Database Interfaces ========== -->
+    <!-- ========== Database interfaces: a database kind's create#Database and check#Database ========== -->
 
     <service verb="create" noun="Database" type="interface">
+        <description>Make an instance's database and user on its database dependency, with that server's admin login from
+            the lease the call runs under; the user's password is made and deposited as the instance's dbPassword
+            binding (refused when that is deposited already). Names are plain identifiers; a password is quoted as
+            each server reads it (a quote or backslash refused for MySQL).</description>
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="databaseCreated" type="Boolean"/>
@@ -188,258 +192,202 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="dbUserExists" type="Boolean"/>
         </out-parameters>
     </service>
+    <service verb="create" noun="DatabasePostgres" type="rust" location="moqui_instance::services::create_database_postgres"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.create#Database"/></service>
+    <service verb="create" noun="DatabaseMySQL" type="rust" location="moqui_instance::services::create_database_mysql"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.create#Database"/></service>
+    <service verb="check" noun="DatabasePostgres" type="rust" location="moqui_instance::services::check_database_postgres"
+            allow-remote="false">
+        <implements service="org.moqui.dev.InstanceServices.check#Database"/></service>
+    <service verb="check" noun="DatabaseMySQL" type="rust" location="moqui_instance::services::check_database_mysql"
+            allow-remote="false">
+        <implements service="org.moqui.dev.InstanceServices.check#Database"/></service>
 
-    <!-- ========== AppInstance Management Services ========== -->
+    <!-- ========== Managed instances (plans/Vault-Instances.md §4; docs/Run-Deploy.md "Managed instances") ==========
+        Rust (crates/moqui-instance), over the container driver CI's runs use (moqui_lib::docker). Each service needs the
+        sealed INSTANCE_ADMIN unless authorization is disabled. No parameter or result holds a secret: what an instance
+        needs is a vault item by binding, made and deposited by its provision, or leased. -->
 
-    <service verb="create" noun="AppInstance">
+    <service verb="store" noun="InstanceEnvironment" type="rust" location="moqui_instance::services::store_instance_environment"
+            allow-remote="false">
+        <description>Make or change an environment: its operational vault, approvers, required pipeline, machine access (Y
+            lets its operations run under the vault's machine access for it, with no approver), unseal policy and method,
+            transport and lease time limit. A given parameter that is empty clears its field.</description>
+        <in-parameters>
+            <auto-parameters entity-name="moqui.server.instance.InstanceEnvironment" include="nonpk"/>
+            <parameter name="environmentId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="environmentId"/></out-parameters>
+    </service>
+    <service verb="store" noun="InstanceCluster" type="rust" location="moqui_instance::services::store_instance_cluster"
+            allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="moqui.server.instance.InstanceCluster" include="nonpk"/>
+            <parameter name="clusterId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="clusterId"/></out-parameters>
+    </service>
+    <service verb="store" noun="InstanceHost" type="rust" location="moqui_instance::services::store_instance_host"
+            allow-remote="false">
+        <description>Make or change a Docker or Podman host: unix (a socket's path), https (its client key is the item
+            InstanceHost:&lt;id&gt;:tlsClientKey of its vault) or http to this machine only.</description>
+        <in-parameters>
+            <auto-parameters entity-name="moqui.server.instance.InstanceHost" include="nonpk"/>
+            <parameter name="instanceHostId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="instanceHostId"/></out-parameters>
+    </service>
+    <service verb="store" noun="InstanceImage" type="rust" location="moqui_instance::services::store_instance_image"
+            allow-remote="false">
         <in-parameters>
             <parameter name="instanceImageId" required="true"/>
-            <parameter name="instanceHostId"/>
+            <parameter name="instanceKindId"/>
+            <parameter name="imageName"/>
+            <parameter name="registryLocation"/>
+            <parameter name="registryLogin"/>
+            <parameter name="vaultId"/>
+        </in-parameters>
+        <out-parameters><parameter name="instanceImageId"/></out-parameters>
+    </service>
+    <service verb="store" noun="DatabaseHost" type="rust" location="moqui_instance::services::store_database_host"
+            allow-remote="false">
+        <in-parameters>
+            <auto-parameters entity-name="moqui.server.instance.DatabaseHost" include="nonpk"/>
+            <parameter name="databaseHostId" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="databaseHostId"/></out-parameters>
+    </service>
+
+    <service verb="create" noun="AppInstance" type="rust" location="moqui_instance::services::create_app_instance"
+            allow-remote="false">
+        <description>Make an instance from its image's kind: its dependencies (another instance of the environment, made
+            first by its provision, or a database host), checked against what the kind takes; its settings, volumes and
+            host config from the kind's templates; and its secret bindings. Makes nothing on a host.</description>
+        <in-parameters>
+            <parameter name="appInstanceId"><description>instanceName when empty</description></parameter>
+            <parameter name="instanceImageId" required="true"/>
+            <parameter name="instanceHostId" required="true"/>
+            <parameter name="environmentId" required="true"/>
+            <parameter name="clusterId"/>
+            <parameter name="instanceName" required="true"/>
+            <parameter name="hostName"/>
+            <parameter name="hostPort"><description>The host's port its service is published on; a database a manager
+                makes databases on needs one</description></parameter>
+            <parameter name="databaseInstanceId"/>
             <parameter name="databaseHostId"/>
-            <parameter name="hostName" required="true"/>
-            <parameter name="instanceName" default="hostName.replace('.', '_')"/>
+            <parameter name="searchInstanceId"/>
+            <parameter name="databaseName"/>
+            <parameter name="databaseUser"/>
         </in-parameters>
         <out-parameters><parameter name="appInstanceId"/></out-parameters>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.InstanceImage" value-field="instanceImage"/>
-            <if condition="instanceImage == null"><return error="true" message="InstanceImage not found with ID ${instanceImageId}"/></if>
-            <set field="imageType" from="instanceImage.imageType"/>
-            <if condition="imageType == null"><return error="true" message="InstanceImageType not found for InstanceImage with ID ${instanceImageId}"/></if>
-
-            <set field="initCommand" from="imageType.defaultInitCommand"/>
-            <set field="networkMode" from="imageType.defaultNetworkMode"/>
-
-            <service-call name="create#moqui.server.instance.AppInstance" in-map="context" out-map="context"/>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-
-            <set field="imageTypeEnvList" from="imageType.envs"/>
-            <iterate list="imageTypeEnvList" entry="imageTypeEnv">
-                <set field="envValue" from="ec.resource.expand(imageTypeEnv.envValue, '')"/>
-                <service-call name="create#moqui.server.instance.AppInstanceEnv"
-                        in-map="{appInstanceId:appInstanceId, envName:imageTypeEnv.envName, envValue:envValue}"/>
-            </iterate>
-            <set field="imageTypeLinkList" from="imageType.links"/>
-            <iterate list="imageTypeLinkList" entry="imageTypeLink">
-                <service-call name="create#moqui.server.instance.AppInstanceLink"
-                        in-map="{appInstanceId:appInstanceId, instanceName:imageTypeLink.instanceName, aliasName:imageTypeLink.aliasName}"/>
-            </iterate>
-            <set field="imageTypeVolumeList" from="imageType.vols"/>
-            <iterate list="imageTypeVolumeList" entry="imageTypeVolume">
-                <set field="volumeName" from="ec.resource.expand(imageTypeVolume.volumeName, '')"/>
-                <service-call name="create#moqui.server.instance.AppInstanceVolume"
-                        in-map="{appInstanceId:appInstanceId, mountPoint:imageTypeVolume.mountPoint, volumeName:volumeName}"/>
-            </iterate>
-            <set field="imageTypeHostConfigList" from="imageType.hostConfigs"/>
-            <iterate list="imageTypeHostConfigList" entry="imageTypeHostConfig">
-                <set field="hostConfigValue" from="ec.resource.expand(imageTypeHostConfig.hostConfigValue, '')"/>
-                <service-call name="create#moqui.server.instance.AppInstanceHostConfig"
-                        in-map="{appInstanceId:appInstanceId, hostConfigName:imageTypeHostConfig.hostConfigName, hostConfigValue:hostConfigValue, type:imageTypeHostConfig.type}"/>
-            </iterate>
-        </actions>
     </service>
 
-    <service verb="provision" noun="AppInstance" authz-action="all">
-        <in-parameters><parameter name="appInstanceId"/></in-parameters>
+    <service verb="preview" noun="AppInstanceProvision" type="rust"
+            location="moqui_instance::services::preview_app_instance_provision" allow-remote="false">
+        <description>What a provision of the instance makes, dependencies first: containers, volumes, networks, databases
+            and users, the vault items it deposits, host names, and the items its lease needs (a host's TLS key, a
+            registry login, a database's admin login), with whether the environment has machine access.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters><parameter name="preview" type="Map"/></out-parameters>
+    </service>
+    <service verb="request" noun="InstanceAction" type="rust" location="moqui_instance::services::request_instance_action"
+            allow-remote="false" transaction="ignore">
+        <description>An action from a screen (IatProvision, IatStart, IatStop, IatRestart, IatRemove): run now when it opens
+            no vault item or its environment has machine access; else its lease is asked for, the action recorded as
+            waiting with it (approve it in System › Vaults › Lease), and run on this server once the lease
+            opens.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="actionEnumId" required="true"/>
+            <parameter name="removeVolumes" type="Boolean"/>
+        </in-parameters>
         <out-parameters>
-            <parameter name="databaseCreated" type="Boolean"/>
-            <parameter name="userCreated" type="Boolean"/>
-            <parameter name="instanceCreated" type="Boolean"/>
-            <parameter name="instanceExists" type="Boolean"/>
-            <parameter name="instanceUuid"/>
-            <parameter name="instanceStarted" type="Boolean"/>
-            <parameter name="instanceRunning" type="Boolean"/>
+            <parameter name="instanceActionId"/>
+            <parameter name="statusEnumId"/>
+            <parameter name="leaseId"/>
         </out-parameters>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <service-call name="org.moqui.dev.InstanceServices.create#AppDatabase" in-map="context" out-map="context"/>
-            <service-call name="org.moqui.dev.InstanceServices.init#AppInstance" in-map="context" out-map="context"/>
-            <service-call name="org.moqui.dev.InstanceServices.start#AppInstance" in-map="context" out-map="context"/>
-        </actions>
     </service>
-    <service verb="check" noun="AppInstanceAndDatabase">
-        <in-parameters><parameter name="appInstanceId"/></in-parameters>
+    <service verb="provision" noun="AppInstance" type="rust" location="moqui_instance::services::provision_app_instance"
+            allow-remote="false" transaction="ignore">
+        <description>Provision the instance and its dependencies not made yet (plans/Vault-Instances.md §4.3): the
+            credentials its kinds make, deposited; its database and user, made with the admin login; its volumes,
+            network and container with secrets as files; started and checked. One that opens vault items runs only
+            under leaseId (a lease this server holds, asked for this provision and opened by an approver) or its
+            environment's machine access, and is refused otherwise. An InstanceAction row records it.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="leaseId"/>
+        </in-parameters>
         <out-parameters>
-            <parameter name="databaseExists" type="Boolean"/>
-            <parameter name="dbUserExists" type="Boolean"/>
-            <parameter name="instanceExists" type="Boolean"/>
-            <parameter name="instanceRunning" type="Boolean"/>
-            <parameter name="statusString"/>
-            <parameter name="errorString"/>
-            <parameter name="startedAt" type="Timestamp"/>
-            <parameter name="finishedAt" type="Timestamp"/>
-            <parameter name="moquiStatusMap" type="Map"/>
-            <parameter name="instanceLog"/>
+            <parameter name="instanceActionId"/>
+            <parameter name="report"/>
         </out-parameters>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            const dbFuture = ec.service.async().name("org.moqui.dev.InstanceServices.check#AppDatabase").parameter("appInstanceId", appInstanceId).callFuture()
-            const instFuture = ec.service.async().name("org.moqui.dev.InstanceServices.check#AppInstance").parameter("appInstanceId", appInstanceId).callFuture()
-            const msFuture = ec.service.async().name("org.moqui.dev.InstanceServices.check#MoquiServer").parameter("appInstanceId", appInstanceId).callFuture()
-
-            ec.context.putAll(dbFuture.get())
-            ec.context.putAll(instFuture.get())
-            ec.context.putAll(msFuture.get())
-            ]]></script></actions>
     </service>
-
-    <service verb="check" noun="MoquiServer">
-        <in-parameters><parameter name="appInstanceId"/></in-parameters>
-        <out-parameters>
-            <parameter name="moquiConnectSuccess" type="Boolean"/>
-            <parameter name="moquiStatusMap" type="Map"/>
-        </out-parameters>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            // the hosted instance's own host, which an INSTANCE_ADMIN set up, is often on this network
-            const restClient = ec.service.rest().method("GET").allowInternal().uri().host(String(appInstance.hostName)).path("status").build()
-
-            try {
-                const restResponse = restClient.call()
-                if (restResponse.statusCode == 200) {
-                    moquiConnectSuccess = true
-                    moquiStatusMap = restResponse.jsonObject()
-                } else {
-                    moquiConnectSuccess = false
-                    ec.message.addMessage(`Server error on Moqui server: ${restResponse.getReasonPhrase()}`)
-                }
-            } catch (e) {
-                moquiConnectSuccess = false
-                ec.logger.error(`Error connecting to Moqui server at ${restClient.getUri()}: ${e}`)
-                ec.message.addMessage(`Error connecting to Moqui server at ${restClient.getUri()}: ${e}`)
-            }
-        ]]></script></actions>
+    <service verb="start" noun="AppInstance" type="rust" location="moqui_instance::services::start_app_instance"
+            allow-remote="false" transaction="ignore">
+        <description>The host type's start, under leaseId or machine access when the host's key is a vault item.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/><parameter name="leaseId"/></in-parameters>
+        <out-parameters><parameter name="instanceActionId"/><parameter name="report"/></out-parameters>
     </service>
-
-    <service verb="init" noun="AppInstance">
-        <implements service="org.moqui.dev.InstanceServices.init#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
-            <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
-            <!-- runs on a worker and is not waited on: creating a container pulls its image, which can take minutes -->
-            <!-- a row names the service: only one of these services, so a host type row cannot run any other -->
-            <if condition="!String(hostType.initService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="InstanceHostType ${hostType.hostTypeId} names an init service outside org.moqui.dev.InstanceServices"/></if>
-            <script>ec.service.async().name(hostType.initService).parameter("appInstanceId", appInstanceId).call()</script>
-        </actions>
+    <service verb="stop" noun="AppInstance" type="rust" location="moqui_instance::services::stop_app_instance"
+            allow-remote="false" transaction="ignore">
+        <in-parameters><parameter name="appInstanceId" required="true"/><parameter name="leaseId"/></in-parameters>
+        <out-parameters><parameter name="instanceActionId"/><parameter name="report"/></out-parameters>
     </service>
-    <service verb="start" noun="AppInstance">
-        <implements service="org.moqui.dev.InstanceServices.start#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
-            <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
-            <if condition="!String(hostType.startService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="The startService of this instance is outside org.moqui.dev.InstanceServices"/></if>
-            <service-call name="${hostType.startService}" in-map="context" out-map="context"/>
-        </actions>
+    <service verb="restart" noun="AppInstance" type="rust" location="moqui_instance::services::restart_app_instance"
+            allow-remote="false" transaction="ignore">
+        <in-parameters><parameter name="appInstanceId" required="true"/><parameter name="leaseId"/></in-parameters>
+        <out-parameters><parameter name="instanceActionId"/><parameter name="report"/></out-parameters>
     </service>
-    <service verb="stop" noun="AppInstance">
-        <implements service="org.moqui.dev.InstanceServices.stop#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
-            <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
-            <if condition="!String(hostType.stopService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="The stopService of this instance is outside org.moqui.dev.InstanceServices"/></if>
-            <service-call name="${hostType.stopService}" in-map="context" out-map="context"/>
-        </actions>
+    <service verb="remove" noun="AppInstance" type="rust" location="moqui_instance::services::remove_app_instance"
+            allow-remote="false" transaction="ignore">
+        <description>The host type's remove: the container, and its volumes (its data) only with removeVolumes. The
+            instance's row and its vault items stay.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="leaseId"/>
+            <parameter name="removeVolumes" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="instanceActionId"/><parameter name="report"/></out-parameters>
     </service>
-    <service verb="remove" noun="AppInstance">
-        <implements service="org.moqui.dev.InstanceServices.remove#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
-            <if condition="hostType == null"><return error="true" message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
-            <if condition="!String(hostType.removeService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="The removeService of this instance is outside org.moqui.dev.InstanceServices"/></if>
-            <service-call name="${hostType.removeService}" in-map="context" out-map="context"/>
-        </actions>
-    </service>
-    <service verb="check" noun="AppInstance">
+    <service verb="check" noun="AppInstance" type="rust" location="moqui_instance::services::check_app_instance"
+            allow-remote="false" transaction="ignore">
+        <description>What the host says of the instance's container, written to its row; a host reached with a client key
+            from the vault is checked during an action, under its lease.</description>
         <implements service="org.moqui.dev.InstanceServices.check#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="hostType" from="appInstance?.instanceHost?.hostType"/>
-            <if condition="hostType == null"><return message="No InstanceHostType found for AppInstance with ID ${appInstanceId}"/></if>
-            <if condition="!String(hostType.checkService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="The checkService of this instance is outside org.moqui.dev.InstanceServices"/></if>
-            <service-call name="${hostType.checkService}" in-map="context" out-map="context"/>
-        </actions>
     </service>
 
-    <service verb="create" noun="AppDatabase">
-        <implements service="org.moqui.dev.InstanceServices.create#Database"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="databaseType" from="appInstance.database?.type"/>
-            <if condition="databaseType == null"><return error="true" message="No DatabaseType found for AppInstance with ID ${appInstanceId}"/></if>
-            <if condition="!String(databaseType.createService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="The createService of this instance is outside org.moqui.dev.InstanceServices"/></if>
-            <service-call name="${databaseType.createService}" in-map="context" out-map="context"/>
-        </actions>
-    </service>
-    <service verb="check" noun="AppDatabase">
-        <implements service="org.moqui.dev.InstanceServices.check#Database"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="databaseType" from="appInstance.database?.type"/>
-            <if condition="databaseType == null"><return message="No DatabaseType found for AppInstance with ID ${appInstanceId}"/></if>
-            <if condition="!String(databaseType.checkService || '').startsWith('org.moqui.dev.InstanceServices.')">
-                <return error="true" message="The checkService of this instance is outside org.moqui.dev.InstanceServices"/></if>
-            <service-call name="${databaseType.checkService}" in-map="context" out-map="context"/>
-        </actions>
-    </service>
+    <!-- The docker host type's services (the driver contract of InstanceHostType), over moqui_lib::docker: called by the
+        actions above under their lease -->
+    <service verb="init" noun="InstanceContainer" type="rust" location="moqui_instance::services::init_instance_container"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.init#Instance"/></service>
+    <service verb="start" noun="InstanceContainer" type="rust" location="moqui_instance::services::start_instance_container"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.start#Instance"/></service>
+    <service verb="stop" noun="InstanceContainer" type="rust" location="moqui_instance::services::stop_instance_container"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.stop#Instance"/></service>
+    <service verb="remove" noun="InstanceContainer" type="rust" location="moqui_instance::services::remove_instance_container"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.remove#Instance"/></service>
+    <service verb="check" noun="InstanceContainer" type="rust" location="moqui_instance::services::check_instance_container"
+            allow-remote="false" transaction="ignore">
+        <implements service="org.moqui.dev.InstanceServices.check#Instance"/></service>
 
-    <!-- ========== Docker Management Services ========== -->
-    <!--
-        - https://docs.docker.com/engine/reference/api/docker_remote_api/
-        - https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/
-        - https://docs.docker.com/engine/reference/commandline/dockerd/#bind-docker-to-another-host-port-or-a-unix-socket
-        - https://docs.docker.com/engine/security/https/
-    -->
+    <service verb="reconcile" noun="AppInstances" type="rust" location="moqui_instance::services::reconcile_app_instances"
+            allow-remote="false" transaction="ignore">
+        <description>The reconcile job: for each instance with a container, what its host says (state, health, image) is
+            written beside its desired state. It changes nothing on a host. A host reached with a client key from the
+            vault is left until an action runs.</description>
+        <out-parameters>
+            <parameter name="observedCount" type="Integer"/>
+            <parameter name="unreachableCount" type="Integer"/>
+            <parameter name="skippedCount" type="Integer"/>
+        </out-parameters>
+    </service>
 
     <service verb="get" noun="RegistryToken" type="rust" location="moqui_core::service::registry_token::get_registry_token"
             allow-remote="false">
@@ -449,566 +397,6 @@ along with this software (see the LICENSE.md file). If not, see
             is Rust (crates/moqui-core/src/service/registry_token.rs).</description>
         <in-parameters><parameter name="instanceImageId" required="true"/></in-parameters>
         <out-parameters><parameter name="authToken"/></out-parameters>
-    </service>
-
-    <service verb="init" noun="InstanceDocker" transaction-timeout="1500" >
-        <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/create-a-container -->
-        <!-- https://docs.docker.com/engine/api/v1.24/#create-an-image -->
-        <implements service="org.moqui.dev.InstanceServices.init#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            connectSuccess = null
-            instanceCreated = false
-            instanceExists = null
-            instanceUuid = null
-            warnings = null
-
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            if (instanceHost == null) {
-                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
-            }
-            const instanceImage = appInstance.findRelatedOne("image", null, null)
-            if (instanceImage == null) {
-                ec.message.addError(`No InstanceImage found for AppInstance ${appInstanceId}`); return;
-            }
-            const instanceImageType = instanceImage.findRelatedOne("imageType", null, null)
-            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
-            const docker = (method, path, more) => ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi")
-                    .parameters(Object.assign({instanceHostId: instanceHost.instanceHostId, method, path}, more || {})).call() || {}
-            const responseText = (response) => typeof response.responseBody === "string" ? response.responseBody : JSON.stringify(response.responseBody)
-
-            const hostConfigMap = {RestartPolicy: {Name: "unless-stopped"}}
-            const linkList = []
-            for (const link of appInstance.links) linkList.push(`${link.instanceName}:${link.aliasName || link.instanceName}`)
-            if (linkList.length) hostConfigMap.Links = linkList
-            const networkMode = appInstance.networkMode || instanceImageType?.defaultNetworkMode
-            if (networkMode) hostConfigMap.NetworkMode = networkMode
-
-            const envList = []
-            for (const env of appInstance.envs) if (env.envValue) envList.push(`${env.envName}=${env.envValue}`)
-
-            const bindList = []
-            for (const vol of appInstance.vols) if (vol.mountPoint && vol.volumeName) bindList.push(`${vol.volumeName}:${vol.mountPoint}`)
-            if (bindList.length) hostConfigMap.Binds = bindList
-
-            for (const hostConf of appInstance.hostConfigs) if (hostConf.hostConfigName && hostConf.hostConfigValue) {
-                let hostConfigValue
-                if (hostConf.type == null || hostConf.type == 'String') hostConfigValue = hostConf.hostConfigValue
-                else if (hostConf.type == 'Number') hostConfigValue = toNumber(ec.l10n.parseNumber(hostConf.hostConfigValue, null))
-                else throw new Error(`Unknown type '${hostConf.type}' for hostConfig`)
-                hostConfigMap[hostConf.hostConfigName] = hostConfigValue
-            }
-
-            let jsonBody = {Image: instanceImage.imageName, Env: envList, HostConfig: hostConfigMap}
-            const initCommand = appInstance.initCommand || instanceImageType?.defaultInitCommand
-            if (initCommand) jsonBody.Cmd = initCommand
-
-            if (appInstance.jsonConfig) {
-                // jsonBody over the base config, as CollectionUtilities.mergeNestedMap(base, jsonBody, false)
-                const mergeNested = (base, over) => {
-                    for (const [key, value] of Object.entries(over)) {
-                        const baseValue = base[key]
-                        if (value != null && typeof value === "object" && !Array.isArray(value) &&
-                                baseValue != null && typeof baseValue === "object" && !Array.isArray(baseValue)) {
-                            mergeNested(baseValue, value)
-                        } else if (Array.isArray(value) && Array.isArray(baseValue)) {
-                            for (const item of value) if (!baseValue.includes(item)) baseValue.push(item)
-                        } else {
-                            base[key] = value
-                        }
-                    }
-                    return base
-                }
-                jsonBody = mergeNested(JSON.parse(String(appInstance.jsonConfig)), jsonBody)
-            }
-
-            // the names only: an Env value may be a password (SEC-TLS-09)
-            ec.logger.info(`Initializing docker container for ${appInstance.instanceName} with image ${jsonBody.Image}, env ${
-                envList.map((entry) => entry.split("=")[0]).join(", ")}, host config ${Object.keys(jsonBody.HostConfig || {}).join(", ")}`)
-
-            let authTokenPass = null
-            if (instanceImage.authTokenCmd) {
-                // the conf's token-command the field names, run natively for an INSTANCE_ADMIN holder
-                authTokenPass = ec.service.sync().name("org.moqui.dev.InstanceServices.get#RegistryToken")
-                        .parameter("instanceImageId", instanceImage.instanceImageId).call()?.authToken ?? null
-                if (ec.message.hasError()) return
-            } else {
-                authTokenPass = instanceImage.password
-            }
-            // registryLocation is the registry's server address
-            const jsonAuth = {username: instanceImage.username, password: authTokenPass, email: instanceImage.emailAddress,
-                    serveraddress: instanceImage.registryLocation}
-            const imageCreate = docker("POST", "/images/create", {
-                query: {fromImage: String(instanceImage.imageName), repo: String(instanceImage.imageName)},
-                registryAuth: StringUtilities.base64Encode(JSON.stringify(jsonAuth)), timeoutSeconds: 1000})
-            // refused or not connected: call#DockerApi said why
-            if (imageCreate.statusCode == null) { connectSuccess = false; return }
-            if (imageCreate.statusCode != 200) {
-                ec.message.addMessage(`Error Image-pull-fail problem image not-exists either or credential is wrong (${imageCreate.statusCode}): ${imageCreate.reasonPhrase}`)
-            }
-
-            const created = docker("POST", "/containers/create", {query: {name: String(appInstance.instanceName)}, body: JSON.stringify(jsonBody)})
-            if (created.statusCode == null) { connectSuccess = false; return }
-            connectSuccess = true
-            if (created.statusCode == 201) {
-                instanceCreated = true
-                instanceExists = true
-
-                const jsonObj = created.responseBody || {}
-                instanceUuid = jsonObj.Id
-                warnings = jsonObj.Warnings
-
-                if (instanceUuid) {
-                    appInstance.instanceUuid = instanceUuid
-                    appInstance.update()
-                }
-
-                ec.message.addMessage(`Created Docker container ${appInstance.instanceName} (${appInstance.instanceUuid})${warnings && warnings.length ? ' warnings: ' + JSON.stringify(warnings) : ''}`)
-            } else if (created.statusCode == 409) {
-                instanceExists = true
-                ec.logger.warn(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) conflict [${created.reasonPhrase}]:\n${responseText(created)}`)
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) got a conflict on create [${created.reasonPhrase}]`)
-            } else if (created.statusCode == 404) {
-                // POST /v1.24/images/create?fromImage=busybox&tag=latest HTTP/1.1
-                ec.message.addMessage(ec.l10n.localize("Image not Found ,or may be Docker login fail"))
-            } else {
-                ec.logger.error(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) ERROR [${created.reasonPhrase}]:\n${responseText(created)}`)
-                ec.message.addMessage(`Error on create container for ${appInstance.instanceName} (${created.statusCode}): ${created.reasonPhrase}`)
-            }
-            ]]></script></actions>
-    </service>
-    <service verb="start" noun="InstanceDocker">
-        <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/start-a-container -->
-        <implements service="org.moqui.dev.InstanceServices.start#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            instanceStarted = false
-            instanceRunning = null
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            if (instanceHost == null) {
-                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
-            }
-            const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
-
-            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
-            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
-                instanceHostId: instanceHost.instanceHostId, method: "POST",
-                path: `/containers/${encodeURIComponent(containerName)}/start`}).call() || {}
-            if (response.statusCode == 204) {
-                instanceStarted = true
-                instanceRunning = true
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) started`)
-            } else if (response.statusCode == 304) {
-                instanceStarted = false
-                instanceRunning = true
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) already started`)
-            } else if (response.statusCode == 404) {
-                instanceStarted = false
-                instanceRunning = false
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
-            } else if (response.statusCode != null) {
-                errorString = response.reasonPhrase
-                ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-            }
-        ]]></script></actions>
-    </service>
-    <service verb="stop" noun="InstanceDocker">
-        <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/stop-a-container -->
-        <implements service="org.moqui.dev.InstanceServices.stop#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            instanceStopped = false
-            instanceRunning = null
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            if (instanceHost == null) {
-                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
-            }
-            const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
-
-            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
-            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
-                instanceHostId: instanceHost.instanceHostId, method: "POST",
-                path: `/containers/${encodeURIComponent(containerName)}/stop`}).call() || {}
-            if (response.statusCode == 204) {
-                instanceStopped = true
-                instanceRunning = false
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) stopped`)
-            } else if (response.statusCode == 304) {
-                instanceStopped = false
-                instanceRunning = false
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) was not running`)
-            } else if (response.statusCode == 404) {
-                instanceStopped = false
-                instanceRunning = false
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
-            } else if (response.statusCode != null) {
-                errorString = response.reasonPhrase
-                ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-            }
-        ]]></script></actions>
-    </service>
-    <service verb="remove" noun="InstanceDocker">
-        <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/remove-a-container -->
-        <implements service="org.moqui.dev.InstanceServices.remove#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            instanceRemoved = false
-            instanceExists = null
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            if (instanceHost == null) {
-                ec.message.addError(`No InstanceHost found for AppInstance ${appInstanceId}`); return;
-            }
-            const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
-
-            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
-            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
-                instanceHostId: instanceHost.instanceHostId, method: "DELETE",
-                path: `/containers/${encodeURIComponent(containerName)}`}).call() || {}
-            if (response.statusCode == 204) {
-                instanceRemoved = true
-                instanceExists = false
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) removed`)
-            } else if (response.statusCode == 404) {
-                instanceRemoved = false
-                instanceExists = false
-                ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist, init first`)
-            } else if (response.statusCode != null) {
-                errorString = response.reasonPhrase
-                ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-            }
-        ]]></script></actions>
-    </service>
-    <service verb="check" noun="InstanceDocker">
-        <implements service="org.moqui.dev.InstanceServices.check#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <service-call name="org.moqui.dev.InstanceServices.get#DockerStatus" in-map="context" out-map="context"/>
-            <service-call name="org.moqui.dev.InstanceServices.get#DockerLog" in-map="context" out-map="context"/>
-        </actions>
-    </service>
-    <service verb="get" noun="DockerStatus">
-        <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/inspect-a-container -->
-        <implements service="org.moqui.dev.InstanceServices.check#Instance"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            connectSuccess = null
-            instanceExists = null
-            instanceRunning = null
-            statusString = ""
-            errorString = ""
-            startedAt = null
-            finishedAt = null
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            if (instanceHost == null) { ec.message.addMessage(`No InstanceHost found for AppInstance ${appInstanceId}`); return; }
-            const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
-
-            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
-            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
-                instanceHostId: instanceHost.instanceHostId, method: "GET",
-                path: `/containers/${encodeURIComponent(containerName)}/json`}).call() || {}
-            if (response.statusCode == null) {
-                // refused or not connected: call#DockerApi said why
-                connectSuccess = false
-            } else {
-                connectSuccess = true
-
-                if (response.statusCode == 200) {
-                    instanceExists = true
-
-                    inspectMap = response.responseBody && typeof response.responseBody === "object" ? response.responseBody : {}
-                    const stateMap = inspectMap.State || {}
-                    instanceRunning = !!stateMap.Running
-                    statusString = stateMap.Status == null ? null : String(stateMap.Status)
-                    errorString = stateMap.Error == null ? null : String(stateMap.Error)
-                    startedAt = stateMap.StartedAt ? ec.l10n.parseTimestamp(String(stateMap.StartedAt), "") : null
-                    if (stateMap.FinishedAt) finishedAt = ec.l10n.parseTimestamp(String(stateMap.FinishedAt), "")
-
-                    if (!appInstance.instanceUuid) {
-                        appInstance.instanceUuid = inspectMap.Id
-                        appInstance.update()
-                    }
-
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) ${instanceRunning ? 'running' : 'NOT running'}, status ${statusString}, ${errorString ? 'error: ' + errorString + ', ' : ''}started at ${ec.l10n.format(startedAt, '')}${finishedAt ? ', finished at ' + ec.l10n.format(finishedAt, '') : ''}`)
-                } else if (response.statusCode == 404) {
-                    instanceExists = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist`)
-                } else {
-                    errorString = response.reasonPhrase
-                    ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-                }
-            }
-        ]]></script></actions>
-    </service>
-    <service verb="get" noun="DockerLog">
-        <!-- see https://docs.docker.com/engine/reference/api/docker_remote_api_v1.24/#/inspect-a-container -->
-        <in-parameters><parameter name="appInstanceId"/></in-parameters>
-        <out-parameters><parameter name="instanceLog"/></out-parameters>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if><script><![CDATA[
-            instanceLog = null
-            const appInstance = ec.entity.find("moqui.server.instance.AppInstance").condition("appInstanceId", appInstanceId).one()
-            const instanceHost = appInstance.findRelatedOne("instanceHost", null, null)
-            if (instanceHost == null) { ec.message.addMessage(`No InstanceHost found for AppInstance ${appInstanceId}`); return; }
-            const containerName = String(appInstance.instanceUuid || appInstance.instanceName)
-
-            // the host as its row says: a unix socket, https, or plain http to this machine only (SEC-OUT-08)
-            const response = ec.service.sync().name("org.moqui.dev.InstanceServices.call#DockerApi").parameters({
-                instanceHostId: instanceHost.instanceHostId, method: "GET",
-                path: `/containers/${encodeURIComponent(containerName)}/logs`, query: {stdout: "true", tail: "50"}}).call() || {}
-            if (response.statusCode == null) {
-                // refused or not connected: call#DockerApi said why
-                connectSuccess = false
-            } else {
-                connectSuccess = true
-
-                if (response.statusCode == 200) {
-                    instanceExists = true
-                    const text = typeof response.responseBody === "string" ? response.responseBody : JSON.stringify(response.responseBody)
-                    // drop the stream frame headers and the terminal color codes
-                    instanceLog = text.replace(/\u0001\u0000{5}[\u0000\u0001][\u003c\ufffd]/g, "").replace(/\u001b\[[0-9]{0,2}m/g, "")
-                } else if (response.statusCode == 404) {
-                    instanceExists = false
-                    ec.message.addMessage(`Docker container ${appInstance.instanceName} (${appInstance.instanceUuid}) does not exist`)
-                } else {
-                    errorString = response.reasonPhrase
-                    ec.message.addMessage(`Server error on Docker host: ${errorString}`)
-                }
-            }
-        ]]></script></actions>
-    </service>
-
-    <!-- ========== Database Management Services ========== -->
-
-    <service verb="get" noun="AppInstanceEnv">
-        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
-        <out-parameters>
-            <parameter name="envMap" type="Map"/>
-            <parameter name="adminMap" type="Map"/>
-        </out-parameters>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
-            <set field="databaseHost" from="appInstance.database"/>
-            <if condition="databaseHost == null"><return message="No DatabaseHost found for AppInstance ${appInstanceId}"/></if>
-            <set field="envList" from="appInstance.envs"/>
-            <set field="envMap" from="{}"/>
-            <iterate list="envList" entry="envItem"><script>envMap[envItem.envName] = envItem.envValue</script></iterate>
-
-            <!-- setup adminMap directly from databaseHost settings, may differ from how instance accesses the database -->
-            <set field="adminMap" from="{entity_ds_db_conf:databaseHost.type.confName, entity_ds_host:databaseHost.hostAddress,
-                    entity_ds_port:databaseHost.hostPort, entity_ds_user:databaseHost.adminUser, entity_ds_password:databaseHost.adminPassword}"/>
-        </actions>
-    </service>
-
-    <!-- MySQL Services -->
-    <service verb="check" noun="DatabaseMySQL">
-        <implements service="org.moqui.dev.InstanceServices.check#Database"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
-            <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
-            <!-- connect with the mysql database which is always there in MySQL -->
-            <set field="adminMap.entity_ds_database" value="mysql"/>
-
-            <script><![CDATA[
-                const identifier = (name, what) => {
-                    if (!/^[A-Za-z0-9_]+$/.test(String(name ?? ""))) throw new Error(`The ${what} name [${name}] is not a plain identifier`)
-                    return String(name)
-                }
-                const quoted = (text) => String(text ?? "").replace(/'/g, "''")
-                const databaseName = identifier(envMap.entity_ds_database, "database")
-                const userName = identifier(envMap.entity_ds_user, "user")
-
-                dbConnectSuccess = ec.entity.testConfConnection(adminMap)
-                databaseExists = false
-                dbUserExists = false
-                if (!dbConnectSuccess) ec.logger.warn("Test connection to MySQL failed")
-
-                if (dbConnectSuccess) {
-                    const dbCount = ec.entity.runSqlCountConf("information_schema.schemata", `schema_name='${databaseName}'`, adminMap)
-                    if (dbCount > 0) databaseExists = true
-
-                    const userCount = ec.entity.runSqlCountConf("mysql.user", `user='${userName}'`, adminMap)
-                    if (userCount > 0) dbUserExists = true
-                }
-            ]]></script>
-
-            <message>Checked database ${envMap.entity_ds_database} at ${adminMap.entity_ds_host}: connect ${dbConnectSuccess ? 'successful' : 'failed'}, database ${databaseExists ? 'exists' : 'does not exist'}, user ${envMap.entity_ds_user} ${dbUserExists ? 'exists' : 'does not exist'}</message>
-        </actions>
-    </service>
-    <service verb="create" noun="DatabaseMySQL">
-        <implements service="org.moqui.dev.InstanceServices.create#Database"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
-            <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
-            <!-- connect with the mysql database which is always there in MySQL -->
-            <set field="adminMap.entity_ds_database" value="mysql"/>
-
-            <script><![CDATA[
-                const identifier = (name, what) => {
-                    if (!/^[A-Za-z0-9_]+$/.test(String(name ?? ""))) throw new Error(`The ${what} name [${name}] is not a plain identifier`)
-                    return String(name)
-                }
-                // MySQL's default mode reads a backslash as an escape, so doubling quotes is not enough: a password with a
-                // quote or a backslash is refused (SEC-TLS-10)
-                const quoted = (text) => {
-                    const password = String(text ?? "")
-                    if (/['"\\]/.test(password)) throw new Error("The database password may not hold a quote or a backslash")
-                    return password
-                }
-                const databaseName = identifier(envMap.entity_ds_database, "database")
-                const userName = identifier(envMap.entity_ds_user, "user")
-
-                databaseCreated = false
-                userCreated = false
-
-                // see if database exists (SELECT * FROM information_schema.schemata WHERE schema_name='moqui')
-                const dbCount = ec.entity.runSqlCountConf("information_schema.schemata", `schema_name='${databaseName}'`, adminMap)
-                if (dbCount > 0) {
-                    ec.message.addMessage(`Database ${databaseName} already exists on host ${adminMap.entity_ds_host}`)
-                } else {
-                    const dbRows = ec.entity.runSqlUpdateConf(`CREATE DATABASE \`${databaseName}\` DEFAULT CHARACTER SET utf8`, adminMap)
-                    if (dbRows > 0) {
-                        databaseCreated = true
-                        ec.message.addMessage(`Created database ${databaseName} on host ${adminMap.entity_ds_host}`)
-                    }
-                }
-
-                // see if user exists (SELECT * FROM mysql.user WHERE user='root')
-                const userCount = ec.entity.runSqlCountConf("mysql.user", `user='${userName}'`, adminMap)
-                if (userCount > 0) {
-                    ec.message.addMessage(`User ${userName} already exists on host ${envMap.entity_ds_host}`)
-                } else {
-                    // NOTE: calling CREATE USER with IF NOT EXISTS returns an error instead of warning in MySQL 5.7.* (at least 5.7.10)
-                    // NOTE: always seems to return 0 rows updated so ignore
-                    ec.entity.runSqlUpdateConf(`CREATE USER '${userName}' IDENTIFIED BY '${quoted(envMap.entity_ds_password)}'`, adminMap)
-                    userCreated = true
-                    ec.message.addMessage(`Created user ${userName} on host ${adminMap.entity_ds_host}`)
-                }
-                // NOTE: because of issue above user must already exist, often the case (using same user to access all tenant DBs; may create separate users to access only a single tenant DB)
-                ec.entity.runSqlUpdateConf(`GRANT ALL ON ${databaseName}.* TO '${userName}'`, adminMap)
-            ]]></script>
-        </actions>
-    </service>
-
-    <service verb="check" noun="DatabasePostgres">
-        <implements service="org.moqui.dev.InstanceServices.check#Database"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
-            <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
-
-            <set field="adminMap.entity_ds_database" from="envMap.entity_ds_database"/>
-
-            <script><![CDATA[
-                const identifier = (name, what) => {
-                    if (!/^[A-Za-z0-9_]+$/.test(String(name ?? ""))) throw new Error(`The ${what} name [${name}] is not a plain identifier`)
-                    return String(name)
-                }
-                const quoted = (text) => String(text ?? "").replace(/'/g, "''")
-                const databaseName = identifier(envMap.entity_ds_database, "database")
-                const userName = identifier(envMap.entity_ds_user, "user")
-
-                dbConnectSuccess = ec.entity.testConfConnection(adminMap)
-                databaseExists = false
-                dbUserExists = false
-                if (!dbConnectSuccess) ec.logger.warn("Test connection to Postgres failed")
-
-                if (dbConnectSuccess) {
-                    const dbCount = ec.entity.runSqlCountConf("pg_database", `pg_database.datname='${databaseName}'`, adminMap)
-                    if (dbCount > 0) databaseExists = true
-
-                    const userCount = ec.entity.runSqlCountConf("pg_catalog.pg_user", `usename='${userName}'`, adminMap)
-                    if (userCount > 0) dbUserExists = true
-                }
-            ]]></script>
-        </actions>
-    </service>
-
-    <service verb="create" noun="DatabasePostgres">
-        <implements service="org.moqui.dev.InstanceServices.create#Database"/>
-        <actions>
-            <!-- hosted instances run commands, start containers and make databases on the hosts their rows name: the sealed
-                INSTANCE_ADMIN permission, whatever calls this (plans/Security-Review.md SEC-TLS-02) -->
-            <if condition="!ec.artifactExecution.authzDisabled() &amp;&amp; !ec.user.hasPermission('INSTANCE_ADMIN')">
-                <return error="true" message="Hosted instances need the INSTANCE_ADMIN permission"/></if>
-            <log message="Creating database in Postgres!"/>
-            <service-call name="org.moqui.dev.InstanceServices.get#AppInstanceEnv" in-map="context" out-map="context"/>
-            <if condition="!envMap || !Object.keys(envMap).length"><return/></if>
-
-            <set field="adminMap.entity_ds_database" from="adminMap.entity_ds_db_conf"/>
-            <script><![CDATA[
-                const identifier = (name, what) => {
-                    if (!/^[A-Za-z0-9_]+$/.test(String(name ?? ""))) throw new Error(`The ${what} name [${name}] is not a plain identifier`)
-                    return String(name)
-                }
-                const quoted = (text) => String(text ?? "").replace(/'/g, "''")
-                const databaseName = identifier(envMap.entity_ds_database, "database")
-                const userName = identifier(envMap.entity_ds_user, "user")
-
-                databaseCreated = false
-                userCreated = false
-
-                const dbCount = ec.entity.runSqlCountConf("pg_database", `pg_database.datname='${databaseName}'`, adminMap)
-                if (dbCount > 0) {
-                    ec.message.addMessage(`Database ${databaseName} already exists on host ${adminMap.entity_ds_host}`)
-                } else {
-                    // Postgres reports no rows for CREATE DATABASE, so a statement that did not fail created it
-                    ec.entity.runSqlUpdateConf(`CREATE DATABASE ${databaseName}`, adminMap)
-                    databaseCreated = true
-                    ec.message.addMessage(`Created database ${databaseName} on host ${adminMap.entity_ds_host}`)
-                }
-
-                const userCount = ec.entity.runSqlCountConf("pg_catalog.pg_user", `usename='${userName}'`, adminMap)
-                if (userCount > 0) {
-                    ec.message.addMessage(`User ${userName} already exists on host ${envMap.entity_ds_host}`)
-                } else {
-                    ec.entity.runSqlUpdateConf(`CREATE USER ${userName} WITH PASSWORD '${quoted(envMap.entity_ds_password)}'`, adminMap)
-                    userCreated = true
-                    ec.message.addMessage(`Created user ${userName} on host ${adminMap.entity_ds_host}`)
-                }
-                ec.entity.runSqlUpdateConf(`GRANT ALL PRIVILEGES ON DATABASE ${databaseName} TO ${userName}`, adminMap)
-            ]]></script>
-        </actions>
     </service>
 
 </services>

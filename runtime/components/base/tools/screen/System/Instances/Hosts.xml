@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Docker and Podman hosts (store#InstanceHost): a unix socket, https with a client certificate (whose key is the item
+    InstanceHost:<id>:tlsClientKey of the host's vault, the environment's when empty), or http to this machine only. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Hosts" default-menu-index="3">
+
+    <transition name="storeHost" method="post"><service-call name="org.moqui.dev.InstanceServices.store#InstanceHost"/>
+        <default-response url="."/></transition>
+
+    <actions>
+        <entity-find entity-name="moqui.server.instance.InstanceHostDetail" list="hostList">
+            <order-by field-name="instanceHostId"/></entity-find>
+    </actions>
+    <widgets>
+        <container-dialog id="StoreHostDialog" button-text="New host">
+            <form-single name="StoreHost" transition="storeHost">
+                <field name="instanceHostId"><default-field title="Id"><text-line size="30"/></default-field></field>
+                <field name="hostTypeId"><default-field title="Type">
+                    <drop-down><entity-options key="${hostTypeId}" text="${description}">
+                        <entity-find entity-name="moqui.server.instance.InstanceHostType"/></entity-options></drop-down>
+                </default-field></field>
+                <field name="hostProtocol"><default-field title="Protocol">
+                    <drop-down><option key="unix"/><option key="https"/><option key="http" text="http (this machine only)"/></drop-down></default-field></field>
+                <field name="hostAddress"><default-field title="Address" tooltip="A socket's path, or a host name"><text-line size="50"/></default-field></field>
+                <field name="adminPort"><default-field title="Port"><text-line size="6"/></default-field></field>
+                <field name="tlsCaCert"><default-field title="Authority (PEM)"><text-area rows="3" cols="60"/></default-field></field>
+                <field name="tlsClientCert"><default-field title="Client certificate (PEM)" tooltip="Its key is a vault item, never here">
+                    <text-area rows="3" cols="60"/></default-field></field>
+                <field name="vaultId"><default-field title="Vault of its key" tooltip="The environment's when empty"><text-line size="30"/></default-field></field>
+                <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+            </form-single>
+        </container-dialog>
+
+        <form-list name="HostList" list="hostList" skip-form="true">
+            <field name="instanceHostId"><default-field title="Id"><display/></default-field></field>
+            <field name="typeDescription"><default-field title="Type"><display/></default-field></field>
+            <field name="hostProtocol"><default-field title="Protocol"><display/></default-field></field>
+            <field name="hostAddress"><default-field title="Address"><display/></default-field></field>
+            <field name="adminPort"><default-field title="Port"><display/></default-field></field>
+            <field name="keyBinding"><default-field title="Client key">
+                <display text="${tlsClientCert ? 'InstanceHost:' + instanceHostId + ':tlsClientKey' : ''}"/></default-field></field>
+            <field name="vaultId"><default-field title="Vault"><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

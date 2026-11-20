@@ -273,21 +273,21 @@ fn a_find_condition_on_an_encrypted_field_matches_the_stored_value() {
     let _entered = context.enter();
     // PartyIdentification-style lookups: the stored value is encrypted, the condition value is plain text
     run_script(
-        r#"const host = ec.entity.makeValue("moqui.server.instance.InstanceHost");
-        host.instanceHostId = "H1";
+        r#"const host = ec.entity.makeValue("moqui.database.DatabaseConnection");
+        host.connectionId = "H1";
         host.password = "Secret";
         host.create();"#,
     )
     .unwrap();
     holds(
-        r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("password", "Secret").list().length === 1"#,
+        r#"ec.entity.find("moqui.database.DatabaseConnection").condition("password", "Secret").list().length === 1"#,
     );
     holds(
-        r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("password", "in", ["Secret", "Other"]).list().length === 1"#,
+        r#"ec.entity.find("moqui.database.DatabaseConnection").condition("password", "in", ["Secret", "Other"]).list().length === 1"#,
     );
-    holds(r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("password", "Other").list().length === 0"#);
+    holds(r#"ec.entity.find("moqui.database.DatabaseConnection").condition("password", "Other").list().length === 0"#);
     holds(
-        r#"ec.entity.find("moqui.server.instance.InstanceHost").condition("instanceHostId", "H1").one().password === "Secret""#,
+        r#"ec.entity.find("moqui.database.DatabaseConnection").condition("connectionId", "H1").one().password === "Secret""#,
     );
 }
 

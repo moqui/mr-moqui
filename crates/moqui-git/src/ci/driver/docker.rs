@@ -52,25 +52,47 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     Ok(())
 }
 
-/// The plain values of an `InstanceHost` row that say where its host is and how it is reached.
-fn host_address(host: &EntityValue) -> HostAddress {
-    HostAddress {
-        protocol: field(host, "hostProtocol"),
+/// The values of an `InstanceHost` row that say where its host is and how it is reached. The client key of an https
+/// host with a client certificate is a vault item (`InstanceHost:<id>:tlsClientKey`, plans/Vault-Instances.md §4.1),
+/// read from the lease the thread runs under (`moqui_core::vault_hooks::leased`); with no lease the host is not
+/// reached, and the refusal says so.
+fn host_address(host: &EntityValue) -> Result<HostAddress, Error> {
+    let protocol = field(host, "hostProtocol");
+    let tls_client_cert = field(host, "tlsClientCert");
+    let https = protocol
+        .as_deref()
+        .is_some_and(|protocol| protocol.eq_ignore_ascii_case("https"));
+    let tls_client_key = if https && tls_client_cert.is_some() {
+        let host_id = field(host, "instanceHostId").unwrap_or_default();
+        let binding = format!("InstanceHost:{host_id}:tlsClientKey");
+        let key = moqui_core::vault_hooks::leased(&binding, Some("privateKey")).map_err(|err| {
+            Error::new(format!(
+                "the host's client key is the vault item {binding}, read under a lease of it: {}",
+                err.message()
+            ))
+        })?;
+        Some(to_plain_string(&key))
+    } else {
+        None
+    };
+    Ok(HostAddress {
+        protocol,
         address: field(host, "hostAddress"),
         port: field(host, "adminPort"),
         tls_ca_cert: field(host, "tlsCaCert"),
-        tls_client_cert: field(host, "tlsClientCert"),
-        tls_client_key: field(host, "tlsClientKey"),
-    }
+        tls_client_cert,
+        tls_client_key,
+    })
 }
 
 /// The client for an `InstanceHost` row.
 ///
 /// # Errors
 ///
-/// When the row names no address, or plain http to a host that is not this machine (SEC-OUT-08).
+/// When the row names no address, plain http to a host that is not this machine (SEC-OUT-08), or a client key the
+/// thread's lease does not hold.
 pub fn host_of(host: &EntityValue) -> Result<DockerHost, Error> {
-    Ok(DockerHost::connect(&host_address(host), None)?)
+    Ok(DockerHost::connect(&host_address(host)?, None)?)
 }
 
 /// Run `command` in a container of `image` on `host` to its end, kept in as a job's container is, and remove it: the
@@ -788,8 +810,8 @@ const INSTANCE_PORT: u16 = 2375;
 /// The longest `timeoutSeconds` a call may ask for.
 const MAX_CALL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
-/// `call#DockerApi`: one Docker Engine API call to an `InstanceHost`, for the hosted-instance services of
-/// `InstanceServices.xml` (`init#InstanceDocker` and the others), on the client the CI runs use ([`DockerHost`]):
+/// `call#DockerApi`: one Docker Engine API call to an `InstanceHost`, for what the managed-instance services do not
+/// cover, on the client the CI runs and the managed instances use ([`DockerHost`]):
 /// a unix socket, https with the row's TLS fields, or plain http to this machine only (SEC-OUT-08). Needs
 /// `INSTANCE_ADMIN` unless authorization is disabled. In: `instanceHostId`, `method`, `path` (under the API version),
 /// `query`, `body` (JSON text sent as it is, or a map or list), `registryAuth` (sent as `X-Registry-Auth`),
@@ -817,7 +839,7 @@ fn call_docker_api(parameters: &Parameters, facade: &EntityFacade) -> Out {
         return Ok(BTreeMap::new());
     }
     let host = match super::host_row(facade, &host_id)
-        .and_then(|row| DockerHost::connect(&host_address(&row), Some(INSTANCE_PORT)).map_err(Error::from))
+        .and_then(|row| DockerHost::connect(&host_address(&row)?, Some(INSTANCE_PORT)).map_err(Error::from))
     {
         Ok(host) => host,
         Err(err) => {

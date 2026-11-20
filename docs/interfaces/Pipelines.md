@@ -289,11 +289,11 @@ a sealed permission (`user-facade` `authz`): only a holder grants it to a group.
 | `hostProtocol` | `hostAddress` | |
 | --- | --- | --- |
 | `unix` | `/run/podman/podman.sock`, `/var/run/docker.sock`, `/run/user/1000/podman/podman.sock` | A socket on the server's machine: for a try on one machine only, since a runner is not to be on the server's |
-| `https` | a host name, with `adminPort` (2376) | TLS with `tlsCaCert`, `tlsClientCert` and `tlsClientKey` (PEM; the key encrypted) |
+| `https` | a host name, with `adminPort` (2376) | TLS with `tlsCaCert` and `tlsClientCert` (PEM); the client key is the vault item `InstanceHost:<id>:tlsClientKey`, read under the lease the call runs under. A CI run is unattended and runs under no lease, so a runner host is reached by `unix` or a forwarded socket until runner pools get their host's key under machine access ([Vault-Instances](../../plans/Vault-Instances.md) §3.8, M3) |
 | `http` | `localhost`, `127.0.0.1` (127.0.0.0/8), `::1` or `::ffff:127.0.0.1`, with `adminPort` (2375) | No authentication: this machine only. Plain http to any other host is refused before anything is sent (SEC-OUT-08); reach it over `https`, or forward its socket |
 
-The hosted-instance services (`init#InstanceDocker` and the others) reach the same rows through `call#DockerApi`,
-on the same client and rule, with `adminPort` 2375 when the row has none.
+The managed-instance services ([Run-Deploy](../Run-Deploy.md#managed-instances)) reach the same rows on the same client
+(`moqui_lib::docker`) and rule, as `call#DockerApi` does, with `adminPort` 2375 when the row has none.
 
 Docker: `dockerd --tlsverify --tlscacert=ca.pem --tlscert=server-cert.pem --tlskey=server-key.pem -H 0.0.0.0:2376`.
 Podman: `podman system service --time=0 tcp://0.0.0.0:2376` behind a TLS proxy, or the socket forwarded over SSH;

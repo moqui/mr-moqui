@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The kinds (seed data, framework/data/InstanceTypeData.xml): what each needs from a vault (its secrets: made and deposited
+    by a provision, or leased; each given to its container as a file) and what it depends on. Read only. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Kinds" default-menu-index="6">
+
+    <actions>
+        <entity-find entity-name="moqui.server.instance.InstanceKind" list="kindList"><order-by field-name="instanceKindId"/></entity-find>
+        <entity-find entity-name="moqui.server.instance.InstanceKindSecret" list="secretList">
+            <order-by field-name="instanceKindId,secretName"/></entity-find>
+        <entity-find entity-name="moqui.server.instance.InstanceKindDependency" list="dependencyList">
+            <order-by field-name="instanceKindId,dependencyRole"/></entity-find>
+    </actions>
+    <widgets>
+        <form-list name="KindList" list="kindList" skip-form="true">
+            <field name="instanceKindId"><default-field title="Kind"><display/></default-field></field>
+            <field name="description"><default-field><display/></default-field></field>
+            <field name="containerPort"><default-field title="Port"><display/></default-field></field>
+            <field name="confName"><default-field title="Database"><display/></default-field></field>
+        </form-list>
+        <label text="Secrets" type="h5"/>
+        <form-list name="KindSecretList" list="secretList" skip-form="true">
+            <field name="instanceKindId"><default-field title="Kind"><display/></default-field></field>
+            <field name="secretName"><default-field title="Secret"><display/></default-field></field>
+            <field name="bindingPattern"><default-field title="Binding"><display/></default-field></field>
+            <field name="vaultItemTypeId"><default-field title="Item type"><display/></default-field></field>
+            <field name="fileName"><default-field title="File"><display/></default-field></field>
+            <field name="envName"><default-field title="Named by"><display/></default-field></field>
+            <field name="generated"><default-field title="Made here"><display/></default-field></field>
+        </form-list>
+        <label text="Dependencies" type="h5"/>
+        <form-list name="KindDependencyList" list="dependencyList" skip-form="true">
+            <field name="instanceKindId"><default-field title="Kind"><display/></default-field></field>
+            <field name="dependencyRole"><default-field title="Role"><display/></default-field></field>
+            <field name="allowedKindId"><default-field title="Served by"><display/></default-field></field>
+            <field name="optional"><default-field><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

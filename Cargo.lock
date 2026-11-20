@@ -4947,8 +4947,15 @@ dependencies = [
 name = "moqui-instance"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "moqui-core",
  "moqui-lib",
+ "moqui-vault",
+ "moqui-vault-server",
+ "serde_json",
+ "sha2 0.11.1",
+ "tracing",
+ "zeroize",
 ]
 
 [[package]]

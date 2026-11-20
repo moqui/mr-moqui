@@ -74,6 +74,7 @@ fn database() -> ContainerSpec {
             "-c".to_string(),
             "max_connections=200".to_string(),
         ],
+        entrypoint: Vec::new(),
         secrets: vec![secret("postgres-password", PASSWORD)],
         pull: false,
         allow_host_access: false,
@@ -104,6 +105,10 @@ fn a_secret_in_the_environment_labels_or_command_is_refused_before_anything_is_s
             Box::new(|spec| spec.labels.push(("moqui.password".to_string(), text.clone()))),
         ),
         ("command", Box::new(|spec| spec.cmd.push(format!("--password={text}")))),
+        (
+            "entrypoint",
+            Box::new(|spec| spec.entrypoint = vec!["sh".to_string(), "-c".to_string(), format!("P={text} exec x")]),
+        ),
         (
             "health check",
             Box::new(|spec| {

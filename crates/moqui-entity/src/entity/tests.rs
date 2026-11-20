@@ -253,11 +253,11 @@ impl DbConnection for RecConn {
 
     fn query_once(&mut self, sql: &str, _params: &[Value]) -> Result<Vec<DbRow>, Error> {
         let tape = self.tape.lock().unwrap_or_else(|err| err.into_inner());
-        if sql.to_ascii_lowercase().contains("instance_host") && sql.contains("SELECT") {
+        if sql.to_ascii_lowercase().contains("database_connection") && sql.contains("SELECT") {
             if let Some(password) = tape.password.clone() {
                 return Ok(vec![DbRow {
                     columns: vec![
-                        ("instanceHostId".into(), Value::string("H1")),
+                        ("connectionId".into(), Value::string("H1")),
                         ("password".into(), Value::string(password)),
                     ],
                     origins: None,
@@ -495,23 +495,23 @@ fn try_insert_seals_the_password_before_sql() {
     facade.set_disable_fk_create(true);
     facade.set_disable_data_feed(true);
     let mut fields = BTreeMap::new();
-    fields.insert("instanceHostId".to_string(), Value::string("H1"));
+    fields.insert("connectionId".to_string(), Value::string("H1"));
     fields.insert("password".to_string(), Value::string("TestEntityFieldValue"));
     facade
         .upsert_record(
-            "moqui.server.instance.InstanceHost",
+            "moqui.database.DatabaseConnection",
             crate::entity::field_map(fields.clone()),
         )
         .unwrap();
-    fields.insert("instanceHostId".to_string(), Value::string("H2"));
-    facade.begin("moqui.server.instance.InstanceHost", None).unwrap();
+    fields.insert("connectionId".to_string(), Value::string("H2"));
+    facade.begin("moqui.database.DatabaseConnection", None).unwrap();
     facade
         .upsert_record(
-            "moqui.server.instance.InstanceHost",
+            "moqui.database.DatabaseConnection",
             crate::entity::field_map(fields.clone()),
         )
         .unwrap();
-    facade.commit("moqui.server.instance.InstanceHost").unwrap();
+    facade.commit("moqui.database.DatabaseConnection").unwrap();
     let recorded = tape.lock().unwrap_or_else(|err| err.into_inner());
     let upserts: Vec<_> = recorded
         .sql
@@ -524,9 +524,9 @@ fn try_insert_seals_the_password_before_sql() {
     assert_ne!(stored, "TestEntityFieldValue");
     drop(recorded);
     let found = facade
-        .find("moqui.server.instance.InstanceHost")
+        .find("moqui.database.DatabaseConnection")
         .unwrap()
-        .eq("instanceHostId", Value::string("H1"))
+        .eq("connectionId", Value::string("H1"))
         .one()
         .unwrap()
         .unwrap();

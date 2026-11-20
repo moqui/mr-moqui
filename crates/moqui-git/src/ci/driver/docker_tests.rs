@@ -688,7 +688,8 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         errors.contains("hostProtocol ftp is not unix, http or https"),
         "{errors}"
     );
-    // a TLS host with a client certificate that is not PEM is refused before anything is sent
+    // a TLS host with a client certificate: its key is a vault item, and with no lease the host is not reached (plans/
+    // Vault-Instances.md §4.1); nothing is sent
     let api = Api::new("https", "docker.example.com", Some(2376), Seen::default());
     {
         let _entered = api.context.enter();
@@ -697,16 +698,13 @@ fn a_host_row_that_cannot_be_reached_says_why() {
             .find("moqui.server.instance.InstanceHost")
             .unwrap()
             .eq("instanceHostId", Value::string("H"))
-            .update_all([
-                ("tlsClientCert".to_string(), Value::string("not a certificate")),
-                ("tlsClientKey".to_string(), Value::string("not a key")),
-            ])
+            .update_all([("tlsClientCert".to_string(), Value::string("not a certificate"))])
             .unwrap();
     }
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
     assert!(out.is_empty());
     assert!(
-        errors.contains("the client certificate and key are not PEM"),
+        errors.contains("InstanceHost:H:tlsClientKey") && errors.contains("lease"),
         "{errors}"
     );
 }

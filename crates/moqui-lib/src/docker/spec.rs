@@ -178,6 +178,9 @@ pub struct ContainerSpec {
     pub pull: bool,
     /// The command, when not the image's.
     pub cmd: Vec<String>,
+    /// The entrypoint, when not the image's: a wrapper that reads a secret file into what an image that reads no
+    /// `*_FILE` setting takes. Checked as the command is.
+    pub entrypoint: Vec<String>,
     /// Settings that are not secret. A secret's value here is refused ([`Self::check`]): a secret is a file, read
     /// through the image's `*_FILE` setting (`POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password`).
     pub env: Vec<(String, String)>,
@@ -401,6 +404,9 @@ impl ContainerSpec {
         if self.cmd.iter().any(|word| holds(word.as_bytes(), secret)) {
             return Some("command".to_string());
         }
+        if self.entrypoint.iter().any(|word| holds(word.as_bytes(), secret)) {
+            return Some("entrypoint".to_string());
+        }
         let health = self.health.as_ref().map_or(&[][..], |health| &health.test[..]);
         if health.iter().any(|word| holds(word.as_bytes(), secret)) {
             return Some("health check".to_string());
@@ -472,6 +478,9 @@ impl ContainerSpec {
         });
         if !self.cmd.is_empty() {
             body["Cmd"] = json!(self.cmd);
+        }
+        if !self.entrypoint.is_empty() {
+            body["Entrypoint"] = json!(self.entrypoint);
         }
         if let Some(user) = &self.user {
             body["User"] = json!(user);
@@ -565,6 +574,9 @@ impl ContainerSpec {
         }
         if !self.cmd.is_empty() {
             body["command"] = json!(self.cmd);
+        }
+        if !self.entrypoint.is_empty() {
+            body["entrypoint"] = json!(self.entrypoint);
         }
         if let Some(user) = &self.user {
             body["user"] = json!(user);

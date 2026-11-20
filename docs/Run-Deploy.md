@@ -17,7 +17,8 @@ and the build packages are in [Build-Test](Build-Test.md).
   - deployments: [One production server](#one-production-server), [Cluster](#cluster),
     [PASS servers with a BOSS server or cluster](#pass-servers-with-a-boss-server-or-cluster),
     [Dev instances with a dev group server](#dev-instances-with-a-dev-group-server),
-    [A local server with an edge node](#a-local-server-with-an-edge-node), [An all-in-one node](#an-all-in-one-node);
+    [A local server with an edge node](#a-local-server-with-an-edge-node), [An all-in-one node](#an-all-in-one-node),
+    [Managed instances](#managed-instances);
   - reference: [Components](#components), [Moving from Moqui Java](#moving-from-moqui-java),
     [Directory layout](#directory-layout).
 
@@ -2030,6 +2031,87 @@ hand a database to someone else, send a `./moq save-db` save and the matching `m
   separate accounts.
 - Pushing a hosted repository to another server; a `remote` repository is a read-only mirror.
 - OAuth or OIDC tokens for MCP and A2A; they take login keys and app passwords.
+
+## Managed instances
+
+A server can provision and run other instances, MR Moqui, Postgres, MySQL and OpenSearch, on Docker and Podman hosts,
+with every credential in an operational vault ([Vaults](security/Vaults.md#operational-vaults)). This is System ›
+Instances, the services of `org.moqui.dev.InstanceServices` (Rust, `crates/moqui-instance`, in the Enterprise and
+Maximal builds) and the container driver CI's runs use too (`moqui_lib::docker`). Every service needs the sealed
+`INSTANCE_ADMIN` (`ADMIN_ADV`). The plan is [Vault-Instances](../plans/Vault-Instances.md) §4; built so far is M1: the
+manager link, deploys, Monitor's fleet screen, rotation and a managed sealed start come later.
+
+**The rows.** System › Instances has a tab for each:
+
+| Tab | What it holds |
+| --- | --- |
+| Environments | Production, staging or demo: its operational vault (where its items are and where a provision deposits what it makes), its approver group, required pipeline, machine access, unseal policy, transport and lease time limit |
+| Hosts | A Docker or Podman host: `unix` (a socket's path), `https` with `tlsCaCert` and `tlsClientCert`, or `http` to this machine only. The client key is the `tls-key-pair` item `InstanceHost:<id>:tlsClientKey` (field `privateKey`) of the host's vault, the environment's when the host names none |
+| Images | An image of a kind. MR Moqui's own is `podman/build.sh`'s `localhost/moqui:latest`, with one data volume, `/var/lib/moqui`. A registry login is the `registry-login` item `InstanceImage:<id>:registry` |
+| Database hosts | A database server not managed here, of kind `postgres` or `mysql`; its admin login is the `database-credential` item `DatabaseHost:<id>:admin` |
+| Kinds | `mr-moqui`, `postgres`, `mysql`, `opensearch` (seed data, `framework/data/InstanceTypeData.xml`): each one's settings, volumes, health check, the vault items it needs and what it depends on |
+| Instances | The fleet: each instance's kind, environment, host, desired state and what its host last said |
+
+No row holds a secret. An instance's page shows its secret bindings (the item's binding and type, the file it is given
+as, and when it was deposited), never a value.
+
+**Making an instance.** *New instance* (`create#AppInstance`) takes an image, an environment, a host, a container name,
+and the dependencies the kind takes: a database (another instance of the environment, or a database host) and search
+(an OpenSearch instance). It writes the instance's rows from its kind: settings, volumes and health check, with the
+names filled in (`${instanceName}`, `${databaseHost}` and the others of `kinds::PLACEHOLDERS`; nothing else is
+expanded), and its secret bindings (`AppInstance:<id>:admin`, `:dbPassword`, `:ingestKey`). It makes nothing on a
+host. A database instance that the manager makes databases on needs a `hostPort`: the manager reaches it there (on
+loopback for a host that is this machine).
+
+**Provisioning** (`provision#AppInstance`, the instance page's Provision):
+
+1. The page previews what will be made: containers, volumes, networks, the databases and users, the items deposited,
+   host names, and the lease it needs: a host's client key, a registry login, a database host's admin login, or the
+   admin login of a database instance made before.
+2. A provision that opens items runs only under a lease of them that an approver opened, or under its environment's
+   machine access; without either it is refused, and the refusal is an action row. Provision asks for the lease and the
+   page goes to the lease dialog (System › Vaults › Lease); once an approver opens it, the provision runs on the server
+   that asked. With machine access (the environment's *Machine access* on, and the items given in System › Vaults), it
+   runs at once under a lease approved by "machine", for the environment the instance's own row names. A provision
+   that opens no item (a local socket, public images, its database made with it) needs no lease. The lease names the
+   items and the operation, not where they are used: a holder of `INSTANCE_ADMIN` who changes a database host's address
+   or an image's registry points the admin login or registry login at that server the next time a provision uses it.
+   Under machine access no approver sees that, which is one more reason to keep machine access for demo and CI
+   environments ([Vaults, Machine access](security/Vaults.md#machine-access)).
+3. Dependencies are made first. For each instance, the credentials its kind makes (a database's admin password, an
+   MR Moqui instance's database password and ingest key) are made by the server and deposited into the environment's
+   vault, wrapped to its deposit key: the server writes them and cannot read them back, and a member takes them in
+   when they next open the vault. Then its database and user are made on its database with the admin login (Postgres
+   `CREATE USER` and `CREATE DATABASE ... OWNER`, MySQL `CREATE DATABASE`, `CREATE USER` and `GRANT`; names are plain
+   identifiers, and a MySQL password with a quote or backslash is refused). Then its network (one per environment,
+   `moqui-<environment>`), volumes and container, started and checked.
+4. **Secrets are files.** No secret goes into a container's environment, labels or command, where `docker inspect` and
+   `/proc/*/environ` show them: the driver refuses such a container before anything is sent. A secret is the file
+   `/run/secrets/<name>`, 0400 and owned by the kind's user, put into the created container before it starts on Docker
+   and a Podman secret on Podman, and the image reads it through its `*_FILE` setting (`POSTGRES_PASSWORD_FILE`,
+   `MYSQL_ROOT_PASSWORD_FILE`). OpenSearch reads no such setting: its entrypoint is wrapped to read its admin password
+   from the file, so the OpenSearch process has it in its own environment, as the image requires, and `docker inspect`
+   does not. A new MR Moqui instance gets only its one-time pairing token, as the file `moqui-pairing-token` (it works
+   for 15 minutes; the instance's row keeps its SHA-256); its database password and ingest key reach it over the manager
+   link (M2), not as files.
+5. The action row records what was made, never a value, with its lease or machine access; the lease ends with the
+   provision. A failure says where it stopped, and the container made before it is on the row for Remove.
+
+**Start, stop, restart and remove** run the host type's services (`InstanceHostType`'s start, stop and remove
+services, only of `org.moqui.dev.InstanceServices`), under a lease when the host's client key is a vault item. Remove
+removes the container and, only when asked, its volumes, which hold its data; its row and its vault items stay.
+
+**The reconcile job** (`reconcile_AppInstances`, every five minutes) writes what each host says of each instance (its
+state, health and image digest) beside its desired state, and changes nothing on a host. An instance on a host reached
+with a client key is observed during an action, under its lease, until the manager link reports its state.
+
+**CI runner hosts.** The run services of a CI job reach a host through the same rows, and a CI run is unattended: it
+runs under no lease, so a runner host's client key, which is a vault item, is not opened for it. Reach a runner host by
+a `unix` socket or a forwarded one until runner pools get their host's key under machine access (M3).
+
+**Tests.** `cargo test -p moqui-instance` runs the rules against the fake engine on Docker and on Podman. Against a real
+engine, opt in: `MOQUI_CI_DOCKER_SOCKET=$HOME/.docker/run/docker.sock cargo test -p moqui-instance docker_real --
+--ignored` provisions a Postgres instance whose health check signs in with its password file, then removes it.
 
 ## Components
 
