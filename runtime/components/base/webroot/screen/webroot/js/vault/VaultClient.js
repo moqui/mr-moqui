@@ -153,6 +153,8 @@
         vaultKeyPasswordOpen(args) { return this.call("vault_key_password_open", args); }
         vaultRotate(args) { return this.call("vault_rotate", args); }
         depositKeyNew(args) { return this.call("deposit_key_new", args); }
+        /** A deposited item taken in: its key rewrapped by the vault key ({vault_id, item_id, key_version, label, deposit_wrapped_private, wrapped_item_key}). */
+        depositAdopt(args) { return this.call("deposit_adopt", args); }
         itemSeal(args) { return this.call("item_seal", args); }
         itemOpen(args) { return this.call("item_open", args); }
         leaseApprove(args) { return this.call("lease_approve", args); }

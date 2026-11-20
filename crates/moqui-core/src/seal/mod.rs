@@ -189,10 +189,11 @@ impl SealConf {
         }
     }
 
-    /// Whether the instance's purpose is `production`.
+    /// Whether the instance's purpose is `production`, as the seal treats it: a test run's runtimes are not
+    /// ([`set_test_run`]).
     #[must_use]
     pub fn production(&self) -> bool {
-        self.purpose == "production"
+        self.purpose == "production" && !TEST_RUN.load(Ordering::SeqCst)
     }
 
     /// The method `seal@method` names, if any.
@@ -213,6 +214,17 @@ fn database_identity(conf: &MNode) -> Value {
         "host": conf_attribute(conf, "entity-facade/datasource[transactional]/inline-other@host"),
         "database": conf_attribute(conf, "entity-facade/datasource[transactional]/inline-other@database"),
     })
+}
+
+/// Set by a test run ([`set_test_run`]).
+static TEST_RUN: AtomicBool = AtomicBool::new(false);
+
+/// Make this process a test run (`moqui test`, `moqui test-client`, and the servers they start): its runtimes take the
+/// `dev` seal at their first start, as a dev instance's do, whatever their purpose, so a test server on a production
+/// purpose keeps its crypt pass and generated keys in its scratch runtime's seal rather than refusing them as a
+/// production boot with no seal does (plans/Sealed-Secrets.md S4). Never set by a server or a production tool.
+pub fn set_test_run() {
+    TEST_RUN.store(true, Ordering::SeqCst);
 }
 
 /// The root key: 256 random bits, in memory only while unsealed, cleared when dropped. `Debug` shows nothing of it.
@@ -706,6 +718,20 @@ impl Keeper {
     #[must_use]
     pub fn is_unsealed(&self) -> bool {
         self.unsealed.load(Ordering::SeqCst)
+    }
+
+    /// Whether this runtime's seal guards its secrets from a writer of `runtime/.env`: unsealed, not a boot with no
+    /// seal, and not the `dev` seal, whose own file holds its root key in the clear (a dev checkout's or a test run's
+    /// `.env` keeps its values there).
+    #[must_use]
+    pub fn refuses_dotenv_secrets(&self) -> bool {
+        self.is_unsealed()
+            && !self.is_ephemeral()
+            && self
+                .inner()
+                .file
+                .as_ref()
+                .is_some_and(|file| file.method_kind() != MethodKind::Dev.name())
     }
 
     /// Whether this boot holds a root key in memory only, with no seal to keep anything under it (an unattended boot

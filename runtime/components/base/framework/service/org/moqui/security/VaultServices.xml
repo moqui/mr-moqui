@@ -168,8 +168,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="get" noun="Vault" type="rust" location="moqui_vault_server::vaults::get_vault">
         <description>To a member (or a single-secret vault's owner): the vault, its member-list chain (entries, oldest
             first, in the vault crate's shape), its current members and roles, the caller's own wraps of every key version
-            they hold (wraps), and a single-secret vault's wrapped key (secretWrap). Anyone else is told there is no such
-            vault.</description>
+            they hold (wraps), a single-secret vault's wrapped key (secretWrap), and an operational vault's deposit key
+            (deposit, the vault crate's shape, whose signature the client checks on each open, and its private half
+            wrapped by the vault key, depositWrappedPrivate). Anyone else is told there is no such vault.</description>
         <in-parameters><parameter name="vaultId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="vault" type="Map"/>
@@ -177,6 +178,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="memberList" type="List"/>
             <parameter name="wraps" type="List"/>
             <parameter name="secretWrap" type="Map"/>
+            <parameter name="deposit" type="Map"/>
+            <parameter name="depositWrappedPrivate"/>
         </out-parameters>
     </service>
     <service verb="delete" noun="Vault" type="rust" location="moqui_vault_server::vaults::delete_vault">
@@ -226,6 +229,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="vaultItemTypeId"/>
             <parameter name="bindingKey"/>
             <parameter name="itemName"/>
+            <parameter name="newItemKey" type="Boolean"><description>The client made a new item key for this write (the
+                vault crate's item_seal answers new_item_key): an environment's machine access to the item goes stale and
+                is given again</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>
@@ -275,8 +281,9 @@ along with this software (see the LICENSE.md file). If not, see
             (entry), every item key rewrapped under it (itemKeys: item_id, wrapped_item_key), every remaining member's wrap
             remade (memberWraps). The removed member's wraps are deleted, and a write at the old version is refused from
             then on; the others' earlier wraps stay until they open the new version (ack#VaultKeyVersion). A vault keeps a
-            manager, and an operational vault recovery on or two members. Two events: the removal and the
-            rotation.</description>
+            manager, and an operational vault recovery on or two members. An operational vault takes the new version's
+            deposit key the rotation made (deposit, depositWrappedPrivate, signed by the caller), else its deposit key is
+            cleared. Two events: the removal and the rotation.</description>
         <in-parameters>
             <parameter name="vaultId" required="true"/>
             <parameter name="userId" required="true"/>
@@ -284,6 +291,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="entry" type="Map" required="true"/>
             <parameter name="itemKeys" type="List" required="true"/>
             <parameter name="memberWraps" type="List" required="true"/>
+            <parameter name="deposit" type="Map"/>
+            <parameter name="depositWrappedPrivate"/>
         </in-parameters>
         <out-parameters>
             <parameter name="keyVersion" type="Long"/>
@@ -298,6 +307,176 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="keyVersion" type="Long" required="true"/>
         </in-parameters>
         <out-parameters><parameter name="dropped" type="Long"/></out-parameters>
+    </service>
+
+    <!-- Operational vaults: the deposit key, leases, machine access and reveal (§3.2, §3.7, §3.8) -->
+
+    <service verb="set" noun="VaultDepositKey" type="rust" location="moqui_vault_server::deposit::set_vault_deposit_key">
+        <description>A manager of an operational vault puts its deposit key, made in their client (the vault crate's
+            deposit_key_new): its public half signed by the caller with their active key, of the vault's current key
+            version (deposit), and its private half wrapped by the vault key (depositWrappedPrivate). The server checks the
+            signature against the vault's signed member list and refuses a deposit key with no manager's signature or of
+            an earlier key version; the change names the vault revision (expectedRevision). The server then deposits a
+            new item it makes (a password while provisioning) by wrapping its item key to the public half, and cannot
+            read it back. An event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="expectedRevision" type="Long" required="true"/>
+            <parameter name="deposit" type="Map" required="true"/>
+            <parameter name="depositWrappedPrivate" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="revision" type="Long"/></out-parameters>
+    </service>
+    <service verb="ask" noun="VaultLease" type="rust" location="moqui_vault_server::lease::services::ask_vault_lease">
+        <description>A lease of an operational vault's items (bindings: a list, or one per line or comma) for an operation
+            a person starts by hand, asked by a member of the vault or a holder of VAULT_ADMIN (the framework's own
+            operations ask in Rust). The server makes the lease's key pair, keeps its private half in this cluster
+            member's memory only, and signs the lease with its lease key: its id, the vault and key version, each item's
+            id, type, binding and name, the operation, the cluster member, the time limit (limitMinutes, at most
+            vault@lease-max-hours) and the lease's public key (lease, the vault crate's shape). The vault's approvers are
+            notified (topic VaultLeaseWaiting). An item the server deposited is refused until a member takes it in. An
+            event.</description>
+        <in-parameters>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="bindings" type="List" required="true"/>
+            <parameter name="operation" required="true"/>
+            <parameter name="limitMinutes" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="leaseId"/>
+            <parameter name="lease" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="VaultLease" type="rust" location="moqui_vault_server::lease::services::get_vault_lease">
+        <description>A lease, to a member of its vault, its requester or a holder of VAULT_ADMIN: its state, the signed
+            statement (lease, which the lease dialog shows and the approver's client checks against the lease key its
+            user checked, never a column), the items' wrapped keys the approver unwraps (wrappedItemKeys, by item id),
+            the lease key and its fingerprint, who asked and approved and when, and whether this cluster member holds its
+            key (held).</description>
+        <in-parameters><parameter name="leaseId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="leaseId"/>
+            <parameter name="lease" type="Map"/>
+            <parameter name="statusId"/>
+            <parameter name="wrappedItemKeys" type="Map"/>
+            <parameter name="leaseKey"/>
+            <parameter name="leaseKeyFingerprint"/>
+            <parameter name="held" type="Boolean"/>
+            <parameter name="requestedByUserId"/>
+            <parameter name="requestedDate" type="Timestamp"/>
+            <parameter name="approvedByUserId"/>
+            <parameter name="approvedDate" type="Timestamp"/>
+            <parameter name="endedDate" type="Timestamp"/>
+            <parameter name="machineAccess"/>
+            <parameter name="environmentId"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="VaultLeases" type="rust" location="moqui_vault_server::lease::services::list_vault_leases">
+        <description>A vault's leases, newest first, to its members (statusId: VlsRequested waiting, VlsOpen, VlsEnded,
+            VlsRevoked); with no vault, the leases waiting for the caller's approval and those they asked for, or every
+            lease to a holder of VAULT_ADMIN. Never a sealed key.</description>
+        <in-parameters>
+            <parameter name="vaultId"/>
+            <parameter name="statusId"/>
+            <parameter name="limit" type="Integer" default="200"/>
+        </in-parameters>
+        <out-parameters><parameter name="leaseList" type="List"/></out-parameters>
+    </service>
+    <service verb="approve" noun="VaultLease" type="rust" location="moqui_vault_server::lease::services::approve_vault_lease">
+        <description>A member with the approve role in the lease's vault approves it, on any cluster member, after a recent
+            sign-in: the item keys their client unwrapped (each under the type, binding and name the lease gives) and
+            sealed to the lease's key, with their signature over the lease (approval, the vault crate's lease_approve
+            answer). The server checks its own signature on the lease, the approver's signature with their active key,
+            that every item the lease names is sealed once, and that the vault key has not changed; it stores the
+            approval with the VeLeaseApproved event in one transaction and, at its commit, wakes the member that holds
+            the lease. A lease past its time limit, or not waiting, is refused. The SSH admin shell does not
+            approve.</description>
+        <in-parameters>
+            <parameter name="leaseId" required="true"/>
+            <parameter name="approval" type="Map" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="leaseId"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="revoke" noun="VaultLease" type="rust" location="moqui_vault_server::lease::services::revoke_vault_lease">
+        <description>A lease waiting or open, revoked by a manager or an approver of its vault, its requester or a holder of
+            VAULT_ADMIN: its row is marked revoked with its event, and the member that holds it forgets its keys (told by
+            the cluster topic, and refusing any use once it reads the row).</description>
+        <in-parameters><parameter name="leaseId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="leaseId"/>
+            <parameter name="statusId"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="VaultLeaseKey" type="rust" location="moqui_vault_server::lease::services::get_vault_lease_key">
+        <description>The server's lease key (the Ed25519 public key that signs each lease) and its fingerprint, which a
+            member compares once by another channel and stores as a key check (store#KeyCheck with the lease
+            key).</description>
+        <out-parameters>
+            <parameter name="leaseKey"/>
+            <parameter name="fingerprint"/>
+        </out-parameters>
+    </service>
+    <service verb="ask" noun="VaultMachineAccess" type="rust" location="moqui_vault_server::machine::ask_vault_machine_access">
+        <description>A holder of VAULT_ADMIN asks to give an environment (environmentId) machine access to named items of
+            an operational vault (bindings). The server makes a lease for the grant, which a member with the approve role
+            approves as any lease; once it opens, the member that asked seals each item key under the machine key (HKDF
+            of entity-facade@crypt-pass until Sealed-Secrets S1) with the environment, vault and item ids as associated
+            data, in a column the entity facade never decrypts, and ends the lease. These items are then as strong as
+            the server's own keys. Events.</description>
+        <in-parameters>
+            <parameter name="environmentId" required="true"/>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="bindings" type="List" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="leaseId"/>
+            <parameter name="lease" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="list" noun="VaultMachineAccess" type="rust" location="moqui_vault_server::machine::list_vault_machine_access">
+        <description>A vault's machine access to its members (vaultId), or every environment's to a holder of VAULT_ADMIN:
+            the environment, the item with its binding and name, who gave it and when; never a sealed key.</description>
+        <in-parameters>
+            <parameter name="vaultId"/>
+            <parameter name="environmentId"/>
+        </in-parameters>
+        <out-parameters><parameter name="accessList" type="List"/></out-parameters>
+    </service>
+    <service verb="revoke" noun="VaultMachineAccess" type="rust" location="moqui_vault_server::machine::revoke_vault_machine_access">
+        <description>A holder of VAULT_ADMIN deletes an environment's sealed item keys of a vault (or of one item,
+            vaultItemId), with an event each, and is given the items to rotate at their source (rotateItemIds), since the
+            server could have kept them.</description>
+        <in-parameters>
+            <parameter name="environmentId" required="true"/>
+            <parameter name="vaultId" required="true"/>
+            <parameter name="vaultItemId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="revokedCount" type="Long"/>
+            <parameter name="rotateItemIds" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="reveal" noun="VaultItem" type="rust" location="moqui_vault_server::reveal::reveal_vault_item">
+        <description>One operational item's wrapped key and sealed body, with its type, binding and name, to a member with
+            the reveal role, whose client opens it with the vault key. The VeReveal event is written first, in the same
+            transaction. Otherwise the server sends no operational body to any client.</description>
+        <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="vaultItemId"/>
+            <parameter name="vaultId"/>
+            <parameter name="itemKeyWrapEnumId"/>
+            <parameter name="wrappedItemKey"/>
+            <parameter name="keyVersion" type="Long"/>
+            <parameter name="bodyCipher"/>
+            <parameter name="revision" type="Long"/>
+            <parameter name="vaultItemTypeId"/>
+            <parameter name="bindingKey"/>
+            <parameter name="itemName"/>
+            <parameter name="revealed" type="Boolean"/>
+        </out-parameters>
     </service>
 
     <!-- Deliveries (§3.3) -->

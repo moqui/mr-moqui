@@ -68,6 +68,10 @@ pub const WEB_BAN: &str = "web-ban";
 /// what they keep from those sets (`crate::edge::cluster_state`).
 pub const EDGE_STATE: &str = "edge-state";
 
+/// A vault lease approved or revoked on one server (plans/Vault-Instances.md §3.7), `{"leaseId", "member", "kind":
+/// "approved"|"revoked"}`, so the member that holds the lease's key opens it, or forgets it, without waiting for its
+/// two-second poll of the row (moqui-vault-server `lease`).
+pub const VAULT_LEASE: &str = "vault-lease";
 /// Every topic of the bus, which are also the topics the cluster carries: the transports' receivers take only these.
 pub const TOPICS: &[&str] = &[
     ENTITY_CACHE_INVALIDATE,
@@ -82,6 +86,7 @@ pub const TOPICS: &[&str] = &[
     EDGE_REPLICA_NOTE,
     WEB_BAN,
     EDGE_STATE,
+    VAULT_LEASE,
 ];
 
 const RECENT_IDS: usize = 1024;

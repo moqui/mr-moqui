@@ -1134,6 +1134,9 @@ pub fn register_on_end(name: &str, parameters: &BTreeMap<String, Value>, on_comm
         )));
     }
     let factory = super::pool::capture_factory()?;
+    // a value leased from a vault stays in its operation: never a queued call's parameter (Vault-Instances §3.7)
+    crate::vault_hooks::refuse_leased(&format!("call of {name} at the end of the transaction"), parameters)
+        .map_err(Error::from)?;
     let parameters = match prepare_async(&name, parameters)? {
         AsyncCall::Run(parameters) => parameters,
         // A sim session, or input that failed validation, whose errors are in the message facade.

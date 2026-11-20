@@ -20,8 +20,10 @@
 //! that app.
 //!
 //! Commands: `help`, `status`, `service <name> [json]`, `entity <name> [json conditions]`, `cache clear [name]`,
-//! `js <code>` (a JavaScript expression or statements, with `ec`; `js` alone reads lines until a line with `.`), and
-//! `exit`. Output is text, and JSON for values.
+//! `js <code>` (a JavaScript expression or statements, with `ec`; `js` alone reads lines until a line with `.`),
+//! `leases [vaultId]` and `lease revoke <leaseId>` (plans/Vault-Instances.md §3.7: the shell lists and revokes vault
+//! leases but never approves one, since the key passphrase would be typed on the server), and `exit`. Output is text,
+//! and JSON for values.
 
 use std::collections::BTreeMap;
 use std::sync::Weak;
@@ -45,6 +47,8 @@ const HELP: &str = "Commands:
   entity <name> [json]          find up to 100 rows, with a JSON object of field conditions
   cache clear [name]            clear one cache, or all of them
   js <code>                     run JavaScript with ec; 'js' alone reads lines until a line with '.'
+  leases [vaultId]              vault leases waiting for your approval and those you asked for, or a vault's
+  lease revoke <leaseId>        revoke a vault lease (approve one in your own client: the browser or moqui vault)
   apps                          the applications in the terminal; quit them to come back here
   sh [profile]                  a program on the server's operating system (dev instances, TERMINAL_HOST)
   profiles                      the programs sh runs
@@ -96,7 +100,7 @@ pub(crate) async fn run(factory: &Weak<ExecutionContextFactory>, username: &str,
             status: 0,
             exit: true,
         },
-        "status" | "service" | "entity" | "cache" | "js" => {
+        "status" | "service" | "entity" | "cache" | "js" | "leases" | "lease" => {
             let command = command.to_string();
             let username = username.to_string();
             let from = from.to_string();
@@ -330,7 +334,90 @@ fn execute(factory: &ExecutionContextFactory, username: &str, command: &str, res
                 Ok(Outcome::failed(errors))
             }
         }
+        "leases" => leases(rest),
+        "lease" => lease(rest),
         other => Ok(Outcome::failed(format!("unknown command {other}"))),
+    }
+}
+
+const LEASE_SERVICES: &str = "org.moqui.security.VaultServices";
+
+/// A vault service's results, or its errors as the command's failure.
+fn vault_service(
+    verb_noun: &str,
+    parameters: BTreeMap<String, Value>,
+) -> Result<Result<BTreeMap<String, Value>, Outcome>, Error> {
+    let called = moqui_core::service::sync(&format!("{LEASE_SERVICES}.{verb_noun}"), &parameters);
+    let errors = message_errors();
+    Ok(match called {
+        Ok(results) if errors.is_empty() => Ok(results.into_iter().collect()),
+        Ok(_) => Err(Outcome::failed(errors)),
+        Err(err) if errors.is_empty() => Err(Outcome::failed(err.message().to_string())),
+        Err(_) => Err(Outcome::failed(errors)),
+    })
+}
+
+/// `leases [vaultId]`: one line a lease, never a key.
+fn leases(rest: &str) -> Result<Outcome, Error> {
+    let mut parameters = BTreeMap::new();
+    if let Some(vault_id) = rest.split_whitespace().next() {
+        parameters.insert("vaultId".to_string(), Value::string(vault_id));
+    }
+    let results = match vault_service("list#VaultLeases", parameters)? {
+        Ok(results) => results,
+        Err(failed) => return Ok(failed),
+    };
+    // a control character (a newline, an escape) in a name is shown escaped, so a name cannot forge a line
+    let text = |row: &Value, name: &str| match row {
+        Value::Map(map) => map
+            .get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+            .chars()
+            .map(|c| if c.is_control() { c.escape_default().to_string() } else { c.to_string() })
+            .collect::<String>(),
+        _ => String::new(),
+    };
+    let lines: Vec<String> = match results.get("leaseList") {
+        Some(Value::List(rows)) => rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{}  {}  {}  {}  {}",
+                    text(row, "leaseId"),
+                    text(row, "statusId"),
+                    text(row, "vaultId"),
+                    text(row, "operation"),
+                    text(row, "bindings")
+                )
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    Ok(Outcome::ok(if lines.is_empty() {
+        "no leases".to_string()
+    } else {
+        lines.join("\n")
+    }))
+}
+
+/// `lease revoke <leaseId>`; `lease approve` is refused: a lease is approved in the member's own client.
+fn lease(rest: &str) -> Result<Outcome, Error> {
+    let mut words = rest.split_whitespace();
+    match (words.next(), words.next()) {
+        (Some("revoke"), Some(lease_id)) => {
+            let mut parameters = BTreeMap::new();
+            parameters.insert("leaseId".to_string(), Value::string(lease_id));
+            Ok(match vault_service("revoke#VaultLease", parameters)? {
+                Ok(_) => Outcome::ok(format!("revoked {lease_id}")),
+                Err(failed) => failed,
+            })
+        }
+        (Some("approve"), _) => Ok(Outcome::failed(
+            "a lease is approved in your own client (the browser, the apps, or moqui vault approve <leaseId> on your \
+             machine), never on the server: your key passphrase would be typed here",
+        )),
+        _ => Ok(Outcome::failed("usage: lease revoke <leaseId>")),
     }
 }
 

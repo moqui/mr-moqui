@@ -808,11 +808,14 @@ moqui vault --server URL --user USERNAME <command>
     list                   Your vaults
     open <vaultId> [--item ID]
                            Open a vault through its signed member list and list its items, or print one item
+    leases [--vault ID]    Leases waiting for your approval and those you asked for, or one vault's leases
+    approve <leaseId>      Show what a signed lease names, check the server's lease key once, and approve it here
     What this client accepted of each vault's member list is kept in ~/.config/moqui/vault/state.json, and a server
     that hands back an older one is refused.
 
   moqui vault --server https://moqui.example.com --user ada key init
   moqui vault --server https://moqui.example.com --user ada open vault-2f9c
+  moqui vault --server https://moqui.example.com --user ada approve lease-7d01c2
 ";
 
 const VERSION: &str = "\

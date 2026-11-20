@@ -810,6 +810,11 @@ impl QueuedCall {
 /// Store a call the pool queue had no room for, or did not run before it stopped, as a queued job with its caller.
 /// The pass will submit it.
 pub(crate) fn persist_queued(factory: &Arc<ExecutionContextFactory>, call: &QueuedCall) -> Result<(), Error> {
+    let what = format!("queued call of {}", call.service);
+    crate::vault_hooks::refuse_leased(&what, &call.parameters).map_err(Error::from)?;
+    if let Some(results) = call.rules.as_ref().and_then(|rules| rules.results.as_ref()) {
+        crate::vault_hooks::refuse_leased(&what, results).map_err(Error::from)?;
+    }
     let facade = factory
         .entity()
         .ok_or_else(|| Error::new("service worker queue is full and there is no database to queue in"))?;
@@ -862,6 +867,8 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
         .ok_or_else(|| Error::new(format!("No ServiceJob record found for jobName {job_name}")))?;
     let mut parameters = job_parameters(&facade, job_name)?;
     parameters.extend(extra.clone());
+    // a value leased from a vault is never a job's stored parameter (Vault-Instances §3.7)
+    crate::vault_hooks::refuse_leased(&format!("job {job_name}"), &parameters).map_err(Error::from)?;
     let history_on_error = error_history_only(&job);
     let run_id = create_run(
         &facade,

@@ -386,8 +386,11 @@ start, and on first use `webapp-list/webapp[webroot]/session-config@cookie-key`,
 `edge@link-key`, `acme@account-key`, `push/web@vapid-key` and the other keys the default conf leaves at `CHANGEME` into
 the `SecretValue` table. `mail-delivery/dkim@key` (empty by default) is made there too, the first time a server needs
 it. A value the conf files or the process environment give wins over the store. One in `runtime/.env`, which the
-server's own user can write, is ignored once the runtime has its seal, with an error logged (before the seal it is
-still read, with a warning). A secret is never logged, is masked wherever the conf is shown, and is null to a script's
+server's own user can write, is ignored once the runtime has a seal other than the `dev` seal, with an error logged;
+before the seal, and under the `dev` seal (whose own file holds its root key: a dev checkout's, a test run's), it is
+still read, with a warning. `moqui test` and `moqui test-client` give their runtimes the `dev` seal whatever their
+purpose, so a test server on a production purpose keeps its crypt pass in its scratch runtime's seal, and a test
+snapshot (`runtime/save/test-*`) keeps that `seal.json` beside its dump; one with none is made again. A secret is never logged, is masked wherever the conf is shown, and is null to a script's
 `ec.factory.getConfValue` and `System.getProperty`.
 
 A conf attribute holds its value as written: `${...}` is not expanded, and a conf that still has a `${` in an

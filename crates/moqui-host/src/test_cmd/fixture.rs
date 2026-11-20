@@ -305,6 +305,18 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
         ),
         _ => None,
     };
+    // a snapshot is whole only with the seal its encrypted fields and the cluster's password are under: one with no
+    // seal.json beside its dump (made before S4's test seal, or a save stopped part way) is made again
+    if let Some(dir) = dump
+        .as_ref()
+        .and_then(|dump| dump.parent())
+        .filter(|dir| dir.join("moqui.dump").is_file() && !dir.join(RUNTIME_SEAL).is_file())
+    {
+        tracing::warn!("The test snapshot {} has no seal.json: it is made again", dir.display());
+        if let Err(err) = std::fs::remove_dir_all(dir) {
+            tracing::error!("could not remove {}: {err}", dir.display());
+        }
+    }
     if let Some(dump) = dump.as_ref().filter(|dump| dump.is_file()) {
         let started = Instant::now();
         tracing::warn!("Restoring the test database from {}", dump.display());
@@ -333,11 +345,12 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     if let Some(dump) = dump {
         if let Some(dir) = dump.parent() {
             std::fs::create_dir_all(dir).map_err(io("could not create the snapshot directory"))?;
-        }
-        crate::db::embedded::save_db(scratch, &cluster, &dump)?;
-        if let Some(dir) = dump.parent() {
             keep_runtime_env(scratch, dir)?;
         }
+        // the dump under a part name, put in place once whole: a run that stops in the save leaves no snapshot
+        let partial = dump.with_file_name("moqui.dump.partial");
+        crate::db::embedded::save_db(scratch, &cluster, &partial)?;
+        std::fs::rename(&partial, &dump).map_err(io("could not put the test snapshot in place"))?;
         tracing::warn!("Saved the test database to {}", dump.display());
         let dir = dump.parent().map(Path::to_path_buf);
         if let Some(dir) = &dir {

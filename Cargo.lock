@@ -5164,6 +5164,7 @@ dependencies = [
  "moqui-vault",
  "serde_json",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]

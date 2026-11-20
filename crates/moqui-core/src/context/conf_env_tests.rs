@@ -185,23 +185,36 @@ fn a_secret_at_changeme_is_made_into_the_seal_never_dotenv_unless_an_override_se
     assert_eq!(given, "given-by-the-operator", "the environment's value stands");
     assert_eq!(keeper.bootstrap_secret(secrets::CRYPT_PASS).unwrap().unwrap(), kept);
 
-    // runtime/.env, which the server's own user writes, sets no secret once there is a seal: the store answers it
-    let third = conf();
-    let overrides = apply_from(
-        &third,
-        vec![name(
-            "moqui_conf__entity_facade__crypt_pass",
-            "written-into-dotenv",
-            Source::DotEnv,
-        )],
-    );
-    secrets::prepare_boot(&third, &overrides, Some(&keeper)).unwrap();
-    let pass = third
-        .first_named("entity-facade")
-        .unwrap()
-        .attribute("crypt-pass")
+    // runtime/.env, which the server's own user writes, sets no secret once there is a seal other than the dev seal:
+    // the store answers it. Under the dev seal (a dev checkout's, a test run's) it is still read.
+    let dotenv_pass = |keeper: &Keeper| {
+        let third = conf();
+        let overrides = apply_from(
+            &third,
+            vec![name(
+                "moqui_conf__entity_facade__crypt_pass",
+                "written-into-dotenv",
+                Source::DotEnv,
+            )],
+        );
+        secrets::prepare_boot(&third, &overrides, Some(keeper)).unwrap();
+        third
+            .first_named("entity-facade")
+            .unwrap()
+            .attribute("crypt-pass")
+            .unwrap()
+    };
+    assert_eq!(dotenv_pass(&keeper), "written-into-dotenv");
+    let guarded_dir = dir.join("shamir");
+    let guarded = Keeper::open(&crate::seal::file::path_in(&guarded_dir), SealConf::with_purpose("dev")).unwrap();
+    guarded
+        .init(crate::seal::Init {
+            method: crate::seal::MethodKind::Shamir,
+            passphrase: None,
+        })
         .unwrap();
-    assert_eq!(pass, "CHANGEME");
+    assert!(guarded.refuses_dotenv_secrets() && !keeper.refuses_dotenv_secrets());
+    assert_eq!(dotenv_pass(&guarded), "CHANGEME");
 
     let unsealed = dir.join("production");
     let ephemeral = Keeper::open(

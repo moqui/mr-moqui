@@ -27,6 +27,7 @@ use moqui_vault::rng::OsRng;
 use serde_json::{json, Value as Json};
 
 mod deliveries;
+mod leases;
 mod members;
 mod personal;
 mod vaults;
