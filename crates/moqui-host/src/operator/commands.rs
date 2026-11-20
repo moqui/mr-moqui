@@ -13,12 +13,13 @@
  */
 
 //! The operator socket's commands (plans/Sealed-Secrets.md §3.3): `status` for any peer; `init`, `unseal`, `seal`,
-//! `rekey`, `rotate-root` and `export-seal` for root and the operator group ([`super::peer`]). A request is a JSON
-//! object with `command` and that command's fields; the answer is `{"ok": true, ...}` or `{"ok": false, "error"}`.
-//! Passphrases and shares are moved into zeroizing strings as soon as they are parsed, and never logged.
+//! `rekey`, `rotate-root`, `export-seal` and `secret-put`, `secret-list` and `secret-rm` (S4) for root and the operator
+//! group ([`super::peer`]). A request is a JSON object with `command` and that command's fields; the answer is
+//! `{"ok": true, ...}` or `{"ok": false, "error"}`. Passphrases, shares and secret values are moved into zeroizing
+//! strings as soon as they are parsed, and never logged or answered.
 
 use moqui_core::context::Error;
-use moqui_core::seal::{Init, Keeper, MethodKind, Rekey, RotateRoot, UnsealInput};
+use moqui_core::seal::{secrets, Init, Keeper, MethodKind, Rekey, RotateRoot, UnsealInput};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
@@ -33,10 +34,15 @@ struct Request {
     share: Option<Zeroizing<String>>,
     recovery: bool,
     take_shares: bool,
+    /// `secret put --force`: replace the crypt pass.
+    force: bool,
     /// The recovery shares of `rekey` and `rotate-root`.
     shares: Vec<Zeroizing<String>>,
     /// A recovery bundle to restore (`init --from`).
     bundle: Option<String>,
+    /// A secret's name and value (`secret put`, `secret rm`).
+    name: Option<String>,
+    value: Option<Zeroizing<String>>,
 }
 
 impl Request {
@@ -51,6 +57,8 @@ impl Request {
         let passphrase = text("passphrase").map(Zeroizing::new);
         let share = text("share").map(Zeroizing::new);
         let bundle = text("bundle");
+        let name = text("name");
+        let secret_value = text("value").map(Zeroizing::new);
         let shares = match value.get_mut("shares").map(Value::take) {
             Some(Value::Array(items)) => items
                 .into_iter()
@@ -68,8 +76,11 @@ impl Request {
             share,
             recovery: value["recovery"] == Value::Bool(true),
             take_shares: value["take_shares"] == Value::Bool(true),
+            force: value["force"] == Value::Bool(true),
             shares,
             bundle,
+            name,
+            value: secret_value,
         })
     }
 }
@@ -115,7 +126,7 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
                 None if !keeper.conf().method.is_empty() => keeper.conf().method,
                 None => {
                     return Err(Error::new(
-                        "name the unseal method: init --method tpm|passphrase|shamir|dev",
+                        "name the unseal method: init --method tpm|kms|transit|passphrase|shamir|dev",
                     ))
                 }
             };
@@ -146,10 +157,9 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             Ok(json!({"ok": true, "status": status(keeper)}))
         }
         "rekey" => {
-            let method = request
-                .method
-                .filter(|method| !method.is_empty())
-                .ok_or_else(|| Error::new("name the new unseal method: rekey --method tpm|passphrase|shamir|dev"))?;
+            let method = request.method.filter(|method| !method.is_empty()).ok_or_else(|| {
+                Error::new("name the new unseal method: rekey --method tpm|kms|transit|passphrase|shamir|dev")
+            })?;
             let issued = keeper.rekey(Rekey {
                 shares: request.shares,
                 method: MethodKind::parse(&method)?,
@@ -164,9 +174,58 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             })?;
             Ok(json!({"ok": true, "method_shares": texts(&issued.method_shares), "status": status(keeper)}))
         }
-        "export-seal" => Ok(json!({"ok": true, "bundle": keeper.export_bundle()?})),
+        "export-seal" => {
+            let bundle = keeper.export_bundle()?;
+            // the embedded cluster's password is made at the database's first open, after init: a bundle made before it
+            // has none, and restores a seal that cannot reach that cluster
+            let has_password = keeper
+                .seal_file()
+                .is_some_and(|seal| seal.bootstrap.contains_key(secrets::DATASOURCE_PASSWORD));
+            let warning = (!has_password).then_some(
+                "the bundle holds no datasource password: on the embedded cluster, export it again once the server \
+                 serves (its password is made at the database's first open)",
+            );
+            Ok(json!({"ok": true, "bundle": bundle, "warning": warning}))
+        }
+        "secret-put" => {
+            let name = secret_name(request.name)?;
+            let value = request
+                .value
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| Error::new("secret put needs a value"))?;
+            secrets::operator_put(keeper, database(keeper).as_ref(), &name, &value, request.force)?;
+            tracing::info!("Operator: the secret {name} was put");
+            Ok(json!({"ok": true, "name": secrets::canonical(&name)}))
+        }
+        "secret-list" => {
+            let listed = secrets::list_from(keeper, database(keeper).as_ref())?;
+            Ok(json!({"ok": true, "secrets": listed}))
+        }
+        "secret-rm" => {
+            let name = secret_name(request.name)?;
+            let removed = secrets::operator_remove(keeper, database(keeper).as_ref(), &name)?;
+            if removed {
+                tracing::info!("Operator: the secret {name} was removed");
+            }
+            Ok(json!({"ok": true, "removed": removed}))
+        }
         other => Err(Error::new(format!("unknown operator command {other:?}"))),
     }
+}
+
+/// The name a `secret` command gives.
+fn secret_name(name: Option<String>) -> Result<String, Error> {
+    name.map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| Error::new("name the secret: secret put|rm <name>"))
+}
+
+/// The entity facade of the server this keeper's runtime runs, once its database is open: where a SecretValue is kept.
+fn database(keeper: &Keeper) -> Option<moqui_core::entity::EntityFacade> {
+    let runtime = keeper.path().parent()?.parent()?;
+    moqui_core::context::ExecutionContextFactory::running()
+        .filter(|factory| factory.runtime_dir() == runtime)
+        .and_then(|factory| factory.entity())
 }
 
 /// The shares as the texts an answer carries.

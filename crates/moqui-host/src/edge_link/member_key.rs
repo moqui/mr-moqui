@@ -18,10 +18,11 @@
 //! member's instance id on its first link, so a node with the shared key alone (a stolen `.env`, a staging copy) cannot
 //! take a member's id.
 //!
-//! The key is kept in `runtime/db/edge_member_key`, beside `runtime/db/instance_id`, and for the same reason: it is
-//! this instance's. Not in `.env`, which every member and a standby share; not in the database, which a standby
-//! restores from a backup. A standby with a key of its own is then a new node to the edge node, which a takeover's
-//! notice and hold are for.
+//! The key is a bootstrap secret of this instance's own `seal.json` (`edge-member-key`, plans/Sealed-Secrets.md §3.1,
+//! S4), for the reason `runtime/db/instance_id` is beside it: it is this instance's. Not in `.env`, which every member
+//! and a standby share; not in the database, which a standby restores from a backup. A standby with a key of its own is
+//! then a new node to the edge node, which a takeover's notice and hold are for. A `runtime/db/edge_member_key` file an
+//! earlier build wrote is moved into `seal.json`; a runtime with no seal (a test's) keeps the file.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -77,10 +78,14 @@ impl MemberKey {
         Self::from_pkcs8(&der).map_err(|_| remedy("is not an Ed25519 key"))
     }
 
-    /// This instance's key, from `runtime/db/edge_member_key` under `runtime`, made there on first use (owner read
-    /// and write only).
+    /// This instance's key: the bootstrap secret `edge-member-key` of the runtime's seal, made there on first use (a
+    /// key file an earlier build left is moved into it), else, with no seal to keep it (a test's runtime, a boot before
+    /// `moqui operator init`), `runtime/db/edge_member_key`.
     pub fn load_or_create(runtime: &Path) -> Result<Arc<Self>, String> {
         let file = runtime.join(KEY_FILE);
+        if let Some(keeper) = moqui_core::seal::keeper_of(runtime).filter(|keeper| !keeper.is_ephemeral()) {
+            return Self::from_seal(&keeper, &file).map(Arc::new);
+        }
         if let Ok(text) = std::fs::read_to_string(&file) {
             return Self::read(&file, &text).map(Arc::new);
         }
@@ -120,6 +125,46 @@ impl MemberKey {
             Ok(key) => moqui_core::cluster::set_edge_member_key(factory, &key.fingerprint()),
             Err(err) => tracing::error!("Edge link: this member's own key was not read at start: {err}"),
         }
+    }
+
+    /// The key in the seal, made (or taken from a key file an earlier build left, which is then removed) when it has
+    /// none.
+    fn from_seal(keeper: &moqui_core::seal::Keeper, file: &Path) -> Result<Self, String> {
+        let left = std::fs::read_to_string(file).ok();
+        let kept =
+            moqui_core::seal::secrets::bootstrap_or_make(keeper, moqui_core::seal::secrets::EDGE_MEMBER_KEY, || {
+                match &left {
+                    Some(text) => Ok(text.trim().to_string().into()),
+                    None => {
+                        let rng = aws_lc_rs::rand::SystemRandom::new();
+                        let der = Ed25519KeyPair::generate_pkcs8(&rng)
+                            .map_err(|_| moqui_core::context::Error::new("could not make a member key"))?;
+                        tracing::info!("Edge link: this member's own key is made in its seal.json");
+                        Ok(STANDARD.encode(der.as_ref()).into())
+                    }
+                }
+            })
+            .map_err(|err| format!("this member's edge key: {err}"))?;
+        let key = Self::read(file, &kept)?;
+        if let Some(left) = left.as_deref() {
+            if left.trim() != kept.as_str() {
+                // seal.json holds another key: the file stays for an operator to look at, the seal's key is used
+                tracing::error!(
+                    "Edge link: {} holds another key than seal.json's edge-member-key: the seal's is used and the file \
+                     is kept (plans/Sealed-Secrets.md S4)",
+                    file.display()
+                );
+                return Ok(key);
+            }
+            match std::fs::remove_file(file) {
+                Ok(()) => tracing::warn!(
+                    "Edge link: moved this member's key from {} into seal.json (plans/Sealed-Secrets.md S4)",
+                    file.display()
+                ),
+                Err(err) => tracing::error!("Could not remove {}: {err}", file.display()),
+            }
+        }
+        Ok(key)
     }
 
     /// The public key, 32 bytes.

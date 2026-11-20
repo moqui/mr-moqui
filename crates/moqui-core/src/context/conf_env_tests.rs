@@ -14,7 +14,7 @@
 
 use moqui_lib::node::MNode;
 
-use super::{apply_from, generate_secrets, Outcome, Source};
+use super::{apply_from, Outcome, Source};
 
 fn conf() -> MNode {
     MNode::parse_text(
@@ -138,36 +138,79 @@ fn a_name_that_cannot_be_set_is_refused_and_a_secret_is_known() {
     assert_eq!(applied[1].outcome, Outcome::Set);
 }
 
+/// S4: a secret at `CHANGEME` is made into the seal, never into `runtime/.env` or the conf; one an override set is
+/// not made; and a boot with no seal (a production instance before init) keeps it in memory only, writing nothing.
 #[test]
-fn a_secret_at_changeme_is_generated_into_dotenv_unless_an_override_set_it() {
+fn a_secret_at_changeme_is_made_into_the_seal_never_dotenv_unless_an_override_set_it() {
+    use crate::seal::{secrets, Keeper, Mode, SealConf};
     let dir = std::env::temp_dir().join(format!("moqui-conf-env-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let env_path = dir.join(".env");
-    let _ = std::fs::remove_file(&env_path);
+    let keeper = Keeper::open(&crate::seal::file::path_in(&dir), SealConf::with_purpose("dev")).unwrap();
+    keeper.start(Mode::Unattended).unwrap();
 
     let first = conf();
-    let made = generate_secrets(&first, &[], &env_path).unwrap();
-    assert_eq!(made, vec!["entity-facade@crypt-pass".to_string()]);
+    secrets::prepare_boot(&first, &[], Some(&keeper)).unwrap();
+    let kept = keeper
+        .bootstrap_secret(secrets::CRYPT_PASS)
+        .unwrap()
+        .expect("the crypt pass is in seal.json");
+    assert_eq!(kept.len(), 44, "32 random bytes in base64");
     let pass = first
         .first_named("entity-facade")
         .unwrap()
         .attribute("crypt-pass")
         .unwrap();
-    assert!(!pass.ends_with("CHANGEME"));
-    let text = std::fs::read_to_string(&env_path).unwrap();
-    assert!(text.contains(&format!("moqui_conf__entity_facade__crypt_pass={pass}\n")));
-    // out of the loaded dotenv table again, which other tests of this process read
-    moqui_lib::env::update_dotenv_file(&env_path, &[], &["moqui_conf__entity_facade__crypt_pass"]).unwrap();
+    assert!(pass.ends_with("CHANGEME"), "the conf keeps no secret");
+    assert!(!dir.join(".env").exists());
+    // the next start keeps the one it made
+    secrets::prepare_boot(&conf(), &[], Some(&keeper)).unwrap();
+    assert_eq!(keeper.bootstrap_secret(secrets::CRYPT_PASS).unwrap().unwrap(), kept);
 
     let second = conf();
     let overrides = apply_from(
         &second,
         vec![name(
             "moqui_conf__entity_facade__crypt_pass",
-            "CHANGEME",
+            "given-by-the-operator",
             Source::Environment,
         )],
     );
-    assert!(generate_secrets(&second, &overrides, &env_path).unwrap().is_empty());
+    secrets::prepare_boot(&second, &overrides, Some(&keeper)).unwrap();
+    let given = second
+        .first_named("entity-facade")
+        .unwrap()
+        .attribute("crypt-pass")
+        .unwrap();
+    assert_eq!(given, "given-by-the-operator", "the environment's value stands");
+    assert_eq!(keeper.bootstrap_secret(secrets::CRYPT_PASS).unwrap().unwrap(), kept);
+
+    // runtime/.env, which the server's own user writes, sets no secret once there is a seal: the store answers it
+    let third = conf();
+    let overrides = apply_from(
+        &third,
+        vec![name(
+            "moqui_conf__entity_facade__crypt_pass",
+            "written-into-dotenv",
+            Source::DotEnv,
+        )],
+    );
+    secrets::prepare_boot(&third, &overrides, Some(&keeper)).unwrap();
+    let pass = third
+        .first_named("entity-facade")
+        .unwrap()
+        .attribute("crypt-pass")
+        .unwrap();
+    assert_eq!(pass, "CHANGEME");
+
+    let unsealed = dir.join("production");
+    let ephemeral = Keeper::open(
+        &crate::seal::file::path_in(&unsealed),
+        SealConf::with_purpose("production"),
+    )
+    .unwrap();
+    ephemeral.start(Mode::Unattended).unwrap();
+    secrets::prepare_boot(&conf(), &[], Some(&ephemeral)).unwrap();
+    assert!(!unsealed.join(".env").exists() && !unsealed.join("db/seal.json").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

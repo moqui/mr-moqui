@@ -46,10 +46,7 @@ pub(crate) const ACCOUNT_PROPERTY: &str = "push/fcm@service-account";
 pub(crate) const PROJECT_PROPERTY: &str = "push/fcm@project-id";
 pub(crate) const BASE_URL_PROPERTY: &str = "push/fcm@base-url";
 const DEFAULT_BASE_URL: &str = "https://fcm.googleapis.com";
-const DEFAULT_TOKEN_URI: &str = "https://oauth2.googleapis.com/token";
 const SCOPE: &str = "https://www.googleapis.com/auth/firebase.messaging";
-/// `urn:ietf:params:oauth:grant-type:jwt-bearer`, form-encoded.
-const GRANT_TYPE: &str = "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer";
 /// A JWT asks for a token good this long (Google's most).
 const JWT_SECONDS: i64 = 3600;
 /// A cached token is renewed this long before it expires.
@@ -63,35 +60,8 @@ const BACKOFF: Duration = Duration::from_millis(500);
 const MAX_WAIT: Duration = Duration::from_secs(5);
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// The service account key's fields the sender needs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ServiceAccount {
-    pub client_email: String,
-    pub private_key: String,
-    pub token_uri: String,
-    pub project_id: String,
-}
-
-impl ServiceAccount {
-    /// From the JSON key file Google gives for a service account.
-    pub(crate) fn parse(json: &str) -> Result<Self, String> {
-        let value: serde_json::Value =
-            serde_json::from_str(json).map_err(|err| format!("the service account is not JSON: {err}"))?;
-        let field = |name: &str| value[name].as_str().unwrap_or_default().trim().to_string();
-        let account = Self {
-            client_email: field("client_email"),
-            private_key: field("private_key"),
-            token_uri: Some(field("token_uri"))
-                .filter(|uri| !uri.is_empty())
-                .unwrap_or_else(|| DEFAULT_TOKEN_URI.to_string()),
-            project_id: field("project_id"),
-        };
-        if account.client_email.is_empty() || account.private_key.is_empty() {
-            return Err("the service account has no client_email or private_key".to_string());
-        }
-        Ok(account)
-    }
-}
+/// The service account key's fields the sender needs (shared with the seal's GCP KMS method).
+pub(crate) use crate::google_auth::ServiceAccount;
 
 /// What the sender is configured with.
 #[derive(Debug, Clone)]
@@ -157,28 +127,7 @@ pub(crate) fn note_unset() {
 
 /// The signed JWT of the OAuth 2 JWT bearer grant (RFC 7523) for the account, at `now` (Unix seconds).
 pub(crate) fn jwt(account: &ServiceAccount, now: i64) -> Result<String, String> {
-    let header = URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256","typ":"JWT"}"#);
-    let claims = serde_json::json!({
-        "iss": account.client_email,
-        "scope": SCOPE,
-        "aud": account.token_uri,
-        "iat": now,
-        "exp": now + JWT_SECONDS,
-    });
-    let claims = URL_SAFE_NO_PAD.encode(claims.to_string());
-    let signing_input = format!("{header}.{claims}");
-    // the key file's private_key is PKCS#8 PEM with its line breaks as \n, which the JSON parse turned into newlines
-    let signer = moqui_lib::signer::SimpleSigner::from_pem_with(
-        ACCOUNT_PROPERTY,
-        &account.private_key,
-        None,
-        Some("SHA256withRSA"),
-    );
-    let signature = signer.sign(&signing_input).map_err(|err| err.message().to_string())?;
-    let signature = base64::engine::general_purpose::STANDARD
-        .decode(signature)
-        .map_err(|err| format!("the signature is not base64: {err}"))?;
-    Ok(format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature)))
+    crate::google_auth::jwt(account, SCOPE, now, JWT_SECONDS)
 }
 
 /// How a request goes out: [`crate::outbound::send`] on a server, a stand-in in the unit tests.
@@ -266,7 +215,7 @@ impl Tokens {
     fn fetch_token(&self, account: &ServiceAccount, now: i64, send: Send<'_>) -> Result<(String, i64), String> {
         let assertion = jwt(account, now)?;
         // the JWT is base64url and dots, which a form body carries as they are
-        let body = format!("grant_type={GRANT_TYPE}&assertion={assertion}");
+        let body = crate::google_auth::token_form(&assertion);
         let response = send(Request {
             method: Method::Post,
             url: account.token_uri.clone(),

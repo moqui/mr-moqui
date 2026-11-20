@@ -47,6 +47,7 @@ pub mod file;
 pub mod methods;
 mod recovery;
 pub mod rotate;
+pub mod secrets;
 
 pub use file::SealFile;
 pub use methods::{Method, MethodKind};
@@ -74,6 +75,8 @@ pub struct SealConf {
     /// What names the database a recovery bundle goes with: `instance@id` and the transactional datasource's
     /// database conf, host, name and schema (never its password).
     pub database_identity: Value,
+    /// The `kms` and `transit` methods' settings (S11), from the conf files only.
+    pub cloud: methods::CloudConf,
 }
 
 impl SealConf {
@@ -87,9 +90,10 @@ impl SealConf {
     }
 
     /// The settings from the merged conf of a boot and the environment names it applied. The settings that place the
-    /// socket, pace the unseal attempts and name the program the `tpm` method runs come only from the conf files (the
-    /// server's user can write `runtime/.env`, and its children set the environment): one an environment name or
-    /// `runtime/.env` set is ignored, with an error logged, and its default is used.
+    /// socket, pace the unseal attempts, name the program the `tpm` method runs, and say where the `kms` and `transit`
+    /// methods send the root key and whose credential they send come only from the conf files (the server's user can
+    /// write `runtime/.env`, and its children set the environment): one an environment name or `runtime/.env` set is
+    /// ignored, with an error logged, and its default is used.
     ///
     /// # Errors
     ///
@@ -137,6 +141,25 @@ impl SealConf {
             )));
         }
         let max_delay = protected("seal@unseal-max-delay-seconds");
+        let cloud = methods::CloudConf {
+            kms_provider: protected("seal@kms-provider"),
+            kms_key: protected("seal@kms-key"),
+            kms_region: protected("seal@kms-region"),
+            kms_endpoint: protected("seal@kms-endpoint"),
+            kms_token_endpoint: protected("seal@kms-token-endpoint"),
+            kms_credentials: methods::Credentials::parse("seal@kms-credentials", &protected("seal@kms-credentials"))?,
+            transit_url: protected("seal@transit-url"),
+            transit_mount: Some(protected("seal@transit-mount"))
+                .filter(|mount| !mount.is_empty())
+                .unwrap_or_else(|| "transit".to_string()),
+            transit_key: protected("seal@transit-key"),
+            transit_namespace: protected("seal@transit-namespace"),
+            transit_ca_file: protected("seal@transit-ca-file"),
+            transit_token: match protected("seal@transit-token").as_str() {
+                "" => methods::Credentials::Metadata,
+                given => methods::Credentials::parse("seal@transit-token", given)?,
+            },
+        };
         Ok(Self {
             method,
             shares,
@@ -146,6 +169,7 @@ impl SealConf {
             unseal_max_delay: Duration::from_secs(number("seal@unseal-max-delay-seconds", 300, max_delay)?),
             purpose: conf_attribute(conf, PURPOSE),
             database_identity: database_identity(conf),
+            cloud,
         })
     }
 
@@ -161,6 +185,7 @@ impl SealConf {
             unseal_max_delay: Duration::from_secs(300),
             purpose: purpose.to_string(),
             database_identity: Value::Null,
+            cloud: methods::CloudConf::default(),
         }
     }
 
@@ -398,6 +423,8 @@ pub struct Keeper {
     base_delay: Mutex<Duration>,
     watchers: Mutex<Vec<(u64, SealCallback)>>,
     next_watch: AtomicU64,
+    /// The SecretValue rows opened so far (S4, [`secrets`]), dropped at `seal`.
+    secret_values: Mutex<secrets::Cache>,
 }
 
 #[derive(Default)]
@@ -580,6 +607,7 @@ impl Keeper {
             base_delay: Mutex::new(Duration::from_secs(1)),
             watchers: Mutex::new(Vec::new()),
             next_watch: AtomicU64::new(1),
+            secret_values: Mutex::default(),
         };
         drop(keeper.inner());
         Ok(keeper)
@@ -678,6 +706,13 @@ impl Keeper {
     #[must_use]
     pub fn is_unsealed(&self) -> bool {
         self.unsealed.load(Ordering::SeqCst)
+    }
+
+    /// Whether this boot holds a root key in memory only, with no seal to keep anything under it (an unattended boot
+    /// of a production instance before `moqui operator init`).
+    #[must_use]
+    pub fn is_ephemeral(&self) -> bool {
+        read(&self.snapshot).0.ephemeral
     }
 
     /// The seal file as this keeper has it, if any.
@@ -895,8 +930,14 @@ impl Keeper {
             root_id: root.id(),
             method,
             recovery,
-            bootstrap: std::collections::BTreeMap::new(),
-            secret_value_key: None,
+            // the crypt pass with the seal, so the bundle exported at init carries the key of the fields (S4)
+            bootstrap: bootstrap::initial(&root)?,
+            // made with the seal, so the bundle exported at init carries it to every member (S4)
+            secret_value_key: Some(bootstrap::seal_secret_value_key(
+                &root,
+                1,
+                &moqui_vault::keys::Key32::random(&mut moqui_vault::rng::OsRng),
+            )),
         };
         if !file::stage(&self.path, &seal)?.commit_new(&held)? {
             // another process made this runtime's seal first: use that one
@@ -1165,12 +1206,14 @@ impl Keeper {
     /// Drop the root key and every share entered from memory now (§3.3, §3.5), and tell the watchers, which close the
     /// listeners. A start then waits for `unseal`, whatever the method.
     pub fn seal(&self) {
+        let was_ephemeral;
         {
             let mut inner = self.inner();
             inner.root = None;
             inner.entered.clear();
             inner.entering = None;
             inner.operator_sealed = true;
+            was_ephemeral = inner.ephemeral;
             inner.ephemeral = false;
             if inner.held_shares.take().is_some() {
                 tracing::error!(
@@ -1189,6 +1232,11 @@ impl Keeper {
                 }
             }
             self.changed.notify_all();
+        }
+        // the opened secrets after the state lock is let go: a reader takes the state (the data key) before the cache
+        lock(&self.secret_values).clear();
+        if was_ephemeral {
+            secrets::clear_ephemeral();
         }
         tracing::warn!("Sealed by an operator: the root key is dropped from memory and the listeners close");
         let watchers: Vec<_> = lock(&self.watchers)

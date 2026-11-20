@@ -184,6 +184,11 @@ pub struct ExecutionContextFactory {
     started_millis: i64,
     native: crate::native::NativeRegistry,
     pub(crate) native_tools: crate::native::ToolSet,
+    /// The seal of this runtime (plans/Sealed-Secrets.md S4): where its secrets are kept. Unset for a test's factory.
+    seal_keeper: std::sync::OnceLock<Arc<crate::seal::Keeper>>,
+    /// A test's factory, which has no seal: the secrets run-time code keeps (`conf_env::keep_in_env`, a persisted
+    /// `set_conf_value`) go to `.env` and a process property, as before S4. False on every booted factory.
+    secrets_in_env: bool,
 }
 
 impl Drop for ExecutionContextFactory {
@@ -352,12 +357,23 @@ impl ExecutionContextFactory {
             }
         }
         let native = crate::native::NativeRegistry::discover(&components, &conf_node, artifacts_only)?;
+        let keeper = (!artifacts_only)
+            .then(|| crate::seal::keeper_of(&runtime_dir))
+            .flatten();
         if !artifacts_only {
-            super::conf_env::generate_secrets(&conf_node, &overrides, &env_path)?;
-            check_session_cookie_key(&super::conf_env::conf_attribute(
-                &conf_node,
-                crate::user::session::COOKIE_KEY,
-            ))?;
+            // the secrets go to seal.json and SecretValue, never runtime/.env (plans/Sealed-Secrets.md S4)
+            crate::seal::secrets::prepare_boot(&conf_node, &overrides, keeper.as_deref())?;
+            let cookie_key = super::conf_env::conf_attribute(&conf_node, crate::user::session::COOKIE_KEY);
+            let overridden = overrides.iter().any(|item| {
+                item.applied()
+                    && item.selector.as_deref().is_some_and(|selector| {
+                        crate::seal::secrets::canonical(selector) == crate::user::session::COOKIE_KEY
+                    })
+            });
+            // at CHANGEME in the conf files the store makes it; only one an override set is checked here
+            if overridden || !cookie_key.ends_with("CHANGEME") {
+                check_session_cookie_key(&cookie_key)?;
+            }
             log_instance_purpose(&conf_node, &overrides, &discovered_purpose);
         }
         if let Some(before_init) = &options.before_init {
@@ -415,10 +431,15 @@ impl ExecutionContextFactory {
             started_millis: jiff::Timestamp::now().as_millisecond(),
             native,
             native_tools: crate::native::ToolSet::default(),
+            seal_keeper: std::sync::OnceLock::new(),
+            secrets_in_env: false,
         });
         if artifacts_only {
             factory.pools.attach(&factory);
             return Ok(factory);
+        }
+        if let Some(keeper) = keeper {
+            let _ = factory.seal_keeper.set(keeper);
         }
         factory.native.configure(&factory, &conf_node)?;
         // on an edge node its delegated services go to the link from the first call (plans/archive/Edge-Node.md §5.2)
@@ -899,7 +920,72 @@ impl ExecutionContextFactory {
     /// as environment names compare them (plans/archive/Conf-Paths.md §1), with whether it holds a secret; `None` when the conf
     /// has no such attribute or `selector` is not one. A live override of it (Monitor › Settings) comes first while it
     /// lasts. The caller decides what a secret shows: a script never gets one (`ec.factory.getConfValue`).
+    ///
+    /// A secret the conf leaves empty or at `CHANGEME` is answered from the seal's store (plans/Sealed-Secrets.md S4):
+    /// a transitional shim for the readers that still take a `String`, until each reads its handle
+    /// ([`Self::secret`]).
     pub fn conf_value(&self, selector: &str) -> Option<super::conf_env::ConfValue> {
+        let found = self.conf_value_files(selector);
+        let secret = found
+            .as_ref()
+            .map_or_else(|| super::conf_env::selector_secret(selector), |found| found.secret);
+        if !secret
+            || found
+                .as_ref()
+                .is_some_and(|found| !crate::seal::secrets::left_to_store(&found.value))
+        {
+            return found;
+        }
+        match crate::seal::secrets::get(self, selector) {
+            Ok(Some(value)) => Some(super::conf_env::ConfValue {
+                value: value.to_string(),
+                secret: true,
+            }),
+            Ok(None) => found,
+            Err(err) => {
+                tracing::debug!("The secret {selector} could not be read from the store: {err}");
+                found
+            }
+        }
+    }
+
+    /// The handle of the secret `selector` (plans/Sealed-Secrets.md §3.1, Secret handles): the value the conf files,
+    /// the environment or `runtime/.env` give, else the seal's store, made there now when the conf schema marks it
+    /// generated and the conf leaves it at `CHANGEME`. `None` when neither has one.
+    ///
+    /// # Errors
+    ///
+    /// The server is sealed, or the store cannot be read or written.
+    pub fn secret(&self, selector: &str) -> Result<Option<zeroize::Zeroizing<String>>, Error> {
+        if let Some(found) = self
+            .conf_value_files(selector)
+            .filter(|found| !crate::seal::secrets::left_to_store(&found.value))
+        {
+            return Ok(Some(zeroize::Zeroizing::new(found.value)));
+        }
+        crate::seal::secrets::get(self, selector)
+    }
+
+    /// The seal of this factory's runtime, when its boot opened one (a test's factory has none).
+    pub fn seal_keeper(&self) -> Option<Arc<crate::seal::Keeper>> {
+        self.seal_keeper.get().cloned()
+    }
+
+    /// Whether this is a test's factory, whose run-time secrets go to `.env` and a process property as before S4 (a
+    /// booted factory keeps them in its seal's store).
+    #[must_use]
+    pub fn keeps_secrets_in_env(&self) -> bool {
+        self.secrets_in_env
+    }
+
+    /// Give a test's factory a seal, for a test of the secret store.
+    #[doc(hidden)]
+    pub fn set_seal_keeper(&self, keeper: Arc<crate::seal::Keeper>) {
+        let _ = self.seal_keeper.set(keeper);
+    }
+
+    /// [`Self::conf_value`] as the conf files, the environment names and a live override give it, with no store.
+    pub fn conf_value_files(&self, selector: &str) -> Option<super::conf_env::ConfValue> {
         let path = moqui_lib::node::path::AttrPath::parse(selector).ok()?;
         if self.conf_overlaid.load(std::sync::atomic::Ordering::Acquire) {
             if let Some(value) = read(&self.conf_overlay).get(&path.selector()) {
@@ -1869,13 +1955,6 @@ fn ensure_env_readable(path: &Path) -> Result<(), Error> {
     }
 }
 
-pub(super) fn generate_secret() -> Result<String, Error> {
-    let mut bytes = [0_u8; 32];
-    getrandom::fill(&mut bytes)
-        .map_err(|err| Error::new(format!("could not read random bytes for a secret property: {err}")))?;
-    Ok(STANDARD.encode(bytes))
-}
-
 impl ExecutionContextFactory {
     /// A context with no database. Tests use it when they only need an entered context.
     #[doc(hidden)]
@@ -1966,6 +2045,8 @@ impl ExecutionContextFactory {
             started_millis: jiff::Timestamp::now().as_millisecond(),
             native: crate::native::NativeRegistry::default(),
             native_tools: crate::native::ToolSet::default(),
+            seal_keeper: std::sync::OnceLock::new(),
+            secrets_in_env: true,
         });
         factory.pools.attach(&factory);
         crate::user::session::install_session_end(&factory);

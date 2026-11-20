@@ -18,8 +18,9 @@
 //! TLS-ALPN-01 challenge, which needs no port 80: the authority opens a TLS connection to the name on port 443 offering
 //! ALPN `acme-tls/1`, and this node answers with a certificate made for the challenge ([`challenge`]). The certificate
 //! the order gets is a row (`AcmeCertificate`, its key encrypted) that every member of a cluster writes as
-//! `runtime/cert/<name>/fullchain.pem` and `privkey.pem` ([`store::sync_files`]), certbot's layout, which the HTTPS
-//! listener's [`crate::tls::CertStore`] reads. The renewal job renews only names set up there.
+//! `runtime/cert/<name>/fullchain.pem` ([`store::sync_files`]), certbot's layout, which the HTTPS listener's
+//! [`crate::tls::CertStore`] reads; the key is served from the row and held in memory only, never written to the
+//! directory (plans/Sealed-Secrets.md §3.1, S4). The renewal job renews only names set up there.
 //!
 //! Where the challenge is answered:
 //! - the HTTPS listener ([`accept`], from `crate::http`), before any other settings are picked: a handshake that offers

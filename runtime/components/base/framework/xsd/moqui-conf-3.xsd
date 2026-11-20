@@ -2175,8 +2175,8 @@ along with this software (see the LICENSE.md file). If not, see
             only once unsealed, and while sealed answers only on the operator socket.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="method" type="xs:string"><xs:annotation><xs:documentation>The unseal method init uses when
-                none is named: tpm, passphrase, shamir or dev (kms and transit later). On a production instance's first
-                start an automatic method (tpm) makes the seal by itself. Empty for none. Once runtime/db/seal.json exists
+                none is named: tpm, kms, transit, passphrase, shamir or dev. On a production instance's first start an
+                automatic method (tpm, kms, transit) makes the seal by itself. Empty for none. Once runtime/db/seal.json exists
                 its method wins and this is ignored.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="socket" type="xs:string"><xs:annotation><xs:documentation>Where a server binds its own
                 operator socket when root hands it none (systemd/moqui-operator.socket, moqui operator bind), relative to
@@ -2192,6 +2192,37 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="unseal-max-delay-seconds" type="non-neg-int-expandable" default="300"><xs:annotation><xs:documentation>The
                 longest wait after wrong passphrases or shares; it doubles from one second. Read from the conf files
                 only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-provider" type="xs:string"><xs:annotation><xs:documentation>The kms method's cloud:
+                aws, gcp or azure. The kms and transit settings say where the root key is sent and whose credential goes
+                with it, so they are read from the conf files only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-key" type="xs:string"><xs:annotation><xs:documentation>The KMS key: an AWS key id,
+                ARN or alias; a GCP projects/.../cryptoKeys/... name; an Azure key URL
+                (https://VAULT.vault.azure.net/keys/NAME).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-region" type="xs:string"><xs:annotation><xs:documentation>The AWS region of the
+                key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-endpoint" type="xs:string"><xs:annotation><xs:documentation>The KMS API's base URL in
+                place of the provider's (a private endpoint); empty for the provider's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-token-endpoint" type="xs:string"><xs:annotation><xs:documentation>Where tokens come
+                from in place of the provider's: the instance metadata (AWS IMDSv2, Azure IMDS), the metadata server
+                (GCP), or Azure's sign-in endpoint for client credentials.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-credentials" type="xs:string"><xs:annotation><xs:documentation>Empty or metadata for
+                the host's own identity (the instance role, the metadata server, the managed identity); else a file of
+                root's (an absolute path, writable by its owner only) or systemd:NAME for the unit's credential NAME: AWS
+                {"access_key_id", "secret_access_key", "session_token"}, a GCP service account's key file, Azure
+                {"tenant_id", "client_id", "client_secret"}. Never the credential itself.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-url" type="xs:string"><xs:annotation><xs:documentation>The transit method's
+                OpenBao or Vault address (https://bao.example:8200).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-mount" type="xs:string" default="transit"><xs:annotation><xs:documentation>Its
+                Transit secrets engine's mount.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-key" type="xs:string"><xs:annotation><xs:documentation>The Transit key that wraps
+                the root key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-namespace" type="xs:string"><xs:annotation><xs:documentation>The namespace
+                (X-Vault-Namespace), if any.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-ca-file" type="xs:string"><xs:annotation><xs:documentation>A PEM of the
+                authorities the Vault's HTTPS is checked against in place of the system's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-token" type="xs:string"><xs:annotation><xs:documentation>The file holding the
+                Vault token sent as X-Vault-Token: an absolute path of root's, writable by its owner only, or systemd:NAME
+                for the unit's credential NAME. Never the token itself.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="acme">

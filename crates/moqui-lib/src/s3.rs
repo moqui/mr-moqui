@@ -19,12 +19,12 @@
 use std::io::{self, Read, Write};
 use std::time::Duration;
 
-use hmac::{KeyInit as _, Mac as _};
 use sha2::{Digest as _, Sha256};
 
 use crate::error::Error;
 use crate::http::{Method, OpenRequest, RestClient};
 use crate::node::MNode;
+use crate::sigv4::{canonical_query, hex, uri_encode, EMPTY_SHA256};
 
 /// The first parts of a streamed upload; every 1000 parts the size doubles, so 10,000 parts hold over 16 TB.
 const FIRST_PART: usize = 16 * 1024 * 1024;
@@ -34,7 +34,6 @@ const COPY_PART: u64 = 1024 * 1024 * 1024;
 const ATTEMPTS: u32 = 4;
 /// The largest list or error response read.
 const MAX_RESPONSE: u64 = 16 * 1024 * 1024;
-const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 /// Where the objects go and the keys that sign for them.
 #[derive(Clone)]
@@ -552,19 +551,6 @@ fn child_text(node: &MNode, name: &str) -> String {
         .unwrap_or_default()
 }
 
-/// SigV4's URI encoding: unreserved characters as they are, every other byte `%XX`; `/` too when `slash`.
-fn uri_encode(text: &str, slash: bool) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') || (byte == b'/' && !slash) {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
-}
-
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -586,32 +572,8 @@ fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn canonical_query(query: &[(&str, String)]) -> String {
-    let mut pairs: Vec<(String, String)> = query
-        .iter()
-        .map(|(name, value)| (uri_encode(name, true), uri_encode(value, true)))
-        .collect();
-    pairs.sort();
-    pairs
-        .iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn hmac(key: &[u8], data: &str) -> Vec<u8> {
-    // HMAC takes a key of any length
-    let mut mac = hmac::Hmac::<Sha256>::new_from_slice(key).unwrap_or_else(|_| unreachable!());
-    mac.update(data.as_bytes());
-    mac.finalize().into_bytes().to_vec()
-}
-
-/// The `Authorization` header of a request: `path` and `query` already encoded, `headers` with `host` and every
-/// `x-amz-` header, all of them signed.
+/// The `Authorization` header of a request to S3 ([`crate::sigv4`]): `path` and `query` already encoded, `headers`
+/// with `host` and every `x-amz-` header, all of them signed.
 fn authorization(
     method: &str,
     path: &str,
@@ -621,32 +583,23 @@ fn authorization(
     config: &S3Config,
     amz_date: &str,
 ) -> String {
-    let mut signed: Vec<(String, String)> = headers
-        .iter()
-        .map(|(name, value)| (name.to_ascii_lowercase(), value.trim().to_string()))
-        .collect();
-    signed.sort();
-    let canonical_headers: String = signed.iter().map(|(name, value)| format!("{name}:{value}\n")).collect();
-    let signed_names = signed
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect::<Vec<_>>()
-        .join(";");
-    let canonical = format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed_names}\n{payload_hash}");
-    let date = &amz_date[..8];
-    let scope = format!("{date}/{}/s3/aws4_request", config.region);
-    let to_sign = format!(
-        "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
-        hex(&Sha256::digest(canonical.as_bytes()))
-    );
-    let mut key = hmac(format!("AWS4{}", config.secret_key).as_bytes(), date);
-    for part in [config.region.as_str(), "s3", "aws4_request"] {
-        key = hmac(&key, part);
-    }
-    let signature = hex(&hmac(&key, &to_sign));
-    format!(
-        "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed_names}, Signature={signature}",
-        config.access_key
+    crate::sigv4::authorization(
+        &crate::sigv4::Request {
+            method,
+            path,
+            query,
+            headers,
+            payload_hash,
+        },
+        &crate::sigv4::Credentials {
+            access_key: &config.access_key,
+            secret_key: &config.secret_key,
+        },
+        crate::sigv4::Scope {
+            region: &config.region,
+            service: "s3",
+        },
+        amz_date,
     )
 }
 

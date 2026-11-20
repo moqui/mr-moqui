@@ -3190,15 +3190,14 @@ pub fn derived_cookie_key(label: &str) -> Result<Vec<u8>, Error> {
 /// (plans/archive/Conf-Paths.md §6.3).
 pub const COOKIE_KEY: &str = "webapp-list/webapp[webroot]/session-config@cookie-key";
 
-fn cookie_key() -> Result<Vec<u8>, Error> {
-    let raw = crate::context::conf_env::setting(COOKIE_KEY);
-    if raw.is_empty() {
-        return Err(Error::new(
-            "the session cookie key (session-config cookie-key) is not set",
-        ));
-    }
+/// The key by its handle (plans/Sealed-Secrets.md §3.1), decoded into a buffer that is cleared when dropped.
+fn cookie_key() -> Result<zeroize::Zeroizing<Vec<u8>>, Error> {
+    let raw = crate::context::conf_env::secret(COOKIE_KEY)
+        .filter(|raw| !raw.trim().is_empty() && !raw.trim().ends_with("CHANGEME"))
+        .ok_or_else(|| Error::new("the session cookie key (session-config cookie-key) is not set"))?;
     STANDARD
         .decode(raw.trim().as_bytes())
+        .map(zeroize::Zeroizing::new)
         .map_err(|_| Error::new("the session cookie key (session-config cookie-key) is not standard base64"))
 }
 

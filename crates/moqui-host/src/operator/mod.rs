@@ -76,7 +76,11 @@ mod server {
         {
             let mut watches = moqui_lib::sync::lock(&WATCHES);
             if !watches.iter().any(|(dir, _)| dir == request.runtime_dir) {
-                let watch = keeper.on_seal(Arc::new(crate::systemd_notify::mark_sealed_stop));
+                // a seal also drops the TLS keys held in memory (S4); the listeners that loaded them close
+                let watch = keeper.on_seal(Arc::new(|| {
+                    crate::systemd_notify::mark_sealed_stop();
+                    crate::tls::drop_held_keys();
+                }));
                 watches.push((request.runtime_dir.to_path_buf(), watch));
             }
         }

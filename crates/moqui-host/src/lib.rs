@@ -966,6 +966,7 @@ where
         }
         [command, rest @ ..] if command == "load" => {
             let flags = parse_load_args(rest)?;
+            REFUSE_UNSEALED_LOAD.store(true, std::sync::atomic::Ordering::SeqCst);
             dispatch_load(&flags)?;
             Ok(None)
         }
@@ -1358,6 +1359,11 @@ pub fn load_data(
     }
 }
 
+/// Set by the `moqui load` command: a load on a production runtime with no seal yet, and no crypt pass the conf or the
+/// environment gives, is refused (plans/Sealed-Secrets.md S4): its encrypted fields would have no key to be written
+/// under. A program that loads through [`load_data`] (a test) gets the refusal at its first encrypted field instead.
+static REFUSE_UNSEALED_LOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 fn load_embedded(
     runtime_dir: &std::path::Path,
@@ -1381,10 +1387,20 @@ fn load_embedded(
     );
     let factory = moqui_core::context::ExecutionContextFactory::boot_with_framework(&runtime_dir, &framework_dir)
         .map_err(|err| moqui_lib::error::Error::new(err.to_string()))?;
+    if REFUSE_UNSEALED_LOAD.load(std::sync::atomic::Ordering::SeqCst)
+        && moqui_core::seal::secrets::unsealed_without_crypt_pass(&factory)
+    {
+        return Err(moqui_lib::error::Error::new(
+            "moqui load refuses a production runtime with no seal yet: start the server and run `moqui operator init` \
+             first (the load's encrypted fields need the crypt pass the seal keeps), or give entity-facade@crypt-pass \
+             in the environment (plans/Sealed-Secrets.md S4)",
+        ));
+    }
     log_files_attached(&factory);
     embedded_files::check(&factory, false);
     let opened_at = std::time::Instant::now();
-    let opened = crate::db::entity_db::transactional_conf(&factory).and_then(|conf| {
+    let opened = crate::db::entity_db::transactional_conf(&factory).and_then(|mut conf| {
+        crate::db::entity_db::embedded_password(&factory, &mut conf, cluster_dir)?;
         let pool = load_pool(&conf.pool);
         let install = crate::db::embedded::shared_install_dir(&runtime_dir, cluster_dir);
         tracing::info!(
@@ -1846,7 +1862,8 @@ fn boot_server_factory(
     embedded_files::check(&factory, true);
     // Tool checks before the database: which Chromium PDF uses, or why there is none.
     let pdf = install_pdf(&factory);
-    let conf = crate::db::entity_db::transactional_conf(&factory)?;
+    let mut conf = crate::db::entity_db::transactional_conf(&factory)?;
+    crate::db::entity_db::embedded_password(&factory, &mut conf, &cluster_dir)?;
     // `(request cap + service cap) * 2` must fit in `max - reserve`; check_serve_caps below says so.
     let pool = conf.pool.clone();
     let install = crate::db::embedded::shared_install_dir(&runtime_dir, &cluster_dir);

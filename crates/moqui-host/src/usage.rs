@@ -764,8 +764,8 @@ moqui operator <command> [--socket PATH]
     The server's own user runs only status; root and the socket's group run the rest. Passphrases and shares are read with echo off, or a line each from
     standard input when it is not a terminal.
     status                   The state (sealed, unsealing, unsealed), the method and the recovery shares
-    init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm,
-                             passphrase, shamir or dev (dev is refused on a production instance); default
+    init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm, kms,
+                             transit, passphrase, shamir or dev (dev is refused on a production instance); default
                              seal@method
     init --take-shares       Read, once, the recovery shares an automatic first start holds in memory
     unseal [--recovery]      Give the passphrase or one share; --recovery a recovery share, which opens any
@@ -779,6 +779,15 @@ moqui operator <command> [--socket PATH]
                              with the offline backups; a restore needs it and the recovery shares
     init --from FILE         Restore a recovery bundle on a clean runtime; then unseal --recovery, and rekey
                              to this host's method
+    secret put NAME [--file PATH] [--force]
+                             Keep a secret by name, once unsealed: a conf selector the conf leaves empty or
+                             at CHANGEME (entity-facade/datasource[transactional]@password,
+                             llm-facade/endpoint[openai]@api-key), or tls-key/<name> for runtime/cert/<name>.crt.
+                             A bootstrap secret goes to seal.json, any other to the SecretValue table. The value
+                             is read with echo off, from standard input, or from PATH, and is never printed.
+                             A new entity-facade@crypt-pass needs --force; the old one becomes crypt-pass-old
+    secret list              The kept secrets' names, kinds (bootstrap or value) and generations
+    secret rm NAME           Remove a kept secret (not a crypt pass or a datasource password)
     bind PATH [--group G] -- COMMAND ...
                              As root: make the operator socket at PATH (root's, mode 0660 with group G or
                              0600) and run COMMAND with it open, for a server that then drops to its own user
@@ -1111,7 +1120,8 @@ pub fn command_usage(command: &str) -> Error {
         "conf" => "moqui conf env [--names] [text]",
         "operator" => {
             "moqui operator status | init [--method M | --take-shares | --from FILE] | unseal [--recovery] | seal \
-             | rekey --method M | rotate-root | export-seal FILE [--socket PATH]"
+             | rekey --method M | rotate-root | export-seal FILE | secret put NAME [--file PATH] [--force] | secret list \
+             | secret rm NAME [--socket PATH]"
         }
         "vault" => "moqui vault --server URL --user USERNAME key init | key show | key check <username> | list | open <vaultId>",
         "embedded" => {

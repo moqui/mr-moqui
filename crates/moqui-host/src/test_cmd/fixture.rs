@@ -348,26 +348,41 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     Ok(None)
 }
 
-/// The loader's `runtime/.env`, kept beside a snapshot's dump: the secrets the load generated, `moqui_conf__entity_facade__crypt_pass`
-/// among them, which the encrypted fields of the dump were written with.
+/// The loader's `runtime/.env`, kept beside a snapshot's dump: the settings the load ran with.
 const RUNTIME_ENV: &str = "runtime.env";
+/// The loader's `db/seal.json`, kept beside a snapshot's dump: the crypt pass the encrypted fields of the dump were
+/// written with, the cluster's password and the SecretValue data key (plans/Sealed-Secrets.md S4).
+const RUNTIME_SEAL: &str = "seal.json";
 
-/// Keep the scratch runtime's `.env` with the snapshot at `dir`, so a run that restores it (each worker of a run with
-/// several) reads the encrypted fields with the loader's keys rather than new ones it generates. No `.env` keeps none.
+/// Keep the scratch runtime's `.env` and `seal.json` with the snapshot at `dir`, so a run that restores it (each worker
+/// of a run with several) reads the encrypted fields and the stored secrets with the loader's keys rather than new
+/// ones it makes. One that is not there is not kept.
 fn keep_runtime_env(scratch: &Path, dir: &Path) -> Result<(), Error> {
     let env = scratch.join(".env");
     if env.is_file() {
         std::fs::copy(&env, dir.join(RUNTIME_ENV)).map_err(io("could not keep the test runtime's .env"))?;
     }
+    let seal = moqui_core::seal::file::path_in(scratch);
+    if seal.is_file() {
+        std::fs::copy(&seal, dir.join(RUNTIME_SEAL)).map_err(io("could not keep the test runtime's seal.json"))?;
+    }
     Ok(())
 }
 
-/// Put the `.env` kept with the snapshot at `dir` in the scratch runtime before it boots; a snapshot made before it was
-/// kept has none, and its encrypted fields read as the run's own keys find them.
+/// Put the `.env` and `seal.json` kept with the snapshot at `dir` in the scratch runtime before it boots; a snapshot
+/// made before they were kept has none, and its encrypted fields read as the run's own keys find them.
 fn restore_runtime_env(dir: &Path, scratch: &Path) -> Result<(), Error> {
     let kept = dir.join(RUNTIME_ENV);
     if kept.is_file() {
         std::fs::copy(&kept, scratch.join(".env")).map_err(io("could not restore the test runtime's .env"))?;
+    }
+    let kept = dir.join(RUNTIME_SEAL);
+    if kept.is_file() {
+        let seal = moqui_core::seal::file::path_in(scratch);
+        if let Some(parent) = seal.parent() {
+            std::fs::create_dir_all(parent).map_err(io("could not create the test runtime's db directory"))?;
+        }
+        std::fs::copy(&kept, &seal).map_err(io("could not restore the test runtime's seal.json"))?;
     }
     Ok(())
 }
@@ -488,10 +503,11 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
     };
     let factory = ExecutionContextFactory::boot_with_options(runtime, framework, options)
         .map_err(|err| Error::new(err.to_string()))?;
-    let conf = crate::db::entity_db::transactional_conf(&factory)?;
+    let mut conf = crate::db::entity_db::transactional_conf(&factory)?;
     let pool = conf.pool.clone();
     let cluster = runtime.join("db/embedded");
     std::fs::create_dir_all(&cluster).map_err(io("could not create the cluster directory"))?;
+    crate::db::entity_db::embedded_password(&factory, &mut conf, &cluster)?;
     let install = crate::db::embedded::shared_install_dir(runtime, &cluster);
     let connections = pool.max + crate::db::entity_facade::embedded_group_pool_max(&factory);
     let db = crate::db::entity_db::open(conf, &cluster, &install, connections)?;

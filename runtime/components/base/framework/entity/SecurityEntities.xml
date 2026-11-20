@@ -1116,4 +1116,16 @@ along with this software (see the LICENSE.md file). If not, see
         </relationship>
     </entity>
 
+    <entity entity-name="SecretValue" package="moqui.security" use="configuration" cache="never">
+        <description>A secret of this server that is not needed before the database opens (plans/Sealed-Secrets.md §3.1,
+            S4): a generated conf secret (the session cookie key, the VAPID key, the cluster TLS pair) or one an
+            operator put with `moqui operator secret put`, by name. The value is sealed with AES-256-GCM under the
+            SecretValue data key, which seal.json keeps wrapped by the root key, with "SecretValue", the name and the
+            generation as associated data: a row copied to another name or generation does not open. Opened only by the
+            server's own code (moqui_core::seal::secrets); a find gives ciphertext.</description>
+        <field name="secretName" type="text-medium" is-pk="true"/>
+        <field name="generation" type="number-integer"/>
+        <field name="sealedValue" type="text-very-long"/>
+    </entity>
+
 </entities>
