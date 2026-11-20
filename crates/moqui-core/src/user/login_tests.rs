@@ -1110,6 +1110,58 @@ fn a_password_login_and_a_finished_second_factor_are_recent_sign_ins_an_internal
     session::reset_session();
 }
 
+/// A strong sign-in (plans/Vault-Instances.md §9, Nov 19): the code that finishes a second factor and an SSO login
+/// are; a password alone, an internal login and a session's login key are not; a paired device's key is, with a recent
+/// sign-in on the device. Each is the user's own, recent within the age asked, and a logout drops it.
+#[test]
+fn a_strong_sign_in_is_a_second_factor_sso_or_a_devices_key_and_recent() {
+    let (ctx, facade) = open_ctx();
+    let _guard = ctx.enter();
+    create_user(&facade, "ada", "Secret1!", |_| {});
+    create_user(&facade, "bob", "Secret1!", |_| {});
+    internal_login_user("ada").unwrap();
+    assert!(!strong_recent_auth(300_000));
+    login_user("ada", "Secret1!").unwrap();
+    assert!(recent_auth(300_000));
+    assert!(!strong_recent_auth(300_000));
+    // the internal login that finishes a second factor (the password was checked, then the code)
+    logout().unwrap();
+    session::set_session_attribute(PRE_AUTHC_USERNAME, Some("bob"));
+    session::set_session_attribute(AUTHC_FACTOR_REQUIRED, Some("true"));
+    internal_login_user("bob").unwrap();
+    assert!(strong_recent_auth(300_000));
+    assert!(!strong_recent_auth(-1));
+    // another user's login drops it, and so does a logout
+    internal_login_user("ada").unwrap();
+    assert!(!strong_recent_auth(300_000));
+    internal_login_user("bob").unwrap();
+    assert!(!strong_recent_auth(300_000));
+    // an SSO login at the provider's sign-in time: strong, and as old as that time
+    logout().unwrap();
+    login_external_user("ada", Some(now_millis() - 600_000)).unwrap();
+    assert!(!strong_recent_auth(300_000));
+    assert!(strong_recent_auth(900_000));
+    logout().unwrap();
+    assert!(!strong_recent_auth(900_000));
+    session::reset_session();
+
+    // a paired device's key with a recent sign-in on it is; a session's login key with one is not
+    internal_login_user("ada").unwrap();
+    let device = get_device_key("Ada's laptop").unwrap();
+    let session_key = get_login_key(None).unwrap();
+    session::reset_session();
+    login_user_key(&device).unwrap();
+    assert!(!strong_recent_auth(300_000));
+    note_recent_auth("ada");
+    assert!(strong_recent_auth(300_000));
+    session::reset_session();
+    login_user_key(&session_key).unwrap();
+    note_recent_auth("ada");
+    assert!(recent_auth(300_000));
+    assert!(!strong_recent_auth(300_000));
+    session::reset_session();
+}
+
 /// A re-authentication checks the signed-in user's password without changing the login: a wrong one fails and counts,
 /// a right one is a recent sign-in.
 #[test]

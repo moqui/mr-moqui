@@ -64,6 +64,11 @@ pub use moqui_drivers as db;
 #[cfg(feature = "git")]
 mod ci_run;
 mod conf_cmd;
+#[cfg(feature = "vault")]
+mod vault_cmd;
+#[cfg(not(feature = "vault"))]
+#[path = "vault_cmd_off.rs"]
+mod vault_cmd;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -830,6 +835,10 @@ where
         }
         [command, rest @ ..] if command == "conf" => {
             conf_cmd::dispatch(rest)?;
+            Ok(None)
+        }
+        [command, rest @ ..] if command == "vault" => {
+            vault_cmd::dispatch(rest)?;
             Ok(None)
         }
         [command, rest @ ..] if command == "check" => {

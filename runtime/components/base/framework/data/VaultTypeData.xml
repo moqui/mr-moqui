@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Vaults (framework/entity/VaultEntities.xml, plans/Vault-Instances.md §3): the kinds, locks, roles, wraps and events,
+    the statuses of personal keys and leases, the framework's item types with their fields (§3.4), and the grant of the
+    vault services and their REST paths to every signed-in user. Each service decides who may do what itself (a member's
+    role, a delivery's recipient, a personal key's own user), so the grant adds no right to a vault. -->
+<entity-facade-xml type="seed">
+    <moqui.basic.EnumerationType enumTypeId="VaultKind" description="Vault kind"/>
+    <moqui.basic.Enumeration enumId="VkPersonal" enumTypeId="VaultKind" enumCode="personal" description="Personal" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VkOperational" enumTypeId="VaultKind" enumCode="operational" description="Operational" sequenceNum="2"/>
+
+    <moqui.basic.EnumerationType enumTypeId="VaultLock" description="Vault lock"/>
+    <moqui.basic.Enumeration enumId="VlSingleSecret" enumTypeId="VaultLock" enumCode="single-secret" description="Single secret" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VlSharedKey" enumTypeId="VaultLock" enumCode="shared-key" description="Shared key" sequenceNum="2"/>
+
+    <moqui.basic.EnumerationType enumTypeId="VaultSecretKind" description="Single-secret vault secret"/>
+    <moqui.basic.Enumeration enumId="VsPassword" enumTypeId="VaultSecretKind" enumCode="password" description="Password" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VsGenerated" enumTypeId="VaultSecretKind" enumCode="generated" description="Generated key" sequenceNum="2"/>
+
+    <!-- manage, write and read for a personal shared-key vault; manage, approve and reveal for an operational one -->
+    <moqui.basic.EnumerationType enumTypeId="VaultMemberRole" description="Vault member role"/>
+    <moqui.basic.Enumeration enumId="VrManage" enumTypeId="VaultMemberRole" enumCode="manage" description="Manage" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VrWrite" enumTypeId="VaultMemberRole" enumCode="write" description="Write" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="VrRead" enumTypeId="VaultMemberRole" enumCode="read" description="Read" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="VrApprove" enumTypeId="VaultMemberRole" enumCode="approve" description="Approve leases" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="VrReveal" enumTypeId="VaultMemberRole" enumCode="reveal" description="Reveal" sequenceNum="5"/>
+
+    <moqui.basic.EnumerationType enumTypeId="VaultItemKeyWrap" description="Vault item key wrap"/>
+    <moqui.basic.Enumeration enumId="VwVault" enumTypeId="VaultItemKeyWrap" enumCode="vault" description="By the vault key" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VwDeposit" enumTypeId="VaultItemKeyWrap" enumCode="deposit" description="To the deposit key" sequenceNum="2"/>
+
+    <moqui.basic.EnumerationType enumTypeId="VaultFieldKind" description="Vault item field kind"/>
+    <moqui.basic.Enumeration enumId="VfText" enumTypeId="VaultFieldKind" enumCode="text" description="Text" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VfSecret" enumTypeId="VaultFieldKind" enumCode="secret" description="Secret" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="VfUrl" enumTypeId="VaultFieldKind" enumCode="url" description="URL" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="VfTotp" enumTypeId="VaultFieldKind" enumCode="totp" description="TOTP seed" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="VfMultiLine" enumTypeId="VaultFieldKind" enumCode="multi-line" description="Multi-line text" sequenceNum="5"/>
+    <moqui.basic.Enumeration enumId="VfDate" enumTypeId="VaultFieldKind" enumCode="date" description="Date" sequenceNum="6"/>
+    <moqui.basic.Enumeration enumId="VfFileName" enumTypeId="VaultFieldKind" enumCode="file-name" description="File name" sequenceNum="7"/>
+
+    <!-- §3.13; the lease, machine access, recovery and reveal events are written from V2 and V4 -->
+    <moqui.basic.EnumerationType enumTypeId="VaultEventType" description="Vault event"/>
+    <moqui.basic.Enumeration enumId="VeVaultCreated" enumTypeId="VaultEventType" description="Vault made" sequenceNum="1"/>
+    <moqui.basic.Enumeration enumId="VeVaultDeleted" enumTypeId="VaultEventType" description="Vault deleted" sequenceNum="2"/>
+    <moqui.basic.Enumeration enumId="VeKeyFetched" enumTypeId="VaultEventType" description="Wrapped personal key fetched" sequenceNum="3"/>
+    <moqui.basic.Enumeration enumId="VePersonalKeyMade" enumTypeId="VaultEventType" description="Personal key set up" sequenceNum="4"/>
+    <moqui.basic.Enumeration enumId="VePersonalKeyReplaced" enumTypeId="VaultEventType" description="Personal key replaced" sequenceNum="5"/>
+    <moqui.basic.Enumeration enumId="VePassphraseChanged" enumTypeId="VaultEventType" description="Key passphrase changed" sequenceNum="6"/>
+    <moqui.basic.Enumeration enumId="VeMemberAdded" enumTypeId="VaultEventType" description="Member added" sequenceNum="7"/>
+    <moqui.basic.Enumeration enumId="VeMemberRemoved" enumTypeId="VaultEventType" description="Member removed" sequenceNum="8"/>
+    <moqui.basic.Enumeration enumId="VeKeyRotated" enumTypeId="VaultEventType" description="Vault key rotated" sequenceNum="9"/>
+    <moqui.basic.Enumeration enumId="VeKeyVersionAcked" enumTypeId="VaultEventType" description="Key version opened by a member" sequenceNum="10"/>
+    <moqui.basic.Enumeration enumId="VeItemCreated" enumTypeId="VaultEventType" description="Item made" sequenceNum="11"/>
+    <moqui.basic.Enumeration enumId="VeItemUpdated" enumTypeId="VaultEventType" description="Item changed" sequenceNum="12"/>
+    <moqui.basic.Enumeration enumId="VeItemDeleted" enumTypeId="VaultEventType" description="Item deleted" sequenceNum="13"/>
+    <moqui.basic.Enumeration enumId="VeDeliverySent" enumTypeId="VaultEventType" description="Delivery sent" sequenceNum="14"/>
+    <moqui.basic.Enumeration enumId="VeDeliveryFiled" enumTypeId="VaultEventType" description="Delivery filed" sequenceNum="15"/>
+    <moqui.basic.Enumeration enumId="VeRecovery" enumTypeId="VaultEventType" description="Vault recovered" sequenceNum="16"/>
+    <moqui.basic.Enumeration enumId="VeLeaseRequested" enumTypeId="VaultEventType" description="Lease asked for" sequenceNum="17"/>
+    <moqui.basic.Enumeration enumId="VeLeaseApproved" enumTypeId="VaultEventType" description="Lease approved" sequenceNum="18"/>
+    <moqui.basic.Enumeration enumId="VeLeaseUsed" enumTypeId="VaultEventType" description="Lease used" sequenceNum="19"/>
+    <moqui.basic.Enumeration enumId="VeLeaseEnded" enumTypeId="VaultEventType" description="Lease ended" sequenceNum="20"/>
+    <moqui.basic.Enumeration enumId="VeLeaseRevoked" enumTypeId="VaultEventType" description="Lease revoked" sequenceNum="21"/>
+    <moqui.basic.Enumeration enumId="VeMachineGiven" enumTypeId="VaultEventType" description="Machine access given" sequenceNum="22"/>
+    <moqui.basic.Enumeration enumId="VeMachineUsed" enumTypeId="VaultEventType" description="Machine access used" sequenceNum="23"/>
+    <moqui.basic.Enumeration enumId="VeMachineRevoked" enumTypeId="VaultEventType" description="Machine access revoked" sequenceNum="24"/>
+    <moqui.basic.Enumeration enumId="VeReveal" enumTypeId="VaultEventType" description="Value revealed" sequenceNum="25"/>
+
+    <moqui.basic.StatusType statusTypeId="VaultPersonalKey" description="Vault personal key"/>
+    <moqui.basic.StatusItem statusId="VpkActive" statusTypeId="VaultPersonalKey" statusCode="active" description="Active" sequenceNum="1"/>
+    <moqui.basic.StatusItem statusId="VpkReplaced" statusTypeId="VaultPersonalKey" statusCode="replaced" description="Replaced" sequenceNum="2"/>
+    <moqui.basic.StatusType statusTypeId="VaultLease" description="Vault lease"/>
+    <moqui.basic.StatusItem statusId="VlsRequested" statusTypeId="VaultLease" description="Waiting for approval" sequenceNum="1"/>
+    <moqui.basic.StatusItem statusId="VlsOpen" statusTypeId="VaultLease" description="Open" sequenceNum="2"/>
+    <moqui.basic.StatusItem statusId="VlsEnded" statusTypeId="VaultLease" description="Ended" sequenceNum="3"/>
+    <moqui.basic.StatusItem statusId="VlsRevoked" statusTypeId="VaultLease" description="Revoked" sequenceNum="4"/>
+
+    <!-- The framework's item types (§3.4); the body is {"v": 1, "type": <vaultItemTypeId>, "name", "fields", "notes",
+        "tags", "uris"} -->
+    <moqui.security.vault.VaultItemType vaultItemTypeId="login" description="Login" sequenceNum="1">
+        <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="2"/>
+        <fields fieldName="totp" label="One-time code seed" fieldKindEnumId="VfTotp" masked="Y" sequenceNum="3"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="note" description="Note" sequenceNum="2">
+        <fields fieldName="text" label="Text" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="1"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="card" description="Card" sequenceNum="3">
+        <fields fieldName="cardholder" label="Name on card" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="number" label="Number" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="2"/>
+        <fields fieldName="expires" label="Expires" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
+        <fields fieldName="code" label="Security code" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
+        <fields fieldName="pin" label="PIN" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="5"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="identity" description="Identity" sequenceNum="4">
+        <fields fieldName="fullName" label="Full name" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="birthDate" label="Birth date" fieldKindEnumId="VfDate" masked="N" sequenceNum="2"/>
+        <fields fieldName="documentType" label="Document" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
+        <fields fieldName="documentNumber" label="Document number" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
+        <fields fieldName="address" label="Address" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="5"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="contact" description="Private contact" sequenceNum="5">
+        <fields fieldName="fullName" label="Name" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="organization" label="Organization" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
+        <fields fieldName="email" label="Email" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
+        <fields fieldName="phone" label="Phone" fieldKindEnumId="VfText" masked="N" sequenceNum="4"/>
+        <fields fieldName="address" label="Address" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="5"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="ssh-key" description="SSH key" sequenceNum="6">
+        <fields fieldName="privateKey" label="Private key" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="1"/>
+        <fields fieldName="publicKey" label="Public key" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="2"/>
+        <fields fieldName="passphrase" label="Passphrase" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="api-key" description="API key" sequenceNum="7">
+        <fields fieldName="url" label="Service" fieldKindEnumId="VfUrl" masked="N" sequenceNum="1"/>
+        <fields fieldName="keyId" label="Key id" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
+        <fields fieldName="secret" label="Secret" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="database-credential" description="Database credential" sequenceNum="8">
+        <fields fieldName="host" label="Host" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="port" label="Port" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
+        <fields fieldName="database" label="Database" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
+        <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="4"/>
+        <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="5"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="tls-key-pair" description="TLS key pair" sequenceNum="9">
+        <fields fieldName="certificate" label="Certificate" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="1"/>
+        <fields fieldName="chain" label="Chain" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="2"/>
+        <fields fieldName="privateKey" label="Private key" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="3"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="registry-login" description="Registry login" sequenceNum="10">
+        <fields fieldName="registry" label="Registry" fieldKindEnumId="VfUrl" masked="N" sequenceNum="1"/>
+        <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
+        <fields fieldName="password" label="Password or token" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="recovery-code" description="Recovery codes" sequenceNum="11">
+        <fields fieldName="service" label="For" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="codes" label="Codes" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="2"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="recovery-share" description="Recovery share" sequenceNum="12">
+        <fields fieldName="instance" label="Instance" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="shareIndex" label="Share" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
+        <fields fieldName="sharesNeeded" label="Shares needed" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
+        <fields fieldName="share" label="Share" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
+    </moqui.security.vault.VaultItemType>
+
+    <!-- the services and their REST paths (/rest/s1/vault) for every signed-in user; each checks the caller itself -->
+    <moqui.security.ArtifactGroup artifactGroupId="VaultServices" description="Vault services (each checks its caller)"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.security\.VaultServices\..*"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y"
+            artifactName="/vault"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="VaultServicesALL" userGroupId="ALL_USERS" artifactGroupId="VaultServices"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+</entity-facade-xml>

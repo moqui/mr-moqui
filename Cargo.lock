@@ -4899,6 +4899,7 @@ dependencies = [
  "moqui-sip",
  "moqui-tools",
  "moqui-tui",
+ "moqui-vault",
  "moqui-vault-server",
  "moqui-xmpp",
  "opentelemetry-proto",
@@ -5147,6 +5148,8 @@ dependencies = [
  "moqui-core",
  "moqui-lib",
  "moqui-vault",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

@@ -23,7 +23,9 @@
 //! - [`personal`] (§3.5), [`vault`] (§3.2, §3.9), [`keyversion`] (§3.9), [`lease`] (§3.7), [`machine`] (§3.8),
 //!   [`recovery`] (§3.10), [`delivery`] (§3.3) and [`fingerprint`] (§3.5) are the vaults' formats.
 //! - [`vectors`] writes the known-answer vectors of `testdata/vectors.json`, natively and in the wasm module.
-//! - `ops` is the wasm module's JSON calls and `wasm` its `extern "C"` ABI (feature `wasm`); `scripts/vault-wasm.sh`
+//! - [`ops`] is the module's JSON calls (feature `json`, which `wasm` takes): the browser module, the `moqui vault`
+//!   command and the test client's `vault` member drive the same [`ops::Session`], and the server reads the records'
+//!   JSON shapes from [`ops::shapes`]. `wasm` is the module's `extern "C"` ABI (feature `wasm`); `scripts/vault-wasm.sh`
 //!   builds it to `runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm`.
 
 pub mod aead;
@@ -37,7 +39,7 @@ pub mod keyversion;
 pub mod lease;
 pub mod machine;
 pub mod names;
-#[cfg(any(test, feature = "wasm"))]
+#[cfg(any(test, feature = "json"))]
 pub mod ops;
 pub mod personal;
 pub mod recovery;

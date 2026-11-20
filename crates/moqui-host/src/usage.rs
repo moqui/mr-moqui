@@ -27,6 +27,7 @@ Server
   (no command)     [options]                                Start the HTTP server (HTTP port default 8080, HTTPS 8443: moqui help serve)
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
+  vault            --server URL --user U <command>          A vault client on this machine: your key, vaults and items
 
 Data
   load             [name=value ...]                         Load data files into the configured database
@@ -753,6 +754,24 @@ moqui conf env [--names] [text]
   moqui_conf__ssh_server__port=2222 moqui
 ";
 
+const VAULT: &str = "\
+moqui vault --server URL --user USERNAME <command>
+    A vault client on this machine, against a server's vault services (docs/security/Vaults.md). The vault crypto
+    runs here: the key passphrase, your personal key and every vault key stay in this process. Each run signs in
+    with your password, and your second factor's code when your account has one; nothing of the sign-in is kept.
+    key init               Make your personal vault key: a key passphrase (twice), then its recovery code to keep
+    key show               Your personal key's fingerprint
+    key check <username>   Compare a user's fingerprint with them by another channel, then store your signed check
+    list                   Your vaults
+    open <vaultId> [--item ID]
+                           Open a vault through its signed member list and list its items, or print one item
+    What this client accepted of each vault's member list is kept in ~/.config/moqui/vault/state.json, and a server
+    that hands back an older one is refused.
+
+  moqui vault --server https://moqui.example.com --user ada key init
+  moqui vault --server https://moqui.example.com --user ada open vault-2f9c
+";
+
 const VERSION: &str = "\
 moqui version
     The version, the package this binary was built as (lite, enterprise, maximal, or custom), and every
@@ -786,6 +805,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "lsp" => Some(LSP),
         "embedded" => Some(EMBEDDED),
         "conf" => Some(CONF),
+        "vault" => Some(VAULT),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
@@ -1054,6 +1074,7 @@ pub fn command_usage(command: &str) -> Error {
         "help" => "moqui help [command]",
         "version" => "moqui version",
         "conf" => "moqui conf env [--names] [text]",
+        "vault" => "moqui vault --server URL --user USERNAME key init | key show | key check <username> | list | open <vaultId>",
         "embedded" => {
             "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
              | unpack [<program>...]"

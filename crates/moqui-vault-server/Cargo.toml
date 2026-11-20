@@ -14,7 +14,10 @@ publish.workspace = true
 [dependencies]
 moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
-moqui-vault = { workspace = true, features = ["std"] }
+# the crypto, and the records' JSON shapes (ops::shapes) the services take and answer
+moqui-vault = { workspace = true, features = ["std", "json"] }
+serde_json.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open.

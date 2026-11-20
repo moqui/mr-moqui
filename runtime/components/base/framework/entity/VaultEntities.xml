@@ -1,0 +1,359 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Vaults (plans/Vault-Instances.md §3.3; docs/security/Vaults.md): secrets under keys the server does not hold. The
+    rows hold public keys, signatures and ciphertext made by the vault crate (crates/moqui-vault) in a client: the server
+    never decrypts a personal item, a vault key or a personal private key. Bytes are hex; a record whose signature covers
+    its fields (a key version, a member's wrap, a key check, a delivery) is stored field by field as it was signed, so a
+    client checks it again. No column is an entity encrypt="true" field: the columns hold ciphertext already, and such a
+    field has no associated data.
+
+    The services are org.moqui.security.VaultServices (crates/moqui-vault-server), which serve a wrap or a body only to a
+    member and a delivery only to its recipient. These are moqui.* entities, which entity filters never apply to: screens
+    reach them only through those services. V1 writes the personal keys, key checks, vaults, items, members, key versions,
+    deliveries and events; the lease, machine access and recovery tables are here for V2 and V4. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <entity entity-name="Vault" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A vault (§3.1). Its kind (VaultKind: personal or operational) and lock (VaultLock: single-secret or
+            shared-key) are chosen when it is made and never change. keyVersion is the vault key's current version, which a
+            removal rotates; revision goes up with each change of the member list or key, and a change names the revision it
+            was made from (a compare-and-swap, decision (a) of §9). A single-secret vault holds its wrapped vault key
+            (secretWrap, with its KDF parameters) and has no members and no recovery. A personal vault's name is in
+            headerCipher, sealed by the vault key in the client; an operational vault's vaultName is in the clear, with its
+            deposit key (V2). recoveryOn: the organization's recovery key wraps the vault key (V4); an operational vault keeps
+            recovery on or two members.</description>
+        <field name="vaultId" type="id" is-pk="true"/>
+        <field name="vaultKindEnumId" type="id"/>
+        <field name="lockEnumId" type="id"/>
+        <field name="ownerUserId" type="id"><description>Who made it; a single-secret vault's only user</description></field>
+        <field name="keyVersion" type="number-integer"/>
+        <field name="revision" type="number-integer"/>
+        <field name="vaultName" type="text-medium"><description>Operational vaults only, in the clear</description></field>
+        <field name="headerCipher" type="text-long"><description>A personal vault's header (its name), sealed in the
+            client</description></field>
+        <field name="secretKindEnumId" type="id"><description>Single-secret: a password or a generated key (VaultSecretKind)</description></field>
+        <field name="secretWrap" type="text-long"><description>Single-secret: the vault key wrapped by the password
+            (Argon2id) or the generated key (HKDF), as the vault crate's JSON with its parameters</description></field>
+        <field name="recoveryOn" type="text-indicator"/>
+        <field name="depositPublic" type="text-medium"><description>Operational (V2): the deposit key's public half</description></field>
+        <field name="depositSignerUserId" type="id"/>
+        <field name="depositSignerKeyId" type="id"/>
+        <field name="depositSignature" type="text-medium"/>
+        <field name="depositWrappedPrivate" type="text-long"><description>The deposit key's private half, wrapped by the
+            vault key</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastOpenedDate" type="date-time"><description>A single-secret vault's last open the client reported,
+            for the reminder of §3.11</description></field>
+        <relationship type="one" title="VaultKind" related="moqui.basic.Enumeration">
+            <key-map field-name="vaultKindEnumId"/></relationship>
+        <relationship type="one" title="VaultLock" related="moqui.basic.Enumeration">
+            <key-map field-name="lockEnumId"/></relationship>
+        <relationship type="one-nofk" title="VaultSecretKind" related="moqui.basic.Enumeration">
+            <key-map field-name="secretKindEnumId"/></relationship>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <index name="VAULT_OWNER"><index-field name="ownerUserId"/></index>
+    </entity>
+
+    <entity entity-name="VaultKeyVersion" package="moqui.security.vault" use="transactional" cache="never">
+        <description>One signed entry of a vault's member-list chain (§3.9, crates/moqui-vault keyversion.rs): a key version
+            and a revision of its member list (an add is the next revision of the same version, a removal revision 1 of the
+            next version). memberList is the members as signed (each user, role, personal key id and public keys, as JSON),
+            and the signer held the manage role in the entry before (the first: the maker, a manager in it). A client accepts
+            a key version only through this chain, back to a signer whose key its user checked.</description>
+        <field name="vaultId" type="id" is-pk="true"/>
+        <field name="keyVersion" type="number-integer" is-pk="true"/>
+        <field name="revision" type="number-integer" is-pk="true"/>
+        <field name="memberList" type="text-very-long"/>
+        <field name="signerUserId" type="id"/>
+        <field name="signerKeyId" type="id"/>
+        <field name="signature" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.Vault"/>
+    </entity>
+
+    <entity entity-name="VaultMember" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A member's wrap of one key version of a vault key, to their personal key, with who made it and their
+            signature (§3.9). The rows of the vault's current keyVersion are its members, with their role (VaultMemberRole:
+            manage, write and read for a personal vault, manage, approve and reveal for an operational one), which the
+            services enforce. A rotation writes each remaining member's wrap of the new version and keeps their earlier ones
+            until they open the new version (ack#VaultKeyVersion, decision (b) of §9); a removed member's rows are all
+            deleted.</description>
+        <field name="vaultId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="keyVersion" type="number-integer" is-pk="true"/>
+        <field name="personalKeyId" type="id"/>
+        <field name="roleEnumId" type="id"/>
+        <field name="wrappedVaultKey" type="text-long"><description>HPKE to the member's personal key</description></field>
+        <field name="wrapSignerUserId" type="id"/>
+        <field name="wrapSignerKeyId" type="id"/>
+        <field name="wrapSignature" type="text-medium"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="ackedDate" type="date-time"><description>When the member opened this version</description></field>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.Vault"/>
+        <relationship type="one" title="VaultMemberRole" related="moqui.basic.Enumeration">
+            <key-map field-name="roleEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.security.UserAccount"/>
+        <relationship type="one-nofk" related="moqui.security.vault.VaultPersonalKey"/>
+        <index name="VAULT_MEMBER_USER"><index-field name="userId"/></index>
+    </entity>
+
+    <entity entity-name="VaultItem" package="moqui.security.vault" use="transactional" cache="never">
+        <description>One item of a vault, its own random item key wrapped by the vault key (itemKeyWrapEnumId VwVault) or,
+            for an item the server deposits into an operational vault, to the deposit key (VwDeposit, V2). The body is the
+            item's JSON, sealed whole by the item key. keyVersion is the version the item key is wrapped under; a write is
+            taken only at the vault's current version, and names the revision it was made from. A personal vault's row
+            holds no name, type or value in the clear: they are in the body. An operational item also has its type,
+            binding and name in the clear (all three in the associated data), and bindingKey is unique in its
+            vault.</description>
+        <field name="vaultItemId" type="id" is-pk="true"/>
+        <field name="vaultId" type="id"/>
+        <field name="itemKeyWrapEnumId" type="id"/>
+        <field name="wrappedItemKey" type="text-long"/>
+        <field name="keyVersion" type="number-integer"/>
+        <field name="bodyCipher" type="text-very-long"/>
+        <field name="revision" type="number-integer"/>
+        <field name="vaultItemTypeId" type="id"><description>Operational only</description></field>
+        <field name="bindingKey" type="text-medium"><description>Operational only: AppInstance:&lt;id&gt;:dbPassword</description></field>
+        <field name="itemName" type="text-medium"><description>Operational only</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="lastModifiedDate" type="date-time"/>
+        <field name="lastModifiedByUserId" type="id"/>
+        <relationship type="one" related="moqui.security.vault.Vault"/>
+        <relationship type="one" title="VaultItemKeyWrap" related="moqui.basic.Enumeration">
+            <key-map field-name="itemKeyWrapEnumId"/></relationship>
+        <relationship type="one-nofk" related="moqui.security.vault.VaultItemType"/>
+        <index name="VAULT_ITEM_VAULT"><index-field name="vaultId"/></index>
+        <index name="VAULT_ITEM_BINDING" unique="true"><index-field name="vaultId"/><index-field name="bindingKey"/></index>
+    </entity>
+
+    <entity entity-name="VaultItemHistory" package="moqui.security.vault" use="transactional" cache="never">
+        <description>An earlier revision of an item, with its wrapped key and body as they were: a password's history, and
+            a rotation's way back (§4.7). Written by update#VaultItem; kept for a retention period.</description>
+        <field name="vaultItemId" type="id" is-pk="true"/>
+        <field name="revision" type="number-integer" is-pk="true"/>
+        <field name="vaultId" type="id"/>
+        <field name="itemKeyWrapEnumId" type="id"/>
+        <field name="wrappedItemKey" type="text-long"/>
+        <field name="keyVersion" type="number-integer"/>
+        <field name="bodyCipher" type="text-very-long"/>
+        <field name="vaultItemTypeId" type="id"/>
+        <field name="bindingKey" type="text-medium"/>
+        <field name="itemName" type="text-medium"/>
+        <field name="changedDate" type="date-time"/>
+        <field name="changedByUserId" type="id"/>
+        <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
+        <index name="VAULT_ITEM_HIST_VAULT"><index-field name="vaultId"/></index>
+    </entity>
+
+    <entity entity-name="VaultPersonalKey" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A user's personal key (§3.5): an X25519 key pair to receive wraps and an Ed25519 key pair to sign. The
+            public halves are in the clear; the two private halves are wrapped together by the key passphrase (Argon2id,
+            its parameters in the wrap) and by the user's recovery code. The server keeps no hash of either and sends the
+            wraps only to their own user after a strong, recent sign-in (vault@key-fetch-max-age). A user has one key with
+            status VpkActive; replacing it marks the old one VpkReplaced, and nothing is wrapped to the new key until its
+            fingerprint is checked again.</description>
+        <field name="personalKeyId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="encryptPublic" type="text-medium"/>
+        <field name="verifyPublic" type="text-medium"/>
+        <field name="passphraseWrap" type="text-long"><description>The vault crate's password wrap, as JSON</description></field>
+        <field name="recoveryWrap" type="text-long"/>
+        <field name="statusId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount"/>
+        <relationship type="one" related="moqui.basic.StatusItem"/>
+        <index name="VAULT_PKEY_USER"><index-field name="userId"/><index-field name="statusId"/></index>
+    </entity>
+
+    <entity entity-name="VaultKeyCheck" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A key a user checked by comparing its fingerprint (§3.5): the checker and their personal key, the
+            checked key (a personalKeyId with both its public halves, or lease-key: the server's lease key, V2), when
+            (checkedAt, epoch millis, as signed) and the checker's signature. A client verifies the signature with its own
+            key before it relies on the check; a check is for one key, so a changed key is checked again.</description>
+        <field name="keyCheckId" type="id" is-pk="true"/>
+        <field name="checkerUserId" type="id"/>
+        <field name="checkerKeyId" type="id"/>
+        <field name="checkedKeyId" type="id"/>
+        <field name="checkedEncrypt" type="text-medium"/>
+        <field name="checkedVerify" type="text-medium"/>
+        <field name="checkedAt" type="number-integer"/>
+        <field name="signature" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" title="Checker" related="moqui.security.UserAccount">
+            <key-map field-name="checkerUserId" related="userId"/></relationship>
+        <index name="VAULT_KCHECK_CHECKER"><index-field name="checkerKeyId"/><index-field name="checkedKeyId"/></index>
+    </entity>
+
+    <entity entity-name="VaultRecoveryKey" package="moqui.security.vault" use="transactional" cache="never">
+        <description>An organization's recovery key (§3.10, V4): its public half, signed by the holder who made it, split k
+            of n across its holders (Shamir, decision of §9), kept by user group or by instance.</description>
+        <field name="recoveryKeyId" type="id" is-pk="true"/>
+        <field name="publicKey" type="text-medium"/>
+        <field name="sharesNeeded" type="number-integer"><description>k</description></field>
+        <field name="sharesTotal" type="number-integer"><description>n</description></field>
+        <field name="makerUserId" type="id"/>
+        <field name="makerKeyId" type="id"/>
+        <field name="signature" type="text-medium"/>
+        <field name="userGroupId" type="id"/>
+        <field name="instanceId" type="id"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="VaultRecoveryHolder" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A holder's share of a recovery key (V4), sealed to their personal key and signed by its
+            maker.</description>
+        <field name="recoveryKeyId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="personalKeyId" type="id"/>
+        <field name="shareIndex" type="number-integer"/>
+        <field name="sealedShare" type="text-long"/>
+        <field name="signature" type="text-medium"/>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.VaultRecoveryKey"/>
+    </entity>
+
+    <entity entity-name="VaultRecoveryWrap" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A shared-key vault's key of one version wrapped to a recovery key (V4), signed by the member who turned
+            recovery on after checking the recovery key's maker.</description>
+        <field name="vaultId" type="id" is-pk="true"/>
+        <field name="keyVersion" type="number-integer" is-pk="true"/>
+        <field name="recoveryKeyId" type="id" is-pk="true"/>
+        <field name="sealed" type="text-long"/>
+        <field name="signerUserId" type="id"/>
+        <field name="signerKeyId" type="id"/>
+        <field name="signature" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.Vault"/>
+        <relationship type="one" related="moqui.security.vault.VaultRecoveryKey"/>
+    </entity>
+
+    <entity entity-name="VaultDelivery" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A value sealed to one user's personal key (HPKE), from a user (senderKind user: their signing key,
+            senderKeyId the personal key the server checked the signature with) or an instance (instance: its link key, M6),
+            with its purpose and the sender's signature (§3.3). Only the recipient lists it; their client checks the
+            signature and files the value into a vault (filedDate).</description>
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="recipientUserId" type="id"/>
+        <field name="recipientKeyId" type="id"/>
+        <field name="purpose" type="text-short"/>
+        <field name="senderKind" type="text-short"/>
+        <field name="senderId" type="id"/>
+        <field name="senderKeyId" type="id"/>
+        <field name="sealedValue" type="text-very-long"/>
+        <field name="signature" type="text-medium"/>
+        <field name="sentDate" type="date-time"/>
+        <field name="filedDate" type="date-time"/>
+        <relationship type="one-nofk" title="Recipient" related="moqui.security.UserAccount">
+            <key-map field-name="recipientUserId" related="userId"/></relationship>
+        <index name="VAULT_DELIV_RECIPIENT"><index-field name="recipientUserId"/><index-field name="filedDate"/></index>
+    </entity>
+
+    <entity entity-name="VaultLease" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A lease (§3.7, V2): the vault, the items it names (each id, type, binding and name, as JSON), the
+            operation, the cluster member that runs it, the lease's ephemeral public key and the time limit, signed by the
+            server's lease key; once approved, the item keys sealed to the lease's key, with the approver and their
+            signature. It never holds a key that opens anything by itself.</description>
+        <field name="leaseId" type="id" is-pk="true"/>
+        <field name="vaultId" type="id"/>
+        <field name="keyVersion" type="number-integer"/>
+        <field name="leaseItems" type="text-long"/>
+        <field name="operation" type="text-medium"/>
+        <field name="clusterMemberId" type="id"/>
+        <field name="leasePublic" type="text-medium"/>
+        <field name="expiresAt" type="number-integer"><description>Epoch millis, as signed</description></field>
+        <field name="serverSignature" type="text-medium"/>
+        <field name="sealedItemKeys" type="text-very-long"/>
+        <field name="approvedByUserId" type="id"/>
+        <field name="approvalSignature" type="text-medium"/>
+        <field name="approvedDate" type="date-time"/>
+        <field name="machineAccess" type="text-indicator"><description>Y: opened under an environment's machine access</description></field>
+        <field name="statusId" type="id"/>
+        <field name="requestedByUserId" type="id"/>
+        <field name="requestedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.Vault"/>
+        <relationship type="one-nofk" related="moqui.basic.StatusItem"/>
+        <index name="VAULT_LEASE_VAULT"><index-field name="vaultId"/><index-field name="statusId"/></index>
+    </entity>
+
+    <entity entity-name="VaultMachineAccess" package="moqui.security.vault" use="transactional" cache="never">
+        <description>An environment's machine access to one item (§3.8, V2): its item key sealed by the vault crate's AEAD
+            under the server's machine key, with the environment, vault and item ids as associated data. The column is not
+            an entity encrypt="true" field, so no find, cache, export or sync decrypts it.</description>
+        <field name="environmentId" type="id" is-pk="true"/>
+        <field name="vaultItemId" type="id" is-pk="true"/>
+        <field name="vaultId" type="id"/>
+        <field name="sealedItemKey" type="text-long"/>
+        <field name="grantedByUserId" type="id"/>
+        <field name="grantedDate" type="date-time"/>
+        <relationship type="one" related="moqui.security.vault.Vault"/>
+        <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
+    </entity>
+
+    <entity entity-name="VaultEvent" package="moqui.security.vault" use="transactional" cache="never">
+        <description>An event of §3.13 (VaultEventType), written in the transaction of the change it records: a vault made
+            or deleted, a wrapped key fetched, a member added or removed, a key rotation, a delivery sent or filed, and the
+            later phases' leases, machine access, recoveries and reveals. userId acted; subjectUserId is whom it was about
+            (the member, the recipient). detail is words, never a key or a value. Kept as long as the audit log; a deleted
+            vault's events stay.</description>
+        <field name="vaultEventId" type="id" is-pk="true"/>
+        <field name="eventTypeEnumId" type="id"/>
+        <field name="vaultId" type="id"/>
+        <field name="vaultItemId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="subjectUserId" type="id"/>
+        <field name="personalKeyId" type="id"/>
+        <field name="keyVersion" type="number-integer"/>
+        <field name="deliveryId" type="id"/>
+        <field name="leaseId" type="id"/>
+        <field name="detail" type="text-medium"/>
+        <field name="eventDate" type="date-time"/>
+        <relationship type="one" title="VaultEventType" related="moqui.basic.Enumeration">
+            <key-map field-name="eventTypeEnumId"/></relationship>
+        <index name="VAULT_EVENT_VAULT"><index-field name="vaultId"/><index-field name="eventDate"/></index>
+        <index name="VAULT_EVENT_USER"><index-field name="userId"/><index-field name="eventDate"/></index>
+    </entity>
+
+    <entity entity-name="VaultItemType" package="moqui.security.vault" use="configuration" cache="true">
+        <description>An item type (§3.4): the client draws an item's form from its fields, and the server checks an
+            operational item's shape when it uses it. The framework's are seed data (VaultTypeData.xml); a component adds its
+            own (an instance kind's items).</description>
+        <field name="vaultItemTypeId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <relationship type="many" related="moqui.security.vault.VaultItemTypeField" short-alias="fields">
+            <key-map field-name="vaultItemTypeId"/></relationship>
+    </entity>
+
+    <entity entity-name="VaultItemTypeField" package="moqui.security.vault" use="configuration" cache="true">
+        <description>A field of an item type: its label, its kind (VaultFieldKind: text, secret, URL, TOTP, multi-line,
+            date, file name) and whether its value is masked until asked for.</description>
+        <field name="vaultItemTypeId" type="id" is-pk="true"/>
+        <field name="fieldName" type="text-short" is-pk="true"/>
+        <field name="label" type="text-medium"/>
+        <field name="fieldKindEnumId" type="id"/>
+        <field name="masked" type="text-indicator"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <relationship type="one" related="moqui.security.vault.VaultItemType"/>
+        <relationship type="one" title="VaultFieldKind" related="moqui.basic.Enumeration">
+            <key-map field-name="fieldKindEnumId"/></relationship>
+    </entity>
+</entities>

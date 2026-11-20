@@ -17,7 +17,10 @@ default = ["std"]
 std = ["dep:getrandom"]
 # The browser module: a raw extern "C" ABI, randomness imported from the page. It answers the known-answer vectors,
 # so it carries the fixed test stream.
-wasm = ["test-vectors", "dep:serde_json"]
+wasm = ["test-vectors", "json"]
+# ops::Session, the module's JSON calls, natively: the moqui command's vault client and the test client's `vault`
+# member drive it as the browser does, and the server reads the records' JSON shapes (ops::shapes).
+json = ["dep:serde_json"]
 # rng::TestRng, the fixed stream the known-answer vectors are made with. Never a key's source.
 test-vectors = ["dep:serde_json"]
 

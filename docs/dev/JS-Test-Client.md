@@ -270,6 +270,7 @@ Every call blocks until it is done; there is no `await`. Conditions are plain va
 | `session(opts)` | A new session with its own cookie jar and token. `opts.headers` go on each of its requests; `opts.user` (and `opts.password`, `moqui` by default) logs it in |
 | `login(user, password = "moqui")`, `logout()` | `http.login` and `http.logout` |
 | `hmac` | `sha256Base64` and `sha256Timestamp`, the System Message signers ([HTTP](#http)) |
+| `vault` | `vault.client()`: a vault client, the vault crate's own session (`crates/moqui-vault` `ops`) run natively, as `moqui vault` runs it, holding its personal key and opened vault keys and refusing what a real client refuses. `client.call(op, args)` answers the op's result or throws the module's refusal; `client.try(op, args)` answers `{ ok, result, error }`; `close()`. The ops and their JSON are `ops.rs`; a client ends with its spec ([Vaults](../security/Vaults.md)) |
 | `ws` | WebSocket |
 | `ssh` | SSH: `connect` to a server, then `exec`, `agentApps` and `shell` ([SSH](#ssh)) |
 | `browser` | Headless Chromium: `newPage(opts)`, and `runInPage(opts)` at the top of an offline spec |

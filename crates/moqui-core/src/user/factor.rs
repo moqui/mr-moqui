@@ -357,7 +357,8 @@ pub fn reauthenticate(password: &str, code: &str) -> Result<CodeLogin, Error> {
     if !password.is_empty() || !super::login::reauth_password_checked(&user_id) {
         super::login::check_reauth_password(&user_id, password)?;
     }
-    if second_factor_required(&user_id)? {
+    let second_factor = second_factor_required(&user_id)?;
+    if second_factor {
         if code.is_empty() {
             let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
             return code_needed(false);
@@ -375,6 +376,10 @@ pub fn reauthenticate(password: &str, code: &str) -> Result<CodeLogin, Error> {
         }
     }
     super::login::note_recent_auth(&user_id);
+    // the password and the code: a strong sign-in (login.rs LAST_STRONG_AUTH)
+    if second_factor {
+        super::login::note_strong_auth(&user_id);
+    }
     Ok(CodeLogin::LoggedIn)
 }
 

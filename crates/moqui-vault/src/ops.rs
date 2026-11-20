@@ -28,13 +28,15 @@
 //! - a recovery key is combined here and used here: no secret share or key goes back to the page.
 //!
 //! The request's strings are overwritten after the call and the answer is built in a buffer of its exact size.
-//! It is compiled for the wasm module and for the crate's tests, which call it natively.
+//! It is compiled for the wasm module, natively under the feature `json` (the `moqui vault` command and the test
+//! client's `vault` member), and for the crate's tests. [`shapes`] reads and writes the records' JSON, which the
+//! server's vault services take and answer in the same form.
 
 use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
-use crate::delivery::{Delivery, To};
+use crate::delivery::{self, Delivery, Filed, Sender, To};
 use crate::fingerprint::{self, KeyCheck};
 use crate::hpke;
 use crate::keys::Key32;
@@ -49,9 +51,9 @@ use crate::vault::{self, ItemRef, Recipient, RotateInput, Signer};
 use crate::Error;
 
 #[path = "ops_json.rs"]
-mod json_io;
+pub mod shapes;
 
-use json_io::{
+use shapes::{
     array_of, bytes_of, delivery_json, delivery_of, deposit_json, entries_of, holder_share_of, i64_of, key_check_json,
     key_checks_of, key_version_json, label_of, lease_of, member_wrap_json, member_wrap_of, members_of, object_of,
     password_wrap_json, password_wrap_of, public_of, record_of, recovery_wrap_json, recovery_wrap_of, remembered_json,
@@ -71,6 +73,8 @@ pub struct Session {
     me: Option<Me>,
     vault_keys: BTreeMap<(String, u64), Key32>,
     recovery_keys: BTreeMap<String, hpke::SecretKey>,
+    /// The deliveries opened in this session: a repeat is refused, never filed twice.
+    filed: Filed,
 }
 
 fn opened_json(id: &str, key: &PersonalKey) -> Value {
@@ -159,6 +163,7 @@ impl Session {
 
     fn dispatch(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
         match str_of(args, "op")? {
+            #[cfg(any(test, feature = "test-vectors"))]
             "vectors" => crate::vectors::generate(),
             "lock" => {
                 // Dropping the keys zeroizes them.
@@ -178,6 +183,13 @@ impl Session {
             "personal_make" => self.personal_make(args, rng),
             "personal_open" => self.personal_open(args, rng),
             "personal_open_recovery" => self.personal_open_recovery(args),
+            "personal_rewrap" => {
+                // a new key passphrase for the open key: one value rewrapped (§3.5)
+                let me = self.me()?;
+                let passphrase = str_of(args, "passphrase")?.as_bytes();
+                let wrap = personal::wrap_with_passphrase(&me.key, &me.key_id, passphrase, rng)?;
+                Ok(json!({ "personal_key_id": me.key_id, "passphrase_wrap": password_wrap_json(&wrap) }))
+            }
             "fingerprint" => Ok(json!({ "fingerprint": fingerprint::personal(&public_of(args, "public")?) })),
             "key_check_make" => self.key_check_make(args),
             "verify" => {
@@ -329,6 +341,8 @@ impl Session {
                 Ok(json!({ "recovery_key_id": record.recovery_key_id }))
             }
             "recovery_open_vault" => self.recovery_open_vault(args),
+            "delivery_send" => self.delivery_send(args, rng),
+            "delivery_open" => self.delivery_open(args),
             _ => Err(Error::Format("unknown op")),
         }
     }
@@ -577,6 +591,53 @@ impl Session {
             "lease_id": approval.lease_id, "sealed": sealed,
             "approver_user_id": approval.approver_user_id, "signature": hex(&approval.signature),
         }))
+    }
+
+    /// A value sealed to a user's personal key (a checked key, or this session's own) and signed with this session's
+    /// key, as `VaultDelivery` stores it (§3.3).
+    fn delivery_send(&self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
+        let to_public = public_of(args, "to_public")?;
+        self.require_checked(args, &to_public)?;
+        let to = To {
+            user_id: str_of(args, "to_user_id")?,
+            key_id: str_of(args, "to_key_id")?,
+            public: &to_public,
+        };
+        let me = self.me()?;
+        let sender = Sender {
+            kind: "user",
+            id: &me.user_id,
+            key: me.key.signing_key(),
+        };
+        let value = str_of(args, "value")?.as_bytes();
+        let sent = delivery::send(
+            str_of(args, "delivery_id")?,
+            to,
+            str_of(args, "purpose")?,
+            value,
+            sender,
+            rng,
+        )?;
+        Ok(delivery_json(&sent))
+    }
+
+    /// Opens a delivery to this session's key: its sender's signature first, under a key this session checked (or
+    /// its own), then the value. A delivery id already opened here is refused, so a repeat is never filed twice.
+    fn delivery_open(&mut self, args: &Value) -> Result<Value, Error> {
+        let sent = delivery_of(object_of(args, "delivery")?)?;
+        let sender = public_of(args, "sender_public")?;
+        self.require_checked(args, &sender)?;
+        let me = self.me()?;
+        if sent.recipient_user_id != me.user_id || sent.recipient_key_id != me.key_id {
+            return Err(Error::Refused("the delivery is for someone else"));
+        }
+        let value = delivery::open(&sent, &me.key, &sender.verify)?;
+        let text = std::str::from_utf8(&value).map_err(|_| Error::Format("a delivery's value is UTF-8"))?;
+        let answer = json!({ "delivery_id": sent.delivery_id, "purpose": sent.purpose, "value": text });
+        if !self.filed.first_time(&sent) {
+            return Err(Error::Refused("that delivery was opened already"));
+        }
+        Ok(answer)
     }
 
     /// Opens a vault's recovery wrap with the recovery key combined in this session; the wrap's signer must be a
