@@ -14,6 +14,46 @@
 
 use super::*;
 
+/// SEC-CLU-88: `Track` counts a call in flight in its connection's activity from the call until its answer's body is
+/// done, so a download in progress is not idle; a call with no connection activity (the HTTPS listener's) is passed
+/// through.
+#[tokio::test]
+async fn track_counts_a_call_until_its_answers_body_ends() {
+    use tower::Service as _;
+    let node = moqui_lib::node::MNode::parse_text("web-protection", "<web-protection/>").unwrap();
+    let guard = Arc::new(crate::guard::Guard::new(crate::guard::GuardConf::from_node(
+        Some(&node),
+        Arc::new(moqui_core::web::address::ClientAddressing::new("", Vec::new())),
+    )));
+    let activity = Arc::new(crate::http::Activity::new());
+    let caller = |activity: Option<Arc<crate::http::Activity>>| Caller {
+        #[cfg(feature = "edge")]
+        peer: "127.0.0.1:4317".parse().unwrap(),
+        client: "127.0.0.1".parse().unwrap(),
+        guard: Arc::clone(&guard),
+        activity,
+    };
+    let inner = tower::service_fn(|_request: http::Request<()>| async {
+        Ok::<_, std::convert::Infallible>(http::Response::new(tonic::body::Body::new(String::from("part"))))
+    });
+    let mut track = Track { inner };
+    let mut request = http::Request::new(());
+    request.extensions_mut().insert(caller(Some(Arc::clone(&activity))));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert!(!activity.idle_for().is_zero(), "idle before the call");
+    let response = track.call(request).await.unwrap();
+    assert!(
+        activity.idle_for().is_zero(),
+        "in flight while the answer's body is open"
+    );
+    drop(response);
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    assert!(!activity.idle_for().is_zero(), "idle once the body is done");
+    let mut plain = http::Request::new(());
+    plain.extensions_mut().insert(caller(None));
+    assert!(track.call(plain).await.is_ok());
+}
+
 /// SEC-CLU-88: a gRPC connection that sends nothing ends after its first-byte wait; one that sent something ends once it
 /// has had no call in flight for the idle period, and not while a call is in flight.
 #[tokio::test]
