@@ -66,7 +66,9 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
   `replay-unmask-selector`; `[data-moqui-block]`, canvas, video, iframes and `replay-block-selector` recorded as empty
   boxes; no console or network capture. Chunks go to `/rum/replay` until `replay-max-minutes` (30) or
   `replay-max-bytes` (5 MiB), which the server holds each replay to; it keeps them gzipped in `browser_replays` for
-  `replay-retention-days` (7). Replays are never a report dataset: Monitor › Replays reads them through services that
+  `replay-retention-days` (7). `replay-user-bytes-per-hour` (50 MiB) holds the event bytes one user's replays send in
+  an hour on each server, whatever replay ids the page picks. A replay is read and listed as the session of its first
+  chunk sent it; a chunk another session sends under its id is left out. Replays are never a report dataset: Monitor › Replays reads them through services that
   need `MONITOR_REPLAY` (ADMIN has it), and each one opened is logged.
   Replay JSON requests have their own `replay-body-limit` (1 MiB by default); an explicitly configured `body-limit`
   remains the replay cap unless `replay-body-limit` overrides it. Trace/log defaults stay at 256 KiB, and the webapp's
@@ -1029,7 +1031,9 @@ evaluated and delivered to its contact points as before.
   active here. Its owner activates it by saving it with `paused` false, which is the save above.
 - **At each notification** every recipient is checked again and told separately, one notification or message a recipient;
   one whose scope changed is skipped with `scope-differs` (and the other codes of report delivery), one past the cap with
-  `over-cap`, and one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
+  `over-cap`, every in-app one with `topic` when the audience's topic is no longer registered for alerts
+  (`NotificationTopic.reportAlertTopic` Y, as `ReportAlert` is; an app registers its own alert topic so in its data), and
+  one whose message fails is recorded and tried again at the next evaluation, while a recipient already told
   that state is not told it again until the repeat interval. Each recipient's last outcome for a notification group on a
   channel is a `moqui.report.AlertRecipientDelivery` row: the outcome, a safe reason code and, for one it was sent to, the
   state's name; never a value or a series label, and no state for one skipped. A business rule's notification row keeps no

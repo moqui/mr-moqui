@@ -102,6 +102,10 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="database-audit-days" type="xs:string" default="90"><xs:annotation><xs:documentation>The
                 days the DatabaseAudit rows of the Tools database screens are kept, at least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="external-database-private-network" type="xs:string" default="false"><xs:annotation><xs:documentation>
+                True lets a Tools external database connection (DatabaseConnection, DATABASE_EXTERNAL) reach a
+                loopback or private address, such as a database beside this server; false, the default, takes only a
+                public address. A link-local or cloud metadata address is refused either way.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-queue" type="xs:integer"><xs:annotation><xs:documentation>
                 The maximum size of the worker queue.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
@@ -344,6 +348,9 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="replay-max-bytes" type="xs:positiveInteger"><xs:annotation><xs:documentation>Event
                 bytes one replay may hold. Default 5242880.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-user-bytes-per-hour" type="xs:positiveInteger" default="52428800"><xs:annotation><xs:documentation>
+                Event bytes one user's replays may send in an hour, on each server, whatever replay ids the page picks.
+                Default 52428800.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="replay-block-selector" type="xs:string"><xs:annotation><xs:documentation>A CSS
                 selector of elements recorded only as an empty box, besides [data-moqui-block], canvas, video and
                 iframe.</xs:documentation></xs:annotation></xs:attribute>
@@ -768,6 +775,18 @@ along with this software (see the LICENSE.md file). If not, see
                 window. Fewer run when that pool cannot hold this many beside the request and service workers (a
                 warning at startup says so). No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-room-clients" type="xs:positiveInteger" default="4"><xs:annotation><xs:documentation>
+                The clients one notification socket may keep in one CalcGrid room or one co-edited page; a join past it
+                is refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-awareness-bytes" type="xs:positiveInteger" default="4096"><xs:annotation><xs:documentation>
+                The largest co-editing awareness (a join's and an awareness frame's, as JSON) a notification socket may
+                send; a larger one is refused (413). Read on each frame (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-joins-per-minute" type="xs:positiveInteger" default="60"><xs:annotation><xs:documentation>
+                The CalcGrid room and co-edited page joins one notification socket may make a minute, given back
+                evenly over the minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-user-joins-per-minute" type="xs:positiveInteger" default="240"><xs:annotation><xs:documentation>
+                The joins one user's notification sockets may make a minute together, given back evenly over the
+                minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -1195,6 +1214,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) and rich-text image uploads (upload#RichTextImage) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="collab-max-state-bytes" type="xs:positiveInteger" default="8388608"><xs:annotation><xs:documentation>The most bytes a co-edited page's state may take; an update past it is refused (413). The whole state is held in memory and written again at each flush. Read on each update.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drive-root" type="xs:string" default="dbresource://drive"><xs:annotation><xs:documentation>The location under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made (FileServices ensure#PersonalDrive, create#Drive). A setting, not a user preference, so a user does not choose where their drive is. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-timeout" type="xs:string"><xs:annotation><xs:documentation>Seconds a script may run when no transaction limits it (a widget condition, a
                 transaction="ignore" service), on every thread; a transaction's own timeout replaces it, and 0 is no
@@ -1521,6 +1541,12 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:sequence>
         <xs:attribute name="backend" type="xs:string" default="postgres"><xs:annotation><xs:documentation>
             postgres or opensearch.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="query-timeout-seconds" type="xs:positiveInteger" default="10"><xs:annotation><xs:documentation>
+            How long one search statement (postgres) or request (opensearch) may run when no report's own limit is
+            in force; a search past it fails.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="query-max-clauses" type="xs:positiveInteger" default="64"><xs:annotation><xs:documentation>
+            The most terms (words, phrases and ranges) a query string may hold; a longer one is refused before it
+            runs.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
 
     <!-- ===================== LLM Facade Conf Root ===================== -->

@@ -57,6 +57,8 @@
         <field name="repositoryId" type="id"/>
         <field name="path" type="text-medium"/>
         <field name="userId" type="id"/>
+        <field name="storedByUserId" type="id"><description>Who last stored the sync; a sync that runs as another user
+            runs only while they hold ADMIN_LOGIN_AS (SEC-TLS-109).</description></field>
         <field name="enabled" type="text-indicator"/>
         <field name="lastPushDate" type="date-time"/>
         <field name="lastPullDate" type="date-time"/>

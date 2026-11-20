@@ -70,6 +70,7 @@ impl JdbcExtractor {
         self.driver = Some(super::conf_driver(&moqui_core::driver::ConfDb {
             ssl_mode: String::new(),
             ssl_root_cert: String::new(),
+            address_guard: moqui_core::driver::AddressGuard::Off,
             db_type: db_type.to_string(),
             host: host.to_string(),
             port: port.to_string(),

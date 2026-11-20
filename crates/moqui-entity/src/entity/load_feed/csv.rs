@@ -24,8 +24,52 @@ use super::loader::{
     call_data_file_service, complete_csv_pk, data_service_name, decode_base64, entity_defined, shape_of, skip_type,
     store_value, Record,
 };
+use super::pull::MAX_UNIT;
 use super::{DataFileService, LoadOptions};
 use crate::entity::facade::EntityFacade;
+
+/// A reader that fails, as it reads, past [`MAX_UNIT`] bytes since a record last ended, so the CSV reader never holds
+/// an unbounded record (SEC-DAT-91). A record ends at a line break (`\n` or `\r`) outside quotes; one inside a quoted
+/// field is part of the record, so a quoted field of many lines is held to the bound too.
+pub(super) struct RecordBound<R> {
+    inner: R,
+    quote: u8,
+    quoted: bool,
+    since_end: usize,
+}
+
+impl<R> RecordBound<R> {
+    pub(super) fn new(inner: R, quote: u8) -> Self {
+        Self {
+            inner,
+            quote,
+            quoted: false,
+            since_end: 0,
+        }
+    }
+}
+
+impl<R: Read> Read for RecordBound<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        for byte in &buf[..read] {
+            if *byte == self.quote {
+                // a doubled quote inside a quoted field turns it off and on again
+                self.quoted = !self.quoted;
+            } else if !self.quoted && (*byte == b'\n' || *byte == b'\r') {
+                self.since_end = 0;
+                continue;
+            }
+            self.since_end += 1;
+            if self.since_end > MAX_UNIT {
+                return Err(std::io::Error::other(format!(
+                    "a record is larger than {MAX_UNIT} bytes"
+                )));
+            }
+        }
+        Ok(read)
+    }
+}
 
 pub(super) fn load_csv_reader(
     facade: &EntityFacade,
@@ -43,14 +87,15 @@ pub(super) fn load_csv_reader(
             ))),
         }
     };
+    let quote = byte(options.csv_quote_char, b'"', "quote")?;
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(byte(options.csv_delimiter, b',', "delimiter")?)
         .comment(Some(byte(options.csv_comment_start, b'#', "comment start")?))
-        .quote(byte(options.csv_quote_char, b'"', "quote")?)
+        .quote(quote)
         .has_headers(false)
         .flexible(true)
         .trim(csv::Trim::All)
-        .from_reader(reader);
+        .from_reader(RecordBound::new(reader, quote));
     let mut records = reader.records();
     // A given entity name or field names stand for the entity line and the header line, which the text then lacks.
     let mut file_type = None;
@@ -132,6 +177,11 @@ pub(super) fn load_csv_reader(
     let mut total = 0_u64;
     for (line, record) in records.enumerate() {
         let record = record.map_err(|err| Error::new(format!("could not read csv {location}")).with_source(err))?;
+        if record.as_slice().len() > MAX_UNIT {
+            return Err(Error::new(format!(
+                "csv {location} has a record larger than {MAX_UNIT} bytes"
+            )));
+        }
         if record_blank(&record) {
             continue;
         }

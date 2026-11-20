@@ -838,7 +838,9 @@ fn get_calc_cells(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -
         if let Some(presence) = ExecutionContext::with_current(|ec| Presence::of(ec.factory())) {
             let key = together::presence_key(&room);
             let user = user_id();
-            let selection = parameters.get("selection").map_or(Json::Null, to_json);
+            let selection = parameters
+                .get("selection")
+                .map_or(Json::Null, |selection| together::place_of(&to_json(selection)));
             presence.set(
                 &key,
                 &client,

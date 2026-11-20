@@ -386,8 +386,10 @@ Load into… call.
   the `mappingId`. See [Scheduling](#scheduling) below.
   - The cron expression is checked first: one that does not parse, or is never due, is refused. The answer gives the
     next run.
-  - The mapping is stored again, so the schedule gets the same checks as a change of the mapping. That limits it to the
-    mapping's owner or a `DATABASE_ADMIN` holder.
+  - The owner's own mapping is stored again, so the schedule gets the same checks as a change of the mapping. Another
+    user's mapping is scheduled only by a holder of `DATABASE_ADMIN` and `ADMIN_LOGIN_AS` whom the owner holds no
+    access beyond (`ec.user.heldBeyond`). It is not stored again, since a store by another user makes the mapping theirs,
+    and it runs as its owner's job.
   - The job is made paused. Its `mappingId` parameter and a `ServiceJobUser` of the mapping's owner (notified of each
     run) are added, and only then is the job unpaused, so the scheduler never sees half a job. A failure removes what
     was made.
@@ -467,8 +469,11 @@ Load into… call.
   - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface-Tools.md#jobs)), so the run signs
     in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
     `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
-  - The owner must be a `ServiceJobUser` of the job. An `ADMIN` may write both, so may schedule another user's saved
-    mapping to run as that user; that is allowed on purpose.
+  - The owner must be a `ServiceJobUser` of the job, and the row is the owner's consent only when the owner made it,
+    or a holder of `ADMIN_LOGIN_AS` whom the owner holds no access beyond (asked again at each run). The row's
+    `addedByUserId` records who made it (the `ServiceJobUserAddedBy` EECA; an update keeps it). A row loaded as data
+    has none, so its job refuses to run as the owner until the owner or such a holder adds the row again.
+  - Each value map the mapping uses must be the owner's too; whoever saves a mapping or a value map owns it.
   - The run reads the mapping's own source: the job's `location` and `contentBytes` parameters are ignored.
   - The owner signs in as any login does. A missing owner, an account that is disabled or terminated, and a password
     that must change or has expired refuse the run, with a logged error. So an expired password fails the owner's
@@ -535,9 +540,21 @@ cancel, table maintenance or entity sources.
   - An empty `sslMode` is `verify-full` for a host that is not loopback, and no TLS for localhost.
   - `sslRootCert` is the path of a PEM file of the authorities to trust.
   - MySQL's mode names (`REQUIRED`, `VERIFY_CA`, `VERIFY_IDENTITY`) are taken too.
+  - On Postgres `verify-ca` trusts only the `sslRootCert` file and is refused without one; use `verify-full` to trust
+    the public authorities.
+- **Public addresses only, by default.** A connection's host must resolve to public addresses only. To reach a database
+  on this machine or the private network (a test database beside the server), set
+  `tools@external-database-private-network` to `true` in the runtime conf or as
+  `moqui_conf__tools__external_database_private_network`. A link-local or cloud metadata address is refused either
+  way. The driver checks the addresses at each connection it opens and connects to an address it checked. One gap is
+  left: MySQL under `verify-full` connects by the host name, so that the client can check the certificate against
+  it, and looks the name up again. A name whose answer changes between the check and the connect is not caught there;
+  closing it needs a TLS server-name option in the MySQL client fork.
 - **Read only by default.** A `readOnly` connection (the default) runs every statement in a read-only transaction and
   takes no changes.
-- **Pools.** One per connection, closed after ten idle minutes, through the host's conf connection factory.
+- **Pools.** One per connection, closed after ten idle minutes, through the host's conf connection factory. A pool is
+  kept for the row's `revision`, which each store moves: on any cluster member a changed or deleted row is never
+  served from an old pool.
 
 ## Conf settings
 

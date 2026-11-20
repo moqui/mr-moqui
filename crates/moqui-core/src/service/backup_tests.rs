@@ -150,3 +150,62 @@ fn the_mirror_flags_pick_the_transport_and_the_encryption() {
     assert!(mirror_options(&params(&[("mirrorEncrypt", Value::Bool(true))])).is_err());
     assert!(mirror_options(&params(&[("mirrorTransport", Value::string("ftp"))])).is_err());
 }
+
+/// SEC-TLS-96: the mirror reads its remote as the other senders do. A disabled remote receives nothing, and one whose
+/// `allowPrivateNetwork` is N is connected to at no internal address (the SFTP sync and a git push mirror take the
+/// same rule through `SftpClient::for_remote`).
+#[test]
+fn a_mirror_refuses_a_disabled_remote_and_keeps_a_public_one_off_internal_addresses() {
+    let facade = crate::testing::open();
+    facade.set_disable_fk_create(true);
+    let ctx = ExecutionContextFactory::test_context();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let connector = crate::sftp::tests::memory(ctx.factory());
+    let _authz = ctx.disable_authz();
+    let mut message_type = facade.make_value("moqui.service.message.SystemMessageType").unwrap();
+    message_type.set("systemMessageTypeId", Value::string("BackupMirror"));
+    message_type.set("sendPath", Value::string("/srv/bk"));
+    message_type.create(&facade).unwrap();
+    let remote = |id: &str, disabled: &str| {
+        let mut row = facade.make_value("moqui.service.message.SystemMessageRemote").unwrap();
+        for (name, value) in [
+            ("systemMessageRemoteId", id),
+            ("systemMessageTypeId", "BackupMirror"),
+            ("sendUrl", "backup.example.com"),
+            ("username", "joe"),
+            ("password", "pw"),
+            ("allowPrivateNetwork", "N"),
+            ("disabled", disabled),
+        ] {
+            row.set(name, Value::string(value));
+        }
+        row.create(&facade).unwrap();
+    };
+    remote("Off", "Y");
+    remote("Public", "N");
+    let options = MirrorOptions {
+        transport: None,
+        recipient: None,
+    };
+    let outcome = crate::backup::BackupOutcome {
+        skipped: false,
+        backup_dir: PathBuf::new(),
+        archive_path: PathBuf::new(),
+        backup_kind: "full".into(),
+        bytes_written: 0,
+        promoted: Vec::new(),
+        removed: Vec::new(),
+        keep: Vec::new(),
+        renames: Vec::new(),
+        rewritten: Vec::new(),
+        errors: Vec::new(),
+    };
+    let refused = super::mirror(&facade, "Off", &options, &outcome).unwrap_err();
+    assert!(refused.message().contains("disabled"), "{refused}");
+    assert!(connector.seen.lock().unwrap().is_empty());
+    super::mirror(&facade, "Public", &options, &outcome).unwrap();
+    let seen = connector.seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert!(seen[0].deny_internal);
+}

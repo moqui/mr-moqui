@@ -219,21 +219,9 @@ function userName(userId) {
 // in, or holding through a current group a sealed permission the caller lacks, holds access the caller could not be given,
 // so the caller may not change, sign out or take over that account (its sign-in fields, factors, locks, sessions,
 // credentials, Login as). The refusal's reason, or null when the caller may act; an instance administrator holds every one.
+// The one rule is the framework's (user::held_beyond), which the git sync and the ETL owner checks ask too.
 function heldBeyond(userId) {
-    const at = nowMs()
-    const groupIds = rows(MEMBER, {userId})
-        .filter(row => open(row, at))
-        .map(row => row.userGroupId)
-    if (!groupIds.length) return null
-    const privileged = new Set(Array.from(UserSecurityChecks.privilegedGroups()))
-    const sealed = new Set(Array.from(UserSecurityChecks.sealedPermissions()))
-    const group = groupIds.find(groupId => privileged.has(groupId) && !ec.user.isInGroup(groupId))
-    if (group) return "The account is in the privileged group " + group + ", which you are not in"
-    const grants = Array.from(find("moqui.security.UserGroupPermission").condition("userGroupId", "in", groupIds).list()).filter(
-        row => open(row, at) && sealed.has(row.userPermissionId) && !ec.user.hasPermission(row.userPermissionId)
-    )
-    if (grants.length) return "The account holds the sealed permission " + grants[0].userPermissionId + ", which you do not"
-    return null
+    return ec.user.heldBeyond(userId)
 }
 
 // The accounts whose username or name holds a text, ignoring case: the first 200 by username.

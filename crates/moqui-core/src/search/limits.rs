@@ -49,6 +49,29 @@ pub fn with_limits<T>(limits: QueryLimits, body: impl FnOnce() -> Result<T, Erro
     let _restore = Restore(old);
     body()
 }
+/// How long one search statement may run outside a report's budget: `search-facade@query-timeout-seconds`, 10 by
+/// default (SEC-DAT-84).
+#[must_use]
+pub fn search_timeout() -> Duration {
+    let seconds = crate::context::conf_env::setting("search-facade@query-timeout-seconds")
+        .parse::<u64>()
+        .ok()
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(10);
+    Duration::from_secs(seconds)
+}
+
+/// The most clauses (words, phrases and ranges) a parsed query string may hold: `search-facade@query-max-clauses`, 64
+/// by default (SEC-DAT-84).
+#[must_use]
+pub fn max_clauses() -> usize {
+    crate::context::conf_env::setting("search-facade@query-max-clauses")
+        .parse::<usize>()
+        .ok()
+        .filter(|max| *max > 0)
+        .unwrap_or(64)
+}
+
 pub fn remaining() -> Result<Option<Duration>, Error> {
     ACTIVE.with(|active| match *active.borrow() {
         None => Ok(None),

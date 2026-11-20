@@ -281,7 +281,7 @@
             request-pool-max="16" request-queue="64"
             empty-db-load="seed,seed-initial,install"
             on-start-load-types="none" on-start-load-components=""
-            database-audit-days="90">
+            database-audit-days="90" external-database-private-network="false">
         <!-- Native components select linked ToolFactory implementations here.
              The cache facade is built in; Java H2/JCR/SMTP factories do not run in MR. -->
         <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->
@@ -358,7 +358,8 @@
 
         <!-- this is a count of all artifact hits, expire once idle for over 15 minutes -->
         <cache name="artifact.tarpit.hits" expire-time-idle="900" max-elements="10000" value-type="ArrayList"/>
-        <!-- type=distributed shares replay keys when a real distributed factory is configured; default factory is local MCache. -->
+        <!-- Its live time bounds a chat bridge webhook's replay window and how long its key is held; the replay keys of
+            signed requests are kept in moqui.security.SignatureReplay, which every cluster member sees (SEC-DAT-90). -->
         <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
         <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
         <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
@@ -392,6 +393,9 @@
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
+        <!-- Browser telemetry (off unless enabled): replay-user-bytes-per-hour holds the replay bytes one user sends an
+             hour, whatever replay ids the page picks. -->
+        <browser replay-user-bytes-per-hour="52428800"/>
     </telemetry>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
          spans are written inside a trace, so a scheduler poll or a data load writes none; so are transaction spans
@@ -454,6 +458,8 @@
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
+                socket-room-clients="4" socket-awareness-bytes="4096" socket-joins-per-minute="60"
+                socket-user-joins-per-minute="240"
             app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
@@ -706,7 +712,8 @@
         where their drive is. -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
-            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive">
+            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
+            collab-max-state-bytes="8388608">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not
@@ -866,7 +873,9 @@
         embedded cluster when the entity database is not Postgres) or opensearch (the cluster below). With no postgres
         element the postgres backend uses the search schema of the entity Postgres; a postgres element with a url points
         it at another Postgres. -->
-    <search-facade backend="postgres">
+    <!-- query-timeout-seconds: how long one search statement may run outside a report's own budget; query-max-clauses:
+        the most terms a query string may hold. -->
+    <search-facade backend="postgres" query-timeout-seconds="10" query-max-clauses="64">
         <!-- The OpenSearch (or ElasticSearch 7+) cluster of the opensearch backend, and of the SearchProxy servlet.
             run: on the opensearch backend, when the url is this host and nothing answers there, start the install in
             runtime/opensearch (unless it has a pid file, a node run outside the server) and stop it on shutdown; false

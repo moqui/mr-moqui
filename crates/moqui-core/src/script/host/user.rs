@@ -55,6 +55,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "endVisit", [Text], None, end_visit),
         method!("ec.user", "hasPermission", [Value], None, has_permission),
         method!("ec.user", "isInGroup", [Value], None, is_in_group),
+        method!("ec.user", "heldBeyond", [Text], None, held_beyond),
         method!("ec.user", "getUserGroupIdSet", [OptValue], None, group_id_set),
         method!("ec.user", "setPreference", [Value, OptValue], None, set_preference),
         method!("ec.user", "getClientIp", [], client_ip),
@@ -474,6 +475,14 @@ fn is_in_group(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let group = call.text_or_empty(0);
     crate::user::is_in_group(&group)
         .map(Ret::from)
+        .map_err(|err| user_error(&err))
+}
+
+/// `user::held_beyond`: why the current user may not act as or on the account, or null.
+fn held_beyond(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let user_id = call.text_or_empty(0);
+    crate::user::held_beyond(&user_id)
+        .map(|reason| Ret::from(reason.map_or(Value::Null, Value::String)))
         .map_err(|err| user_error(&err))
 }
 

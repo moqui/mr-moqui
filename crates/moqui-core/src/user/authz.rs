@@ -1105,6 +1105,68 @@ fn basic_long(value: Option<&Value>) -> Option<i64> {
     }
 }
 
+/// Bounded delegation for an action taken as or on another account (SEC-ADM-05, Identity.js `heldBeyond`): the reason
+/// the current user may not act as `user_id`, or None when they may. An account in a privileged group the current user
+/// is not in, or holding through a current group a sealed permission the current user lacks, holds access the current
+/// user could not be given.
+///
+/// # Errors
+///
+/// When the groups or grants cannot be read.
+pub fn held_beyond(user_id: &str) -> Result<Option<String>, Error> {
+    let facade = entity_facade()?;
+    let now = now_millis();
+    let open = |row: &EntityValue| {
+        let at = |name: &str| {
+            row.get(name)
+                .filter(|value| !value.is_null())
+                .and_then(super::value_millis)
+        };
+        at("fromDate").is_none_or(|from| from <= now) && at("thruDate").is_none_or(|thru| thru > now)
+    };
+    let groups: Vec<String> = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find("moqui.security.UserGroupMember")?
+            .eq("userId", Value::string(user_id))
+            .use_cache(false)
+            .list()?
+            .values()
+            .iter()
+            .filter(|row| open(row))
+            .map(|row| text(row, "userGroupId"))
+            .collect()
+    };
+    let privileged = crate::service::privileged_groups();
+    for group in &groups {
+        if privileged.contains(group) && !super::is_in_group(group)? {
+            return Ok(Some(format!(
+                "The account is in the privileged group {group}, which you are not in"
+            )));
+        }
+    }
+    let sealed = crate::service::sealed_permissions();
+    for group in &groups {
+        let grants = {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            facade
+                .find("moqui.security.UserGroupPermission")?
+                .eq("userGroupId", Value::string(group))
+                .use_cache(false)
+                .list()?
+        };
+        for grant in grants.values().iter().filter(|row| open(row)) {
+            let permission = text(grant, "userPermissionId");
+            if sealed.contains(&permission) && !super::has_permission(&permission)? {
+                return Ok(Some(format!(
+                    "The account holds the sealed permission {permission}, which you do not"
+                )));
+            }
+        }
+    }
+    Ok(None)
+}
+
 fn text(row: &EntityValue, field: &str) -> String {
     match row.get(field) {
         Some(Value::String(value)) => value.clone(),

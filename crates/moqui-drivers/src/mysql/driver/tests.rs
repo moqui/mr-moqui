@@ -560,3 +560,38 @@ fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
         assert!(err.to_string().contains("only a query"), "{sql}: {err}");
     }
 }
+
+/// SEC-TLS-101: with a guard, a connection goes to each address the guard took, by its text, so the client looks no name
+/// up again; under verify-full the name stays for the certificate check.
+#[test]
+fn a_guarded_connection_goes_to_an_address_that_was_checked() {
+    use moqui_core::driver::AddressGuard;
+    use moqui_core::entity::datasource::TlsVerify;
+    let hosts = |driver: &MysqlDriver| {
+        driver
+            .endpoints()
+            .unwrap()
+            .into_iter()
+            .map(|endpoint| endpoint.host)
+            .collect::<Vec<_>>()
+    };
+    let plain = MysqlDriver::new("localhost", 3306, "u", "p", "db", false).address_guard(AddressGuard::LinkLocal);
+    let pinned = hosts(&plain);
+    assert!(!pinned.is_empty());
+    assert!(
+        pinned
+            .iter()
+            .all(|host| host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())),
+        "{pinned:?}"
+    );
+    let ca = MysqlDriver::new("localhost", 3306, "u", "p", "db", true)
+        .tls_options(TlsVerify::Ca, "")
+        .address_guard(AddressGuard::LinkLocal);
+    assert!(hosts(&ca).iter().all(|host| host.parse::<std::net::IpAddr>().is_ok()));
+    let full = MysqlDriver::new("localhost", 3306, "u", "p", "db", true).address_guard(AddressGuard::LinkLocal);
+    assert_eq!(hosts(&full), ["localhost"]);
+    let refused = MysqlDriver::new("localhost", 3306, "u", "p", "db", false).address_guard(AddressGuard::Internal);
+    assert!(refused.endpoints().is_err());
+    let off = MysqlDriver::new("localhost", 3306, "u", "p", "db", false);
+    assert_eq!(hosts(&off), ["localhost"]);
+}

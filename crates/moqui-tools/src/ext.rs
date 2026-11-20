@@ -62,7 +62,14 @@ struct Open {
     dialect: moqui_db::dialect::Dialect,
     read_only: bool,
     last_used: Instant,
+    /// The row's `lastUpdatedStamp` the pool was made from: a row stored since (on any cluster member) is not served
+    /// from this pool (SEC-TLS-101).
+    stamp: String,
 }
+
+/// `true` lets a connection reach loopback and private addresses (a database beside this server); a link-local or
+/// metadata address is refused either way.
+const PRIVATE_NETWORK_SETTING: &str = "tools@external-database-private-network";
 
 fn pools() -> &'static Mutex<HashMap<String, Open>> {
     static POOLS: OnceLock<Mutex<HashMap<String, Open>>> = OnceLock::new();
@@ -112,6 +119,17 @@ fn conf_of(row: &moqui_core::entity::EntityValue) -> moqui_core::driver::ConfDb 
         password: field("password"),
         ssl_mode: field("sslMode"),
         ssl_root_cert: field("sslRootCert"),
+        address_guard: address_guard(&moqui_core::context::conf_env::setting(PRIVATE_NETWORK_SETTING)),
+    }
+}
+
+/// The addresses a connection may reach: public ones, or with [`PRIVATE_NETWORK_SETTING`] true any but link-local and
+/// metadata ones. The driver checks each connection it opens and connects to an address it checked (SEC-TLS-101).
+fn address_guard(allow_private: &str) -> moqui_core::driver::AddressGuard {
+    if allow_private.trim().eq_ignore_ascii_case("true") {
+        moqui_core::driver::AddressGuard::LinkLocal
+    } else {
+        moqui_core::driver::AddressGuard::Internal
     }
 }
 
@@ -145,16 +163,28 @@ fn row_of(facade: &EntityFacade, connection_id: &str) -> Result<Option<moqui_cor
 /// No such row, an unknown database conf, or no driver for it.
 pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error> {
     let name = format!("ext:{connection_id}");
-    // the row is read and the pool made once, under the map's lock, so two requests share one pool; a pool is
-    // forgotten when its row is stored or deleted, the only ways it changes (generic writes are refused)
+    // the row is read at each use and its pool kept by the row's lastUpdatedStamp, so a row stored or deleted on
+    // another cluster member is never served from an old pool here (forget clears this process's at once); the pool is
+    // made once, under the map's lock, so two requests share one
+    let row = row_of(facade, connection_id)?;
+    let Some(row) = row else {
+        forget(connection_id);
+        return Err(Error::new(format!("no connection {connection_id}")));
+    };
+    // the row's revision, which each store moves, beside its stamp: two stores in one millisecond differ too
+    let stamp = format!(
+        "{}#{}",
+        row.get("lastUpdatedStamp").map(to_plain_string).unwrap_or_default(),
+        row.get("revision").map(to_plain_string).unwrap_or_default()
+    );
     let (tx, dialect, read_only) = {
         let mut pools = lock(pools());
-        if let Some(open) = pools.get_mut(connection_id) {
+        if let Some(open) = pools.get_mut(connection_id).filter(|open| open.stamp == stamp) {
             open.last_used = Instant::now();
             (open.tx.clone(), open.dialect.clone(), open.read_only)
         } else {
-            let row =
-                row_of(facade, connection_id)?.ok_or_else(|| Error::new(format!("no connection {connection_id}")))?;
+            // a pool of an older row, or none: what was learned of its server goes with it
+            crate::group_db::forget_server(&name);
             let conf = conf_of(&row);
             if !DB_TYPES.contains(&conf.db_type.as_str()) {
                 return Err(Error::new(format!(
@@ -163,6 +193,7 @@ pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error
                 )));
             }
             check_host(&conf.host).map_err(Error::new)?;
+            check_address(&conf)?;
             let read_only = row.get("readOnly").map(to_plain_string).as_deref() != Some("N");
             let dialect = dialect_of(facade, &conf.db_type)?;
             let driver = moqui_core::driver::conf_driver(&conf)?;
@@ -184,6 +215,7 @@ pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error
                     dialect: dialect.clone(),
                     read_only,
                     last_used: Instant::now(),
+                    stamp,
                 },
             );
             (tx, dialect, read_only)
@@ -204,6 +236,26 @@ fn check_host(host: &str) -> Result<(), &'static str> {
         return Err("host is a name or address reached over TCP, not a socket path");
     }
     Ok(())
+}
+
+/// Where a connection's host resolves: no loopback, private or link-local address unless `allow_private` (the
+/// [`PRIVATE_NETWORK_SETTING`]) is `true`, and no link-local or metadata address even then, so a holder of
+/// `DATABASE_EXTERNAL` cannot probe the server's own network with `test#DatabaseConnection` or send a stored password
+/// to whatever answers there (SEC-TLS-101). The name is looked up again by the driver when it connects.
+fn check_address(conf: &moqui_core::driver::ConfDb) -> Result<(), Error> {
+    let port = conf
+        .port
+        .trim()
+        .parse::<u16>()
+        .unwrap_or(if conf.db_type == "postgres" { 5432 } else { 3306 });
+    conf.address_guard
+        .resolve(conf.host.trim(), port)
+        .map(|_| ())
+        .map_err(|err| {
+            Error::new(format!(
+                "{err}: an external database is at a public address unless {PRIVATE_NETWORK_SETTING} is true"
+            ))
+        })
 }
 
 /// A host on this machine's loopback, the only kind a connection may reach without TLS by default.
@@ -406,6 +458,12 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
         .one()?;
     if let Some(row) = &existing {
         if !may_manage(row) {
+            audit_connection(
+                facade,
+                &connection_id,
+                false,
+                serde_json::json!({"op": "update", "refused": "not the owner"}),
+            );
             add_error("That connection is another user's to change");
             return none();
         }
@@ -455,6 +513,13 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
     }
     let read_only = parameters.get("readOnly").is_none_or(is_empty) || flag(parameters, "readOnly");
     row.set("readOnly", Value::string(if read_only { "Y" } else { "N" }));
+    let revision = existing
+        .as_ref()
+        .and_then(|old| old.get("revision"))
+        .map(to_plain_string)
+        .and_then(|revision| revision.parse::<i64>().ok())
+        .unwrap_or(0);
+    row.set("revision", Value::I64(revision.saturating_add(1)));
     let password = text(parameters, "password");
     let mut password_cleared = false;
     if !password.is_empty() {
@@ -471,10 +536,42 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
         row.create(facade)?;
     }
     forget(&connection_id);
+    audit_connection(
+        facade,
+        &connection_id,
+        true,
+        serde_json::json!({
+            "op": if existing.is_some() { "update" } else { "create" },
+            "dbType": text_of(row.get("dbType")),
+            "host": text_of(row.get("host")),
+            "port": text_of(row.get("port")),
+            "databaseName": text_of(row.get("databaseName")),
+            "userName": text_of(row.get("userName")),
+            "sslMode": text_of(row.get("sslMode")),
+            "readOnly": read_only,
+            "passwordSet": !text(parameters, "password").is_empty(),
+            "passwordCleared": password_cleared,
+        }),
+    );
     let mut out = BTreeMap::new();
     out.insert("connectionId".to_string(), Value::String(connection_id));
     out.insert("passwordCleared".to_string(), Value::Bool(password_cleared));
     Ok(out)
+}
+
+/// Write the `DbaConnection` audit row of a store, delete or test of the connection `connection_id`, with what was done
+/// in `detail` (never the password) (SEC-TLS-102).
+fn audit_connection(facade: &EntityFacade, connection_id: &str, is_change: bool, detail: serde_json::Value) {
+    crate::audit::record(
+        facade,
+        &crate::audit::AuditEntry {
+            action: "DbaConnection",
+            db: Some(format!("ext:{connection_id}")),
+            is_change,
+            detail_json: Some(detail.to_string()),
+            ..crate::audit::AuditEntry::default()
+        },
+    );
 }
 
 /// Whether the current user may change, delete or test the connection `row`: its owner, or a `DATABASE_ADMIN`
@@ -501,10 +598,17 @@ fn delete_database_connection(parameters: &BTreeMap<String, Value>, facade: &Ent
         .one()?
     {
         if !may_manage(&row) {
+            audit_connection(
+                facade,
+                &connection_id,
+                false,
+                serde_json::json!({"op": "delete", "refused": "not the owner"}),
+            );
             add_error("That connection is another user's to delete");
             return none();
         }
         row.delete(facade)?;
+        audit_connection(facade, &connection_id, true, serde_json::json!({"op": "delete"}));
     }
     forget(&connection_id);
     none()
@@ -520,6 +624,12 @@ fn test_database_connection(parameters: &BTreeMap<String, Value>, facade: &Entit
     match row_of(facade, &connection_id)? {
         Some(row) if may_manage(&row) => {}
         Some(_) => {
+            audit_connection(
+                facade,
+                &connection_id,
+                false,
+                serde_json::json!({"op": "test", "refused": "not the owner"}),
+            );
             add_error("That connection is another user's to test");
             return none();
         }
@@ -537,6 +647,12 @@ fn test_database_connection(parameters: &BTreeMap<String, Value>, facade: &Entit
         };
         db.query(sql, &[])
     });
+    audit_connection(
+        facade,
+        &connection_id,
+        false,
+        serde_json::json!({"op": "test", "connected": tested.is_ok()}),
+    );
     match tested {
         Ok(rows) => {
             out.insert("connected".to_string(), Value::Bool(true));

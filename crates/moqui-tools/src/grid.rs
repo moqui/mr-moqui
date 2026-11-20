@@ -1530,6 +1530,8 @@ pub fn export(
         tracing::warn!(error = %err, "Could not write the grid export to {location}");
         refusal("The export could not be written (the server log has the detail)")
     })?;
+    // an export takes a copy of the source off the grid: each is audited, of an entity source too (SEC-TLS-102)
+    audit_read(facade, actor, "DbaExport", source, row_count, Some(&location));
     Ok(ExportOutcome {
         location,
         file_name,
@@ -1537,6 +1539,37 @@ pub fn export(
         row_count,
         truncated,
     })
+}
+
+/// Write the `action` audit row of a read of `source` (a page, `DbaGridRead`, or an export, `DbaExport`) that answered
+/// `rows` rows: an entity source's reads are audited as a SQL source's query is (SEC-TLS-102).
+pub(crate) fn audit_read(
+    facade: &EntityFacade,
+    actor: &Actor,
+    action: &'static str,
+    source: &Source,
+    rows: usize,
+    location: Option<&str>,
+) {
+    let (kind, name) = match source {
+        Source::Entity { entity_name, .. } => ("entity", entity_name.clone()),
+        Source::Sql { group, .. } => ("sql", group.clone()),
+        Source::File { spec } => ("file", spec.location.clone()),
+    };
+    audit::record_as(
+        facade,
+        &AuditEntry {
+            action,
+            db: match source {
+                Source::Sql { group, .. } => Some(crate::catalog::db_text(group)),
+                _ => None,
+            },
+            rows_returned: Some(i64::try_from(rows).unwrap_or(i64::MAX)),
+            detail_json: Some(serde_json::json!({"source": kind, "name": name, "location": location}).to_string()),
+            ..AuditEntry::default()
+        },
+        actor,
+    );
 }
 
 /// CSV into an owner-only temporary file, written to the location at the end as a stream and removed whatever
@@ -1860,7 +1893,10 @@ pub fn save(
     let entity = definition(facade, entity_name)?;
     // the entity audit log and Monitor's recovery and ingest rows: read here, written only by their own services
     if !sensitive::generic_access(facade, &entity.full_name).write {
-        return Err(refusal(format!("{} is written only by its own services", entity.full_name)));
+        return Err(refusal(format!(
+            "{} is written only by its own services",
+            entity.full_name
+        )));
     }
     // a data document's definition holds expressions that run as whoever reads the document: changed on its own
     // screens, not by any Tools viewer through the grid

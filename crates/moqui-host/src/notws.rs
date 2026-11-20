@@ -188,6 +188,118 @@ enum TopicCommand {
     Unsubscribe(Vec<String>),
 }
 
+/// What one socket may hold of presence (SEC-TLS-113), from the webroot webapp: the clients it keeps in one CalcGrid
+/// room or co-edited page (`socket-room-clients`), the bytes of one awareness (`socket-awareness-bytes`), and the
+/// joins it makes a minute (`socket-joins-per-minute`), and the joins one user's sockets make a minute together
+/// (`socket-user-joins-per-minute`).
+#[derive(Clone, Copy)]
+struct PresenceCaps {
+    room_clients: usize,
+    awareness_bytes: usize,
+    joins_per_minute: u32,
+    user_joins_per_minute: u32,
+}
+
+impl PresenceCaps {
+    fn of(factory: &ExecutionContextFactory) -> Self {
+        let number = |name: &str, default: usize| {
+            factory
+                .webapp_setting("webroot", name)
+                .parse::<usize>()
+                .ok()
+                .filter(|value| *value > 0)
+                .unwrap_or(default)
+        };
+        Self {
+            room_clients: number("socket-room-clients", 4),
+            awareness_bytes: number("socket-awareness-bytes", 4096),
+            joins_per_minute: u32::try_from(number("socket-joins-per-minute", 60)).unwrap_or(u32::MAX),
+            user_joins_per_minute: u32::try_from(number("socket-user-joins-per-minute", 240)).unwrap_or(u32::MAX),
+        }
+    }
+}
+
+/// A token bucket a minute wide: `capacity` takes at once, given back at `capacity` a minute, so no burst at a
+/// minute's edge gets twice the rate.
+#[derive(Clone, Copy)]
+struct Bucket {
+    tokens: f64,
+    at: std::time::Instant,
+}
+
+/// Take one from the bucket of `key` in `buckets`; false when it is empty. The map keeps at most 4,096 keys: past that
+/// the full ones (unused for a minute) go.
+fn take<K: std::hash::Hash + Eq + Clone>(buckets: &Mutex<HashMap<K, Bucket>>, key: &K, capacity: u32) -> bool {
+    let capacity = f64::from(capacity.max(1));
+    let now = std::time::Instant::now();
+    let mut buckets = lock(buckets);
+    if buckets.len() >= 4096 && !buckets.contains_key(key) {
+        buckets.retain(|_, bucket| bucket.tokens + bucket.at.elapsed().as_secs_f64() * capacity / 60.0 < capacity);
+    }
+    let bucket = buckets.entry(key.clone()).or_insert(Bucket {
+        tokens: capacity,
+        at: now,
+    });
+    bucket.tokens = (bucket.tokens + now.duration_since(bucket.at).as_secs_f64() * capacity / 60.0).min(capacity);
+    bucket.at = now;
+    if bucket.tokens < 1.0 {
+        return false;
+    }
+    bucket.tokens -= 1.0;
+    true
+}
+
+/// Whether the socket `slot_id` of `user_id` may join a room or a page once more: the socket's own rate
+/// ([`PresenceCaps::joins_per_minute`]) and its user's over all their sockets ([`PresenceCaps::user_joins_per_minute`]).
+fn join_allowed(slot_id: u64, user_id: &str, caps: &PresenceCaps) -> bool {
+    static SOCKETS: OnceLock<Mutex<HashMap<u64, Bucket>>> = OnceLock::new();
+    static USERS: OnceLock<Mutex<HashMap<String, Bucket>>> = OnceLock::new();
+    take(SOCKETS.get_or_init(Default::default), &slot_id, caps.joins_per_minute)
+        && take(
+            USERS.get_or_init(Default::default),
+            &user_id.to_string(),
+            caps.user_joins_per_minute,
+        )
+}
+
+/// The joins a socket asked for in one room or page that are not members yet (SEC-TLS-113): counted with the members,
+/// so a burst of joins in flight together cannot pass the room cap.
+fn pending_joins() -> &'static Mutex<HashMap<(u64, String), usize>> {
+    static PENDING: OnceLock<Mutex<HashMap<(u64, String), usize>>> = OnceLock::new();
+    PENDING.get_or_init(Default::default)
+}
+
+/// A place held for a join in flight; given back when dropped, after the member is in or the join failed.
+struct Reserved((u64, String));
+
+impl Drop for Reserved {
+    fn drop(&mut self) {
+        let mut pending = lock(pending_joins());
+        if let Some(count) = pending.get_mut(&self.0) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                pending.remove(&self.0);
+            }
+        }
+    }
+}
+
+/// Hold a place for a join of the socket `slot_id` in `room`, where it has `members` clients already: none when those
+/// and its joins in flight fill [`PresenceCaps::room_clients`].
+fn reserve(slot_id: u64, room: &str, members: usize, max: usize) -> Option<Reserved> {
+    let key = (slot_id, room.to_string());
+    let mut pending = lock(pending_joins());
+    let count = pending.entry(key.clone()).or_insert(0);
+    if members + *count >= max {
+        if *count == 0 {
+            pending.remove(&key);
+        }
+        return None;
+    }
+    *count += 1;
+    Some(Reserved(key))
+}
+
 /// Subscribe once to `notification-message`. A second boot keeps the first listener.
 pub(crate) fn install_push() -> Result<(), CoreError> {
     if PUSH.get().is_some() {
@@ -505,11 +617,19 @@ async fn run_socket(
         }
     }
     tracing::debug!(session_id = %slot.session_id, user_id = %slot.user_id, "notification socket closed");
-    unregister(id);
-    collab::socket_closed(&factory, id);
-    calc::socket_closed(&factory, id);
-    rtc::socket_closed(&factory, id);
+    end_socket(&factory, id, &mut rx);
     offline_when_gone(&factory, &slot.user_id);
+}
+
+/// Let a closed socket go: its receiver is closed first, so a join still in flight that admits a member after the
+/// members are let go here finds the socket closed (`slot.tx.is_closed()`) and leaves at once (collab and calc `admit`,
+/// SEC-TLS-111); then its slot, its co-editing and sheet members and its calls.
+fn end_socket(factory: &Arc<ExecutionContextFactory>, id: u64, rx: &mut tokio::sync::mpsc::Receiver<Push>) {
+    rx.close();
+    unregister(id);
+    collab::socket_closed(factory, id);
+    calc::socket_closed(factory, id);
+    rtc::socket_closed(factory, id);
 }
 
 /// The `webroot` webapp's `/notws` `endpoint` `timeout` in milliseconds, else an hour.

@@ -1660,53 +1660,7 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let names = call.texts(0).unwrap_or_default().to_vec();
     let groups = call.texts(1);
     let facade = entity_facade()?;
-    let default_group = facade.default_group().to_string();
-    let mut failed: Vec<(String, String)> = Vec::new();
-    let names: Vec<String> = match groups {
-        None => names,
-        Some(groups) => names
-            .into_iter()
-            .filter(|name| {
-                match facade.with_entity(name, |entity, _, _| {
-                    Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
-                }) {
-                    Ok(group) => groups.contains(&group),
-                    Err(err) => {
-                        failed.push((name.clone(), err.message().to_string()));
-                        false
-                    }
-                }
-            })
-            .collect(),
-    };
-    facade.forget_tables();
-    let mut ddl = Vec::new();
-    let mut errors = 0usize;
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    match facade.check_tables_ddl(&refs) {
-        Ok(check) => {
-            ddl = check.ddl;
-            errors = check.errors;
-        }
-        Err(err) => {
-            tracing::warn!(
-                "Checking the tables together failed, checking each entity: {}",
-                err.message()
-            );
-            for name in &names {
-                match facade.check_tables_ddl(&[name.as_str()]) {
-                    Ok(check) => {
-                        ddl.extend(check.ddl);
-                        errors += check.errors;
-                    }
-                    Err(err) => {
-                        tracing::error!("Table check of entity {name} failed: {}", err.message());
-                        failed.push((name.clone(), err.message().to_string()));
-                    }
-                }
-            }
-        }
-    }
+    let crate::entity::ForcedCheck { ddl, errors, failed } = facade.check_tables_forced(names, groups);
     let mut map = indexmap::IndexMap::default();
     map.insert(
         "ddl".to_string(),
@@ -2619,6 +2573,7 @@ fn conf_db_of(conf: &Value) -> Result<crate::driver::ConfDb, HostError> {
         password: text("entity_ds_password"),
         ssl_mode: text("entity_ds_sslmode"),
         ssl_root_cert: text("entity_ds_sslrootcert"),
+        address_guard: crate::driver::AddressGuard::Off,
     })
 }
 

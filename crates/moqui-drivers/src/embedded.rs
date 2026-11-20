@@ -170,6 +170,9 @@ mod cluster {
             args.push("--format=custom".to_string());
             args.push("--file".to_string());
             args.push(dump.display().to_string());
+            // pg_dump opens the file it is given as it is, so it takes the process umask unless made first
+            // (SEC-TLS-97)
+            private_dump(dump)?;
             run_tool(self, "pg_dump", &args)
         }
 
@@ -182,13 +185,7 @@ mod cluster {
         pub fn save_database_sealed(&self, database: &str, dump: &Path, recipient: &Recipient) -> Result<(), Error> {
             let mut args = connect_args(self, database);
             args.push("--format=custom".to_string());
-            moqui_lib::private_fs::file_options()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(dump)
-                .and_then(|_| moqui_lib::private_fs::restrict(dump))
-                .map_err(|err| Error::new(format!("create {}", dump.display())).with_source(err))?;
+            private_dump(dump)?;
             let bin = tool_bin(&self.server.settings().binary_dir(), "pg_dump");
             let password = self.server.settings().password.clone();
             crate::backup::run_bounded_to(&bin, &args, &password, Duration::MAX, Some((dump, recipient)))
@@ -1275,6 +1272,17 @@ mod cluster {
         {
             bin_dir.join(name)
         }
+    }
+
+    /// Make `dump` empty and this user's alone (`0600`), one that is there already too, before a dump is written to it.
+    fn private_dump(dump: &Path) -> Result<(), Error> {
+        moqui_lib::private_fs::file_options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dump)
+            .and_then(|_| moqui_lib::private_fs::restrict(dump))
+            .map_err(|err| Error::new(format!("create {}", dump.display())).with_source(err))
     }
 
     fn run_tool(cluster: &EmbeddedCluster, name: &str, args: &[String]) -> Result<(), Error> {

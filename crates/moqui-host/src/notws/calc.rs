@@ -126,9 +126,29 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
 }
 
 fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, client: String) {
+    // a socket's presence is bounded: its joins a minute and its clients in one room (SEC-TLS-113)
+    let caps = super::PresenceCaps::of(factory);
+    let others = lock(members())
+        .iter()
+        .filter(|member| member.slot_id == slot.id && member.room == room && member.client != client)
+        .count();
+    // the place is held before the join goes off, so joins in flight together count against the cap
+    let Some(reserved) = super::reserve(slot.id, &room, others, caps.room_clients) else {
+        return error(
+            slot,
+            &room,
+            &client,
+            429,
+            "this connection has as many clients in the room as it may",
+        );
+    };
+    if !super::join_allowed(slot.id, &slot.user_id, &caps) {
+        return error(slot, &room, &client, 429, "too many joins; wait a minute");
+    }
     let factory = Arc::clone(factory);
     let slot = Arc::clone(slot);
     tokio::spawn(async move {
+        let _reserved = reserved;
         let user_id = slot.user_id.clone();
         let (job_factory, job_room) = (Arc::clone(&factory), room.clone());
         let found = super::on_pool(&factory, move || {
@@ -144,19 +164,17 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, 
             Ok((None, _)) => return error(&slot, &room, &client, 403, "Open the document first"),
             Err(err) => return error(&slot, &room, &client, 503, err.message()),
         };
-        {
-            let mut all = lock(members());
-            // a join again (after a reconnect) replaces the client's place
-            all.retain(|member| !(member.client == client && member.slot_id == slot.id));
-            all.push(Member {
-                slot: Arc::downgrade(&slot),
-                slot_id: slot.id,
-                room: room.clone(),
-                doc: doc.clone(),
-                client: client.clone(),
-                user_id: slot.user_id.clone(),
-                name: name.clone(),
-            });
+        let member = Member {
+            slot: Arc::downgrade(&slot),
+            slot_id: slot.id,
+            room: room.clone(),
+            doc: doc.clone(),
+            client: client.clone(),
+            user_id: slot.user_id.clone(),
+            name: name.clone(),
+        };
+        if !admit(&factory, &slot, member) {
+            return;
         }
         let presence = Presence::of(&factory);
         presence.set(&doc, &client, &slot.user_id, &name, None, Json::Null);
@@ -168,6 +186,23 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, room: String, 
         broadcast(&doc, Some(&client), None, &peer);
         publish(&factory, &doc, &peer);
     });
+}
+
+/// Put `member` among the members; false when the socket closed while the join was worked. Its close found no member
+/// to take away then, so the member leaves at once (SEC-TLS-111).
+fn admit(factory: &ExecutionContextFactory, slot: &Slot, member: Member) -> bool {
+    let client = member.client.clone();
+    {
+        let mut all = lock(members());
+        // a join again (after a reconnect) replaces the client's place
+        all.retain(|known| !(known.client == client && known.slot_id == slot.id));
+        all.push(member);
+    }
+    if slot.tx.is_closed() {
+        leave(factory, slot.id, Some(&client));
+        return false;
+    }
+    true
 }
 
 fn member(slot_id: u64, client: &str) -> Option<Member> {
@@ -185,11 +220,7 @@ fn select(factory: &ExecutionContextFactory, slot: &Slot, room: &str, client: &s
         .get("sheet")
         .and_then(Json::as_u64)
         .and_then(|sheet| u32::try_from(sheet).ok());
-    // a place is four numbers; anything else of the client's is not passed on
-    let area = message.get("area").map_or(Json::Null, |area| {
-        json!({"row": area["row"].as_i64(), "column": area["column"].as_i64(),
-            "width": area["width"].as_i64(), "height": area["height"].as_i64()})
-    });
+    let area = message.get("area").map_or(Json::Null, together::place_of);
     Presence::of(factory).set(&member.doc, client, &member.user_id, &member.name, sheet, area.clone());
     let frame = json!({"type": "select", "client": client, "userId": member.user_id, "name": member.name,
         "sheet": sheet, "area": area});
@@ -419,5 +450,50 @@ mod tests {
         );
         assert!(Presence::of(&factory).peers(doc, "o1").is_empty());
         socket_closed(&factory, otto.id);
+    }
+
+    /// SEC-TLS-113: a socket keeps at most four clients in one room, its joins in flight counted with them; SEC-TLS-111:
+    /// a member admitted after its socket closed leaves at once.
+    #[test]
+    fn a_sockets_clients_in_a_room_are_bounded_and_a_closed_socket_keeps_no_member() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (ann, mut ann_rx) = slot("ann-cap");
+        let member = |client: &str| Member {
+            slot: Arc::downgrade(&ann),
+            slot_id: ann.id,
+            room: "cap-room".into(),
+            doc: "cap-doc".into(),
+            client: client.into(),
+            user_id: "ann-cap".into(),
+            name: "Ann".into(),
+        };
+        for client in ["a", "b", "c"] {
+            lock(members()).push(member(client));
+        }
+        // a fourth in flight holds the last place
+        let held = super::super::reserve(ann.id, "cap-room", 3, 4).expect("the fourth place");
+        join(&factory, &ann, "cap-room".into(), "e".into());
+        let refused: Json = serde_json::from_str(&ann_rx.try_recv().unwrap().text).unwrap();
+        assert_eq!(refused["code"], 429);
+        drop(held);
+        socket_closed(&factory, ann.id);
+
+        let (gone, gone_rx) = slot("gone");
+        drop(gone_rx);
+        let late = Member {
+            slot: Arc::downgrade(&gone),
+            slot_id: gone.id,
+            room: "late-room".into(),
+            doc: "late-doc".into(),
+            client: "g".into(),
+            user_id: "gone".into(),
+            name: "Gone".into(),
+        };
+        assert!(!admit(&factory, &gone, late));
+        assert!(
+            super::member(gone.id, "g").is_none(),
+            "no member is left of a closed socket"
+        );
     }
 }

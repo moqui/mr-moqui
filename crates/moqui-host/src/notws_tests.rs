@@ -111,3 +111,37 @@ fn a_socket_whose_queue_overflows_during_a_fan_out_is_removed_and_the_others_sti
     unregister(dave.id);
     assert!(!has_socket("fan-carol") && !has_socket("fan-dave"));
 }
+
+/// SEC-TLS-113: joins are a token bucket per socket and per user, given back over the minute, and a socket's places in a
+/// room are held while its joins are in flight.
+#[test]
+fn joins_are_a_bucket_per_socket_and_per_user_and_places_are_held_in_flight() {
+    let caps = PresenceCaps {
+        room_clients: 2,
+        awareness_bytes: 4096,
+        joins_per_minute: 3,
+        user_joins_per_minute: 4,
+    };
+    let socket = NEXT_SOCKET.fetch_add(1, Ordering::Relaxed);
+    let other = NEXT_SOCKET.fetch_add(1, Ordering::Relaxed);
+    assert!((0..3).all(|_| join_allowed(socket, "bucket-user", &caps)));
+    assert!(
+        !join_allowed(socket, "bucket-user", &caps),
+        "the socket's bucket is empty"
+    );
+    assert!(join_allowed(other, "bucket-user", &caps), "another socket of the user");
+    assert!(!join_allowed(other, "bucket-user", &caps), "the user's bucket is empty");
+    let first = reserve(socket, "bucket-room", 0, 2).expect("a place");
+    let second = reserve(socket, "bucket-room", 0, 2).expect("a second place");
+    assert!(
+        reserve(socket, "bucket-room", 0, 2).is_none(),
+        "two joins in flight fill the room"
+    );
+    drop(first);
+    assert!(
+        reserve(socket, "bucket-room", 1, 2).is_none(),
+        "a member and a join in flight fill it"
+    );
+    drop(second);
+    assert!(reserve(socket, "bucket-room", 1, 2).is_some());
+}

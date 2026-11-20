@@ -191,3 +191,14 @@ fn the_others_in_a_document_are_seen_by_name_and_place_and_one_who_left_is_not()
     presence.leave("doc-1", "c2");
     assert!(presence.peers("doc-1", "c1").is_empty());
 }
+
+/// SEC-TLS-113: a view's place is four numbers, whatever else the client sent as its selection.
+#[test]
+fn a_place_is_four_numbers() {
+    let place = super::place_of(&serde_json::json!({"row": 2, "column": 3, "width": 4, "height": 5,
+        "label": "<img src=x>", "extra": [1, 2, 3]}));
+    assert_eq!(
+        place,
+        serde_json::json!({"row": 2, "column": 3, "width": 4, "height": 5})
+    );
+}
