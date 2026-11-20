@@ -517,6 +517,9 @@ pub fn kept() -> Vec<PathBuf> {
 
 /// The one error a production instance answers for any other project: it does not say whether the path is there.
 pub const NOT_AVAILABLE: &str = "project: not available on this instance";
+/// The one error a user not in `ADMIN` gets for any other project, whatever the path holds (SEC-DEV-82).
+pub const ADMIN_ONLY: &str =
+    "project: another project on this host is read for an admin; name a projectId an admin allowed";
 
 /// The project a request names in `project` (an absolute directory on this machine, [`super::requested_dir`]), read
 /// against the server `own`: `None` when the text is empty or names the server's own runtime, which its database
@@ -524,7 +527,10 @@ pub const NOT_AVAILABLE: &str = "project: not available on this instance";
 /// Moqui checkout is read with the server's own framework conf. With `model`, see [`open`].
 ///
 /// A production instance (`instance@purpose` production) reads no other project: any but its own runtime (or the
-/// clone it is in) is [`NOT_AVAILABLE`], before anything of the path is looked at but its canonical form.
+/// clone it is in) is [`NOT_AVAILABLE`], before anything of the path is looked at but its canonical form. Elsewhere
+/// another project is read only for a user in `ADMIN`, as a dev-aide root outside the runtime is set only by one
+/// (SEC-DEV-04): for anyone else it is [`ADMIN_ONLY`], answered the same way (SEC-DEV-82). An allowed
+/// `DevArtifactProject` ([`allowed`]) is the way for the others.
 ///
 /// # Errors
 ///
@@ -539,10 +545,11 @@ pub fn requested(
         return Ok(None);
     }
     let own_runtime = std::fs::canonicalize(own.runtime_dir()).unwrap_or_else(|_| own.runtime_dir().to_path_buf());
-    if moqui_core::web::is_production() {
+    let production = moqui_core::web::is_production();
+    if production || !moqui_core::user::is_in_group("ADMIN").unwrap_or(false) {
         return match super::requested_dir(project) {
             Ok(dir) if dir == own_runtime || dir.join("runtime") == own_runtime => Ok(None),
-            _ => Err(Error::new(NOT_AVAILABLE)),
+            _ => Err(Error::new(if production { NOT_AVAILABLE } else { ADMIN_ONLY })),
         };
     }
     let dir = super::requested_dir(project)?;

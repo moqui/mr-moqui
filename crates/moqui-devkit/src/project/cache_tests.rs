@@ -77,6 +77,28 @@ fn a_production_instance_answers_only_its_own_runtime() {
     clean(&root);
 }
 
+/// Another project on this host is read only for an admin (SEC-DEV-82): anyone else gets one answer whatever the path
+/// holds, and nothing of it is read; the server's own runtime is answered from its rows.
+#[test]
+fn another_project_is_read_only_for_an_admin() {
+    let root = mr_clone("not-admin");
+    let ctx = ExecutionContextFactory::test_context();
+    let own = Arc::clone(ctx.factory());
+    let _entered = ctx.enter();
+    let project = requested(&root.display().to_string(), false, &own, false)
+        .err()
+        .unwrap();
+    let missing = requested("/no/such/moqui/project", false, &own, false).err().unwrap();
+    assert_eq!(project.to_string(), ADMIN_ONLY);
+    assert_eq!(missing.to_string(), ADMIN_ONLY);
+    assert!(!kept().contains(&root), "nothing of it was read");
+    let own_runtime = std::fs::canonicalize(own.runtime_dir()).unwrap();
+    assert!(requested(&own_runtime.display().to_string(), false, &own, false)
+        .unwrap()
+        .is_none());
+    clean(&root);
+}
+
 /// A project that does not boot again (a conf saved half-edited) still answers from the index read before, and boots
 /// again once the conf is fixed.
 #[test]
