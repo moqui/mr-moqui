@@ -467,6 +467,8 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     }
     facade.with_slot(ClusterLink::default, |link| link.0 = Arc::downgrade(&state));
     install_heartbeat(factory);
+    // what needs this member's id: the vault's lease registry (moqui-vault-server)
+    crate::extension::cluster_started(factory);
     Ok(())
 }
 

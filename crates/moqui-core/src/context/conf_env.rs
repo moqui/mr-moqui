@@ -120,12 +120,13 @@ pub fn candidates(env_file: Option<&Path>) -> Vec<(String, String, Source)> {
             .unwrap_or_default(),
         None => env::dotenv_entries(),
     };
-    // once the runtime has its seal, a secret is not taken from .env, which the server's own user can write
+    // once the runtime has its seal (not the dev seal), a secret is not taken from .env, which the server's own user
+    // can write
     // (plans/Sealed-Secrets.md S4; the boot's first merge, before the gate, is put right by seal::secrets::prepare_boot)
     let sealed = env_file
         .and_then(Path::parent)
         .and_then(crate::seal::keeper_of)
-        .is_some_and(|keeper| keeper.is_unsealed() && !keeper.is_ephemeral());
+        .is_some_and(|keeper| keeper.refuses_dotenv_secrets());
     let mut dotenv: Vec<(String, String)> = entries
         .into_iter()
         .filter(|(name, value)| ours(name, value) && !(sealed && env_name_secret(name)))

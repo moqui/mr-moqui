@@ -364,8 +364,11 @@ impl ExecutionContextFactory {
             // the secrets go to seal.json and SecretValue, never runtime/.env (plans/Sealed-Secrets.md S4)
             crate::seal::secrets::prepare_boot(&conf_node, &overrides, keeper.as_deref())?;
             let cookie_key = super::conf_env::conf_attribute(&conf_node, crate::user::session::COOKIE_KEY);
+            // an .env value the seal's rule ignored (secrets::prepare_boot) is back at CHANGEME, for the store
+            let dotenv_ignored = keeper.as_deref().is_some_and(crate::seal::Keeper::refuses_dotenv_secrets);
             let overridden = overrides.iter().any(|item| {
                 item.applied()
+                    && !(dotenv_ignored && item.source == super::conf_env::Source::DotEnv)
                     && item.selector.as_deref().is_some_and(|selector| {
                         crate::seal::secrets::canonical(selector) == crate::user::session::COOKIE_KEY
                     })

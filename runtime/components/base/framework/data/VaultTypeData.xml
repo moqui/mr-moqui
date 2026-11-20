@@ -77,10 +77,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="VeMachineUsed" enumTypeId="VaultEventType" description="Machine access used" sequenceNum="23"/>
     <moqui.basic.Enumeration enumId="VeMachineRevoked" enumTypeId="VaultEventType" description="Machine access revoked" sequenceNum="24"/>
     <moqui.basic.Enumeration enumId="VeReveal" enumTypeId="VaultEventType" description="Value revealed" sequenceNum="25"/>
-    <moqui.basic.Enumeration enumId="VeRecoveryKeyMade" enumTypeId="VaultEventType" description="Recovery key made" sequenceNum="26"/>
-    <moqui.basic.Enumeration enumId="VeRecoveryStarted" enumTypeId="VaultEventType" description="Recovery started" sequenceNum="27"/>
-    <moqui.basic.Enumeration enumId="VeRecoveryShared" enumTypeId="VaultEventType" description="Recovery share sealed to a recovery" sequenceNum="28"/>
-    <moqui.basic.Enumeration enumId="VeRecoveryCancelled" enumTypeId="VaultEventType" description="Recovery cancelled" sequenceNum="29"/>
+    <moqui.basic.Enumeration enumId="VeDepositKeySet" enumTypeId="VaultEventType" description="Deposit key set" sequenceNum="26"/>
+    <moqui.basic.Enumeration enumId="VeRecoveryKeyMade" enumTypeId="VaultEventType" description="Recovery key made" sequenceNum="27"/>
+    <moqui.basic.Enumeration enumId="VeRecoveryStarted" enumTypeId="VaultEventType" description="Recovery started" sequenceNum="28"/>
+    <moqui.basic.Enumeration enumId="VeRecoveryShared" enumTypeId="VaultEventType" description="Recovery share sealed to a recovery" sequenceNum="29"/>
+    <moqui.basic.Enumeration enumId="VeRecoveryCancelled" enumTypeId="VaultEventType" description="Recovery cancelled" sequenceNum="30"/>
 
     <moqui.basic.StatusType statusTypeId="VaultRecoverySession" description="Vault recovery"/>
     <moqui.basic.StatusItem statusId="VrsOpen" statusTypeId="VaultRecoverySession" description="Open" sequenceNum="1"/>
@@ -98,6 +99,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.StatusItem statusId="VlsOpen" statusTypeId="VaultLease" description="Open" sequenceNum="2"/>
     <moqui.basic.StatusItem statusId="VlsEnded" statusTypeId="VaultLease" description="Ended" sequenceNum="3"/>
     <moqui.basic.StatusItem statusId="VlsRevoked" statusTypeId="VaultLease" description="Revoked" sequenceNum="4"/>
+
+    <!-- A lease waiting for an approver (plans/Vault-Instances.md §3.7): kept in the approvers' notifications, its link the
+        lease dialog (System › Vaults › Lease) -->
+    <moqui.security.user.NotificationTopic topic="VaultLeaseWaiting" inboxEnumId="NinNotifications" description="Vault lease waiting for approval"
+            typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" titleTemplate="${title || 'A vault lease waits for your approval'}"/>
 
     <!-- The framework's item types (§3.4); the body is {"v": 1, "type": <vaultItemTypeId>, "name", "fields", "notes",
         "tags", "uris"} -->

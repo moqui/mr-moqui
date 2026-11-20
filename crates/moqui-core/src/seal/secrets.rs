@@ -766,10 +766,11 @@ pub fn put_named(name: &str, value: &str) -> Result<(), Error> {
 
 /// The boot's part (in place of writing `.env`): the cluster pair is set together or not at all, and the crypt pass,
 /// left at `CHANGEME` by the conf and the environment, is made into `seal.json` at the first start. A conf secret that
-/// `runtime/.env` sets is ignored once this runtime has a seal, as the seal's own settings are: the server's user can
-/// write `.env`, so it would choose a key; it is put back to `CHANGEME` in `conf`, so the store answers it, and named
-/// in an error. Before the seal (a boot with no seal) it is still read, and named in a warning; that boot makes no
-/// crypt pass. Nothing is written to `.env`.
+/// `runtime/.env` sets is ignored once this runtime has a seal other than the `dev` seal, as the seal's own settings
+/// are: the server's user can write `.env`, so it would choose a key; it is put back to `CHANGEME` in `conf`, so the
+/// store answers it, and named in an error. Before the seal (a boot with no seal), and under the `dev` seal (a dev
+/// checkout's, a test run's), it is still read, and named in a warning; a boot with no seal makes no crypt pass.
+/// Nothing is written to `.env`.
 ///
 /// # Errors
 ///
@@ -780,7 +781,7 @@ pub fn prepare_boot(
     keeper: Option<&Keeper>,
 ) -> Result<(), Error> {
     use crate::context::conf_env::{conf_attribute, Source};
-    let sealed = keeper.is_some_and(|keeper| !keeper.is_ephemeral());
+    let sealed = keeper.is_some_and(Keeper::refuses_dotenv_secrets);
     for item in overrides {
         if !(item.secret && item.applied() && item.source == Source::DotEnv) {
             continue;

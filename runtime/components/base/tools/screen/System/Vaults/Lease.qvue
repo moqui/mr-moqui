@@ -1,0 +1,145 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The lease dialog (Lease.xml): what the signed lease names, from the statement the server signed and the vault worker
+    checks (never a column), and its approval in the browser. The worker (js/vault/VaultClient.js, loaded with its
+    integrity hash, which loads its worker and the wasm module with theirs) opens the personal key with the key
+    passphrase, checks the lease key against this user's checks (or makes the check once the fingerprint is compared),
+    opens the vault key through the member-list chain, and makes the approval; the passphrase and every key stay in the
+    worker, which is locked when the dialog closes. Brand color names and Quasar classes only. -->
+<template><div class="m-vault-lease q-pa-sm" style="max-width:720px">
+    <div v-if="error" class="text-negative q-mb-md">{{error}}</div>
+    <div v-if="!data && !error" class="m-muted">{{t('Loading the lease…')}}</div>
+    <template v-if="data">
+        <div class="text-h6">{{t('Approve a lease of')}} {{data.vaultName}}</div>
+        <div class="text-caption m-muted q-mb-md">{{t('Read from the lease the server signed. Your client checks each name: an item that is not the one named does not unwrap.')}}</div>
+        <q-list bordered separator class="q-mb-md">
+            <q-item><q-item-section><q-item-label caption>{{t('Operation')}}</q-item-label><q-item-label>{{data.lease.operation}}</q-item-label></q-item-section></q-item>
+            <q-item v-for="item in data.lease.items" :key="item.item_id">
+                <q-item-section avatar><q-icon name="sym_o_key"></q-icon></q-item-section>
+                <q-item-section><q-item-label>{{item.name}}</q-item-label><q-item-label caption>{{item.binding}} · {{item.item_type}}</q-item-label></q-item-section>
+            </q-item>
+            <q-item><q-item-section><q-item-label caption>{{t('Runs on')}}</q-item-label><q-item-label>{{data.lease.cluster_member}} · {{untilText}}</q-item-label></q-item-section></q-item>
+        </q-list>
+        <div v-if="data.statusId !== 'VlsRequested'" class="text-weight-medium">{{statusText}}</div>
+        <template v-else>
+            <div v-if="askedByMe" class="text-warning q-mb-md">{{t('You asked for this lease: another member with the approve role approves it. You can approve it only when you are the vault\'s one approver.')}}</div>
+            <div v-if="!leaseKeyChecked" class="q-mb-md">
+                <div class="text-weight-medium">{{t('Check the server\'s lease key once')}}</div>
+                <div class="text-caption m-muted">{{t('Compare these words with the server\'s operator by another channel. Your client refuses a lease signed by a key you have not checked.')}}</div>
+                <div class="text-subtitle1 q-my-sm" style="font-family:monospace">{{data.leaseKeyFingerprint}}</div>
+                <q-checkbox v-model="fingerprintMatches" :label="t('The operator read me the same words')"></q-checkbox>
+            </div>
+            <q-input v-model="passphrase" type="password" outlined dense autocomplete="off" :label="t('Your key passphrase')" class="q-mb-sm" @keyup.enter="approve"></q-input>
+            <q-btn unelevated no-caps color="primary" icon="sym_o_verified" :label="t('Approve')" :loading="busy"
+                    :disable="busy || !passphrase || (!leaseKeyChecked && !fingerprintMatches)" @click="approve"></q-btn>
+        </template>
+    </template>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+
+module.exports = {
+    name: 'VaultLeaseDialog',
+    inject: { mScreen: { default: null } },
+    data() { return { data: null, error: null, passphrase: '', fingerprintMatches: false, busy: false, client: null }; },
+    computed: {
+        base() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/System/Vaults/Lease'; },
+        leaseId() { return (this.$root.currentParameters || {}).leaseId || ''; },
+        askedByMe() {
+            return !!this.data.requestedByUserId && !!this.data.personal && this.data.requestedByUserId === this.data.personal.userId;
+        },
+        leaseKeyChecked() {
+            const key = this.data && this.data.leaseKey;
+            return !!key && (this.data.keyChecks || []).some((check) => check.checked_key_id === 'lease-key' && check.checked_verify === key);
+        },
+        untilText() {
+            const minutes = Math.max(0, Math.round((Number(this.data.lease.expires_at) - Date.now()) / 60000));
+            return t('for at most') + ' ' + minutes + ' ' + t('minutes');
+        },
+        statusText() {
+            const names = { VlsOpen: t('Approved: the operation is using it.'), VlsEnded: t('This lease has ended.'), VlsRevoked: t('This lease was revoked.') };
+            return names[this.data.statusId] || this.data.statusId;
+        }
+    },
+    methods: {
+        t,
+        url(name) { return this.base + '/' + name; },
+        post(name, params) {
+            return moqui.request(this.url(name), { method: 'POST', params }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) throw new Error(json.errors);
+                return json;
+            });
+        },
+        load() {
+            return moqui.request(this.url('leaseData'), { params: { leaseId: this.leaseId } }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { this.error = json.errors; return; }
+                this.data = json;
+            }, (err) => { this.error = String(err && err.message || err); });
+        },
+        // VaultClient.js with its integrity hash; it loads the worker and the module with theirs
+        startClient() {
+            if (this.client) return Promise.resolve(this.client);
+            const integrity = this.data.integrity;
+            const ready = window.MoquiVaultClient ? Promise.resolve() : new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = '/js/vault/VaultClient.js';
+                script.integrity = integrity.client;
+                script.crossOrigin = 'anonymous';
+                script.onload = resolve;
+                script.onerror = () => reject(new Error(t('The vault module could not be loaded')));
+                document.head.appendChild(script);
+            });
+            return ready.then(() => {
+                this.client = new window.MoquiVaultClient({ workerIntegrity: integrity.worker, wasmIntegrity: integrity.wasm, idleMinutes: 5 });
+                return this.client.start().then(() => this.client);
+            });
+        },
+        approve() {
+            if (this.busy) return;
+            this.busy = true;
+            this.error = null;
+            let client = null;
+            let checks = this.data.keyChecks || [];
+            this.startClient().then((started) => {
+                client = started;
+                return this.post('wrappedKey', {});
+            }).then((wrapped) => client.call('personal_open', { personal_key_id: wrapped.personalKeyId, user_id: wrapped.userId,
+                public: wrapped.public, passphrase_wrap: wrapped.passphraseWrap, passphrase: this.passphrase })).then(() => {
+                this.passphrase = '';
+                if (this.leaseKeyChecked) return null;
+                return client.call('key_check_make', { lease_key: this.data.leaseKey, fingerprint: this.data.leaseKeyFingerprint, checked_at: Date.now() })
+                    .then((check) => this.post('storeCheck', { check: JSON.stringify(check) }))
+                    .then((stored) => { checks = stored.keyChecks || checks; });
+            }).then(() => {
+                const version = this.data.lease.key_version;
+                const wrap = (this.data.wraps || []).find((one) => Number(one.key_version) === Number(version));
+                if (!wrap) throw new Error(t('You hold no wrap of this vault\'s key version'));
+                return client.call('vault_key_open', { entries: this.data.entries, key_checks: checks, wrap });
+            }).then(() => client.call('lease_approve', { lease: this.data.lease, lease_key: this.data.leaseKey, key_checks: checks,
+                wrapped_item_keys: this.data.wrappedItemKeys, now: Date.now() }))
+            .then((approval) => this.post('approve', { leaseId: this.leaseId, approval: JSON.stringify(approval) }))
+            .then((answer) => {
+                this.data = Object.assign({}, this.data, { statusId: answer.statusId });
+                moqui.notifyMessages([{ type: 'success', message: t('Lease approved') }], null);
+            }).catch((err) => { this.error = String(err && err.message || err); })
+            .then(() => { this.busy = false; this.passphrase = ''; if (client) client.lock(); });
+        }
+    },
+    mounted() { this.load(); },
+    beforeUnmount() { if (this.client) this.client.terminate(); }
+};
+</script>

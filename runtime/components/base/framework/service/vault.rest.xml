@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     checks its caller; VaultTypeData.xml grants the path to every signed-in user. -->
 <resource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
         name="vault" displayName="Vault REST API" version="${moqui_version}"
-        description="Vaults: personal keys, key checks, vaults, items, members and deliveries, as ciphertext and signed records">
+        description="Vaults: personal keys, key checks, vaults, items, members, deliveries, deposit keys, leases and machine access, as ciphertext and signed records">
     <resource name="personalKey">
         <method type="get"><service name="org.moqui.security.VaultServices.get#PersonalKey"/></method>
         <method type="post"><service name="org.moqui.security.VaultServices.setup#PersonalKey"/></method>
@@ -46,13 +46,31 @@ along with this software (see the LICENSE.md file). If not, see
             <resource name="removeMember"><method type="post"><service name="org.moqui.security.VaultServices.remove#VaultMember"/></method></resource>
             <resource name="ack"><method type="post"><service name="org.moqui.security.VaultServices.ack#VaultKeyVersion"/></method></resource>
             <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>
+            <resource name="depositKey"><method type="post"><service name="org.moqui.security.VaultServices.set#VaultDepositKey"/></method></resource>
+            <resource name="machineAccess"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultMachineAccess"/></method></resource>
         </id>
+    </resource>
+    <resource name="leases">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#VaultLeases"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.ask#VaultLease"/></method>
+        <id name="leaseId">
+            <method type="get"><service name="org.moqui.security.VaultServices.get#VaultLease"/></method>
+            <resource name="approve"><method type="post"><service name="org.moqui.security.VaultServices.approve#VaultLease"/></method></resource>
+            <resource name="revoke"><method type="post"><service name="org.moqui.security.VaultServices.revoke#VaultLease"/></method></resource>
+        </id>
+    </resource>
+    <resource name="leaseKey"><method type="get"><service name="org.moqui.security.VaultServices.get#VaultLeaseKey"/></method></resource>
+    <resource name="machineAccess">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#VaultMachineAccess"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.ask#VaultMachineAccess"/></method>
+        <resource name="revoke"><method type="post"><service name="org.moqui.security.VaultServices.revoke#VaultMachineAccess"/></method></resource>
     </resource>
     <resource name="items">
         <id name="vaultItemId">
             <method type="put"><service name="org.moqui.security.VaultServices.update#VaultItem"/></method>
             <method type="delete"><service name="org.moqui.security.VaultServices.delete#VaultItem"/></method>
             <resource name="history"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultItemHistory"/></method></resource>
+            <resource name="reveal"><method type="post"><service name="org.moqui.security.VaultServices.reveal#VaultItem"/></method></resource>
         </id>
     </resource>
     <resource name="deliveries">

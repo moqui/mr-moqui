@@ -1,10 +1,11 @@
 # Vaults
 
 A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/Vault-Instances.md) has
-the design). This guide grows with each phase; so far it covers the crypto every client and the server share, and what
+the design). This guide grows with each phase; so far it covers the crypto every client and the server share, what
 the server keeps and serves (V1): personal keys, key checks, vaults of both locks, items, members, deliveries and
-events, with the `moqui vault` command, and organization recovery split k of n (V4). Operational vaults' leases and
-machine access (V2) and Commons › Vault (V3) are later phases.
+events, with the `moqui vault` command; operational vaults (V2): the deposit key, leases, machine access and reveal,
+with System › Vaults and the lease dialog; and organization recovery split k of n (V4). Commons › Vault (V3) is a
+later phase.
 
 ## What V1 offers
 
@@ -54,6 +55,123 @@ trust that is not on this server, or on paper with your important papers; keep t
 only copy inside this vault or anywhere on this server. A generated key is long and random, so it cannot be guessed:
 download or print it, then keep it the same way. Commons › Vault (V3) walks through these steps when the vault is made.
 
+## Operational vaults
+
+An operational vault holds the secrets of deployed instances: database passwords, registry logins, TLS keys. Its
+members are managers, approvers and revealers (§3.9), each with their own wrap of the vault key, and it keeps
+recovery on or at least two members. Making one needs `VAULT_ADMIN`. In normal use no member sees a value and no value
+goes to a page: the server uses an item for one operation under a lease a member approves, then forgets it.
+
+### The deposit key
+
+The server makes some credentials itself, while provisioning, and must put them in the vault without being able to
+read the vault. A manager makes the vault's **deposit key** in their client: a key pair whose public half is stored
+on the vault in the clear, signed by them, and whose private half is wrapped by the vault key
+(`set#VaultDepositKey`). The server deposits a new item by wrapping its item key to the public half (`VwDeposit`),
+after checking that signature against the vault's signed member list: a deposit key with no manager's signature, or of
+an earlier key version, is refused when it is stored and at each deposit. The server can write the item and cannot
+read it back. A removal's rotation makes and stores the new version's deposit key. A member's client checks the
+deposit key's signature on each open (`get#Vault` gives it), and takes a deposited item in by unwrapping its key with
+the deposit key's private half and wrapping it by the vault key (`deposit_adopt`); a lease cannot name an item until
+then. A removal never waits on one: its rotation takes every deposited item in on the way (`vault_rotate` with the old
+deposit key's wrapped private half).
+
+### Leases
+
+A lease is how the server uses operational items (§3.7):
+
+1. An operation asks for a lease of the items it needs, by binding (`AppInstance:demo:dbPassword`), with its time
+   limit: at most `vault@lease-max-hours` (4). The server makes an ephemeral X25519 key pair for it, keeps the
+   private half in the memory of the cluster member that runs the operation, and signs the lease with its **lease
+   key**: the lease id, the vault and key version, each item's id, type, binding and name, the operation, the cluster
+   member, the time limit and the lease's public key. The vault's approvers get a notification (topic
+   `VaultLeaseWaiting`).
+2. A member with the approve role opens the **lease dialog** (System › Vaults › Lease, from the notification, a deploy's
+   page or an instance's page), which shows what the signed lease names, never a column. Their client checks the
+   lease's signature against a lease key they checked, opens their personal key with the key passphrase, opens the
+   vault key through the member-list chain, unwraps each named item key under the type, binding and name the lease
+   gives (so an item that is not the one named does not unwrap), seals them to the lease's key and signs the approval.
+   The server needs the approve role and a sign-in in the last five minutes (`approve#VaultLease`), checks its own
+   signature on the lease and the approver's, and stores the approval with its event in one transaction, on any
+   cluster member; the member that holds the lease is woken by the `vault-lease` cluster topic and also reads the row
+   every two seconds. Before it opens the sealed keys, that member checks again that the approver's key is their
+   active one and that they hold the approve role at the lease's key version. Two people for a lease: its requester
+   does not approve it while another member holds the approve role (the dialog says so); a vault with one approver
+   lets that approver approve their own.
+3. The operation reads a value by binding: in Rust through the lease registry, in a kind's script service run under
+   the lease with `ec.vault.leased(binding)` ([JS-Core-API](../dev/JS-Core-API.md#ecvault)). The member opens the
+   sealed item keys with the lease's private key, checks that the item row is the one the lease names, writes a
+   `VeLeaseUsed` event in a transaction of its own, checks the lease is still held, and only then decrypts and
+   returns the value. When that event cannot be written, nothing is returned. The lease is the thread's while the
+   operation runs: every script on that thread under it (a rule a service call fires, a template it renders, another
+   service it calls synchronously) can read its items by binding, not only the service the operation called. That is a
+   limit: an operation runs code it trusts under its lease.
+4. The lease ends when the operation ends, at its time limit (a timer drops it within 30 seconds, read again or
+   not), on Revoke (`revoke#VaultLease`, by a manager, an approver, its requester or `VAULT_ADMIN`), and when the
+   server stops or seals: its keys are dropped, which zeroes them, and nothing stored can open the sealed keys on its
+   row. A restart ends the member's leases: a use after it is refused with "lease ended; ask again", and once the
+   cluster has started and named the member, it marks the leases that member had asked for ended (only its own: a
+   lease names its cluster member, and another member's leases are that member's).
+
+A lease's operation, and an operational item's binding, name and type, hold no control character (a newline, an
+escape): the server refuses one, and `moqui vault approve` and the shell show any it finds escaped, so a name cannot
+forge a line of the approval prompt.
+
+A leased value stays in its operation. It is never a parameter of a queued or scheduled call: an async call, a call
+registered for the end of a transaction, a job run, a call queued when the service queue is full and a call's tx
+rules kept in the outbox (their parameters and results) each refuse a value, or a map key, that holds a secret the
+lease handed to the operation on that thread. The secrets it looks for are the item's masked fields, by its type
+(`VaultItemTypeField.masked`), or, for a type that registers no fields, the fields named like `password`,
+`passphrase`, `secret`, `key`, `token` or `pin`, of at least 8 characters: a host, a user name or a short PIN would
+match ordinary text. Another thread's operation keeps its own out. A leased value is never written to a log or an
+event.
+
+**The lease key** is an Ed25519 key of the server. Its seed is the generated secret `vault@lease-key`, which the
+seal's store keeps as a `SecretValue` (Sealed-Secrets S4, made at its first read); with S1 it becomes the keyring's
+`vault-lease` purpose key. Its fingerprint changes once at the upgrade to S4, from a seed that was in `runtime/.env`
+to one in the store, and at every boot of an ephemeral runtime whose store does not outlive it: approvers check the
+new key once. Each approver checks its fingerprint once (System › Vaults shows it, as does
+`get#VaultLeaseKey`), comparing it with the server's operator by another channel, and their client stores the check
+as a `VaultKeyCheck` row. A client refuses a lease that is not signed, or signed by a key its user has not checked, so
+a database writer cannot put its own key or items on a lease. A new seed is a new key, which every approver checks
+again.
+
+### Machine access
+
+An environment that needs unattended work (a demo that deploys after every green merge, a runner host whose key the
+engine uses for queued jobs) can hold **machine access** to named items (§3.8). A holder of `VAULT_ADMIN` asks for it
+(`ask#VaultMachineAccess`), which makes a lease for the grant; an approver approves it as any lease; then the server
+seals each item key under its **machine key** with the vault crate's AES-256-GCM and the environment, vault and item
+ids as associated data, so a row moved to another environment or item does not open. Until Sealed-Secrets S1 the
+machine key is HKDF of `entity-facade@crypt-pass` with the label `vault-machine`, read through the factory's secret
+handle as the entity facade reads it (since S4 from `seal.json` when the conf leaves it at `CHANGEME`): whoever holds
+that pass and the database opens these items, so they are as strong as the server's own keys, and the vault's page
+says so. After `operator rotate` of the pass, a row sealed under the one before (`entity-facade@crypt-pass-old`)
+still opens and is sealed again under the new one at its next use. The column is not an entity `encrypt="true"`
+field, so no find, cache, export or sync decrypts it. An operation of the environment then uses a lease approved by
+"machine", recorded and used as any other; the environment is the operation's own, which the provision, deploy and
+rotation operations (M1, M3, M5) pass from the `InstanceEnvironment` of the instance they act on, never one a request
+names. When an item is written with a new item key (a client's `item_seal` answers `new_item_key`, and the write says
+`newItemKey`), its machine access goes stale: a lease under it is refused with `machineAccessStale` and the vault's
+page shows it, until machine access is given again. Revoking machine access (`revoke#VaultMachineAccess`) deletes the
+sealed keys, ends the environment's machine leases open on the vault, and names the items to rotate at their source,
+since the server could have kept them.
+
+### Reveal
+
+A member with the reveal role can see one value: `reveal#VaultItem` sends that item's wrapped key and ciphertext to
+their client, which opens it with the vault key, and writes a `VeReveal` event first. No other call sends an
+operational body to a client.
+
+### System › Vaults
+
+The operational vaults the user is a member of; a vault's members and roles, its items (names, bindings, types,
+revisions and the days since each changed, never a value), its leases (waiting, open, ended) with Revoke, its machine
+access with Revoke, and its events; the leases waiting for the user's approval; and the lease key's fingerprint. The
+vault screens add `worker-src blob:` and `'wasm-unsafe-eval'` to their Content-Security-Policy for the vault worker;
+no other screen has them. The SSH admin shell lists leases (`leases [vaultId]`) and revokes one (`lease revoke
+<leaseId>`) but never approves: the key passphrase would be typed on the server.
+
 ## Organization recovery
 
 A shared-key vault can have the organization's **recovery key** on, so that a member who loses both their key
@@ -102,9 +220,10 @@ The tables are `moqui.security.vault` (`framework/entity/VaultEntities.xml`): `V
 member-list chain), `VaultMember` (a member's wrap of one key version, with their role), `VaultItem` and
 `VaultItemHistory`, `VaultPersonalKey`, `VaultKeyCheck`, `VaultDelivery`, `VaultEvent`, the item types
 (`VaultItemType`, `VaultItemTypeField`, seeded in `framework/data/VaultTypeData.xml`: login, note, card, identity,
-contact, SSH key, API key, database credential, TLS key pair, registry login, recovery code, recovery share), and
-recovery's `VaultRecoveryKey`, `VaultRecoveryHolder`, `VaultRecoverySession` and `VaultRecoveryDelivery`, and for
-later phases `VaultLease` and `VaultMachineAccess`. No column is an entity `encrypt="true"` field: they hold ciphertext and signed records already.
+contact, SSH key, API key, database credential, TLS key pair, registry login, recovery code, recovery share),
+`VaultLease` and `VaultMachineAccess` (V2), and recovery's `VaultRecoveryKey`, `VaultRecoveryHolder`,
+`VaultRecoverySession` and `VaultRecoveryDelivery` (V4). No column is an entity `encrypt="true"` field: they hold
+ciphertext and signed records already.
 
 The services are `org.moqui.security.VaultServices` (`crates/moqui-vault-server`), also at `/rest/s1/vault`
 (`framework/service/vault.rest.xml`). Records cross in the vault crate's JSON shapes, so a client hands an answer to
@@ -131,6 +250,8 @@ second factor and keeps nothing of the sign-in.
 | `key check <username>` | Shows a user's fingerprint to compare with them; on yes, stores your signed check |
 | `list` | Your vaults |
 | `open <vaultId> [--item ID]` | Opens a vault through its member list and lists its items, or prints one |
+| `leases [--vault ID]` | The leases waiting for your approval and those you asked for, or one vault's |
+| `approve <leaseId>` | Shows what the signed lease names, has you compare the lease key's fingerprint the first time, and on yes approves it here |
 | `recovery list` | The organization's recovery keys, and the recoveries you may seal a share to |
 | `recovery make --k K [--group G] <username>...` | Makes a recovery key split K of these holders (each key checked first) |
 | `recovery on <vaultId> [--key ID]` | As a manager: turns recovery on for a vault (the recovery key's maker checked first) |
@@ -244,10 +365,18 @@ the vault crate's own session: no row of a personal vault holds an item's name, 
 non-member gets no wrap and no body; a removed member has no wrap and a write at the old key version is refused; a
 key version or wrap no manager signed is refused by the server and by a member's client; nothing is wrapped to a
 changed personal key before it is checked again; a delivery goes only to its recipient; a wrapped personal key needs
-a strong, recent sign-in; each change writes its event; k recovery holders recover a vault to a member's new key and
-every member is told, k − 1 cannot, a single-secret vault never gets a recovery wrap, a holder's step without
-`VAULT_RECOVERY` or a recent sign-in is refused, and an operational vault cannot drop to one member with recovery off.
-`moqui test framework --spec VaultServices` checks the
+a strong, recent sign-in; each change writes its event; and V2's: a lease opens only the items it names and nothing
+it held opens after it ends; an approval without the approve role or a recent sign-in is refused; a lease whose event
+cannot be written does not open; a lease approved through one cluster member runs on the member that asked; machine
+access opens only its items for its environment, and its sealed keys moved to another environment's row do not open;
+a client refuses a lease whose public key or items changed after it was signed, and one signed by a lease key its user
+has not checked; a binding pointed at another item fails at the unwrap; a deposit key with no manager's signature is
+refused; a leased value is not in a job's stored parameters; a restart ends the member's leases; a reveal goes only to
+the reveal role. `moqui test-client framework --serve --spec VaultLease` approves a lease end to end over REST with the
+test client's `vault` member. Recovery's: k recovery holders recover a vault to a member's new key and every member
+is told, k − 1 cannot, a single-secret vault never gets a recovery wrap, a holder's step without `VAULT_RECOVERY` or a
+recent sign-in is refused, and an operational vault cannot drop to one member with recovery off. `moqui test
+framework --spec VaultServices` checks the
 services' access as a server spec, and `moqui test-client framework --serve --spec VaultShared` the same rules over
 REST with the test client's `vault` member ([JS-Test-Client](../dev/JS-Test-Client.md)), which is the vault crate's
 session run natively; `--spec VaultRecovery` runs a recovery end to end the same way.

@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The operational vaults the user is a member of (list#Vaults), the leases waiting for their approval and those they
+    asked for (list#VaultLeases, each opening the lease dialog), and the server's lease key fingerprint, which a member
+    compares once by another channel before approving (get#VaultLeaseKey). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Operational vaults" default-menu-index="1">
+
+    <transition name="vaultDetail"><default-response url="../VaultDetail"/></transition>
+    <transition name="lease"><default-response url="../Lease"/></transition>
+
+    <actions>
+        <script><![CDATA[
+            const call = (name, parameters) => {
+                const out = ec.service.sync().name('org.moqui.security.VaultServices.' + name).requireNewTransaction(true).parameters(parameters || {}).call()
+                if (ec.message.hasError()) { ec.message.clearErrors(); return null }
+                return out
+            }
+            const vaults = call('list#Vaults')
+            vaultList = Array.from(vaults?.vaultList || []).filter(vault => vault.vaultKindEnumId === 'VkOperational')
+            const leases = call('list#VaultLeases')
+            leaseList = Array.from(leases?.leaseList || []).map(lease => Object.assign({}, lease, {
+                expiresText: lease.expiresAt ? ec.l10n.format(Number(lease.expiresAt), 'yyyy-MM-dd HH:mm') : ''}))
+            const leaseKey = call('get#VaultLeaseKey')
+            leaseKeyFingerprint = leaseKey?.fingerprint || ''
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="Operational vaults" type="h5"/>
+        <label text="Each holds the secrets of deployed instances. The server uses an item only under a lease a member approves, for one operation, and forgets it after; it never sends an operational value to a page."
+                type="p" style="text-caption m-muted"/>
+        <form-list name="VaultList" list="vaultList" skip-form="true">
+            <field name="vaultName"><default-field title="Vault"><link url="vaultDetail" text="${vaultName}" link-type="anchor" parameter-map="{vaultId:vaultId}"/></default-field></field>
+            <field name="roleEnumId"><default-field title="Your role"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="itemCount"><default-field title="Items"><display/></default-field></field>
+            <field name="keyVersion"><default-field title="Key version"><display/></default-field></field>
+            <field name="recoveryOn"><default-field title="Recovery"><display/></default-field></field>
+        </form-list>
+
+        <label text="Leases" type="h6" style="q-mt-md"/>
+        <label text="Waiting for your approval, and the ones you asked for. Open one to see what its signed lease names and approve it."
+                type="p" style="text-caption m-muted"/>
+        <form-list name="LeaseList" list="leaseList" skip-form="true">
+            <field name="operation"><default-field title="Operation"><link url="lease" text="${operation}" link-type="anchor" parameter-map="{leaseId:leaseId}"/></default-field></field>
+            <field name="bindings"><default-field title="Items"><display/></default-field></field>
+            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="vaultId"><default-field title="Vault"><display/></default-field></field>
+            <field name="expiresText"><default-field title="Until"><display/></default-field></field>
+        </form-list>
+
+        <label text="Lease key" type="h6" style="q-mt-md"/>
+        <label text="The server signs each lease with this key. Compare its fingerprint once with the server's operator, by another channel, before you approve a lease: your client refuses a lease signed by a key you have not checked."
+                type="p" style="text-caption m-muted"/>
+        <label text="${leaseKeyFingerprint || 'The lease key is not set yet.'}" type="code"/>
+    </widgets>
+</screen>

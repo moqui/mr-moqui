@@ -29,7 +29,14 @@
 //! - [`members`]: the member-list chain, add, remove with rotation in one compare-and-swap, and the ack of a new
 //!   key version (§3.9, decisions (a) and (b) of §9).
 //! - [`deliveries`]: sealed values to one recipient (§3.3).
-//! - [`events`]: the `VaultEvent` rows of §3.13, written in the transaction of their change.
+//! - [`deposit`]: an operational vault's signed deposit key, and the server's deposit of a new item with no lease
+//!   (§3.2).
+//! - [`lease`]: leases (§3.7): the lease key, the registry of the leases this cluster member holds, ask, approve,
+//!   use, end and revoke, and the thread's lease a script reads a value from (`ec.vault.leased`).
+//! - [`machine`]: machine access per environment (§3.8).
+//! - [`reveal`]: one operational value to a member with the reveal role (§3.7).
+//! - [`events`]: the `VaultEvent` rows of §3.13, written in the transaction of their change; a lease's use in its own,
+//!   before the value is returned.
 //! - [`recovery`]: the organization's recovery keys split k of n, recovery on a vault, and recoveries (§3.10).
 
 use std::collections::BTreeMap;
@@ -38,18 +45,31 @@ use moqui_core::extension::RustServiceFn;
 
 mod common;
 pub mod deliveries;
+pub mod deposit;
 pub mod events;
 pub mod items;
+pub mod lease;
+pub mod machine;
 pub mod members;
 pub mod personal;
 pub mod recovery;
+pub mod reveal;
 pub mod vaults;
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["vault"],
         register_services,
+        after_cluster_start: lease::after_cluster_start,
+        before_shutdown: lease::before_shutdown,
         ..moqui_core::extension::Extension::EMPTY
+    }
+}
+
+moqui_core::vault_hooks::submit! {
+    moqui_core::vault_hooks::VaultHooks {
+        leased: lease::hook_leased,
+        holds_leased: lease::hook_holds_leased,
     }
 }
 
@@ -60,6 +80,10 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     members::register(map)?;
     deliveries::register(map)?;
     recovery::register(map)?;
+    deposit::register(map)?;
+    lease::services::register(map)?;
+    machine::register(map)?;
+    reveal::register(map)?;
     events::register(map)
 }
 
