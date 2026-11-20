@@ -68,7 +68,8 @@ fn a_secret_file_reaches_a_real_container_and_nothing_else() {
         ..ContainerSpec::default()
     };
     let id = host.create_spec(&spec).unwrap();
-    let outcome = (|| {
+    // The checks run under catch_unwind so the container is removed even when one fails.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // what the host shows of the container holds no secret
         let shown = host
             .send(
@@ -99,10 +100,12 @@ fn a_secret_file_reaches_a_real_container_and_nothing_else() {
         let logs = host.logs(&id, 10).unwrap();
         assert!(logs.contains(&value), "the secret file's value: {logs}");
         assert!(logs.contains("400 1000 1000"), "its mode and owner: {logs}");
-    })();
+    }));
     host.remove_container(&id, true).unwrap();
     assert_eq!(host.inspect(&id).unwrap(), None, "removed");
-    outcome;
+    if let Err(failure) = outcome {
+        std::panic::resume_unwind(failure);
+    }
     if engine == Engine::Podman {
         eprintln!("the container's Podman secret was deleted with it");
     }
