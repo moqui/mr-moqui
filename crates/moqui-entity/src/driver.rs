@@ -291,6 +291,41 @@ pub struct ConfDb {
     pub ssl_mode: String,
     /// `sslrootcert`: the path of a PEM file of the authorities to trust in place of the public ones.
     pub ssl_root_cert: String,
+    /// Which addresses the host may resolve to, checked at each connection the driver opens (SEC-TLS-101).
+    pub address_guard: AddressGuard,
+}
+
+/// The addresses a connection may reach, checked where it connects: a host a user stored (a Tools external
+/// connection) is kept off this server's network, or off its link-local and metadata addresses (SEC-TLS-101).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AddressGuard {
+    /// Any address: the operator's own conf.
+    #[default]
+    Off,
+    /// No link-local or cloud metadata address.
+    LinkLocal,
+    /// Public addresses only.
+    Internal,
+}
+
+impl AddressGuard {
+    /// The addresses of `host` to connect to, refused when the guard does not take one of them.
+    ///
+    /// # Errors
+    ///
+    /// When the name does not resolve or an address is one the guard refuses.
+    pub fn resolve(self, host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, Error> {
+        use std::net::ToSocketAddrs as _;
+        let checked = match self {
+            Self::Off => (host, port)
+                .to_socket_addrs()
+                .map(Iterator::collect)
+                .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) }),
+            Self::LinkLocal => moqui_lib::net::non_link_local_addresses(host, port),
+            Self::Internal => moqui_lib::net::public_addresses(host, port),
+        };
+        checked.map_err(|err| Error::new(format!("connect {host}:{port}: {err}")))
+    }
 }
 
 impl std::fmt::Debug for ConfDb {
@@ -304,6 +339,7 @@ impl std::fmt::Debug for ConfDb {
             .field("password", &"<redacted>")
             .field("ssl_mode", &self.ssl_mode)
             .field("ssl_root_cert", &self.ssl_root_cert)
+            .field("address_guard", &self.address_guard)
             .finish()
     }
 }

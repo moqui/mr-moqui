@@ -71,6 +71,7 @@ fn bed_model(name: &str, tools: &str, limits: &str, model: &str) -> Bed {
         "moqui.security.UserAccount",
         &[("userId", USER), ("username", USER), ("userFullName", "Run Tester")],
     );
+    grant_agent_use(&facade, USER);
     row(
         &facade,
         "moqui.agent.AgentDefinition",
@@ -2287,4 +2288,120 @@ fn an_external_runs_reported_turns_are_priced_rolled_up_once_and_its_budget_requ
     assert!(crate::text_of(&run, "statusReason").unwrap().contains("cost budget"));
     // the native engine records its own runs' usage
     assert!(external::record_usage(&bed.factory, "native-usage", &[turn(1, "fake-1")]).is_err());
+}
+
+/// SEC-AI-90: each step checks what `start_run` and its callers check at the start, so a paused run whose agent was
+/// disabled, or whose user lost `AgentUse`, ends when it is resumed instead of reading as the user and calling the model.
+#[test]
+fn a_run_whose_agent_is_disabled_or_whose_user_lost_agent_use_ends_at_its_next_step() {
+    let bed = bed("standing");
+    let _entered = bed.ctx.enter();
+    let ask = || tools(vec![tool("a1", "test_ask", json!({"key": "color"}))]);
+    fake::script(&bed.endpoint, vec![ask(), ask()]);
+    let paused = || {
+        let started = start_run(&bed.factory, &request("Ask me")).unwrap();
+        assert_eq!(
+            wait_for(&bed.factory, &started.run_id, WAIT).unwrap(),
+            RunState::InputRequired
+        );
+        started.run_id
+    };
+    let (first, second) = (paused(), paused());
+    let ended = |run_id: &str, code: &str| {
+        submit_input(&bed.factory, run_id, USER, "answer", "blue", None).unwrap();
+        assert_eq!(wait_for(&bed.factory, run_id, WAIT).unwrap(), RunState::Failed);
+        assert_eq!(text_of(&run_row(&bed, run_id), "errorCode").as_deref(), Some(code));
+    };
+    let mut agent = bed
+        .facade
+        .find("moqui.agent.AgentDefinition")
+        .unwrap()
+        .eq("agentId", Value::string("assist"))
+        .one()
+        .unwrap()
+        .unwrap();
+    agent.set("disabled", Value::string("Y"));
+    agent.update(&bed.facade).unwrap();
+    ended(&first, "agent_disabled");
+    agent.set("disabled", Value::string("N"));
+    agent.update(&bed.facade).unwrap();
+    let mut member = bed
+        .facade
+        .find("moqui.security.UserGroupMember")
+        .unwrap()
+        .eq("userId", Value::string(USER))
+        .one()
+        .unwrap()
+        .unwrap();
+    member.set("thruDate", Value::string("1265184000001"));
+    member.update(&bed.facade).unwrap();
+    ended(&second, "not_permitted");
+    assert_eq!(
+        fake::requests(&bed.endpoint).len(),
+        2,
+        "no model call after either resume"
+    );
+}
+
+/// SEC-AI-90: a trigger's run is exempt from `AgentUse` only when it runs as an agent's own account (a `runAsUserId`
+/// or `chatUserId`); a trigger that runs as a person is held to theirs. A user made external after a run started ends
+/// it at its next step.
+#[test]
+fn a_trigger_run_is_exempt_only_as_an_agents_account_and_an_external_user_ends_a_run() {
+    let bed = bed("trigger-standing");
+    let _entered = bed.ctx.enter();
+    for user in ["svc.user", "person.user", "ext.user"] {
+        row(
+            &bed.facade,
+            "moqui.security.UserAccount",
+            &[("userId", user), ("username", user)],
+        );
+    }
+    grant_agent_use(&bed.facade, "ext.user");
+    row(
+        &bed.facade,
+        "moqui.agent.AgentDefinition",
+        &[
+            ("agentId", "helper"),
+            ("agentName", "Helper"),
+            ("featureId", "assist"),
+            ("surfaces", "job"),
+            ("runAsUserId", "svc.user"),
+        ],
+    );
+    // started as a trigger starts its run, with the trigger noted on the run before it is submitted
+    let run = |user: &str, trigger: bool| {
+        fake::script(&bed.endpoint, vec![fake::Reply::text("Done.")]);
+        let started = start_run(
+            &bed.factory,
+            &StartRequest {
+                defer_submit: true,
+                user_id: user.to_string(),
+                ..request("Go")
+            },
+        )
+        .unwrap();
+        if trigger {
+            let mut row = run_row(&bed, &started.run_id);
+            row.set("triggerId", Value::string("TRIGGER_1"));
+            row.update(&bed.facade).unwrap();
+        }
+        if user == "ext.user" {
+            crate::run::test_support::grant(&bed.facade, user, "EXTERNAL_USER");
+        }
+        submit_started(&bed.factory, &started).unwrap();
+        let state = wait_for(&bed.factory, &started.run_id, WAIT).unwrap();
+        (state, text_of(&run_row(&bed, &started.run_id), "errorCode"))
+    };
+    assert_eq!(run("svc.user", true), (RunState::Completed, None), "an agent's account");
+    assert_eq!(
+        run("person.user", true),
+        (RunState::Failed, Some("not_permitted".to_string())),
+        "a trigger that runs as a person without AgentUse"
+    );
+    assert_eq!(
+        run("ext.user", false),
+        (RunState::Failed, Some("not_permitted".to_string())),
+        "a user made external"
+    );
 }

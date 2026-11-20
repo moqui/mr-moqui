@@ -68,3 +68,14 @@ fn walk(node: &MNode, path: &mut Vec<String>, missing: &mut Vec<String>) {
         path.pop();
     }
 }
+
+/// The settings the review's fixes read on each use are live, though their elements restart (SEC-TLS-101, SEC-DAT-84).
+#[test]
+fn settings_read_on_each_use_are_live() {
+    let live = |path: &[&str], attr: &str| unit(path).expect("a unit").attr_class(attr) == super::Class::Live;
+    assert!(live(&["tools"], "external-database-private-network"));
+    assert!(live(&["tools"], "database-audit-days"));
+    assert!(live(&["search-facade"], "query-timeout-seconds"));
+    assert!(live(&["search-facade"], "query-max-clauses"));
+    assert!(!live(&["search-facade"], "backend"));
+}

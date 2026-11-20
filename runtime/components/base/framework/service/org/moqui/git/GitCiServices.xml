@@ -445,14 +445,18 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="requiredPipeline"><description>The pipeline, with the deploy event, that must pass</description></parameter>
             <parameter name="approvalRequired" type="Boolean"/>
             <parameter name="approverGroupId"><description>The user group whose members approve; a maintainer of
-                the repository (the delete right) when empty</description></parameter>
+                the repository (the delete right) when none is set. Left out, empty or null on a change, the stored one
+                stays (a caller with no groups sends null)</description></parameter>
             <parameter name="allowedRefs"><description>Branch patterns, separated by spaces, whose runs get the
                 environment's secrets, and which deploy to it, besides protected refs (a deployment of one no branch
                 rule protects waits for an approver)</description></parameter>
             <parameter name="dataTypes"><description>The data types the target loads of the component's data files,
                 comma separated, signed in each attestation; empty for the target's defaults</description></parameter>
         </in-parameters>
-        <out-parameters><parameter name="environmentId"/></out-parameters>
+        <out-parameters><parameter name="environmentId"/>
+            <parameter name="cleared"><description>What the change cleared, said to give again, or empty: the values of
+                the environment's secrets when allowedRefs gains a pattern, approvalRequired goes off or the approver group
+                changes while approval is required, and the token on a new targetUrl with none given (SEC-GIT-91)</description></parameter></out-parameters>
     </service>
     <service verb="delete" noun="CiEnvironment" type="rust" location="moqui_git::ci::service::secrets::delete_ci_environment">
         <description>Remove an environment (the delete right on its repository, or authorization disabled); refused

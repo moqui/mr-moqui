@@ -2,7 +2,7 @@
 <entity-facade-xml type="seed">
     <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" description="Evaluate report alert rules as their owners"
         serviceName="org.moqui.report.ReportServices.evaluate#Alerts" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
-    <moqui.security.user.NotificationTopic topic="ReportAlert" inboxEnumId="NinUpdates" description="Report alert"
+    <moqui.security.user.NotificationTopic topic="ReportAlert" inboxEnumId="NinUpdates" description="Report alert" reportAlertTopic="Y"
         typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"/>
     <!-- Business dataset scope policies (crates/moqui-report/src/business.rs): each a rowFilterService (enumCode) a domain
         component registers as an Enumeration of this type, which a business dataset must name to be admitted. optionValue

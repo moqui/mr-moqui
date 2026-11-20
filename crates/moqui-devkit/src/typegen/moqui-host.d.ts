@@ -925,6 +925,8 @@ interface MoquiUserFacade {
     loginUser(username: string | null, password: string | null): boolean;
     /** A job's login: leaves the account's hasLoggedOut as it is. */
     internalLoginUser(username: string): boolean;
+    /** Bounded delegation (SEC-ADM-05): why the current user may not act as or on the account `userId` (a privileged group they are not in, a sealed permission they lack, held by a current group of the account), or null when they may. */
+    heldBeyond(userId: string): string | null;
     /** Logs out and marks the account hasLoggedOut, which ends its sessions in every browser. */
     logoutUser(): boolean;
     /** Ends this context's login only, writing nothing to the account: the end of a job's internalLoginUser. */

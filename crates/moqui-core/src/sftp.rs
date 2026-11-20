@@ -49,6 +49,9 @@ pub struct SftpConfig {
     pub keys: Vec<SftpKey>,
     /// A pinned `SHA256:...` fingerprint of the server's host key. Empty trusts on first use.
     pub host_key_fingerprint: Option<String>,
+    /// Connect to no internal address (`moqui_lib::net::public_addresses`): a stored remote whose
+    /// `allowPrivateNetwork` keeps it off the private network. A link-local or metadata address is refused either way.
+    pub deny_internal: bool,
 }
 
 #[derive(Clone)]
@@ -68,6 +71,7 @@ impl std::fmt::Debug for SftpConfig {
             .field("password", &self.password.as_ref().map(|_| REDACTED))
             .field("keys", &self.keys)
             .field("host_key_fingerprint", &self.host_key_fingerprint)
+            .field("deny_internal", &self.deny_internal)
             .finish()
     }
 }
@@ -380,7 +384,8 @@ impl SftpClient {
 
     /// A client for a `SystemMessageRemote`: to `host` (`host` or `host:port`) as `username`, with the remote's
     /// `privateKey` (and `publicKey`) when it has one, else its `password`, and the host key pinned to its
-    /// `sshHostKeyFingerprint` when set. The SFTP sync, the backup mirror, and a git push mirror connect so.
+    /// `sshHostKeyFingerprint` when set, and kept off internal addresses as its `allowPrivateNetwork` says
+    /// (`outbound::deny_private_network`). The SFTP sync, the backup mirror, and a git push mirror connect so.
     ///
     /// # Errors
     ///
@@ -398,6 +403,7 @@ impl SftpClient {
             client.public_key_pkcs8(&private_key, Some(&field("publicKey")));
         }
         client.host_key_fingerprint(&field("sshHostKeyFingerprint"));
+        client.config.deny_internal = crate::outbound::deny_private_network(&field("allowPrivateNetwork"));
         Ok(client)
     }
 

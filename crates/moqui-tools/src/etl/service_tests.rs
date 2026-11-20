@@ -270,3 +270,61 @@ fn an_entity_source_and_a_lookup_read_no_encrypted_or_password_field() {
     );
     let _ = moqui_core::user::logout();
 }
+
+/// SEC-TLS-103: a user other than the owner who saves a mapping (a DATABASE_ADMIN holder) becomes its owner, so a
+/// scheduled run, which signs in as the owner, never runs what another user wrote as the old owner.
+#[test]
+fn a_mapping_saved_by_another_user_becomes_that_users() {
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
+    );
+    let facade = moqui_core::testing::open();
+    facade.set_disable_fk_create(true);
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let owner_of = || {
+        let _authz = ctx.disable_authz();
+        facade
+            .find("moqui.etl.EtlMapping")
+            .unwrap()
+            .eq("mappingId", Value::string("EtlOwned"))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("ownerUserId").map(to_plain_string))
+            .unwrap_or_default()
+    };
+    {
+        let _authz = ctx.disable_authz();
+        for (user_id, username) in [("ETL_OWNER", "etl.owner"), ("ETL_EDITOR", "etl.editor")] {
+            let mut account = facade.make_value("moqui.security.UserAccount").unwrap();
+            account.set("userId", Value::string(user_id));
+            account.set("username", Value::string(username));
+            account.create(&facade).unwrap();
+        }
+        let mut row = facade.make_value("moqui.etl.EtlMapping").unwrap();
+        row.set("mappingId", Value::string("EtlOwned"));
+        row.set("ownerUserId", Value::string("ETL_OWNER"));
+        row.create(&facade).unwrap();
+    }
+    let mut map = moqui_lib::object::ValueMap::default();
+    for (name, value) in [
+        ("mappingId", "EtlOwned"),
+        ("description", "changed by the editor"),
+        ("sourceTypeEnumId", "EtlsFile"),
+        ("sourceLocation", "dbresource://moqui/etl/x.csv"),
+        ("targetTypeEnumId", "EtltEntity"),
+        ("targetName", "moqui.basic.Enumeration"),
+    ] {
+        map.insert(name.to_string(), Value::string(value));
+    }
+    let mapping = crate::etl::mapping::Mapping::from_map(&map).unwrap();
+    moqui_core::user::internal_login_user("etl.owner").unwrap();
+    super::save_mapping(&facade, &mapping).unwrap();
+    assert_eq!(owner_of(), "ETL_OWNER", "the owner's own save keeps the owner");
+    moqui_core::user::internal_login_user("etl.editor").unwrap();
+    super::save_mapping(&facade, &mapping).unwrap();
+    assert_eq!(owner_of(), "ETL_EDITOR");
+    moqui_core::user::logout().unwrap();
+}

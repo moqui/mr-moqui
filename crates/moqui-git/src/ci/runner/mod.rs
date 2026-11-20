@@ -981,6 +981,11 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
     let (status, job) = transport.json("GET", "job", None).map_err(Stop::Error)?;
     check(status, "getting the job", &job)?;
     let spec = &job["spec"];
+    // what a cache may unpack to: the server's git-ci max-unpack-bytes (SEC-GIT-95)
+    let max_unpack = job["limits"]["maxUnpackBytes"]
+        .as_u64()
+        .filter(|most| *most > 0)
+        .unwrap_or(archive::DEFAULT_MAX_UNPACK_BYTES);
     let max_batch = usize::try_from(job["limits"]["maxLogBatchBytes"].as_u64().unwrap_or(1024 * 1024))
         .unwrap_or(1024 * 1024)
         .clamp(4096, 4 * 1024 * 1024);
@@ -1033,7 +1038,12 @@ fn run_job(transport: &dyn Transport, options: &Options) -> Result<bool, Stop> {
         }
         let scratch = Scratch::new(&options.workspace, "cache.tar.gz");
         match transport.download(&format!("caches?{}", query(&[("key", &key)])), &scratch.0) {
-            Ok(200) => match archive::unpack(&scratch.0, &options.workspace) {
+            Ok(200) => match archive::unpack_within(
+                &scratch.0,
+                &options.workspace,
+                max_unpack,
+                archive::MAX_UNPACK_ENTRIES,
+            ) {
                 Ok(count) => log.line(None, &format!("Cache {key} restored to {path} ({count} entries)"))?,
                 Err(err) => log.line(None, &format!("Cache {key} was not restored: {err}"))?,
             },

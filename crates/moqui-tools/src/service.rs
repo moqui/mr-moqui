@@ -30,6 +30,7 @@ use crate::{capabilities, DbRef, NOT_AVAILABLE};
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, get_capabilities)?;
     rust_service!(map, reset_query_stats)?;
+    rust_service!(map, check_tables)?;
     // ---- SQL (plans/archive/Tools-Database.md §8): crate::sql_service ----
     crate::sql_service::register(map)?;
     // ---- the data grid (plans/archive/Tools-Database.md §9): crate::grid_service ----
@@ -138,6 +139,80 @@ fn get_capabilities(
             Ok(caps.to_out())
         }
     }
+}
+
+/// The most of a table check's DDL kept in its audit row; the server log has every statement.
+const MAX_AUDITED_DDL: usize = 64 * 1024;
+
+/// `check#Tables`: the table check of `entityNames` (every entity when empty) of the entity groups `groupNames` (all
+/// when empty), which forgets what is known of the tables and creates or extends the tables, indexes and keys
+/// (`EntityFacade::check_tables_forced`). It runs DDL, so it needs `DATABASE_ADMIN` as the planned jobs of the same
+/// screens do, and writes a `DbaTableCheck` audit row with the statements that ran (SEC-TLS-99). Out: `ddl`,
+/// `errors`, `failed` (`{entityName, error}`).
+fn check_tables(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    if !may_view_tools() || !crate::group_db::require_admin("Checking the tables runs DDL: it") {
+        return Ok(BTreeMap::new());
+    }
+    let mut names = crate::group_db::list(parameters, "entityNames");
+    if names.is_empty() {
+        names = facade.with_model(|model| model.entities().iter().map(|entity| entity.full_name.clone()).collect());
+    }
+    let groups = crate::group_db::list(parameters, "groupNames");
+    let entities = names.len();
+    let check = facade.check_tables_forced(names, (!groups.is_empty()).then_some(groups.as_slice()));
+    let mut statements = check.ddl.join(";\n");
+    if statements.len() > MAX_AUDITED_DDL {
+        let mut end = MAX_AUDITED_DDL;
+        while !statements.is_char_boundary(end) {
+            end -= 1;
+        }
+        statements.truncate(end);
+    }
+    crate::audit::record(
+        facade,
+        &crate::audit::AuditEntry {
+            action: "DbaTableCheck",
+            db: (groups.len() == 1).then(|| format!("group:{}", groups[0])),
+            statement_text: (!statements.is_empty()).then_some(statements),
+            is_change: !check.ddl.is_empty(),
+            rows_affected: i64::try_from(check.ddl.len()).ok(),
+            detail_json: Some(
+                serde_json::json!({
+                    "groups": groups,
+                    "entities": entities,
+                    "statements": check.ddl.len(),
+                    "errors": check.errors,
+                    "failed": check.failed.len(),
+                })
+                .to_string(),
+            ),
+            ..crate::audit::AuditEntry::default()
+        },
+    );
+    let failed = check
+        .failed
+        .into_iter()
+        .map(|(name, error)| {
+            let mut row = indexmap::IndexMap::default();
+            row.insert("entityName".to_string(), Value::String(name));
+            row.insert("error".to_string(), Value::String(error));
+            Value::Map(row)
+        })
+        .collect();
+    Ok(BTreeMap::from([
+        (
+            "ddl".to_string(),
+            Value::List(check.ddl.into_iter().map(Value::String).collect()),
+        ),
+        (
+            "errors".to_string(),
+            Value::I64(i64::try_from(check.errors).unwrap_or(i64::MAX)),
+        ),
+        ("failed".to_string(), Value::List(failed)),
+    ]))
 }
 
 /// `reset#QueryStats`: forget the entity facade's statement stats of this instance (`ec.entity.clearQueryStats()`),

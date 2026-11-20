@@ -186,6 +186,14 @@ impl S3Client {
         }
     }
 
+    /// Refuse a store at an internal address ([`RestClient::deny_internal_addresses`]): for an endpoint a user or a
+    /// stored row supplied.
+    #[must_use]
+    pub fn deny_internal_addresses(mut self, deny: bool) -> Self {
+        self.http = self.http.deny_internal_addresses(deny);
+        self
+    }
+
     #[must_use]
     pub fn config(&self) -> &S3Config {
         &self.config

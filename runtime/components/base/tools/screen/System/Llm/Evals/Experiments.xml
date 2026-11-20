@@ -4,7 +4,7 @@
     <parameter name="datasetId"/>
     <transition name="startExperiment" method="post">
         <actions><script><![CDATA[
-            experimentId = ec.service.sync().name('org.moqui.agent.AgentEvalServices.start#Experiment').parameters({datasetId, agentId, serviceName, trials, experimentName, notes}).call()?.experimentId
+            experimentId = ec.service.sync().name('org.moqui.agent.AgentEvalServices.start#Experiment').parameters({datasetId, agentId, serviceName, trials, experimentName, notes, policyWrites}).call()?.experimentId
         ]]></script></actions>
         <default-response url="../ExperimentDetail"><parameter name="experimentId"/></default-response>
         <error-response url="."/>
@@ -52,6 +52,8 @@
                 <field name="agentId"><default-field title="Agent"><drop-down allow-empty="true"><list-options list="agentOptions" key="${value}" text="${label}"/></drop-down></default-field></field>
                 <field name="serviceName"><default-field title="Or service"><text-line size="50"/></default-field></field>
                 <field name="trials"><default-field><text-line size="3" default-value="1"/></default-field></field>
+                <field name="policyWrites"><default-field title="Policy writes" tooltip="An item may be another user's message: its writes are refused unless the agent's tool policy may approve them"><drop-down allow-empty="false">
+                    <option key="N" text="Refuse every write"/><option key="Y" text="As the agent's policy approves"/></drop-down></default-field></field>
                 <field name="experimentName"><default-field title="Name"><text-line size="40"/></default-field></field>
                 <field name="notes"><default-field title="What changed"><text-area rows="2" cols="60"/></default-field></field>
                 <field name="submitButton"><default-field title=""><submit text="Start"/></default-field></field>

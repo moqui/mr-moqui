@@ -79,6 +79,7 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
         password,
         ssl_mode,
         ssl_root_cert,
+        address_guard,
         ..
     } = conf;
     let mode = ssl_mode.trim();
@@ -101,7 +102,7 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
             } else {
                 postgres::PostgresDriver::external(user, database, host, port)?
             };
-            Arc::new(driver.password(password))
+            Arc::new(driver.password(password).address_guard(*address_guard))
         }
         #[cfg(feature = "mysql")]
         "mysql" | "mysql8" => Arc::new(
@@ -113,10 +114,20 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
                 database,
                 !mode.is_empty() && moqui_core::entity::datasource::tls_wanted(mode),
             )
-            .tls_options(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert),
+            .tls_options(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert)
+            .address_guard(*address_guard),
         ),
         other => {
-            let _ = (host, database, user, password, mode, ssl_root_cert, port_of(0));
+            let _ = (
+                host,
+                database,
+                user,
+                password,
+                mode,
+                ssl_root_cert,
+                address_guard,
+                port_of(0),
+            );
             Err(Error::new(format!("no database driver for database conf {other}")))?
         }
     };

@@ -101,6 +101,8 @@ pub(super) struct S3Remote<'a> {
     pub access_key: &'a str,
     pub secret_key: &'a str,
     pub prefix: &'a str,
+    /// The remote's `allowPrivateNetwork` keeps the store off internal addresses.
+    pub deny_internal: bool,
 }
 
 /// Mirror the keep set to S3, encrypted to `recipient` when there is one. `Y` when every step went through.
@@ -123,9 +125,47 @@ pub(super) fn mirror_s3(
     }
     let recipient = recipient.map(parse_recipient).transpose()?;
     let config = S3Config::from_url(remote.send_url, remote.access_key, remote.secret_key)?;
+    plain_endpoint_refusal(config.endpoint.as_deref(), crate::web::is_production())?;
     let shown = format!("s3://{}/{}", config.bucket, remote.prefix);
-    let client = S3Client::new(config);
+    let client = S3Client::new(config).deny_internal_addresses(remote.deny_internal);
     mirror(&client, &shown, &key_prefix(remote.prefix), recipient.as_ref(), outcome)
+}
+
+/// An `http` endpoint carries the archives and the signed requests in clear: it is taken only on an instance that is
+/// not production, for this machine or a store on the private network (a LAN MinIO), never a public or link-local
+/// address (SEC-TLS-96).
+pub(super) fn plain_endpoint_refusal(endpoint: Option<&str>, production: bool) -> Result<(), LibError> {
+    let Some(rest) = endpoint.and_then(|endpoint| endpoint.strip_prefix("http://")) else {
+        return Ok(());
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let host = match authority.rsplit_once(':') {
+        Some((host, port)) if port.chars().all(|ch| ch.is_ascii_digit()) => host,
+        _ => authority,
+    };
+    if production || !(moqui_lib::net::loopback_host(host) || on_private_network(host)) {
+        return Err(LibError::new(format!(
+            "the S3 endpoint http://{authority} is not encrypted: use https (http is taken only for this machine on an \
+             instance that is not production)"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether every address `host` resolves to is on the private network and none link-local or a metadata address.
+fn on_private_network(host: &str) -> bool {
+    use std::net::ToSocketAddrs as _;
+    let name = host.trim_start_matches('[').trim_end_matches(']');
+    match (name, 0).to_socket_addrs() {
+        Ok(addresses) => {
+            let addresses: Vec<_> = addresses.collect();
+            !addresses.is_empty()
+                && addresses.iter().all(|address| {
+                    moqui_lib::net::internal_address(address.ip()) && !moqui_lib::net::link_local_address(address.ip())
+                })
+        }
+        Err(_) => false,
+    }
 }
 
 /// Mirror the keep set into `dir` over a connected SFTP client, each archive one file encrypted to `recipient`.

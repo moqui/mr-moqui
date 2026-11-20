@@ -21,9 +21,10 @@
 //!   with no signature does (401, [`WebhookResponse::not_signed`]); a disabled one checks the signature first
 //!   ([`super::ChatBridgeAdapter::verify_webhook`]) and answers its network 503, so the network tries again once it is
 //!   enabled, and anyone else as an unknown bridge: no bridge id can be told from another by its answers.
-//! - [`replay_take`] and [`replay_finish`]: the webhooks' replay cache, the distributed cache the system-message HMAC
-//!   check uses (`moqui.security.hmac.replay`), so a copy of a request is caught on every node that cache reaches (it
-//!   stays on its node until a distributed cache is configured, as for the HMAC check: docs/security/Proof-Tests.md).
+//! - [`replay_take`] and [`replay_finish`]: the webhooks' replay keys, in the `moqui.security.SignatureReplay` table
+//!   the system-message HMAC check uses too (`service::replay_store`, SEC-DAT-90), so a copy of a request is caught on
+//!   every cluster member; the `moqui.security.hmac.replay` cache's live time only bounds the window
+//!   ([`replay_window_ms`]) and how long a key is held.
 //! - [`media_url`] and [`media`]: a file of a message that goes out by address (MMS), at
 //!   `/channels/{chatBridgeId}/media/{token}` under `channels@public-url`. The token names the `ChatAttachment` and an
 //!   expiry, signed with HMAC-SHA-256 under `channels@media-key`; only a file of a message delivered to that bridge is
@@ -218,34 +219,23 @@ pub(super) fn window_within(wanted_ms: i64, live_ms: i64, idle_ms: i64) -> i64 {
 ///
 /// Returns why the cache could not be read (strict: the caller refuses the request).
 pub fn replay_take(bridge_id: &str, signature: &str) -> Result<Replay, String> {
-    let cache = replay_cache()?;
-    let key = replay_key(bridge_id, signature);
-    if cache
-        .put_if_absent(key.clone(), Value::Bool(false))
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Replay::New);
-    }
-    Ok(match cache.get(&key).map_err(|error| error.to_string())? {
-        Some(Value::Bool(true)) => Replay::Done,
-        _ => Replay::Working,
+    // held as long as the replay cache would hold it, which bounds the window (replay_window_ms); the keys are a
+    // table's, so a webhook sent again to another cluster member is a replay there too (SEC-DAT-90)
+    let held = replay_cache()?.info().expire_live_ms;
+    let held = if held > 0 { held } else { 600_000 };
+    let taken = crate::service::replay_store::take(&replay_key(bridge_id, signature), held)
+        .map_err(|error| error.to_string())?;
+    Ok(match taken {
+        crate::service::replay_store::Taken::New => Replay::New,
+        crate::service::replay_store::Taken::Working => Replay::Working,
+        crate::service::replay_store::Taken::Done => Replay::Done,
     })
 }
 
 /// The request of `signature` was worked (`true`: kept as done) or not (`false`: let go, so the network's retry goes
 /// through). A failure is logged.
 pub fn replay_finish(bridge_id: &str, signature: &str, worked: bool) {
-    let key = replay_key(bridge_id, signature);
-    let done = replay_cache().and_then(|cache| {
-        if worked {
-            cache.put(key, Value::Bool(true)).map_err(|error| error.to_string())
-        } else {
-            cache.remove(&key).map(|_| ()).map_err(|error| error.to_string())
-        }
-    });
-    if let Err(error) = done {
-        tracing::warn!("chat bridge {bridge_id}: a webhook's replay entry was not kept: {error}");
-    }
+    crate::service::replay_store::finish(&replay_key(bridge_id, signature), worked);
 }
 
 /// A file fetched from a network.

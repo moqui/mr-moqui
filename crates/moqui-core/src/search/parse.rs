@@ -43,12 +43,56 @@ use super::query::{Query, TextFields, TextMatch};
 /// Returns an error naming the clause that is not in the supported subset.
 pub fn parse_query_string(input: &str) -> Result<Query, Error> {
     let tokens = tokenize(input)?;
+    let clauses = clause_count(&tokens);
+    let max = super::limits::max_clauses();
+    if clauses > max {
+        return Err(Error::new(format!(
+            "the query has {clauses} terms; a query string takes at most {max}"
+        )));
+    }
     let mut parser = Parser { tokens, pos: 0, input };
     let query = parser.query(None, 0)?;
     if parser.pos < parser.tokens.len() {
         return Err(parser.error_at("unexpected ')'"));
     }
     Ok(query)
+}
+
+/// The clauses a query string asks the backend to run, held to `search-facade@query-max-clauses` (SEC-DAT-84): each
+/// word, phrase and range, but a field's list of plain values (`ownerPartyId:(A OR B OR C)`, one `IN` test) is one,
+/// while a wildcard word in it (served by no index) counts on its own.
+fn clause_count(tokens: &[(Token, usize)]) -> usize {
+    let mut count = 0;
+    let mut index = 0;
+    while index < tokens.len() {
+        let is_list = matches!(tokens[index].0, Token::Field(_))
+            && matches!(tokens.get(index + 1).map(|(token, _)| token), Some(Token::Open));
+        if is_list {
+            let mut depth = 0;
+            let mut plain = false;
+            index += 1;
+            while index < tokens.len() {
+                match &tokens[index].0 {
+                    Token::Open => depth += 1,
+                    Token::Close => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    Token::Word { wild, .. } if wild.iter().any(|flag| *flag) => count += 1,
+                    Token::Word { .. } | Token::Range { .. } => plain = true,
+                    _ => {}
+                }
+                index += 1;
+            }
+            count += usize::from(plain);
+        } else if matches!(tokens[index].0, Token::Word { .. } | Token::Range { .. }) {
+            count += 1;
+        }
+        index += 1;
+    }
+    count
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -412,6 +456,12 @@ impl Parser<'_> {
             }
             Token::Open => {
                 self.pos += 1;
+                // an empty group matches nothing: no clauses would be match-all, so `ownerPartyId:()` written for a
+                // user of no organization would lift the limit it stands for (SEC-DAT-85)
+                if matches!(self.tokens.get(self.pos), Some((Token::Close, _))) {
+                    self.pos += 1;
+                    return Ok(match_none());
+                }
                 let inner = self.query(field, depth + 1)?;
                 match self.tokens.get(self.pos) {
                     Some((Token::Close, _)) => {
@@ -506,6 +556,16 @@ fn word_query(field: Option<&str>, text: &str, quoted: bool, wild: &[bool]) -> Q
     Query::Text { terms, fields, kind }
 }
 
+/// A query no document matches: every document excluded.
+fn match_none() -> Query {
+    Query::Bool {
+        all: Vec::new(),
+        any: Vec::new(),
+        none: vec![Query::MatchAll],
+        min_any: None,
+    }
+}
+
 fn combine(clauses: Vec<(Occur, Query)>) -> Query {
     if clauses.is_empty() {
         return Query::MatchAll;
@@ -549,6 +609,49 @@ mod tests {
             fields: field.map_or(TextFields::All, |name| TextFields::Only(vec![name.into()])),
             kind,
         }
+    }
+
+    /// SEC-DAT-85: an empty group, alone or for a field, matches nothing, so a limit written as a group of no values
+    /// stays a limit.
+    #[test]
+    fn an_empty_group_matches_nothing() {
+        assert_eq!(parse("()"), match_none());
+        assert_eq!(parse("ownerPartyId:()"), match_none());
+        assert_eq!(
+            parse("shoes AND ownerPartyId:()"),
+            Query::Bool {
+                all: vec![text(None, "shoes", TextMatch::Term), match_none()],
+                any: Vec::new(),
+                none: Vec::new(),
+                min_any: None,
+            }
+        );
+    }
+
+    /// SEC-DAT-84: a query string holds at most search-facade@query-max-clauses terms (64 by default).
+    #[test]
+    fn a_query_string_past_the_clause_limit_is_refused() {
+        let words = |count: usize| {
+            (0..count)
+                .map(|index| format!("*w{index}*"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        parse(&words(64));
+        let refused = parse_query_string(&words(65)).unwrap_err();
+        assert!(refused.message().contains("at most 64"), "{refused}");
+        // a field's list of plain values is one clause, however long (Marble's organization limit, AgentTraces' ids)
+        let ids = (0..200)
+            .map(|index| format!("ORG{index}"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        parse(&format!("{} AND ownerPartyId:({ids})", words(63)));
+        // a wildcard word in such a list counts on its own
+        let wild = (0..65)
+            .map(|index| format!("o{index}*"))
+            .collect::<Vec<_>>()
+            .join(" OR ");
+        assert!(parse_query_string(&format!("ownerPartyId:({wild})")).is_err());
     }
 
     #[test]

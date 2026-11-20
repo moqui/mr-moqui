@@ -166,6 +166,14 @@ along with this software (see the LICENSE.md file). If not, see
         Tools). The rules are BackupDestination.js, on get#BackupDestination's list, which backup#EmbeddedDatabase refuses
         another destination named in a call by (service/backup.rs). A data load runs with authorization disabled and is not
         checked. They are checks, so they run when the call already has errors too. -->
+    <!-- Who made a job's user row, whatever wrote it: the user signed in, none for a data load (SEC-TLS-103). An update
+        keeps the value the row was made with, whatever the request passed (an entity-auto update takes its parameters). A
+        row with none is no consent of its user's: run#EtlMapping refuses to run as them by it. -->
+    <eeca id="ServiceJobUserAddedBy" entity="moqui.service.job.ServiceJobUser" on-create="true" on-update="true"
+            run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>entityValue.addedByUserId = eecaOperation == 'create' ? (ec.user.userId || null)
+            : (originalValue?.addedByUserId || null)</script></actions>
+    </eeca>
     <eeca id="BackupDestinationParameter" entity="moqui.service.job.ServiceJobParameter"
             on-create="true" on-update="true" on-delete="true" run-before="true" get-original-value="true" run-on-error="true">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')

@@ -286,7 +286,7 @@
             request-pool-max="16" request-queue="64"
             empty-db-load="seed,seed-initial,install"
             on-start-load-types="none" on-start-load-components=""
-            database-audit-days="90">
+            database-audit-days="90" external-database-private-network="false">
         <!-- Native components select linked ToolFactory implementations here.
              The cache facade is built in; Java H2/JCR/SMTP factories do not run in MR. -->
         <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->
@@ -363,7 +363,8 @@
 
         <!-- this is a count of all artifact hits, expire once idle for over 15 minutes -->
         <cache name="artifact.tarpit.hits" expire-time-idle="900" max-elements="10000" value-type="ArrayList"/>
-        <!-- type=distributed shares replay keys when a real distributed factory is configured; default factory is local MCache. -->
+        <!-- Its live time bounds a chat bridge webhook's replay window and how long its key is held; the replay keys of
+            signed requests are kept in moqui.security.SignatureReplay, which every cluster member sees (SEC-DAT-90). -->
         <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
         <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
         <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
@@ -397,6 +398,9 @@
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
+        <!-- Browser telemetry (off unless enabled): replay-user-bytes-per-hour holds the replay bytes one user sends an
+             hour, whatever replay ids the page picks. -->
+        <browser replay-user-bytes-per-hour="52428800"/>
     </telemetry>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
          spans are written inside a trace, so a scheduler poll or a data load writes none; so are transaction spans
@@ -459,6 +463,8 @@
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
+                socket-room-clients="4" socket-awareness-bytes="4096" socket-joins-per-minute="60"
+                socket-user-joins-per-minute="240"
             app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
@@ -713,7 +719,7 @@
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
-            sftp-max-read="67108864">
+            collab-max-state-bytes="8388608" sftp-max-read="67108864">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not
@@ -873,7 +879,9 @@
         embedded cluster when the entity database is not Postgres) or opensearch (the cluster below). With no postgres
         element the postgres backend uses the search schema of the entity Postgres; a postgres element with a url points
         it at another Postgres. -->
-    <search-facade backend="postgres">
+    <!-- query-timeout-seconds: how long one search statement may run outside a report's own budget; query-max-clauses:
+        the most terms a query string may hold. -->
+    <search-facade backend="postgres" query-timeout-seconds="10" query-max-clauses="64">
         <!-- The OpenSearch (or ElasticSearch 7+) cluster of the opensearch backend, and of the SearchProxy servlet.
             run: on the opensearch backend, when the url is this host and nothing answers there, start the install in
             runtime/opensearch (unless it has a pid file, a node run outside the server) and stop it on shutdown; false
@@ -1130,7 +1138,8 @@
         fetch-max-request-bytes of an upload-pack request, max-object-size bytes of one pushed object;
         idle-timeout seconds of silence in a request body end it. pack-threads (2 when empty) compress and index one
         pack; a pushed or fetched delta chain is at most max-delta-depth deep. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
-        object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
+        object, at /git/<repositoryId>.git/info/lfs; a repository has at most lfs-max-locks LFS locks (0: no cap), and one
+        locks or locks/verify request answers at most lfs-locks-max-page (0: 100). eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
         webhook-private-network="true". A repository has at most max-webhooks webhooks and max-mirrors push mirrors
         (0: no cap); one pass of the webhook retries or of the mirror queue starts sends for queue-pass-seconds (0: no
@@ -1191,7 +1200,8 @@
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
             max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
-            lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
+            lfs-max-object-size="5368709120" lfs-max-locks="1000" lfs-locks-max-page="100" lfs-upload-check-service=""
+            outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" max-webhooks="20" max-mirrors="10" queue-pass-seconds="300" queue-pass-gap-seconds="300"
             merge-requests-max-page="100" merge-requests-max-repositories="500" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
@@ -1225,13 +1235,14 @@
             max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
             max-timeout-minutes="360" default-timeout-minutes="60" max-fetch-depth="50"
             max-log-bytes="16777216" max-log-batch-bytes="1048576" max-artifact-bytes="1073741824"
-            max-report-bytes="16777216" max-cache-bytes="2147483648" max-artifacts="100"
+            max-report-bytes="16777216" max-cache-bytes="2147483648" max-unpack-bytes="17179869184" max-artifacts="100"
             artifact-retention-days="30" max-artifact-retention-days="365" log-retention-days="90"
             cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
             container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
             container-tmp-mb="1024" container-workspace-mb="4096" max-services="4" schedule-min-minutes="15"
-            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="0" max-owner-upload-bytes="0"
+            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="10737418240" max-owner-upload-bytes="0"
+            max-untrusted-run-upload-bytes="1073741824"
             deploy-timeout-seconds="600" deploy-private-network="false"/>
 
     <!--
