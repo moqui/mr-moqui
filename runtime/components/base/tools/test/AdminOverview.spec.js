@@ -538,7 +538,9 @@ feature("incident display dates preserve raw values and missing records retain t
     expect() {
         // The existing Monitoring acceptance owns the screens' renders. Exercise their actual data mapping only.
         const scripts = Object.fromEntries(["Incidents", "IncidentDetail"].map(name => {
+            // the screen's own actions, not a transition's script
             const source = ec.resource.getLocationText("component://tools/screen/System/Monitor/" + name + ".xml")
+                .replace(/<transition\b[\s\S]*?<\/transition>/g, "")
             return [name, /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]]
         }))
         const instant = new Date("2026-11-04T18:28:00.123Z"), epoch = instant.getTime()
