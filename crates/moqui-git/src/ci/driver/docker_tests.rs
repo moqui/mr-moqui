@@ -708,13 +708,14 @@ fn a_host_row_that_cannot_be_reached_says_why() {
         errors.contains("InstanceHost:H:tlsClientKey") && errors.contains("machineAccessMissing"),
         "{errors}"
     );
-    // with an environment, the key is asked of its machine access: here no vault server is linked, so it is refused
-    // and still nothing is sent (moqui-vault-server's tests open one from the hook)
+    // with an environment, the key is asked of its machine access (the vault server is linked, a dev-dependency):
+    // ci-env holds none, so it is refused and still nothing is sent (moqui-vault-server's tests give the access)
     set(vec![("environmentId".to_string(), Value::string("ci-env"))]);
     let (out, errors) = api.call(start_run_docker, &start_parameters("moqui-build:1"));
     assert!(out.is_empty());
     assert!(
-        errors.contains("InstanceHost:H:tlsClientKey") && errors.contains("vault is not built in"),
+        errors.contains("Environment ci-env has no machine access to InstanceHost:H:tlsClientKey")
+            && errors.contains("machineAccessMissing"),
         "{errors}"
     );
     assert!(api.seen().is_empty(), "nothing sent: {:?}", api.seen());

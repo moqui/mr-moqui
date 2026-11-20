@@ -2456,11 +2456,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         &fixture,
         WRITER,
         &format!("{SERVICES}.store#CiEnvironment"),
-        &[
-            ("repositoryId", s("app")),
-            ("name", s("staging")),
-            ("token", s("target-token-0123456789abcdef0123456789")),
-        ],
+        &[("repositoryId", s("app")), ("name", s("staging"))],
     );
     let environment_id = to_plain_string(&environment["environmentId"]);
     ok(
@@ -2526,10 +2522,7 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
         &[("repositoryId", s("app"))],
     );
     let shown = format!("{:?}", environments["environmentList"]);
-    assert!(
-        shown.contains("staging") && !shown.contains("target-token-0123456789abcdef0123456789"),
-        "{shown}"
-    );
+    assert!(shown.contains("staging"), "{shown}");
     let (_, errors) = call(
         &fixture,
         WRITER,
