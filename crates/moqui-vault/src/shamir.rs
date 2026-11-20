@@ -28,12 +28,12 @@ use subtle::ConstantTimeEq as _;
 use zeroize::Zeroizing;
 
 use crate::rng::Rng;
+use crate::text;
 use crate::Error;
 
 const TEXT_VERSION: u8 = 1;
 const CHECKSUM_LEN: usize = 4;
 const CHECKSUM_LABEL: &[u8] = b"moqui-vault share";
-const BASE32: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const GROUP: usize = 5;
 
 /// One share: its x coordinate (1 to 255) and the polynomials' values there, one byte per secret byte.
@@ -63,13 +63,8 @@ impl Share {
         payload.extend_from_slice(&self.value);
         let checksum = checksum(&payload);
         payload.extend_from_slice(&checksum);
-        let encoded = base32_encode(&payload);
-        let mut text = Zeroizing::new(format!("share-{:02x}", self.index));
-        for group in encoded.as_bytes().chunks(GROUP) {
-            text.push('-');
-            text.extend(group.iter().map(|&c| char::from(c)));
-        }
-        text
+        let encoded = text::base32_grouped(&payload, GROUP);
+        Zeroizing::new(format!("share-{:02x}-{}", self.index, *encoded))
     }
 
     /// Reads [`Share::to_text`]'s form back, refusing a wrong checksum, version or index.
@@ -92,7 +87,7 @@ impl Share {
             })
             .collect();
         let index = u8::from_str_radix(&index_hex, 16).map_err(|_| Error::Format("share index"))?;
-        let payload = base32_decode(body)?;
+        let payload = text::base32_decode(body)?;
         let Some((content, sum)) = payload.split_at_checked(payload.len().saturating_sub(CHECKSUM_LEN)) else {
             return Err(Error::Format("share too short"));
         };
@@ -120,51 +115,6 @@ fn checksum(content: &[u8]) -> [u8; CHECKSUM_LEN] {
     let mut out = [0u8; CHECKSUM_LEN];
     out.copy_from_slice(&digest[..CHECKSUM_LEN]);
     out
-}
-
-fn base32_encode(bytes: &[u8]) -> Zeroizing<String> {
-    let mut out = Zeroizing::new(String::with_capacity(bytes.len() * 8 / 5 + 1));
-    let mut buffer: u32 = 0;
-    let mut bits = 0;
-    for &byte in bytes {
-        buffer = (buffer << 8) | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            out.push(char::from(BASE32[((buffer >> bits) & 31) as usize]));
-        }
-    }
-    if bits > 0 {
-        out.push(char::from(BASE32[((buffer << (5 - bits)) & 31) as usize]));
-    }
-    out
-}
-
-fn base32_value(c: u8) -> Option<u32> {
-    let c = match c.to_ascii_uppercase() {
-        b'O' => b'0',
-        b'I' | b'L' => b'1',
-        other => other,
-    };
-    BASE32.iter().position(|&d| d == c).map(|at| at as u32)
-}
-
-fn base32_decode(text: &str) -> Result<Zeroizing<Vec<u8>>, Error> {
-    let mut out = Zeroizing::new(Vec::with_capacity(text.len() * 5 / 8));
-    let mut buffer: u32 = 0;
-    let mut bits = 0;
-    for &c in text.as_bytes() {
-        let Some(value) = base32_value(c) else {
-            return Err(Error::Format("share has a character that is not base32"));
-        };
-        buffer = (buffer << 5) | value;
-        bits += 5;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buffer >> bits) as u8);
-        }
-    }
-    Ok(out)
 }
 
 /// Multiplication in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1, in constant time.

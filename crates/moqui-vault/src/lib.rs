@@ -18,13 +18,32 @@
 //!
 //! - [`rng`], [`keys`], [`aead`], [`kdf`] and [`shamir`] are the primitives the sealed start of
 //!   plans/Sealed-Secrets.md §3.3 shares with the vaults.
+//! - [`names`] is what every associated data and HPKE `info` names; [`hpke`] the public-key wraps; [`sign`] the
+//!   Ed25519 statements.
+//! - [`personal`] (§3.5), [`vault`] (§3.2, §3.9), [`keyversion`] (§3.9), [`lease`] (§3.7), [`machine`] (§3.8),
+//!   [`recovery`] (§3.10), [`delivery`] (§3.3) and [`fingerprint`] (§3.5) are the vaults' formats.
+//! - [`vectors`] writes the known-answer vectors of `testdata/vectors.json`, natively and in the wasm module.
 
 pub mod aead;
+pub mod delivery;
 mod error;
+pub mod fingerprint;
+pub mod hpke;
 pub mod kdf;
 pub mod keys;
+pub mod keyversion;
+pub mod lease;
+pub mod machine;
+pub mod names;
+pub mod personal;
+pub mod recovery;
 pub mod rng;
 pub mod shamir;
+pub mod sign;
+pub mod text;
+pub mod vault;
+#[cfg(any(test, feature = "test-vectors"))]
+pub mod vectors;
 
 pub use error::Error;
 pub use keys::Key32;

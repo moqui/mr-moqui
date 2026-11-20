@@ -17,19 +17,26 @@ default = ["std"]
 std = ["dep:getrandom"]
 # The browser module: a raw extern "C" ABI, randomness imported from the page. It answers the known-answer vectors,
 # so it carries the fixed test stream.
-wasm = ["test-vectors"]
+wasm = ["test-vectors", "dep:serde_json"]
 # rng::TestRng, the fixed stream the known-answer vectors are made with. Never a key's source.
-test-vectors = []
+test-vectors = ["dep:serde_json"]
 
 [dependencies]
 aes-gcm = { workspace = true, features = ["zeroize"] }
 # Local, not the workspace entry: that one's default features pull getrandom, which the wasm build must leave out.
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+ed25519-dalek.workspace = true
 getrandom = { workspace = true, optional = true }
 hkdf.workspace = true
+hpke.workspace = true
+# The vectors and the wasm module's JSON calls.
+serde_json = { workspace = true, optional = true }
 sha2.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
