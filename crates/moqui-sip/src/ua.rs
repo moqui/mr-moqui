@@ -443,6 +443,53 @@ struct BlockInspector {
     dialogs: Arc<std::sync::OnceLock<std::sync::Weak<DialogLayer>>>,
     /// The registrar's bindings, which end with the stream connection they came over.
     phones: Option<(Arc<Mutex<Registrar>>, mpsc::UnboundedSender<UaEvent>)>,
+    /// The INVITEs this inspector let through lately, by their Via ([`invite_key`]): what a CANCEL or a non-2xx ACK
+    /// names, looked up in O(1).
+    invites: Mutex<AdmittedInvites>,
+}
+
+/// How long an admitted INVITE's key is kept: an INVITE server transaction's life (Timer H, 64 T1, with Timer I).
+const INVITE_KEPT: Duration = Duration::from_secs(40);
+/// The most INVITE keys kept; past it the expired go, and a new one is not kept while none has (its CANCEL is then
+/// counted as a new request, as a stray one is).
+const MAX_INVITES_KEPT: usize = 10_000;
+
+/// The keys of the INVITEs admitted in the last [`INVITE_KEPT`], at most [`MAX_INVITES_KEPT`].
+#[derive(Default)]
+struct AdmittedInvites {
+    keys: HashMap<String, Instant>,
+}
+
+impl AdmittedInvites {
+    fn admit(&mut self, key: String, now: Instant) {
+        if !self.keys.contains_key(&key) && self.keys.len() >= MAX_INVITES_KEPT {
+            self.keys
+                .retain(|_, at| now.saturating_duration_since(*at) < INVITE_KEPT);
+            if self.keys.len() >= MAX_INVITES_KEPT {
+                return;
+            }
+        }
+        self.keys.insert(key, now);
+    }
+
+    fn holds(&self, key: &str, now: Instant) -> bool {
+        self.keys
+            .get(key)
+            .is_some_and(|at| now.saturating_duration_since(*at) < INVITE_KEPT)
+    }
+}
+
+/// The key of a request's INVITE transaction from its top Via alone, with no copy of the request: the transport and
+/// sent-by, and the branch, which a CANCEL and the ACK of a non-2xx answer share with their INVITE (RFC 3261 §9.1,
+/// §17.1.1.3).
+fn invite_key(request: &Request) -> Option<String> {
+    let via = request.top_via_header().ok()?;
+    let text = via.value();
+    let (sent_by, params) = text.split_once(';')?;
+    let branch = params
+        .split(';')
+        .find_map(|param| param.trim().strip_prefix("branch="))?;
+    Some(format!("{}|{}", sent_by.trim().to_ascii_lowercase(), branch.trim()))
 }
 
 /// A request outside a dialog or transaction this side has, which the rate and the transaction cap count: one with no
@@ -481,20 +528,11 @@ impl BlockInspector {
             .is_ok_and(|id| dialogs.get_dialog(&id).is_some())
     }
 
-    /// Whether an INVITE server transaction with `request`'s Via branch and sender is running: the one a CANCEL
-    /// cancels, or a non-2xx ACK acknowledges.
-    fn has_invite(&self, request: &Request) -> bool {
-        let Some(endpoint) = self.endpoint.get().and_then(std::sync::Weak::upgrade) else {
-            return false;
-        };
-        let mut invite = request.clone();
-        invite.method = Method::Invite;
-        let Ok(key) = TransactionKey::from_request(&invite, TransactionRole::Server) else {
-            return false;
-        };
-        endpoint
-            .get_running_transactions()
-            .is_some_and(|running| running.contains(&key))
+    /// Whether this inspector let through, within [`INVITE_KEPT`], the INVITE `request`'s Via names: the one a
+    /// CANCEL cancels, or a non-2xx ACK acknowledges. O(1), with no copy of the request or of the running
+    /// transactions.
+    fn has_invite(&self, request: &Request, now: Instant) -> bool {
+        invite_key(request).is_some_and(|key| lock(&self.invites).holds(&key, now))
     }
 }
 
@@ -512,7 +550,7 @@ impl TransportEventInspector for BlockInspector {
                 }
                 let known = Known {
                     dialog: &|request| self.has_dialog(request),
-                    invite: &|request| self.has_invite(request),
+                    invite: &|request| self.has_invite(request, now),
                 };
                 if is_new_request(message, &known) {
                     let running = self
@@ -530,6 +568,14 @@ impl TransportEventInspector for BlockInspector {
                         Admit::Busy => {
                             tracing::warn!("SIP: {running} transactions running, a new request from {addr} dropped");
                             return None;
+                        }
+                    }
+                }
+                // an INVITE let through: its CANCEL and non-2xx ACK will name it
+                if let SipMessage::Request(request) = message {
+                    if request.method == Method::Invite {
+                        if let Some(key) = invite_key(request) {
+                            lock(&self.invites).admit(key, now);
                         }
                     }
                 }
@@ -744,6 +790,7 @@ impl Ua {
                 endpoint: Arc::clone(&endpoint_slot),
                 dialogs: Arc::clone(&dialogs_slot),
                 phones: phones.as_ref().map(|p| (Arc::clone(&p.registrar), events.clone())),
+                invites: Mutex::default(),
             }))
             .build();
         let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
