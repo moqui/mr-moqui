@@ -510,6 +510,10 @@ pub(crate) struct EdgeServer {
     /// Up connections refused (a key not paired or revoked) by source, so an anonymous client with any certificate
     /// stops costing a transaction and a log line past `up_refusals` in the window (SEC-CLU-84).
     refused_up: Mutex<PairAttempts>,
+    /// The keys this process paired or took an up connection of: a source past `up_refusals` is refused before the
+    /// look-up only for a key not among them, so a busy address (a NAT, a shared host) never blocks a paired node's
+    /// links. At most [`MAX_KNOWN_KEYS`].
+    known_keys: Mutex<std::collections::HashSet<String>>,
     shutdown: watch::Receiver<bool>,
     /// The paired nodes' public host names (§5.3).
     pub(crate) hosts: Hosts,
@@ -539,6 +543,9 @@ pub(crate) struct EdgeServer {
 
 /// How long the edge cluster's list is answered before its member rows are read again: every link's Ping asks it.
 const EDGE_MEMBERS_FOR: Duration = Duration::from_secs(2);
+
+/// The paired keys an edge node keeps in memory to tell them from strangers' (SEC-CLU-84): far more than its pairings.
+const MAX_KNOWN_KEYS: usize = 10_000;
 
 /// The refused up connections of one source in a window that are logged at info; the rest at debug (SEC-CLU-84).
 const LOGGED_UP_REFUSALS: u32 = 3;
@@ -628,6 +635,7 @@ impl EdgeServer {
             registry: Mutex::new(Registry::default()),
             pair_attempts: Mutex::new(PairAttempts::default()),
             refused_up: Mutex::new(PairAttempts::default()),
+            known_keys: Mutex::new(std::collections::HashSet::new()),
             shutdown,
             hosts: Hosts::default(),
             telemetry: Arc::clone(&telemetry),
@@ -1524,6 +1532,20 @@ impl EdgeServer {
         Ok(MemberState::parse(&status.state).unwrap_or_default())
     }
 
+    /// Whether `fingerprint` is a key this process paired or linked (see `known_keys`).
+    fn known_key(&self, fingerprint: &str) -> bool {
+        lock(&self.known_keys).contains(fingerprint)
+    }
+
+    /// Keep `fingerprint` as a key this process paired or linked; past [`MAX_KNOWN_KEYS`] the set starts again.
+    pub(super) fn note_known_key(&self, fingerprint: &str) {
+        let mut keys = lock(&self.known_keys);
+        if keys.len() >= MAX_KNOWN_KEYS && !keys.contains(fingerprint) {
+            keys.clear();
+        }
+        keys.insert(fingerprint.to_string());
+    }
+
     /// Count a Pair call from `ip`; false when it is over the limit for the window.
     fn pair_allowed(&self, ip: IpAddr) -> bool {
         lock(&self.pair_attempts).allowed(ip, Instant::now(), self.config.pair_window, self.config.pair_attempts)
@@ -1592,9 +1614,10 @@ impl EdgeServer {
             let _ = write_answer(&mut stream, Answer::Refused, message).await;
             return;
         };
-        // a source refused often lately is refused before the lookup: no transaction, and no log line (SEC-CLU-84)
+        // a source refused often lately is refused before the lookup, unless the key is one paired here: no transaction,
+        // and no log line (SEC-CLU-84)
         let (window, limit) = (self.config.pair_window, self.config.up_refusals);
-        if lock(&self.refused_up).reached(remote.ip(), Instant::now(), window, limit) {
+        if !self.known_key(&fingerprint) && lock(&self.refused_up).reached(remote.ip(), Instant::now(), window, limit) {
             tracing::debug!("Edge link from {remote} refused before its key was looked up: refused too often lately");
             let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
             return;
@@ -1604,7 +1627,10 @@ impl EdgeServer {
             .on_pool(move |factory| store::link_up(factory, &lookup, remote))
             .await;
         let (node, generation) = match linked {
-            Ok(Some(linked)) => linked,
+            Ok(Some(linked)) => {
+                self.note_known_key(&fingerprint);
+                linked
+            }
             Ok(None) => {
                 let refusals = lock(&self.refused_up).charge(remote.ip(), Instant::now(), window);
                 if refusals <= LOGGED_UP_REFUSALS {
@@ -2802,6 +2828,7 @@ impl Link for LinkService {
         match paired {
             Paired::Pinned { key_changed } => {
                 lock(&self.server.registry).revoked.remove(&node);
+                self.server.note_known_key(&fingerprint);
                 if key_changed {
                     // the links of the old key end now that its row has the new one
                     self.server.close(&node);
