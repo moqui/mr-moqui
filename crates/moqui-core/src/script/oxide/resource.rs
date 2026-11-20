@@ -66,6 +66,20 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
                     crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
                 // an expand, expression or condition runs as text that may be a proposed definition's: while a preview
                 // holds the runtime, in a region of its allow-list, its value copied out as data (SEC-AI-102)
+                // in a preview asked for inside a running script, the text runs not: a template's text with a
+                // placeholder for each expression, an expression's null, a condition's false
+                if name != "script" && crate::script::preview::skipped() {
+                    return Ok(match name {
+                        "expression" => Value::Null,
+                        "condition" => Value::Bool(false),
+                        _ => match scope.arg(0) {
+                            Value::String(text) => {
+                                text_value(&crate::script::preview::placeholder(&text.to_utf8_lossy()))
+                            }
+                            _ => text_value(""),
+                        },
+                    });
+                }
                 let region = if name == "script" {
                     None
                 } else {

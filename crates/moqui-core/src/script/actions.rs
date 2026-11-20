@@ -138,7 +138,10 @@ pub(crate) fn run_actions_at(actions: &str, source: Option<&moqui_lib::error::So
     }
     // an actions snippet of a definition (a drop-down's entity-options, a form-list's count find) runs on the preview's
     // allow-list host while a preview holds the runtime; a service's or a rule's own runs under its frame, on the whole
-    // host (SEC-AI-102)
+    // host (SEC-AI-102); skipped in a preview asked for inside a running script
+    if crate::script::preview::skipped() {
+        return Ok(());
+    }
     let _preview = crate::script::preview::enter_entry()?;
     run_prepared(&prepared)
 }

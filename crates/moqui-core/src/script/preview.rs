@@ -36,7 +36,8 @@ thread_local! {
 }
 
 thread_local! {
-    /// Set while a preview holds the thread with no runtime of its own ([`PreviewHeld`]): its text runs no code.
+    /// Set while a preview holds the thread with no runtime of its own ([`PreviewHeld`]): its text runs no code, and
+    /// the render passes over it ([`skipped`]).
     static SHARED: Cell<bool> = const { Cell::new(false) };
     /// Set while a preview holds the thread with a runtime of its own ([`PreviewHeld`]): the screens' code outside a
     /// region (the framework's render units, the shell's actions) runs on the units' list ([`unit_allowed`]).
@@ -44,7 +45,8 @@ thread_local! {
 }
 
 /// A preview's hold of the thread's script runtime ([`crate::screen::overlay::with`]): a fresh one with its built-in
-/// objects frozen, or, when a script runs on the thread now, no code of the proposed text at all.
+/// objects frozen, or, when a script runs on the thread now, no code of the proposed text at all: the preview renders
+/// its structure and literal text with its code left out ([`skipped`]).
 pub(crate) struct PreviewHeld {
     _runtime: Option<crate::script::oxide::PreviewRuntime>,
     shared_before: bool,
@@ -56,7 +58,7 @@ impl PreviewHeld {
         let runtime = crate::script::oxide::PreviewRuntime::enter();
         let shared = runtime.is_none();
         if shared {
-            tracing::warn!("a preview of proposed screen text renders inside a script: its text runs no code");
+            tracing::warn!("a preview of proposed screen text renders inside a script: its code is left out");
         }
         Self {
             _runtime: runtime,
@@ -73,6 +75,40 @@ impl Drop for PreviewHeld {
     }
 }
 
+/// Whether a proposed screen's code is passed over now instead of run: a preview holds the thread with no runtime of
+/// its own ([`PreviewHeld`], a preview asked for inside a running script) and a proposed screen's code would run
+/// ([`crate::screen::proposed_running`]). The entries then run nothing and give a placeholder: actions are skipped, a
+/// condition is false, a value or a field's value null, a map empty, and a `${}` template its text with each
+/// expression as [`placeholder`] shows it. The preview shows the proposed screen's labels, structure and literal text.
+/// What reaches [`enter`] anyway is refused there.
+pub(crate) fn skipped() -> bool {
+    SHARED.with(Cell::get) && crate::screen::proposed_running()
+}
+
+/// What a `${}` template of proposed text shows when its code is skipped ([`skipped`]): its literal text, each
+/// `${...}` expression as `…`. No `${` is left, so trusted code that expands the text later runs none of it.
+pub(crate) fn placeholder(template: &str) -> String {
+    let bytes = template.as_bytes();
+    let mut text = String::with_capacity(template.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'$' && bytes.get(index + 1) == Some(&b'{') {
+            if let Some(end) = crate::script::template::scan_expression(template, index + 2, b'}') {
+                text.push('…');
+                index = end + 1;
+                continue;
+            }
+        }
+        let ch = template[index..].chars().next().unwrap_or('\u{FFFD}');
+        text.push(ch);
+        index += ch.len_utf8();
+    }
+    while text.contains("${") {
+        text = text.replace("${", "{");
+    }
+    text
+}
+
 /// A run of a preview's proposed text, while it lives; nothing when no proposed screen's code runs.
 #[must_use = "dropping the guard ends the region"]
 pub(crate) struct PreviewCode(Option<u32>);
@@ -81,7 +117,8 @@ pub(crate) struct PreviewCode(Option<u32>);
 ///
 /// # Errors
 ///
-/// When the preview has no runtime of its own ([`PreviewHeld`]): the text runs no code then.
+/// When the preview has no runtime of its own ([`PreviewHeld`]): the text runs no code then. The entries pass over
+/// the text before this ([`skipped`]), so this refuses only what would run anyway.
 pub(crate) fn enter() -> Result<PreviewCode, crate::context::Error> {
     if !crate::screen::proposed_running() {
         return Ok(PreviewCode(None));

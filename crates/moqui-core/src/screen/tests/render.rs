@@ -2453,6 +2453,55 @@ fn a_previewed_screen_still_renders_with_the_allowed_members() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: a preview asked for inside a running script (Screen Design's terminal render) cannot set the thread's
+/// runtime aside, so its proposed text runs no code: the render shows its labels, structure and literal text, its
+/// actions are skipped, a condition is false, a value null and each `${}` expression a placeholder.
+#[test]
+fn a_preview_inside_a_running_script_renders_its_structure_and_runs_no_code() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-shared-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Shared.xml");
+    let screen = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            throw new Error('ACTIONS RAN')
+        ]]></script></actions><widgets>
+            <label text="LITERAL TEXT"/>
+            <label text="EXPANDED ${(() => { throw new Error('EXPAND RAN') })()} AND $${'x'} END"/>
+            <section name="Sectioned" condition="true"><widgets><label text="PASSED"/></widgets>
+                <fail-widgets><label text="FAILED"/></fail-widgets></section>
+            <section-iterate name="Iterated" list="[1, 2]" entry="item">
+                <widgets><label text="ITEM"/></widgets></section-iterate>
+        </widgets></screen>"#;
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("text")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = {
+        let _running = crate::script::run::EngineTag::Oxide.enter();
+        crate::screen::overlay::with(overlay, render)
+    };
+    assert!(previewed.contains("LITERAL TEXT"), "{previewed}");
+    assert!(previewed.contains("EXPANDED … AND $… END"), "{previewed}");
+    assert!(
+        previewed.contains("FAILED") && !previewed.contains("PASSED"),
+        "{previewed}"
+    );
+    assert!(!previewed.contains("ITEM"), "{previewed}");
+    // the actions and the expression would throw: neither ran
+    assert!(!previewed.contains("RAN"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-AI-102: a preview renders on a script runtime of its own whose built-in objects are frozen, so the proposed text
 /// changes no prototype the framework's render code or a later request calls; the thread's own runtime is untouched.
 #[test]
