@@ -445,7 +445,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="requiredPipeline"><description>The pipeline, with the deploy event, that must pass</description></parameter>
             <parameter name="approvalRequired" type="Boolean"/>
             <parameter name="approverGroupId"><description>The user group whose members approve; a maintainer of
-                the repository (the delete right) when empty</description></parameter>
+                the repository (the delete right) when none is set. Left out, empty or null on a change, the stored one
+                stays (a caller with no groups sends null)</description></parameter>
             <parameter name="allowedRefs"><description>Branch patterns, separated by spaces, whose runs get the
                 environment's secrets, and which deploy to it, besides protected refs (a deployment of one no branch
                 rule protects waits for an approver)</description></parameter>

@@ -364,17 +364,15 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         }
     };
     row.set("name", Value::string(&name));
-    for field_name in [
-        "targetUrl",
-        "cloneUrl",
-        "requiredPipeline",
-        "allowedRefs",
-        "approverGroupId",
-        "dataTypes",
-    ] {
+    for field_name in ["targetUrl", "cloneUrl", "requiredPipeline", "allowedRefs", "dataTypes"] {
         if parameters.contains_key(field_name) {
             row.set(field_name, opt(text(parameters, field_name)));
         }
+    }
+    // an approver group absent, empty or null on a change keeps the stored one: a caller that has no groups (Smithy sends
+    // null on every save) does not clear one set elsewhere, nor clear the secrets with it (SEC-GIT-91)
+    if let Some(group) = text(parameters, "approverGroupId") {
+        row.set("approverGroupId", Value::string(group));
     }
     // the target and the clone URL are checked when stored, and again when a deployment calls the target
     for field_name in ["targetUrl", "cloneUrl"] {

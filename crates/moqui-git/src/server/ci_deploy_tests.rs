@@ -970,6 +970,16 @@ fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
     change(&[("approverGroupId", s("GIT_WRITERS"))]);
     assert_eq!(value(), "", "another approver group");
     secret(Some(&secret_id));
+    // a caller with no groups sends null on every save: the stored group stays, and so do the secrets
+    assert_eq!(change(&[("approverGroupId", Value::Null)]), "", "nothing cleared");
+    assert_eq!(value(), "the-prod-key");
+    assert_eq!(
+        text(
+            &rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", &id)])[0],
+            "approverGroupId"
+        ),
+        "GIT_WRITERS"
+    );
     change(&[("approvalRequired", Value::Bool(false))]);
     assert_eq!(value(), "", "approval no longer required");
     assert_eq!(token(), TOKEN);
