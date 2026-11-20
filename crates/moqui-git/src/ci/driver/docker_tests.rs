@@ -846,6 +846,18 @@ fn an_image_volume_is_a_sized_tmpfs_and_one_that_cannot_be_is_refused() {
         "rw,exec,nosuid,nodev,size=1024m,uid=1000,gid=1000,mode=0700"
     );
 
+    // a pool with no memoryMb: nothing would bound the tmpfs, so the image is refused before anything is made
+    let api = Api::tcp();
+    let mut unbounded = start_parameters("with-volume:1");
+    unbounded.retain(|(name, _)| *name != "memoryMb");
+    let (out, errors) = api.call(start_run_docker, &unbounded);
+    assert!(!out.contains_key("instanceRef"), "{out:?}");
+    assert!(errors.contains("the pool sets none"), "{errors}");
+    assert!(
+        !api.seen().iter().any(|(method, _, _)| method == "POST"),
+        "nothing made"
+    );
+
     let api = Api::tcp();
     let (out, errors) = api.call(start_run_docker, &start_parameters("relative-volume:1"));
     assert!(!out.contains_key("instanceRef"), "{out:?}");

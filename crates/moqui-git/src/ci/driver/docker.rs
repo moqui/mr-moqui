@@ -643,12 +643,21 @@ fn not_on_host(image: &str) -> Error {
 /// Put a tmpfs at each `VOLUME` path of a container's image, sized `container-tmp-mb` and owned by the container's
 /// user as `/tmp` is, so the engine makes no anonymous volume there on the host's disk (SEC-GIT-93): a database
 /// service (postgres, mysql, redis) writes its data in memory the pool's memory limit bounds. A path a tmpfs already
-/// covers (`/tmp`, the working directory) is left. A path that is not absolute cannot be covered, and is refused.
+/// covers (`/tmp`, the working directory) is left. A path that is not absolute cannot be covered, and is refused, and so
+/// is any `VOLUME` on a pool with no `memoryMb`, where nothing would bound the tmpfs.
 ///
 /// # Errors
 ///
 /// The refusal of a path that cannot be covered.
 pub fn cover_volumes(body: &mut serde_json::Value, volumes: &[String], hardening: &Hardening) -> Result<(), String> {
+    // a tmpfs is memory: only the pool's memory limit (memoryMb) bounds what the volumes hold
+    if !volumes.is_empty() && body["HostConfig"]["Memory"].as_i64().is_none_or(|memory| memory <= 0) {
+        return Err(format!(
+            "its image declares a VOLUME ({}), which runs on a tmpfs that only the pool's memoryMb bounds, and the pool \
+             sets none: give the pool a memoryMb",
+            volumes.join(", ")
+        ));
+    }
     for volume in volumes {
         let path = volume.trim_end_matches('/');
         if !path.starts_with('/') || path.contains(',') || path.contains(':') {

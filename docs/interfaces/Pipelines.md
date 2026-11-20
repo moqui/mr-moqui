@@ -271,7 +271,7 @@ A runner is never the server, nor on its machine or its network. A pool (`GitRun
 | `trusted` | Y: trusted runs only. N: untrusted runs only. |
 | `allowedImages` | Image patterns (`*`). A job whose image none matches is an error; an empty list allows none. |
 | `maxConcurrent`, `maxMinutes` | Jobs at once, and the longest a job runs. |
-| `cpuLimit`, `memoryMb`, `diskMb`, `pidsLimit` | The container's limits. `diskMb` needs a storage driver that takes it. |
+| `cpuLimit`, `memoryMb`, `diskMb`, `pidsLimit` | The container's limits. `diskMb` needs a storage driver that takes it. A database service's data is on a tmpfs, so it counts toward `memoryMb`, which an image with a `VOLUME` needs. |
 | `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. A network is named by letters, digits, dot, dash and underscore only, and is no engine keyword, so never `host`, `container:...`, Podman's `ns:<path>`, `slirp4netns`, `pasta` or `private`, with options or without (refused when the pool is stored, and `none` if a row has one). |
 | `serverUrl` | The URL the pool's runners reach the server by, when it is not `git-ci` `server-url`. |
 
@@ -324,10 +324,11 @@ its container, which reaches out only when the pool's `egressRule` is `bridge`: 
 it is internal, and the job's container is put on the pool's network too, so the job's egress is the pool's and a
 service has none. A network of that name already there is an error (another run's), never shared. A job's or a
 service's image (the image is inspected before its container is made) gets a tmpfs of `container-tmp-mb`, owned by
-the container's user, at each path its image declares a `VOLUME` (a database service keeps its data there, within the
-memory limit), where the engine would otherwise make an anonymous
+the container's user, at each path its image declares a `VOLUME` (a database service keeps its data there, in memory:
+its data counts toward the pool's `memoryMb`), where the engine would otherwise make an anonymous
 volume on the host's disk, outside the pool's limits. A path no tmpfs covers (not absolute), and a container the
-engine gave a volume anyway, are refused before it starts.
+engine gave a volume anyway, are refused before it starts, and so is an image with a `VOLUME` on a pool with no
+`memoryMb`, where nothing would bound the tmpfs.
 
 The names carry this server's id (`git-ci` `server-id`, else the public URL's host), and a removal or a cleanup
 touches only containers with this server's label, so two servers can share a host. The cleanup leaves a container
