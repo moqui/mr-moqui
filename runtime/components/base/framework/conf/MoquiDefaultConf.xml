@@ -1305,7 +1305,7 @@
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
-        items pass queue-max-megabytes the oldest fail the same way, items of other kinds before mail; past
+        items pass queue-max-megabytes the oldest fail the same way, items of other kinds before mail (newest first); past
         queue-mail-percent of that cap an edge node's SMTP listener refuses new mail for the pairing for now (452 at
         RCPT TO, 451 after the data), so mail it answered 250 for is not what the cap fails. A payload is at most 1 MiB;
         a larger body (up to 64 MiB, counted in the cap) is the item's content, sent over the link before it (at most

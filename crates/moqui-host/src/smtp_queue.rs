@@ -467,6 +467,10 @@ fn deliver_queued(
         let item = edge_mail::inbound_item_trusting(raw.to_vec(), envelope, &recipients, &conversation, trusted);
         match queue::enqueue(factory, facade, Some(&node), &item) {
             Ok(queued) => {
+                // counted at once, so a burst within the kept count's seconds passes no share (SEC-MAIL-86)
+                if queued.created {
+                    queue::note_queued(&node, incoming);
+                }
                 summary.push(format!(
                     "queued for local node {node} as item {}{}",
                     queued.queue_item_id,

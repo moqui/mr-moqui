@@ -525,6 +525,35 @@ fn the_cap_spares_accepted_mail_and_mail_waits_past_its_share() {
         ["other-1"],
         "the newer item of another kind, not the oldest mail"
     );
+    // past the cap with only mail left, the newest goes first: the mail that waited longest is the last to go
+    let tight = EdgeSettings {
+        max_bytes: 150,
+        ..settings.clone()
+    };
+    let cleaned = clean(ctx.factory(), &facade, &tight, now_millis()).unwrap();
+    assert_eq!(cleaned.expired, 1);
+    let pending: Vec<String> = facade
+        .find(QUEUE_ITEM)
+        .unwrap()
+        .eq("statusEnumId", Value::string(PENDING))
+        .disable_authz()
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .map(|row| text(row, "conversationKey"))
+        .collect();
+    assert_eq!(pending, ["mail-1"], "the newest mail failed, the oldest kept");
+    // what was queued since the kept count was read is counted at once: a burst passes no share
+    assert!(
+        has_room(&facade, &settings, "burst-node", 100).unwrap(),
+        "an empty queue, read and kept"
+    );
+    note_queued("burst-node", 200);
+    assert!(
+        !has_room(&facade, &settings, "burst-node", 100).unwrap(),
+        "200 just queued and 100 more pass 225"
+    );
 }
 
 /// The cap of a pairing's own row, in megabytes, holds in place of the conf's; it is read for the pairing alone.
