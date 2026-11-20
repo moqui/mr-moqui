@@ -91,6 +91,9 @@ pub struct Upload<'a> {
     /// A cache's key, as the runner expanded it.
     pub cache_key: Option<&'a str>,
     pub retention_days: Option<i64>,
+    /// The size the upload says it is (its `Content-Length`), when it says: the room a cap makes for it by evicting
+    /// caches.
+    pub size: Option<u64>,
 }
 
 fn days(name: &str, default: u64) -> i64 {
@@ -257,7 +260,13 @@ pub fn store(
         if *key == "ownerId" {
             backfill_owners(entity);
         }
-        let used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        let mut used = u64::try_from(stored_bytes(entity, key, id)?).unwrap_or(0);
+        // caches count toward the cap and are kept while they are used, so room for the upload is made by evicting
+        // the least recently used ones (SEC-GIT-90); an artifact or a report is never evicted
+        let wanted = upload.size.unwrap_or_else(|| upload.kind.max_bytes()).min(cap);
+        if used.saturating_add(wanted) > cap {
+            used = evict_caches(entity, key, id, used, cap.saturating_sub(wanted))?;
+        }
         if used >= cap {
             return Err(quota(what, used, cap, setting));
         }
@@ -342,6 +351,38 @@ pub fn store(
         }
     }
     Ok(field(&row, "artifactId"))
+}
+
+/// Delete the caches kept under `key` `id`, least recently used first (by `lastUsedDate`, else when they were made),
+/// until at most `target` bytes are kept or no cache is left. A cache is rebuilt by the next run that misses it; its
+/// content blob is left to `gc#ContentBlobs`. The bytes kept after.
+fn evict_caches(entity: &EntityFacade, key: &str, id: &str, used: u64, target: u64) -> Result<u64, Error> {
+    let mut used = used;
+    let caches = entity
+        .find(RUN_ARTIFACT)?
+        .eq(key, Value::string(id))
+        .eq("artifactKind", Value::string("cache"))
+        .order_by("lastUsedDate", false)
+        .order_by("createdDate", false)
+        .list()?;
+    for cache in caches.iter() {
+        if used <= target {
+            break;
+        }
+        let size = u64::try_from(long(cache, "sizeBytes").unwrap_or(0)).unwrap_or(0);
+        match cache.delete(entity) {
+            Ok(()) => {
+                tracing::info!(
+                    "the cache {} of {key} {id} was evicted to make room under its upload cap",
+                    field(cache, "cacheKey").unwrap_or_default()
+                );
+                used = used.saturating_sub(size);
+            }
+            // another upload evicted it first, or it could not go: the next one is tried
+            Err(err) => tracing::warn!("a cache of {key} {id} was not evicted: {}", err.message()),
+        }
+    }
+    Ok(used)
 }
 
 /// The refusal of an upload past a storage cap.
