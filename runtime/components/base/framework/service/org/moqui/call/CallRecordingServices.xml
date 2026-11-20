@@ -231,7 +231,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="expire" noun="Recordings" authenticate="anonymous-all" transaction="ignore">
-        <description>The recording job (hourly): recordings past their retentionUntilDate are deleted, files and rows;
+        <description>The recording job (hourly): recordings past their retentionUntilDate are deleted, files and rows, and
+            the live captions kept (calls/captions@store) past calls/captions@retention-days;
             recovery: a recording still going whose call ended or whose media node stopped fails ("the recorder stopped"), a
             segment that was not stored is removed with any partial file, and files under the recordings' root that no
             recording row names (an upload whose rows rolled back) are deleted. Each item is on its own: one that fails is
@@ -244,7 +245,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="expire" noun="RecordingItem" authenticate="false" allow-remote="false">
-        <description>Internal: one item of expire#Recordings (itemKind retention, stale, failedSegment or orphanFiles).</description>
+        <description>Internal: one item of expire#Recordings (itemKind retention, captions, stale, failedSegment or
+            orphanFiles).</description>
         <in-parameters>
             <parameter name="itemKind" required="true"/>
             <parameter name="callRecordingId"/>

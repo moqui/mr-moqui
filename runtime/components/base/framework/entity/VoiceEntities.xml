@@ -801,6 +801,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="optedOut" type="text-indicator"/>
         <field name="lastKeyword" type="text-short"/>
         <field name="changedDate" type="date-time"/>
+        <field name="keywordDate" type="date-time"><description>The provider's time of the message of the last STOP or
+            START applied by its time: an older one is stale (SEC-COM-90). A HELP, or a STOP the provider refused a send
+            for, does not set it.</description></field>
     </entity>
     <entity entity-name="SmsSendCount" package="moqui.call" use="transactional" cache="never">
         <description>Texts sent a day, for the limits (VoicePolicy smsMaxPerUserPerDay, smsMaxPerDay, smsSystemMaxPerDay):

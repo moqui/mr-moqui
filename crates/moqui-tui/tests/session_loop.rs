@@ -327,6 +327,7 @@ fn start_noted(link: FakeLink, path: &str, size: (u16, u16), log: bool, notes: O
         notes,
         log,
         login_name: None,
+        input_queued: None,
     };
     let done = thread::spawn(move || run_session(link, options, &rx, &replies, &mut writer));
     Running { tx, out, done }
@@ -347,6 +348,36 @@ fn the_log_pane_shows_the_lines_the_caller_sends() {
     running.out.wait_for("A warning for the pane", 100, 40);
     running.tx.send(SessionEvent::Close).unwrap();
     running.done.join().unwrap().unwrap();
+}
+
+/// The loop takes each input's bytes off the caller's count as it decodes them, so a transport that waits while too
+/// many are queued reads again once they are taken (SEC-FIL-99).
+#[test]
+fn the_loop_counts_down_the_input_it_takes() {
+    let (tx, rx) = mpsc::channel();
+    let replies = tx.clone();
+    let out = Shared::default();
+    let mut writer = out.clone();
+    let queued = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let options = SessionOptions {
+        path: GALLERY_LIST_PATH.to_string(),
+        columns: 100,
+        rows: 40,
+        input_queued: Some(Arc::clone(&queued)),
+        ..SessionOptions::default()
+    };
+    let done = thread::spawn(move || run_session(gallery_link(), options, &rx, &replies, &mut writer));
+    out.wait_for("Open detail", 100, 40);
+    let paste = [b"\x1b[200~".as_slice(), &[b'x'; 100_000], b"\x1b[201~"].concat();
+    queued.fetch_add(paste.len(), std::sync::atomic::Ordering::AcqRel);
+    tx.send(SessionEvent::Input(paste)).unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while queued.load(std::sync::atomic::Ordering::Acquire) > 0 {
+        assert!(Instant::now() < until, "the input was never taken off the count");
+        thread::sleep(Duration::from_millis(10));
+    }
+    tx.send(SessionEvent::Close).unwrap();
+    done.join().unwrap().unwrap();
 }
 
 #[test]

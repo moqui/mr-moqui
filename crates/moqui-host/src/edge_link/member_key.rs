@@ -87,7 +87,8 @@ impl MemberKey {
         let rng = aws_lc_rs::rand::SystemRandom::new();
         let der = Ed25519KeyPair::generate_pkcs8(&rng).map_err(|_| "could not make a member key".to_string())?;
         if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| format!("could not make {}: {err}", parent.display()))?;
+            moqui_lib::private_fs::create_dir_all(parent)
+                .map_err(|err| format!("could not make {}: {err}", parent.display()))?;
         }
         // written whole to a file of its own (owner only), then put in place only where none is: a reader never sees a
         // part, and of two processes making one at once both keep the one put in place first
@@ -137,25 +138,24 @@ impl MemberKey {
     }
 }
 
-#[cfg(unix)]
+/// Write `text` to `file` as a new file of mode `0600` (`moqui_lib::private_fs`), as `tls::write_private` does: what is
+/// at the path (a part a stopped write left, or a link another local user planted) is removed first, never written
+/// into or followed, since the mode applies only to a file the open creates (SEC-OUT-85).
 fn write_private(file: &Path, text: &str) -> Result<(), String> {
     use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    let mut out = std::fs::OpenOptions::new()
+    let fail = |err: std::io::Error| format!("could not write {}: {err}", file.display());
+    match std::fs::remove_file(file) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(fail(err)),
+        _ => {}
+    }
+    let mut out = moqui_lib::private_fs::file_options()
         .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
+        .create_new(true)
         .open(file)
-        .map_err(|err| format!("could not write {}: {err}", file.display()))?;
+        .map_err(fail)?;
     out.write_all(text.as_bytes())
         .and_then(|()| out.sync_all())
-        .map_err(|err| format!("could not write {}: {err}", file.display()))
-}
-
-#[cfg(not(unix))]
-fn write_private(file: &Path, text: &str) -> Result<(), String> {
-    std::fs::write(file, text).map_err(|err| format!("could not write {}: {err}", file.display()))
+        .map_err(fail)
 }
 
 /// SHA-256 of a member's public key, hex.

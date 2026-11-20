@@ -98,12 +98,14 @@ fn csv_line(cells: &[&str]) -> String {
         if index > 0 {
             line.push(',');
         }
+        // an error file is opened by a person: a source value that would run as a formula is guarded (SEC-SCR-89)
+        let cell = moqui_lib::string::csv_formula_guarded(cell);
         if cell.contains([',', '"', '\n', '\r']) {
             line.push('"');
             line.push_str(&cell.replace('"', "\"\""));
             line.push('"');
         } else {
-            line.push_str(cell);
+            line.push_str(&cell);
         }
     }
     line.push('\n');

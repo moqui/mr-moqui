@@ -513,6 +513,15 @@ along with this software (see the LICENSE.md file). If not, see
             the visit stored.</description>
         <in-parameters><parameter name="endpoint" required="true"/></in-parameters>
     </service>
+    <service verb="forget" noun="UserWebPush" type="rust" location="moqui_core::service::web_push::forget_user_subscriptions"
+            authenticate="false" allow-remote="false">
+        <description>Internal: delete every browser subscription of userId, so its browsers get no more pushes (SEC-COM-92):
+            when the account is disabled for good or terminated (the UserAccountWebPushEnds entity ECA) and when its
+            sessions are ended everywhere (revoke#AccountAccess, revoke#OwnAccess). A native app's registration ends with its
+            device key.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
+    </service>
     <service verb="send" noun="WebPush" type="rust" location="moqui_core::service::web_push::send_web_push"
             authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal: run on a service worker when a persisted notification is sent, and for a call's ring

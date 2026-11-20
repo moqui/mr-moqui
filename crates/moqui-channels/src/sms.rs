@@ -677,6 +677,10 @@ impl<P: SmsProvider> SmsAdapter<P> {
                 // to another host
                 .redirects(3, true)
                 .deny_internal_addresses(deny)
+                // every request of the adapter carries the provider's key or token (an API call, a file fetch, a
+                // group's roster), so over https only, whether or not the bridge's start ran; http only to a
+                // test's fake, `allowInternalAddresses` (SEC-COM-88)
+                .https_only(deny)
         };
         if allow_internal {
             self.internal.get_or_init(|| make(false))

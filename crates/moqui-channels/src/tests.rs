@@ -445,6 +445,14 @@ impl Bed {
             "meta": {"attempt": 1}})
     }
 
+    /// A text from `from` the provider received at `received_at` (RFC 3339), signed now; the response.
+    fn text_in_at(&self, from: &str, body: &str, received_at: &str) -> WebhookResponse {
+        let n = self.next();
+        let mut event = self.received(&format!("ev-{n}"), &format!("in-{n}"), from, body, json!([]));
+        event["data"]["payload"]["received_at"] = json!(received_at);
+        self.hook(&self.signed(&event, now() / 1000))
+    }
+
     /// A text from `from`, signed now; the response.
     fn text_in(&self, from: &str, body: &str, media: Json) -> (WebhookResponse, String) {
         let n = self.next();
@@ -1614,6 +1622,45 @@ fn a_bridge_sends_its_key_over_https_and_reaches_no_internal_address_on_producti
     assert_eq!(on_production, (false, true));
 }
 
+/// SEC-COM-88: every request of an SMS adapter goes over https, whether or not the bridge started: an API call, and
+/// an inbound file's fetch (which runs from the webhook, before any start) with the provider's key; a test's fake (a
+/// bridge that allows internal addresses) still takes http.
+#[test]
+fn a_provider_request_is_never_sent_in_clear_text_whatever_started() {
+    use crate::sms::{call, ApiBody, ApiRequest};
+    use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
+    let request = |url: &str| ApiRequest {
+        method: moqui_lib::http::Method::Post,
+        url: url.to_string(),
+        headers: vec![("authorization".to_string(), "Bearer K".to_string())],
+        body: ApiBody::None,
+    };
+    let public = moqui_lib::http::RestClient::new()
+        .deny_internal_addresses(true)
+        .https_only(true);
+    let refused = call(&public, &request("http://api.example.test/v2/messages")).unwrap_err();
+    assert!(refused.message().contains("https only"), "{refused}");
+    // the adapter's own client: a file of a bridge saved with an http address is not fetched
+    let bridge = |config: Json| moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: "B".to_string(),
+        type_enum_id: String::new(),
+        adapter_name: "sms".to_string(),
+        name: "B".to_string(),
+        config,
+    };
+    let adapter = telnyx();
+    let plain = bridge(json!({"apiKey": "K", "apiBaseUrl": "http://api.example.test"}));
+    let fetched = adapter
+        .fetch_media(&plain, "http://media.example.test/f.jpg", 100)
+        .unwrap_err();
+    assert!(fetched.contains("https only"), "{fetched}");
+    let fake = moqui_lib::http::RestClient::new()
+        .deny_internal_addresses(false)
+        .connect_timeout(Duration::from_millis(200));
+    let unreached = call(&fake, &request("http://127.0.0.1:9/v2/messages")).unwrap_err();
+    assert!(!unreached.message().contains("https only"), "{unreached}");
+}
+
 /// plans/Comms-Messaging.md §9, group texts: a group MMS that comes in (our number among its `to` and `cc`) is one room
 /// for that set of outside numbers, the same room whoever writes and in whatever order; a reply goes out as one group
 /// MMS to every number; Text a number with several numbers opens that room; a group with a number a text to would be
@@ -2077,6 +2124,101 @@ fn a_providers_opt_out_signal_is_kept_once() {
         ),
         (json!("ignored"), json!("unknownNumber"))
     );
+}
+
+/// SEC-COM-90: a STOP or START older than the pair's last change changes nothing, so an old signed text posted again
+/// (as a new message, past the once-only mark) cannot undo a later keyword; a newer one still does.
+#[test]
+fn an_older_keyword_does_not_undo_a_later_one() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let opted_out = || {
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))],
+        )["optedOut"]
+            .clone()
+    };
+    assert_eq!(
+        status(&bed.text_in_at(THEIRS, "STOP", "2026-11-01T12:05:00.000+00:00")),
+        200
+    );
+    assert_eq!(opted_out(), "Y");
+    bed.text_in_at(THEIRS, "START", "2026-11-01T12:00:00.000+00:00");
+    assert_eq!(opted_out(), "Y", "a START sent before the STOP does not opt back in");
+    bed.text_in_at(THEIRS, "START", "2026-11-01T12:10:00.000+00:00");
+    assert_eq!(opted_out(), "N", "a later START does");
+    // a HELP processed first makes no STOP stale, whatever their order: an opt-out is never lost
+    const OTHER: &str = "+15554443333";
+    bed.text_in_at(OTHER, "HELP", "2026-11-01T12:10:00.000+00:00");
+    bed.text_in_at(OTHER, "STOP", "2026-11-01T12:05:00.000+00:00");
+    assert_eq!(
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(OTHER))],
+        )["optedOut"],
+        "Y"
+    );
+}
+
+/// SEC-COM-91: texts from outside senders are capped: past channels@new-pair-rooms-per-day new conversations a day a
+/// text from another new number is kept in a room held out of every user's sight (spam's filter), never lost (a known
+/// one still comes in as before), and past channels@inbound-media-bytes-per-day a bridge's file is named as not
+/// received.
+#[test]
+fn new_conversations_and_inbound_files_have_a_day_cap() {
+    let bed =
+        bed_with(r#"<moqui-conf><channels new-pair-rooms-per-day="1" inbound-media-bytes-per-day="6"/></moqui-conf>"#);
+    let _entered = bed.ctx.enter();
+    let picture = bed.fake.file("pic.jpg", "image/jpeg", &[1, 2, 3, 4, 5]);
+    let media = |url: &str| json!([{"url": url, "content_type": "image/jpeg", "size": 5}]);
+    let (first, _) = bed.text_in(THEIRS, "Hi", media(&picture));
+    assert_eq!(body_json(&first)["outcome"], "accepted");
+    let room = bed.room(THEIRS).unwrap();
+    const NEW: &str = "+15556667777";
+    let (held, _) = bed.text_in(NEW, "Hello", json!([]));
+    assert_eq!(body_json(&held)["outcome"], "accepted", "kept");
+    let held_room = bed.room(NEW).expect("its room");
+    let kept = bed.messages(&held_room);
+    assert_eq!(kept.len(), 1);
+    assert!(
+        kept[0].1.contains("Hello") && kept[0].1.contains("Held"),
+        "{}",
+        kept[0].1
+    );
+    {
+        let _authz = bed.ctx.disable_authz();
+        let members = bed
+            .facade
+            .find("moqui.chat.ChatRoomMember")
+            .unwrap()
+            .eq("chatRoomId", text(&held_room))
+            .list()
+            .unwrap();
+        let users: Vec<_> = members
+            .values()
+            .iter()
+            .filter(|member| {
+                member
+                    .get("userId")
+                    .is_some_and(|user| !to_plain_string(user).is_empty())
+            })
+            .collect();
+        assert!(!users.is_empty());
+        for member in users {
+            assert_eq!(
+                member.get("filterEnumId").map(to_plain_string).as_deref(),
+                Some("CmfSpam"),
+                "held out of sight"
+            );
+        }
+    }
+    // the known number's next text comes in, and its file is past the bridge's bytes of the day
+    let (again, _) = bed.text_in(THEIRS, "Another", media(&picture));
+    assert_eq!(body_json(&again)["outcome"], "accepted");
+    let messages = bed.messages(&room);
+    assert_eq!(messages.len(), 2);
+    assert!(messages[1].1.contains("A file not received"), "{}", messages[1].1);
 }
 
 /// A bridge whose provider carries no group texts (its capabilities say `groupTexts` false): Text a number with several

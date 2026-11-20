@@ -46,6 +46,48 @@ fn an_endpoint_is_a_grpc_url_or_the_edge_link() {
     }
 }
 
+/// The client secret goes only to the authority the settings name, and in clear text only to loopback unless
+/// `pass@backend-insecure` is true (SEC-OUT-83): a script's endpoint to another host gets nothing.
+#[test]
+fn the_client_secret_goes_only_to_the_configured_authority() {
+    let to = |endpoint: &str| parse_endpoint(endpoint).unwrap();
+    // the endpoint pass@backend-grpc-url names, its host in any case
+    secret_may_go_to(
+        &to("grpcs://Authority.example.com:4443"),
+        "grpcs://authority.example.com:4443",
+        "",
+        false,
+    )
+    .unwrap();
+    secret_may_go_to(&to("grpc://127.0.0.1:9000"), "grpc://127.0.0.1:9000", "", false).unwrap();
+    // with none, pass@backend-url's host on port 4317
+    secret_may_go_to(
+        &to("grpcs://authority.example.com"),
+        "",
+        "https://authority.example.com/rest",
+        false,
+    )
+    .unwrap();
+    // another host, port or scheme is refused
+    for endpoint in [
+        "grpc://host.example:4317",
+        "grpcs://authority.example.com:4444",
+        "grpc://authority.example.com:4443",
+    ] {
+        let refused = secret_may_go_to(&to(endpoint), "grpcs://authority.example.com:4443", "", false).unwrap_err();
+        assert!(refused.message().contains("goes only to"), "{endpoint}: {refused}");
+    }
+    assert!(secret_may_go_to(&to("grpc://host.example:4317"), "", "", false).is_err());
+    // clear text to another host only when pass@backend-insecure says so
+    let plain = to("grpc://authority.internal:4317");
+    let refused = secret_may_go_to(&plain, "grpc://authority.internal:4317", "", false).unwrap_err();
+    assert!(refused.message().contains("clear text"), "{refused}");
+    secret_may_go_to(&plain, "grpc://authority.internal:4317", "", true).unwrap();
+    secret_may_go_to(&plain, "", "http://authority.internal", true).unwrap();
+    // the edge link carries no secret
+    secret_may_go_to(&Endpoint::Edge, "", "", false).unwrap();
+}
+
 #[test]
 fn a_download_reads_its_chunks_in_order_and_ends_or_fails_with_the_stream() {
     let (sender, receiver) = tokio::sync::mpsc::channel(4);
@@ -86,7 +128,8 @@ fn a_download_reads_its_chunks_in_order_and_ends_or_fails_with_the_stream() {
 /// `RestClient`, proved by `the_outbound_http_client_checks_the_servers_certificate_and_name` (tls_tests.rs). Clear text
 /// (`grpc://`, `http://`) to another host is refused by mr-pass's Transport unless `pass@backend-insecure` is true
 /// (mr-pass `test/Transport.spec.js`, "a transport in clear text to another host is refused unless
-/// pass@backend-insecure says so"); this client itself takes a `grpc://` endpoint from any caller.
+/// pass@backend-insecure says so"), and by this client too (`secret_may_go_to`), which sends the secret only to the
+/// authority the settings name.
 #[test]
 fn the_authority_client_checks_the_authoritys_certificate_and_name() {
     use std::io::Write as _;

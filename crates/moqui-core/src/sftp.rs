@@ -300,6 +300,22 @@ pub struct SftpClient {
     config: SftpConfig,
     preserve_attributes: bool,
     session: Option<Box<dyn SftpSession>>,
+    /// The largest file [`Self::get_binary`] and [`Self::get_text`] read (`resource-facade` `sftp-max-read`).
+    max_read: u64,
+}
+
+/// `resource-facade` `sftp-max-read` when the conf leaves it out: 64 MiB.
+const DEFAULT_MAX_READ: u64 = 64 * 1024 * 1024;
+/// The bytes asked for at once while a file is read.
+const READ_CHUNK: usize = 256 * 1024;
+
+/// `resource-facade` `sftp-max-read` of the current context, or [`DEFAULT_MAX_READ`].
+fn conf_max_read() -> u64 {
+    crate::resource::setting("sftp-max-read")
+        .parse::<u64>()
+        .ok()
+        .filter(|most| *most > 0)
+        .unwrap_or(DEFAULT_MAX_READ)
 }
 
 impl SftpClient {
@@ -320,7 +336,50 @@ impl SftpClient {
             },
             preserve_attributes: true,
             session: None,
+            max_read: conf_max_read(),
         })
+    }
+
+    /// The largest file a read takes, in place of `resource-facade` `sftp-max-read`.
+    #[cfg(test)]
+    pub(crate) fn set_max_read(&mut self, bytes: u64) {
+        self.max_read = bytes;
+    }
+
+    /// The whole file at `path`, refused when it is larger than [`Self::max_read`] bytes: by its size first, and as it
+    /// is read, chunk by chunk, so a file the server says is small or that grows is cut off there too. A file's size
+    /// is the server's (a trading partner's) to choose (SEC-FIL-96).
+    fn read_within(&mut self, path: &str) -> Result<Vec<u8>, Error> {
+        let max = self.max_read;
+        let too_large = || {
+            Error::new(format!(
+                "SFTP {path} is larger than {max} bytes (resource-facade sftp-max-read)"
+            ))
+        };
+        let session = self.session()?;
+        if session
+            .stat(path)?
+            .and_then(|attributes| attributes.size)
+            .is_some_and(|size| size > max)
+        {
+            return Err(too_large());
+        }
+        let handle = session.open(path, false)?;
+        let mut bytes = Vec::new();
+        let read = loop {
+            match session.read_chunk(handle, READ_CHUNK) {
+                Ok(chunk) if chunk.is_empty() => break Ok(()),
+                Ok(chunk) if u64::try_from(bytes.len() + chunk.len()).unwrap_or(u64::MAX) > max => {
+                    break Err(too_large())
+                }
+                Ok(chunk) => bytes.extend_from_slice(&chunk),
+                Err(err) => break Err(err),
+            }
+        };
+        let closed = session.close_handle(handle);
+        read?;
+        closed?;
+        Ok(bytes)
     }
 
     /// A client for a `SystemMessageRemote`: to `host` (`host` or `host:port`) as `username`, with the remote's
@@ -487,7 +546,7 @@ impl SftpClient {
     ///
     /// Not connected, or the server's error.
     pub fn get_binary(&mut self, path: &str) -> Result<Vec<u8>, Error> {
-        self.session()?.read(path)
+        self.read_within(path)
     }
 
     /// The file decoded in `charset`, UTF-8 when empty.
@@ -497,7 +556,7 @@ impl SftpClient {
     /// Not connected, an unknown charset, or the server's error.
     pub fn get_text(&mut self, path: &str, charset: &str) -> Result<String, Error> {
         let encoding = encoding_for(charset)?;
-        let bytes = self.session()?.read(path)?;
+        let bytes = self.read_within(path)?;
         Ok(decode(encoding, &bytes))
     }
 

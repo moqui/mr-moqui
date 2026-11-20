@@ -86,8 +86,13 @@
         them; the local node does): webhooks-per-minute and webhooks-per-client-minute cap the webhooks a minute it queues
         for the bridge and from one client address, unverified-max-bytes their body, and unverified-waiting how many of
         the bridge's wait in its queue; media-max-bytes is the largest file it keeps for an MMS, and media-node-megabytes
-        the files of one local node it keeps at most. -->
-    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60">
+        the files of one local node it keeps at most. Texts and files from outside senders, which no user's quota counts:
+        new-pair-rooms-per-day caps the new conversations (pair rooms) a day opened to the users of one of our numbers, a
+        text from another new number past it is kept in a room held out of their sight (as spam, Not spam brings it
+        back) and the voice admins (VoicePolicy alertUserGroupId) hear of it once a day; inbound-media-bytes-per-day caps the files a bridge fetches from its network a
+        day, a file past it is named as not received (0 for either: no cap). -->
+    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60"
+            new-pair-rooms-per-day="200" inbound-media-bytes-per-day="2147483648">
         <edge-limits webhooks-per-minute="600" webhooks-per-client-minute="120" unverified-max-bytes="32768"
                 unverified-waiting="500" media-max-bytes="5242880" media-node-megabytes="256"/>
     </channels>
@@ -193,7 +198,8 @@
         speech provider (the model bound to the transcribe feature; calls/captions@provider local is speech-local, not built
         yet), at most calls/captions@workers at once, each within calls/captions@timeout-seconds; past calls/captions@queue
         waiting chunks the oldest is dropped. calls/captions@language: an ISO 639-1 code, empty to let the model tell.
-        calls/captions@store true keeps each caption as a CallTranscript (by default nothing is kept).
+        calls/captions@store true keeps each caption as a CallTranscript (by default nothing is kept), for
+        calls/captions@retention-days (the recording job removes older ones; 0 keeps them).
         calls/captions@prompt-audio: a WAV file a phone leg hears after the captions tones (docs/interfaces/SIP.md, Notices). -->
     <!-- ICE-TCP (W4): a TCP port on media-server@host for browsers that cannot reach the UDP one; off while empty. -->
     <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
@@ -234,7 +240,7 @@
     <calls ring-seconds="45" guest-joins-per-minute="20" transfer-ring-seconds="30" hold-music-location=""
             direct-path="true" forward-ring-seconds="30" forward-max-hops="5">
         <captions enabled="false" provider="llm" chunk-seconds="5" queue="6" workers="2" timeout-seconds="20"
-                language="" store="false" prompt-audio=""/>
+                language="" store="false" retention-days="30" prompt-audio=""/>
         <queue tick-seconds="5" prompt-location=""/>
         <recording enabled="false" ack-required="false" policy-revision="1" retention-days="90" queue-frames="4096"
                 segment-mb="64" segment-minutes="30" max-mb="2048" prompt-audio=""/>
@@ -711,11 +717,13 @@
         for the rest of the outermost script run, made once; false makes it again at each load. drive-root: the location
         under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made
         (FileServices ensure#PersonalDrive, create#Drive); a setting, not a user's preference, so a user does not choose
-        where their drive is. -->
+        where their drive is. sftp-max-read: the largest file the SFTP client (SftpClient getText and getBinary, the
+        SystemMessage poll) reads from a remote server, in bytes; a larger one is refused, not read whole (0 or empty is
+        the default, 64 MiB; there is no setting for no limit). -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
             image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
-            collab-max-state-bytes="8388608">
+            collab-max-state-bytes="8388608" sftp-max-read="67108864">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not
@@ -1089,7 +1097,9 @@
         git clone URLs show; the webroot webapp's http-host and port when empty. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
         most connections at once, max-sessions-per-user of them for one user logged in by key or password and
-        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. A server that takes git from
+        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. Of them, connections let in for
+        the login dialog with no user hold at most max-dialog-sessions, max-dialog-sessions-per-source from one address
+        (0 is no share), so they never fill the sessions a key or password login needs. A server that takes git from
         the public (git-any-account) raises max-sessions, and max-sessions-per-source where many users share an
         address. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
         password; by key only when false. git-any-account: git over SSH for any account that logs in by key, without
@@ -1100,8 +1110,8 @@
     -->
     <ssh-server enabled="true" port="" host="127.0.0.1" host-key="CHANGEME" public-host=""
             public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
-            max-sessions-per-user="4" max-sessions-per-source="8"
-            git-password-auth="false" git-any-account="false" login-dialog="true"/>
+            max-sessions-per-user="4" max-sessions-per-source="4" max-dialog-sessions="4"
+            max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" login-dialog="true"/>
     <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after

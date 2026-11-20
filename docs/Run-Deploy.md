@@ -1861,8 +1861,9 @@ A `myaddons.xml` repository can name a server's `addons.xml`, such as the one a 
 public components with their clone addresses (`B/<group>/-/addons.xml` on an MR PASS server):
 `<repository name="team"><location type="addons" url="https://team.example.com/B/acme/-/addons.xml"/></repository>`.
 The get tasks fetch it once per run (https; http only to a loopback address; or a `file:` URL) and look components and
-repositories up in it after `myaddons.xml` and before `addons.xml`, so `./moq component-get acme-site` clones from the
-server's own git location. Its root's `default` and `default-repository` are not used. One that cannot be read, or is
+repositories up in it after `myaddons.xml` and `addons.xml`, so `./moq component-get acme-site` clones from the
+server's own git location, and a name `addons.xml` defines (`mr-mantle`, `apps`, `github`) stays the official one. A
+component name is letters, digits, `-` and `_`, never a path. Its root's `default` and `default-repository` are not used. One that cannot be read, or is
 not https, is skipped with a warning. A repository entry with only the `addons` location leaves the others to the
 served file's repository of the same name; one with a `git` location of its own uses that.
 

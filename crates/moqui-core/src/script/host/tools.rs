@@ -1958,7 +1958,7 @@ fn load_source(
     options: &crate::entity::load_feed::LoadOptions,
 ) -> Result<(u64, Vec<String>), moqui_lib::error::Error> {
     use crate::entity::load_feed::{
-        component_data_locations, conf_data_locations, load_entity_data, load_entity_text_file, load_entity_xml_text,
+        component_data_locations, conf_data_locations, load_entity_data, load_entity_text, load_entity_xml_text,
         location_in_components,
     };
     // As Java's `internalRun`: the XML, CSV and JSON text, each in its own transaction, then each location. With
@@ -1969,22 +1969,11 @@ fn load_source(
     if !xml.is_empty() {
         records += load_entity_xml_text(facade, "xmlText", &xml, options)?.records;
     }
-    for (name, extension) in [("csvText", "csv"), ("jsonText", "json")] {
+    for (name, json) in [("csvText", false), ("jsonText", true)] {
         let body = text(name);
-        if body.is_empty() {
-            continue;
+        if !body.is_empty() {
+            records += load_entity_text(facade, name, &body, json, options)?.records;
         }
-        let dir = factory.runtime_dir().join("tmp");
-        std::fs::create_dir_all(&dir).map_err(|err| {
-            moqui_lib::error::Error::new(format!("could not create {}", dir.display())).with_source(err)
-        })?;
-        let path = dir.join(format!("data-load-{}.{extension}", crate::entity::uuid_v4()?));
-        std::fs::write(&path, body).map_err(|err| {
-            moqui_lib::error::Error::new(format!("could not write {}", path.display())).with_source(err)
-        })?;
-        let result = load_entity_text_file(facade, name, &path, options);
-        let _ = std::fs::remove_file(&path);
-        records += result?.records;
     }
     let given = !xml.is_empty() || !text("csvText").is_empty() || !text("jsonText").is_empty() || !locations.is_empty();
     let locations = if given {

@@ -212,8 +212,11 @@ fn pdf_browser(args: &ClientArgs) -> Option<PathBuf> {
 
 fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> Result<ServeChild, Error> {
     let names = server.components.join(", ");
-    let ready_file = std::env::temp_dir().join(format!("moqui-serve-{}-{}.url", std::process::id(), index + 1));
-    let _ = std::fs::remove_file(&ready_file);
+    // in a new directory of this user, so no file another local user planted is taken for the server's address
+    // (SEC-DEV-84)
+    let ready_dir = moqui_lib::private_fs::new_dir_in(&std::env::temp_dir(), "moqui-serve")
+        .map_err(|err| Error::new("could not make the server's ready directory").with_source(err))?;
+    let ready_file = ready_dir.join(format!("{}.url", index + 1));
     if let Some(dir) = log.parent() {
         std::fs::create_dir_all(dir)
             .map_err(|err| Error::new(format!("could not create {}", dir.display())).with_source(err))?;
@@ -325,7 +328,10 @@ impl ServeChild {
                 }
             }
         }
-        let _ = std::fs::remove_file(&self.ready_file);
+        // the ready file's own directory goes with it
+        if let Some(dir) = self.ready_file.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }
 

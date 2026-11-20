@@ -139,6 +139,23 @@ fn audit_text(command: &str, rest: &str) -> String {
     }
 }
 
+/// What the kept history (the `TERMINAL_HISTORY` preference) keeps of a line ended at the prompt (SEC-FIL-90): as the
+/// audit, a `service` or `entity` line's name and never its parameters; nothing of `js`, whose code may hold a
+/// secret, nor a line that is not a command (a line of a `js` block); other commands as typed. The session's own
+/// history, for Up within it, keeps the lines as typed.
+pub(crate) fn history_text(line: &str) -> Option<String> {
+    let line = line.trim();
+    let (command, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+    match command {
+        "" | "js" => None,
+        "service" | "entity" => Some(audit_text(command, rest.trim())),
+        _ if super::COMMANDS.contains(&command) || ["help", "?", "exit", "quit", "logout"].contains(&command) => {
+            Some(line.to_string())
+        }
+        _ => None,
+    }
+}
+
 /// The audit of one command line that ran (SEC-FIL-62), as the terminal's sessions have: an INFO line, and a
 /// `moqui.terminal.TerminalSession` row of kind `command` (who, from where, what, its exit status), as the signed-in
 /// user on this thread. A row that cannot be written is logged and the command's answer stands.

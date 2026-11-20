@@ -28,6 +28,23 @@ along with this software (see the LICENSE.md file). If not, see
             on-create="true" on-update="true" on-delete="true" run-before="true">
         <actions><script>UserSecurityChecks.assertSealedPermissionGrant(userPermissionId)</script></actions>
     </eeca>
+    <!-- an account disabled for good (not a lockout after failed logins, which has a disabledDateTime and ends by itself) or
+        terminated gets no more pushes in its browsers: its subscriptions go (SEC-COM-92); one that cannot is logged -->
+    <eeca id="UserAccountWebPushEnds" entity="moqui.security.UserAccount" on-update="true">
+        <actions><script><![CDATA[
+            const value = entityValue
+            const disabled = value.disabled === 'Y' && !value.disabledDateTime
+            const terminated = value.terminateDate != null && Number(value.terminateDate) <= Date.now()
+            if (disabled || terminated) {
+                try {
+                    ec.service.sync().name('org.moqui.ui.NotificationServices.forget#UserWebPush')
+                        .parameter('userId', value.userId).disableAuthz().call()
+                } catch (err) {
+                    ec.logger.error(`The browser pushes of ${value.userId} were not ended: ${err && err.message ? err.message : err}`)
+                }
+            }
+        ]]></script></actions>
+    </eeca>
     <!-- a DataDocument field expression is script run as whoever reads the document: writing one needs DATABASE_ADMIN -->
     <eeca id="DataDocumentFieldExpression" entity="moqui.entity.document.DataDocumentField"
             on-create="true" on-update="true" run-before="true">

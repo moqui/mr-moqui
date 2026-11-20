@@ -59,8 +59,11 @@ const MIME_TYPES: [&str; 6] = [
     "image/bmp",
 ];
 
-/// The widest or tallest image the decoder takes. The decoder's default allocation limit (512 MiB) holds as well.
+/// The widest or tallest image the decoder takes.
 const MAX_INPUT_SIDE: u32 = 30_000;
+/// The most pixels of an image the decoder takes, read from its header before anything is decoded (SEC-SCR-85): 64
+/// megapixels, past a phone's photo. The allocation limit is what that needs at 8 bytes a pixel (16-bit RGBA), 512 MiB.
+const MAX_INPUT_PIXELS: u64 = 64_000_000;
 /// The widest or tallest resized image: WebP's limit, so every listed writer takes it.
 const MAX_OUTPUT_SIDE: u32 = 16_383;
 /// The most pixels in a resized image, 200 MB as RGBA.
@@ -167,8 +170,10 @@ fn input_bytes(parameters: &BTreeMap<String, Value>, name: &str, location_name: 
 }
 
 /// The image in `bytes`, decoded within the same limits as `convert#Image` (no side over 30,000 pixels, the
-/// decoder's allocation limit), or None. For the thumbnails of `ec.files` (SEC-SCR-09).
+/// decoder's allocation limit) and in its concurrency slot (`image-max-concurrent`, SEC-SCR-85), or None. For the
+/// thumbnails of `ec.files` (SEC-SCR-09).
 pub(crate) fn decode_limited(bytes: &[u8]) -> Option<DynamicImage> {
+    let _slot = image_slot();
     decode(bytes).ok().map(|(image, _)| image)
 }
 
@@ -179,11 +184,12 @@ fn decode(bytes: &[u8]) -> Result<(DynamicImage, String), LibError> {
     Ok((image, suffix_of(format).to_string()))
 }
 
-/// The decoder's limits: no side over [`MAX_INPUT_SIDE`], and its default allocation limit.
+/// The decoder's limits: no side over [`MAX_INPUT_SIDE`], and what [`MAX_INPUT_PIXELS`] needs at most.
 fn input_limits() -> Limits {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_INPUT_SIDE);
     limits.max_image_height = Some(MAX_INPUT_SIDE);
+    limits.max_alloc = Some(MAX_INPUT_PIXELS * 8);
     limits
 }
 
@@ -199,6 +205,15 @@ fn limited_reader(bytes: &[u8]) -> Result<(BytesReader<'_>, ImageFormat), LibErr
     let format = reader.format().ok_or_else(|| {
         LibError::new("No reader for the image: its format is not one of jpg, png, gif, tiff, webp, bmp")
     })?;
+    // its sides from its header, before any pixel is decoded: an image of more pixels than MAX_INPUT_PIXELS is refused
+    let mut header = ImageReader::with_format(Cursor::new(bytes), format);
+    header.limits(input_limits());
+    let (width, height) = header.into_dimensions().map_err(read_error)?;
+    if u64::from(width) * u64::from(height) > MAX_INPUT_PIXELS {
+        return Err(LibError::new(format!(
+            "Could not read image: {width}x{height} is more than {MAX_INPUT_PIXELS} pixels"
+        )));
+    }
     Ok((reader, format))
 }
 
@@ -765,6 +780,8 @@ fn write_image_service(
         .ok_or_else(|| LibError::new("outputResourceReference is required"))?;
     let output_format = param_text(parameters, "outputImageFormat");
     let bytes = input_bytes(parameters, "image", "inputLocation")?;
+    // decoded and written in the concurrency slot, as convert#Image is (SEC-SCR-85)
+    let _slot = image_slot();
     let (image, found_format) = decode(&bytes)?;
     let input_format = Some(param_text(parameters, "inputImageFormat"))
         .filter(|name| !name.is_empty())

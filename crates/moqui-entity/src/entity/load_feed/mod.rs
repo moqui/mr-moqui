@@ -52,7 +52,7 @@ pub(super) use feed::clear_frame_touches;
 pub use feed::register_feed_insert;
 pub(crate) use feed::{feed_keeps_values, feed_wants_old, note_touch};
 pub use loader::{
-    convert_entity_fields, is_restricted_entity, load_entity_data, load_entity_text_file, load_entity_xml_text,
+    convert_entity_fields, is_restricted_entity, load_entity_data, load_entity_text, load_entity_xml_text,
     location_in_components, seed_load_running,
 };
 pub use locations::{component_data_locations, data_directory_locations, data_types_of};

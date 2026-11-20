@@ -1339,6 +1339,16 @@ fn cell_text(value: &Value) -> String {
     }
 }
 
+/// A cell of the CSV export, which is made for a person to open in a spreadsheet: text that would run as a formula
+/// gets a leading apostrophe (SEC-SCR-89, `moqui_lib::string::csv_formula_guarded`).
+fn csv_cell_text(value: &Value) -> String {
+    let text = cell_text(value);
+    match moqui_lib::string::csv_formula_guarded(&text) {
+        std::borrow::Cow::Borrowed(_) => text,
+        std::borrow::Cow::Owned(guarded) => guarded,
+    }
+}
+
 /// The default export directory of `user_id`: `runtime://tmp/grid-export/<userId>/`, which `clean#GridUploads` empties
 /// of files older than a day. A download of a file there checks that the user is the one its path names.
 #[must_use]
@@ -1631,7 +1641,12 @@ impl TableWriter {
 
     fn header(&mut self, names: &[String]) -> Result<(), Error> {
         if let Some(csv) = &mut self.csv {
-            csv.write_record(names).map_err(|err| Error::new(err.to_string()))?;
+            csv.write_record(
+                names
+                    .iter()
+                    .map(|name| moqui_lib::string::csv_formula_guarded(name).into_owned()),
+            )
+            .map_err(|err| Error::new(err.to_string()))?;
         }
         if let Some(book) = &mut self.book {
             for name in names {
@@ -1643,7 +1658,7 @@ impl TableWriter {
 
     fn row(&mut self, cells: &[Value]) -> Result<(), Error> {
         if let Some(csv) = &mut self.csv {
-            csv.write_record(cells.iter().map(cell_text))
+            csv.write_record(cells.iter().map(csv_cell_text))
                 .map_err(|err| Error::new(err.to_string()))?;
         }
         if let Some(book) = &mut self.book {
@@ -2171,148 +2186,5 @@ fn apply_change(
 mod save_tests;
 
 #[cfg(test)]
-mod tests {
-    use moqui_lib::object::Value;
-
-    use super::{
-        escape_like, export_location_allowed, parse_filter, parse_sort, stamp_matches, statement_shape_refusal, wrap,
-        Filter, Sort,
-    };
-    use crate::audit::Actor;
-
-    fn filter(field: &str, kind: &str, value: Value) -> Filter {
-        Filter {
-            field: field.to_string(),
-            kind: kind.to_string(),
-            value,
-        }
-    }
-
-    #[test]
-    fn a_sql_source_is_wrapped_with_bound_filters_and_quoted_names() {
-        let filters = vec![
-            filter("description", "like", Value::string("50%_x")),
-            filter("n", ">=", Value::I64(3)),
-            filter("id", "in", Value::string("a, b")),
-            filter("none", "in", Value::List(Vec::new())),
-            filter("note", "empty", Value::Null),
-            filter("code", "!empty", Value::Null),
-        ];
-        let sort = vec![Sort {
-            field: "Total \"Due\"".to_string(),
-            descending: true,
-        }];
-        let wrapped = wrap("SELECT * FROM t", false, &sort, &filters, " LIMIT 11 OFFSET 0").unwrap();
-        assert_eq!(
-            wrapped.sql,
-            "SELECT * FROM (SELECT * FROM t) q WHERE LOWER(CAST(\"description\" AS TEXT)) LIKE LOWER(?) AND \"n\" >= ? \
-             AND \"id\" IN (?, ?) AND 1 = 0 AND (\"note\" IS NULL OR CAST(\"note\" AS TEXT) = '') \
-             AND NOT (\"code\" IS NULL OR CAST(\"code\" AS TEXT) = '') ORDER BY \"Total \"\"Due\"\"\" DESC LIMIT 11 OFFSET 0"
-        );
-        assert_eq!(wrapped.params[0], Value::string("%50\\%\\_x%"));
-        assert!(
-            wrap("SELECT ? AS a", false, &[], &filters, "").is_err(),
-            "a ? of its own beside filters"
-        );
-        assert_eq!(escape_like("a\\b"), "a\\\\b");
-    }
-
-    #[test]
-    fn a_result_of_one_table_named_once_is_the_only_shape_saved() {
-        let sql = "SELECT enum_id, description FROM enumeration WHERE enum_type_id = 'x'";
-        assert_eq!(statement_shape_refusal(sql, false, "ENUMERATION"), None);
-        for sql in [
-            "SELECT a.enum_id FROM enumeration a JOIN enumeration b ON b.enum_id = a.enum_id",
-            "SELECT a.enum_id FROM enumeration a, enumeration_type t",
-            "SELECT DISTINCT enum_id FROM enumeration",
-            "SELECT enum_id FROM enumeration GROUP BY enum_id",
-            "SELECT enum_id FROM enumeration UNION SELECT enum_id FROM enumeration",
-            "SELECT enum_id FROM enumeration WHERE enum_id IN (SELECT enum_id FROM enumeration)",
-        ] {
-            assert!(statement_shape_refusal(sql, false, "enumeration").is_some(), "{sql}");
-        }
-        // a table name in a quoted string does not count
-        assert_eq!(
-            statement_shape_refusal(
-                "SELECT enum_id FROM enumeration WHERE description = 'enumeration'",
-                false,
-                "enumeration"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn exports_go_to_the_users_own_places_unless_an_admin_says_otherwise() {
-        let ana = Actor {
-            user_id: Some("ANA".to_string()),
-            ..Actor::default()
-        };
-        assert!(export_location_allowed(
-            "runtime://tmp/grid-export/ANA/x/a.csv",
-            &ana,
-            false
-        ));
-        assert!(export_location_allowed(
-            "dbresource://moqui/database/export/ANA/a.csv",
-            &ana,
-            false
-        ));
-        assert!(!export_location_allowed(
-            "runtime://tmp/grid-export/BO/x/a.csv",
-            &ana,
-            false
-        ));
-        assert!(!export_location_allowed(
-            "runtime://tmp/grid-export/ANA/../BO/a.csv",
-            &ana,
-            false
-        ));
-        assert!(!export_location_allowed("dbresource://other/a.csv", &ana, false));
-        assert!(!export_location_allowed(
-            "component://framework/data/a.csv",
-            &ana,
-            false
-        ));
-        assert!(export_location_allowed("dbresource://other/a.csv", &ana, true));
-        assert!(export_location_allowed("runtime://export/a.csv", &ana, true));
-        assert!(export_location_allowed(
-            "runtime://tmp/grid-export/ANA/x/a.csv",
-            &ana,
-            true
-        ));
-        for refused in [
-            "component://framework/data/a.csv",
-            "file:/etc/a.csv",
-            "runtime://conf/a.csv",
-            "runtime://tmp/other/a.csv",
-            "runtime://tmp/grid-export/BO/x/a.csv",
-        ] {
-            assert!(!export_location_allowed(refused, &ana, true), "{refused}");
-        }
-    }
-
-    #[test]
-    fn tabulator_sorts_filters_and_stamps_are_read() {
-        let mut sort = indexmap::IndexMap::default();
-        sort.insert("field".to_string(), Value::string("a"));
-        sort.insert("dir".to_string(), Value::string("desc"));
-        assert_eq!(
-            parse_sort(Some(&Value::List(vec![Value::Map(sort)]))),
-            vec![Sort {
-                field: "a".to_string(),
-                descending: true
-            }]
-        );
-        let mut map = indexmap::IndexMap::default();
-        map.insert("field".to_string(), Value::string("b"));
-        map.insert("value".to_string(), Value::I64(1));
-        assert_eq!(parse_filter(Some(&Value::List(vec![Value::Map(map)])))[0].kind, "=");
-        let stored = "2026-11-05T10:00:00.123456Z".parse::<jiff::Timestamp>().unwrap();
-        assert!(stamp_matches(
-            Some(&Value::Timestamp(stored)),
-            "2026-11-05T10:00:00.123456Z"
-        ));
-        assert!(!stamp_matches(Some(&Value::Timestamp(stored)), "2026-11-05T10:00:00Z"));
-    }
-}
+#[path = "grid_tests.rs"]
+mod tests;

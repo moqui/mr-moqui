@@ -790,12 +790,21 @@ function expire() {
     for (const dir of root.getDirectoryEntries().slice(0, 500)) orphans.push({ location: dir.getLocation() })
   }
   return {
-    deletedCount: eachSafely('retention', retention),
+    deletedCount: eachSafely('retention', retention) + eachSafely('captions', [{}]),
     recoveredCount: eachSafely('stale', stale) + eachSafely('failedSegment', failed) + eachSafely('orphanFiles', orphans),
   }
 }
 
 function expireItem(p) {
+  // the live captions calls/captions@store kept (no recording's, no voicemail's) go after calls/captions@retention-days,
+  // which no one in the call can see or remove otherwise (SEC-COM-85)
+  if (p.itemKind === 'captions') {
+    const days = Number(ec.factory.getConfValue('calls/captions@retention-days') || 0)
+    if (!(days > 0)) return { done: false }
+    const deleted = find(TRANSCRIPT).condition('callRecordingId', null).condition('voicemailId', null)
+      .condition('createdDate', '<', new Date(nowMs() - days * 86400000)).deleteAll()
+    return { done: deleted > 0 }
+  }
   if (p.itemKind === 'retention') {
     const recording = one(RECORDING, { callRecordingId: p.callRecordingId })
     if (!recording || ACTIVE.includes(recording.statusId) || ms(recording.retentionUntilDate) >= nowMs()) return { done: false }
