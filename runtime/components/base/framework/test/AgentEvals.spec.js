@@ -136,7 +136,8 @@ feature("live scoring runs another service's scorer as its attacher, and such an
   const byJohn=attach('EX_JOHN_DOE'),byNobody=attach(null),before=String(one('moqui.agent.AgentScorerAttach',{attachId:byNobody}).lastScoredDate)
   ec.user.logoutLocal();let live;try{live=call(S+'score#LiveRuns',{})}finally{login('john.doe');ec.artifactExecution.disableAuthz()}
   const refused=invoke(S+'attach#Scorer',{scorerId:'EVAL_T_OTHER',datasetId:'EVAL_T_DS'})
-  return{live,before,scores:list('moqui.agent.AgentScore',{runId}),john:one('moqui.agent.AgentScorerAttach',{attachId:byJohn}),nobody:one('moqui.agent.AgentScorerAttach',{attachId:byNobody}),refused}},
- then({live,before,scores,john,nobody,refused}){scores.length==1;scores[0].errorText.includes('no score');!scores[0].errorText.includes('not authorized')
+  const shown=screenTest('apps').render('system/Llm/Evals/Scorers',{},'get').output||''
+  return{live,before,shown,scores:list('moqui.agent.AgentScore',{runId}),john:one('moqui.agent.AgentScorerAttach',{attachId:byJohn}),nobody:one('moqui.agent.AgentScorerAttach',{attachId:byNobody}),refused}},
+ then({live,before,shown,scores,john,nobody,refused}){shown.includes('No attacher: not run. Attach it again.');scores.length==1;scores[0].errorText.includes('no score');!scores[0].errorText.includes('not authorized')
   String(john.lastScoredDate)!=before;String(nobody.lastScoredDate)==before;refused.error.includes('AgentAudit')},
 })

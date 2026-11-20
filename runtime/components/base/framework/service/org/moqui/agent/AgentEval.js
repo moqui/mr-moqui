@@ -191,7 +191,8 @@ function live(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  let scored=0
  for(const a of rows('AgentScorerAttach').filter(a=>a.agentId&&active(a))){
   try{const s=one('AgentScorer',{scorerId:a.scorerId});if(!s||s.scorerTypeEnumId==='AgstHuman')continue
-   if(otherService(s)&&!a.attachedByUserId){ec.logger.error('Live scorer '+s.scorerId+' of attach '+a.attachId+' calls '+s.serviceName+' and its attach names no one to run it as: not run');continue}
+   // said once a process (Evals › Scorers shows it on the attach), not each five minutes
+   if(otherService(s)&&!a.attachedByUserId){if(ec.cache.getCache('agent.eval.noAttacher').putIfAbsent(a.attachId,true))ec.logger.error('Live scorer '+s.scorerId+' of attach '+a.attachId+' calls '+s.serviceName+' and its attach names no one to run it as: not run');continue}
    const pass=()=>{let count=0
     const rate=num(a.samplingRate)??1,since=a.lastScoredDate||a.fromDate||now()
     const runs=Array.from(find('AgentRun',{agentId:a.agentId,statusId:'AgrCompleted'}).condition('endedDate','greater',since).orderBy('endedDate').limit(100).list())

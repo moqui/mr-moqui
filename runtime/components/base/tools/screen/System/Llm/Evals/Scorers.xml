@@ -33,9 +33,14 @@
             canEdit = ec.user.hasPermission('MONITOR_EVAL')
             const num = v => v == null ? null : v.toNumber ? v.toNumber() : Number(v)
             const now = Date.now(), live = a => a.thruDate == null || Date.parse(String(a.thruDate)) > now
-            const names = {}; for (const s of scorerList) names[s.scorerId] = s.scorerName || s.scorerId
+            const names = {}, scorers = {}; for (const s of scorerList) { names[s.scorerId] = s.scorerName || s.scorerId; scorers[s.scorerId] = s }
+            // a scorer of another service runs as whoever attached it; an attach that names no one is not run (AgentEval.js
+            // live, SERVICE_SCORERS there the evals' own)
+            const own = ['org.moqui.agent.AgentEvalServices.score#ExactMatch', 'org.moqui.agent.AgentEvalServices.score#Contains', 'org.moqui.agent.AgentEvalServices.score#CalledTool']
+            const unrun = a => { const s = scorers[a.scorerId]; return !a.attachedByUserId && s?.scorerTypeEnumId === 'AgstService' && !own.includes(s.serviceName) }
             liveList = Array.from(ec.entity.find('moqui.agent.AgentScorerAttach').disableAuthz().list()).filter(a => a.agentId && live(a))
-                .map(a => Object.assign(a.getMap(), {scorerName: names[a.scorerId] || a.scorerId, rate: Math.round(num(a.samplingRate) * 100) + '%'}))
+                .map(a => Object.assign(a.getMap(), {scorerName: names[a.scorerId] || a.scorerId, rate: Math.round(num(a.samplingRate) * 100) + '%',
+                    note: unrun(a) ? ec.l10n.localize('No attacher: not run. Attach it again.') : ''}))
             agentOptions = Array.from(ec.entity.find('moqui.agent.AgentDefinition').disableAuthz().list()).map(a => ({value: a.agentId, label: a.agentName || a.agentId}))
         ]]></script>
     </actions>
@@ -74,6 +79,7 @@
             <field name="agentId"><default-field title="Agent"><display/></default-field></field>
             <field name="rate"><default-field title="Sampled"><display/></default-field></field>
             <field name="lastScoredDate"><default-field title="Read up to"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
+            <field name="note"><default-field title=""><display style="text-warning"/></default-field></field>
             <field name="scores"><default-field title=""><link url="runs" text="Scores" link-type="anchor"><parameter name="agentId"/></link></default-field></field>
             <field name="detach"><default-field title=""><link condition="canEdit" url="detach" text="Stop" link-type="hidden-form"><parameter name="attachId"/></link></default-field></field>
         </form-list>
