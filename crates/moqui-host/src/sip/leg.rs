@@ -50,6 +50,9 @@ use crate::rtc::media::{self, Consumer, Kinds, PcmSource};
 /// The frames a leg's consumer queues before it drops (a second).
 const CONSUMER_QUEUE: usize = 50;
 const TICK: Duration = Duration::from_millis(20);
+/// The datagrams a leg reads in one tick; a phone sends one a tick, and the rest wait in the socket's buffer, where the
+/// kernel drops what it cannot hold (SEC-COM-86).
+const MAX_DATAGRAMS_PER_TICK: usize = 64;
 
 /// Audio played to the phone over what it hears, 48 kHz mono: a call's notice (`prompt.rs`), its tones and any
 /// recorded speech.
@@ -214,6 +217,7 @@ impl LegMedia {
             looped: None,
             loop_at: 0,
             muted: false,
+            digits: moqui_sip::dtmf::DigitRate::default(),
         };
         let thread = std::thread::Builder::new()
             .name("moqui-sip-leg".to_string())
@@ -260,6 +264,8 @@ struct Worker {
     loop_at: usize,
     /// V5: on hold, the phone's audio does not go to the room.
     muted: bool,
+    /// The digits taken this second (SEC-COM-86).
+    digits: moqui_sip::dtmf::DigitRate,
 }
 
 impl Worker {
@@ -300,14 +306,19 @@ impl Worker {
                     }
                 }
             }
-            // the phone's packets
-            while let Ok((len, from)) = self.socket.recv_from(&mut buf) {
+            // the phone's packets, at most MAX_DATAGRAMS_PER_TICK, and its digits at most a rate
+            for _ in 0..MAX_DATAGRAMS_PER_TICK {
+                let Ok((len, from)) = self.socket.recv_from(&mut buf) else {
+                    break;
+                };
                 if let Some(media) = self.media.as_mut() {
                     if let Received::Digit(digit) = media.receive(from, &buf[..len]) {
-                        let _ = self.notes.send(LegNote::Digit {
-                            leg: self.leg.clone(),
-                            digit,
-                        });
+                        if self.digits.take(Instant::now()) {
+                            let _ = self.notes.send(LegNote::Digit {
+                                leg: self.leg.clone(),
+                                digit,
+                            });
+                        }
                     }
                 }
             }
