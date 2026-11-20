@@ -722,6 +722,10 @@ fn a_css_comment_in_a_string_hides_nothing() {
         ".a { background: url('/*'), url(https://evil.example/x), url('*/') }",
         ".a { background: url(/*), url(https://evil.example/x), url(*/) }",
         ".a { content: \"/*\" }\n@import url(/x.css);\n.b { content: \"*/\" }",
+        // a lone CR or a form feed ends a string as a line break does, in the browser and in the check
+        ".a { content:\"a\r\" /* \" ; background: url(https://evil.example/x); \" */ }",
+        ".a { content:\"a\x0c\" /* \" ; background: url(https://evil.example/x); \" */ }",
+        ".a { content:\"a\r\n\" /* \" ; background: url(https://evil.example/x); \" */ }",
     ] {
         let found = css_errors(css);
         assert!(
@@ -744,6 +748,13 @@ fn a_css_comment_in_a_string_hides_nothing() {
     // a comment outside strings is still a comment, and a string may hold `*/` or a URL-like text
     let found = css_errors(".a { color: red /* url(https://evil.example/x) */ }\n.b { content: \"*/\" }");
     assert_eq!(found, Vec::<String>::new());
+    // an escaped quote or parenthesis outside a url() is a character: a utility class's arbitrary value, a quote shown
+    let found =
+        css_errors(".w-\\[calc\\(100\\%-2rem\\)\\] { width: calc(100% - 2rem) }\n.q::before { content: \"\\\"\" }");
+    assert_eq!(found, Vec::<String>::new());
+    // inside an unquoted url() it is refused
+    let found = css_errors(".a { background: url(//cdn.example\\)@evil.example/x) }");
+    assert!(found.iter().any(|error| error.contains("an escaped")), "{found:?}");
 }
 
 /// A link's own `referrerpolicy` overrides the page's `Referrer-Policy`, so a theme cannot set it (SEC-PSF-83).
