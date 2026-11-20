@@ -75,7 +75,14 @@ pub fn client_config(options: &TlsOptions) -> Result<Arc<rustls::ClientConfig>, 
     let config = match options.effective_verify() {
         TlsVerify::Full => builder.with_root_certificates(roots()?).with_no_client_auth(),
         TlsVerify::Ca => {
-            let inner = WebPkiServerVerifier::builder_with_provider(Arc::new(roots()?), Arc::clone(&provider))
+            // as libpq: verify-ca trusts the sslrootcert file alone. With the public authorities and no name check,
+            // a certificate any of them issued for any domain would pass (SEC-DAT-93).
+            let Some(path) = &options.root_cert else {
+                return Err(Error::new(
+                    "postgres TLS verify-ca trusts only the sslrootcert file, and none is set: set it, or use verify-full",
+                ));
+            };
+            let inner = WebPkiServerVerifier::builder_with_provider(Arc::new(root_store(path)?), Arc::clone(&provider))
                 .build()
                 .map_err(|err| Error::new("postgres TLS configuration").with_source(err))?;
             builder

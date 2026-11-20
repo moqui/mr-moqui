@@ -347,6 +347,10 @@ pub(super) fn collect(
     let cutoff = began - options.prune_millis;
     let store = FsStore::open(root)?;
     let objects_dir = root.join("objects");
+    // a quarantine or gc scratch directory a killed process left (SEC-GIT-92), which list_files passes over
+    if !options.dry_run {
+        crate::leftovers::sweep_objects(&objects_dir);
+    }
 
     // the refs, the roots and the files, under the writer lock
     let lock = provider.lock_of(id);

@@ -1341,7 +1341,9 @@ impl Engine {
                 }
                 self.note(
                     NOTE_TRUNK_SERVICE,
-                    serde_json::json!({"voiceTrunkId": trunk, "status": status, "errorText": error}),
+                    // as this engine, which a local node checks for its edge node's (SEC-CLU-91)
+                    serde_json::json!({"voiceTrunkId": trunk, "status": status, "errorText": error,
+                        "instanceId": self.own}),
                 );
             }
             UaEvent::AuthFailure {
@@ -1358,7 +1360,8 @@ impl Engine {
                 tracing::warn!("SIP: {source} is blocked after failed digests (last for {username:?})");
                 self.note(
                     AUTH_FAILURE_SERVICE,
-                    serde_json::json!({"sourceAddress": source.to_string(), "username": username, "blocked": true}),
+                    serde_json::json!({"sourceAddress": source.to_string(), "username": username, "blocked": true,
+                        "instanceId": self.own}),
                 );
             }
         }

@@ -351,17 +351,123 @@ pub fn room_owner(room: &str) -> super::owner::Owner {
 }
 
 /// Where a node that takes links keeps a paired node's call audio at `location` (a greeting or prompt of that node,
-/// fetched by its SIP engine or queued as `callAudio`): the location itself on a dedicated edge node, which has none of
-/// its own; on an all-in-one node (E12) the same path under `dbresource://moqui/edge-node/<node>/`, apart from the
-/// server's own audio at that path.
-pub fn kept_audio_location(factory: &ExecutionContextFactory, node: &str, location: &str) -> String {
-    if super::settings(factory).edge_node() {
-        return location.to_string();
-    }
+/// fetched by its SIP engine or queued as `callAudio`): the same path under `dbresource://moqui/edge-node/<node>/`, on a
+/// dedicated edge node as on an all-in-one node (E12), so one pairing's audio is never at a location another pairing's
+/// calls read, nor the server's own (SEC-CLU-90).
+pub fn kept_audio_location(node: &str, location: &str) -> String {
     paired_audio_location(node, location)
 }
 
-/// [`kept_audio_location`] on an all-in-one node.
+/// The largest greeting or prompt a node that takes links keeps for a paired node (as `get#CallAudio` answers).
+pub const MAX_KEPT_AUDIO: u64 = 8 * 1024 * 1024;
+
+/// Whether `size` more bytes of paired node `node`'s call audio may be kept: at most [`MAX_KEPT_AUDIO`] for one file,
+/// and the pairing's kept audio, all of it, within its queue cap (`queue-max-megabytes`, or its
+/// `EdgeClient.queueMaxMegabytes`): why not, when not (SEC-CLU-90).
+///
+/// # Errors
+///
+/// Returns why the audio is not kept: too large, or past the pairing's cap, or the kept audio could not be read.
+pub fn check_kept_audio(factory: &ExecutionContextFactory, node: &str, size: u64) -> Result<(), String> {
+    if size > MAX_KEPT_AUDIO {
+        return Err(format!(
+            "{size} bytes is over the {MAX_KEPT_AUDIO} a greeting or prompt may be"
+        ));
+    }
+    let facade = factory.entity().ok_or("the entity facade is not installed")?;
+    let cap = super::queue::node_cap(&facade, &super::settings(factory), node);
+    let directory = paired_audio_location(node, "");
+    let kept_size = || {
+        super::queue::transaction(&facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+            factory
+                .resource()
+                .tree_size(directory.trim_end_matches('/'))
+                .map_err(moqui_lib::error::Error::from)
+        })
+        .map_err(|err| format!("the call audio kept for {node} was not read: {err}"))
+    };
+    let mut kept = kept_size()?;
+    if kept.saturating_add(size) > cap {
+        // what no fallback names any more goes first (a greeting changed, a prompt fetched once), then it is asked again
+        let removed = prune_kept_audio(factory, &facade, node);
+        if removed > 0 {
+            tracing::info!("Edge call audio of {node}: {removed} kept files no fallback names were removed");
+            kept = kept_size()?;
+        }
+    }
+    if kept.saturating_add(size) > cap {
+        return Err(format!(
+            "the call audio kept for {node} would be {} bytes, over its queue cap of {cap}",
+            kept.saturating_add(size)
+        ));
+    }
+    Ok(())
+}
+
+/// Remove the call audio kept for paired node `node` that none of its replicated fallbacks (`voiceFallbacks`,
+/// `PhoneNumberFallback.greetingLocation`) names: a greeting the box changed since, or a prompt fetched once, which
+/// the engine fetches again when a call needs it (SEC-CLU-90). How many files went; one that is not removed is logged.
+pub fn prune_kept_audio(factory: &ExecutionContextFactory, facade: &crate::entity::EntityFacade, node: &str) -> u64 {
+    let named: std::collections::HashSet<String> = match super::replica::list_values(
+        facade,
+        Some(node),
+        "voiceFallbacks",
+        Some("moqui.call.PhoneNumberFallback"),
+        1_000_000,
+    ) {
+        Ok(values) => values
+            .iter()
+            .filter_map(|value| value.fields["greetingLocation"].as_str())
+            .filter(|location| !location.trim().is_empty())
+            .map(|location| kept_audio_location(node, location.trim()))
+            .collect(),
+        Err(err) => {
+            // nothing is removed when what is named cannot be read
+            tracing::error!("Edge call audio of {node}: its fallbacks were not read, nothing is removed: {err}");
+            return 0;
+        }
+    };
+    let resources = factory.resource();
+    let mut directories = vec![paired_audio_location(node, "").trim_end_matches('/').to_string()];
+    let mut removed = 0;
+    while let Some(directory) = directories.pop() {
+        let entries = super::queue::transaction(facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+            if resources.stat(&directory)?.is_none_or(|stat| stat.is_file) {
+                return Ok(Vec::new());
+            }
+            resources.list(&directory).map_err(moqui_lib::error::Error::from)
+        });
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::error!("Edge call audio of {node}: {directory} was not read: {err}");
+                continue;
+            }
+        };
+        for entry in entries {
+            let location = format!("{directory}/{}", entry.name);
+            if !entry.is_file {
+                directories.push(location);
+                continue;
+            }
+            if named.contains(&location) {
+                continue;
+            }
+            let deleted =
+                super::queue::transaction(facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+                    resources.delete(&location).map_err(moqui_lib::error::Error::from)
+                });
+            match deleted {
+                Ok(true) => removed += 1,
+                Ok(false) => {}
+                Err(err) => tracing::error!("Edge call audio of {node}: {location} was not removed: {err}"),
+            }
+        }
+    }
+    removed
+}
+
+/// [`kept_audio_location`]: `location`'s path under the paired node's own directory.
 pub fn paired_audio_location(node: &str, location: &str) -> String {
     let node: String = node
         .chars()

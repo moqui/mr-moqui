@@ -55,6 +55,7 @@ pub(super) static USER: HostClass = HostClass {
         method!("ec.user", "endVisit", [Text], None, end_visit),
         method!("ec.user", "hasPermission", [Value], None, has_permission),
         method!("ec.user", "isInGroup", [Value], None, is_in_group),
+        method!("ec.user", "heldBeyond", [Text], None, held_beyond),
         method!("ec.user", "getUserGroupIdSet", [OptValue], None, group_id_set),
         method!("ec.user", "setPreference", [Value, OptValue], None, set_preference),
         method!("ec.user", "getClientIp", [], client_ip),
@@ -215,6 +216,8 @@ const USER_JS: &str = r#"(function (proto, hidden) {
 /// Java's `loginUserKey`: whether the login key logged its user in. A key that does not is an error message, as a
 /// failed `loginUser` is.
 fn login_user_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     let key = call.text_or_empty(0);
     match crate::user::login_user_key(&key) {
         Ok(()) => Ok(true.into()),
@@ -227,6 +230,8 @@ fn login_user_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// Java's `loginAnonymousIfNoUser`: with nobody logged in the session becomes anonymous; whether this call did that.
 fn login_anonymous_if_no_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     crate::user::login_anonymous()
         .map(Ret::from)
         .map_err(|err| user_error(&err))
@@ -260,6 +265,8 @@ fn password_rules(_: &mut Call<'_>) -> Result<Ret, HostError> {
 /// False with no error when the password was right and a second factor is still needed. A null or missing username
 /// or password is an empty one, a failed login as Java's: false and the message.
 fn login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     let username = call.text(0).unwrap_or_default().to_string();
     let password = call.text(1).unwrap_or_default().to_string();
     match crate::user::login_user(&username, &password) {
@@ -272,6 +279,8 @@ fn login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn logout_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     match crate::user::logout() {
         Ok(()) => Ok(true.into()),
         Err(err) => {
@@ -283,6 +292,8 @@ fn logout_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `ec.user.logoutLocal()`: end this context's login only, writing nothing to the account (a job's borrowed sign-in).
 fn logout_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     match crate::user::logout_local() {
         Ok(()) => Ok(true.into()),
         Err(err) => {
@@ -293,6 +304,8 @@ fn logout_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn internal_login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     // a second argument true: the caller verified this sign-in's second factor code (a strong sign-in)
     let verified = call.bool(1).unwrap_or(false);
     match crate::user::internal_login_user_verified(call.text(0).unwrap_or_default(), verified) {
@@ -464,6 +477,14 @@ fn is_in_group(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let group = call.text_or_empty(0);
     crate::user::is_in_group(&group)
         .map(Ret::from)
+        .map_err(|err| user_error(&err))
+}
+
+/// `user::held_beyond`: why the current user may not act as or on the account, or null.
+fn held_beyond(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let user_id = call.text_or_empty(0);
+    crate::user::held_beyond(&user_id)
+        .map(|reason| Ret::from(reason.map_or(Value::Null, Value::String)))
         .map_err(|err| user_error(&err))
 }
 

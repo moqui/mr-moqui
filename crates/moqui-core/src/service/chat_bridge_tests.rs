@@ -76,6 +76,8 @@ struct TestAdapter {
     name: String,
     caps: Capabilities,
     network: Mutex<Network>,
+    /// Its start fails: settings it refuses.
+    start_fails: std::sync::atomic::AtomicBool,
 }
 
 impl TestAdapter {
@@ -93,6 +95,7 @@ impl TestAdapter {
                 media_max_bytes: 0,
             },
             network: Mutex::new(Network::default()),
+            start_fails: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -110,6 +113,14 @@ impl TestAdapter {
 }
 
 impl ChatBridgeAdapter for TestAdapter {
+    fn start(&self, _bridge: &BridgeInfo) -> Result<(), String> {
+        if self.start_fails.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("its settings are refused".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
     fn name(&self) -> &str {
         &self.name
     }
@@ -580,6 +591,50 @@ fn a_crash_before_and_after_remote_acceptance() {
 
 /// One destination failing while the other delivers: its rows wait in order behind the one that failed, back off, and
 /// go once it is back; a permanent failure is visible and the next one goes.
+/// SEC-COM-88: a bridge whose start failed sends nothing: its rows wait (no attempt) until a start succeeds, while
+/// another bridge delivers.
+#[test]
+fn a_bridge_whose_start_failed_sends_nothing() {
+    let bed = bed("unstarted", true);
+    let _entered = bed.ctx.enter();
+    login("alice");
+    bed.b.start_fails.store(true, std::sync::atomic::Ordering::SeqCst);
+    let one = bed.send("<p>one</p>");
+    bed.round(0);
+    assert_eq!(bed.delivery(one, "MA").0, "CdsAccepted");
+    let held = bed.delivery(one, "MB");
+    assert_eq!((held.0.as_str(), held.2), ("CdsPending", 0), "held, not tried");
+    assert!(bed.b.sent().is_empty());
+    bed.b.start_fails.store(false, std::sync::atomic::Ordering::SeqCst);
+    bed.round(1_000);
+    assert_eq!(bed.delivery(one, "MB").0, "CdsAccepted", "sent once it starts");
+}
+
+/// SEC-COM-90: the hourly cleanup removes inbound batches done more than 30 days ago, and keeps a keyword's once-only
+/// mark (signal:) as long as the opt-out.
+#[test]
+fn old_batches_go_and_keyword_marks_stay() {
+    let bed = bed("cleanup", true);
+    let _entered = bed.ctx.enter();
+    let old = bed.now - 31 * 86_400_000;
+    for id in ["signal:text:old", "old-batch"] {
+        row(
+            &bed.facade,
+            "moqui.chat.ChatBridgeInbound",
+            &[
+                ("chatBridgeId", text("BA")),
+                ("transactionId", text(id)),
+                ("receivedDate", Value::I64(old)),
+                ("statusEnumId", text("CbiDone")),
+            ],
+        );
+    }
+    bed.round(0);
+    let kept = |id: &str| bed.count("moqui.chat.ChatBridgeInbound", &[("transactionId", text(id))]);
+    assert_eq!(kept("old-batch"), 0);
+    assert_eq!(kept("signal:text:old"), 1);
+}
+
 #[test]
 fn one_failing_destination_does_not_block_another() {
     let bed = bed("failing", true);

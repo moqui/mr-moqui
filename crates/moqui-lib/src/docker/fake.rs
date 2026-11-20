@@ -20,7 +20,8 @@
 //!
 //! What it does on purpose: an image named `missing/...` is not on the host until it is pulled; one named `broken` is
 //! refused at create; a container on the network `absent-net` is refused with a 404 that names no image; on Docker a
-//! container of the image `read-only-root` refuses an archive, as Docker refuses one into a read-only root.
+//! container of the image `read-only-root` refuses an archive, as Docker refuses one into a read-only root; an image
+//! named `with-volume...` declares the `VOLUME` `/data`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -436,10 +437,26 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
                 b"{\"status\":\"Pulling\"}\n{\"status\":\"Done\"}\n".to_vec(),
             )
         }
-        ("GET", ["images", id, "json"]) => json_answer(
-            200,
-            &json!({"Id": format!("sha256:{id}"), "RepoDigests": [format!("example.com/app@sha256:{id}")]}),
-        ),
+        ("GET", ["images", id, "json"]) => {
+            let image = decode(id);
+            if image.starts_with("missing/") && !state.pulled.contains(&image) {
+                return message(404, &format!("No such image: {image}"));
+            }
+            // an image named `with-volume...` declares a VOLUME, as a database's official image does
+            let volumes = if image.starts_with("with-volume") {
+                json!({"/data": {}})
+            } else {
+                json!(null)
+            };
+            json_answer(
+                200,
+                &json!({
+                    "Id": format!("sha256:{id}"),
+                    "RepoDigests": [format!("example.com/app@sha256:{id}")],
+                    "Config": {"Volumes": volumes},
+                }),
+            )
+        }
         ("PUT", ["containers", reference, "archive"]) => {
             let Some(container) = find(state, reference) else {
                 return message(404, "No such container");

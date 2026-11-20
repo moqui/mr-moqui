@@ -245,6 +245,28 @@ fn the_certificate_is_written_where_the_listener_reads_it() {
     }
     // written again unchanged: nothing to do
     store::write_files(&dir, "www.example.com", &chain, &key_pem).unwrap();
+    #[cfg(unix)]
+    {
+        // a staging file left readable (or a link planted) is replaced by a new private file, never written into
+        // (SEC-OUT-85), and the name's directory is this user's alone
+        use std::os::unix::fs::PermissionsExt as _;
+        let sub = dir.join("www.example.com");
+        let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&sub), 0o700);
+        let elsewhere = dir.parent().unwrap().join("elsewhere.pem");
+        std::fs::write(&elsewhere, "").unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, sub.join(".privkey.pem.new")).unwrap();
+        std::fs::write(sub.join("privkey.pem"), "old").unwrap();
+        store::write_files(&dir, "www.example.com", &chain, &key_pem).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&elsewhere).unwrap(),
+            "",
+            "the link's target is not written"
+        );
+        assert_eq!(std::fs::read_to_string(sub.join("privkey.pem")).unwrap(), key_pem);
+        assert_eq!(mode(&sub.join("privkey.pem")), 0o600);
+    }
 
     std::fs::create_dir_all(dir.join("certbot.example.com")).unwrap();
     assert!(store::foreign_dir(&dir, "certbot.example.com"));

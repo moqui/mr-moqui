@@ -215,6 +215,8 @@ pub struct RestClient {
     truncate_body: bool,
     max_redirects: usize,
     redirect_any_host: bool,
+    /// Every request goes over https ([`https_only`](Self::https_only)).
+    https_only: bool,
     connect_timeout: Duration,
     unix_socket: Option<std::path::PathBuf>,
     root_certificates: Option<Vec<u8>>,
@@ -248,6 +250,7 @@ impl RestClient {
             truncate_body: false,
             max_redirects: MAX_REDIRECTS,
             redirect_any_host: false,
+            https_only: false,
             connect_timeout: CONNECT_TIMEOUT,
             unix_socket: None,
             root_certificates: None,
@@ -317,6 +320,15 @@ impl RestClient {
         }
         // The resolver is part of the transport, so one built before this is not kept.
         self.transport = OnceLock::new();
+        self
+    }
+
+    /// Refuse every request whose URL is not https, before anything is sent: a client that carries a credential with
+    /// each request (a provider's API key) never sends it in clear text, whatever URL a caller builds. A redirect never
+    /// goes from https to http on any client.
+    #[must_use]
+    pub fn https_only(mut self, on: bool) -> Self {
+        self.https_only = on;
         self
     }
 
@@ -715,6 +727,12 @@ impl Call<'_> {
             .map_err(|err| Error::new(format!("invalid URL {}", redacted(&self.url))).with_source(err))?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(Error::new(format!("URL {} must be http or https", redacted(&self.url))));
+        }
+        if self.client.https_only && parsed.scheme() != "https" {
+            return Err(Error::new(format!(
+                "URL {} is not https, and this client sends over https only",
+                redacted(&self.url)
+            )));
         }
         for (name, value) in &self.headers {
             check_header(name, value)?;

@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
          read#DeliveryReport is moqui_mail::read_delivery_report.
          poll#EmailServer is moqui_mail::poll_server.
          test#EmailServer is moqui_mail::test_server.
-         deliver#EdgeMail, deliver#EdgeOutboundMail, note#EdgeMailStatus and fail#EdgeOutboundMail are
+         deliver#EdgeMail, deliver#EdgeOutboundMail, note#EdgeMailStatus, fail#EdgeOutboundMail and fail#EdgeMail are
          moqui_mail::edge_mail. get#DkimRecord is moqui_mail::auth. -->
     <service verb="send" noun="Email" type="rust" location="moqui_mail::send_template" allow-remote="false">
         <implements service="org.moqui.EmailServices.send#EmailTemplate"/>
@@ -170,6 +170,19 @@ along with this software (see the LICENSE.md file). If not, see
         <description>On a local node, the failed-service of the queue kind mailOut: a message that never reached the edge
             node (unpaired, past the retention period or the size cap) is put back as a bounce is, with the reason as
             its sendError, so the failure is not silent.</description>
+        <in-parameters>
+            <parameter name="queueItemId" required="true"/>
+            <parameter name="kind"/>
+            <parameter name="conversationKey"/>
+            <parameter name="payload" allow-html="any"/>
+            <parameter name="error" allow-html="any"/>
+        </in-parameters>
+    </service>
+
+    <service verb="fail" noun="EdgeMail" type="rust" location="moqui_mail::fail_edge_mail" allow-remote="false">
+        <description>On an edge node, the failed-service of the queue kind mail: a message its listener answered 250 for
+            that never reached the local node (unpaired, past the retention period or the size cap) is logged as an
+            error with its envelope sender and recipients, so the failure is not silent.</description>
         <in-parameters>
             <parameter name="queueItemId" required="true"/>
             <parameter name="kind"/>

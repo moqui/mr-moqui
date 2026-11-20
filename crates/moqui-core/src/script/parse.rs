@@ -17,7 +17,7 @@
 use std::cell::RefCell;
 
 use oxc_allocator::Allocator;
-use oxc_ast::ast::{SourceType, Statement};
+use oxc_ast::ast::{Expression, SourceType, Statement};
 use oxc_parser::{ParseOptions, Parser};
 
 use crate::context::Error;
@@ -120,6 +120,34 @@ fn parse_expression(source: &str) -> Result<(), Error> {
         }
         Ok(())
     })
+}
+
+/// Whether `source`, untrusted text, is one JavaScript expression alone: parenthesized, it parses as a program of one
+/// expression statement whose expression is that one parenthesized expression from the first character to the last, so
+/// it closes no parenthesis it did not open (`0), (x`) and adds no statement. Parsed on [`on_parse_stack`], at most
+/// [`MAX_EXPRESSION`] bytes (SEC-AI-102).
+pub(crate) fn is_single_expression(source: &str) -> bool {
+    if source.trim().is_empty() || source.len() > MAX_EXPRESSION {
+        return false;
+    }
+    let wrapped = format!("({source}\n)");
+    let whole = u32::try_from(wrapped.len()).unwrap_or(u32::MAX);
+    on_parse_stack(move || {
+        with_arena(|allocator| {
+            let parsed = Parser::new(allocator, &wrapped, SourceType::default()).parse();
+            if parsed.fatal_error || parsed.diagnostics.has_errors() || !parsed.program.directives.is_empty() {
+                return false;
+            }
+            match parsed.program.body.as_slice() {
+                [Statement::ExpressionStatement(statement)] => match &statement.expression {
+                    Expression::ParenthesizedExpression(outer) => outer.span.start == 0 && outer.span.end == whole,
+                    _ => false,
+                },
+                _ => false,
+            }
+        })
+    })
+    .unwrap_or(false)
 }
 
 /// A `<script>` body runs inside the function the action macros emit, so a top-level `return`

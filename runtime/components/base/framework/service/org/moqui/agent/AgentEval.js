@@ -4,7 +4,11 @@ const P='moqui.agent.'
 const find=(n,c={})=>ec.entity.find(P+n).condition(c).disableAuthz(),one=(n,c)=>find(n,c).one(),rows=(n,c={},order)=>Array.from((order?find(n,c).orderBy(order):find(n,c)).list())
 const map=r=>r?.getMap?r.getMap():Object.assign({},r||{}),num=v=>v==null||v===''?null:typeof v=='object'&&v.toNumber?v.toNumber():Number(String(v))
 const ms=v=>v==null||v===''?null:Number.isFinite(Number(String(v)))?Number(String(v)):Date.parse(String(v)),now=()=>ec.user.nowTimestamp
-const call=(n,p)=>{const out=ec.service.sync().name(n).parameters(p).disableAuthz().call()||{};if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return out}
+// The errors a call left, taken off ec.message into the Error thrown, so the writes after it (the catch that marks a
+// result failed) are not refused by them; an Error the call threw keeps its own text.
+function taken(err){const text=ec.message.hasError()?ec.message.getErrorsString():'';ec.message.clearErrors();return err||new Error(text)}
+const call=(n,p)=>{let out;try{out=ec.service.sync().name(n).parameters(p).disableAuthz().call()||{}}catch(err){throw taken(err)}
+ if(ec.message.hasError())throw taken();return out}
 const create=(n,p)=>call('create#'+P+n,p),update=(n,p)=>call('update#'+P+n,p)
 const json=t=>{if(t==null||t==='')return null;if(typeof t!='string')return t;try{return JSON.parse(t)}catch(e){return null}}
 const text=v=>v==null?'':typeof v=='string'?v:JSON.stringify(v)
@@ -20,6 +24,32 @@ function scorerRefusal(p){const audit=ec.user.hasPermission('AgentAudit')
  if(!audit)return'Live scoring reads every user\'s runs of the agent: attaching a scorer to an agent needs the AgentAudit permission'
  create('AgentAuditLog',{auditorUserId:ec.user.userId,reason:'attached scorer '+p.scorerId+' to agent '+p.agentId+' for live scoring',auditDate:now()});return null}
 function checkScorer(p){return{refusal:scorerRefusal(p)}}
+// A service an eval names by free text (an experiment's target, a scorer of another service) runs with authorization on
+// as the current user, whatever disabled it (the evals' own disableAuthz, a job's), under the System screen they reach
+// Evals through; never as the system for whoever named it (SEC-AI-95). With no user (in a job) it is refused.
+function asPerson(n,p){let out={}
+ try{ec.artifactExecution.runAsUser('component://tools/screen/System.xml',()=>{out=ec.service.sync().name(n).parameters(p).call()||{}})}catch(err){throw taken(err)}
+ if(ec.message.hasError())throw taken();return out}
+// body() as the experiment's starter: in a job, which has no user, the starter is signed in for it, so the job does what
+// the starter's own Check now would; a user calling does it as themselves.
+function asStarter(e,body){return asUserId(e.startedByUserId,'experiment '+e.experimentId,body)}
+// body() as userId when there is no user (the job), signed in for it; a user calling does it as themselves.
+function asUserId(userId,what,body){if(ec.user.userId)return body()
+ const u=userId?ec.entity.find('moqui.security.UserAccount').condition({userId}).disableAuthz().one():null
+ if(!u||!ec.user.internalLoginUser(u.username)){ec.message.clearErrors();throw new Error('user '+userId+' of '+what+' cannot be signed in')}
+ try{return body()}finally{ec.user.logoutLocal()}}
+const otherService=s=>s.scorerTypeEnumId==='AgstService'&&!SERVICE_SCORERS.includes(s.serviceName)
+// Attach a scorer to an agent (live scoring of every user's runs: AgentAudit, written to AgentAuditLog) or to a dataset
+// (its experiments' results). A scorer of another service needs AgentAudit either way. The attach keeps who made it:
+// live scoring runs a scorer of another service as them (SEC-AI-95).
+function attach(p){need('MONITOR_EVAL');const s=one('AgentScorer',{scorerId:p.scorerId});if(!s)throw new Error('Choose a scorer')
+ if(!p.agentId===!p.datasetId)throw new Error('Attach a scorer to an agent or to a dataset')
+ const refusal=p.agentId?scorerRefusal({op:'attach',scorerId:s.scorerId,agentId:p.agentId})
+  :otherService(s)&&!ec.user.hasPermission('AgentAudit')?'A scorer of a service other than the evals\' own needs the AgentAudit permission':null
+ if(refusal)throw new Error(refusal)
+ let rate=null;if(p.agentId){rate=num(p.samplingRate)??1;if(!(rate>0&&rate<=1))throw new Error('Sampling rate is more than 0 and at most 1')}
+ const out=create('AgentScorerAttach',{scorerId:s.scorerId,agentId:p.agentId||null,datasetId:p.datasetId||null,samplingRate:rate,fromDate:now(),lastScoredDate:p.agentId?now():null,attachedByUserId:ec.user.userId})
+ return{attachId:out.attachId}}
 
 // ---- datasets: each change raises versionNum; an item belongs to versions fromVersion..thruVersion (exclusive)
 function dataset(id){const d=one('AgentDataset',{datasetId:id});if(!d)throw new Error('Dataset '+id+' is not available');return d}
@@ -47,7 +77,7 @@ function runReadable(p){return{readable:readsRun(one('AgentRun',{runId:p.runId})
 function otherUsers(runId){return new Error('Run '+runId+' is another user\'s: its content needs the AgentAudit permission')}
 function saveRun(p){need('MONITOR_EVAL');const run=one('AgentRun',{runId:p.runId});if(!run)throw new Error('Run '+p.runId+' is not available')
  if(!readsRun(run,'saved as a dataset item in Evals'))throw otherUsers(run.runId)
- return addItem({datasetId:p.datasetId,inputText:runInput(run.runId),groundTruth:p.groundTruth||(p.useOutput==='Y'?runOutput(run):null),metadataJson:JSON.stringify({agentId:run.agentId}),sourceRunId:run.runId})}
+ return addItem({datasetId:p.datasetId,inputText:runInput(run.runId),groundTruth:p.groundTruth||(p.useOutput==='Y'?runOutput(run):null),metadataJson:JSON.stringify({agentId:run.agentId,runUserId:run.userId}),sourceRunId:run.runId})}
 
 // ---- scoring
 const JUDGE='You grade the output of an AI agent. Read the rubric, the input, the expected answer (if any) and the output. Think about it in reasoning, then give score: a number from 0 (fails the rubric) to 1 (fully meets it).'
@@ -61,10 +91,10 @@ function judge(s,c){
 function scoreOne(s,c){
  if(s.scorerTypeEnumId==='AgstJudge')return judge(s,c)
  if(s.scorerTypeEnumId==='AgstService'){const p={input:c.input,output:c.output,groundTruth:c.groundTruth,runId:c.runId,metadata:json(c.metadataJson),config:json(s.configJson)||{}}
-  // a built-in scorer runs as the evals do; any other service with the caller's own authorization (none in a job), never
-  // as the system for whoever named it (SEC-AI-83)
-  const out=SERVICE_SCORERS.includes(s.serviceName)?call(s.serviceName,p):(ec.service.sync().name(s.serviceName).parameters(p).call()||{})
-  if(ec.message.hasError())throw new Error(ec.message.getErrorsString());return{score:num(out.score),reason:out.reason}}
+  // a built-in scorer runs as the evals do; any other service as a person (asPerson), never as the system for whoever
+  // named it (SEC-AI-83)
+  const out=SERVICE_SCORERS.includes(s.serviceName)?call(s.serviceName,p):asPerson(s.serviceName,p)
+  return{score:num(out.score),reason:out.reason}}
  return null // a human scorer is scored by a person
 }
 // Writes an AgentScore per scorer; a scorer that fails writes a score row with its error and the others go on.
@@ -101,8 +131,11 @@ function start(p){
  for(const item of items)for(let t=1;t<=trials;t++){
   const r=create('AgentExperimentResult',{experimentId:e.experimentId,itemId:item.itemId,trialNum:t,statusId:'EvrPending'})
   if(!agentId)continue
-  // agent runs start now, as this user (ec.llm.startRun needs a user and AgentAdmin); the job reads them as they end
-  try{const runId=ec.llm.startRun(agentId,item.inputText);update('AgentExperimentResult',{resultId:r.resultId,runId,statusId:'EvrRunning',startedDate:now()})}
+  // agent runs start now, as this user (a job run needs AgentUse and AgentAdmin); the job reads them as they end. An
+  // item's text may be another user's (a saved run), so its agent's policy approves no write unless the starter said
+  // policyWrites=Y: the run is asked without approval.policy, and a write it needs a person for is refused (SEC-AI-96)
+  try{const runId=call('org.moqui.agent.AgentServices.start#AgentRun',{agentId,messageText:item.inputText,surface:'job',clientCaps:p.policyWrites==='Y'?null:'screen'}).runId
+   update('AgentExperimentResult',{resultId:r.resultId,runId,statusId:'EvrRunning',startedDate:now()})}
   catch(err){ec.logger.error('Experiment '+e.experimentId+' item '+item.itemId+' did not start: '+err);update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrFailed',errorText:String(err).slice(0,4000),endedDate:now()})}
  }
  const x=one('AgentExperiment',{experimentId:e.experimentId});if(!agentId)advanceOne(x,5);else summarize(x)
@@ -124,7 +157,7 @@ function advanceOne(e,serviceLimit){
     finishResult(e,r,item,runOutput(run),num(run.cost),scorers)
    }else if(e.serviceName&&r.statusId==='EvrPending'){if(calls++>=serviceLimit)continue
     update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrRunning',startedDate:now()})
-    const out=call(e.serviceName,{input:item?.inputText,metadata:json(item?.metadataJson)})
+    const out=asPerson(e.serviceName,{input:item?.inputText,metadata:json(item?.metadataJson)})
     finishResult(e,r,item,text(out.output??out.text??out),null,scorers)
    }
   }catch(err){ec.logger.error('Experiment '+e.experimentId+' result '+r.resultId+' failed: '+err);update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrFailed',errorText:String(err).slice(0,4000),endedDate:now()})}
@@ -139,9 +172,10 @@ function summarize(e){
  if(open===0&&e.statusId==='EvRunning')Object.assign(f,{statusId:done?'EvCompleted':'EvFailed',endedDate:now()})
  update('AgentExperiment',f)
 }
-function advance(p){
+// The job's each minute (no user: each experiment as its starter), or a user's Check now, which needs MONITOR_EVAL_RUN.
+function advance(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  const list=p.experimentId?[one('AgentExperiment',{experimentId:p.experimentId})].filter(Boolean):rows('AgentExperiment',{statusId:'EvRunning'})
- for(const e of list){if(e.statusId!=='EvRunning')continue;try{advanceOne(e,20)}catch(err){ec.logger.error('Experiment '+e.experimentId+' could not advance: '+err)}}
+ for(const e of list){if(e.statusId!=='EvRunning')continue;try{asStarter(e,()=>advanceOne(e,20))}catch(err){ec.logger.error('Experiment '+e.experimentId+' could not advance: '+err)}}
  return{experimentCount:list.length}
 }
 function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{experimentId:p.experimentId});if(!e||e.statusId!=='EvRunning')throw new Error('Experiment is not running')
@@ -150,14 +184,22 @@ function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{exper
 
 // ---- live scoring: a stable sample (a hash of the run id) of each attached agent's completed runs
 function sampled(runId,rate){let h=2166136261;for(const ch of String(runId)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)>>>0}return(h%10000)/10000<rate}
-function live(p){
+// The job's each five minutes, or a user's, which needs MONITOR_EVAL_RUN (judges cost money).
+// A scorer of another service runs as the person who attached it (attachedByUserId, an AgentAudit holder), in the job
+// signed in for it as an experiment's starter is; one whose attach names no one is not run and its runs wait.
+function live(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  let scored=0
  for(const a of rows('AgentScorerAttach').filter(a=>a.agentId&&active(a))){
   try{const s=one('AgentScorer',{scorerId:a.scorerId});if(!s||s.scorerTypeEnumId==='AgstHuman')continue
-   const rate=num(a.samplingRate)??1,since=a.lastScoredDate||a.fromDate||now()
-   const runs=Array.from(find('AgentRun',{agentId:a.agentId,statusId:'AgrCompleted'}).condition('endedDate','greater',since).orderBy('endedDate').limit(100).list())
-   for(const run of runs){if(sampled(run.runId,rate)){try{score([s],{runId:run.runId,input:runInput(run.runId),output:runOutput(run)},'AgssLive');scored++}catch(err){ec.logger.error('Live score of run '+run.runId+' failed: '+err)}}}
-   if(runs.length)update('AgentScorerAttach',{attachId:a.attachId,lastScoredDate:runs[runs.length-1].endedDate})
+   // said once a process (Evals › Scorers shows it on the attach), not each five minutes
+   if(otherService(s)&&!a.attachedByUserId){if(ec.cache.getCache('agent.eval.noAttacher').putIfAbsent(a.attachId,true))ec.logger.error('Live scorer '+s.scorerId+' of attach '+a.attachId+' calls '+s.serviceName+' and its attach names no one to run it as: not run');continue}
+   const pass=()=>{let count=0
+    const rate=num(a.samplingRate)??1,since=a.lastScoredDate||a.fromDate||now()
+    const runs=Array.from(find('AgentRun',{agentId:a.agentId,statusId:'AgrCompleted'}).condition('endedDate','greater',since).orderBy('endedDate').limit(100).list())
+    for(const run of runs){if(sampled(run.runId,rate)){try{score([s],{runId:run.runId,input:runInput(run.runId),output:runOutput(run)},'AgssLive');count++}catch(err){ec.logger.error('Live score of run '+run.runId+' failed: '+err)}}}
+    if(runs.length)update('AgentScorerAttach',{attachId:a.attachId,lastScoredDate:runs[runs.length-1].endedDate})
+    return count}
+   scored+=otherService(s)?asUserId(a.attachedByUserId,'attach '+a.attachId,pass):pass()
   }catch(err){ec.logger.error('Live scoring of attach '+a.attachId+' failed: '+err)}
  }
  return{scoredCount:scored}
@@ -174,5 +216,5 @@ function calledTool(p){if(!p.runId)return{score:0,reason:'No run to check'};cons
  const used=new Set(rows('AgentToolCall',{runId:p.runId}).map(c=>c.toolName));if(!want.length)return{score:used.size?1:0,reason:used.size?'Called '+[...used].join(', '):'Called no tool'}
  const missing=want.filter(t=>!used.has(t));return{score:(want.length-missing.length)/want.length,reason:missing.length?'Did not call '+missing.join(', '):'Called '+want.join(', ')}}
 
-function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,checkScorer,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
+function execute(op,p){return({addItem,updateItem,removeItem,saveRun,scoreRun,runReadable,checkScorer,attach,review,start,advance,cancel,live,exactMatch,contains,calledTool})[op](p)}
 ;({execute})

@@ -207,11 +207,10 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
         let _guard = context.disable_authz();
         seed(&facade);
     }
-    set_context_name(
-        "filterOrgIds",
+    context.user_context().insert(
+        "filterOrgIds".to_string(),
         Value::List(vec![Value::string("ORG1"), Value::string("ORG2")]),
-    )
-    .unwrap();
+    );
 
     // The filters come from the record that allowed this frame.
     context
@@ -223,7 +222,22 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     assert!(has_in(&filtered, "ownerPartyId", &["ORG1", "ORG2"]), "{filtered:?}");
     assert!(!has_equals(&filtered, "ownerPartyId", "ORG9"), "{filtered:?}");
 
+    // SEC-AI-102: a filter reads the user context alone, not a name the screen or service running the find set (a
+    // preview's proposed text may set one), so the active org set stays off and no org of its own is let in
     set_context_name("activeOrgId", Value::string("ORG9")).unwrap();
+    set_context_name("filterOrgIds", Value::List(vec![Value::string("ORG9")])).unwrap();
+    let from_context = super::apply_entity_filters(VIEW, None).expect("user org filter");
+    assert!(
+        has_in(&from_context, "ownerPartyId", &["ORG1", "ORG2"]),
+        "{from_context:?}"
+    );
+    assert!(!has_equals(&from_context, "ownerPartyId", "ORG9"), "{from_context:?}");
+    assert!(!format!("{from_context:?}").contains("ORG9"), "{from_context:?}");
+    clear_context_stack();
+
+    context
+        .user_context()
+        .insert("activeOrgId".to_string(), Value::string("ORG9"));
     let both = super::apply_entity_filters(VIEW, None).expect("both filters");
     assert!(has_in(&both, "ownerPartyId", &["ORG1", "ORG2"]), "{both:?}");
     assert!(has_equals(&both, "ownerPartyId", "ORG9"), "{both:?}");
@@ -247,8 +261,9 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
         .unwrap()
         .is_empty());
 
-    // the orgs may come from ec.user.context, as setup#UserOrganizationInfo puts them, instead of the context
+    // the orgs come from ec.user.context, as setup#UserOrganizationInfo puts them
     clear_context_stack();
+    context.user_context().clear();
     assert!(crate::script::eval_condition(
         "(ec.user.context.filterOrgIds = ['ORG7']) && ec.user.context.filterOrgIds[0] === 'ORG7' \
                 && Object.keys(ec.user.context).includes('filterOrgIds') && ec.user.context.missing === undefined"
@@ -272,11 +287,10 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
         }
     }
     clear_context_stack();
-    set_context_name(
-        "filterOrgIds",
+    context.user_context().insert(
+        "filterOrgIds".to_string(),
         Value::List(vec![Value::string("ORG1"), Value::string("ORG2")]),
-    )
-    .unwrap();
+    );
     let ids = |facade: &EntityFacade| -> Vec<String> {
         let mut ids: Vec<String> = facade
             .find(VIEW)
@@ -306,7 +320,9 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
         record("P2").is_none(),
         "agent cards must apply the same org filters as entity finds"
     );
-    set_context_name("activeOrgId", Value::string("ORG1")).unwrap();
+    context
+        .user_context()
+        .insert("activeOrgId".to_string(), Value::string("ORG1"));
     assert_eq!(ids(&facade), ["P1"]);
 
     // The filter sets are kept for an authorization generation, and a write to a filter table moves it.
@@ -325,6 +341,7 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     }
     assert_eq!(ids(&facade), ["P1", "P3"]);
 
+    context.user_context().clear();
     clear_context_stack();
     session::reset_session();
 }
@@ -426,11 +443,10 @@ fn a_profile_frame_gives_its_filters_to_finds_below_whatever_else_the_user_holds
             );
         }
     }
-    set_context_name(
-        "filterOrgIds",
+    context.user_context().insert(
+        "filterOrgIds".to_string(),
         Value::List(vec![Value::string("ORG1"), Value::string("ORG2")]),
-    )
-    .unwrap();
+    );
     let ids = |entity: &str| -> Vec<String> {
         let mut ids: Vec<String> = facade
             .find(entity)
@@ -456,7 +472,9 @@ fn a_profile_frame_gives_its_filters_to_finds_below_whatever_else_the_user_holds
     assert_eq!(ids(VIEW), ["P1", "P3"]);
     // a user with no organization gets a term that matches nothing (`1 = 0`, which the in-memory test database does
     // not parse, so the condition is read and no find is run)
-    set_context_name("filterOrgIds", Value::List(Vec::new())).unwrap();
+    context
+        .user_context()
+        .insert("filterOrgIds".to_string(), Value::List(Vec::new()));
     let none = super::apply_entity_filters("test.product.Product", None).expect("a term for no organization");
     assert!(!has_in(&none, "ownerPartyId", &["ORG1"]), "{none:?}");
     // off the profile the open grant answers again
@@ -496,12 +514,13 @@ fn a_remote_invalidation_and_a_whole_clear_read_the_filter_sets_again() {
             );
         }
     }
-    set_context_name(
-        "filterOrgIds",
+    context.user_context().insert(
+        "filterOrgIds".to_string(),
         Value::List(vec![Value::string("ORG1"), Value::string("ORG2")]),
-    )
-    .unwrap();
-    set_context_name("activeOrgId", Value::string("ORG1")).unwrap();
+    );
+    context
+        .user_context()
+        .insert("activeOrgId".to_string(), Value::string("ORG1"));
     let ids = || -> Vec<String> {
         let mut ids: Vec<String> = facade
             .find(VIEW)

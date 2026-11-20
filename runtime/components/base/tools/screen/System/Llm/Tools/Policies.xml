@@ -20,8 +20,18 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="agentId"/>
 
-    <transition name="storePolicy"><service-call name="store#moqui.agent.AgentToolPolicy"/>
-        <default-response url="." parameter-map="{agentId:agentId}"/></transition>
+    <transition name="storePolicy">
+        <actions><script><![CDATA[
+            // a rule names the tool or the pattern it decides: a row with none is left out of the policy (SEC-AI-87)
+            if (!String(context.toolPattern ?? '').trim()) {
+                ec.message.addError(ec.l10n.localize('A rule needs a tool pattern: a tool or catalog name, or a pattern with *'))
+                return
+            }
+            ec.service.sync().name('store#moqui.agent.AgentToolPolicy').parameters({agentId, sequenceNum, toolPattern: context.toolPattern.trim(),
+                classificationEnumId: context.classificationEnumId ?? null, approvalModeEnumId: context.approvalModeEnumId ?? null,
+                allowDestructive: context.allowDestructive ?? null, callsPerRun: context.callsPerRun ?? null}).call()
+        ]]></script></actions>
+        <default-response url="." parameter-map="{agentId:agentId}"/><error-response url="." parameter-map="{agentId:agentId}"/></transition>
     <transition name="deletePolicy"><service-call name="delete#moqui.agent.AgentToolPolicy"/>
         <default-response url="." parameter-map="{agentId:agentId}"/></transition>
 
@@ -41,7 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-single name="AddPolicy" transition="storePolicy">
                     <field name="agentId" from="agentId"><default-field><hidden/></default-field></field>
                     <field name="sequenceNum"><default-field title="Sequence"><text-line size="5"/></default-field></field>
-                    <field name="toolPattern"><default-field title="Tool Pattern" tooltip="A tool or catalog name, or a pattern with * (mcp__*, *)">
+                    <field name="toolPattern" required="true"><default-field title="Tool Pattern" tooltip="A tool or catalog name, or a pattern with * (mcp__*, *)">
                         <text-line size="30"/></default-field></field>
                     <field name="classificationEnumId"><default-field title="Ceiling" tooltip="The highest class it may run; empty is any">
                         <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
@@ -61,7 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
             <form-list name="PolicyList" list="policyList" transition="storePolicy">
                 <field name="agentId"><default-field><hidden/></default-field></field>
                 <field name="sequenceNum"><default-field title="Sequence"><display/></default-field></field>
-                <field name="toolPattern"><default-field title="Tool Pattern"><text-line size="25"/></default-field></field>
+                <field name="toolPattern" required="true"><default-field title="Tool Pattern"><text-line size="25"/></default-field></field>
                 <field name="classificationEnumId"><default-field title="Ceiling">
                     <drop-down allow-empty="true"><entity-options key="${enumId}" text="${description}">
                         <entity-find entity-name="moqui.basic.Enumeration"><econdition field-name="enumTypeId" value="AgentClassification"/>

@@ -215,6 +215,10 @@ fn call_unit(engine: &OxideEngine, context: &mut Context, unit: &Unit) -> Result
     if !unit.runtime.is_empty() && !engine.unit_runtimes.borrow().contains(&unit.runtime_id) {
         let compiled = compile(engine, &unit.runtime, unit.runtime_id).and_then(|compiled| context.execute(&compiled));
         compiled.map_err(|err| failed(context, err))?;
+        // in a preview's runtime the mode's render runtime is frozen once it is made (SEC-AI-102)
+        if super::engine::preview_start() {
+            super::engine::freeze_mode_runtime(context).map_err(|err| failed(context, err))?;
+        }
         engine.unit_runtimes.borrow_mut().insert(unit.runtime_id);
     }
     let saved = engine.units.borrow_mut().get(&unit.id);

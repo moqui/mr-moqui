@@ -834,3 +834,60 @@ feature("a steward changes a document only when it is theirs: one their groups r
         inherited.includes("was not added by dataset bds-left")
     }
 })
+
+feature("a field is added to a dataset's document only by a steward who may widen every group that reads it (SEC-TLS-92)", {
+    when() {
+        // a document of the steward's own dataset, read by the steward's group and the readers' group
+        const document = "BdsWiden"
+        sys(() => {
+            make("moqui.entity.document.DataDocument", {dataDocumentId: document, indexName: "bds_widen", documentName: document,
+                primaryEntityName: "moqui.basic.Enumeration"})
+            for (const [fieldSeqId, fieldPath] of [["01", "enumId"], ["02", "enumCode"]])
+                make("moqui.entity.document.DataDocumentField", {dataDocumentId: document, fieldSeqId, fieldPath})
+            make("moqui.entity.feed.DataFeed", {dataFeedId: "BdsWidenFeed", dataFeedTypeEnumId: "DTFDTP_MAN_PULL", feedName: "BdsWidenFeed"})
+            make("moqui.entity.feed.DataFeedDocument", {dataFeedId: "BdsWidenFeed", dataDocumentId: document})
+            for (const userGroupId of ["BDS_STEWARD", "BDS_READER"])
+                make("moqui.entity.document.DataDocumentUserGroup", {dataDocumentId: document, userGroupId})
+        })
+        const STEWARD = "bds.steward"
+        const created = asUser(STEWARD, R + "create#BusinessDataset", {datasetId: "bds-own-widen", dataDocumentId: document,
+            scopePolicyId: "ReportUserGroups", rowFilterParameters: policy.rowFilterParameters})
+        const add = (fieldPath, fieldNameAlias) =>
+            asUser(STEWARD, R + "store#BusinessDatasetFields", {datasetId: "bds-own-widen", fields: [{fieldPath, fieldNameAlias}]}).error || ""
+        // a field of the document's own entity widens BDS_READER's reads as a related one does
+        const own = add("description", "widenDescription")
+        const related = add("type:description", "widenType")
+        const readers = (op, userGroupId) => sys(() => op === "remove"
+            ? ec.entity.find("moqui.entity.document.DataDocumentUserGroup").condition({dataDocumentId: document, userGroupId}).deleteAll()
+            : make("moqui.entity.document.DataDocumentUserGroup", {dataDocumentId: document, userGroupId}))
+        // with the steward's group the document's only reader, the field is theirs to add
+        readers("remove", "BDS_READER")
+        const alone = add("description", "widenDescription")
+        // everyone, by ALL_USERS, is not the steward's group to widen
+        readers("add", "ALL_USERS")
+        const everyone = add("enumTypeId", "widenTypeId")
+        readers("remove", "ALL_USERS")
+        // ADMIN, which reads every entity, is no group to widen; BDS_READER is, until the steward holds its widen grant
+        readers("add", "ADMIN")
+        readers("add", "BDS_READER")
+        const ungranted = add("enumTypeId", "widenTypeId")
+        sys(() => {
+            make("moqui.security.ArtifactGroup", {artifactGroupId: "BDS_WIDEN_READER", description: "BDS widen reader"})
+            make("moqui.security.ArtifactGroupMember", {artifactGroupId: "BDS_WIDEN_READER", artifactName: "org.moqui.report.widen.BDS_READER",
+                artifactTypeEnumId: "AT_SERVICE"})
+            make("moqui.security.ArtifactAuthz", {artifactAuthzId: "BDS_WIDEN_READER", userGroupId: "BDS_STEWARD", artifactGroupId: "BDS_WIDEN_READER",
+                authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_ALL"})
+        })
+        const granted = add("enumTypeId", "widenTypeId")
+        return {created: created.error || "", own, related, alone, everyone, ungranted, granted}
+    },
+    then({created, own, related, alone, everyone, ungranted, granted}) {
+        created == ""
+        own.includes("not yours to widen")
+        related.includes("not yours to widen")
+        alone == ""
+        everyone.includes("not yours to widen")
+        ungranted.includes("read by 1 group(s)")
+        granted == ""
+    }
+})

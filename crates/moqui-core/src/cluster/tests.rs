@@ -290,6 +290,7 @@ fn put_member(
             ssh_fp: String::new(),
             version: String::new(),
             edge_link_url: String::new(),
+            edge_member_key: String::new(),
         },
     )
     .unwrap();
@@ -308,6 +309,30 @@ fn write_row(facade: &EntityFacade, id: &str, commit: bool) {
     } else {
         facade.rollback(ROW).unwrap();
     }
+}
+
+/// SEC-CLU-81: a member key the host set before the start is on the row from its first write, and one set after it is
+/// written to the row at once; the member report carries it.
+#[test]
+fn a_member_publishes_its_edge_key_from_the_rows_first_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-keyed");
+    let (ctx, facade) = open_facade();
+    let _recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    let first = "ab".repeat(32);
+    super::set_edge_member_key(ctx.factory(), &first);
+    super::start(ctx.factory()).unwrap();
+    let members = super::load_members(&facade).unwrap();
+    assert_eq!(members[0].edge_member_key, first, "on the row from the start");
+    let second = "cd".repeat(32);
+    super::set_edge_member_key(ctx.factory(), &second);
+    let members = super::load_members(&facade).unwrap();
+    assert_eq!(members[0].edge_member_key, second, "written at once after the start");
+    let report = super::member_report(ctx.factory(), &facade).unwrap();
+    assert_eq!(report[0].edge_member_key, second);
+    moqui_lib::env::set_property(super::EDGE_MEMBER_KEY_PROPERTY, "");
 }
 
 #[test]
@@ -1657,6 +1682,7 @@ fn a_live_member_with_another_ssh_host_key_is_named() {
         ssh_fp: ssh_fp.to_string(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     let members = [
         member("self", Some(1_000), "SHA256:a"),
@@ -1684,6 +1710,7 @@ fn messages_go_only_to_a_row_of_this_members_material() {
         ssh_fp: String::new(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     let own = super::Member {
         instance_id: "self".to_string(),
@@ -1694,6 +1721,7 @@ fn messages_go_only_to_a_row_of_this_members_material() {
         ssh_fp: String::new(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     assert!(super::same_material(&row("S", "C"), Some(&own)));
     assert!(!super::same_material(&row("S", "other"), Some(&own)));

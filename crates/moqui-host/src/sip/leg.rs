@@ -50,6 +50,9 @@ use crate::rtc::media::{self, Consumer, Kinds, PcmSource};
 /// The frames a leg's consumer queues before it drops (a second).
 const CONSUMER_QUEUE: usize = 50;
 const TICK: Duration = Duration::from_millis(20);
+/// The datagrams a leg reads in one tick; a phone sends one a tick, and the rest wait in the socket's buffer, where the
+/// kernel drops what it cannot hold (SEC-COM-86).
+const MAX_DATAGRAMS_PER_TICK: usize = 64;
 
 /// Audio played to the phone over what it hears, 48 kHz mono: a call's notice (`prompt.rs`), its tones and any
 /// recorded speech.
@@ -214,6 +217,7 @@ impl LegMedia {
             looped: None,
             loop_at: 0,
             muted: false,
+            digits: moqui_sip::dtmf::DigitRate::default(),
         };
         let thread = std::thread::Builder::new()
             .name("moqui-sip-leg".to_string())
@@ -239,6 +243,20 @@ impl Drop for LegMedia {
     }
 }
 
+/// The datagrams waiting on `socket`, at most `max` of them, each given to `each`; how many were read. The rest wait
+/// in the socket's buffer for the next tick (SEC-COM-86).
+fn read_datagrams(socket: &UdpSocket, buf: &mut [u8], max: usize, mut each: impl FnMut(&[u8], SocketAddr)) -> usize {
+    let mut read = 0;
+    while read < max {
+        let Ok((len, from)) = socket.recv_from(buf) else {
+            break;
+        };
+        each(&buf[..len], from);
+        read += 1;
+    }
+    read
+}
+
 struct Worker {
     leg: String,
     socket: UdpSocket,
@@ -260,6 +278,8 @@ struct Worker {
     loop_at: usize,
     /// V5: on hold, the phone's audio does not go to the room.
     muted: bool,
+    /// The digits taken this second (SEC-COM-86).
+    digits: moqui_sip::dtmf::DigitRate,
 }
 
 impl Worker {
@@ -300,17 +320,21 @@ impl Worker {
                     }
                 }
             }
-            // the phone's packets
-            while let Ok((len, from)) = self.socket.recv_from(&mut buf) {
-                if let Some(media) = self.media.as_mut() {
-                    if let Received::Digit(digit) = media.receive(from, &buf[..len]) {
-                        let _ = self.notes.send(LegNote::Digit {
-                            leg: self.leg.clone(),
-                            digit,
-                        });
+            // the phone's packets, at most MAX_DATAGRAMS_PER_TICK, and its digits at most a rate
+            let (socket, media, digits, notes, leg) =
+                (&self.socket, &mut self.media, &mut self.digits, &self.notes, &self.leg);
+            read_datagrams(socket, &mut buf, MAX_DATAGRAMS_PER_TICK, |packet, from| {
+                if let Some(media) = media.as_mut() {
+                    if let Received::Digit(digit) = media.receive(from, packet) {
+                        if digits.take(Instant::now()) {
+                            let _ = notes.send(LegNote::Digit {
+                                leg: leg.clone(),
+                                digit,
+                            });
+                        }
                     }
                 }
-            }
+            });
             let mixer = self.room.tick();
             let mut out = match self.looped.as_ref().filter(|audio| !audio.is_empty()) {
                 Some(audio) => {
@@ -479,3 +503,7 @@ pub(crate) fn sdp_address(public: Option<IpAddr>, socket: &UdpSocket) -> Option<
     let bound = socket.local_addr().ok()?;
     Some(SocketAddr::new(public.unwrap_or(bound.ip()), bound.port()))
 }
+
+#[cfg(test)]
+#[path = "leg_tests.rs"]
+mod tests;

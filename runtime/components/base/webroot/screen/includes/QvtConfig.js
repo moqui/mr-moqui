@@ -28,7 +28,9 @@ function build(ec, sri, options) {
     const account = ec.user.userAccount || {}
     const preferences = {}
     if (ec.user.userId) {
-        const found = ec.entity.find('moqui.security.UserPreference').condition('userId', ec.user.userId).disableAuthz().list()
+        // the user's own rows: read as the user where authorization may not be disabled (a preview, SEC-AI-102)
+        const query = ec.entity.find('moqui.security.UserPreference').condition('userId', ec.user.userId)
+        const found = (ec.artifactExecution.authzLocked() ? query : query.disableAuthz()).list()
         for (let i = 0; i < found.length; i++) {
             const key = found.get(i).get('preferenceKey')
             preferences[key] = ec.user.getPreference(key)

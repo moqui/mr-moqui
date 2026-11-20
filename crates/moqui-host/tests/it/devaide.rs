@@ -1529,6 +1529,45 @@ fn a_screen_renders_with_proposed_text_in_an_overlay() {
     // nothing was written, and the next render is as saved
     assert!(!gate.runtime.join("components/addon/my-site/screen-extend").exists());
     assert!(!text(&render()).contains("Extra Note"));
+    a_proposed_screen_previews_in_the_real_shell(&factory);
+}
+
+/// SEC-AI-102: a proposed app screen renders inside the real webroot and qapps shell for a signed-in user (the shell's
+/// own actions, its client config among them, run on the render units' list), and its own text is still locked there:
+/// its actions, and its `default-menu-title`, which the shell's header and the menu data expand, write no markup.
+fn a_proposed_screen_previews_in_the_real_shell(factory: &Arc<ExecutionContextFactory>) {
+    let proposed = r#"<screen require-authentication="false"
+        default-menu-title="Home${sri.write('&lt;i&gt;PWNEDMENU&lt;/i&gt;') || ''}"><actions><script>
+        out = (() => { try { ec.entity.find('moqui.basic.Enumeration').disableAuthz(); return 'ALLOWED' }
+            catch (e) { return String(e.message).includes('not available in a preview') ? 'REFUSED' : 'OTHER ' + e.message } })()
+        </script></actions><widgets><label text="PREVIEWMARK ${out}"/></widgets></screen>"#;
+    let render = |path: &str| {
+        let output = moqui_core::screen::make_render(factory)
+            .screen_path(path)
+            .render()
+            .unwrap_or_else(|err| panic!("the preview of {path} renders: {}", err.message()));
+        (output.status, output.body_text())
+    };
+    let preview = |path: &str| {
+        let mut overlay = moqui_core::screen::overlay::Overlay::new();
+        overlay.insert_location(factory, "component://tools/screen/Tools/Home.xml", proposed);
+        moqui_core::screen::overlay::with(overlay, || render(path))
+    };
+    // the qapps page: the shell, whose client then asks for the screen
+    let (status, page) = preview("qapps/tools/Home");
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("/js/MoquiLib.js"), "the shell's page: {page}");
+    assert!(!page.contains("<i>PWNEDMENU"), "the shell's page: {page}");
+    // the html apps shell, which renders the screen inside it: its text is still locked
+    let (status, page) = preview("apps/tools/Home");
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("PREVIEWMARK REFUSED"), "{page}");
+    assert!(!page.contains("<i>PWNEDMENU"), "{page}");
+    // the menu data of the path, which expands each level's title
+    let (status, data) = preview("menuData/apps/tools/Home");
+    assert_eq!(status, 200, "{data}");
+    assert!(data.contains("Home"), "{data}");
+    assert!(!data.contains("<i>PWNEDMENU"), "{data}");
 }
 
 /// Source stamps (plans/design-dev-aide.md P6, F10): a render that asks for them (`X-Moqui-Aide: source`, a Dev AIDE

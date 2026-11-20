@@ -54,6 +54,11 @@ pub fn search_not_up(facade: &EntityFacade) -> bool {
 /// `set-results`, non-primary-key fields the actions set in the rule's context are set on the values. A rule
 /// is skipped while the message facade has errors unless it has `run-on-error` or is one of the Rust security
 /// checks.
+///
+/// `given` is the fields the write's caller set, when an update filled in others from the stored row; `entityValue`
+/// answers `isFieldGiven` by it (`EntityValue::is_field_given`), so a rule tells a value given again from one the
+/// update carried over (plans/Security-Review-Low.md SEC-TLS-116). `None`: each field of `values` was given.
+#[allow(clippy::too_many_arguments)]
 pub fn run_matched_eca(
     facade: &EntityFacade,
     entity_name: &str,
@@ -62,12 +67,14 @@ pub fn run_matched_eca(
     rules: &[std::sync::Arc<EcaRule>],
     values: &mut crate::entity::FieldMap,
     pre_row: Option<&crate::entity::EntityValue>,
+    given: Option<&std::collections::BTreeSet<std::sync::Arc<str>>>,
 ) -> Result<(), Error> {
     if !rules.iter().any(|rule| rule.run_before == before) {
         return Ok(());
     }
     tracing::debug!(entity = entity_name, operation, before, "running matched entity eca");
     let update_or_delete = operation == "update" || operation == "delete";
+    let mut given = given.map(|given| std::sync::Arc::new(given.clone()));
     for rule in rules {
         if rule.run_before != before {
             continue;
@@ -92,6 +99,10 @@ pub fn run_matched_eca(
         };
         if rule.get_entire_entity {
             if let Some(row) = &db_row {
+                // the fields the row fills in were not given
+                if given.is_none() {
+                    given = Some(std::sync::Arc::new(values.keys().cloned().collect()));
+                }
                 for (name, value) in row.fields() {
                     values.entry(name.clone()).or_insert_with(|| value.clone());
                 }
@@ -108,6 +119,9 @@ pub fn run_matched_eca(
         let mut current = facade.make_value(entity_name).map_err(in_rule)?;
         for (name, value) in values.iter() {
             current.set(std::sync::Arc::clone(name), value.clone());
+        }
+        if let Some(given) = &given {
+            current.set_given(std::sync::Arc::clone(given));
         }
         let cell: std::sync::Arc<std::sync::Mutex<crate::entity::EntityValue>> =
             std::sync::Arc::new(std::sync::Mutex::new(current));

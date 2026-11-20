@@ -410,6 +410,12 @@ fn an_edge_node_queues_an_unverifiable_webhook_only_after_its_cheap_checks() {
         Some(429)
     );
     assert_eq!(check(&from("192.0.2.4", now + 20_000), "n:TW1"), None);
+    // while the bridge's bucket is empty a new address gets no bucket of its own (SEC-COM-89)
+    assert_eq!(
+        check(&from("192.0.2.9", now + 20_000), "n:TW1").map(|a| a.status),
+        Some(429)
+    );
+    assert!(!moqui_lib::sync::lock(&rates.buckets).contains_key("n:TW1|192.0.2.9"));
 }
 
 /// The edge node's whole path for a network it cannot verify: the cheap checks, then the item queued with its URL and
@@ -472,6 +478,19 @@ fn an_edge_node_queues_an_unverified_webhook_without_checking_it() {
         (full.status, full.body.as_slice()),
         (429, b"too many requests wait; try again later".as_slice())
     );
+    // a disabled bridge is answered as one that does not exist, before any rate (SEC-COM-89)
+    let disabled =
+        serde_json::json!({"typeEnumId": "CbtSms", "adapterName": "core-edge-test", "statusId": "CbsDisabled"});
+    let answer = paired_webhook_within(
+        ctx.factory(),
+        &facade,
+        "TW1",
+        &deferred_request(Some("forged"), "ev-3", now),
+        &node,
+        &disabled,
+        &limits(10),
+    );
+    assert_eq!(answer, WebhookResponse::not_signed());
 }
 
 /// The local node checks every queued request's signature with the bridge's whole configuration, over the URL the

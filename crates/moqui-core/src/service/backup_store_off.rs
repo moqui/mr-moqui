@@ -28,6 +28,7 @@ pub(super) struct S3Remote<'a> {
     pub access_key: &'a str,
     pub secret_key: &'a str,
     pub prefix: &'a str,
+    pub deny_internal: bool,
 }
 
 pub(super) fn mirror_s3(

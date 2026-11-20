@@ -60,7 +60,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="systemMessageTypeId" required="true"/>
             <parameter name="systemMessageRemoteId" required="true"/>
-            <parameter name="fileCountLimit" type="Integer"/>
+            <parameter name="fileCountLimit" type="Integer" default-value="100"><description>The most files one poll reads
+                (the first by name); the next poll takes the rest. Each is at most resource-facade sftp-max-read bytes.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="fileCount"/>

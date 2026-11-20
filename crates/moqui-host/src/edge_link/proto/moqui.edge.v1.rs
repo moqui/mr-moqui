@@ -121,6 +121,10 @@ pub struct ClusterMember {
     /// The moqui binary version it runs.
     #[prost(string, tag = "4")]
     pub version: ::prost::alloc::string::String,
+    /// The SHA-256 (hex) of its own edge link key, as its member row publishes it: the edge node admits this id only
+    /// with that key (SEC-CLU-81). Empty for a member that publishes none.
+    #[prost(string, tag = "5")]
+    pub key_fingerprint: ::prost::alloc::string::String,
 }
 /// A linked member's state and its cluster's members: with its Hello, with every Ping on its up connection, and when
 /// the edge node asks (LocalLink.Members). The edge node keeps the latest list of each pairing in memory only, and

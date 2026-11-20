@@ -252,6 +252,11 @@ struct Parser<'a> {
 /// overflow the stack, which aborts the process instead of failing the one parse.
 const MAX_DEPTH: usize = 256;
 
+/// Most attributes one start tag may have. A repeated name is found by comparing with each earlier one, so a tag of
+/// a million short attributes would cost 10^11 comparisons; no document this reads has more than a few dozen
+/// (SEC-SCR-87).
+const MAX_ATTRIBUTES: usize = 1000;
+
 impl<'a> Parser<'a> {
     fn new(location: Option<&str>, src: &'a str, raw_text: bool) -> Self {
         Self {
@@ -521,6 +526,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.read_name()?;
         let mut attributes: Vec<(&'a str, Cow<'a, str>)> = Vec::new();
+        let mut read = 0_usize;
         loop {
             self.skip_ws();
             if self.starts_with("/>") {
@@ -551,6 +557,11 @@ impl<'a> Parser<'a> {
             self.skip_ws();
             let attr_value = self.read_attr_value()?;
             // A repeated attribute takes the later value, in the first one's place.
+            // every attribute read counts, a repeated name too, so a tag cannot repeat one name without end
+            read += 1;
+            if read > MAX_ATTRIBUTES {
+                return Err(self.error(format!("<{name}> has more than {MAX_ATTRIBUTES} attributes")));
+            }
             match attributes.iter_mut().find(|(name, _)| *name == attr_name) {
                 Some(slot) => slot.1 = attr_value,
                 None => attributes.push((attr_name, attr_value)),

@@ -22,8 +22,12 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EdgePairingCode" package="moqui.edge" use="transactional" cache="never">
         <description>A one-use pairing code an edge node's operator made (System › Edge Clients), good until expireDate
             (an hour by default). Only its hash is kept (codeHash, as other single-use codes). Pairing sets usedDate and
-            the pairedNodeId it paired; a used or expired code pairs nothing.</description>
+            the pairedNodeId it paired; a used or expired code pairs nothing. forNodeId, when set, is the one local node
+            the code pairs: a node that was revoked or unpaired itself (whatever key it brings, its own too), or was paired
+            before with another key, pairs again only with a code made for it, so a code made for one node never gives
+            another what was kept for its id.</description>
         <field name="pairingCodeId" type="id" is-pk="true"/>
+        <field name="forNodeId" type="id"/>
         <field name="codeHash" type="text-medium" not-null="true"/>
         <field name="createdDate" type="date-time"/>
         <field name="createdByUserId" type="id"/>

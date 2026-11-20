@@ -107,6 +107,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="edgeLinkUrl" type="text-medium"><description>On a member of an edge cluster, where a local node dials
             it (its edge@link-url): the edge node's Hello answer lists each live member with it (plans/Edge-Node2.md
             §4.6).</description></field>
+        <field name="edgeMemberKey" type="text-medium"><description>The fingerprint of the member's own edge link key
+            (runtime/db/edge_member_key), which a linked member tells its edge node with its cluster's member list: the
+            edge node admits that member id only with that key (SEC-CLU-81).</description></field>
     </entity>
 
     <!-- A component loaded or deployed on a running server (plans/archive/Component-Deploy.md; docs/tools/Component-Deploy.md):

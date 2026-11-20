@@ -93,6 +93,7 @@ impl FixedMember {
                 heartbeat_age_ms: 0,
                 live: true,
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                key_fingerprint: String::new(),
             }]),
         })
     }
@@ -106,6 +107,7 @@ impl FixedMember {
                 heartbeat_age_ms: if *live { 1_000 } else { 3_600_000 },
                 live: *live,
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                key_fingerprint: String::new(),
             })
             .collect();
     }

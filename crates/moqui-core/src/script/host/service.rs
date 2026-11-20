@@ -198,6 +198,7 @@ fn get_current_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn disable_authz(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    super::refuse_locked_authz()?;
     changed(call, |state| state.options.disable_authz = true)
 }
 
@@ -425,6 +426,9 @@ fn call_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let name = call.text_or_empty(0);
     let flags = call.int(1).unwrap_or(0);
     let on = |bit: i32| flags & bit != 0;
+    if on(XML_DISABLE_AUTHZ) {
+        super::refuse_locked_authz()?;
+    }
     let mut options = CallOptions {
         disable_authz: on(XML_DISABLE_AUTHZ),
         multi: on(XML_MULTI),

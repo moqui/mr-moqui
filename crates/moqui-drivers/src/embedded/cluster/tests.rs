@@ -810,7 +810,19 @@ fn save_db_round_trips_the_search_schema() {
     conn.execute("INSERT INTO search.kept (body) VALUES (?)", &[Value::string("kept")])
         .unwrap();
     let dump = dir.join("moqui.dump");
+    // SEC-TLS-97: a plain dump is this user's alone, one written over a readable file too
+    std::fs::write(&dump, b"").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&dump, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
     cluster.save_db(&dump).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(std::fs::metadata(&dump).unwrap().permissions().mode() & 0o777, 0o600);
+    }
     let header = std::fs::read(&dump).unwrap();
     assert!(header.starts_with(b"PGDMP"), "dump is not custom format");
     let list = std::process::Command::new(dir.join("install").join(SHIPPED_VERSION).join("bin/pg_restore"))

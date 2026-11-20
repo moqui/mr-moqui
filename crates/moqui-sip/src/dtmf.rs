@@ -16,9 +16,13 @@
 //!
 //! Sending, a digit is a run of event packets every 20 ms with the timestamp of its start, the marker on the first,
 //! the duration growing, then three copies of the last with the end bit; the next digit follows a short gap. Receiving,
-//! a digit is reported once, when its first packet comes, whatever arrives again of it.
+//! a digit is reported once, when its first packet comes, whatever arrives again of it; a new one only once the last
+//! ended or 40 ms of RTP time after it began, and [`DigitRate`] holds a leg to [`MAX_DIGITS_PER_SECOND`], so a far end
+//! that sends event packets with a new timestamp each does not make a digit (a task and a service call) of every one
+//! (SEC-COM-86).
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 /// How long a sent digit lasts, and the gap after it, in 20 ms packets.
 const TONE_PACKETS: u32 = 5;
@@ -164,25 +168,68 @@ impl DtmfSender {
     }
 }
 
+/// The RTP time after a digit began before another can begin without its end: 40 ms at the 8 kHz event clock.
+const MIN_DIGIT_TICKS: u32 = 320;
+/// The digits a leg takes in a second; a person, or a dialer at the shortest tone and gap, sends far fewer.
+pub const MAX_DIGITS_PER_SECOND: u32 = 20;
+
 /// The digits a leg receives.
 #[derive(Default)]
 pub struct DtmfReceiver {
     /// The RTP timestamp of the last digit reported.
     last: Option<u32>,
+    /// The last digit's end bit came.
+    ended: bool,
 }
 
 impl DtmfReceiver {
-    /// An event packet with its RTP timestamp; the digit when it is a new one.
+    /// An event packet with its RTP timestamp; the digit when it is a new one: a timestamp other than the last
+    /// digit's, once that digit ended or [`MIN_DIGIT_TICKS`] after it began.
     pub fn receive(&mut self, timestamp: u32, payload: &[u8]) -> Option<char> {
-        let [event, ..] = payload else {
+        let [event, flags, ..] = payload else {
             return None;
         };
-        if payload.len() < 4 || self.last == Some(timestamp) {
+        if payload.len() < 4 {
             return None;
+        }
+        if let Some(last) = self.last {
+            if last == timestamp {
+                self.ended |= flags & 0x80 != 0;
+                return None;
+            }
+            if !self.ended && timestamp.wrapping_sub(last) < MIN_DIGIT_TICKS {
+                return None;
+            }
         }
         let digit = digit_of(*event)?;
         self.last = Some(timestamp);
+        self.ended = flags & 0x80 != 0;
         Some(digit)
+    }
+}
+
+/// A leg's digits in the current second, at most [`MAX_DIGITS_PER_SECOND`]. Sans-IO: the caller passes the time.
+#[derive(Default)]
+pub struct DigitRate {
+    since: Option<Instant>,
+    taken: u32,
+}
+
+impl DigitRate {
+    /// Whether a digit received at `now` is taken.
+    pub fn take(&mut self, now: Instant) -> bool {
+        match self.since {
+            Some(since) if now.saturating_duration_since(since) < Duration::from_secs(1) => {}
+            _ => {
+                self.since = Some(now);
+                self.taken = 0;
+            }
+        }
+        if self.taken >= MAX_DIGITS_PER_SECOND {
+            return false;
+        }
+        self.taken += 1;
+        true
     }
 }
 
@@ -220,6 +267,34 @@ mod tests {
         assert_eq!(ends, 2 * END_REPEATS);
         assert!(!sender.is_active());
         assert_eq!(event_of('D'), Some(15));
+        // a new timestamp is a new digit only once the last ended or 40 ms after it began (SEC-COM-86)
+        let mut receiver = DtmfReceiver::default();
+        let start = [1u8, 0x0a, 0, 160];
+        let end = [1u8, 0x8a, 3, 32];
+        assert_eq!(receiver.receive(1000, &start), Some('1'));
+        assert_eq!(
+            receiver.receive(1001, &start),
+            None,
+            "a new timestamp each packet is no new digit"
+        );
+        assert_eq!(receiver.receive(1319, &start), None);
+        assert_eq!(
+            receiver.receive(1320, &start),
+            Some('1'),
+            "40 ms on, a digit whose end was lost"
+        );
+        assert_eq!(receiver.receive(1320, &end), None);
+        assert_eq!(
+            receiver.receive(1321, &[2u8, 0x0a, 0, 160]),
+            Some('2'),
+            "after its end, at once"
+        );
+        // a leg takes at most MAX_DIGITS_PER_SECOND a second
+        let mut rate = DigitRate::default();
+        let now = Instant::now();
+        let taken = (0..100).filter(|_| rate.take(now)).count();
+        assert_eq!(taken, MAX_DIGITS_PER_SECOND as usize);
+        assert!(rate.take(now + Duration::from_secs(1)));
         assert_eq!(digit_of(10), Some('*'));
         assert_eq!(digit_of(16), None);
     }

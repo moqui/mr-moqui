@@ -323,8 +323,38 @@ fn save_causes(entity: &EntityFacade, incident: &str, ranked: &[causes::Ranked])
     Ok(())
 }
 
+/// The severities an incident takes; a label of any other is `major`.
+const SEVERITIES: [&str; 3] = ["minor", "major", "critical"];
+
+/// Whether the user `owner_id` (an alert rule's owner) may have the rule open a Monitor incident: an active account
+/// that holds `MONITOR_INCIDENT` by its own grants.
+pub(crate) fn may_open_incident(ec: &ExecutionContext, owner_id: &str, now: i64) -> bool {
+    let Some(entity) = ec.factory().entity() else {
+        return false;
+    };
+    match crate::delivery::account(ec, &entity, owner_id, now) {
+        Ok(Some(account)) if account.active => {}
+        Ok(_) => return false,
+        Err(error) => {
+            tracing::error!(owner = owner_id, %error, "could not read an alert rule's owner");
+            return false;
+        }
+    }
+    let _authz = ec.disable_authz();
+    moqui_core::user::user_has_permission(owner_id, "MONITOR_INCIDENT").unwrap_or(false)
+}
+
+/// An incident's severity from an alert's `severity` label: one of [`SEVERITIES`], else `major`.
+pub(crate) fn severity_of(labels: &Json) -> &'static str {
+    labels["severity"]
+        .as_str()
+        .and_then(|severity| SEVERITIES.iter().copied().find(|known| *known == severity))
+        .unwrap_or("major")
+}
+
 /// An alert rule labelled `incident="true"` went to Firing: open an incident for its service (the `service` or
-/// `service.name` label, else the rule), or add the alert to the open one. A failure is logged: alerting goes on.
+/// `service.name` label, else the rule), or add the alert to the open one, with the `severity` label when it is one of
+/// [`SEVERITIES`]. A failure is logged: alerting goes on.
 pub(crate) fn open_from_alert(ec: &ExecutionContext, rule: &str, title: &str, series: &str, labels: &Json, now: i64) {
     let Some(entity) = ec.factory().entity() else {
         return;
@@ -350,10 +380,7 @@ pub(crate) fn open_from_alert(ec: &ExecutionContext, rule: &str, title: &str, se
                     let mut incident = entity.make_value(INCIDENT)?;
                     incident.set_sequenced_id_primary(&entity)?;
                     incident.set("title", Value::String(format!("{title} is firing")));
-                    incident.set(
-                        "severity",
-                        Value::string(labels["severity"].as_str().unwrap_or("major")),
-                    );
+                    incident.set("severity", Value::string(severity_of(labels)));
                     incident.set("statusId", Value::string("Open"));
                     incident.set("source", Value::string("alert"));
                     incident.set("serviceName", Value::string(&service));
@@ -654,3 +681,7 @@ fn add_note(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Resul
     tracing::info!(target: AUDIT, incident = id, user, "incident note added");
     Ok(output(json!({"incidentId": id})))
 }
+
+#[cfg(test)]
+#[path = "incident_tests.rs"]
+mod tests;

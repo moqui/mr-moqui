@@ -502,6 +502,8 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     });
     let address = local.server.grpc_address().unwrap();
     let direct = format!("grpc://127.0.0.1:{}", address.port());
+    // the client secret goes only to the authority the settings name (SEC-OUT-83)
+    moqui_lib::env::set_property(&crate::common::property_name("pass@backend-grpc-url"), direct.clone());
     let direct_handle = round_trips(&local, &direct, "front", &big);
     // a file over the limit is refused by the authority, as the REST API's multipart limit
     let large = upload(&direct, vec![b'x'; 10 * 1024 * 1024 + 1]).unwrap();

@@ -231,6 +231,56 @@ Here `optionIndicator`, `parentEnumId` and `sequenceNum` are the row's fields, a
 `row-actions` run once for each row of the page, so a find or a service call there runs that many times. Read the
 related rows for the whole list in the screen's `actions`.
 
+## In a preview of proposed text
+
+A screen that stands at a preview's proposed text (a dev-aide change set or a `screen-xml` canvas, `screen::overlay`)
+runs its code on an allow-list host (`crates/moqui-core/src/script/preview.rs`, plans/Security-Review-Low.md
+SEC-AI-102). That is its actions (always-, pre-, transition and form row actions, a form's or a drop-down's
+`entity-find`, a tree node's), its widget, field and condition expressions, and the forms that `extends` one of its
+forms. The screen is told by the nearest screen frame above the last service frame, so a transition, the menu data and
+a form's or tree's data are covered as the render is. The code may call:
+
+| Group | Members |
+|---|---|
+| Entities | `ec.entity.find`, `findOneXml`, `makeValue`, `conditionFactory`; `EntityFind`, `EntityList`, `EntityValue`, `EntityListIterator`, `EntityCondition`; authorization and entity filters apply, and no `disableAuthz()` |
+| Services | `ec.service.sync()` and its builder, `callXml`; the service's authorization applies, and no `disableAuthz()` |
+| Messages and text | `ec.message`, `ec.l10n`, `ec.logger`; `ec.resource.expand`, `expandNoL10n`, `expression` and `condition`, which run more of the same text on the same host, their value copied out as data; `ec.resource.script` of a `component://` location, which runs inside the same region on the same list |
+| Settings | `ec.factory.getConfValue` (a secret one reads as null) |
+| Context | names read and written, `ec.context`, its shared map, `ec.user.context` reads |
+| The user | `ec.user` `userId`, `username`, `hasPermission`, `isInGroup`, `getUserGroupIdSet`, `getPreference`, `getPreferences`, `nowTimestamp`, `timestampMillis`, `locale`, `timeZone`, `getLocale`, `getTimeZone`, `userAccount` |
+| Helpers | `StringUtilities`, `CollectionUtilities`, the pure `WebUtilities` encoders, `compare`, the decimal and date globals |
+| `sri` | the reads of the render, its field values, options and validations, and the URL builders (`buildUrl`, `makeUrlByType`, `UrlInstance`); no render, write or redirect |
+| Authorization | `ec.artifactExecution.authzLocked()`, `isPermitted`, `isPermittedOwn` |
+
+Anything else throws "... is not available in a preview of proposed screen text": every `ec.web` member (the
+response's writes, headers, redirects, errors and status, cookies, the session and the request's parameters), the rest
+of `ec.resource` (files, locations, a `script` of another location, `template`), `ec.cache`, the rest of `ec.factory`,
+the rest of
+`ec.artifactExecution`, raw SQL and the other `tools`, the user's switches (sign in and out, `runAsUser`) and the
+effective time, `ec.screen`, the search index and notifications. A service the code calls, and the entity filters and
+ECA rules its finds and writes reach, run their own code on the whole host, and an entity filter's map reads only
+`ec.user.context`, never a name the screen set.
+
+The preview renders on a script runtime of its own, let go after it, and the allow-list holds for all of it. Its built-in
+objects are frozen, and so are `ec`, each facade under it, `sri`, the helpers, the host classes' prototypes and a mode's
+render functions, each once made, so the proposed text replaces no function the framework's code calls after it. Every
+expansion, expression, condition, value and map, and every actions snippet of a definition (a drop-down's
+`entity-options` find, a form-list's count find), runs on the allow-list above while a preview holds the runtime,
+whoever's frame is on top: the trusted shell's expansion of a proposed screen's menu title among them. The
+framework's render units and the screens' code around the proposed text run on a list of their own, the members a render
+needs (`sri`, its writes to the page, the reads of the request, the settings, `component://` files and
+`ec.llm.isEnabled()` for the shell's client config), and no response write of `ec.web`. An expression a render unit
+would write into its code (a `condition`, a field's `hide`, a form-single's `map`, a `text-map`, a
+`currency-unit-field`, a `disable-condition`, a report's `variables`, `frame` or `panel`) is never spliced in: it must be
+one JavaScript expression alone, or the screen does not load, and it is evaluated from a string literal by
+`ec.resource.expression`, as the proposed text's own, its value copied out as data. A name, id, type or size the units
+write into the page as it is loses any markup character, and a `default-menu-title` or `menu-title` is made literal (no
+markup, no `$`). The proposed text reads a copy of the page's script and
+stylesheet lists (`footer_scripts`, `html_scripts`, `footer_stylesheets`, `html_stylesheets`), so it adds no
+`<script src>` or `<link>` to the shell's page, and may not set one. A parent screen whose subscreen is proposed is not
+proposed for that alone. The response keeps the preview's `Content-Security-Policy`, drops a `Refresh` header and
+redirects only to this site.
+
 ## Server-static screens
 
 A screen whose `server-static` names `qvt` is sent to the browser as a cached template with no request data in it,

@@ -69,6 +69,10 @@ const COLLAB_DOCUMENT: &str = "moqui.resource.CollabDocument";
 const FLUSH_AFTER: Duration = Duration::from_millis(1500);
 /// A document on database files is saved as a version after this long without an edit.
 const IDLE_SAVE: Duration = Duration::from_secs(120);
+/// A member's access to the page is asked again by the [`tick`] once its answer is this old (SEC-TLS-112).
+const ACCESS_RECHECK: Duration = Duration::from_secs(60);
+/// An answer this old is not used for an update: the tick did not ask again.
+const ACCESS_STALE: Duration = Duration::from_secs(180);
 
 /// Why a message was refused, with the HTTP-like code the client reads.
 #[derive(Debug, Clone)]
@@ -115,6 +119,14 @@ pub enum Event {
     /// Changes another server stored that this server's room lacked, now merged into it: the Yjs update (v1) for the
     /// room's clients.
     Update { document_key: String, update: Vec<u8> },
+    /// The user may no longer view the page: the host drops that user's clients from the document (SEC-TLS-112).
+    Revoked { document_key: String, user_id: String },
+    /// The user's right to change the page changed while they may still view it: the host tells their clients.
+    CanEdit {
+        document_key: String,
+        user_id: String,
+        can_edit: bool,
+    },
 }
 
 /// The record a document key names.
@@ -138,10 +150,25 @@ struct Room {
     unsaved: BTreeSet<String>,
     last_editor: Option<String>,
     members: usize,
-    can_edit: HashMap<String, bool>,
+    /// Each member's access, by user, as last asked.
+    can_edit: HashMap<String, Grant>,
+    /// The size of the document's state as last written, and of the updates applied since: what [`apply`] holds to
+    /// [`max_state_bytes`].
+    state_bytes: usize,
     /// The row's `lastUpdatedStamp` (milliseconds) as this server last read or wrote it; a row with another was written
     /// by another server since, and [`tick`] merges it. `None` when not known, which only costs a read.
     stamp: Option<i64>,
+}
+
+/// Whether a member may change the document, when that was last answered, when to ask again after a check that
+/// failed, and how many clients of the user are in the room.
+#[derive(Clone, Copy)]
+struct Grant {
+    can_edit: bool,
+    checked: Instant,
+    retry_at: Instant,
+    failures: u32,
+    clients: usize,
 }
 
 fn rooms() -> &'static Mutex<HashMap<String, Arc<Mutex<Room>>>> {
@@ -216,7 +243,22 @@ struct Access {
     on_database: bool,
 }
 
+/// What [`access`] answers in a test in place of the wiki's: `Some` answers that, `None` asks the wiki.
+#[cfg(test)]
+static ACCESS_FOR_TEST: Mutex<Option<Result<(bool, bool), u16>>> = Mutex::new(None);
+
 fn access(page_id: &str, user_id: &str) -> Result<Access, Refusal> {
+    #[cfg(test)]
+    if let Some(answer) = *lock(&ACCESS_FOR_TEST) {
+        return match answer {
+            Ok((can_view, can_edit)) => Ok(Access {
+                can_view,
+                can_edit,
+                on_database: true,
+            }),
+            Err(code) => Err(Refusal::new(code, "the access check failed")),
+        };
+    }
     let out = call_internal(
         "org.moqui.resource.WikiServices.get#WikiPageAccess",
         &[
@@ -448,6 +490,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         )?
         .stamp;
     }
+    let state_bytes = doc.transact().encode_state_as_update_v1(&StateVector::default()).len();
     let room = Arc::new(Mutex::new(Room {
         doc,
         target,
@@ -457,6 +500,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         last_editor: None,
         members: 0,
         can_edit: HashMap::new(),
+        state_bytes,
         stamp,
     }));
     // another join may have loaded it meanwhile: keep the first
@@ -477,6 +521,8 @@ enum Stored {
 struct Written {
     stamp: Option<i64>,
     merged: Option<Vec<u8>>,
+    /// The size of the state written.
+    state_bytes: usize,
 }
 
 /// Write the document's state and snapshot.
@@ -509,6 +555,7 @@ fn write_row(
             .start_time_millis()
             .filter(|millis| *millis > 0);
         let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+        let state_bytes = state.len();
         let snapshot = markdown::render(doc);
         let mut row = match existing {
             Some(row) => row,
@@ -545,7 +592,11 @@ fn write_row(
         } else {
             row.update(&facade)?;
         }
-        Ok(Written { stamp, merged })
+        Ok(Written {
+            stamp,
+            merged,
+            state_bytes,
+        })
     })
     .map_err(Error::from)
 }
@@ -553,6 +604,7 @@ fn write_row(
 /// Note what [`write_row`] did in the room: its stamp, and the merged update for the room's clients.
 fn wrote(key: &str, room: &mut Room, written: Written) {
     room.stamp = written.stamp;
+    room.state_bytes = written.state_bytes;
     if let Some(update) = written.merged {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
@@ -584,16 +636,28 @@ pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Join
     if !can_view {
         return Err(Refusal::new(404, format!("{key} not found")));
     }
-    let room = load(key, page_id, on_database)?;
-    let mut room = lock(&room);
-    room.members += 1;
-    room.can_edit.insert(user_id.to_string(), can_edit);
+    // the client's state vector first: a refused join is no member, which no leave would ever take away (SEC-TLS-111)
     let vector = if client_state_vector.is_empty() {
         StateVector::default()
     } else {
         StateVector::decode_v1(client_state_vector)
             .map_err(|err| Refusal::new(400, format!("not a Yjs state vector: {err}")))?
     };
+    let room = load(key, page_id, on_database)?;
+    let mut room = lock(&room);
+    room.members += 1;
+    let now = Instant::now();
+    let clients = room.can_edit.get(user_id).map_or(0, |grant| grant.clients) + 1;
+    room.can_edit.insert(
+        user_id.to_string(),
+        Grant {
+            can_edit,
+            checked: now,
+            retry_at: now,
+            failures: 0,
+            clients,
+        },
+    );
     let txn = room.doc.transact();
     let update = txn.encode_state_as_update_v1(&vector);
     let state_vector = txn.state_vector().encode_v1();
@@ -633,11 +697,21 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     let room = room_of(key).ok_or_else(|| Refusal::new(409, format!("{key} is not open here: join it first")))?;
     let mut room = lock(&room);
     match room.can_edit.get(user_id) {
-        Some(true) => {}
-        Some(false) => return Err(Refusal::new(403, "you may view this page and not change it")),
+        Some(grant) if grant.checked.elapsed() > ACCESS_STALE => {
+            return Err(Refusal::new(403, "your access to this page could not be checked again"))
+        }
+        Some(grant) if grant.can_edit => {}
+        Some(_) => return Err(Refusal::new(403, "you may view this page and not change it")),
         None => return Err(Refusal::new(409, format!("{key} is not open here: join it first"))),
     }
+    // the whole state is held in memory and written again at each flush: bounded (SEC-TLS-113)
+    let max = max_state_bytes();
+    if room.state_bytes.saturating_add(update.len()) > max {
+        return Err(Refusal::new(413, format!("the document is larger than {max} bytes")));
+    }
+    let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;
+    room.state_bytes = room.state_bytes.saturating_add(size);
     room.doc
         .transact_mut()
         .apply_update(update)
@@ -647,6 +721,15 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
     room.unsaved.insert(user_id.to_string());
     room.last_editor = Some(user_id.to_string());
     Ok(())
+}
+
+/// The most bytes a co-edited document's state may take: `resource-facade@collab-max-state-bytes`, 8 MiB by default.
+fn max_state_bytes() -> usize {
+    moqui_core::context::conf_env::setting("resource-facade@collab-max-state-bytes")
+        .parse::<usize>()
+        .ok()
+        .filter(|max| *max > 0)
+        .unwrap_or(8 * 1024 * 1024)
 }
 
 /// An update another server applied: into this server's room, when it has the document open. That server writes it.
@@ -665,6 +748,26 @@ pub fn apply_remote(key: &str, update: &[u8]) {
 
 /// A client left the document. The room is written, saved and closed by the next [`tick`] once no one is in it.
 pub fn leave(key: &str) {
+    leave_as(key, None);
+}
+
+/// A client of `user_id` left the document: the room counts one member fewer, and the user's access answer goes with
+/// their last client (SEC-TLS-112).
+pub fn leave_as(key: &str, user_id: Option<&str>) {
+    if let (Some(room), Some(user_id)) = (room_of(key), user_id) {
+        let mut room = lock(&room);
+        let last = room.can_edit.get_mut(user_id).is_some_and(|grant| {
+            grant.clients = grant.clients.saturating_sub(1);
+            grant.clients == 0
+        });
+        if last {
+            room.can_edit.remove(user_id);
+        }
+    }
+    leave_count(key);
+}
+
+fn leave_count(key: &str) {
     if let Some(room) = room_of(key) {
         let mut room = lock(&room);
         room.members = room.members.saturating_sub(1);
@@ -694,8 +797,88 @@ pub fn tick() {
     }
     refresh(&keys);
     for (key, room) in keys {
+        recheck_access(&key, &room);
         if let Err(err) = tick_room(&key, &room) {
             tracing::error!("co-edited {key}: {}", err.message());
+        }
+    }
+}
+
+/// Ask again the access of each member whose answer is [`ACCESS_RECHECK`] old: a user whose right to change the page
+/// was taken away has their updates refused from then on, and one who may no longer view it is dropped from the
+/// document ([`Event::Revoked`]). A check that fails leaves the answer to go stale, when [`apply`] refuses it
+/// (SEC-TLS-112).
+fn recheck_access(key: &str, room: &Mutex<Room>) {
+    let (page_id, due): (String, Vec<String>) = {
+        let room = lock(room);
+        let now = Instant::now();
+        let due = room
+            .can_edit
+            .iter()
+            .filter(|(_, grant)| grant.checked.elapsed() >= ACCESS_RECHECK && grant.retry_at <= now)
+            .map(|(user, _)| user.clone())
+            .collect();
+        (room.target.wiki_page_id.clone(), due)
+    };
+    for user_id in due {
+        let revoke = |user_id: String| {
+            lock(room).can_edit.remove(&user_id);
+            lock(events()).push(Event::Revoked {
+                document_key: key.to_string(),
+                user_id,
+            });
+        };
+        match access(&page_id, &user_id) {
+            Ok(found) if found.can_view => {
+                let mut room = lock(room);
+                let Some(grant) = room.can_edit.get_mut(&user_id) else {
+                    continue;
+                };
+                let changed = grant.can_edit != found.can_edit;
+                grant.can_edit = found.can_edit;
+                grant.checked = Instant::now();
+                grant.retry_at = grant.checked;
+                grant.failures = 0;
+                drop(room);
+                if changed {
+                    lock(events()).push(Event::CanEdit {
+                        document_key: key.to_string(),
+                        user_id,
+                        can_edit: found.can_edit,
+                    });
+                }
+            }
+            Ok(_) => revoke(user_id),
+            Err(refusal) => {
+                tracing::warn!(
+                    "co-edited {key}: the access of {user_id} was not checked again: {}",
+                    refusal.message
+                );
+                // an answer that could not be renewed past ACCESS_STALE takes the member out; until then the check is
+                // tried again later each time (5 s, 10 s, ... at most a minute)
+                let stale = lock(room)
+                    .can_edit
+                    .get(&user_id)
+                    .is_some_and(|grant| grant.checked.elapsed() > ACCESS_STALE);
+                if stale {
+                    revoke(user_id);
+                } else if let Some(grant) = lock(room).can_edit.get_mut(&user_id) {
+                    grant.failures = grant.failures.saturating_add(1);
+                    let wait = Duration::from_secs(5u64.saturating_mul(1 << grant.failures.min(4)).min(60));
+                    grant.retry_at = Instant::now() + wait;
+                }
+            }
+        }
+    }
+}
+
+/// Age every member's access answer of `key` by `by`, as if it were asked that long ago.
+#[cfg(test)]
+fn age_grants(key: &str, by: Duration) {
+    if let Some(room) = room_of(key) {
+        for grant in lock(&room).can_edit.values_mut() {
+            grant.checked = grant.checked.checked_sub(by).unwrap_or(grant.checked);
+            grant.retry_at = grant.retry_at.checked_sub(by).unwrap_or(grant.retry_at);
         }
     }
 }

@@ -2080,9 +2080,9 @@
             return out;
         };
         const listViewColumns = (values, statusTypeId, status, statusFlowId) => {
-            const out = ec.service.sync().name("org.moqui.ui.StatusServices.get#ListViewColumns").parameters({
+            const out = ((b) => ec.artifactExecution.authzLocked() ? b : b.disableAuthz())(ec.service.sync().name("org.moqui.ui.StatusServices.get#ListViewColumns").parameters({
                 values, statusTypeId: statusTypeId || null, status: !!status, statusFlowId: statusFlowId || null
-            }).disableAuthz().call() || {};
+            })).call() || {};
             const columns = Array.from(out.columns || []).map((column) => ({
                 value: String(column.value), label: String(column.label || column.value), color: column.color ? String(column.color) : ""
             }));
@@ -2366,10 +2366,10 @@
             const statusId = xn(at(n, "status-id"));
             if (!statusId || statusId === "null") return null;
             const readOnly = xn(at(n, "read-only")) === "true";
-            const out = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({
+            const out = ((b) => ec.artifactExecution.authzLocked() ? b : b.disableAuthz())(ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({
                 statusId, statusTypeId: xn(at(n, "status-type-id")) || null, statusFlowId: xn(at(n, "status-flow-id")) || null,
                 stageStatusIds: idList(at(n, "stages")), allowedToStatusIds: readOnly ? [] : idList(at(n, "allowed-status-ids"))
-            }).disableAuthz().call() || {};
+            })).call() || {};
             const stages = Array.from(out.stages || []).map((stage) => ({ statusId: stage.statusId, label: stage.label, color: stage.color, state: stage.state }));
             const transitions = readOnly ? [] : Array.from(out.transitions || []).map((tr) => ({
                 toStatusId: tr.toStatusId, label: tr.label, color: tr.color, isNext: !!tr.isNext, isDanger: !!tr.isDanger

@@ -1193,3 +1193,28 @@ fn a_git_location_with_a_hash_is_not_written() {
         "one\n"
     );
 }
+
+/// SEC-GIT-92: `gc#GitRepositories` removes the quarantine a killed push left in a local repository's objects
+/// directory, an hour old and of no process here, and leaves its own process's.
+#[test]
+fn gc_removes_a_dead_pushs_quarantine() {
+    let fixture = fixture("gc-leftovers");
+    let _entered = fixture.context.enter();
+    let path = fixture.dir.join("left.git");
+    define(&fixture.entity, "left", "local", Some(&path), None);
+    scenario(fixture.context.factory().resource(), "left");
+    let old = std::time::SystemTime::now() - crate::leftovers::LEFT_FOR - std::time::Duration::from_secs(60);
+    let made = |name: &str| {
+        let dir = path.join("objects").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::File::open(&dir).unwrap().set_modified(old).unwrap();
+        dir
+    };
+    // no Linux process has this pid (above the largest pid_max)
+    let dead = made("incoming-4194999-0");
+    let own = made(&format!("incoming-{}-0", std::process::id()));
+    let provider = crate::provider(fixture.context.factory()).unwrap();
+    provider.gc(Some("left"), &gc_options(false)).unwrap();
+    assert!(!dead.exists(), "the dead push's quarantine is removed");
+    assert!(own.exists(), "this process's is kept");
+}

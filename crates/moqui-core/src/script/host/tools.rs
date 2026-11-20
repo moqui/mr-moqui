@@ -965,6 +965,8 @@ macro_rules! tools_js {
         },
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
+        // whether disableAuthz() is refused here: a preview's proposed screen text runs (SEC-AI-102)
+        authzLocked: host.authzLocked,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
         disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit,
         // Java's stack: each frame as {name, typeEnumId, actionEnumId}, top first. No history is kept here: what ran
@@ -1265,6 +1267,7 @@ static METHODS: &[Method] = &[
     method!("tools", "disableAuthz", [], disable_authz),
     method!("tools", "enableAuthz", [], enable_authz),
     method!("tools", "authzDisabled", [], authz_disabled),
+    method!("tools", "authzLocked", [], authz_locked),
     method!("tools", "disableTarpit", [], disable_tarpit),
     method!("tools", "enableTarpit", [], enable_tarpit),
     method!("tools", "entityEcaDisabled", [], entity_eca_disabled),
@@ -1651,53 +1654,7 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let names = call.texts(0).unwrap_or_default().to_vec();
     let groups = call.texts(1);
     let facade = entity_facade()?;
-    let default_group = facade.default_group().to_string();
-    let mut failed: Vec<(String, String)> = Vec::new();
-    let names: Vec<String> = match groups {
-        None => names,
-        Some(groups) => names
-            .into_iter()
-            .filter(|name| {
-                match facade.with_entity(name, |entity, _, _| {
-                    Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
-                }) {
-                    Ok(group) => groups.contains(&group),
-                    Err(err) => {
-                        failed.push((name.clone(), err.message().to_string()));
-                        false
-                    }
-                }
-            })
-            .collect(),
-    };
-    facade.forget_tables();
-    let mut ddl = Vec::new();
-    let mut errors = 0usize;
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    match facade.check_tables_ddl(&refs) {
-        Ok(check) => {
-            ddl = check.ddl;
-            errors = check.errors;
-        }
-        Err(err) => {
-            tracing::warn!(
-                "Checking the tables together failed, checking each entity: {}",
-                err.message()
-            );
-            for name in &names {
-                match facade.check_tables_ddl(&[name.as_str()]) {
-                    Ok(check) => {
-                        ddl.extend(check.ddl);
-                        errors += check.errors;
-                    }
-                    Err(err) => {
-                        tracing::error!("Table check of entity {name} failed: {}", err.message());
-                        failed.push((name.clone(), err.message().to_string()));
-                    }
-                }
-            }
-        }
-    }
+    let crate::entity::ForcedCheck { ddl, errors, failed } = facade.check_tables_forced(names, groups);
     let mut map = indexmap::IndexMap::default();
     map.insert(
         "ddl".to_string(),
@@ -1721,7 +1678,31 @@ fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// The SQL runner's statement: `{columns, records, limitReached, rowsAffected}`, values formatted as text.
+/// Who may run SQL past the entity facade (`runSqlStatement`, `testConfConnection`, `runSqlCountConf`,
+/// `runSqlUpdateConf`): a service's own code (Mantle's account number migration, the instance database setup); work
+/// with authorization disabled outside a screen render (a job, a load, a test's setup); or a holder of the sealed
+/// `SQL_RUNNER_WEB`, the SQL runner's permission. A screen's actions and widgets, a REST resource or a web script
+/// otherwise reach no row past entity authorization and filters by it (plans/Security-Review-Low.md SEC-AI-102).
+fn sql_allowed() -> Result<(), HostError> {
+    let (service_body, unchecked) = with_ec(|ec| {
+        (
+            ec.in_service_body(),
+            ec.authz_disabled() && crate::screen::active_depth() == 0,
+        )
+    })?;
+    if service_body
+        || unchecked
+        || crate::user::has_permission("SQL_RUNNER_WEB").map_err(|err| HostError::message(err.message()))?
+    {
+        return Ok(());
+    }
+    Err(HostError::message(
+        "Raw SQL runs only in a service's own code, or for a holder of SQL_RUNNER_WEB",
+    ))
+}
+
 fn run_sql_statement(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let group = call.text_or_empty(0);
     let sql = call.text_or_empty(1);
     let limit = call.value(2).cloned();
@@ -1977,7 +1958,7 @@ fn load_source(
     options: &crate::entity::load_feed::LoadOptions,
 ) -> Result<(u64, Vec<String>), moqui_lib::error::Error> {
     use crate::entity::load_feed::{
-        component_data_locations, conf_data_locations, load_entity_data, load_entity_text_file, load_entity_xml_text,
+        component_data_locations, conf_data_locations, load_entity_data, load_entity_text, load_entity_xml_text,
         location_in_components,
     };
     // As Java's `internalRun`: the XML, CSV and JSON text, each in its own transaction, then each location. With
@@ -1988,22 +1969,11 @@ fn load_source(
     if !xml.is_empty() {
         records += load_entity_xml_text(facade, "xmlText", &xml, options)?.records;
     }
-    for (name, extension) in [("csvText", "csv"), ("jsonText", "json")] {
+    for (name, json) in [("csvText", false), ("jsonText", true)] {
         let body = text(name);
-        if body.is_empty() {
-            continue;
+        if !body.is_empty() {
+            records += load_entity_text(facade, name, &body, json, options)?.records;
         }
-        let dir = factory.runtime_dir().join("tmp");
-        std::fs::create_dir_all(&dir).map_err(|err| {
-            moqui_lib::error::Error::new(format!("could not create {}", dir.display())).with_source(err)
-        })?;
-        let path = dir.join(format!("data-load-{}.{extension}", crate::entity::uuid_v4()?));
-        std::fs::write(&path, body).map_err(|err| {
-            moqui_lib::error::Error::new(format!("could not write {}", path.display())).with_source(err)
-        })?;
-        let result = load_entity_text_file(facade, name, &path, options);
-        let _ = std::fs::remove_file(&path);
-        records += result?.records;
     }
     let given = !xml.is_empty() || !text("csvText").is_empty() || !text("jsonText").is_empty() || !locations.is_empty();
     let locations = if given {
@@ -2586,6 +2556,7 @@ fn conf_db_of(conf: &Value) -> Result<crate::driver::ConfDb, HostError> {
         password: text("entity_ds_password"),
         ssl_mode: text("entity_ds_sslmode"),
         ssl_root_cert: text("entity_ds_sslrootcert"),
+        address_guard: crate::driver::AddressGuard::Off,
     })
 }
 
@@ -2598,6 +2569,7 @@ fn conf_connection(conf: &Value) -> Result<Box<dyn crate::driver::DbConnection>,
 
 /// `testConfConnection(conf)`: whether a connection opens. A failure is logged, as the Java scripts did.
 fn test_conf_connection(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let conf = call.value_or_null(0);
     let conf = conf_db_of(&conf)?;
     match crate::driver::conf_driver(&conf).and_then(|driver| driver.connect()) {
@@ -2611,6 +2583,7 @@ fn test_conf_connection(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `runSqlCountConf(table, where, conf)`: `SELECT COUNT(*) FROM table WHERE where` on that database.
 fn run_sql_count_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let table = call.text_or_empty(0);
     let where_text = call.text_or_empty(1);
     let conf = call.value_or_null(2);
@@ -2633,6 +2606,7 @@ fn run_sql_count_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `runSqlUpdateConf(sql, conf)`: run one statement outside a transaction (`CREATE DATABASE` cannot run inside one)
 /// and return the rows it changed.
 fn run_sql_update_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    sql_allowed()?;
     let sql = call.text_or_empty(0);
     let conf = call.value_or_null(1);
     let mut conn = conf_connection(&conf)?;
@@ -2962,8 +2936,10 @@ fn run_as_system(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// `ec.artifactExecution.disableAuthz()`: authorization is not checked for this execution context until
-/// `enableAuthz()`. Returns whether it was already disabled, as Java.
+/// `enableAuthz()`. Returns whether it was already disabled, as Java. Refused in the actions of a preview's proposed
+/// screen text ([`super::refuse_locked_authz`]).
 fn disable_authz(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    super::refuse_locked_authz()?;
     Ok(Ret::from(with_ec(
         crate::context::ExecutionContext::script_disable_authz,
     )?))
@@ -2985,8 +2961,15 @@ fn enable_tarpit(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(crate::context::ExecutionContext::enable_tarpit)?))
 }
 
+/// `ec.artifactExecution.authzLocked()`: whether `disableAuthz()` is refused here, as while a preview's proposed screen
+/// text runs ([`super::refuse_locked_authz`]). Framework template code asks it and reads as the viewer then.
+///
 /// `ec.artifactExecution.authzDisabled()`: whether authorization is disabled for this execution context now, by a
 /// script or by Rust code (a call with `disableAuthz()`, a job), without changing it.
+fn authz_locked(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(crate::screen::proposed_running()))
+}
+
 fn authz_disabled(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(crate::context::ExecutionContext::authz_disabled)?))
 }

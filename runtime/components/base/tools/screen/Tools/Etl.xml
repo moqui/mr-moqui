@@ -207,8 +207,10 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- a ServiceJob that calls run#EtlMapping with mappingId on a schedule, with a ServiceJobUser of the mapping's owner
-        (the run is the owner's only when that row names the owner); the mapping's owner or a DATABASE_ADMIN holder only
-        (the store refuses anyone else, so it is the check) -->
+        (the run is the owner's only when that row names the owner); the mapping's owner (the store refuses anyone else,
+        so it is the check), or for another user's mapping a holder of DATABASE_ADMIN and ADMIN_LOGIN_AS whom the owner
+        holds no access beyond (ec.user.heldBeyond, as run#EtlMapping asks again), the mapping not stored again, since a
+        store by another user makes the mapping theirs (SEC-TLS-103) -->
     <transition name="etlSchedule" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             let out = {}, errors = null, jobName = null
@@ -224,8 +226,20 @@ along with this software (see the LICENSE.md file). If not, see
                 // the same check as a change of the mapping: store it as it is
                 const mapping = (ec.service.sync().name('org.moqui.dev.EtlServices.get#EtlMapping').parameters({mappingId}).call() || {}).mapping
                 if (!mapping || failed()) throw new Error(ec.message.errorsString || 'No mapping ' + mappingId)
-                ec.service.sync().name('org.moqui.dev.EtlServices.store#EtlMapping').parameters({mapping}).call()
-                if (failed()) throw new Error(ec.message.errorsString)
+                // the owner from its row: get#EtlMapping's map carries none
+                const wasDisabled = ec.artifactExecution.disableAuthz()
+                let owner
+                try { owner = String(ec.entity.find('moqui.etl.EtlMapping').condition('mappingId', mappingId).useCache(false).one()?.ownerUserId || ec.user.userId) }
+                finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+                if (owner !== ec.user.userId) {
+                    if (!ec.user.hasPermission('DATABASE_ADMIN') || !ec.user.hasPermission('ADMIN_LOGIN_AS'))
+                        throw new Error("Scheduling another user's mapping needs DATABASE_ADMIN and ADMIN_LOGIN_AS; its owner may schedule it")
+                    const held = ec.user.heldBeyond(owner)
+                    if (held) throw new Error(held)
+                } else {
+                    ec.service.sync().name('org.moqui.dev.EtlServices.store#EtlMapping').parameters({mapping}).call()
+                    if (failed()) throw new Error(ec.message.errorsString)
+                }
                 // a name of at most 60 that keeps its unique end: the mapping id is cut, never the time and random part
                 const unique = '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
                 jobName = 'EtlMapping_' + mappingId.slice(0, 60 - 'EtlMapping_'.length - unique.length) + unique
@@ -237,7 +251,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (failed()) throw new Error(ec.message.errorsString)
                 // the job's user is the mapping's owner (an admin may schedule another's mapping): run#EtlMapping runs a
                 // scheduled job as the owner only when this row names that owner; the owner is told of each run
-                ec.service.sync().name('create#moqui.service.job.ServiceJobUser').parameters({jobName, userId: mapping.ownerUserId || ec.user.userId, receiveNotifications: 'Y'}).call()
+                ec.service.sync().name('create#moqui.service.job.ServiceJobUser').parameters({jobName, userId: owner, receiveNotifications: 'Y'}).call()
                 if (failed()) throw new Error(ec.message.errorsString)
                 ec.service.sync().name('update#moqui.service.job.ServiceJob').parameters({jobName, paused: 'N'}).call()
                 if (failed()) throw new Error(ec.message.errorsString)

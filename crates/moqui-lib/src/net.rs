@@ -80,6 +80,8 @@ pub fn internal_address(address: std::net::IpAddr) -> bool {
                 || (a == 198 && (b & 0xfe) == 18)
                 // reserved 240.0.0.0/4, the broadcast address among them
                 || a >= 240
+                // a cloud metadata address in a public range (Azure's WireServer)
+                || METADATA_V4.contains(&v4.octets())
         }
         std::net::IpAddr::V6(v6) => {
             if let Some(v4) = embedded_ipv4(v6) {
@@ -98,17 +100,25 @@ pub fn internal_address(address: std::net::IpAddr) -> bool {
     }
 }
 
+/// The cloud metadata addresses outside `169.254.0.0/16`: Alibaba's `100.100.100.200`, Azure's WireServer
+/// `168.63.129.16` (a public-range address answered only inside the virtual machine) and Oracle Cloud's `192.0.0.192`.
+const METADATA_V4: [[u8; 4]; 3] = [[100, 100, 100, 200], [168, 63, 129, 16], [192, 0, 0, 192]];
+
+/// The cloud metadata addresses in IPv6 outside `fe80::/10`: AWS's `fd00:ec2::254` and Google Compute Engine's
+/// `fd20:ce::254` (its IPv6-only instances' metadata server).
+const METADATA_V6: [[u16; 8]; 2] = [[0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254], [0xfd20, 0x00ce, 0, 0, 0, 0, 0, 0x0254]];
+
 /// Whether `address` is link-local or a cloud metadata address: `169.254.0.0/16` (`169.254.169.254` among it),
-/// `fe80::/10`, AWS's `fd00:ec2::254`, Alibaba's `100.100.100.200`, and those inside IPv6 as in [`internal_address`].
-/// Refused even for a request that may go to the private network.
+/// `fe80::/10`, the [`METADATA_V4`] and [`METADATA_V6`] addresses, and those inside IPv6 as in
+/// [`internal_address`]. Refused even for a request that may go to the private network.
 pub fn link_local_address(address: std::net::IpAddr) -> bool {
     match address {
-        std::net::IpAddr::V4(v4) => v4.is_link_local() || v4.octets() == [100, 100, 100, 200],
+        std::net::IpAddr::V4(v4) => v4.is_link_local() || METADATA_V4.contains(&v4.octets()),
         std::net::IpAddr::V6(v6) => {
             if let Some(v4) = embedded_ipv4(v6) {
                 return link_local_address(std::net::IpAddr::V4(v4));
             }
-            (v6.segments()[0] & 0xffc0) == 0xfe80 || v6.segments() == [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254]
+            (v6.segments()[0] & 0xffc0) == 0xfe80 || METADATA_V6.contains(&v6.segments())
         }
     }
 }
@@ -248,8 +258,12 @@ mod tests {
             "169.254.169.254",
             "169.254.0.1",
             "100.100.100.200",
+            "168.63.129.16",
+            "192.0.0.192",
+            "::ffff:168.63.129.16",
             "fe80::1",
             "fd00:ec2::254",
+            "fd20:ce::254",
             "::ffff:169.254.169.254",
             "2002:a9fe:a9fe::1",
         ] {
@@ -260,5 +274,8 @@ mod tests {
         }
         assert!(non_link_local_addresses("169.254.169.254", 80).is_err());
         assert!(non_link_local_addresses("127.0.0.1", 80).is_ok());
+        // Azure's WireServer is in a public range, and the full guard refuses it too
+        assert!(internal_address("168.63.129.16".parse().unwrap()));
+        assert!(!internal_address("168.63.129.17".parse().unwrap()));
     }
 }

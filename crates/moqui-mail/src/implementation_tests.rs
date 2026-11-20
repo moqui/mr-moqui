@@ -451,6 +451,25 @@ fn a_server_not_allowed_the_private_network_is_refused_on_production_and_credent
         super::test_failure_kind("* OK [CAPABILITY IMAP4rev1] internal-admin ready"),
         "the server did not answer as a mail server"
     );
+    // SEC-MAIL-94: a NO with a response code is judged by the code, not by "no [" alone, and a known code is kept as
+    // a word while the text is not
+    assert_eq!(
+        super::test_failure_kind("a1 NO [UNAVAILABLE] Backend down, try later"),
+        "the mail server is not available now"
+    );
+    assert_eq!(
+        super::test_failure_kind("a1 NO [CANNOT] Mailbox name not valid here"),
+        "the server did not answer as a mail server"
+    );
+    assert_eq!(
+        super::test_failure("t", "p", "a1 NO [ALERT] Your account is locked: call 555-0100", &[]),
+        "the server did not answer as a mail server (ALERT)"
+    );
+    assert_eq!(super::response_code("a1 NO [NOTACODE] x"), None);
+    assert_eq!(
+        super::response_code("a1 NO [authenticationfailed] x"),
+        Some("AUTHENTICATIONFAILED")
+    );
 }
 
 #[test]

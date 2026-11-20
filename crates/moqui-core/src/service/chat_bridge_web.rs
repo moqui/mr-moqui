@@ -21,9 +21,10 @@
 //!   with no signature does (401, [`WebhookResponse::not_signed`]); a disabled one checks the signature first
 //!   ([`super::ChatBridgeAdapter::verify_webhook`]) and answers its network 503, so the network tries again once it is
 //!   enabled, and anyone else as an unknown bridge: no bridge id can be told from another by its answers.
-//! - [`replay_take`] and [`replay_finish`]: the webhooks' replay cache, the distributed cache the system-message HMAC
-//!   check uses (`moqui.security.hmac.replay`), so a copy of a request is caught on every node that cache reaches (it
-//!   stays on its node until a distributed cache is configured, as for the HMAC check: docs/security/Proof-Tests.md).
+//! - [`replay_take`] and [`replay_finish`]: the webhooks' replay keys, in the `moqui.security.SignatureReplay` table
+//!   the system-message HMAC check uses too (`service::replay_store`, SEC-DAT-90), so a copy of a request is caught on
+//!   every cluster member; the `moqui.security.hmac.replay` cache's live time only bounds the window
+//!   ([`replay_window_ms`]) and how long a key is held.
 //! - [`media_url`] and [`media`]: a file of a message that goes out by address (MMS), at
 //!   `/channels/{chatBridgeId}/media/{token}` under `channels@public-url`. The token names the `ChatAttachment` and an
 //!   expiry, signed with HMAC-SHA-256 under `channels@media-key`; only a file of a message delivered to that bridge is
@@ -218,34 +219,23 @@ pub(super) fn window_within(wanted_ms: i64, live_ms: i64, idle_ms: i64) -> i64 {
 ///
 /// Returns why the cache could not be read (strict: the caller refuses the request).
 pub fn replay_take(bridge_id: &str, signature: &str) -> Result<Replay, String> {
-    let cache = replay_cache()?;
-    let key = replay_key(bridge_id, signature);
-    if cache
-        .put_if_absent(key.clone(), Value::Bool(false))
-        .map_err(|error| error.to_string())?
-    {
-        return Ok(Replay::New);
-    }
-    Ok(match cache.get(&key).map_err(|error| error.to_string())? {
-        Some(Value::Bool(true)) => Replay::Done,
-        _ => Replay::Working,
+    // held as long as the replay cache would hold it, which bounds the window (replay_window_ms); the keys are a
+    // table's, so a webhook sent again to another cluster member is a replay there too (SEC-DAT-90)
+    let held = replay_cache()?.info().expire_live_ms;
+    let held = if held > 0 { held } else { 600_000 };
+    let taken = crate::service::replay_store::take(&replay_key(bridge_id, signature), held)
+        .map_err(|error| error.to_string())?;
+    Ok(match taken {
+        crate::service::replay_store::Taken::New => Replay::New,
+        crate::service::replay_store::Taken::Working => Replay::Working,
+        crate::service::replay_store::Taken::Done => Replay::Done,
     })
 }
 
 /// The request of `signature` was worked (`true`: kept as done) or not (`false`: let go, so the network's retry goes
 /// through). A failure is logged.
 pub fn replay_finish(bridge_id: &str, signature: &str, worked: bool) {
-    let key = replay_key(bridge_id, signature);
-    let done = replay_cache().and_then(|cache| {
-        if worked {
-            cache.put(key, Value::Bool(true)).map_err(|error| error.to_string())
-        } else {
-            cache.remove(&key).map(|_| ()).map_err(|error| error.to_string())
-        }
-    });
-    if let Err(error) = done {
-        tracing::warn!("chat bridge {bridge_id}: a webhook's replay entry was not kept: {error}");
-    }
+    crate::service::replay_store::finish(&replay_key(bridge_id, signature), worked);
 }
 
 /// A file fetched from a network.
@@ -582,6 +572,69 @@ fn safe_name(given: Option<&str>, content_type: &str) -> String {
     format!("file{extension}")
 }
 
+/// The bridges' inbound file bytes of a day (UTC).
+const MEDIA_DAY: &str = "moqui.chat.ChatBridgeMediaDay";
+
+/// Bridge `bridge_id`'s inbound file bytes today, read with no lock: the fetch that follows holds nothing.
+fn media_day_bytes(facade: &EntityFacade, bridge_id: &str) -> Result<u64, LibError> {
+    Ok(facade
+        .find(MEDIA_DAY)?
+        .eq("chatBridgeId", Value::string(bridge_id))
+        .eq("dayDate", Value::string(utc_day()))
+        .disable_authz()
+        .one()?
+        .and_then(|row| row.get("byteCount").map(to_plain_string))
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0))
+}
+
+/// Add `size` bytes to bridge `bridge_id`'s count of today, in a short transaction of its own after the file was
+/// fetched, so files of one bridge are not fetched one at a time. Two first files of a day at once: the one whose
+/// create lost adds to the row the other made. A count that fails is logged and the file stays.
+fn count_media_day(facade: &EntityFacade, bridge_id: &str, size: i64) {
+    let add = || {
+        super::force_new(facade, MEDIA_DAY, || {
+            let now = stamp(now_millis());
+            let row = facade
+                .find(MEDIA_DAY)?
+                .eq("chatBridgeId", Value::string(bridge_id))
+                .eq("dayDate", Value::string(utc_day()))
+                .for_update(true)
+                .disable_authz()
+                .one()?;
+            match row {
+                Some(mut row) => {
+                    let used = row
+                        .get("byteCount")
+                        .and_then(|count| to_plain_string(count).parse::<i64>().ok())
+                        .unwrap_or(0);
+                    row.set("byteCount", Value::I64(used.saturating_add(size)));
+                    row.set("lastDate", now);
+                    row.update(facade)
+                }
+                None => {
+                    let mut row = facade.make_value(MEDIA_DAY)?;
+                    row.set("chatBridgeId", Value::string(bridge_id));
+                    row.set("dayDate", Value::string(utc_day()));
+                    row.set("byteCount", Value::I64(size));
+                    row.set("lastDate", now);
+                    row.create(facade)
+                }
+            }
+        })
+    };
+    if let Err(first) = add() {
+        if let Err(error) = add() {
+            tracing::error!("chat bridge {bridge_id}: its file bytes of today were not counted: {first}; {error}");
+        }
+    }
+}
+
+/// Today in UTC, `yyyy-MM-dd`, as the SMS day counters key it.
+fn utc_day() -> String {
+    jiff::Timestamp::now().strftime("%Y-%m-%d").to_string()
+}
+
 /// `store#BridgeMedia`: fetch the file at `url` of a message from bridge `chatBridgeId` (its adapter's
 /// [`fetch_media`](super::ChatBridgeAdapter::fetch_media), at most `maxBytes`) and keep it as a `ChatAttachment` of room
 /// `chatRoomId` with no uploader and no event yet, at `chat@attachment-root`/(room)/(attachment)/(name), in the caller's
@@ -617,6 +670,25 @@ fn store_bridge_media(
             Value::string(format!("The file was not fetched: {error}")),
         )]))
     };
+    // the bridge's files of a day, at most channels@inbound-media-bytes-per-day: files from outside senders are no one's
+    // upload, so no user's quota counts them (SEC-COM-91); past it a file is named as not received
+    let day_quota = crate::context::conf_env::setting("channels@inbound-media-bytes-per-day")
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    let day_left = if day_quota > 0 {
+        let used = media_day_bytes(facade, &bridge_id)?;
+        if used >= day_quota {
+            tracing::warn!(
+                "chat bridge {bridge_id}: its files of today are past {day_quota} bytes; a file is not fetched"
+            );
+            return not_fetched(format!("the bridge's files of today are past {day_quota} bytes"));
+        }
+        Some(day_quota - used)
+    } else {
+        None
+    };
+    let max = day_left.map_or(max, |left| max.min(left));
     let fetched = match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.fetch_media(&info, &url, max))) {
         Ok(Ok(fetched)) => fetched,
         Ok(Err(error)) => return not_fetched(error),
@@ -643,6 +715,9 @@ fn store_bridge_media(
         .write_bytes(&location, &fetched.bytes)
         .map_err(|error| LibError::new(format!("The file was not kept: {}", error.message())))?;
     let size = i64::try_from(fetched.bytes.len()).unwrap_or(i64::MAX);
+    if day_left.is_some() {
+        count_media_day(facade, &bridge_id, size);
+    }
     attachment.set("chatRoomId", Value::string(&room));
     attachment.set("location", Value::string(&location));
     attachment.set("fileName", Value::string(&file_name));

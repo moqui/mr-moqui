@@ -33,6 +33,7 @@ impl Backend for Arc<Fake> {
             "help@example.com" => RcptAnswer::Local("sales@example.com".to_string()),
             "busy@example.com" => RcptAnswer::TempFail("database down".to_string()),
             "full@example.com" => RcptAnswer::OverQuota,
+            "waiting@example.com" => RcptAnswer::QueueFull,
             _ => RcptAnswer::Unknown,
         }
     }
@@ -1085,7 +1086,8 @@ async fn internet_mode_limits_the_mail_of_an_hour_by_address_and_by_sender() {
 }
 
 /// SEC-MAIL-07: an account over its mailbox quota is answered 452 4.2.2 at RCPT, which is not an error even in internet
-/// mode (the sender keeps the mail and tries again), and the message goes to the other recipients.
+/// mode (the sender keeps the mail and tries again), and the message goes to the other recipients. A recipient whose
+/// paired node's queue is past its share for mail is answered 452 4.3.1 the same way (SEC-MAIL-86).
 #[tokio::test]
 async fn a_recipient_over_its_quota_is_answered_452_and_not_counted_an_error() {
     let mut internet = config("10.9.9.9");
@@ -1102,6 +1104,10 @@ async fn a_recipient_over_its_quota_is_answered_452_and_not_counted_an_error() {
             "452 4.2.2 <full@example.com>: Mailbox full, try again later"
         );
     }
+    assert_eq!(
+        client.command("RCPT TO:<waiting@example.com>").await,
+        "452 4.3.1 <waiting@example.com>: Insufficient system storage, try again later"
+    );
     assert_eq!(client.command("RCPT TO:<sales@example.com>").await, "250 2.1.5 Ok");
     assert_eq!(client.command("DATA").await, "354 End data with <CR><LF>.<CR><LF>");
     client

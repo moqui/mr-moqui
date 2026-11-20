@@ -789,7 +789,7 @@ pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
         return Ok(());
     }
     let fail = |what: &str, err: &dyn std::fmt::Display| Error::new(format!("{what}: {err}"));
-    std::fs::create_dir_all(dir).map_err(|err| fail("could not create the cert directory", &err))?;
+    moqui_lib::private_fs::create_dir_all(dir).map_err(|err| fail("could not create the cert directory", &err))?;
     let key = rcgen::KeyPair::generate().map_err(|err| fail("could not generate a key", &err))?;
     let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
         .map_err(|err| fail("could not set up the certificate", &err))?;
@@ -822,25 +822,22 @@ pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Write a private key to `path` as a new file of mode `0600` (`moqui_lib::private_fs`). A file or a symbolic link
+/// already there (a staging file a stopped write left, or one planted) is removed first, never written into: the
+/// mode applies only to a file the open creates, and `create_new` does not follow a link (SEC-OUT-85).
 pub(crate) fn write_private(path: &Path, text: &str) -> Result<(), Error> {
-    #[cfg(unix)]
-    {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|err| Error::new(format!("could not write {}: {err}", path.display())))?;
-        file.write_all(text.as_bytes())
-            .map_err(|err| Error::new(format!("could not write {}: {err}", path.display())))
+    use std::io::Write as _;
+    let fail = |err: std::io::Error| Error::new(format!("could not write {}: {err}", path.display()));
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(fail(err)),
+        _ => {}
     }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, text).map_err(|err| Error::new(format!("could not write {}: {err}", path.display())))
-    }
+    let mut file = moqui_lib::private_fs::file_options()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)
 }
 
 pub(crate) fn pem(label: &str, der: &[u8]) -> String {

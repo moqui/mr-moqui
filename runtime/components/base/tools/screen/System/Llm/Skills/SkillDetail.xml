@@ -54,7 +54,9 @@ along with this software (see the LICENSE.md file). If not, see
                 <label text="Not in effect: another skill of this name counts (${detail.inEffectSkillId ?? 'none, it is not published or not allowed'})." type="p" style="text-warning"
                         condition="detail.inEffectSkillId != skillId"/>
                 <label text="Source ${skill.provenance ?? ''}, version ${skill.versionNum ?? 1}, ${skill.useCount ?? 0} uses, risk ${detail.risk ?? ''} (only a skill a person wrote lowers a risk), body ${detail.bodyChars ?? 0} characters." type="p"/>
-                <section name="SkillFormSection" condition="!skill.sourceLocation">
+                <label text="The text of another user's personal skill is shown only to its owner, or with the AgentAudit permission (the read is logged)." type="p" style="text-warning"
+                        condition="detail.contentHidden == 'Y'"/>
+                <section name="SkillFormSection" condition="!skill.sourceLocation &amp;&amp; detail.contentHidden != 'Y'">
                     <widgets>
                         <form-single name="SkillForm" transition="storeSkill">
                             <field name="skillId"><default-field><hidden/></default-field></field>

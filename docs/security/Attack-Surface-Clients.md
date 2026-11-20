@@ -143,7 +143,7 @@ The store keeps `GET` answers with a JSON content type and status 200 for the sh
 | `xdg-mime default`, `update-desktop-database` | the app's `.desktop` file, fixed MIME types, a directory | no |
 | `hostname` | none | no |
 | The sidecar `moqui` | `-D name=value` pairs the app builds | no |
-| `moqui save-db` and `moqui load-save` in sidecar mode, the drivers' `save_db` in process, and the folder opener (`crates/moqui-desktop/src/backup.rs`) | The tray's Back up now: a dump into the backup folder (default `~/Documents/MR-Moqui Backups`, made with `std::fs::create_dir_all`), sealed to the app's backup key (`.dump.age`, `src/backup_key.rs`); Restore: a `-before-restore` backup, then the `.dump` or `.dump.age` the user picks, a sealed one opened with the key from the store or a key file the user picks, handed to `load-save` on its stdin; Save backup key…; Choose folder and Open folder | The file and folder the user picks, and a key file |
+| `moqui save-db` and `moqui load-save` in sidecar mode, the drivers' `save_db` in process, and the folder opener (`crates/moqui-desktop/src/backup.rs`) | The tray's Back up now: a dump into the backup folder (default `~/Documents/MR-Moqui Backups`, a new one made with `private_fs::create_dir_all`; the dump made 0600 before `pg_dump` writes it, `save_database` `private_dump`), sealed to the app's backup key (`.dump.age`, `src/backup_key.rs`); Restore: a `-before-restore` backup, then the `.dump` or `.dump.age` the user picks, a sealed one opened with the key from the store or a key file the user picks, handed to `load-save` on its stdin; Save backup key…; Choose folder and Open folder | The file and folder the user picks, and a key file |
 
 ## The mobile app on Android
 

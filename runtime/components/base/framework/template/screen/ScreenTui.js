@@ -1370,9 +1370,9 @@ try {
                 let $groups = [];
                 if ($isStatus || $order.length) {
                     const $values = $order.concat($viewRows.map(($row) => $row.group)).filter(($g, $i, $all) => $g && $all.indexOf($g) === $i);
-                    const $out = ec.service.sync().name("org.moqui.ui.StatusServices.get#ListViewColumns").parameters({
+                    const $out = ((b) => ec.artifactExecution.authzLocked() ? b : b.disableAuthz())(ec.service.sync().name("org.moqui.ui.StatusServices.get#ListViewColumns").parameters({
                         values:$values,statusTypeId:$statusTypeId || null,status:$isStatus,statusFlowId:${jsString(vb("status-flow-id"))} || null
-                    }).disableAuthz().call() || {};
+                    })).call() || {};
                     $groups = Array.from($out.columns || []).map(($c) => ({value:String($c.value),label:String($c.label || $c.value),color:$c.color ? String($c.color) : ""}));
                 }
                 if (!$groups.length) {
@@ -1587,7 +1587,7 @@ ${actionDialogs ? "        " + ifSelOn(actionDialogs) : ""}    } finally {
     if ($statusId && $statusId !== "null") {
         try {
             const $readOnly = String(${exprNoL10n(attr(node, "read-only"))}) === "true";
-            const $out = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:${exprNoL10n(attr(node, "status-type-id"))} || null,statusFlowId:${exprNoL10n(attr(node, "status-flow-id"))} || null,stageStatusIds:${idListExpr(attr(node, "stages"))},allowedToStatusIds:$readOnly ? [] : ${idListExpr(attr(node, "allowed-status-ids"))}}).disableAuthz().call() || {};
+            const $out = ((b) => ec.artifactExecution.authzLocked() ? b : b.disableAuthz())(ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:${exprNoL10n(attr(node, "status-type-id"))} || null,statusFlowId:${exprNoL10n(attr(node, "status-flow-id"))} || null,stageStatusIds:${idListExpr(attr(node, "stages"))},allowedToStatusIds:$readOnly ? [] : ${idListExpr(attr(node, "allowed-status-ids"))}})).call() || {};
             $bar = {readOnly:$readOnly,current:$out.current || null,stages:Array.from($out.stages || []),transitions:$readOnly ? [] : Array.from($out.transitions || [])};
         } catch ($err) {
             ec.logger.error(${jsString(`Leaving the stages of status-bar ${idOf(node)} out for status `)} + $statusId + ": " + $err);

@@ -461,6 +461,22 @@ pub fn signing_domain(raw: &[u8], hosted: impl Fn(&str) -> bool) -> Option<Strin
     signs.then_some(domain)
 }
 
+/// The domain to sign paired node mail `raw` for: its From domain when it is one of `paired` (the paired node's own,
+/// [`paired_domains`]) and, when `mail-delivery/dkim@domains` names any, also one of those. The list narrows what a
+/// paired node's mail is signed for and never widens it, so on a node with several pairings one pairing's mail is never
+/// signed for another's domain (SEC-MAIL-90).
+#[must_use]
+pub fn paired_signing_domain(raw: &[u8], paired: &std::collections::BTreeSet<String>) -> Option<String> {
+    let domain = from_domain(raw)?;
+    paired_signs(&domain, paired, &configured_domains()).then_some(domain)
+}
+
+/// Whether a paired node's mail from `domain` is signed: `domain` is the paired node's, and in `configured` when that
+/// names any.
+fn paired_signs(domain: &str, paired: &std::collections::BTreeSet<String>, configured: &[String]) -> bool {
+    paired.contains(domain) && (configured.is_empty() || configured.iter().any(|listed| listed == domain))
+}
+
 /// How long [`is_hosted_domain`] keeps the hosted accounts' domains before reading them again.
 const HOSTED_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
@@ -470,36 +486,47 @@ const HOSTED_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 /// not read every account (an account added is signed for within the minute).
 #[must_use]
 pub fn is_hosted_domain(facade: &moqui_core::entity::EntityFacade, domain: &str) -> bool {
-    type Kept = Option<(
-        moqui_core::edge::NodeRole,
-        std::time::Instant,
-        std::collections::BTreeSet<String>,
-    )>;
-    static KEPT: Mutex<Kept> = Mutex::new(None);
-    // kept by role: an edge node's, an all-in-one node's and a normal node's domains differ for one database
     let role = sending_role(
         moqui_core::context::ExecutionContext::with_current(|ec| moqui_core::edge::settings(ec.factory()).role)
             .unwrap_or_default(),
     );
-    {
-        let kept = lock(&KEPT);
-        if let Some((kept_role, at, domains)) = kept.as_ref() {
-            if *kept_role == role && at.elapsed() < HOSTED_TTL {
-                return domains.contains(domain);
-            }
-        }
-    }
-    match hosted_domains(facade, role) {
-        Ok(domains) => {
-            let hosted = domains.contains(domain);
-            *lock(&KEPT) = Some((role, std::time::Instant::now(), domains));
-            hosted
-        }
+    match kept_hosted_domains(facade, role) {
+        Ok(domains) => domains.contains(domain),
         Err(err) => {
             tracing::warn!("The hosted accounts' domains were not read: {err}");
             false
         }
     }
+}
+
+/// [`hosted_domains`] of `role`, kept a minute ([`HOSTED_TTL`]), so a send, or each item of a paired node's outbound
+/// pass (SEC-MAIL-90), does not read every account and copy (a domain added is seen within the minute).
+///
+/// # Errors
+///
+/// Returns why when the accounts could not be read.
+pub fn kept_hosted_domains(
+    facade: &moqui_core::entity::EntityFacade,
+    role: moqui_core::edge::NodeRole,
+) -> Result<Arc<std::collections::BTreeSet<String>>, moqui_lib::error::Error> {
+    type Kept = Vec<(
+        moqui_core::edge::NodeRole,
+        std::time::Instant,
+        Arc<std::collections::BTreeSet<String>>,
+    )>;
+    // by role: an edge node's, an all-in-one node's and a normal node's domains differ for one database
+    static KEPT: Mutex<Kept> = Mutex::new(Vec::new());
+    if let Some((_, _, domains)) = lock(&KEPT)
+        .iter()
+        .find(|(kept_role, at, _)| *kept_role == role && at.elapsed() < HOSTED_TTL)
+    {
+        return Ok(Arc::clone(domains));
+    }
+    let domains = Arc::new(hosted_domains(facade, role)?);
+    let mut kept = lock(&KEPT);
+    kept.retain(|(kept_role, _, _)| *kept_role != role);
+    kept.push((role, std::time::Instant::now(), Arc::clone(&domains)));
+    Ok(domains)
 }
 
 /// The ports this process's SMTP listeners are bound to.
@@ -536,7 +563,21 @@ pub fn key_configured() -> bool {
 /// is not held for its signature.
 #[must_use]
 pub fn sign_for(raw: Vec<u8>, hosted: impl Fn(&str) -> bool) -> Vec<u8> {
-    let Some(domain) = signing_domain(&raw, hosted) else {
+    let domain = signing_domain(&raw, hosted);
+    sign_as(raw, domain)
+}
+
+/// Paired node mail `raw` signed with the node's key when its From domain is the paired node's (see
+/// [`paired_signing_domain`]), as [`sign_for`] signs the node's own.
+#[must_use]
+pub fn sign_for_paired(raw: Vec<u8>, paired: &std::collections::BTreeSet<String>) -> Vec<u8> {
+    let domain = paired_signing_domain(&raw, paired);
+    sign_as(raw, domain)
+}
+
+/// `raw` signed for `domain` with the node's key; as it is with no domain or no key, or when the key fails (logged).
+fn sign_as(raw: Vec<u8>, domain: Option<String>) -> Vec<u8> {
+    let Some(domain) = domain else {
         return raw;
     };
     let signed = key().and_then(|key| match key {
@@ -637,7 +678,9 @@ const VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
 ///
 /// DMARC is RFC 9989's: `t=y` lowers the policy one level, and there is no `pct`. A failure under `p=reject` or
 /// `p=quarantine` is overridden when a passing ARC chain was last sealed by one of `smtp-server@arc-trusted-sealers` (a
-/// mailing list or forwarder this node trusts); with that property empty there is no ARC exception.
+/// mailing list or forwarder this node trusts) and that sealer's `ARC-Authentication-Results` records `dmarc=pass` for
+/// the From domain; with that property empty there is no ARC exception. A DMARC result of `temperror` (a DNS error), or
+/// no resolver, is a temporary error too.
 pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records: Option<Arc<Records>>) -> Verdict {
     let id = authserv_id.clone();
     let done = dns::on_runtime(async move {
@@ -662,6 +705,92 @@ pub async fn verify(raw: Vec<u8>, session: Session, authserv_id: String, records
     }
 }
 
+/// Whether a DMARC result defers the message (451): it is a temporary error (`temp`) and either the domain's record
+/// was not read (`has_record` false) or its policy is reject or quarantine.
+fn defers(temp: bool, has_record: bool, policy: Policy) -> bool {
+    temp && (!has_record || matches!(policy, Policy::Reject | Policy::Quarantine))
+}
+
+/// The trusted sealer whose ARC seal overrides a DMARC failure, or none: `newest` (the newest set's sealer, with the
+/// value of its `ARC-Authentication-Results`) is one of `trusted`, and that sealer recorded `dmarc=pass` for `domain`, the
+/// message's From domain, when it took the message. A trusted sealer carries a pass across its own change of the message
+/// (a list's footer); it never turns a failure it recorded itself into a pass (SEC-MAIL-88).
+fn arc_overrides(newest: Option<(String, &[u8])>, domain: &str, trusted: &[String]) -> Option<String> {
+    let (sealer, results) = newest?;
+    (!sealer.is_empty() && trusted.contains(&sealer) && recorded_dmarc_pass(results, domain)).then_some(sealer)
+}
+
+/// Whether an `ARC-Authentication-Results` value records `dmarc=pass` with a `header.from` of `domain`.
+fn recorded_dmarc_pass(results: &[u8], domain: &str) -> bool {
+    let text = String::from_utf8_lossy(results);
+    // RFC 8601's lexical rules: comments out (they may hold anything, `;` too), and a quoted string kept as one word
+    // whose `;`, `=`, parentheses and spaces split nothing, so a quoted `smtp.mailfrom` or `smtp.helo` the sealer
+    // copied cannot write an entry of its own; then the entries split on `;`
+    let mut plain = String::with_capacity(text.len());
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if escaped {
+            escaped = false;
+            if depth == 0 {
+                plain.push(inert(ch));
+            }
+            continue;
+        }
+        match ch {
+            '\\' if depth > 0 || quoted => escaped = true,
+            '"' if depth == 0 => {
+                quoted = !quoted;
+                plain.push('"');
+            }
+            ch if quoted => plain.push(inert(ch)),
+            '(' => depth += 1,
+            ')' if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            ch if ch.is_whitespace() => plain.push(' '),
+            ch => plain.push(ch),
+        }
+    }
+    let domain = domain.trim().trim_end_matches('.');
+    plain.split(';').any(|entry| {
+        let mut words = entry.split_whitespace();
+        words.next().is_some_and(|word| word.eq_ignore_ascii_case("dmarc=pass"))
+            && words.any(|word| {
+                word.split_once('=').is_some_and(|(name, value)| {
+                    name.eq_ignore_ascii_case("header.from")
+                        && value
+                            .trim_matches('"')
+                            .trim_end_matches('.')
+                            .eq_ignore_ascii_case(domain)
+                })
+            })
+    })
+}
+
+/// A character of a quoted string as [`recorded_dmarc_pass`] keeps it: one that would end a word or an entry, start a
+/// comment or name a value outside quotes stands as `_`.
+fn inert(ch: char) -> char {
+    if ch.is_whitespace() || matches!(ch, ';' | '(' | ')' | '=') {
+        '_'
+    } else {
+        ch
+    }
+}
+
+/// `field` with its `dmarc=fail` result marked, in a comment, as overridden by `sealer`, so a reader of the stored field
+/// sees that the failure was let in.
+fn overridden_field(field: String, sealer: &str) -> String {
+    const ENTRY: &str = ";\r\n\tdmarc=fail";
+    match field.find(ENTRY) {
+        Some(at) => {
+            let (head, rest) = field.split_at(at + ENTRY.len());
+            format!("{head} (overridden by the trusted ARC sealer {sealer}){rest}")
+        }
+        None => field,
+    }
+}
+
 /// The domains whose ARC seal is trusted to carry a DMARC pass across a forwarder (`smtp-server@arc-trusted-sealers`).
 fn trusted_sealers() -> Vec<String> {
     moqui_core::context::conf_env::setting("smtp-server@arc-trusted-sealers")
@@ -676,9 +805,11 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         Ok(resolver) => resolver,
         Err(err) => {
             tracing::error!("Mail authentication has no resolver: {err}");
+            // not judged is not accepted: the sender tries again (SEC-MAIL-92)
             return Verdict {
                 field: format!("Authentication-Results: {authserv_id}; none (no resolver)\r\n"),
                 summary: "no resolver".to_string(),
+                temp_error: true,
                 ..Verdict::default()
             };
         }
@@ -763,15 +894,17 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         _ => DmarcAction::Accept,
     };
     let mut arc_override = String::new();
+    let mut field = safe_mailfrom(results.to_header(), &session.mail_from);
     if action != DmarcAction::Accept && arc.result() == &DkimResult::Pass {
-        let sealer = arc
+        // the newest set: mail-auth lists the chain oldest (instance 1) first
+        let newest = arc
             .chain()
             .last()
-            .map(|link| link.seal.header.d.to_ascii_lowercase())
-            .unwrap_or_default();
-        if !sealer.is_empty() && trusted_sealers().contains(&sealer) {
+            .map(|link| (link.seal.header.d.to_ascii_lowercase(), link.results.value));
+        if let Some(sealer) = arc_overrides(newest, dmarc.domain(), &trusted_sealers()) {
             action = DmarcAction::Accept;
             arc_override = format!(" (DMARC policy overridden by the trusted ARC sealer {sealer})");
+            field = overridden_field(field, &sealer);
         }
     }
     let dkim_word = if dkim.iter().any(|output| output.result() == &DkimResult::Pass) {
@@ -786,11 +919,19 @@ async fn verify_with(raw: &[u8], session: &Session, authserv_id: &str, records: 
         result_word(&dmarc.result().to_string()),
         result_word(&arc.result().to_string()),
     );
+    // a DNS error is not a judgment: the sender tries again rather than the message going in unjudged (SEC-MAIL-92),
+    // when it matters: the domain's record could not be read, or it asks reject or quarantine. A p=none domain with a
+    // selector that does not resolve is accepted as before, not deferred until it bounces
+    let temp_error = defers(
+        matches!(dmarc.result(), DmarcResult::TempError(_)),
+        dmarc.record().is_some(),
+        dmarc.policy(),
+    );
     Verdict {
-        field: safe_mailfrom(results.to_header(), &session.mail_from),
+        field,
         dmarc: action,
         summary,
-        temp_error: false,
+        temp_error,
         refused: None,
         domain: if dmarc.domain().is_empty() {
             from

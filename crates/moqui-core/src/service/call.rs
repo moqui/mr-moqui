@@ -516,6 +516,8 @@ fn sync_input(
     // enableAuthz(), or never enables it again, leaves its caller as it was (a Java service would leave the flag set).
     // Made before the call's own disable guard, so it drops after it.
     let _kept = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
+    // a service's own code has the whole host, also when a preview's proposed text called it (SEC-AI-102)
+    let _preview = crate::script::preview::lift();
     let _authz = if options.disable_authz {
         crate::context::ExecutionContext::with_current(|ctx| ctx.disable_authz())
     } else {

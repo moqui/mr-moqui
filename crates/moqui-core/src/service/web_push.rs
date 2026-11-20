@@ -82,6 +82,7 @@ pub(in crate::service) fn register(
 ) -> Result<(), String> {
     rust_service!(map, store_subscription)?;
     rust_service!(map, delete_subscription)?;
+    rust_service!(map, forget_user_subscriptions)?;
     rust_service!(map, get_status)?;
     rust_service!(map, send_web_push)?;
     rust_service!(map, register_device)?;
@@ -344,6 +345,26 @@ fn delete_subscription(
         .condition(web_provider())
         .delete_all()?;
     Ok(BTreeMap::new())
+}
+
+/// `forget#UserWebPush`: delete every browser subscription of `userId` (SEC-COM-92), when the account is disabled for
+/// good or terminated (an entity ECA on `UserAccount`) or its sessions are ended (`revoke#AccountAccess`,
+/// `revoke#OwnAccess`), so its browsers get no more pushes of its rooms. A native app's registration ends with its
+/// device key. Out: `deletedCount`.
+fn forget_user_subscriptions(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = text(parameters, "userId") else {
+        return Ok(BTreeMap::new());
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let deleted = facade
+        .find(SUBSCRIPTION)?
+        .eq("userId", Value::string(&user_id))
+        .condition(web_provider())
+        .delete_all()?;
+    Ok(BTreeMap::from([("deletedCount".to_string(), Value::I64(deleted))]))
 }
 
 /// The stored hash of the device key this request signed in with (its `login_key` header), when that is an unexpired

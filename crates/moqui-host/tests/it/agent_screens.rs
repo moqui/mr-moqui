@@ -78,6 +78,8 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="AGS_VIEWER" username="ags.viewer" userFullName="Agent Screens Viewer"/>
     <moqui.security.UserGroup userGroupId="AGS_VIEW" description="Agent screens viewers"/>
     <moqui.security.UserGroupMember userGroupId="AGS_VIEW" userId="AGS_VIEWER" fromDate="1265184000000"/>
+    <!-- the agents' own permission, which each step of a run checks: the viewer may run one, not save the screen -->
+    <moqui.security.UserGroupPermission userGroupId="AGS_VIEW" userPermissionId="AgentUse" fromDate="1265184000000"/>
     <moqui.security.ArtifactGroup artifactGroupId="AGENT_SCREENS_VIEW" description="Agent screens to view"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="AGENT_SCREENS_VIEW" artifactName="component://webroot/screen/webroot/apps.xml"
         artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>

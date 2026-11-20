@@ -28,7 +28,7 @@ use std::time::Duration;
 use serde_json::json;
 
 pub use moqui_lib::docker::DockerHost;
-use moqui_lib::docker::{encode, Created, HostAddress, CALL_TIMEOUT};
+use moqui_lib::docker::{encode, Created, HostAddress, CALL_TIMEOUT, NETWORK_KEYWORDS};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::http::Method;
 use moqui_lib::object::{to_plain_string, Value};
@@ -98,7 +98,13 @@ pub fn run_once(
     ]
     .into_iter()
     .collect();
-    let id = create(host, name, &create_body(&parameters, &Hardening::default(), None), true)?;
+    let id = create(
+        host,
+        name,
+        create_body(&parameters, &Hardening::default(), None),
+        true,
+        &Hardening::default(),
+    )?;
     let outcome = (|| -> Result<Option<i64>, Error> {
         host.start(&id)?;
         let started = std::time::Instant::now();
@@ -123,20 +129,36 @@ pub fn run_once(
     Ok(exit)
 }
 
-/// Create a job's container, with `pull` pulling its image when the host does not have it. Its id.
-fn create(host: &DockerHost, name: &str, body: &serde_json::Value, pull: bool) -> Result<String, Error> {
-    if pull {
-        return Ok(host.create(name, body, true)?);
-    }
-    match host.create_container(name, body)? {
-        Created::Id(id) => Ok(id),
-        Created::NoSuchImage => {
-            let image = body["Image"].as_str().unwrap_or_default();
-            Err(Error::new(format!(
-                "the image {image} is not on the host, and the pool takes untrusted runs, whose images are not \
-                 pulled on demand: pull it on the host first"
-            )))
+/// Create a job's container of `body` (made with `hardening`), with `pull` pulling its image when the host does not
+/// have it, and a sized tmpfs over each `VOLUME` its image declares ([`cover_volumes`]): the image is inspected first
+/// ([`DockerHost::image_volumes`]), so a path that cannot be covered is refused before anything is made. Its id.
+fn create(
+    host: &DockerHost,
+    name: &str,
+    mut body: serde_json::Value,
+    pull: bool,
+    hardening: &Hardening,
+) -> Result<String, Error> {
+    let image = body["Image"].as_str().unwrap_or_default().to_string();
+    let volumes = match host.image_volumes(&image)? {
+        Some(volumes) => volumes,
+        None if !pull => return Err(not_on_host(&image)),
+        None => {
+            host.pull(&image)?;
+            host.image_volumes(&image)?.ok_or_else(|| {
+                Error::new(format!(
+                    "creating container {name}: the image {image} is not on the host after its pull"
+                ))
+            })?
         }
+    };
+    cover_volumes(&mut body, &volumes, hardening).map_err(|why| Error::new(format!("container {name}: {why}")))?;
+    if pull {
+        return Ok(host.create(name, &body, true)?);
+    }
+    match host.create_container(name, &body)? {
+        Created::Id(id) => Ok(id),
+        Created::NoSuchImage => Err(not_on_host(&image)),
     }
 }
 
@@ -144,15 +166,38 @@ fn create(host: &DockerHost, name: &str, body: &serde_json::Value, pull: bool) -
 /// `Config.User` empty, root, or a name) is refused before it starts: a job never runs as root, in any form, and a
 /// name is whatever the image's own `/etc/passwd` says, which may be uid 0 under another name
 /// ([`is_numeric_user`]).
-fn refuse_root(host: &DockerHost, id: &str, name: &str) -> Result<(), Error> {
+///
+/// Whatever the user, a container with a volume mount is refused too: each `VOLUME` of its image was covered by a
+/// tmpfs ([`cover_volumes`]), so a volume the engine made anyway would be writable on the host's disk, sized by
+/// neither `StorageOpt` nor a tmpfs, there even with a read-only root (SEC-GIT-93). The checks read the made
+/// container once, before it starts.
+fn check_made(host: &DockerHost, id: &str, name: &str, image_user: bool) -> Result<(), Error> {
     let response = host.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
     if response.status() >= 300 {
         return Err(DockerHost::problem(&format!("inspecting container {name}"), &response).into());
     }
-    let user = serde_json::from_str::<serde_json::Value>(response.body())
-        .ok()
-        .and_then(|body| body["Config"]["User"].as_str().map(str::to_string))
+    let made = serde_json::from_str::<serde_json::Value>(response.body()).unwrap_or(serde_json::Value::Null);
+    let volumes: Vec<String> = made["Mounts"]
+        .as_array()
+        .map(|mounts| {
+            mounts
+                .iter()
+                .filter(|mount| mount["Type"] == "volume")
+                .filter_map(|mount| mount["Destination"].as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
+    if !volumes.is_empty() {
+        return Err(Error::new(format!(
+            "container {name} has a volume on the host's disk ({}), outside the job's limits, which its tmpfs did not \
+             cover",
+            volumes.join(", ")
+        )));
+    }
+    if !image_user {
+        return Ok(());
+    }
+    let user = made["Config"]["User"].as_str().map(str::to_string).unwrap_or_default();
     if !is_numeric_user(&user) {
         return Err(Error::new(format!(
             "the image of container {name} may run as root (its user is {}), and git-ci container-user=\"image\" \
@@ -301,8 +346,8 @@ impl Hardening {
     }
 }
 
-/// The network mode a pool's `egressRule` asks for: `bridge` when empty, else the mode, but never the host's network
-/// or another container's (`host`, `container:...`), which would be no way in at all: those are `none`.
+/// The network mode a pool's `egressRule` asks for: `bridge` when empty, else the mode when it is one a pool may have
+/// ([`valid_egress`]); any other (the host's network, another container's, a namespace path) is `none`.
 pub fn egress_mode(rule: Option<&str>) -> String {
     match rule.map(str::trim).filter(|rule| !rule.is_empty()) {
         None => "bridge".to_string(),
@@ -311,10 +356,66 @@ pub fn egress_mode(rule: Option<&str>) -> String {
     }
 }
 
-/// Whether `rule` may be a pool's `egressRule`: not the host's network, not another container's.
+/// Whether `rule` may be a pool's `egressRule`: `bridge`, `none`, or the name of a network of the host (letters,
+/// digits, dot, dash and underscore) that is no engine keyword ([`NETWORK_KEYWORDS`], which a container that stays is
+/// held to as well: [`moqui_lib::docker::valid_network`]). A list of what is refused would miss a mode: on Podman
+/// `ns:<path>` joins the network namespace at a path, the host's included (`ns:/proc/1/ns/net`), and `slirp4netns`
+/// and `pasta` (with or without options) and `private` are modes of their own; `host` and `container:...` are the
+/// host's network and another container's (SEC-GIT-93).
 pub fn valid_egress(rule: &str) -> bool {
     let rule = rule.trim();
-    !rule.eq_ignore_ascii_case("host") && !rule.to_ascii_lowercase().starts_with("container:")
+    if NETWORK_KEYWORDS
+        .iter()
+        .any(|keyword| rule.eq_ignore_ascii_case(keyword))
+    {
+        return false;
+    }
+    rule == "bridge" || rule == "none" || crate::ci::file::valid_name(rule)
+}
+
+fn not_on_host(image: &str) -> Error {
+    Error::new(format!(
+        "the image {image} is not on the host, and the pool takes untrusted runs, whose images are not pulled on \
+         demand: pull it on the host first"
+    ))
+}
+
+/// Put a tmpfs at each `VOLUME` path of a container's image, sized `container-tmp-mb` and owned by the container's
+/// user as `/tmp` is, so the engine makes no anonymous volume there on the host's disk (SEC-GIT-93): a database
+/// service (postgres, mysql, redis) writes its data in memory the pool's memory limit bounds. A path a tmpfs already
+/// covers (`/tmp`, the working directory) is left. A path that is not absolute cannot be covered, and is refused, and so
+/// is any `VOLUME` on a pool with no `memoryMb`, where nothing would bound the tmpfs.
+///
+/// # Errors
+///
+/// The refusal of a path that cannot be covered.
+pub fn cover_volumes(body: &mut serde_json::Value, volumes: &[String], hardening: &Hardening) -> Result<(), String> {
+    // a tmpfs is memory: only the pool's memory limit (memoryMb) bounds what the volumes hold
+    if !volumes.is_empty() && body["HostConfig"]["Memory"].as_i64().is_none_or(|memory| memory <= 0) {
+        return Err(format!(
+            "its image declares a VOLUME ({}), which runs on a tmpfs that only the pool's memoryMb bounds, and the pool \
+             sets none: give the pool a memoryMb",
+            volumes.join(", ")
+        ));
+    }
+    for volume in volumes {
+        let path = volume.trim_end_matches('/');
+        if !path.starts_with('/') || path.contains(',') || path.contains(':') {
+            return Err(format!(
+                "its image declares a VOLUME {volume} that cannot be covered by a tmpfs, and the engine would make it on \
+                 the host's disk outside the job's limits"
+            ));
+        }
+        let host = &mut body["HostConfig"];
+        if !host["Tmpfs"].is_object() {
+            host["Tmpfs"] = json!({});
+        }
+        let tmpfs = &mut host["Tmpfs"];
+        if tmpfs.get(path).is_none() {
+            tmpfs[path] = json!(hardening.tmpfs(hardening.tmp_mb));
+        }
+    }
+    Ok(())
 }
 
 /// The limits of the pool on a container's host config: CPUs, memory with no swap past it, processes, the root
@@ -503,26 +604,24 @@ fn start_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 let id = create(
                     &host,
                     &format!("{name}-{service_name}"),
-                    &service_body(service, &labels, network, parameters, &hardening),
+                    service_body(service, &labels, network, parameters, &hardening),
                     pull,
+                    &hardening,
                 )?;
                 made.push(id.clone());
-                if hardening.user.is_none() {
-                    refuse_root(&host, &id, &format!("{name}-{service_name}"))?;
-                }
+                check_made(&host, &id, &format!("{name}-{service_name}"), hardening.user.is_none())?;
                 host.start(&id)?;
             }
         }
         let id = create(
             &host,
             &name,
-            &create_body(parameters, &hardening, network.as_deref()),
+            create_body(parameters, &hardening, network.as_deref()),
             pull,
+            &hardening,
         )?;
         made.push(id.clone());
-        if hardening.user.is_none() {
-            refuse_root(&host, &id, &name)?;
-        }
+        check_made(&host, &id, &name, hardening.user.is_none())?;
         if network.is_some() && egress != "bridge" && egress != "none" {
             host.connect_network(&egress, &id)?;
         }

@@ -56,6 +56,34 @@ fn a_tall_thin_image_is_refused_not_allocated() {
     assert!(err.message().contains("Could not read image"), "{}", err.message());
 }
 
+/// An image whose header claims more than 64 megapixels within the side limit is refused from its header, before any
+/// pixel is decoded or allocated (SEC-SCR-85).
+#[test]
+fn an_image_of_too_many_pixels_is_refused_from_its_header() {
+    // a PNG signature and IHDR of 20000x20000 8-bit RGB, and nothing after: only the header is read
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&20_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&20_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&png_chunk(b"IHDR", &ihdr));
+    png.extend_from_slice(&png_chunk(b"IDAT", &[]));
+    png.extend_from_slice(&png_chunk(b"IEND", &[]));
+    let err = decode(&png).unwrap_err();
+    assert!(err.message().contains("more than 64000000 pixels"), "{}", err.message());
+    // a photo-sized one is not refused for its pixels (it has no data here, so it fails as a read)
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&8_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&6_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&png_chunk(b"IHDR", &ihdr));
+    png.extend_from_slice(&png_chunk(b"IDAT", &[]));
+    png.extend_from_slice(&png_chunk(b"IEND", &[]));
+    let err = decode(&png).unwrap_err();
+    assert!(!err.message().contains("pixels"), "{}", err.message());
+}
+
 #[test]
 fn jpeg_puts_a_transparent_image_on_white() {
     let (image, _) = decode(&png_with_alpha()).unwrap();

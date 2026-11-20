@@ -15,9 +15,21 @@ const bundleId = "SPEC_ACC_BUNDLE"
 const teamId = "SPEC_ACC_TEAM"
 const unregisteredId = "SPEC_ACC_UNREGISTERED"
 const sealedGroupId = "SPEC_ACC_SEALED"
+const sealedBundleId = "SPEC_ACC_SEALED_BUNDLE"
+// an access administrator outside ADMIN who holds the sealed ADMIN_PASSWORD and is in the privileged ADMIN_ADV
+const admin2User = "spec.access.admin2"
+const admin2Id = "SPEC_ACC_ADMIN2"
+const admins2Id = "SPEC_ACC_ADMINS2"
+const payBundleId = "SPEC_ACC_PAY"
+// a custom group of a plain permission only
+const readersId = "SPEC_ACC_READERS"
 const appGroupId = "SPEC_ACC_APP"
 const preferenceKey = "SPEC_ACC_PAGE_SIZE"
 const viewPermission = "SPEC_ACC_VIEW"
+// a reader bundle that registers the app's view binding, and two custom groups bound to the app: all actions and view
+const readBundleId = "SPEC_ACC_READ_BUNDLE"
+const appAllId = "SPEC_ACC_APP_ALL"
+const appViewId = "SPEC_ACC_APP_VIEW"
 
 const make = (entityName, fields) => {
     const row = ec.entity.makeValue(entityName)
@@ -114,7 +126,8 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, "SPEC_ACC_ADMINS"]
+        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, sealedBundleId, "SPEC_ACC_ADMINS", admins2Id, payBundleId, readersId,
+            readBundleId, appAllId, appViewId]
         for (const authz of rows("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}))
             find("moqui.security.ArtifactAuthzFilter", {artifactAuthzId: authz.artifactAuthzId}).deleteAll()
         find("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}).deleteAll()
@@ -133,11 +146,11 @@ spec({
             "moqui.security.UserGroupMember"
         ])
             ec.entity.find(entityName).condition("userGroupId", "in", groups).deleteAll()
-        ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [adminId, targetId]).deleteAll()
+        ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", [adminId, targetId, admin2Id]).deleteAll()
         ec.entity.find("moqui.security.UserGroup").condition("userGroupId", "in", groups).deleteAll()
         find("moqui.security.ArtifactGroup", {artifactGroupId: appGroupId}).deleteAll()
         find("moqui.basic.Enumeration", {enumId: preferenceKey}).deleteAll()
-        ec.entity.find("moqui.security.UserAccount").condition("userId", "in", [adminId, targetId]).deleteAll()
+        ec.entity.find("moqui.security.UserAccount").condition("userId", "in", [adminId, targetId, admin2Id]).deleteAll()
         ec.artifactExecution.enableAuthz()
     }
 })
@@ -302,6 +315,148 @@ feature(
     }
 )
 
+// SEC-ADM-90: an access administrator gives their own account no privileged bundle (a privileged group, or one that grants a
+// sealed permission, even one they hold), by a membership or a grant proposal; they give it to another account, and a plain
+// bundle to their own
+feature("an access administrator gives their own account no privileged or sensitive bundle nor one whose sensitive grants they lack, a plain one yes, and a group they are in no grant; a member of ADMIN does, marked", {
+    when() {
+        const now = ec.user.timestampMillis(ec.user.nowTimestamp)
+        const advFrom = now - 1000
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserGroup", {userGroupId: sealedBundleId, description: "Spec sealed bundle"})
+        make("moqui.security.CapabilityBundle", {userGroupId: sealedBundleId, appName: "Spec", description: "Spec sealed bundle"})
+        make("moqui.security.UserGroupPermission", {userGroupId: sealedBundleId, userPermissionId: "ADMIN_PASSWORD", fromDate: 0})
+        // a permission of the bundle the team does not have yet
+        make("moqui.security.CapabilityBundlePermission", {userGroupId: bundleId, userPermissionId: "SPEC_ACC_TEAM_RUN",
+            capabilityKindEnumId: "CpkEdit"})
+        make("moqui.security.UserGroup", {userGroupId: readersId, description: "Spec readers", groupTypeEnumId: "UgtCustomTeam"})
+        make("moqui.security.UserGroupPermission", {userGroupId: readersId, userPermissionId: viewPermission, fromDate: 0})
+        // a sensitive capability a bundle of its own registers, which the team is given before it is joined
+        make("moqui.security.UserGroup", {userGroupId: payBundleId, description: "Spec payroll bundle"})
+        make("moqui.security.CapabilityBundle", {userGroupId: payBundleId, appName: "Spec", description: "Spec payroll bundle"})
+        make("moqui.security.CapabilityBundlePermission", {userGroupId: payBundleId, userPermissionId: "SPEC_ACC_PAYROLL",
+            capabilityKindEnumId: "CpkSensitive"})
+        make("moqui.security.UserAccount", {userId: admin2Id, username: admin2User, userFullName: "Spec access administrator 2"})
+        make("moqui.security.UserGroup", {userGroupId: admins2Id, description: "Spec access administrators 2"})
+        for (const permission of ["ADMIN_ACCESS_VIEW", "ADMIN_ACCESS_MANAGE", "ADMIN_PASSWORD"])
+            make("moqui.security.UserGroupPermission", {userGroupId: admins2Id, userPermissionId: permission, fromDate: 0})
+        make("moqui.security.UserGroupMember", {userGroupId: admins2Id, userId: admin2Id, fromDate: 0})
+        make("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: admin2Id, fromDate: advFrom, thruDate: now + 86400000})
+        ec.artifactExecution.enableAuthz()
+        const advRow = () => rows("moqui.security.UserGroupMember", {userGroupId: "ADMIN_ADV", userId: admin2Id})
+            .find(row => ec.user.timestampMillis(row.fromDate) === advFrom)
+        const advRevision = () => String(ec.user.timestampMillis(advRow().lastUpdatedStamp))
+        // an access administrator outside ADMIN who holds ADMIN_PASSWORD and is in ADMIN_ADV
+        const holder = as(admin2User, () => ({
+            own: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: admin2Id, reason: "Spec own"}),
+            ownProposal: invoke(S + "apply#GrantProposal", {userId: admin2Id, bundleGroupIdList: [sealedBundleId], reason: "Spec own"}),
+            other: invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: targetId, reason: "Spec other"}),
+            // the privileged group they are in: kept longer refused, ended sooner allowed
+            extended: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: admin2Id, fromDate: advFrom,
+                thruDate: now + 2 * 86400000, expectedRevision: advRevision(), reason: "Spec longer"}),
+            shortened: invoke(S + "store#Membership", {userGroupId: "ADMIN_ADV", userId: admin2Id, fromDate: advFrom,
+                thruDate: now + 3600000, expectedRevision: advRevision(), reason: "Spec shorter"})
+        }))
+        const plain = as(adminUser, () => {
+            // a bundle with a sensitive capability (ADMIN_PASSWORD, CpkSensitive) is not one's own to take
+            const sensitive = invoke(S + "store#Membership", {userGroupId: bundleId, userId: adminId, reason: "Spec own sensitive"})
+            // a group of plain grants (SPEC_ACC_VIEW, which one does not hold) is, audit-logged
+            const reader = invoke(S + "store#Membership", {userGroupId: readersId, userId: adminId, reason: "Spec own reader"})
+            const readerEnded = invoke(S + "end#Membership", {userGroupId: readersId, userId: adminId, fromDate: reader.fromDate,
+                expectedRevision: reader.revision})
+            return {sensitive, reader, readerEnded}
+        })
+        // the team given the sensitive permission first, as another administrator could: then not one's own to join
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserGroupPermission", {userGroupId: teamId, userPermissionId: "SPEC_ACC_PAYROLL", fromDate: 0})
+        ec.artifactExecution.enableAuthz()
+        plain.unheld = as(adminUser, () =>
+            invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId, reason: "Spec own unheld"}))
+        ec.artifactExecution.disableAuthz()
+        find("moqui.security.UserGroupPermission", {userGroupId: teamId, userPermissionId: "SPEC_ACC_PAYROLL"}).deleteAll()
+        ec.artifactExecution.enableAuthz()
+        // a membership of the team that starts tomorrow, which an administrator gives them
+        const future = as("john.doe", () =>
+            invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId, fromDate: now + 86400000, reason: "Spec future"}))
+        const grant = [{action: "add", userPermissionId: "SPEC_ACC_TEAM_RUN"}]
+        const ownGroup = as(adminUser, () => {
+            const preview = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: grant})
+            const applied = invoke(S + "apply#Grants", {userGroupId: teamId, grantList: grant, expectedRevision: preview.revision})
+            return {preview, applied}
+        })
+        // a member of ADMIN takes a sealed bundle, and adds to a group they are in, marked on the audit log
+        const admin = as("john.doe", () => {
+            const own = invoke(S + "store#Membership", {userGroupId: sealedBundleId, userId: "EX_JOHN_DOE", reason: "Spec admin own"})
+            const team = invoke(S + "store#Membership", {userGroupId: teamId, userId: "EX_JOHN_DOE", reason: "Spec admin team"})
+            const preview = invoke(S + "preview#Grants", {userGroupId: teamId, grantList: grant})
+            return {own, team, preview}
+        })
+        // john.doe's own memberships of the feature off again: the team's sign-in policy below is no administrator's
+        ec.artifactExecution.disableAuthz()
+        find("moqui.security.UserGroupMember", {userGroupId: teamId, userId: "EX_JOHN_DOE"}).deleteAll()
+        ec.artifactExecution.enableAuthz()
+        const members = userId => rows("moqui.security.UserGroupMember", {userGroupId: sealedBundleId, userId}).length
+        const advThru = ec.user.timestampMillis(advRow().thruDate)
+        ec.artifactExecution.disableAuthz()
+        advRow().delete()
+        ec.artifactExecution.enableAuthz()
+        return {holder, plain, future, ownGroup, admin, ownRows: members(admin2Id), otherRows: members(targetId), advThru, now,
+            marked: audits("moqui.security.UserGroupMember", "fromDate", sealedBundleId)
+                .some(row => String(row.changeReason || "").includes("[own access, ADMIN member]"))}
+    },
+    then(r) {
+        r.holder.own.applied == false && r.holder.own.reasonCode == "OWN_ACCOUNT"
+        r.holder.ownProposal.applied == false && r.holder.ownProposal.reasonCode == "OWN_ACCOUNT"
+        r.ownRows == 0
+        r.holder.other.applied == true
+        r.otherRows == 1
+        r.holder.extended.applied == false && r.holder.extended.reasonCode == "OWN_ACCOUNT"
+        r.holder.shortened.applied == true
+        r.advThru <= r.now + 3600000
+        r.plain.sensitive.applied == false && r.plain.sensitive.reasonCode == "OWN_ACCOUNT"
+        r.plain.reader.applied == true && r.plain.readerEnded.applied == true
+        r.plain.unheld.applied == false && r.plain.unheld.reasonCode == "OWN_ACCOUNT" && r.plain.unheld.reason.includes("SPEC_ACC_PAYROLL")
+        r.future.applied == true
+        r.ownGroup.preview.allowed == false && r.ownGroup.preview.reasonCode == "OWN_GROUP"
+        r.ownGroup.applied.applied == false && r.ownGroup.applied.reasonCode == "OWN_GROUP"
+        r.admin.own.applied == true
+        r.admin.team.applied == true
+        r.admin.preview.allowed == true
+        r.marked
+    }
+})
+
+// SEC-ADM-90: a binding a sensitive bundle registers is plain only as far as a plain bundle registers it too: a reader
+// bundle's view binding of the app makes a group's view binding one's own to join, not its binding of all actions
+feature("an own membership of a group bound past what a plain bundle registers is refused, one bound as far is not", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserGroup", {userGroupId: readBundleId, description: "Spec app readers bundle"})
+        make("moqui.security.CapabilityBundle", {userGroupId: readBundleId, appName: "Spec", description: "Spec app readers bundle"})
+        make("moqui.security.CapabilityBundleArtifact", {userGroupId: readBundleId, artifactGroupId: appGroupId,
+            authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_VIEW"})
+        for (const [groupId, action] of [[appAllId, "AUTHZA_ALL"], [appViewId, "AUTHZA_VIEW"]]) {
+            make("moqui.security.UserGroup", {userGroupId: groupId, description: "Spec app " + action, groupTypeEnumId: "UgtCustomTeam"})
+            make("moqui.security.ArtifactAuthz", {artifactAuthzId: groupId, userGroupId: groupId, artifactGroupId: appGroupId,
+                authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: action})
+        }
+        ec.artifactExecution.enableAuthz()
+        return as(adminUser, () => {
+            const all = invoke(S + "store#Membership", {userGroupId: appAllId, userId: adminId, reason: "Spec own app all"})
+            const view = invoke(S + "store#Membership", {userGroupId: appViewId, userId: adminId, reason: "Spec own app view"})
+            const viewEnded = view.applied
+                ? invoke(S + "end#Membership", {userGroupId: appViewId, userId: adminId, fromDate: view.fromDate,
+                    expectedRevision: view.revision})
+                : null
+            return {all, view, viewEnded}
+        })
+    },
+    then({all, view, viewEnded}) {
+        all.applied == false && all.reasonCode == "OWN_ACCOUNT" && all.reason.includes(appGroupId)
+        view.applied == true && viewEnded.applied == true
+    }
+})
+
 feature("the last administration path is refused with a reason", {
     when() {
         const ending = rows("moqui.security.UserGroupMember", {userGroupId: "ADMIN"}).map(row => ({
@@ -334,12 +489,13 @@ feature("the last administration path is refused with a reason", {
 
 feature("a membership change is seen at once by the session it changes", {
     when() {
+        // the access administrator's own membership of a group of plain grants (SEC-ADM-06)
         return as(adminUser, () => {
-            const before = ec.user.isInGroup(teamId)
-            const added = invoke(S + "store#Membership", {userGroupId: teamId, userId: adminId})
-            const during = {member: ec.user.isInGroup(teamId), permission: ec.user.hasPermission(viewPermission)}
+            const before = ec.user.isInGroup(readersId)
+            const added = invoke(S + "store#Membership", {userGroupId: readersId, userId: adminId})
+            const during = {member: ec.user.isInGroup(readersId), permission: ec.user.hasPermission(viewPermission)}
             const ended = invoke(S + "end#Membership", {
-                userGroupId: teamId,
+                userGroupId: readersId,
                 userId: adminId,
                 fromDate: added.fromDate,
                 expectedRevision: added.revision
@@ -349,7 +505,7 @@ feature("a membership change is seen at once by the session it changes", {
                 added,
                 during,
                 ended,
-                after: ec.user.isInGroup(teamId),
+                after: ec.user.isInGroup(readersId),
                 afterPermission: ec.user.hasPermission(viewPermission)
             }
         })

@@ -156,12 +156,15 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="note" noun="SmsKeyword" allow-remote="false">
-        <description>Internal: a person sent keyword STOP (opted out of our number), START (back in) or HELP (kept).</description>
+        <description>Internal: a person sent keyword STOP (opted out of our number), START (back in) or HELP (kept). A STOP
+            or START whose messageMillis is older than the pair's last change is stale and changes nothing.</description>
         <in-parameters>
             <parameter name="ourNumber" required="true"/>
             <parameter name="theirNumber" required="true"/>
             <parameter name="keyword" required="true"/>
+            <parameter name="messageMillis" type="Long"><description>The provider's time of the message</description></parameter>
         </in-parameters>
+        <out-parameters><parameter name="outcome"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Sms.js').execute('noteKeyword', context))</script></actions>
     </service>
 
@@ -170,14 +173,17 @@ along with this software (see the LICENSE.md file). If not, see
             theirNumber opted out of ourNumber (keyword STOP) or back in (START), as its event eventId on bridge chatBridgeId.
             Applied once: the event is kept as a done ChatBridgeInbound (transactionId signal:eventId), so a copy of it (a
             provider with no timestamp in its signature, Twilio, can be replayed after the replay cache let it go) is
-            outcome duplicate and changes nothing. ourNumber must have messaging through chatBridgeId (else outcome
-            ignored, reasonCode unknownNumber). Out: outcome noted, duplicate or ignored.</description>
+            outcome duplicate and changes nothing; the mark is kept as long as the opt-out. With originMillis (the
+            provider's time of the message) one older than the pair's last change is outcome stale and changes nothing
+            (SEC-COM-90). ourNumber must have messaging through chatBridgeId (else outcome ignored, reasonCode
+            unknownNumber). Out: outcome noted, stale, duplicate or ignored.</description>
         <in-parameters>
             <parameter name="chatBridgeId" required="true"/>
             <parameter name="eventId" required="true"/>
             <parameter name="ourNumber" required="true"/>
             <parameter name="theirNumber" required="true"/>
             <parameter name="keyword" required="true"/>
+            <parameter name="originMillis" type="Long"/>
         </in-parameters>
         <out-parameters>
             <parameter name="outcome"/>
