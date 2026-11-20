@@ -677,6 +677,10 @@ impl<P: SmsProvider> SmsAdapter<P> {
                 // to another host
                 .redirects(3, true)
                 .deny_internal_addresses(deny)
+                // every request of the adapter carries the provider's key or token (an API call, a file fetch, a
+                // group's roster), so over https only, whether or not the bridge's start ran; http only to a
+                // test's fake, `allowInternalAddresses` (SEC-COM-88)
+                .https_only(deny)
         };
         if allow_internal {
             self.internal.get_or_init(|| make(false))
@@ -875,16 +879,6 @@ pub fn plain<P: SmsProvider>(
 ///
 /// Returns the client's error: the request could not be made, or its answer was lost ([`never_sent`] tells them apart).
 pub fn call(client: &RestClient, request: &ApiRequest) -> Result<RestResponse, moqui_lib::error::Error> {
-    // every call carries the provider's key or token: https only, http only on a client that allows internal
-    // addresses (a test's fake, `allowInternalAddresses`), whether or not the bridge's start ran (SEC-COM-88)
-    let scheme = request.url.split_once("://").map_or("", |(scheme, _)| scheme);
-    if !(scheme.eq_ignore_ascii_case("https")
-        || (scheme.eq_ignore_ascii_case("http") && !client.denies_internal_addresses()))
-    {
-        return Err(moqui_lib::error::Error::new(
-            "the provider's address is not an https address, and its credentials are never sent in clear text",
-        ));
-    }
     let mut call = client.request(request.method, request.url.clone());
     for (name, value) in &request.headers {
         call = call.header(name.clone(), value.clone());

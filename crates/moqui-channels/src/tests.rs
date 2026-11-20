@@ -1622,32 +1622,43 @@ fn a_bridge_sends_its_key_over_https_and_reaches_no_internal_address_on_producti
     assert_eq!(on_production, (false, true));
 }
 
-/// SEC-COM-88: every provider call is checked where it is sent, so a bridge whose start failed, or a direct send that
-/// never starts it, does not post its key to an http address; a test's fake (a client that allows internal
-/// addresses) still takes http.
+/// SEC-COM-88: every request of an SMS adapter goes over https, whether or not the bridge started: an API call, and
+/// an inbound file's fetch (which runs from the webhook, before any start) with the provider's key; a test's fake (a
+/// bridge that allows internal addresses) still takes http.
 #[test]
-fn a_provider_call_is_never_sent_in_clear_text_whatever_started() {
+fn a_provider_request_is_never_sent_in_clear_text_whatever_started() {
     use crate::sms::{call, ApiBody, ApiRequest};
+    use moqui_core::service::chat_bridge::ChatBridgeAdapter as _;
     let request = |url: &str| ApiRequest {
         method: moqui_lib::http::Method::Post,
         url: url.to_string(),
         headers: vec![("authorization".to_string(), "Bearer K".to_string())],
         body: ApiBody::None,
     };
-    let public = moqui_lib::http::RestClient::new().deny_internal_addresses(true);
-    for url in [
-        "http://api.example.test/v2/messages",
-        "ftp://api.example.test/x",
-        "api.example.test",
-    ] {
-        let refused = call(&public, &request(url)).unwrap_err();
-        assert!(refused.message().contains("not an https address"), "{url}: {refused}");
-    }
+    let public = moqui_lib::http::RestClient::new()
+        .deny_internal_addresses(true)
+        .https_only(true);
+    let refused = call(&public, &request("http://api.example.test/v2/messages")).unwrap_err();
+    assert!(refused.message().contains("https only"), "{refused}");
+    // the adapter's own client: a file of a bridge saved with an http address is not fetched
+    let bridge = |config: Json| moqui_core::service::chat_bridge::BridgeInfo {
+        chat_bridge_id: "B".to_string(),
+        type_enum_id: String::new(),
+        adapter_name: "sms".to_string(),
+        name: "B".to_string(),
+        config,
+    };
+    let adapter = telnyx();
+    let plain = bridge(json!({"apiKey": "K", "apiBaseUrl": "http://api.example.test"}));
+    let fetched = adapter
+        .fetch_media(&plain, "http://media.example.test/f.jpg", 100)
+        .unwrap_err();
+    assert!(fetched.contains("https only"), "{fetched}");
     let fake = moqui_lib::http::RestClient::new()
         .deny_internal_addresses(false)
         .connect_timeout(Duration::from_millis(200));
     let unreached = call(&fake, &request("http://127.0.0.1:9/v2/messages")).unwrap_err();
-    assert!(!unreached.message().contains("not an https address"), "{unreached}");
+    assert!(!unreached.message().contains("https only"), "{unreached}");
 }
 
 /// plans/Comms-Messaging.md §9, group texts: a group MMS that comes in (our number among its `to` and `cc`) is one room
