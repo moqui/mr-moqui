@@ -99,8 +99,8 @@ tauri-build = { version = "=3.0.0-alpha.4", features = [] }
 [patch.crates-io]
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
-# yrs 0.28.1 with a depth limit on the values an update decodes (patches/README.md; SEC-TLS-95)
-yrs = { path = "../../patches/yrs" }
+# yrs 0.28.2 at moqui's fork, its decode depth and reservations bounded (docs/Build-Test.md Forks; SEC-TLS-95, -117)
+yrs = { git = "https://github.com/moqui/y-crdt", rev = "6ad5c94af9c4b50ac9c05dec67c3b96a8e8fd782" }
 
 # As in the repository's workspace and target/moqui-app: a debug build leaves the framework and component crates at
 # opt-level 0 with full debug info and optimizes the other dependencies (.cargo/config.toml). Here they are not

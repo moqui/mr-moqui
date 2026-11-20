@@ -125,8 +125,8 @@ fn the_jwt_asks_for_the_messaging_scope_at_the_token_endpoint_and_is_signed_rs25
     assert_eq!(claims["exp"], NOW + 3600);
 
     let (signing_input, signature) = jwt.rsplit_once('.').unwrap();
-    let key = rsa::RsaPrivateKey::from_pkcs8_pem(KEY).unwrap();
-    let verifying = rsa::pkcs1v15::VerifyingKey::<rsa::sha2::Sha256>::new(rsa::RsaPublicKey::from(&key));
+    let key = rsa::PrivateKey::from_pkcs8_pem(KEY).unwrap();
+    let verifying = rsa::pkcs1v15::VerifyingKey::<rsa::sha2::Sha256>::new(rsa::PublicKey::from(&key));
     let signature = URL_SAFE_NO_PAD.decode(signature).unwrap();
     let signature = rsa::pkcs1v15::Signature::try_from(signature.as_slice()).unwrap();
     verifying

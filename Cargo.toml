@@ -4,7 +4,7 @@
 #
 # license is CC0-1.0. The patent grant in LICENSE.md has no SPDX identifier.
 # rust-toolchain.toml pins Rust 1.100. The workspace needs 1.99: quickjs-oxide declares rust-version 1.99, mail-parser
-# 1.0 1.98, and oxc 0.153 and later 1.97. This file does not set rust-version, so `cargo metadata` and `cargo tree` still run on
+# 1.0 1.98, and oxc 0.159 1.98. This file does not set rust-version, so `cargo metadata` and `cargo tree` still run on
 # older cargo.
 
 [workspace]
@@ -52,8 +52,6 @@ exclude = [
     "runtime/components/test",
     "runtime/components/dev",
     "crates/moqui-desktop",
-    # patched crates.io crates, each its own package (patches/README.md)
-    "patches/yrs",
 ]
 
 [workspace.package]
@@ -175,10 +173,10 @@ sha1 = { version = "0.11", features = ["oid"] }
 base64 = "0.23"
 # Inherited descriptors marked close-on-exec before the embedded Postgres starts (moqui-drivers), safely.
 close_fds = "0.3"
-# SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The rsa release candidate is the one russh and huskarl already
-# resolve, so the graph has one rsa. Its digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix).
-# plans/archive/License-Review.md records RUSTSEC-2023-0071.
-rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
+# SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The release russh and huskarl resolve, so the graph has one rsa. Its
+# digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix). 0.10.0 is on crypto-bigint, constant time,
+# and fixes RUSTSEC-2023-0071 (Marvin).
+rsa = { version = "0.10", features = ["pkcs1v15"] }
 rand_core = "0.10"
 # Name rustls. On 0.13 that is aws-lc, but default-tls must not be inherited:
 # a later release could point default-tls back at native-tls.
@@ -279,14 +277,14 @@ getrandom = { version = "0.4", features = ["std"] }
 # The script engine, in safe Rust (plans/archive/Script-Engine-Oxide.md). The moqui fork, by exact revision;
 # local work on the fork patches it to ../quickjs-oxide outside committed files. Declares rust-version 1.99.
 quickjs-oxide = { git = "https://github.com/moqui/quickjs-oxide", rev = "b7e34e04bde919d1a76cfd01430226ea0493017f", default-features = false }
-# 0.158.0 declares rust-version 1.97.0.
-oxc_parser = "0.158"
+# 0.159.0 declares rust-version 1.98.0.
+oxc_parser = "0.159"
 # The parser's arena, kept per thread and reset after each parse. Already in the tree under oxc_parser.
-oxc_allocator = "0.158"
+oxc_allocator = "0.159"
 # The ESTree JSON of a parsed expression, for the server-static compatibility walk. Already in the tree under oxc_parser.
-oxc_ast = { version = "0.158", features = ["serialize"] }
+oxc_ast = { version = "0.159", features = ["serialize"] }
 # Spans of parsed nodes, for the test harness power-assert rewrite. Already in the tree under oxc_parser.
-oxc_span = "0.158"
+oxc_span = "0.159"
 # HTML cleaning for allow-html="safe" service parameters. MIT OR Apache-2.0. Builder::default() is the
 # conservative maintained allow-list; there is no custom list in this repo.
 ammonia = "4"
@@ -300,7 +298,7 @@ html5ever = "0.40"
 ironcalc = { git = "https://github.com/moqui/IronCalc", rev = "dbecebb36238f2111e3be91c24db4ec7e14253f6" }
 # Test fixtures only (a dev-dependency of the crates whose tests read a workbook another writer made): the xlsx writers
 # are on ironcalc. Defaults are empty; the chrono and jiff features stay off.
-rust_xlsxwriter = { version = "0.102", default-features = false }
+rust_xlsxwriter = { version = "0.103", default-features = false }
 # read#Spreadsheet: xlsx, xlsm, xlsb, xls, and ods. Defaults are empty; chrono (dates) stays off, dates are read as
 # Excel serial numbers. Shares zip with ironcalc.
 calamine = { version = "0.38", default-features = false }
@@ -450,13 +448,14 @@ sasl = { version = "0.5", default-features = false }
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the
 # target C compiler, which is emcc for wasm32-unknown-emscripten. SQLite is public domain.
-rusqlite = { version = "0.42", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # A dependency of a dependency (turn-server-proto's) held at moqui's fork (docs/Build-Test.md Forks). stun-types comes
 # from the same workspace, so both are patched to keep one copy in the graph.
 [patch.crates-io]
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
-# yrs 0.28.1 with a depth limit on the values an update decodes, which recursed once a level with no limit
-# (patches/README.md; plans/Security-Review-Medium.md SEC-TLS-95)
-yrs = { path = "patches/yrs" }
+# yrs 0.28.2 at moqui's fork, branch moqui/0.28.2-decode-bounds (docs/Build-Test.md Forks): an update's values nest at
+# most 128 levels, which decoded by a recursion once a level with no limit (plans/Security-Review-Medium.md SEC-TLS-95),
+# and a length read from an update reserves at most 1024 entries up front (SEC-TLS-117)
+yrs = { git = "https://github.com/moqui/y-crdt", rev = "6ad5c94af9c4b50ac9c05dec67c3b96a8e8fd782" }

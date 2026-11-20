@@ -21,7 +21,10 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
 - **`client-conf.xml`**: the build's `<client-conf>`, read at build time.
 - **The version** is this crate's (`Cargo.toml`), which `./moq android` passes to the Tauri CLI; release signing and
   Google Play are in [Build-Test](../../docs/Build-Test.md#release-builds-and-google-play).
-- **Tauri** 3.0.0-alpha.6, the desktop app's, on `tauri-runtime-wry`. The TLS verifier is
+- **Tauri** 3.0.0-alpha.6, the desktop app's, on `tauri-runtime-wry`. Its Linux backend is GTK3 (gtk 0.18,
+  webkit2gtk 2.0), so `Cargo.lock` holds glib 0.18, which Dependabot reports (GHSA-wrw7-89jp-8q8g, fixed in 0.20); it
+  is never built for Android (`./moq deny-apps` checks the app for `aarch64-linux-android`), and it goes when wry and
+  Tauri move to webkit2gtk 3 (gtk 0.19, glib 0.22, as the desktop app already has). The TLS verifier is
   `rustls_platform_verifier::android::init_with_env` in the app's setup, its Kotlin component a Maven artifact in
   `gen/android/app/build.gradle.kts`; when it fails the app makes no request and answers from the store.
 - **`gen/android`** is the Gradle project `cargo tauri android init` made, kept in git with the app's changes (the
