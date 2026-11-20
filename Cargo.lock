@@ -121,6 +121,7 @@ dependencies = [
  "blake2 0.11.0",
  "cpufeatures 0.3.1",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -5109,6 +5110,15 @@ dependencies = [
 [[package]]
 name = "moqui-vault"
 version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "argon2",
+ "getrandom 0.4.3",
+ "hkdf",
+ "sha2 0.11.1",
+ "subtle",
+ "zeroize",
+]
 
 [[package]]
 name = "moqui-vault-server"

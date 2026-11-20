@@ -14,11 +14,22 @@ publish.workspace = true
 [features]
 default = ["std"]
 # Native builds: randomness from the OS.
-std = []
-# The browser module: a raw extern "C" ABI, randomness imported from the page.
-wasm = []
+std = ["dep:getrandom"]
+# The browser module: a raw extern "C" ABI, randomness imported from the page. It answers the known-answer vectors,
+# so it carries the fixed test stream.
+wasm = ["test-vectors"]
+# rng::TestRng, the fixed stream the known-answer vectors are made with. Never a key's source.
+test-vectors = []
 
 [dependencies]
+aes-gcm = { workspace = true, features = ["zeroize"] }
+# Local, not the workspace entry: that one's default features pull getrandom, which the wasm build must leave out.
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+getrandom = { workspace = true, optional = true }
+hkdf.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

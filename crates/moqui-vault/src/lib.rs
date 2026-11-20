@@ -13,4 +13,18 @@
  */
 
 //! The vault crypto (plans/Vault-Instances.md §3.2): no I/O and no framework dependency, so the browser module builds
-//! from this crate alone. V0 fills it.
+//! from this crate alone. Randomness comes in through [`rng::Rng`], never from a global source, so the wasm build
+//! takes it from the page and the known-answer vectors from a fixed generator.
+//!
+//! - [`rng`], [`keys`], [`aead`], [`kdf`] and [`shamir`] are the primitives the sealed start of
+//!   plans/Sealed-Secrets.md §3.3 shares with the vaults.
+
+pub mod aead;
+mod error;
+pub mod kdf;
+pub mod keys;
+pub mod rng;
+pub mod shamir;
+
+pub use error::Error;
+pub use keys::Key32;
