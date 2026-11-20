@@ -161,7 +161,20 @@ const CHOICES_SHOWN: usize = 60;
 const PASTE_ON: &[u8] = b"\x1b[?2004h";
 const PASTE_OFF: &[u8] = b"\x1b[?2004l";
 
-/// The user's command history, oldest first: the `TERMINAL_HISTORY` preference, a JSON list.
+/// The lines of `history` the preference keeps ([`shell::history_text`]): no parameters of a call and nothing of
+/// `js`, each one once in a row.
+fn kept_history(history: &[String]) -> Vec<String> {
+    let mut kept: Vec<String> = Vec::new();
+    for line in history.iter().filter_map(|line| shell::history_text(line)) {
+        if kept.last() != Some(&line) {
+            kept.push(line);
+        }
+    }
+    kept
+}
+
+/// The user's command history, oldest first: the `TERMINAL_HISTORY` preference, a JSON list, read with the same rule
+/// it is written by, so a list kept before it holds no parameters or code once read.
 async fn load_history(factory: &Weak<ExecutionContextFactory>, username: &str) -> Vec<String> {
     let username = username.to_string();
     let loaded = crate::worker::on_pool(factory, move |_| {
@@ -170,13 +183,13 @@ async fn load_history(factory: &Weak<ExecutionContextFactory>, username: &str) -
     })
     .await;
     match loaded {
-        Ok(Some(text)) => serde_json::from_str::<Vec<String>>(&text).unwrap_or_default(),
+        Ok(Some(text)) => kept_history(&serde_json::from_str::<Vec<String>>(&text).unwrap_or_default()),
         _ => Vec::new(),
     }
 }
 
 async fn save_history(factory: &Weak<ExecutionContextFactory>, username: &str, history: &[String]) {
-    let Ok(text) = serde_json::to_string(history) else {
+    let Ok(text) = serde_json::to_string(&kept_history(history)) else {
         return;
     };
     let username = username.to_string();
