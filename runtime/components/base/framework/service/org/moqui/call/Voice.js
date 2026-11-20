@@ -962,7 +962,11 @@ function trunkStatus(p) {
     return {}
   }
   // this node's own engines hold the trunks while one is up: the edge node's engine never overrides their status (a
-  // failed trunk turns emergency readiness off), only reports it while it is the only engine
+  // failed trunk turns emergency readiness off), only reports it while it is the only engine. A status the edge node
+  // set while they were down does not outlive their return: at each start and reload (get#EngineConfig, then
+  // moqui-sip ua.rs set_trunks) a local engine starts a register_loop or ping_loop for every trunk it holds, and each
+  // reports that trunk's state here on its first outcome (registered or failed; reachable on the first answered
+  // OPTIONS, failed after PING_FAILURES unanswered ones), which overwrites the edge node's
   if (asEdge() && liveSipNodes().some((n) => n.edgeLinked !== 'Y')) {
     ec.logger.info(`Voice: a trunk status from the edge node for ${p.voiceTrunkId} not taken: this node's own engines hold it`)
     return {}
