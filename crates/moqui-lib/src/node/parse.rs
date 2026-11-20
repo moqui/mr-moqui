@@ -526,6 +526,7 @@ impl<'a> Parser<'a> {
         }
         let name = self.read_name()?;
         let mut attributes: Vec<(&'a str, Cow<'a, str>)> = Vec::new();
+        let mut read = 0_usize;
         loop {
             self.skip_ws();
             if self.starts_with("/>") {
@@ -556,12 +557,13 @@ impl<'a> Parser<'a> {
             self.skip_ws();
             let attr_value = self.read_attr_value()?;
             // A repeated attribute takes the later value, in the first one's place.
-            let count = attributes.len();
+            // every attribute read counts, a repeated name too, so a tag cannot repeat one name without end
+            read += 1;
+            if read > MAX_ATTRIBUTES {
+                return Err(self.error(format!("<{name}> has more than {MAX_ATTRIBUTES} attributes")));
+            }
             match attributes.iter_mut().find(|(name, _)| *name == attr_name) {
                 Some(slot) => slot.1 = attr_value,
-                None if count >= MAX_ATTRIBUTES => {
-                    return Err(self.error(format!("<{name}> has more than {MAX_ATTRIBUTES} attributes")));
-                }
                 None => attributes.push((attr_name, attr_value)),
             }
         }

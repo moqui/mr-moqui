@@ -44,6 +44,10 @@ fn a_tag_with_too_many_attributes_is_an_error() {
     MNode::parse_text("fine.xml", &tag(1000)).unwrap();
     let err = expect_parse_err(MNode::parse_text("wide.xml", &tag(1001)));
     assert!(err.to_string().contains("more than 1000 attributes"), "{err}");
+    // a name repeated past the bound counts too
+    let repeated = format!("<root{}/>", " a=\"\"".repeat(1001));
+    let err = expect_parse_err(MNode::parse_text("repeated.xml", &repeated));
+    assert!(err.to_string().contains("more than 1000 attributes"), "{err}");
 }
 
 #[test]
