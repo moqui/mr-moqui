@@ -610,6 +610,31 @@ fn a_bridge_whose_start_failed_sends_nothing() {
     assert_eq!(bed.delivery(one, "MB").0, "CdsAccepted", "sent once it starts");
 }
 
+/// SEC-COM-90: the hourly cleanup removes inbound batches done more than 30 days ago, and keeps a keyword's once-only
+/// mark (signal:) as long as the opt-out.
+#[test]
+fn old_batches_go_and_keyword_marks_stay() {
+    let bed = bed("cleanup", true);
+    let _entered = bed.ctx.enter();
+    let old = bed.now - 31 * 86_400_000;
+    for id in ["signal:text:old", "old-batch"] {
+        row(
+            &bed.facade,
+            "moqui.chat.ChatBridgeInbound",
+            &[
+                ("chatBridgeId", text("BA")),
+                ("transactionId", text(id)),
+                ("receivedDate", Value::I64(old)),
+                ("statusEnumId", text("CbiDone")),
+            ],
+        );
+    }
+    bed.round(0);
+    let kept = |id: &str| bed.count("moqui.chat.ChatBridgeInbound", &[("transactionId", text(id))]);
+    assert_eq!(kept("old-batch"), 0);
+    assert_eq!(kept("signal:text:old"), 1);
+}
+
 #[test]
 fn one_failing_destination_does_not_block_another() {
     let bed = bed("failing", true);
