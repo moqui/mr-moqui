@@ -953,13 +953,22 @@ fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
     let change = |fields: &[(&str, Value)]| {
         let mut parameters = vec![("repositoryId", s("site")), ("environmentId", s(&id))];
         parameters.extend(fields.iter().cloned());
-        ok(&fixture, WRITER, &store, &parameters);
+        to_plain_string(&ok(&fixture, WRITER, &store, &parameters)["cleared"])
     };
     let secret_id = secret(None);
-    change(&[("dataTypes", s("seed")), ("allowedRefs", s("main"))]);
+    assert_eq!(
+        change(&[("dataTypes", s("seed")), ("allowedRefs", s("main"))]),
+        "",
+        "nothing cleared"
+    );
     assert_eq!(value(), "the-prod-key", "narrowing or keeping nothing new keeps it");
-    change(&[("allowedRefs", s("main feature/*"))]);
+    let cleared = change(&[("allowedRefs", s("main feature/*"))]);
+    assert!(cleared.contains("the values of its 1 secrets"), "{cleared}");
     assert_eq!(value(), "", "a ref allowedRefs did not name");
+    secret(Some(&secret_id));
+    // another group may approve the runs that are given the secrets
+    change(&[("approverGroupId", s("GIT_WRITERS"))]);
+    assert_eq!(value(), "", "another approver group");
     secret(Some(&secret_id));
     change(&[("approvalRequired", Value::Bool(false))]);
     assert_eq!(value(), "", "approval no longer required");

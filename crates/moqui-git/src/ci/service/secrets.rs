@@ -350,6 +350,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
             field(row, "allowedRefs").unwrap_or_default(),
             is_yes(row, "approvalRequired"),
             field(row, "targetUrl"),
+            field(row, "approverGroupId"),
         )
     });
     let mut row = match existing {
@@ -414,7 +415,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         row.set("targetToken", Value::string(token));
     }
     let mut cleared = Vec::new();
-    if let Some((refs_before, approval_before, target_before)) = &before {
+    if let Some((refs_before, approval_before, target_before, approvers_before)) = &before {
         // a new address takes no token given for the old one (SEC-TLS-116's rule)
         if text(parameters, "token").is_none()
             && field(&row, "targetUrl") != *target_before
@@ -430,7 +431,9 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         let refs_now = field(&row, "allowedRefs").unwrap_or_default();
         let widened = refs_now.split_whitespace().any(|pattern| !named.contains(&pattern));
         let relaxed = *approval_before && !is_yes(&row, "approvalRequired");
-        if widened || relaxed {
+        // who may approve a run that is given them changed: another group widens it as well
+        let approvers = is_yes(&row, "approvalRequired") && field(&row, "approverGroupId") != *approvers_before;
+        if widened || relaxed || approvers {
             let id = field(&row, "environmentId").unwrap_or_default();
             let emptied = facade
                 .find(CI_SECRET)?
@@ -447,15 +450,20 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     } else {
         row.update(facade)?;
     }
-    if !cleared.is_empty() {
-        moqui_core::context::ExecutionContext::with_current(|ec| {
-            ec.message().add_message(format!(
-                "The change cleared {}: give them again for the environment as it is now",
-                cleared.join(" and ")
-            ));
-        });
+    // said as a message and as the result's `cleared`, which an application's own page (Smithy's notice) shows
+    let notice = (!cleared.is_empty()).then(|| {
+        format!(
+            "The change cleared {}: give them again for the environment as it is now",
+            cleared.join(" and ")
+        )
+    });
+    if let Some(notice) = &notice {
+        moqui_core::context::ExecutionContext::with_current(|ec| ec.message().add_message(notice.clone()));
     }
-    Ok(out([("environmentId", field_value(&row, "environmentId"))]))
+    Ok(out([
+        ("environmentId", field_value(&row, "environmentId")),
+        ("cleared", notice.map_or(Value::Null, Value::string)),
+    ]))
 }
 
 /// `delete#CiEnvironment`: refused while a secret is scoped to it. Out: `deleted`.
