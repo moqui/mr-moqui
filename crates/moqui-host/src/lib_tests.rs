@@ -386,8 +386,9 @@ fn the_main_stack_declared_is_the_limit_less_what_is_above_main() {
 /// (the workspace crates less the browser, desktop and mobile clients, and the dev components), not counting tests,
 /// `unsafe` code is in exactly the files listed here, as many times each, and each site says why it holds in a
 /// `// SAFETY:` comment just above it: detaching the process and the systemd clock (`libc` calls), `moqui test`'s
-/// effective uid, the embedded Postgres handle's one drop, and the MySQL driver's connection, a leaked box its streaming
-/// result borrows and that only `Drop` frees. Everywhere else the compiler bounds-checks every buffer and string (1.4.1)
+/// effective uid, the embedded Postgres handle's one drop, the MySQL driver's connection, a leaked box its streaming
+/// result borrows and that only `Drop` frees, and the operator socket's inherited descriptor (sealed start); and the
+/// vault crate's browser module (`wasm.rs`, built only to wasm32, not into the server), the pointers its worker passes. Everywhere else the compiler bounds-checks every buffer and string (1.4.1)
 /// and ownership frees each allocation once with no reference left to it (1.4.3), and a new `unsafe` fails this test
 /// until it is reviewed and listed. It does not prove the listed sites right, nor cover the dependencies' unsafe code or
 /// the C of aws-lc; the script engine, quickjs-oxide, forbids `unsafe_code` in its own workspace lints (not read here).
@@ -404,8 +405,10 @@ fn the_server_has_unsafe_code_only_at_the_listed_reviewed_sites() {
         ("crates/moqui-drivers/src/embedded.rs", 1),
         ("crates/moqui-drivers/src/mysql.rs", 4),
         ("crates/moqui-host/src/detach.rs", 3),
+        ("crates/moqui-host/src/operator/socket.rs", 1),
         ("crates/moqui-host/src/systemd_notify.rs", 1),
         ("crates/moqui-host/src/test_cmd/interrupt.rs", 1),
+        ("crates/moqui-vault/src/wasm.rs", 5),
     ]
     .into_iter()
     .collect();

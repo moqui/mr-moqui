@@ -68,6 +68,8 @@ pub extern "C" fn moqui_vault_alloc(len: usize) -> *mut u8 {
 /// # Safety
 ///
 /// `ptr` and `len` must be exactly what [`moqui_vault_alloc`] returned and was given.
+// SAFETY: an `unsafe fn` because it takes back a buffer by its raw pointer and length; the worker calls it only with
+// what moqui_vault_alloc returned and was given, once per buffer.
 #[no_mangle]
 pub unsafe extern "C" fn moqui_vault_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
@@ -83,6 +85,8 @@ pub unsafe extern "C" fn moqui_vault_free(ptr: *mut u8, len: usize) {
 /// # Safety
 ///
 /// `ptr` must point at `len` readable bytes, or `len` must be 0.
+// SAFETY: an `unsafe fn` because it reads the request through a raw pointer and length; the worker calls it with a
+// buffer from moqui_vault_alloc that it wrote `len` bytes into.
 #[no_mangle]
 pub unsafe extern "C" fn moqui_vault_call(ptr: *const u8, len: usize) -> u32 {
     let request: &[u8] = if len == 0 || ptr.is_null() {
