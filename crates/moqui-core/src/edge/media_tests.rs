@@ -63,6 +63,53 @@ fn a_paired_nodes_audio_is_kept_apart_from_the_servers() {
     assert!(paired_audio_location("../x", own).starts_with("dbresource://moqui/edge-node/___x/"));
 }
 
+/// SEC-CLU-90: a dedicated edge node keeps each pairing's greetings and prompts under that pairing's own directory, as
+/// an all-in-one node does, never at the shared location another pairing's calls read; one file is at most 8 MiB, and a
+/// pairing's kept audio stays within its queue cap.
+#[test]
+fn each_pairings_call_audio_is_kept_apart_and_capped() {
+    use moqui_lib::object::Value;
+    let greeting = "dbresource://moqui/call/voicemail/greeting/B1/greeting-1.ogg";
+    assert_ne!(super::kept_audio_location("local-a", greeting), greeting);
+    assert_ne!(
+        super::kept_audio_location("local-a", greeting),
+        super::kept_audio_location("local-b", greeting)
+    );
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    facade.assume_db_tables();
+    ctx.factory().set_entity(facade.clone());
+    let _entered = ctx.enter();
+    let settings = crate::edge::EdgeSettings {
+        role: crate::edge::NodeRole::FrontEdge,
+        max_bytes: 100,
+        ..crate::edge::EdgeSettings::default()
+    };
+    ctx.factory().extension(|_| settings.clone());
+    let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+    client.set("pairedNodeId", Value::string("local-a"));
+    client.set("keyFingerprint", Value::string("ab"));
+    client.set("statusId", Value::string("EdgeClientActive"));
+    client.create(&facade).unwrap();
+    super::check_kept_audio(ctx.factory(), "local-a", 60).unwrap();
+    assert!(super::check_kept_audio(ctx.factory(), "local-a", super::MAX_KEPT_AUDIO + 1).is_err());
+    let kept = super::kept_audio_location("local-a", greeting);
+    let _authz = ctx.disable_authz();
+    super::super::queue::transaction(&facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+        ctx.factory()
+            .resource()
+            .write_from(&kept, &mut std::io::Cursor::new(vec![0_u8; 60]), Some(60))
+            .map_err(moqui_lib::error::Error::from)
+    })
+    .unwrap();
+    let over = super::check_kept_audio(ctx.factory(), "local-a", 60).unwrap_err();
+    assert!(over.contains("queue cap"), "{over}");
+    assert!(
+        super::check_kept_audio(ctx.factory(), "local-b", 60).is_ok(),
+        "another pairing's own"
+    );
+}
+
 /// A local node keeps the TURN secret of each edge cluster member its links reached (plans/Edge-Node2.md §4.6): each
 /// member's calls sign their credentials with it; a member whose TURN is off is forgotten, and unpairing forgets all.
 #[test]

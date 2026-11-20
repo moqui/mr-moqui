@@ -351,17 +351,49 @@ pub fn room_owner(room: &str) -> super::owner::Owner {
 }
 
 /// Where a node that takes links keeps a paired node's call audio at `location` (a greeting or prompt of that node,
-/// fetched by its SIP engine or queued as `callAudio`): the location itself on a dedicated edge node, which has none of
-/// its own; on an all-in-one node (E12) the same path under `dbresource://moqui/edge-node/<node>/`, apart from the
-/// server's own audio at that path.
-pub fn kept_audio_location(factory: &ExecutionContextFactory, node: &str, location: &str) -> String {
-    if super::settings(factory).edge_node() {
-        return location.to_string();
-    }
+/// fetched by its SIP engine or queued as `callAudio`): the same path under `dbresource://moqui/edge-node/<node>/`, on a
+/// dedicated edge node as on an all-in-one node (E12), so one pairing's audio is never at a location another pairing's
+/// calls read, nor the server's own (SEC-CLU-90).
+pub fn kept_audio_location(node: &str, location: &str) -> String {
     paired_audio_location(node, location)
 }
 
-/// [`kept_audio_location`] on an all-in-one node.
+/// The largest greeting or prompt a node that takes links keeps for a paired node (as `get#CallAudio` answers).
+pub const MAX_KEPT_AUDIO: u64 = 8 * 1024 * 1024;
+
+/// Whether `size` more bytes of paired node `node`'s call audio may be kept: at most [`MAX_KEPT_AUDIO`] for one file,
+/// and the pairing's kept audio, all of it, within its queue cap (`queue-max-megabytes`, or its
+/// `EdgeClient.queueMaxMegabytes`): why not, when not (SEC-CLU-90).
+///
+/// # Errors
+///
+/// Returns why the audio is not kept: too large, or past the pairing's cap, or the kept audio could not be read.
+pub fn check_kept_audio(factory: &ExecutionContextFactory, node: &str, size: u64) -> Result<(), String> {
+    if size > MAX_KEPT_AUDIO {
+        return Err(format!(
+            "{size} bytes is over the {MAX_KEPT_AUDIO} a greeting or prompt may be"
+        ));
+    }
+    let facade = factory.entity().ok_or("the entity facade is not installed")?;
+    let cap = super::queue::node_cap(&facade, &super::settings(factory), node);
+    let directory = paired_audio_location(node, "");
+    let kept = super::queue::transaction(&facade, crate::transaction::TransactionAttribute::UseOrBegin, || {
+        factory
+            .resource()
+            .tree_size(directory.trim_end_matches('/'))
+            .map_err(moqui_lib::error::Error::from)
+    })
+    .map_err(|err| format!("the call audio kept for {node} was not read: {err}"))?;
+    if kept.saturating_add(size) > cap {
+        return Err(format!(
+            "the call audio kept for {node} would be {} bytes, over its queue cap of {cap}",
+            kept.saturating_add(size)
+        ));
+    }
+    Ok(())
+}
+
+/// [`kept_audio_location`]: `location`'s path under the paired node's own directory.
 pub fn paired_audio_location(node: &str, location: &str) -> String {
     let node: String = node
         .chars()
