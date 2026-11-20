@@ -112,7 +112,7 @@ fn services_of(facade: &EntityFacade, host: &EntityValue, verb: &str) -> Result<
 }
 
 /// Calls a service by name; its message errors are taken and returned as an error.
-fn call(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError> {
+pub(crate) fn call(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError> {
     let answer = moqui_core::service::sync(name, parameters);
     let errors = ExecutionContext::with_current(|ec| {
         let text = ec.message().errors().join("; ");

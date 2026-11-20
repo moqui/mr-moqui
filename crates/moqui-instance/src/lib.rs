@@ -33,6 +33,9 @@
 //! - [`actions`]: `InstanceAction` rows, and an action asked for from a screen: run now, or a lease asked for and the
 //!   action run once it is approved.
 //! - [`reconcile`]: the job that writes what each host says of its instances and changes nothing else (§4.1).
+//! - [`deploy`]: deploys to an environment's instances (M3, §4.6): the gate, the lease its approval opens, the plan
+//!   with versions before and after, a backup first, the roll one instance at a time (drained over the link when a
+//!   cluster member), the annotations, and rollback to the recorded versions, refused across a schema change.
 //! - [`link`]: the manager's rules of the manager link (M2): pairing once by a token or code, the approvers pinned at
 //!   pairing, who may call an instance, and the bootstrap bundle held in memory until the instance takes it.
 //! - [`services`]: the Rust services, and the INSTANCE_ADMIN check each makes.
@@ -52,6 +55,7 @@ use moqui_core::extension::RustServiceFn;
 pub mod actions;
 mod common;
 pub mod database;
+pub mod deploy;
 pub mod fleet;
 pub mod kinds;
 pub mod lifecycle;

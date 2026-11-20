@@ -150,11 +150,14 @@ fn option_value(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// What a one-shot client container is given: its entrypoint and command (no secret in them) and its secret files.
+/// What a one-shot client container is given: its entrypoint and command (no secret in them), its secret files, the
+/// volumes it mounts (name and path: a backup's), and how long it may run when not [`ONE_SHOT_WAIT`].
 pub struct OneShot {
     pub entrypoint: Vec<String>,
     pub cmd: Vec<String>,
     pub files: Vec<(String, Zeroizing<Vec<u8>>)>,
+    pub mounts: Vec<(String, String)>,
+    pub wait: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for OneShot {
@@ -269,7 +272,59 @@ fn one_shot(script: String, mut files: Vec<(String, Zeroizing<Vec<u8>>)>) -> One
         entrypoint: vec!["/bin/sh".to_string()],
         cmd: vec!["/run/secrets/database.sh".to_string()],
         files,
+        mounts: Vec::new(),
+        wait: None,
     }
+}
+
+/// Where a backup one-shot writes: the server's backups volume, mounted here.
+pub const BACKUPS_DIR: &str = "/backups";
+
+/// The one-shot that backs up `database` on the server, or every database when none, into `file` of the backups volume
+/// `volume` (plans/Vault-Instances.md §4.6, step 5): `pg_dump` (custom format) or `pg_dumpall`, `mysqldump`, written as
+/// `file.partial` and renamed to `file` only when the dump succeeds (a failed one is deleted). It runs at most
+/// `manage@backup-wait-seconds` (3600). Its logs hold only the script's own `moqui:` lines.
+pub fn one_shot_backup(
+    server: Server,
+    admin: &AdminLogin,
+    database: Option<&str>,
+    file: &str,
+    volume: &str,
+) -> Result<OneShot, LibError> {
+    let file = plain_word(file, "backup file")?;
+    let host = plain_word(server.host, "server")?;
+    let port = plain_word(server.port, "port")?;
+    let user = plain_word(&admin.user, "admin user")?;
+    let dump = match (server.conf_name, database) {
+        ("postgres", Some(database)) => format!(
+            "pg_dump -h {host} -p {port} -U {user} -Fc -f {BACKUPS_DIR}/{file}.partial {}",
+            identifier(database, "database")?
+        ),
+        ("postgres", None) => format!("pg_dumpall -h {host} -p {port} -U {user} -f {BACKUPS_DIR}/{file}.partial"),
+        (_, Some(database)) => format!(
+            "mysqldump --defaults-extra-file=/run/secrets/admin.cnf -h {host} -P {port} --single-transaction {} > \
+             {BACKUPS_DIR}/{file}.partial",
+            identifier(database, "database")?
+        ),
+        (_, None) => format!(
+            "mysqldump --defaults-extra-file=/run/secrets/admin.cnf -h {host} -P {port} --single-transaction \
+             --all-databases > {BACKUPS_DIR}/{file}.partial"
+        ),
+    };
+    let script = format!(
+        "set -u\n{}\
+         {dump} 2>/dev/null || {{ rm -f {BACKUPS_DIR}/{file}.partial; echo 'moqui: the backup {file} failed'; exit 7; }}\n\
+         mv {BACKUPS_DIR}/{file}.partial {BACKUPS_DIR}/{file} || {{ echo 'moqui: the backup {file} was not kept'; exit 7; }}\n\
+         echo 'moqui: backup {file}'\n",
+        client_lines(server, &admin.user)?
+    );
+    let mut shot = one_shot(script, vec![admin_file(server, admin)]);
+    shot.mounts.push((volume.to_string(), BACKUPS_DIR.to_string()));
+    let seconds: u64 = moqui_core::context::conf_env::setting("manage@backup-wait-seconds")
+        .parse()
+        .unwrap_or(3600);
+    shot.wait = Some(std::time::Duration::from_secs(seconds));
+    Ok(shot)
 }
 
 /// The one-shot that makes `user` (with `password`) and `database` on the server, refusing (exit [`EXIT_EXISTS`], a

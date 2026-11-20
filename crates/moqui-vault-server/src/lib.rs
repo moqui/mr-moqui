@@ -56,6 +56,8 @@ pub mod members;
 pub mod personal;
 pub mod recovery;
 pub mod reveal;
+#[cfg(feature = "test-support")]
+pub mod testing;
 pub mod vaults;
 
 moqui_core::extension::submit! {
@@ -73,6 +75,11 @@ moqui_core::vault_hooks::submit! {
         leased: lease::hook_leased,
         holds_leased: lease::hook_holds_leased,
         machine_run: machine::hook_machine_run,
+        ask_lease: lease::hook_ask_lease,
+        wait_lease: lease::hook_wait_lease,
+        run_leased: lease::hook_run_leased,
+        end_lease: lease::hook_end_lease,
+        holds_lease: lease::hook_holds_lease,
     }
 }
 

@@ -4856,6 +4856,7 @@ dependencies = [
  "moqui-db",
  "moqui-lib",
  "moqui-report",
+ "moqui-vault-server",
  "rust_xlsxwriter",
  "rustix",
  "serde",
@@ -4863,6 +4864,7 @@ dependencies = [
  "sha2 0.11.1",
  "tar",
  "tracing",
+ "zeroize",
  "zip",
 ]
 

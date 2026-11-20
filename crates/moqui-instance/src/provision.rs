@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use moqui_core::entity::{EntityFacade, EntityValue};
-use moqui_lib::docker::{encode, ContainerSpec, DockerHost, RestartPolicy, SecretFile, PULL_TIMEOUT};
+use moqui_lib::docker::{encode, ContainerSpec, DockerHost, Mount, MountKind, RestartPolicy, SecretFile, PULL_TIMEOUT};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::http::Method;
 use moqui_lib::object::Value;
@@ -411,16 +411,20 @@ fn deposit_credentials(
 /// A leased database admin login, refused when the item's own server is not the one the row names (the row was
 /// changed, or the item is another server's): the login goes only where its item says.
 pub(crate) fn leased_admin(database: &DatabaseUse, binding: &str) -> Result<AdminLogin, LibError> {
+    leased_login(binding, &database.expect_host, &database.expect_port)
+}
+
+/// The login of the item bound to `binding` in the thread's lease, refused unless the item names the server
+/// `expect_host:expect_port` where it is used (reasonCode destinationMismatch).
+pub(crate) fn leased_login(binding: &str, expect_host: &str, expect_port: &str) -> Result<AdminLogin, LibError> {
     let host = leased(binding, "host").unwrap_or_default();
     let port = leased(binding, "port").unwrap_or_default();
-    if host.as_str() != database.expect_host || port.as_str() != database.expect_port {
+    if host.as_str() != expect_host || port.as_str() != expect_port {
         return Err(fail(format!(
-            "{binding} names the server {}:{}, not {}:{} where it would be used: the login goes only to its own \
-             server (reasonCode destinationMismatch)",
+            "{binding} names the server {}:{}, not {expect_host}:{expect_port} where it would be used: the login goes \
+             only to its own server (reasonCode destinationMismatch)",
             host.as_str(),
             port.as_str(),
-            database.expect_host,
-            database.expect_port
         )));
     }
     Ok(AdminLogin {
@@ -639,6 +643,7 @@ pub(crate) fn run_one_shot(
     shot: OneShot,
 ) -> Result<(i64, Vec<String>), LibError> {
     let host = connect_host(host_row)?;
+    let wait = shot.wait.unwrap_or(ONE_SHOT_WAIT);
     let mut tag = [0_u8; 4];
     moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut tag);
     let name = format!("{for_instance}-db-{}", moqui_vault::text::hex(&tag));
@@ -653,6 +658,16 @@ pub(crate) fn run_one_shot(
             ("moqui.instance".to_string(), for_instance.to_string()),
         ],
         network: Some(network.to_string()).filter(|network| !network.is_empty()),
+        mounts: shot
+            .mounts
+            .into_iter()
+            .map(|(source, target)| Mount {
+                kind: MountKind::Volume,
+                source,
+                target,
+                read_only: false,
+            })
+            .collect(),
         restart: RestartPolicy::No,
         secrets: shot
             .files
@@ -664,7 +679,7 @@ pub(crate) fn run_one_shot(
     let container = host.create_spec(&spec)?;
     let ran = (|| -> Result<(i64, Vec<String>), LibError> {
         host.start(&container)?;
-        let until = Instant::now() + ONE_SHOT_WAIT;
+        let until = Instant::now() + wait;
         let info = loop {
             let info = host
                 .inspect(&container)?
@@ -673,10 +688,7 @@ pub(crate) fn run_one_shot(
                 break info;
             }
             if Instant::now() > until {
-                return Err(fail(format!(
-                    "the one-shot {name} did not end in {}s",
-                    ONE_SHOT_WAIT.as_secs()
-                )));
+                return Err(fail(format!("the one-shot {name} did not end in {}s", wait.as_secs())));
             }
             std::thread::sleep(Duration::from_millis(500));
         };
@@ -697,11 +709,24 @@ pub(crate) fn run_one_shot(
 
 /// Pulls an image with the registry login of the lease (`X-Registry-Auth`, which the engine passes to the registry),
 /// after checking that the item's own registry is the image's.
-fn pull_with_login(host: &DockerHost, image: &EntityValue) -> Result<(), LibError> {
+pub(crate) fn pull_with_login(host: &DockerHost, image: &EntityValue) -> Result<(), LibError> {
+    pull_with_login_ref(host, image, &field(image, "imageName"))
+}
+
+/// Pulls `reference` (the image's name, or a digest of its repository a rollback recorded) with the registry login of
+/// the `InstanceImage` row `image`, refused unless the reference pulls from that row's registry.
+pub(crate) fn pull_with_login_ref(host: &DockerHost, image: &EntityValue, reference: &str) -> Result<(), LibError> {
     use base64::Engine as _;
     let image_id = field(image, "instanceImageId");
     let binding = format!("InstanceImage:{image_id}:registry");
     plan::check_registry(image)?;
+    if plan::image_registry(reference) != plan::registry_name(&field(image, "registryLocation")) {
+        return Err(fail(format!(
+            "{reference} pulls from {}, not InstanceImage {image_id}'s registry: its login goes only there (reasonCode \
+             registryMismatch)",
+            plan::image_registry(reference)
+        )));
+    }
     let registry = plan::registry_name(&leased(&binding, "registry").unwrap_or_default());
     let location = plan::registry_name(&field(image, "registryLocation"));
     if registry != location {
@@ -716,21 +741,20 @@ fn pull_with_login(host: &DockerHost, image: &EntityValue) -> Result<(), LibErro
         json!({ "username": user.as_str(), "password": password.as_str(), "serveraddress": location }).to_string(),
     );
     let header = Zeroizing::new(base64::engine::general_purpose::URL_SAFE.encode(auth.as_bytes()));
-    let name = field(image, "imageName");
-    let (repository, tag) = match name.rsplit_once(':') {
-        Some((repository, tag)) if !tag.contains('/') => (repository.to_string(), tag.to_string()),
-        _ => (name.clone(), "latest".to_string()),
+    let name = reference.to_string();
+    // a digest is pulled whole; a name by its repository and tag
+    let target = if name.contains('@') {
+        format!("/images/create?fromImage={}", encode(&name))
+    } else {
+        let (repository, tag) = match name.rsplit_once(':') {
+            Some((repository, tag)) if !tag.contains('/') => (repository.to_string(), tag.to_string()),
+            _ => (name.clone(), "latest".to_string()),
+        };
+        format!("/images/create?fromImage={}&tag={}", encode(&repository), encode(&tag))
     };
     let response = host
         .client()
-        .request(
-            Method::Post,
-            host.url(&format!(
-                "/images/create?fromImage={}&tag={}",
-                encode(&repository),
-                encode(&tag)
-            )),
-        )
+        .request(Method::Post, host.url(&target))
         .header("X-Registry-Auth", header.as_str())
         .timeout(PULL_TIMEOUT)
         .allow_in_sim(true)
@@ -748,6 +772,123 @@ fn pull_with_login(host: &DockerHost, image: &EntityValue) -> Result<(), LibErro
 fn already_there(err: &LibError) -> bool {
     let message = err.message().to_ascii_lowercase();
     message.contains("409") || message.contains("already exists")
+}
+
+/// What an instance's container is made of, from its rows: its settings (never a secret), its volumes (mount point and
+/// name), its host config, and its secret files, each a value this provision made (`values`, by secret name) or else
+/// leased by its binding from the lease the thread runs under.
+pub(crate) struct Parts {
+    pub(crate) env: Vec<(String, String)>,
+    pub(crate) volumes: Vec<(String, String)>,
+    pub(crate) host_config: BTreeMap<String, String>,
+    pub(crate) secrets: Vec<(String, Option<String>, Zeroizing<Vec<u8>>)>,
+}
+
+pub(crate) fn parts(
+    facade: &EntityFacade,
+    id: &str,
+    values: &BTreeMap<String, Zeroizing<String>>,
+) -> Result<Parts, LibError> {
+    let volumes = rows(facade, INSTANCE_VOLUME, "appInstanceId", id)?
+        .iter()
+        .map(|volume| (field(volume, "mountPoint"), field(volume, "volumeName")))
+        .collect();
+    let env: Vec<(String, String)> = rows(facade, INSTANCE_ENV, "appInstanceId", id)?
+        .iter()
+        .map(|row| (field(row, "envName"), field(row, "envValue")))
+        .filter(|(name, _)| !name.is_empty())
+        .collect();
+    let host_config = rows(facade, INSTANCE_HOST_CONFIG, "appInstanceId", id)?
+        .iter()
+        .map(|row| (field(row, "hostConfigName"), field(row, "hostConfigValue")))
+        .collect();
+    let mut secrets = Vec::new();
+    for secret in rows(facade, INSTANCE_SECRET, "appInstanceId", id)? {
+        let file = field(&secret, "fileName");
+        if file.is_empty() {
+            continue;
+        }
+        let secret_name = field(&secret, "secretName");
+        let value = match values.get(&secret_name) {
+            Some(value) => value.clone(),
+            None => leased(&field(&secret, "bindingKey"), &secret_field(&secret))?,
+        };
+        let setting = Some(field(&secret, "envName")).filter(|setting| !setting.is_empty());
+        secrets.push((file, setting, Zeroizing::new(value.as_bytes().to_vec())));
+    }
+    Ok(Parts {
+        env,
+        volumes,
+        host_config,
+        secrets,
+    })
+}
+
+/// The field of its item a secret file holds.
+pub(crate) fn secret_field(secret: &EntityValue) -> String {
+    Some(field(secret, "fieldName"))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "password".to_string())
+}
+
+/// An mr-moqui instance's settings of where it dials and the key it pins (§4.4): settings, not secrets. False when this
+/// manager's link has no address.
+pub(crate) fn link_settings(env: &mut Vec<(String, String)>) -> bool {
+    let Some((url, pin)) = crate::link::manager() else {
+        return false;
+    };
+    env.retain(|(name, _)| name != "moqui_conf__manage__url" && name != "moqui_conf__manage__pin");
+    env.push(("moqui_conf__manage__url".to_string(), url));
+    env.push(("moqui_conf__manage__pin".to_string(), pin));
+    true
+}
+
+/// The container a deploy replaces a made instance's with (plans/Vault-Instances.md §4.6, step 6): from `image`, with
+/// the instance's volumes, settings and secret files (each leased by its binding), its network and published port; no
+/// pairing token, since it is paired.
+pub(crate) fn replacement_spec(
+    facade: &EntityFacade,
+    instance: &EntityValue,
+    kind: &EntityValue,
+    image: &str,
+) -> Result<ContainerSpec, LibError> {
+    let id = field(instance, "appInstanceId");
+    let Parts {
+        mut env,
+        volumes,
+        host_config,
+        secrets,
+    } = parts(facade, &id, &BTreeMap::new())?;
+    if field(kind, "instanceKindId") == "mr-moqui" {
+        link_settings(&mut env);
+        // the version it reports, so Monitor's Releases sees the new one (M4's monitor::version_of names it so)
+        // its Monitor identity, with the version of the image it now runs, so Monitor's Releases sees it (§4.8)
+        let mut next = instance.clone();
+        next.set("imageDigest", Value::string(image));
+        let identity = crate::monitor::identity_of(&field(instance, "environmentId"), &next);
+        env.retain(|(name, _)| !identity.iter().any(|(given, _)| given == name));
+        env.extend(identity);
+    }
+    let port = |name: &str, row: &EntityValue| field(row, name).parse::<u16>().ok();
+    kinds::container_spec(ContainerInput {
+        kind: field(kind, "instanceKindId"),
+        name: field(instance, "instanceName"),
+        image: image.to_string(),
+        pull: false,
+        env,
+        volumes,
+        host_config,
+        labels: vec![
+            ("moqui.instance".to_string(), id.clone()),
+            ("moqui.environment".to_string(), field(instance, "environmentId")),
+        ],
+        network: Some(field(instance, "networkName")).filter(|network| !network.is_empty()),
+        container_port: port("containerPort", kind),
+        host_port: port("hostPort", instance),
+        host_ip: Some(PUBLISH_ON.to_string()),
+        run_as: Some(field(kind, "runAsUser")).filter(|run_as| !run_as.is_empty()),
+        secrets,
+    })
 }
 
 /// Makes the step's network, volumes and container (secrets as files), starts it and records what its host says.
@@ -782,44 +923,19 @@ fn make_container(
             Err(err) => return Err(err),
         }
     }
-    let mut volumes = Vec::new();
-    for volume in rows(facade, INSTANCE_VOLUME, "appInstanceId", &id)? {
-        let name = field(&volume, "volumeName");
-        host.create_volume(&name, &labels)?;
+    let Parts {
+        mut env,
+        volumes,
+        host_config,
+        mut secrets,
+    } = parts(facade, &id, values)?;
+    for (_, name) in &volumes {
+        host.create_volume(name, &labels)?;
         made.push(Made::Volume {
             host: step.host.clone(),
             name: name.clone(),
         });
         report.push(format!("volume {name} on host {host_id}"));
-        volumes.push((field(&volume, "mountPoint"), name));
-    }
-    let mut env: Vec<(String, String)> = rows(facade, INSTANCE_ENV, "appInstanceId", &id)?
-        .iter()
-        .map(|row| (field(row, "envName"), field(row, "envValue")))
-        .filter(|(name, _)| !name.is_empty())
-        .collect();
-    let host_config = rows(facade, INSTANCE_HOST_CONFIG, "appInstanceId", &id)?
-        .iter()
-        .map(|row| (field(row, "hostConfigName"), field(row, "hostConfigValue")))
-        .collect();
-    let mut secrets = Vec::new();
-    for secret in rows(facade, INSTANCE_SECRET, "appInstanceId", &id)? {
-        let file = field(&secret, "fileName");
-        if file.is_empty() {
-            continue;
-        }
-        let secret_name = field(&secret, "secretName");
-        let value = match values.get(&secret_name) {
-            Some(value) => value.clone(),
-            None => {
-                let field_name = Some(field(&secret, "fieldName"))
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "password".to_string());
-                leased(&field(&secret, "bindingKey"), &field_name)?
-            }
-        };
-        let setting = Some(field(&secret, "envName")).filter(|setting| !setting.is_empty());
-        secrets.push((file, setting, Zeroizing::new(value.as_bytes().to_vec())));
     }
     let mut instance = step.instance.clone();
     if field(&step.kind, "instanceKindId") == "mr-moqui" {
@@ -836,11 +952,7 @@ fn make_container(
         ));
         // its Monitor identity (§4.8): its instance id, environment and the manager's OTLP address, settings too
         env.extend(crate::monitor::identity_env(facade, plan, step));
-        // where it dials and the key it pins (§4.4): settings, not secrets
-        if let Some((url, pin)) = crate::link::manager() {
-            env.push(("moqui_conf__manage__url".to_string(), url));
-            env.push(("moqui_conf__manage__pin".to_string(), pin));
-        } else {
+        if !link_settings(&mut env) {
             report.push(format!(
                 "AppInstance {id}: this manager's link has no address (manage@link-url), so the instance does not \
                  dial it; pair it with a code from System › Instances"

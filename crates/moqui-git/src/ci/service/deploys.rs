@@ -66,8 +66,8 @@ fn environment_of(facade: &EntityFacade, parameters: &Parameters, repository: &s
 /// `request#GitDeployment`: deploy the head of a branch (`refName`, the default branch when empty; `commitId`, when
 /// given, must be its head) to an environment of the repository, as the caller. Needs the update right; the branch
 /// must be protected or one the environment's `allowedRefs` names (one no branch rule protects waits for an approver);
-/// the environment must name its pipeline, its target and its token. Out: `deploymentId`, `statusId`,
-/// `pipelineRunId`, `message`.
+/// the environment must name its pipeline, and the managed instances' environment or its target and the vault of its
+/// token. Out: `deploymentId`, `statusId`, `pipelineRunId`, `message`.
 fn request_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(repository) = text(parameters, "repositoryId") else {
         add_error("repositoryId is required");
@@ -87,9 +87,12 @@ fn request_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out
         ));
         return none();
     }
-    if field(&environment, "targetUrl").is_none() || deploy::target_token(&environment).is_none() {
+    let managed = deploy::instance_environment(&environment).is_some();
+    if !managed && (field(&environment, "targetUrl").is_none() || !deploy::has_token(facade, &environment)) {
         add_error(format!(
-            "environment {name} has no target URL or no token from its target"
+            "environment {name} names no managed instances' environment, or no target URL, or no vault holding the \
+             target's token (the item {})",
+            deploy::token_binding(&field(&environment, "environmentId").unwrap_or_default())
         ));
         return none();
     }
@@ -187,6 +190,8 @@ fn may_decide(facade: &EntityFacade, deployment: &EntityValue) -> Result<(), Str
     if authz_disabled() {
         return Ok(());
     }
+    // managed instances: their environment's approver group too, the decider checked as themselves
+    deploy::instance_approver(facade, deployment)?;
     let group = environment_row(facade, deployment).and_then(|environment| field(&environment, "approverGroupId"));
     if deploy::approver_now(group.as_deref(), &repository) {
         Ok(())
@@ -199,8 +204,9 @@ fn may_decide(facade: &EntityFacade, deployment: &EntityValue) -> Result<(), Str
 }
 
 /// `decide#GitDeployment`: approve or refuse (`decision`, with a `reason`) a deployment whose pipeline passed and that
-/// waits for approval. By an approver (the environment's approver group, else a maintainer), never the requester.
-/// Out: `statusId`.
+/// waits for approval. By an approver (the environment's approver group, else a maintainer), never the requester. A
+/// deployment with a lease is approved by opening it: `leaseApproval`, the approver's client's approval of the lease,
+/// goes with the decision unless the lease is open already (plans/Vault-Instances.md §4.6). Out: `statusId`.
 fn decide_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(deployment) = deployment_of(facade, parameters)? else {
         return none();
@@ -223,6 +229,9 @@ fn decide_git_deployment(parameters: &Parameters, facade: &EntityFacade) -> Out 
         current_user(),
         approve,
         text(parameters, "reason").as_deref(),
+        parameters
+            .get("leaseApproval")
+            .filter(|value| !matches!(value, Value::Null)),
     ) {
         Ok(status) => Ok(out([("statusId", Value::string(status))])),
         Err(err) => {
@@ -280,6 +289,7 @@ fn deployment_value(facade: &EntityFacade, row: &EntityValue, maintainer: bool) 
         copy("approvedDate"),
         copy("approvalRequired"),
         copy("refusedByUserId"),
+        copy("leaseId"),
         copy("deployResult"),
         ("errorText", error_text),
         copy("createdDate"),

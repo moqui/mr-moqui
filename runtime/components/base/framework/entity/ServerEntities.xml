@@ -199,6 +199,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="transportEnumId" type="id"/>
         <field name="leaseLimitMinutes" type="number-integer"><description>A lease's time limit for its operations; at most
             vault@lease-max-hours</description></field>
+        <field name="singlePersonDeploy" type="text-indicator" default="'N'"><description>Y: with an approver group, a deploy by
+            hand that opens no vault item (or runs under machine access) runs as its requester asks; N (the default):
+            another member of the group approves it (approve#InstanceDeploy). A deploy's lease is never approved by its
+            requester.</description></field>
         <field name="rolloutPausedDate" type="date-time"><description>Set while its rolling deploys are paused (Monitor's
             pause-rollout, cleared by promote: plans/Vault-Instances.md §4.8); a deploy changes no further member
             meanwhile</description></field>
@@ -288,6 +292,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="runAsUser" type="text-short"><description>The uid:gid its secret files are owned by</description></field>
         <field name="createDatabaseService" type="text-medium"/>
         <field name="checkDatabaseService" type="text-medium"/>
+        <field name="backupService" type="text-medium"><description>A database kind's backup, which a deploy runs before a
+            change that touches the database (M3): of org.moqui.dev.InstanceServices only</description></field>
         <field name="scrapeUrlTemplate" type="text-medium"><description>Where Monitor scrapes an instance of the kind
             (its exporter, or its own Prometheus endpoint), with the template placeholders (${instanceName}): a provision
             adds it as a ScrapeTarget (plans/Vault-Instances.md §4.8). Empty: the kind reports by OTLP or not at
@@ -368,6 +374,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="registryLogin" type="text-indicator" default="'N'"><description>Y: a pull needs the registry-login
             item</description></field>
         <field name="vaultId" type="id"/>
+        <field name="sourceRepositoryId" type="id"><description>The repository the image was built from, and its revision,
+            written by the pipeline that built it: a deploy of the image is gated on a passed run of the environment's
+            required pipeline for that revision (M3), never on a commit a caller names</description></field>
+        <field name="sourceRevision" type="text-short"/>
         <relationship type="one" related="moqui.server.instance.InstanceKind" short-alias="kind"/>
         <relationship type="one-nofk" related="moqui.security.vault.Vault"/>
     </entity>
@@ -409,9 +419,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="networkName" type="text-short"/>
         <field name="databaseName" type="text-short"><description>Its own database on its database dependency</description></field>
         <field name="databaseUser" type="text-short"/>
-        <!-- the version: the image digest and the component commits (JSON, M3) -->
+        <!-- the version: the image digest and the component commits (JSON, M3), and the schema hash its link last
+            reported (a rollback across a change of it is refused) -->
         <field name="imageDigest" type="text-medium"/>
         <field name="componentCommits" type="text-long"/>
+        <field name="schemaHash" type="text-medium"/>
         <field name="desiredStateEnumId" type="id"/>
         <field name="observedState" type="text-short"><description>What its host last said: created, running, restarting,
             paused, exited, dead, missing or unreachable</description></field>
@@ -526,12 +538,24 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="machineAccess" type="text-indicator"/>
         <field name="gitDeploymentId" type="id"/>
         <field name="userId" type="id"/>
-        <field name="versionBefore" type="text-medium"/>
+        <field name="versionBefore" type="text-medium"><description>The image digest before</description></field>
         <field name="versionAfter" type="text-medium"/>
+        <field name="componentCommitsBefore" type="text-long"><description>A deploy's component commits before and after
+            (JSON, name to commit), which its rollback goes back to</description></field>
+        <field name="componentCommitsAfter" type="text-long"/>
+        <field name="schemaHashBefore" type="text-medium"><description>The schema hash the instance reported before and
+            after a deploy: a rollback across a change of it is refused</description></field>
+        <field name="schemaHashAfter" type="text-medium"/>
+        <field name="rollbackOfActionId" type="id"><description>The deploy this action rolled back</description></field>
+        <field name="instanceImageIdBefore" type="id"><description>The InstanceImage the instance ran before a deploy, whose
+            registry login a rollback's pull of the recorded digest takes</description></field>
+        <field name="deployRequest" type="text-long"><description>A deploy by hand waiting for another member's approval:
+            what was asked (the request#InstanceDeploy parameters; no value), which approve#InstanceDeploy runs</description></field>
         <field name="report" type="text-very-long"/>
         <field name="startDate" type="date-time"/>
         <field name="endDate" type="date-time"/>
         <index name="INST_ACTION_INST"><index-field name="appInstanceId"/><index-field name="startDate"/></index>
+        <index name="INST_ACTION_DEPLOY"><index-field name="gitDeploymentId"/></index>
         <relationship type="one-nofk" related="moqui.server.instance.AppInstance"/>
         <relationship type="one" title="Action" related="moqui.basic.Enumeration">
             <key-map field-name="actionEnumId"/></relationship>

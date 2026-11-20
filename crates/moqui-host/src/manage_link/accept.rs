@@ -863,11 +863,14 @@ impl Manager for Service {
         self.conn.helloed.store(true, Ordering::Release);
         let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
         let (seal_state, members) = (status.seal_state.clone(), status.cluster_members.clone());
+        let schema_hash = status.schema_hash.clone();
         self.server
             .on_pool(move |facade| {
                 moqui_instance::link::note_state(facade, &instance, "linked", Some(&seal_state), &remote);
                 // its cluster's live members, which Monitor compares (plans/Vault-Instances.md §4.8)
                 moqui_instance::monitor::note_members(facade, &instance, &members);
+                // the schema a deploy records before it and a rollback compares (M3)
+                moqui_instance::link::note_schema(facade, &instance, &schema_hash);
                 Ok(())
             })
             .await?;
@@ -908,6 +911,24 @@ impl Manager for Service {
             if let Err(status) = written {
                 tracing::error!(
                     "Manager link: the cluster members of AppInstance {} were not written: {}",
+                    self.conn.instance,
+                    status.message()
+                );
+            }
+        }
+        if !status.schema_hash.is_empty() {
+            // the schema a deploy records before it and a rollback compares (M3): a write that fails is logged
+            let (instance, schema_hash) = (self.conn.instance.clone(), status.schema_hash.clone());
+            let written = self
+                .server
+                .on_pool(move |facade| {
+                    moqui_instance::link::note_schema(facade, &instance, &schema_hash);
+                    Ok(())
+                })
+                .await;
+            if let Err(status) = written {
+                tracing::error!(
+                    "Manager link: the schema hash of AppInstance {} was not written: {}",
                     self.conn.instance,
                     status.message()
                 );

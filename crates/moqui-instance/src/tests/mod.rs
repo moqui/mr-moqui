@@ -30,6 +30,7 @@ use moqui_vault::rng::OsRng;
 use serde_json::{json, Value as Json};
 
 mod database;
+mod deploy;
 mod docker_real;
 mod kinds;
 mod link;

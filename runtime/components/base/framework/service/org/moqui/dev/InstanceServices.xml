@@ -363,6 +363,103 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
 
+    <!-- ========== Deploys (plans/Vault-Instances.md §4.6, M3; docs/tools/Component-Deploy.md "A deploy over the link") ==========
+        The gate (a passed run of the environment's required pipeline for the commit), the lease its approval opens (or
+        the environment's machine access), a backup first, the roll one instance at a time (a cluster member drained over
+        the link), the annotations, and rollback to the versions an action recorded, refused across a schema change. -->
+    <service verb="define" noun="InstanceDeployParameters" type="interface">
+        <description>What a deploy by hand changes: a new image (instanceImageId, gated on the revision its row records),
+            a component's commit (componentName, repositoryId, refName, commitId, dataTypes), or the rollback of a deploy
+            action (rollbackOfActionId); in an environment, or on one instance or cluster of it.</description>
+        <in-parameters>
+            <parameter name="environmentId"><description>Its instance's when appInstanceId is given</description></parameter>
+            <parameter name="appInstanceId"/>
+            <parameter name="clusterId"/>
+            <parameter name="instanceImageId"/>
+            <parameter name="componentName"/>
+            <parameter name="refName"/>
+            <parameter name="commitId"><description>A component's commit, which the gate checks; an image is gated on the
+                revision its row records</description></parameter>
+            <parameter name="repositoryId"><description>A component's repository: a CI environment of it must deploy to
+                this environment, whose cloneUrl the instance fetches from</description></parameter>
+            <parameter name="dataTypes"/>
+            <parameter name="rollbackOfActionId"/>
+        </in-parameters>
+    </service>
+    <service verb="preview" noun="InstanceDeploy" type="rust" location="moqui_instance::services::preview_instance_deploy"
+            allow-remote="false" transaction="ignore">
+        <description>What a deploy would change: each instance with its image digest, component commits and schema hash
+            before and after, whether it is drained or replaced, the backups it runs first, and the lease it needs (where
+            each item goes). No value.</description>
+        <implements service="org.moqui.dev.InstanceServices.define#InstanceDeployParameters"/>
+        <out-parameters><parameter name="preview" type="Map"/></out-parameters>
+    </service>
+    <service verb="request" noun="InstanceDeploy" type="rust" location="moqui_instance::services::request_instance_deploy"
+            allow-remote="false" transaction="ignore">
+        <description>A deploy from the instance or environment page: refused without a passed run of the environment's
+            required pipeline for the commit (a rollback is not gated, and is refused across a schema change); run now
+            when it opens no vault item or the environment has machine access, else its lease is asked for and it runs on
+            this server once an approver opens it (System › Vaults › Lease).</description>
+        <implements service="org.moqui.dev.InstanceServices.define#InstanceDeployParameters"/>
+        <out-parameters>
+            <parameter name="instanceActionId"/>
+            <parameter name="statusEnumId"/>
+            <parameter name="leaseId"/>
+        </out-parameters>
+    </service>
+    <service verb="prepare" noun="GitDeployment" type="rust" location="moqui_instance::services::prepare_git_deployment"
+            allow-remote="false" transaction="ignore">
+        <description>Called only by a deployment's step (crates/moqui-git, with authorization disabled) whose environment
+            names an InstanceEnvironment, once its pipeline passed (the deployment waiting-pipeline): the gate, and the lease of what its deploy opens, held on this server, which then runs its
+            deploy step. None with machine access or when it opens nothing; approvalRequired unless the environment has
+            machine access.</description>
+        <in-parameters><parameter name="deploymentId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="leaseId"/>
+            <parameter name="approvalRequired" type="Boolean"/>
+            <parameter name="leaseMinutes" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="deploy" noun="GitDeployment" type="rust" location="moqui_instance::services::deploy_git_deployment"
+            allow-remote="false" transaction="ignore">
+        <description>A deployment's deploy step to managed instances (crates/moqui-git only, with authorization disabled; the
+            deployment deploying and leaseId its own): the component at the deployment's commit to the environment's mr-moqui instances over the manager link, no attestation posted, under leaseId or
+            the environment's machine access.</description>
+        <in-parameters>
+            <parameter name="deploymentId" required="true"/>
+            <parameter name="leaseId"/>
+            <parameter name="componentName" required="true"/>
+            <parameter name="repositoryUrl" required="true"/>
+            <parameter name="source"/>
+            <parameter name="dataTypes"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="deployResult"><description>JSON: status, component, commitId, instances, actions</description></parameter>
+            <parameter name="report"/>
+        </out-parameters>
+    </service>
+    <service verb="backup" noun="DatabaseInstance" type="rust" location="moqui_instance::services::backup_database_instance"
+            allow-remote="false" transaction="ignore">
+        <description>A database kind's backup, which a deploy runs first: one database (databaseName) or all, dumped by a
+            one-shot client on the server's network into its backups volume (instanceName-backups), with the admin login
+            from the lease the call runs under, checked against the server its item names.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="databaseName"/>
+        </in-parameters>
+        <out-parameters><parameter name="backupFile"><description>volume:file</description></parameter></out-parameters>
+    </service>
+    <service verb="approve" noun="InstanceDeploy" type="rust" location="moqui_instance::services::approve_instance_deploy"
+            allow-remote="false" transaction="ignore">
+        <description>Approve a deploy by hand that waits for another member of its environment's approver group (it opens
+            no vault item, or runs under machine access, and the environment is not singlePersonDeploy): INSTANCE_ADMIN
+            and a member of the group, never its requester; the deploy then runs as it was asked.</description>
+        <in-parameters><parameter name="instanceActionId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="instanceActionId"/>
+            <parameter name="statusEnumId"/>
+        </out-parameters>
+    </service>
     <!-- Monitor (plans/Vault-Instances.md §4.8) -->
     <service verb="get" noun="InstanceFleet" type="rust" location="moqui_instance::services::get_instance_fleet"
             allow-remote="false" transaction="ignore">

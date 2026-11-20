@@ -248,13 +248,29 @@ plans/Vault-Instances.md §4.4.
 - **On the instance** the link opens no listener. It pins the manager's key from `manage@pin` (a provision's setting, or
   what a code is shown with); a manager that presents another key is refused before any secret is sent. The manager's
   commands run as the link's one identity and only these: status, seal, restart, drain, undrain, put-secret (the
-  operator's rules: the crypt pass only with force), deploy-component (`deploy#AttestedComponent`, whose attestation
-  stands for `COMPONENT_DEPLOY`), export-seal (wrapped values only), surface-report (not built) and a changed approver
+  operator's rules: the crypt pass only with force), deploy-component (with a signature `deploy#AttestedComponent`, whose
+  attestation stands for `COMPONENT_DEPLOY`; with none the manager's own deploy of M3, the pinned link standing for the
+  permission and `component-deploy@enabled`, run by the link's handler and never reachable as a service, still claimed
+  newer than the component's last and kept to its commit under the gate; the manager sends one only from Rust once a
+  deploy passed its gate, lease and approval, and `call#InstanceCommand` refuses a `deploy-component` with no
+  signature), export-seal (wrapped values only),
+  surface-report (not built) and a changed approver
   set (taken only when signed by an approver the instance pinned, at a higher version); an unknown command is refused,
   and while sealed only status runs. The bootstrap bundle is HPKE to the pinned bundle key, its instance id as
   associated data, and goes into `seal.json`, never `.env`.
-- **What a compromised manager can do** (§4.9): every command above on every instance it manages, including put-secret
-  and seal; it cannot change a pinned approver set without an approver's signature, nor read a value an instance does
+- **Deploys** (M3, plans/Vault-Instances.md §4.6): `request#InstanceDeploy`, `prepare#` and `deploy#GitDeployment`
+  and `backup#DatabaseInstance` need `INSTANCE_ADMIN` (or authorization disabled: crates/moqui-git's deploy step), and
+  an environment's approver group when it names one, checked as the caller before authorization is turned off;
+  `prepare#` and `deploy#GitDeployment` only with authorization disabled (the deploy step), the deployment in its
+  state and with its own lease. A deploy is refused without a passed run of the environment's required pipeline for
+  what it deploys (a linked repository's commit, an image's recorded revision); what it opens of the vault is leased
+  by an operation that names each item's destination, a lease of another operation refused, and never approved by its
+  requester; a deploy with no lease waits for a second member of the group unless the environment is single-person;
+  a rollback across a schema change, or of a schema not known, is refused. Naming an
+  `InstanceEnvironment` from a CI environment needs `INSTANCE_ADMIN`, and a CI environment's machine access to its
+  target's token `VAULT_ADMIN`.
+- **What a compromised manager can do** (§4.9): every command above on every instance it manages, including put-secret,
+  seal and a deploy of any commit; it cannot change a pinned approver set without an approver's signature, nor read a value an instance does
   not send it. A manager compromised at pairing chooses the approver set the instance pins.
 - **SSH transport**: the manager runs `ssh` (`manage@ssh-command`) with `-F /dev/null`, `GlobalKnownHostsFile=/dev/null`
   and `StrictHostKeyChecking=yes` against the host key pinned on the row (one key line, checked), the user by `-l` and

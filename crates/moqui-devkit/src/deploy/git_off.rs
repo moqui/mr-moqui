@@ -120,6 +120,16 @@ pub fn deploy_attested(
     Err(NO_GIT.to_string())
 }
 
+/// # Errors
+///
+/// Always: this build has no git.
+pub fn deploy_managed(
+    _factory: &Arc<ExecutionContextFactory>,
+    _attestation_text: &str,
+) -> Result<AttestedDeploy, String> {
+    Err(NO_GIT.to_string())
+}
+
 /// No component is kept in a repository in this build: nothing to apply. The gate's conf is still read here, at
 /// start, so a conf reload does not change it.
 pub fn install(factory: &Arc<ExecutionContextFactory>) {

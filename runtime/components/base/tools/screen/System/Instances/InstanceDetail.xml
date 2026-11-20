@@ -20,7 +20,10 @@ along with this software (see the LICENSE.md file). If not, see
     only; nothing here reaches a host as it renders. The manager link (§4.4, M2): the link as this manager holds it
     (get#InstanceLink, from memory and the row), and for an instance this manager did not make, a pairing code
     (create#InstancePairingCode) shown once after the redirect with this manager's address and link key fingerprint;
-    Revoke unpins the instance's link key and closes its link. -->
+    Revoke unpins the instance's link key and closes its link. Deploys (§4.6, M3): Deploy posts request#InstanceDeploy
+    with a new image or a component's commit (refused without a passed run of the environment's required pipeline for
+    the commit), and Roll back on a done deploy action goes back to the versions it recorded (refused across a schema
+    change); each runs now or goes to the lease dialog, as the actions do. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Instance" default-menu-include="false">
 
@@ -31,6 +34,19 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="leaseId"/></conditional-response>
         <default-response url="."/></transition>
     <transition name="instanceDetail"><default-response url="."/></transition>
+    <transition name="requestDeploy" method="post"><service-call name="org.moqui.dev.InstanceServices.request#InstanceDeploy"/>
+        <conditional-response url="../../Vaults/Lease"><condition><expression>leaseId</expression></condition>
+            <parameter name="leaseId"/></conditional-response>
+        <default-response url="."/><error-response url="."/></transition>
+    <transition name="approveDeploy" method="post">
+        <service-call name="org.moqui.dev.InstanceServices.approve#InstanceDeploy" in-map="{instanceActionId:instanceActionId}"/>
+        <default-response url="."/><error-response url="."/></transition>
+    <transition name="rollbackDeploy" method="post">
+        <service-call name="org.moqui.dev.InstanceServices.request#InstanceDeploy"
+                in-map="{appInstanceId:appInstanceId, rollbackOfActionId:rollbackOfActionId}"/>
+        <conditional-response url="../../Vaults/Lease"><condition><expression>leaseId</expression></condition>
+            <parameter name="leaseId"/></conditional-response>
+        <default-response url="."/><error-response url="."/></transition>
     <transition name="makePairingCode" method="post">
         <service-call name="org.moqui.dev.InstanceLinkServices.create#InstancePairingCode" in-map="{appInstanceId:appInstanceId}" out-map="codeOut"/>
         <actions><!-- shown once, after the redirect; only its hash is kept -->
@@ -109,6 +125,23 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="actionEnumId"><default-field><hidden default-value="IatRestart"/></default-field></field>
                     <field name="submitButton"><default-field title="Restart"><submit/></default-field></field>
                 </form-single>
+                <container-dialog id="DeployDialog" button-text="Deploy" type="primary">
+                    <label type="p" text="A new image of its kind, or a component's commit over its link. Only a commit the environment's required pipeline passed is deployed; a change that touches its database backs it up first, and a deploy that opens vault items asks for its lease."/>
+                    <form-single name="Deploy" transition="requestDeploy">
+                        <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                        <field name="instanceImageId"><default-field title="New image">
+                            <drop-down allow-empty="true"><entity-options key="${instanceImageId}" text="${instanceImageId}: ${imageName}">
+                                <entity-find entity-name="moqui.server.instance.InstanceImage">
+                                    <econdition field-name="instanceKindId" from="appInstance?.instanceKindId"/>
+                                    <order-by field-name="instanceImageId"/></entity-find></entity-options></drop-down>
+                        </default-field></field>
+                        <field name="componentName"><default-field title="Or a component"><text-line size="30"/></default-field></field>
+                        <field name="repositoryId"><default-field title="Its repository" tooltip="A repository whose CI environment deploys to this environment: its pipeline must have passed for the commit, and the instance fetches from that environment's clone URL"><text-line size="30"/></default-field></field>
+                        <field name="refName"><default-field title="Its branch"><text-line size="20" default-value="main"/></default-field></field>
+                        <field name="commitId"><default-field title="Commit" tooltip="The component's commit, which its pipeline passed; an image is gated on the revision its row records"><text-line size="42"/></default-field></field>
+                        <field name="submitButton"><default-field title="Deploy"><submit confirmation="Deploy to ${appInstanceId}?"/></default-field></field>
+                    </form-single>
+                </container-dialog>
                 <form-single name="Remove" transition="requestInstanceAction">
                     <field name="appInstanceId"><default-field><hidden/></default-field></field>
                     <field name="actionEnumId"><default-field><hidden default-value="IatRemove"/></default-field></field>
@@ -225,7 +258,22 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="userId"><default-field title="By"><display/></default-field></field>
                     <field name="versionBefore"><default-field title="Before"><display/></default-field></field>
                     <field name="versionAfter"><default-field title="After"><display/></default-field></field>
+                    <field name="schemaHashAfter"><default-field title="Schema">
+                        <display text="${schemaHashBefore &amp;&amp; schemaHashAfter &amp;&amp; schemaHashBefore != schemaHashAfter ? 'changed' : ''}"/></default-field></field>
+                    <field name="gitDeploymentId"><default-field title="Deployment"><display/></default-field></field>
                     <field name="report"><default-field><display/></default-field></field>
+                    <field name="approve"><default-field title="">
+                        <link url="approveDeploy" text="Approve" link-type="hidden-form"
+                                parameter-map="{appInstanceId:appInstanceId, instanceActionId:instanceActionId}"
+                                confirmation="Approve the deploy of action ${instanceActionId}? It runs now, as it was asked."
+                                condition="statusEnumId == 'IasWaiting' &amp;&amp; !leaseId &amp;&amp; (actionEnumId == 'IatDeploy' || actionEnumId == 'IatRollback')"/>
+                    </default-field></field>
+                    <field name="rollback"><default-field title="">
+                        <link url="rollbackDeploy" text="Roll back" link-type="hidden-form" btn-type="danger"
+                                parameter-map="{appInstanceId:appInstanceId, rollbackOfActionId:instanceActionId}"
+                                confirmation="Roll ${appInstanceId} back to the versions before action ${instanceActionId}?"
+                                condition="(actionEnumId == 'IatDeploy' || actionEnumId == 'IatRollback') &amp;&amp; statusEnumId == 'IasDone'"/>
+                    </default-field></field>
                 </form-list>
             </box-body></container-box>
         </widgets></section>

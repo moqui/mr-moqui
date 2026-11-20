@@ -37,6 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="registryLogin"><default-field title="Registry login" tooltip="A pull leases the item InstanceImage:id:registry">
                     <drop-down><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
                 <field name="vaultId"><default-field title="Vault of its login" tooltip="The environment's when empty"><text-line size="30"/></default-field></field>
+                <field name="sourceRepositoryId"><default-field title="Built from repository" tooltip="Written by the pipeline that built it: a deploy is gated on its passed run for the revision"><text-line size="30"/></default-field></field>
+                <field name="sourceRevision"><default-field title="Revision"><text-line size="42"/></default-field></field>
                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-single>
         </container-dialog>
@@ -47,6 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="imageName"><default-field title="Image"><display/></default-field></field>
             <field name="registryLocation"><default-field title="Registry"><display/></default-field></field>
             <field name="registryLogin"><default-field title="Login"><display/></default-field></field>
+            <field name="sourceRevision"><default-field title="Revision"><display text="${sourceRepositoryId ? sourceRepositoryId + ' ' + (sourceRevision || '').substring(0, 12) : ''}"/></default-field></field>
         </form-list>
     </widgets>
 </screen>

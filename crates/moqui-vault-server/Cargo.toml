@@ -21,6 +21,10 @@ tracing.workspace = true
 # the lease key's seed, the machine key's pass and the values a lease handed out, cleared when dropped
 zeroize.workspace = true
 
+[features]
+# testing: an operational vault with its members' client sessions, for another crate's tests (a deploy's lease)
+test-support = ["moqui-core/test-support"]
+
 [dev-dependencies]
 # moqui_core::testing, the in-memory entity facade the tests open.
 moqui-core = { workspace = true, features = ["test-support"] }

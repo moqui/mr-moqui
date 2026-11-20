@@ -244,8 +244,9 @@ who pushes has, or with authorization disabled; an owner's with authorization di
 scope or environment takes a new value: its old one was given for the old scope. In the same way an environment whose
 `allowedRefs` gains a pattern, whose `approvalRequired` is turned off, or whose `approverGroupId` changes while approval is
 required, has the values of its secrets cleared (they are
-given again for the environment as it is now), and one whose `targetUrl` changes without a new `token` loses its
-token; what was cleared is the result's `cleared`, for the page to show. A job is given a secret it asks for
+given again for the environment as it is now), and one whose `targetUrl` or `vaultId` changes loses its
+`machineAccess` to the target's token (turned on again by a `VAULT_ADMIN`); what was cleared is the result's
+`cleared`, for the page to show. A job is given a secret it asks for
 only when its run is trusted and the secret's scope is met:
 
 | Scope | Given when |
@@ -537,8 +538,10 @@ and `attest.rs`; the target's side is Component-Deploy's ([the gate](../tools/Co
 
 | Field | |
 | --- | --- |
-| `targetUrl` | The target instance's base URL: `https`, or `http` to a loopback IP literal only (the instance and itself). Its address follows the webhooks' rules: a loopback, private or link-local one (written out or resolved) is refused unless `git-ci` `deploy-private-network="true"`. It is the attestation's `audience`, which the target compares with its own `public-urls`. `find#CiEnvironments` answers it to a maintainer only. |
-| `token` (`targetToken`) | The secret the target issued: its `component-deploy` `attestation-secret`, at least 32 characters. Encrypted, never read back (`hasToken`), and never sent: it signs. |
+| `instanceEnvironmentId` | The `InstanceEnvironment` of managed instances it deploys to ([Deploys to managed instances](#deploys-to-managed-instances)); named by an `INSTANCE_ADMIN` only. Then no target, token or attestation: the deploy goes over the manager link. |
+| `targetUrl` | A target not managed here: the instance's base URL, `https`, or `http` to a loopback IP literal only (the instance and itself). Its address follows the webhooks' rules: a loopback, private or link-local one (written out or resolved) is refused unless `git-ci` `deploy-private-network="true"`. It is the attestation's `audience`, which the target compares with its own `public-urls`. `find#CiEnvironments` answers it to a maintainer only. |
+| `vaultId` | The operational vault holding the secret the target issued (its `component-deploy` `attestation-secret`, at least 32 characters): the item bound to `GitCiEnvironment:<environmentId>:targetToken`, an API key whose `secret` field holds it, which a vault member makes in their client (System › Vaults). No row holds the token, no service takes it (`token` is refused) and it is never sent: it signs, read under the deployment's lease or the environment's machine access ([deploy secrets as vault items](#deploy-secrets-as-vault-items)). `hasToken` says whether the vault holds the item. |
+| `machineAccess` | Y: the deploy step signs under the vault's machine access for the environment `git-ci-<environmentId>` (given in System › Vaults), with no lease to approve, for unattended deploys such as a demo's after each green merge; turned on by a `VAULT_ADMIN` only, and off again when `targetUrl` or `vaultId` changes. |
 | `requiredPipeline` | The pipeline that must pass for the commit. It must have the `deploy` event (`on="deploy"`, beside others if it likes). |
 | `approvalRequired`, `approverGroupId` | Whether an approver approves once the pipeline passed, and who: the members of the group who view the repository, else a maintainer (the delete right). Never the requester. |
 | `allowedRefs` | The branches that deploy besides protected ones (as for the environment's secrets). A deployment of a branch no branch rule protects waits for an approver whatever `approvalRequired` says: whoever pushes to it chose the commit and the pipeline file that tests it. |
@@ -569,9 +572,11 @@ the deployment: `decide#GitDeployment` is the one approval step (as approving op
 
 1. reads `component.xml` at the commit. A repository with none, the framework's own, is **not deployable here**: a
    framework change ships as a new archive or image ([Run-Deploy](../Run-Deploy.md)), and the deployment fails saying
-   so, nothing built;
-2. checks the target URL and its token, and asks the outbound check (`git-server` `outbound-check-service`, kind
-   `deploy`, the environment as its event; [Git-Hosting](Git-Hosting.md#outbound-check));
+   so, nothing built. An environment that names an `InstanceEnvironment` then deploys over the manager link instead
+   of the steps below ([Deploys to managed instances](#deploys-to-managed-instances));
+2. checks the target URL, signs the attestation with the token from the environment's vault (under the deployment's
+   lease, or the environment's machine access), and asks the outbound check (`git-server` `outbound-check-service`,
+   kind `deploy`, the environment as its event; [Git-Hosting](Git-Hosting.md#outbound-check));
 3. posts `{attestation, signature}` to `<targetUrl>/rest/s1/moqui/components/deploy` (`deploy#AttestedComponent`):
    no redirect followed, at most `deploy-timeout-seconds` (600), 1 MiB of answer read;
 4. records the answer: `deployed` with `deployResult` (`status` deployed or up-to-date, `component`, `commitId`,
@@ -606,6 +611,54 @@ On moqui.org: a demo instance's environment for the protected main with no appro
 for after each green merge; moqui.org's own with `approvalRequired` and its target set to `require-passed-run`, with an
 `allow` entry for each component it takes.
 
+### Deploy secrets as vault items
+
+**Upgrading.** The token column (`GitCiEnvironment.targetToken`) is gone from the entity, and no deployment reads it:
+an existing target's token is entered again as the vault item below, and the environment given its `vaultId`, before
+it deploys; the old column, left in the database, holds the old encrypted value until it is dropped
+(`ALTER TABLE ... DROP COLUMN TARGET_TOKEN`).
+
+What a deploy signs or opens with is an item of an operational vault ([Vault-Instances](../../plans/Vault-Instances.md)
+§3.7, §3.8), never a row's value: a target's token, and for managed instances a host's client key, a registry login,
+a replaced container's secret files and a database's admin login for its backup. Once the pipeline passed:
+
+- **Under a lease.** The deploy asks for the lease of the items it needs, held by this cluster member, which then
+  runs the deploy step; the deployment's `leaseId` names it, and it waits for approval whatever `approvalRequired`
+  says (its notices carry the lease). Approving the deployment is opening the lease, one decision:
+  `decide#GitDeployment` with `leaseApproval` (the approver's client's approval of the lease, sent to
+  `approve#VaultLease` under the caller's own rights: the vault's approve role and a recent sign-in), or the lease
+  approved in the lease dialog by someone who may decide the deployment (an approver of the environment, not the
+  requester), which the member holding the lease takes as the decision. An approval without an open lease is
+  refused; a decision that crosses the lease dialog's changes nothing the second time; a refusal ends the lease; a
+  lease not approved in its time (or revoked) fails the deployment, and `end#OverdueJobRuns` fails one whose lease
+  ended, was revoked or passed its time (a restart of the member that holds it ends it) before it deployed: deploy
+  again. The lease ends with the deploy step. For managed instances the decider is also a member of the
+  `InstanceEnvironment`'s approver group, when it names one.
+- **Under machine access.** With `machineAccess` (a target's environment) or an `InstanceEnvironment` whose
+  `machineAccess` is Y, no lease is asked: the step opens the items the vault gave the environment, approved by
+  "machine", and the deployment's own approval rule stands.
+
+### Deploys to managed instances
+
+An environment that names an `InstanceEnvironment` (`instanceEnvironmentId`) deploys to that environment's mr-moqui
+instances over the manager link ([Vault-Instances](../../plans/Vault-Instances.md) §4.6, M3; the instance side is
+[Component-Deploy](../tools/Component-Deploy.md#a-deploy-over-the-link)):
+
+1. once the pipeline passed, `org.moqui.dev.InstanceServices.prepare#GitDeployment` (crates/moqui-instance, called by
+   name) checks the gate, a passed run of the `InstanceEnvironment`'s `requiredPipeline` (else this environment's) for
+   the commit, and asks for the lease of what the deploy opens; the deployment waits for approval unless that
+   environment has machine access;
+2. the deploy step calls `deploy#GitDeployment`, which checks the gate again, opens the lease, backs up a database the
+   change touches, and rolls the instances one at a time (a cluster member drained over the link, changed with
+   Component-Deploy's update as the link's caller, waited for until healthy and unsealed, undrained), each change an
+   `InstanceAction` with its versions before and after and an annotation in Monitor; no attestation is posted and the
+   instances hold no attestation secret;
+3. its `deployResult` names the instances and actions; a failure names the instance that failed and leaves the rest
+   unchanged.
+
+A deploy by hand (a new image, a component's commit, or a rollback to the versions an action recorded, refused across
+a schema change) is the same steps from System › Instances (`request#InstanceDeploy`).
+
 ## Records
 
 In `moqui.resource` (`framework/entity/GitCiEntities.xml`). States are plain codes.
@@ -619,11 +672,11 @@ In `moqui.resource` (`framework/entity/GitCiEntities.xml`). States are plain cod
 | `GitRunArtifact` | An upload: `artifactKind` (artifact, report, cache), `name`, `path`, `blobId`, `sizeBytes`, `sha256`, `cacheKey`, `protectedRef`, `keep`, `expireDate`, `lastUsedDate` |
 | `GitRunTestFailure` | A failed test: `suiteName`, `testName`, `filePath`, `lineNumber`, `message`, `durationMillis` |
 | `GitCiSecret` | `repositoryId` or `ownerId`, `name`, `secretValue` (encrypted), `scope`, `environmentId`, `lastUsedDate` |
-| `GitCiEnvironment` | `repositoryId` or `ownerId`, `name`, `allowedRefs`, and for deployments `targetUrl`, `targetToken` (encrypted), `cloneUrl`, `requiredPipeline`, `approvalRequired`, `approverGroupId`, `dataTypes`, `lastCommitId`, `lastDeploymentId`, `lastDeployDate` |
+| `GitCiEnvironment` | `repositoryId` or `ownerId`, `name`, `allowedRefs`, and for deployments `instanceEnvironmentId`, or `targetUrl`, `vaultId` (the vault of the target's token item) and `machineAccess`; `cloneUrl`, `requiredPipeline`, `approvalRequired`, `approverGroupId`, `dataTypes`, `lastCommitId`, `lastDeploymentId`, `lastDeployDate` |
 | `GitRunnerPool`, `GitRunner` | Pools and their registered runners |
 | `GitRunnerUsage` | The time of one job run, written when it ends: `repositoryId`, `ownerId`, `runnerPoolId`, `trusted`, `periodKey` (yyyy-MM), `secondsUsed`, `minutesUsed` (started minutes) |
 | `GitPipelineSchedule` | The schedule pipelines of a repository's default branch |
-| `GitDeployment` | A deployment ([deployments](#deployments)): `repositoryId`, `environmentId`, `environmentName`, `commitId`, `refName`, `componentName`, `pipelineRunId`, `statusId` (requested, waiting-pipeline, waiting-approval, deploying, deployed, failed, refused, cancelled), `requestedByUserId`, `approvalRequired`, `approvedByUserId`, `approvedDate`, `refusedByUserId`, `deployResult`, `errorText` (a maintainer's only; never a secret), `createdDate`, `startedDate`, `finishedDate` |
+| `GitDeployment` | A deployment ([deployments](#deployments)): `repositoryId`, `environmentId`, `environmentName`, `commitId`, `refName`, `componentName`, `pipelineRunId`, `statusId` (requested, waiting-pipeline, waiting-approval, deploying, deployed, failed, refused, cancelled), `requestedByUserId`, `approvalRequired`, `approvedByUserId`, `approvedDate`, `refusedByUserId`, `leaseId` (the lease its approval opens), `deployResult`, `errorText` (a maintainer's only; never a secret), `createdDate`, `startedDate`, `finishedDate` |
 
 Logs and uploads are content blobs ([Git-Hosting](Git-Hosting.md)): the rows refer to them, and `gc#ContentBlobs`
 deletes a blob once no row does. `delete#GitRepository` removes a repository's rows of these entities with it, in
@@ -804,10 +857,8 @@ container through the driver's services, inspects it, and removes it.
 - **Deployments**: an owner's environment (a repository's only); a private repository's fetch by the target (it
   fetches with no credential, so the clone URL must be one the target reads); a tag, or a commit that is not its
   branch's head; the REST of the hosting API for deployments (the services are there); building a framework archive
-  or image, which a framework deployment only reports as not deployable here. Deploys to managed instances
-  ([Vault-Instances](../../plans/Vault-Instances.md) §4.6) are to name an `InstanceEnvironment` from the environment;
-  `targetUrl` and `targetToken` stay for a target not managed here, the token read in one place
-  (`ci::deploy::target_token`) so it can become a vault item, and `decide#GitDeployment` stays the one approval step.
+  or image, which a framework deployment only reports as not deployable here (a new image is deployed to managed
+  instances by hand, from System › Instances).
 - **A small static runner** for an image without the `moqui` binary.
 - **Windows registered runners**: steps run with `sh -c`, and a step past its time is killed by process group on
   Unix only.

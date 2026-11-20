@@ -247,8 +247,11 @@ deployment, [Pipelines](../interfaces/Pipelines.md#deployments)). In its conf:
 ```
 
 and in `runtime/.env` a secret of at least 32 characters (`openssl rand -hex 32`):
-`moqui_conf__component_deploy__attestation_secret=...`. Give the same secret to the source server as its environment's token
-(`store#CiEnvironment` `token`), with this server's base URL (one of `public-urls`) as the environment's `targetUrl`.
+`moqui_conf__component_deploy__attestation_secret=...`. Give the same secret to the source server as its environment's
+token, an item of the environment's operational vault (`GitCiEnvironment:<environmentId>:targetToken`, an API key whose
+`secret` field holds it; [Pipelines](../interfaces/Pipelines.md#deployments)), with this server's base URL (one of
+`public-urls`) as the environment's `targetUrl`. A server the source manages needs none of this: it is deployed to over
+the manager link ([A deploy over the link](#a-deploy-over-the-link)).
 
 - **Read once at start.** The whole element, its secret and its `allow` entries are read when the server starts; a
   conf reload or a live override (Monitor › Settings) changes none of it until the next start, and the conf reload
@@ -295,6 +298,59 @@ What it does not cover: whoever edits the conf (`CONF_EDIT`) or the runtime's fi
 a component directory for the next start; whoever writes the database (Tools' SQL with Allow Changes, Data Load, an
 entity editor) can change the rows a start reads; it keeps the server's own deploy services to attested commits, not
 its file system or database. See [Attack-Surface](../security/Attack-Surface-Tools.md#component-deploy-and-conf-reload).
+
+## A deploy over the link
+
+A managed instance (plans/Vault-Instances.md §4.6, M3; [Run-Deploy](../Run-Deploy.md)) is deployed to by its manager
+over the manager link, not by an attestation posted to its REST:
+
+- **No attestation secret.** The manager sends the link's `deploy-component` command with the commit (the repository
+  URL, branch, commit, component and data types, in the attestation's JSON shape) and no signature. The link's pinned
+  keys name the caller, so the instance needs no `attestation-secret`, no `allow` entry and no `public-urls`; the
+  manager checked the passed run itself. The manager sends it from Rust only, once a deploy passed its gate, lease and
+  approval: `call#InstanceCommand` takes a `deploy-component` only signed (an attested one). The instance runs it as
+  the link's one identity, not as a service: no request reaches it. On a production instance it needs no `component-deploy@enabled` either, since the link stands for both
+  the permission and the switch. Everything else is as for an attested deploy: the component's lock across the cluster,
+  the claim (newer than the last the component took), the database storage, the data types, the audit and the record a
+  start writes from under `require-passed-run`.
+- **To a commit, not only the head, for a rollback only.** A deploy marked a rollback (`"rollback": true`) names the
+  commit an instance action recorded before a deploy: a component kept in the database (or a bare repository) is
+  updated to that commit, which may be older than its branch's head; one kept as a working clone moves only by a
+  fast-forward to its branch's head, and refuses. Any other deploy goes to the branch's head only, as an attested one.
+- **The manager's side.** The deploy step is `org.moqui.dev.InstanceServices` (crates/moqui-instance `deploy.rs`): a
+  `GitDeployment` of an environment that names the `InstanceEnvironment`, or a deploy by hand on System › Instances (an
+  instance's or an environment's Deploy; Roll back on a done deploy action).
+  - **The gate** is tied to what is deployed: a component of a repository a CI environment linked to this
+    `InstanceEnvironment` deploys (`repositoryId`, required), from that CI environment's `cloneUrl`, at a commit its
+    pipeline passed; an image at the source repository and revision its `InstanceImage` records (`sourceRepositoryId`,
+    `sourceRevision`, written by the pipeline that built it), never a commit a caller names. A major version of
+    Postgres, MySQL or OpenSearch is refused: that upgrade is the kind's own procedure.
+  - **Approval.** What it opens of the vault (a host's client key, a registry login, a replaced container's secret
+    files, a database's admin login for its backup) is leased, and approving the deploy is opening that lease, unless
+    the environment has machine access; a deploy's lease is never approved by its requester. With an approver group,
+    a deploy by hand that opens nothing waits for another member's `approve#InstanceDeploy` (Approve on the action),
+    unless the environment is `singlePersonDeploy`. The caller is checked (INSTANCE_ADMIN and the group) before any
+    authorization is turned off.
+  - **The roll.** A change that touches a database backs it up first (the database kind's `backup#DatabaseInstance`,
+    into the server's `-backups` volume, as `file.partial` renamed once whole, at most `manage@backup-wait-seconds`).
+    Then one instance at a time: a cluster member is drained over the link, waited for until it reports itself drained
+    and `manage@drain-wait-seconds` more for its requests, changed, waited for until it reports healthy and unsealed
+    (`manage@deploy-wait-seconds`), and undrained; a single instance is changed in place, and behind a terminate host
+    the edge node's offline page covers the gap. A new image is a new container under the instance's name with the
+    same volumes, settings and secret files, the old one stopped and set aside under another name until the new one is
+    up: when the new one is not made, does not start or does not come up, it goes and the old one takes its name back
+    and starts. The lease is open only around the steps that read from it (the replacement, its pull and checks, the
+    backup). Each change is an `InstanceAction` with the image digest and image row, component commits and schema hash
+    before and after, its lease and its deployment, and posts its annotation to Monitor (service, instance, version,
+    revision).
+- **Rollback** goes back to the image digest and component commits an action recorded before it (pulling the digest
+  with the registry login of the image it was, when the host no longer has it), and is refused when the instance's
+  schema hash, read from its link now and recorded then, is not the same, or was not known (an mr-moqui instance
+  reports it over its link, and the manager keeps it at each link and status): a schema change is not rolled back
+  (restore the backup the deploy made instead). The instance action `rollback` (`IatRollback`, which Monitor's recovery can ask for) is the
+  rollback of the instance's last deploy. A rollout paused in Monitor (the environment's `rolloutPausedDate`) stops a
+  roll before its next instance; a new container reports its image's version (`telemetry@service-version`) for
+  Monitor's Releases.
 
 ## Clusters and containers
 

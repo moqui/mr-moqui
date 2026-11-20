@@ -17,13 +17,29 @@
 //! commit with the `deploy` event, through the engine's queue, so the run check still decides trust; when that run
 //! passes, the deployment waits for `decide#GitDeployment` if the environment requires approval or its branch is one no
 //! branch rule protects (never the requester; a run's own approval does not count for it); then the deploy
-//! step posts an attestation of the passed run ([`super::attest`]), signed with the token the target issued, to the
-//! target instance's Component-Deploy REST, which fetches the branch, checks it is still at that commit, and deploys
-//! it. A repository that is not a Moqui component (the framework's own) is not deployed here: its change ships as a
-//! new archive or image. Each move is written as the commit status `deploy/<environment>` and told to the requester
-//! (and to the approvers while one is awaited) on the notification topic [`TOPIC`].
+//! step deploys it. A repository that is not a Moqui component (the framework's own) is not deployed here: its change
+//! ships as a new archive or image. Each move is written as the commit status `deploy/<environment>` and told to the
+//! requester (and to the approvers while one is awaited) on the notification topic [`TOPIC`].
+//!
+//! **Where it deploys** (plans/Vault-Instances.md §4.6, M3):
+//!
+//! - An environment that names an `InstanceEnvironment` deploys to its managed instances, over the manager link or SSH,
+//!   by `org.moqui.dev.InstanceServices.deploy#GitDeployment` (crates/moqui-instance, called by name): no attestation
+//!   is posted. Once the pipeline passed, `prepare#GitDeployment` asks for the lease of the items the deploy opens; the
+//!   deployment then waits for approval unless that environment has machine access, and approving it is opening the
+//!   lease (one decision).
+//! - Any other environment posts an attestation of the passed run ([`super::attest`]) to the target instance's
+//!   Component-Deploy REST, which fetches the branch, checks it is still at that commit, and deploys it. The token the
+//!   target issued, which signs it, is an operational vault item ([`token_binding`]): signing needs the deployment's
+//!   lease, which its approval opens, or the environment's machine access.
+//!
+//! A lease is held by the cluster member that asked for it, in memory: that member runs the deploy step, woken by a
+//! thread that waits for the lease to open ([`watch_lease`]); an approval in the lease dialog is the deployment's
+//! decision when the lease's approver may decide it.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use moqui_lib::object::Value;
 
@@ -52,6 +68,29 @@ pub const TOPIC: &str = "GitDeployment";
 
 /// The target's Component-Deploy REST that takes an attested deploy (`deploy#AttestedComponent`).
 pub const REST_PATH: &str = "/rest/s1/moqui/components/deploy";
+
+/// The managed instances' side (crates/moqui-instance), called by name: the lease a deploy needs, and the deploy.
+const PREPARE_SERVICE: &str = "org.moqui.dev.InstanceServices.prepare#GitDeployment";
+const DEPLOY_SERVICE: &str = "org.moqui.dev.InstanceServices.deploy#GitDeployment";
+/// An approval of a deployment's lease, sent with the decision.
+const APPROVE_LEASE: &str = "org.moqui.security.VaultServices.approve#VaultLease";
+const VAULT_LEASE: &str = "moqui.security.vault.VaultLease";
+const VAULT_ITEM: &str = "moqui.security.vault.VaultItem";
+
+/// The binding of the item that holds a target's token in the environment's vault (an `api-key`, field `secret`).
+pub fn token_binding(environment_id: &str) -> String {
+    format!("GitCiEnvironment:{environment_id}:targetToken")
+}
+
+/// The environment whose vault machine access signs a target's attestations unattended: `git-ci-<environmentId>`.
+pub fn machine_environment(environment_id: &str) -> String {
+    format!("git-ci-{environment_id}")
+}
+
+/// The managed instances' environment a CI environment deploys to, if it names one.
+pub fn instance_environment(environment: &EntityValue) -> Option<String> {
+    field(environment, "instanceEnvironmentId")
+}
 
 /// The commit status context of an environment's deployments.
 pub fn context(environment: &str) -> String {
@@ -220,10 +259,30 @@ fn after_run(entity: &EntityFacade, run: &EntityValue, deployment: &EntityValue)
     let Some(environment) = environment else {
         return end(entity, &id, WAITING_PIPELINE, FAILED, "its environment is gone", vec![]);
     };
+    // the lease the deploy opens, when it opens one: approving the deployment is opening it, so it waits for an
+    // approver whatever approvalRequired says (plans/Vault-Instances.md §4.6, step 3)
+    let leased = match ask_lease(&environment, deployment) {
+        Ok(leased) => leased,
+        Err(why) => return end(entity, &id, WAITING_PIPELINE, FAILED, &why, vec![]),
+    };
+    if let Some(lease_id) = &leased.lease_id {
+        set_fields(
+            entity,
+            DEPLOYMENT,
+            "deploymentId",
+            &id,
+            Some(WAITING_PIPELINE),
+            vec![("leaseId", Value::string(lease_id))],
+        )?;
+        watch_lease(&id, lease_id, leased.limit);
+    }
     // decide#GitDeployment is the one approval step: an approval of the run (a job in the environment, for its
     // secrets) is of the run, not of the deploy, and does not count for it (plans/Vault-Instances.md §4.6, where
     // approving opens the lease)
-    if super::is_yes(deployment, "approvalRequired") || super::is_yes(&environment, "approvalRequired") {
+    if leased.approval
+        || super::is_yes(deployment, "approvalRequired")
+        || super::is_yes(&environment, "approvalRequired")
+    {
         if set_fields(
             entity,
             DEPLOYMENT,
@@ -240,6 +299,297 @@ fn after_run(entity: &EntityFacade, run: &EntityValue, deployment: &EntityValue)
         return Ok(());
     }
     ready(entity, &id, WAITING_PIPELINE, vec![])
+}
+
+/// The lease a deployment's deploy step opens, asked for once its pipeline passed, and whether its approval is required
+/// for it.
+struct Leased {
+    lease_id: Option<String>,
+    /// How long the lease waits for its approval.
+    limit: Duration,
+    /// The deploy opens vault items and has no machine access: a person approves, which opens the lease.
+    approval: bool,
+}
+
+/// Asks for the lease of what the deploy step will open (see the module doc). Why not, as the deployment's error.
+fn ask_lease(environment: &EntityValue, deployment: &EntityValue) -> Result<Leased, String> {
+    let id = field(deployment, "deploymentId").unwrap_or_default();
+    let none = Leased {
+        lease_id: None,
+        limit: Duration::ZERO,
+        approval: false,
+    };
+    if instance_environment(environment).is_some() {
+        let parameters: BTreeMap<String, Value> = [("deploymentId".to_string(), Value::string(&id))].into();
+        let out = call_service(PREPARE_SERVICE, &parameters)?;
+        let lease_id = out
+            .get("leaseId")
+            .map(moqui_lib::object::to_plain_string)
+            .filter(|lease| !lease.is_empty());
+        let minutes = out
+            .get("leaseMinutes")
+            .map(moqui_lib::object::to_plain_string)
+            .and_then(|minutes| minutes.parse::<u64>().ok())
+            .unwrap_or(240);
+        return Ok(Leased {
+            limit: Duration::from_secs(minutes * 60),
+            approval: lease_id.is_some()
+                || out
+                    .get("approvalRequired")
+                    .is_some_and(|value| matches!(value, Value::Bool(true))),
+            lease_id,
+        });
+    }
+    let Some(vault_id) = field(environment, "vaultId") else {
+        return Ok(none);
+    };
+    if super::is_yes(environment, "machineAccess") {
+        return Ok(none);
+    }
+    let environment_id = field(environment, "environmentId").unwrap_or_default();
+    let target = field(environment, "targetUrl").unwrap_or_default();
+    let operation = sign_operation(&id, &target);
+    let lease_id = moqui_core::vault_hooks::ask_lease(&vault_id, &[token_binding(&environment_id)], &operation, None)
+        .map_err(|err| format!("the lease of the target's token was not asked for: {}", err.message()))?;
+    Ok(Leased {
+        lease_id: Some(lease_id),
+        limit: Duration::from_secs(4 * 60 * 60),
+        approval: true,
+    })
+}
+
+/// The operation a lease of a target's token names, which its approver reads: the deployment, and where the attestation
+/// it signs goes.
+fn sign_operation(deployment_id: &str, target: &str) -> String {
+    let mut text = format!(
+        "deploy GitDeployment {deployment_id}: sign its attestation for {}",
+        moqui_lib::http::redacted(target)
+    );
+    if text.len() > 255 {
+        text = format!("deploy GitDeployment {deployment_id}: sign its attestation for its target");
+    }
+    text
+}
+
+/// Calls a service by name as the system; its out-parameters, or its errors.
+fn call_service(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, String> {
+    let _authz = crate::rows_guard();
+    call_as_caller(name, parameters)
+}
+
+/// Calls a service by name under the caller's own authorization; its out-parameters, or its errors.
+fn call_as_caller(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, String> {
+    let answer = moqui_core::service::sync(name, parameters);
+    let errors = ExecutionContext::with_current(|ec| {
+        let text = ec.message().errors().join("; ");
+        ec.message().clear_errors();
+        text
+    })
+    .unwrap_or_default();
+    match answer {
+        Err(err) => Err(format!(
+            "{}{}",
+            err.message(),
+            if errors.is_empty() {
+                String::new()
+            } else {
+                format!(": {errors}")
+            }
+        )),
+        Ok(_) if !errors.is_empty() => Err(errors),
+        Ok(out) => Ok(out),
+    }
+}
+
+/// Whether a deployment's lease is open: approved, and not ended or revoked.
+fn lease_open(entity: &EntityFacade, lease_id: &str) -> Result<bool, Error> {
+    let _rows = crate::rows_guard();
+    Ok(one(entity, VAULT_LEASE, "leaseId", lease_id)?
+        .and_then(|row| field(&row, "statusId"))
+        .is_some_and(|status| status == "VlsOpen"))
+}
+
+/// Whether the environment's vault holds the target's token item.
+pub(crate) fn has_token(entity: &EntityFacade, environment: &EntityValue) -> bool {
+    let (Some(vault_id), Some(environment_id)) = (field(environment, "vaultId"), field(environment, "environmentId"))
+    else {
+        return false;
+    };
+    let _rows = crate::rows_guard();
+    entity
+        .find(VAULT_ITEM)
+        .and_then(|find| {
+            find.eq("vaultId", Value::string(vault_id))
+                .eq("bindingKey", Value::string(token_binding(&environment_id)))
+                .count()
+        })
+        .is_ok_and(|count| count > 0)
+}
+
+/// Once the caller's transaction commits (the lease's row is in it), a thread on this member, which holds the lease,
+/// waits for the lease to open: an approval in the lease dialog is then the deployment's decision, when its approver
+/// may decide it, and the deploy step runs here. A lease that is not approved in its time, or is revoked, fails the
+/// deployment that still waits for it.
+fn watch_lease(deployment_id: &str, lease_id: &str, limit: Duration) {
+    let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) else {
+        return;
+    };
+    let (deployment_id, lease_id) = (deployment_id.to_string(), lease_id.to_string());
+    let start = {
+        let factory = Arc::clone(&factory);
+        move || {
+            let weak = Arc::downgrade(&factory);
+            let spawned = std::thread::Builder::new()
+                .name("git-ci-deploy-lease".into())
+                .spawn(move || {
+                    let Some(factory) = weak.upgrade() else { return };
+                    let passed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let context = factory.new_context();
+                        let _entered = context.enter();
+                        if let Some(entity) = factory.entity() {
+                            lease_waited(&entity, &deployment_id, &lease_id, limit);
+                        }
+                    }));
+                    if passed.is_err() {
+                        tracing::error!(deployment = %deployment_id, "a deployment's lease watch panicked");
+                    }
+                });
+            if let Err(err) = spawned {
+                tracing::error!("a deployment's lease is not watched: {err}");
+            }
+        }
+    };
+    let deferred = factory
+        .entity()
+        .and_then(|entity| entity.transactions_for(DEPLOYMENT).ok())
+        .filter(|transactions| transactions.in_transaction())
+        .map(|transactions| transactions.on_commit(start.clone()));
+    match deferred {
+        Some(Ok(())) => {}
+        _ => start(),
+    }
+}
+
+/// What [`watch_lease`]'s thread does once the lease opened or did not.
+fn lease_waited(entity: &EntityFacade, deployment_id: &str, lease_id: &str, limit: Duration) {
+    let waited = moqui_core::vault_hooks::wait_lease(lease_id, limit);
+    let moved = (|| -> Result<(), Error> {
+        let found = {
+            let _rows = crate::rows_guard();
+            one(entity, DEPLOYMENT, "deploymentId", deployment_id)?
+        };
+        let Some(deployment) = found else {
+            return Ok(());
+        };
+        let state = field(&deployment, "statusId").unwrap_or_default();
+        if let Err(err) = waited {
+            if state == WAITING_APPROVAL {
+                let why = format!(
+                    "its lease {lease_id} was not approved in its time, or was revoked ({}): deploy again",
+                    err.message()
+                );
+                let _rows = crate::rows_guard();
+                end(entity, deployment_id, WAITING_APPROVAL, FAILED, &why, vec![])?;
+            }
+            return Ok(());
+        }
+        if state == WAITING_APPROVAL {
+            decide_by_lease(entity, &deployment, lease_id)?;
+        }
+        Ok(())
+    })();
+    if let Err(err) = moved {
+        tracing::error!(deployment = %deployment_id, "a deployment did not move on after its lease: {err}");
+    }
+    // approved (by the decision, or by the lease's own approval): the step runs here, on the member that holds it; not
+    // with git-ci start-inline false, as kick does not (a test runs the step itself)
+    if super::setting("start-inline") == "false" {
+        return;
+    }
+    let deploying = {
+        let _rows = crate::rows_guard();
+        one(entity, DEPLOYMENT, "deploymentId", deployment_id)
+    }
+    .ok()
+    .flatten()
+    .is_some_and(|row| field(&row, "statusId").as_deref() == Some(DEPLOYING));
+    if deploying {
+        if let Err(err) = step(entity, deployment_id) {
+            tracing::error!(deployment = %deployment_id, "a deploy step failed: {err}");
+        }
+    }
+}
+
+/// The lease of a deployment that waits for its decision was approved in the lease dialog: that is the decision when
+/// its approver may decide the deployment (an approver of the environment, not the requester); otherwise the lease
+/// ends and the deployment is refused, naming who approved it.
+fn decide_by_lease(entity: &EntityFacade, deployment: &EntityValue, lease_id: &str) -> Result<(), Error> {
+    let id = field(deployment, "deploymentId").unwrap_or_default();
+    let repository = field(deployment, "repositoryId").unwrap_or_default();
+    let (approver, group) = {
+        let _rows = crate::rows_guard();
+        let approver = one(entity, VAULT_LEASE, "leaseId", lease_id)?
+            .and_then(|row| field(&row, "approvedByUserId"))
+            .unwrap_or_default();
+        let group = field(deployment, "environmentId")
+            .and_then(|environment| {
+                one(entity, CI_ENVIRONMENT, "environmentId", &environment)
+                    .ok()
+                    .flatten()
+            })
+            .and_then(|environment| field(&environment, "approverGroupId"));
+        (approver, group)
+    };
+    // the approver's own groups and rights, checked with authorization on, as decide#GitDeployment checks its caller
+    let may = !approver.is_empty()
+        && field(deployment, "requestedByUserId").as_deref() != Some(approver.as_str())
+        && moqui_core::user::internal_login_user(&approver).is_ok()
+        && approver_now(group.as_deref(), &repository)
+        && instance_approver(entity, deployment).is_ok();
+    if let Err(err) = moqui_core::user::logout_local() {
+        tracing::debug!("the lease's approver was not signed out of the watch: {err}");
+    }
+    if may {
+        decide(entity, deployment, Some(approver), true, None, None)?;
+        return Ok(());
+    }
+    moqui_core::vault_hooks::end_lease(lease_id);
+    let message = format!(
+        "its lease was approved by {}, who does not decide this environment's deployments (or asked for it): the lease \
+         ended",
+        if approver.is_empty() { "no one" } else { approver.as_str() }
+    );
+    let _rows = crate::rows_guard();
+    end(entity, &id, WAITING_APPROVAL, REFUSED, &message, vec![])
+}
+
+/// For a deployment to managed instances, whether the current user (the decider, checked as themselves) is a member of
+/// the `InstanceEnvironment`'s approver group when it names one: approving the deployment opens what that environment
+/// holds (plans/Vault-Instances.md §4.6). Why not.
+pub(crate) fn instance_approver(entity: &EntityFacade, deployment: &EntityValue) -> Result<(), String> {
+    let group = {
+        let _rows = crate::rows_guard();
+        field(deployment, "environmentId")
+            .and_then(|id| one(entity, CI_ENVIRONMENT, "environmentId", &id).ok().flatten())
+            .and_then(|environment| instance_environment(&environment))
+            .and_then(|id| {
+                one(
+                    entity,
+                    "moqui.server.instance.InstanceEnvironment",
+                    "environmentId",
+                    &id,
+                )
+                .ok()
+                .flatten()
+            })
+            .and_then(|environment| field(&environment, "approverUserGroupId"))
+    };
+    match group {
+        Some(group) if !moqui_core::user::is_in_group(&group).unwrap_or(false) => Err(format!(
+            "deciding a deployment to these managed instances needs their environment's approver group {group}"
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Whether the current user approves for an environment of `repository_id` whose approver group is `group`.
@@ -272,17 +622,54 @@ fn ready(entity: &EntityFacade, id: &str, from: &str, more: Vec<(&str, Value)>) 
 /// # Errors
 ///
 /// When it does not wait for approval.
+///
+/// A deployment with a lease (plans/Vault-Instances.md §4.6) is approved by opening it: `lease_approval` is the
+/// approver's client's approval of it (`approve#VaultLease`'s `approval`, under the caller's own rights: the vault's
+/// approve role and a recent sign-in), unless the lease is open already. A refusal ends the lease.
 pub fn decide(
     entity: &EntityFacade,
     deployment: &EntityValue,
     user_id: Option<String>,
     approve: bool,
     reason: Option<&str>,
+    lease_approval: Option<&Value>,
 ) -> Result<String, Error> {
-    let _rows = crate::rows_guard();
     let id = field(deployment, "deploymentId").unwrap_or_default();
-    if field(deployment, "statusId").as_deref() != Some(WAITING_APPROVAL) {
+    // the row as it is now: the lease dialog's approval and a decision may cross, and the second one changes nothing
+    let deployment = {
+        let _rows = crate::rows_guard();
+        one(entity, DEPLOYMENT, "deploymentId", &id)?.unwrap_or_else(|| deployment.clone())
+    };
+    let deployment = &deployment;
+    let state = field(deployment, "statusId").unwrap_or_default();
+    if approve && field(deployment, "approvedByUserId").is_some() && matches!(state.as_str(), DEPLOYING | DEPLOYED) {
+        return Ok(state);
+    }
+    if state != WAITING_APPROVAL {
         return Err(Error::new(format!("deployment {id} does not wait for approval")));
+    }
+    let lease_id = field(deployment, "leaseId");
+    let open_already = match &lease_id {
+        Some(lease_id) => lease_open(entity, lease_id)?,
+        None => false,
+    };
+    if let (true, false, Some(lease_id), Some(approval)) = (approve, open_already, &lease_id, lease_approval) {
+        let parameters: BTreeMap<String, Value> = [
+            ("leaseId".to_string(), Value::string(lease_id)),
+            ("approval".to_string(), approval.clone()),
+        ]
+        .into();
+        call_as_caller(APPROVE_LEASE, &parameters)
+            .map_err(|why| Error::new(format!("its lease {lease_id} was not approved: {why}")))?;
+    }
+    let _rows = crate::rows_guard();
+    if let (true, Some(lease_id)) = (approve, &lease_id) {
+        if !lease_open(entity, lease_id)? {
+            return Err(Error::new(format!(
+                "deployment {id} is approved by opening its lease {lease_id}: approve it in the lease dialog, or send \
+                 the lease's approval with the decision"
+            )));
+        }
     }
     if approve {
         ready(
@@ -301,6 +688,9 @@ pub fn decide(
         user_id.clone().unwrap_or_else(|| "the application".to_string()),
         reason.map(|why| format!(": {why}")).unwrap_or_default()
     );
+    if let Some(lease_id) = &lease_id {
+        moqui_core::vault_hooks::end_lease(lease_id);
+    }
     end(
         entity,
         &id,
@@ -371,6 +761,10 @@ pub fn cancel(entity: &EntityFacade, deployment: &EntityValue, user_id: Option<&
             // a run that has ended meanwhile is left as it is
             let _ = super::engine::cancel_run(entity, &run_id);
         }
+    }
+    // its lease opens nothing for a cancelled deployment; the member that holds it stops waiting for it
+    if let Some(lease_id) = field(deployment, "leaseId") {
+        moqui_core::vault_hooks::end_lease(&lease_id);
     }
     Ok(())
 }
@@ -484,6 +878,34 @@ pub fn resume(entity: &EntityFacade, now: i64) -> Result<(usize, usize), Error> 
     let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()));
     let limit = i64::try_from(timeout().as_millis()).unwrap_or(i64::MAX) + 5 * 60_000;
     let (mut started, mut ended) = (0, 0);
+    // a deployment whose lease ended, was revoked, is past its time or is held by no member any more (a restarted member
+    // marks its leases ended) cannot deploy: it fails, so nothing waits on it
+    for row in entity
+        .find(DEPLOYMENT)?
+        .condition(Condition::is_not_null("leaseId"))
+        .list()?
+        .iter()
+    {
+        let state = field(row, "statusId").unwrap_or_default();
+        // a step that began ends its lease as it ends: the step's own time limit below covers it
+        let begun = millis(row, "startedDate").is_some();
+        if !(state == WAITING_APPROVAL || (state == DEPLOYING && !begun)) {
+            continue;
+        }
+        let id = field(row, "deploymentId").unwrap_or_default();
+        let lease_id = field(row, "leaseId").unwrap_or_default();
+        let lease = one(entity, VAULT_LEASE, "leaseId", &lease_id)?;
+        let live = lease.as_ref().is_some_and(|lease| {
+            matches!(field(lease, "statusId").as_deref(), Some("VlsRequested" | "VlsOpen"))
+                && super::long(lease, "expiresAt").is_some_and(|expires| expires > now)
+        });
+        if !live {
+            let why =
+                format!("its lease {lease_id} ended, was revoked or passed its time before it deployed: deploy again");
+            end(entity, &id, &state, FAILED, &why, vec![])?;
+            ended += 1;
+        }
+    }
     for row in entity
         .find(DEPLOYMENT)?
         .eq("statusId", Value::string(DEPLOYING))
@@ -542,6 +964,14 @@ struct Answer {
 /// When a row is not read or written.
 pub fn step(entity: &EntityFacade, id: &str) -> Result<(), Error> {
     let _rows = crate::rows_guard();
+    // a deployment with a lease is deployed by the member that holds it ([`watch_lease`])
+    let lease_id = one(entity, DEPLOYMENT, "deploymentId", id)?.and_then(|row| field(&row, "leaseId"));
+    if lease_id
+        .as_deref()
+        .is_some_and(|lease| !moqui_core::vault_hooks::holds_lease(lease))
+    {
+        return Ok(());
+    }
     let claimed = crate::conditional::update_where(
         entity,
         DEPLOYMENT,
@@ -556,6 +986,12 @@ pub fn step(entity: &EntityFacade, id: &str) -> Result<(), Error> {
         return Ok(());
     };
     let answer = call_target(entity, &deployment);
+    if let Some(lease_id) = &lease_id {
+        // the deploy's own end ends it too (a managed deploy's); ending it twice is harmless
+        if moqui_core::vault_hooks::holds_lease(lease_id) {
+            moqui_core::vault_hooks::end_lease(lease_id);
+        }
+    }
     let mut fields = vec![("componentName", opt(answer.component.clone()))];
     // the target's own words go to errorText only, never to the public status
     let (to, state) = match &answer.outcome {
@@ -619,11 +1055,54 @@ fn call_target(entity: &EntityFacade, deployment: &EntityValue) -> Answer {
             }
         }
     };
-    let outcome = attest_and_post(entity, deployment, &component);
+    let environment = field(deployment, "environmentId")
+        .and_then(|id| one(entity, CI_ENVIRONMENT, "environmentId", &id).ok().flatten());
+    let outcome = match environment.as_ref().and_then(instance_environment) {
+        Some(_) => deploy_managed(entity, deployment, environment.as_ref(), &component),
+        None => attest_and_post(entity, deployment, &component),
+    };
     Answer {
         component: Some(component),
         outcome,
     }
+}
+
+/// The deploy to managed instances (plans/Vault-Instances.md §4.6): `deploy#GitDeployment` of crates/moqui-instance,
+/// which checks the passed run itself, opens the deployment's lease (or the environment's machine access) and rolls the
+/// instances; its report.
+fn deploy_managed(
+    entity: &EntityFacade,
+    deployment: &EntityValue,
+    environment: Option<&EntityValue>,
+    component: &str,
+) -> Result<String, String> {
+    let environment = environment.ok_or_else(|| "its environment is gone".to_string())?;
+    let repository = field(deployment, "repositoryId").unwrap_or_default();
+    let base = crate::server::public_base_url();
+    let repository_url = field(environment, "cloneUrl")
+        .unwrap_or_else(|| format!("{base}/git/{}.git", crate::server::path::path_of(&repository)));
+    let run = field(deployment, "pipelineRunId")
+        .and_then(|id| one(entity, PIPELINE_RUN, "pipelineRunId", &id).ok().flatten())
+        .ok_or_else(|| "its pipeline run is gone".to_string())?;
+    if field(&run, "statusId").as_deref() != Some("success") {
+        return Err("its pipeline run did not pass".to_string());
+    }
+    let parameters: BTreeMap<String, Value> = [
+        ("deploymentId", opt(field(deployment, "deploymentId"))),
+        ("leaseId", opt(field(deployment, "leaseId"))),
+        ("componentName", Value::string(component)),
+        ("repositoryUrl", Value::string(&repository_url)),
+        ("source", Value::string(&base)),
+        ("dataTypes", Value::string(data_types(environment).join(","))),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value))
+    .collect();
+    let out = call_service(DEPLOY_SERVICE, &parameters)?;
+    Ok(out
+        .get("deployResult")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default())
 }
 
 /// The name in `component.xml` at the commit, read as the engine reads a pipeline file.
@@ -639,10 +1118,47 @@ fn component_at(repository: &str, commit: &str) -> Result<Option<String>, Error>
         .map(|component| component.name))
 }
 
-/// The token an environment's target issued, which signs its attestations. The one place it is read: it is to become
-/// a vault item (plans/Vault-Instances.md §2, InstanceEnvironment), and only this changes then.
-pub(crate) fn target_token(environment: &EntityValue) -> Option<String> {
-    field(environment, "targetToken")
+/// Signs an attestation with the token the target issued, an item of the environment's vault (plans/Vault-Instances.md
+/// §4.6): read under the deployment's lease, held here and open, or the environment's machine access; dropped once
+/// signed. The one place it is read.
+fn sign_with_token(
+    environment: &EntityValue,
+    deployment: &EntityValue,
+    attestation: &super::attest::Attestation,
+) -> Result<super::attest::Signed, String> {
+    let name = field(environment, "name").unwrap_or_default();
+    let environment_id = field(environment, "environmentId").unwrap_or_default();
+    if field(environment, "vaultId").is_none() {
+        return Err(format!(
+            "environment {name} names no vault that holds its target's token"
+        ));
+    }
+    let binding = token_binding(&environment_id);
+    let sign = || -> Result<super::attest::Signed, moqui_lib::error::Error> {
+        let token = moqui_core::vault_hooks::leased(&binding, Some("secret"))?;
+        let token = zeroize::Zeroizing::new(moqui_lib::object::to_plain_string(&token));
+        super::attest::sign(&token, attestation).map_err(moqui_lib::error::Error::new)
+    };
+    let deployment_id = field(deployment, "deploymentId").unwrap_or_default();
+    let target = field(environment, "targetUrl").unwrap_or_default();
+    let signed = match field(deployment, "leaseId") {
+        Some(lease_id) => {
+            moqui_core::vault_hooks::run_leased(&lease_id, &sign_operation(&deployment_id, &target), sign)
+        }
+        None if super::is_yes(environment, "machineAccess") => moqui_core::vault_hooks::machine_run(
+            &machine_environment(&environment_id),
+            std::slice::from_ref(&binding),
+            &sign_operation(&deployment_id, &target),
+            sign,
+        ),
+        None => {
+            return Err(format!(
+                "environment {name}'s token is read under the deployment's lease or the environment's machine access, \
+                 and this deployment has neither"
+            ))
+        }
+    };
+    signed.map_err(|err| format!("the target's token was not read: {}", err.message()))
 }
 
 /// The endpoint of an environment's target: `https`, or `http` to a loopback IP literal only (the instance and
@@ -709,9 +1225,6 @@ fn attest_and_post(entity: &EntityFacade, deployment: &EntityValue, component: &
     let name = field(&environment, "name").unwrap_or_default();
     let target = field(&environment, "targetUrl").unwrap_or_default();
     let url = endpoint(&target)?;
-    let Some(token) = target_token(&environment) else {
-        return Err(format!("environment {name} has no token from its target"));
-    };
     crate::outbound_allowed(&repository, crate::Outbound::Deploy, &name)?;
     let run = field(deployment, "pipelineRunId")
         .and_then(|id| one(entity, PIPELINE_RUN, "pipelineRunId", &id).ok().flatten())
@@ -740,7 +1253,7 @@ fn attest_and_post(entity: &EntityFacade, deployment: &EntityValue, component: &
         source: base,
         data_types: data_types(&environment),
     };
-    let signed = super::attest::sign(&token, &attestation)?;
+    let signed = sign_with_token(&environment, deployment, &attestation)?;
     let answered = post(&url, &attestation.deployment_id, &signed)?;
     // a 2xx that is not a deploy's answer for this commit (a page at that URL, another service) deployed nothing
     let status = answered["deployStatus"].as_str().unwrap_or_default();
@@ -883,6 +1396,8 @@ fn notify_users(deployment: &EntityValue, approver_group: Option<&str>, what: &s
             message.insert(key.to_string(), Value::string(value));
         }
         message.insert("statusId".to_string(), opt(field(deployment, "statusId")));
+        // the lease its approval opens, for the lease dialog
+        message.insert("leaseId".to_string(), opt(field(deployment, "leaseId")));
         message
     };
     let mut targets: Vec<(Option<String>, Option<&str>)> = Vec::new();

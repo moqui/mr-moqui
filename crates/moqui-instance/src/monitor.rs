@@ -179,20 +179,27 @@ pub fn identity_env(facade: &EntityFacade, plan: &Plan, step: &Step) -> Vec<(Str
         return Vec::new();
     }
     let _ = facade;
+    identity_of(&plan.environment_id, &step.instance)
+}
+
+/// The Monitor identity settings of the mr-moqui instance `instance` of `environment_id`, as [`identity_env`] gives a
+/// new one, and a deploy (M3) gives the new container it replaces one with: its version as `instance` names it.
+#[must_use]
+pub fn identity_of(environment_id: &str, instance: &EntityValue) -> Vec<(String, String)> {
     let mut env = vec![
-        ("moqui_conf__instance__id".to_string(), step.id()),
+        ("moqui_conf__instance__id".to_string(), field(instance, "appInstanceId")),
         (
             "moqui_conf__telemetry__deployment_environment".to_string(),
-            plan.environment_id.clone(),
+            environment_id.to_string(),
         ),
         // an environment's instances are one service, apart from this manager's own (whose name Monitor's receiver
         // would turn a sender's into `<name> (received)`)
         (
             "moqui_conf__telemetry__service_name".to_string(),
-            format!("moqui-{}", plan.environment_id),
+            format!("moqui-{environment_id}"),
         ),
     ];
-    let version = version_of(&step.instance);
+    let version = version_of(instance);
     if !version.is_empty() {
         env.push(("moqui_conf__telemetry__service_version".to_string(), version));
     }
