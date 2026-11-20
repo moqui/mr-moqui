@@ -23,6 +23,8 @@
 //! - [`personal`] (§3.5), [`vault`] (§3.2, §3.9), [`keyversion`] (§3.9), [`lease`] (§3.7), [`machine`] (§3.8),
 //!   [`recovery`] (§3.10), [`delivery`] (§3.3) and [`fingerprint`] (§3.5) are the vaults' formats.
 //! - [`vectors`] writes the known-answer vectors of `testdata/vectors.json`, natively and in the wasm module.
+//! - `ops` is the wasm module's JSON calls and `wasm` its `extern "C"` ABI (feature `wasm`); `scripts/vault-wasm.sh`
+//!   builds it to `runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm`.
 
 pub mod aead;
 pub mod delivery;
@@ -35,6 +37,8 @@ pub mod keyversion;
 pub mod lease;
 pub mod machine;
 pub mod names;
+#[cfg(any(test, feature = "wasm"))]
+pub mod ops;
 pub mod personal;
 pub mod recovery;
 pub mod rng;
@@ -44,6 +48,12 @@ pub mod text;
 pub mod vault;
 #[cfg(any(test, feature = "test-vectors"))]
 pub mod vectors;
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
+mod wasm;
+
+#[cfg(test)]
+#[path = "wasm_stamp_tests.rs"]
+mod wasm_stamp_tests;
 
 pub use error::Error;
 pub use keys::Key32;

@@ -46,9 +46,35 @@ What each wrap carries and who signs it:
   the signed public half. A vault's wrap to the recovery key is signed by the member who turned recovery on.
 - **Delivery**: a value by HPKE to one user, signed by the sending user or instance.
 
+## The browser module
+
+The browser runs the same crate as a wasm module, `runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm`
+(about 520 KB), built for `wasm32-unknown-unknown` with no wasm-bindgen and no getrandom: its one import is
+`env.moqui_vault_random`, which the worker fills from `crypto.getRandomValues`.
+
+- `VaultWorker.js` is a module Worker that hosts the module. The opened personal key and the unwrapped vault keys stay
+  in the module's memory; the page gets public keys, wraps and the one item it asked for. On lock the module drops its
+  keys, then the worker overwrites the module's whole memory with zeros and starts a fresh instance.
+- `VaultClient.js` (`MoquiVaultClient`) is the page side: it fetches the worker's script and the module, each with its
+  integrity hash when given, starts the worker from a `blob:` URL, gives it the module's bytes, and has a typed method
+  for each call (`personalOpen`, `itemOpen`, `leaseApprove`, ...). It locks after 15 minutes with no call, and
+  `copy(text)` clears the clipboard after 30 seconds when it still holds that text.
+- The calls are JSON, one request and one answer (`crates/moqui-vault/src/ops.rs`); the raw ABI is `src/wasm.rs`, the
+  crate's only `unsafe`.
+
+The module is checked in with its stamp, `moqui_vault.wasm.json`: the SHA-256 over the crate's source files (not its
+tests) and the Cargo.lock entries the module links, those entries, the rustc version and the module's own SHA-256.
+`scripts/vault-wasm.sh` builds both, with paths remapped so the same rustc builds the same bytes on any machine. A
+change to the crate fails `cargo test -p moqui-vault` (`the_checked_in_wasm_is_what_the_source_builds`) until the
+module is rebuilt: run the script, or `MOQUI_REGENERATE_WASM=1 cargo test -p moqui-vault the_checked_in_wasm`, and
+commit both files.
+
 ## Tests and vectors
 
 `cargo test -p moqui-vault` runs the crate's tests, one for each refusal above, and compares the known-answer
 vectors in `crates/moqui-vault/testdata/vectors.json` with what the code makes; it includes the CFRG test vector for
 HPKE with KEM 0x20, KDF 1 and AEAD 2. After a deliberate format change, `MOQUI_REGENERATE_VECTORS=1 cargo test -p
-moqui-vault` rewrites the file; read its diff before committing.
+moqui-vault` rewrites the file; read its diff before committing (and rebuild the module, whose source changed).
+
+`moqui test-client framework --offline --spec VaultModule` loads the module in its worker in the test browser and
+checks that it makes the same vectors, and that an item seals, opens and is forgotten on lock there.
