@@ -174,73 +174,118 @@ pub(crate) fn content_chunks(
     futures_util::stream::iter(chunks)
 }
 
+/// A permit for one content call of pairing `node`, of at most `calls` at once (`edge@content-calls`, at least 1), held
+/// for the call; past them a call is refused for now and the sender tries it again (SEC-CLU-83).
+pub(super) fn content_permit(node: &str, calls: usize) -> Result<tokio::sync::OwnedSemaphorePermit, tonic::Status> {
+    static CALLS: Mutex<std::collections::BTreeMap<String, Arc<tokio::sync::Semaphore>>> =
+        Mutex::new(std::collections::BTreeMap::new());
+    let semaphore = {
+        let mut map = lock(&CALLS);
+        // a semaphore no call holds is dropped, so the map holds the pairings with calls now
+        map.retain(|_, semaphore| Arc::strong_count(semaphore) > 1);
+        Arc::clone(
+            map.entry(node.to_string())
+                .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(calls.max(1)))),
+        )
+    };
+    semaphore.try_acquire_owned().map_err(|_| {
+        tonic::Status::resource_exhausted(format!(
+            "this pairing has {} content calls open already (edge@content-calls); try again",
+            calls.max(1)
+        ))
+    })
+}
+
+/// The next chunk of a content call, none at its end; a call whose next chunk does not come within `idle` ends.
+async fn next_chunk(
+    stream: &mut tonic::Streaming<proto::ContentChunk>,
+    idle: Duration,
+) -> Result<Option<proto::ContentChunk>, tonic::Status> {
+    tokio::time::timeout(idle, stream.message()).await.map_err(|_| {
+        tonic::Status::deadline_exceeded(format!(
+            "no content came for {} seconds (edge@forward-idle-seconds)",
+            idle.as_secs()
+        ))
+    })?
+}
+
+/// Whether pairing `node` may send `size` more bytes of content now: not paused, and within its caps
+/// (`moqui_core::edge::caps::admit_content`); refused for now ([`paused_status`]) when not.
+async fn admit(factory: &Weak<ExecutionContextFactory>, node: &str, size: u64) -> Result<(), tonic::Status> {
+    let asking = node.to_string();
+    let admitted = on_pool(factory, move |factory| {
+        let facade = factory
+            .entity()
+            .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
+        let settings = moqui_core::edge::settings(factory);
+        moqui_core::edge::caps::admit_content(factory, &facade, &settings, &asking, size)
+    })
+    .await
+    .map_err(|err| {
+        tracing::error!("Edge link of {node}: its caps were not read: {err}");
+        tonic::Status::unavailable("the content could not be taken now")
+    })?;
+    match admitted {
+        moqui_core::edge::caps::Admit::Take => Ok(()),
+        moqui_core::edge::caps::Admit::Paused(why) => Err(paused_status(&why)),
+    }
+}
+
 /// Take the content of an item local node `node`'s link sends before its delivery, and keep it on this node: the
 /// location the delivery names. `generation` checks each chunk's link generation (the local node's own, on the down
 /// connection). A chunk of another item, content over [`queue::MAX_CONTENT_BYTES`] or an id that cannot name a file
 /// is refused for itself (a counted refusal on the sender). While the pairing is paused, or when the content kept for
 /// it would pass its queue cap, it is refused for now ([`paused_status`], `moqui_core::edge::caps::admit_content`).
+///
+/// What one call holds in memory is bounded before it is read (SEC-CLU-83): a pairing has at most
+/// `edge@content-calls` content calls at once ([`content_permit`]), the first chunk's `total_size` is asked of the cap
+/// before anything is reserved, a call sends no more than it named, and a call whose next chunk does not come within
+/// `edge@forward-idle-seconds` ends.
 pub(crate) async fn receive_content(
     factory: &Weak<ExecutionContextFactory>,
     node: &str,
     mut stream: tonic::Streaming<proto::ContentChunk>,
     generation: impl Fn(u64) -> Result<(), tonic::Status>,
 ) -> Result<proto::PutContentReply, tonic::Status> {
-    // a paused pairing's content is not read at all
-    let asking = node.to_string();
-    let paused = on_pool(factory, move |factory| {
-        let facade = factory
-            .entity()
-            .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
-        if moqui_core::edge::settings(factory).takes_links() {
-            moqui_core::edge::caps::paused(&facade, &asking)
-        } else {
-            Ok(None)
-        }
-    })
-    .await
-    .map_err(|err| {
-        tracing::error!("Edge link of {node}: its pause was not read: {err}");
-        tonic::Status::unavailable("the content could not be taken now")
-    })?;
-    if let Some(why) = paused {
-        return Err(paused_status(&why));
-    }
-    let mut id: Option<String> = None;
-    let mut content = Vec::new();
-    while let Some(chunk) = stream.message().await? {
-        generation(chunk.generation)?;
-        match &id {
-            None => {
-                queue::received_location(node, &chunk.queue_item_id)
-                    .map_err(|err| tonic::Status::invalid_argument(err.message().to_string()))?;
-                let total = usize::try_from(chunk.total_size).unwrap_or(usize::MAX);
-                if total > queue::MAX_CONTENT_BYTES {
-                    return Err(tonic::Status::resource_exhausted(format!(
-                        "an item's content is at most {} bytes, and this one is {total}",
-                        queue::MAX_CONTENT_BYTES
-                    )));
-                }
-                content.reserve(total);
-                id = Some(chunk.queue_item_id);
-            }
-            Some(first) if *first != chunk.queue_item_id => {
-                return Err(tonic::Status::invalid_argument(
-                    "the chunks of one call are of one item",
-                ));
-            }
-            Some(_) => {}
-        }
-        if content.len() + chunk.data.len() > queue::MAX_CONTENT_BYTES {
-            return Err(tonic::Status::resource_exhausted(format!(
-                "an item's content is at most {} bytes",
-                queue::MAX_CONTENT_BYTES
-            )));
-        }
-        content.extend_from_slice(&chunk.data);
-    }
-    let Some(id) = id else {
+    let settings = factory
+        .upgrade()
+        .map(|factory| moqui_core::edge::settings(&factory))
+        .ok_or_else(|| tonic::Status::unavailable("the server is stopping"))?;
+    let _permit = content_permit(node, settings.content_calls)?;
+    let idle = settings.forward_idle;
+    let Some(first) = next_chunk(&mut stream, idle).await? else {
         return Err(tonic::Status::invalid_argument("no content was sent"));
     };
+    generation(first.generation)?;
+    queue::received_location(node, &first.queue_item_id)
+        .map_err(|err| tonic::Status::invalid_argument(err.message().to_string()))?;
+    let total = usize::try_from(first.total_size).unwrap_or(usize::MAX);
+    if total > queue::MAX_CONTENT_BYTES {
+        return Err(tonic::Status::resource_exhausted(format!(
+            "an item's content is at most {} bytes, and this one is {total}",
+            queue::MAX_CONTENT_BYTES
+        )));
+    }
+    // a paused pairing's content is not read at all, nor content that would pass its cap
+    admit(factory, node, u64::try_from(total).unwrap_or(u64::MAX)).await?;
+    let id = first.queue_item_id.clone();
+    let mut content = Vec::with_capacity(total);
+    let mut chunk = Some(first);
+    while let Some(part) = chunk {
+        if part.queue_item_id != id {
+            return Err(tonic::Status::invalid_argument(
+                "the chunks of one call are of one item",
+            ));
+        }
+        generation(part.generation)?;
+        if content.len() + part.data.len() > total {
+            return Err(tonic::Status::invalid_argument(format!(
+                "an item's content is the {total} bytes its first chunk named, not more"
+            )));
+        }
+        content.extend_from_slice(&part.data);
+        chunk = next_chunk(&mut stream, idle).await?;
+    }
     let keeping = node.to_string();
     let item = id.clone();
     let kept = on_pool(factory, move |factory| {

@@ -2609,6 +2609,12 @@ along with this software (see the LICENSE.md file). If not, see
                     now, and tells its administrators (EdgeContentRefused) once until it takes content again.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="content-calls" type="non-neg-int-expandable" default="4">
+                <xs:annotation><xs:documentation>The content sends (PutContent) of one pairing open at once at most, at
+                    least 1: each holds up to an item's content (64 MiB) in memory, so past them a send is refused for
+                    now and tried again. A send is asked of the pairing's caps before it is read, and ends when its
+                    next part does not come within forward-idle-seconds.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="queue-mail-percent" type="non-neg-int-expandable" default="90">
                 <xs:annotation><xs:documentation>The share of a paired node's queue-max-megabytes, in percent (at most
                     100), past which an edge or all-in-one node's SMTP listener refuses new mail for that node for now

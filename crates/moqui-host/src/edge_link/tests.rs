@@ -436,3 +436,16 @@ fn a_paused_pairing_s_refusal_is_a_pause_and_not_a_counted_failure() {
         "no answer"
     );
 }
+
+/// SEC-CLU-83: a pairing has at most `edge@content-calls` content calls open at once, each holding its content in
+/// memory; another is refused for now, and a permit given back makes room. Pairings are counted apart.
+#[test]
+fn a_pairings_content_calls_at_once_are_capped() {
+    let first = super::queue::content_permit("cap-node-a", 2).unwrap();
+    let _second = super::queue::content_permit("cap-node-a", 2).unwrap();
+    let refused = super::queue::content_permit("cap-node-a", 2).unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::ResourceExhausted, "{refused:?}");
+    let _other = super::queue::content_permit("cap-node-b", 2).expect("another pairing's calls are its own");
+    drop(first);
+    let _third = super::queue::content_permit("cap-node-a", 2).expect("room again");
+}

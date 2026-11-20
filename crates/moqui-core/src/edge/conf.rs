@@ -72,6 +72,9 @@ pub struct EdgeSettings {
     /// pairing for now (`queue-mail-percent`, at most 100): mail answered 250 is then never what the cap fails
     /// (SEC-MAIL-86, [`super::queue::has_room`]).
     pub mail_percent: u64,
+    /// A pairing's content calls (`PutContent`) open at once at most (`content-calls`, at least 1), each holding up to
+    /// an item's content in memory; past them a call is refused for now (SEC-CLU-83).
+    pub content_calls: usize,
     /// The content files kept for one pairing's deliveries at most, whatever their size (`queue-max-content-files`);
     /// 0 for no cap. At it, as at `max_bytes`, an edge node pauses the pairing (SEC-CLU-02, [`super::caps`]).
     pub max_content_files: u64,
@@ -116,6 +119,11 @@ pub const MAX_SSH_TUNNELS: usize = 1_000_000;
 /// would overflow the clock it is added to.
 pub const MAX_WAIT: Duration = Duration::from_secs(86_400);
 
+/// The default of `content-calls`.
+pub const DEFAULT_CONTENT_CALLS: usize = 4;
+/// The most `content-calls`.
+pub const MAX_CONTENT_CALLS: usize = 1024;
+
 /// The default of `queue-mail-percent`.
 pub const DEFAULT_MAIL_PERCENT: u64 = 90;
 
@@ -139,6 +147,7 @@ impl Default for EdgeSettings {
             retention_days: 14,
             max_bytes: 1024 * 1024 * 1024,
             mail_percent: DEFAULT_MAIL_PERCENT,
+            content_calls: DEFAULT_CONTENT_CALLS,
             max_content_files: DEFAULT_MAX_CONTENT_FILES,
             replica_max_rows: DEFAULT_REPLICA_MAX_ROWS,
             max_attempts: 10,
@@ -198,6 +207,9 @@ impl EdgeSettings {
         settings.max_bytes = number("queue-max-megabytes", 1024).saturating_mul(1024 * 1024);
         settings.max_content_files = number("queue-max-content-files", DEFAULT_MAX_CONTENT_FILES);
         settings.mail_percent = number("queue-mail-percent", DEFAULT_MAIL_PERCENT).min(100);
+        settings.content_calls = usize::try_from(number("content-calls", DEFAULT_CONTENT_CALLS as u64))
+            .unwrap_or(DEFAULT_CONTENT_CALLS)
+            .clamp(1, MAX_CONTENT_CALLS);
         settings.replica_max_rows = number("replica-max-rows", DEFAULT_REPLICA_MAX_ROWS);
         settings.max_attempts = u32::try_from(number("queue-max-attempts", 10)).unwrap_or(10).max(1);
         let retry = edge.attribute("queue-retry-seconds").unwrap_or_default();
