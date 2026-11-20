@@ -509,7 +509,7 @@ fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
     let certs = certs();
     let port = crate::common::free_port();
     let port_text = port.to_string();
-    let mut gate = crate::common::start_with_files(
+    let gate = crate::common::start_with_files(
         "edge-refusals",
         None,
         &[
@@ -531,7 +531,7 @@ fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
         .block_on(pair(&pair_config(&url, &code(&gate), "local-r", &certs)))
         .unwrap();
     // a restart: what this process paired is gone from memory, the pairing's row is not
-    gate = gate.restart();
+    let _restarted = gate.restart();
     for _ in 0..3 {
         let (answer, message) = stranger_up(&rt, port);
         assert_eq!(answer, 1, "{message}");
