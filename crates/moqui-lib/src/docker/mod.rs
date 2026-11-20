@@ -16,6 +16,27 @@
 //! plans/Vault-Instances.md §4.2): the one container driver that CI's runs (`moqui_git::ci::driver::docker`) and
 //! managed instances share. A host is reached over a Unix socket, HTTPS with a client certificate, or plain HTTP to
 //! this machine only (SEC-OUT-08). This module knows no entity: the caller maps its host row to a [`HostAddress`].
+//!
+//! Beside the calls CI's runs make, it makes containers that stay ([`ContainerSpec`], [`DockerHost::create_spec`]):
+//! created without starting, started, stopped, restarted, inspected, their logs read and removed, with volumes and
+//! networks. No secret goes into a container's environment, labels or command: a secret is a file under
+//! `/run/secrets`, put into the created container before it starts on Docker ([`archive`]), a Podman secret on Podman
+//! ([`podman`]). [`fake`] is a fake engine for the tests of what uses the driver (feature `docker-fake`).
+
+mod archive;
+mod container;
+#[cfg(any(test, feature = "docker-fake"))]
+pub mod fake;
+mod podman;
+mod spec;
+
+pub use archive::secrets_tar;
+pub use container::{demux_logs, ContainerInfo, VolumeInfo, MAX_LOG_LINES};
+pub use podman::{is_podman, LIBPOD};
+pub use spec::{
+    valid_name, ContainerSpec, HealthCheck, Mount, MountKind, PortBinding, RestartPolicy, SecretFile, SECRETS_DIR,
+    SECRETS_LABEL,
+};
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -80,12 +101,22 @@ pub enum Created {
     NoSuchImage,
 }
 
+/// Which engine serves a host's API.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Engine {
+    Docker,
+    /// Podman, whose own API makes the secret files ([`podman`]).
+    Podman,
+}
+
 /// A connection to a host's API.
 pub struct DockerHost {
     client: RestClient,
     base: String,
     /// What tells this host from another: its socket path or address.
     key: String,
+    /// The engine, once asked.
+    engine: std::sync::OnceLock<Engine>,
 }
 
 impl std::fmt::Debug for DockerHost {
@@ -147,7 +178,12 @@ impl DockerHost {
         ) {
             client = client.client_identity_pem(format!("{}\n{}\n", cert.trim(), key.trim()).into_bytes());
         }
-        Ok(Self { client, base, key })
+        Ok(Self {
+            client,
+            base,
+            key,
+            engine: std::sync::OnceLock::new(),
+        })
     }
 
     /// A host reached over a Unix socket.
@@ -157,7 +193,31 @@ impl DockerHost {
             key: format!("unix:{}", socket.display()),
             client: RestClient::new().timeout(CALL_TIMEOUT).unix_socket(socket),
             base: "http://localhost".to_string(),
+            engine: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Which engine serves this host: Podman when `GET /version` names the component "Podman Engine", else Docker.
+    /// Asked once.
+    ///
+    /// # Errors
+    ///
+    /// When the host does not answer, or refuses.
+    pub fn engine(&self) -> Result<Engine, Error> {
+        if let Some(engine) = self.engine.get() {
+            return Ok(*engine);
+        }
+        let response = self.send(Method::Get, "/version", None, CALL_TIMEOUT)?;
+        if response.status() >= 300 {
+            return Err(Self::problem("asking the host's version", &response));
+        }
+        let version: serde_json::Value = serde_json::from_str(response.body()).unwrap_or(serde_json::Value::Null);
+        let engine = if is_podman(&version) {
+            Engine::Podman
+        } else {
+            Engine::Docker
+        };
+        Ok(*self.engine.get_or_init(|| engine))
     }
 
     /// The HTTP client of this host, for a call this module does not make (`call#DockerApi`).
@@ -425,3 +485,6 @@ pub fn encode(text: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests;

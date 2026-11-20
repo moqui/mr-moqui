@@ -34,6 +34,9 @@ ammonia = { workspace = true }
 # The ETL CsvExtractor (src/etl.rs), streamed.
 csv = { workspace = true }
 tracing = { workspace = true }
+# The container driver's secret files (src/docker): a tar put into a container, and values zeroized when dropped.
+tar = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 
 [features]
 # A lib-only program leaves this off. Phase 6 enables it on the crate that calls HTTP.
@@ -43,7 +46,17 @@ age = ["dep:hmac", "dep:hkdf", "dep:chacha20poly1305", "dep:curve25519-dalek"]
 # An S3 client with SigV4 signing (src/s3.rs), for encrypted backups.
 s3 = ["http", "age"]
 # The Docker and Podman Engine API client (src/docker), which CI's runs and managed instances share.
-docker = ["http"]
+docker = ["http", "dep:tar", "dep:zeroize"]
+# The fake engine (src/docker/fake.rs) for the tests of a crate that uses the driver.
+docker-fake = ["docker"]
+
+# Opt-in: a container with a secret file on a real Docker or Podman socket (docs/Build-Test.md). Run by name, with
+# MOQUI_CI_DOCKER_SOCKET set: cargo test -p moqui-lib --features docker --test docker_real
+[[test]]
+name = "docker_real"
+path = "tests/docker_real.rs"
+test = false
+required-features = ["docker"]
 
 [lints]
 workspace = true

@@ -9,7 +9,7 @@
 # moqui-core with only the features it asks for); the drivers with no
 # database client, with their tests; the mail crate without imap (the send half alone, as Lite links it); the
 # terminal client on its own feature sets (the model alone is what moqui-core's tests link); the lib crate with only its
-# container driver (docker), with its tests; then the scripted TUI
+# container driver and its fake engine (docker-fake), with its tests and opt-in test; then the scripted TUI
 # screens on embedded Postgres, which `cargo test` leaves out.
 #   scripts/check-packages.sh [extra clippy args...]
 set -euo pipefail
@@ -43,7 +43,7 @@ run -p moqui-tools --all-targets "$@"
 run -p moqui-drivers --all-targets "$@"
 run -p moqui-mail --no-default-features --all-targets "$@"
 run -p moqui-tui --no-default-features --features model --all-targets "$@"
-run -p moqui-lib --features docker --all-targets "$@"
+run -p moqui-lib --features docker-fake --all-targets "$@"
 echo "== cargo test -p moqui-host --test tui_screens" >&2
 cargo test -p moqui-host --test tui_screens
 echo "All package feature sets pass" >&2
