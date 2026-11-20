@@ -464,7 +464,7 @@ pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str
     }
     let sub = dir.join(host);
     let fail = |err: std::io::Error| Error::new(format!("could not write {}: {err}", sub.display()));
-    std::fs::create_dir_all(&sub).map_err(fail)?;
+    moqui_lib::private_fs::create_dir_all(&sub).map_err(fail)?;
     let marker = sub.join(MARKER);
     if !marker.is_file() {
         std::fs::write(
