@@ -189,7 +189,8 @@ while its job ran); the job's own state stands.
 A run is **trusted** only when it is for a ref of the repository itself, pushed or asked for by an account with the
 update right. A schedule's run of the default branch or a protected one is trusted: it is the repository's own branch by
 its own file; one of another branch, which an account without the update right may make, is trusted only as a push of
-its head would be, by the account that brought the head (`GitCommitPush`; untrusted when none is known). A run is **untrusted**
+its head would be: by the account of the latest change that set the branch to its head (`GitUpdate`), and only while the
+account that first brought the head (`GitCommitPush`) has the update right too; untrusted when no setter is known. A run is **untrusted**
 when it is for a merge request from a fork (`GitMergeRequest.sourceRepositoryId`), one pushed for review
 (`pushedForReview`) or one that stopped following its source (`sourceDetachedDate`), whoever opened it and whatever
 their rights (the commits are not a branch's of the repository), or was caused by an account without the update

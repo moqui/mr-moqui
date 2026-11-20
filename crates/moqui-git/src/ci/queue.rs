@@ -25,7 +25,7 @@ use std::sync::Mutex;
 use moqui_lib::object::{to_plain_string, Value};
 
 use moqui_core::context::Error;
-use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 
 use super::file::{CiFile, Event, Pipeline};
 use super::plan::PlannedJob;
@@ -717,6 +717,63 @@ fn pusher_of(entity: &EntityFacade, repository_id: &str, commit_id: &str) -> Res
         .and_then(|row| field(&row, "userId")))
 }
 
+/// The account of the latest change (`GitUpdate` with a `GitUpdateRef` of `ref_name` made `ok`) that set the ref to
+/// `commit_id`: who put the branch where it is, as a push's run is decided by its pusher. `None` when none is known.
+fn setter_of(
+    entity: &EntityFacade,
+    repository_id: &str,
+    ref_name: &str,
+    commit_id: &str,
+) -> Result<Option<String>, Error> {
+    const GIT_UPDATE: &str = "moqui.resource.GitUpdate";
+    const GIT_UPDATE_REF: &str = "moqui.resource.GitUpdateRef";
+    if !entity.table_ready(GIT_UPDATE_REF) {
+        return Ok(None);
+    }
+    let updates: Vec<Value> = entity
+        .find(GIT_UPDATE_REF)?
+        .eq("refName", Value::string(ref_name))
+        .eq("newObjectId", Value::string(commit_id))
+        .eq("result", Value::string("ok"))
+        .select_field("updateId")
+        .list()?
+        .iter()
+        .filter_map(|row| field(row, "updateId"))
+        .map(Value::string)
+        .collect();
+    if updates.is_empty() {
+        return Ok(None);
+    }
+    Ok(entity
+        .find(GIT_UPDATE)?
+        .eq("repositoryId", Value::string(repository_id))
+        .condition(Condition::is_in("updateId", updates))
+        .order_by("updateDate", true)
+        .limit(1)
+        .list()?
+        .iter()
+        .next()
+        .and_then(|row| field(row, "userId")))
+}
+
+/// Who a schedule run of a branch other than the default or a protected one is decided by: the account that set the
+/// branch to its head ([`setter_of`]), and only while the account that first brought the head ([`pusher_of`]) has the
+/// update right too, when it is another; `None`, untrusted, when the setter is not known or the bringer has not.
+fn scheduled_user(
+    entity: &EntityFacade,
+    repository_id: &str,
+    ref_name: &str,
+    head: &str,
+) -> Result<Option<String>, Error> {
+    let Some(setter) = setter_of(entity, repository_id, ref_name, head)? else {
+        return Ok(None);
+    };
+    match pusher_of(entity, repository_id, head)? {
+        Some(bringer) if bringer != setter && !trust::has_update(repository_id, &bringer) => Ok(None),
+        _ => Ok(Some(setter)),
+    }
+}
+
 /// Queue the schedule pipelines that came due since they were last checked, as of `now` (milliseconds). The count
 /// queued. One that fails is logged and the others still run.
 pub fn queue_due(provider: &GitProvider, entity: &EntityFacade, now: i64) -> Result<usize, Error> {
@@ -765,7 +822,7 @@ pub fn queue_due(provider: &GitProvider, entity: &EntityFacade, now: i64) -> Res
             request.schedule_own_ref = ref_name == crate::ops::branch_ref(&repo.definition.branch)
                 || trust::is_protected(entity, &repository, Event::Schedule, &ref_name)?;
             if !request.schedule_own_ref {
-                request.user_id = pusher_of(entity, &repository, &head.to_string())?;
+                request.user_id = scheduled_user(entity, &repository, &ref_name, &head.to_string())?;
             }
             Ok(queue(provider, entity, &request)?.len())
         })();

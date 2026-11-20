@@ -2314,35 +2314,70 @@ fn a_file_that_is_not_valid_is_an_error_status_and_a_component_gets_the_built_in
     );
 
     // SEC-GIT-88: a schedule of another branch, one an account without the update right may make, is trusted only as
-    // a push of its head would be; with no pusher known it is not
+    // a push that set the branch to its head would be, and while the account that first brought the head has update
+    // too; a protected branch is the repository's own whoever pushed it
     plain.push(
         &fixture,
         &[("ci.xml", r#"<ci><pipeline name="side" on="schedule" cron="0 0 4 * * ?" branches="side"><job name="j" image="moqui-build"><step run="x"/></job></pipeline></ci>"#)],
         "main",
     );
     let side_head = plain.push(&fixture, &[("side.txt", "a branch of its own")], "side");
-    {
+    let with_user = |entity: &str, key: &[(&str, &str)], user: &str| {
         let _entered = fixture.context.enter();
         let _authz = fixture.context.disable_authz();
-        fixture
-            .entity
-            .find("moqui.resource.GitCommitPush")
-            .unwrap()
-            .eq("repositoryId", s("plain"))
-            .eq("commitId", s(&side_head))
-            .delete_all()
-            .unwrap();
-    }
-    assert_eq!(due(now + 50 * 60 * 60 * 1000), 1);
-    let side: Vec<EntityValue> = rows(&fixture, "moqui.resource.GitPipelineRun", &[("repositoryId", "plain")])
-        .into_iter()
-        .filter(|run| text(run, "pipelineName") == "side")
-        .collect();
-    assert_eq!(side.len(), 1);
-    assert_eq!(
-        (text(&side[0], "refName"), text(&side[0], "trusted")),
-        ("refs/heads/side".into(), "N".into())
+        let mut find = fixture.entity.find(entity).unwrap();
+        for (field, value) in key {
+            find = find.eq(field, s(value));
+        }
+        find.update_all([("userId".to_string(), s(user))]).unwrap();
+    };
+    let setter = |user: &str| {
+        for update in rows(
+            &fixture,
+            "moqui.resource.GitUpdateRef",
+            &[("refName", "refs/heads/side"), ("newObjectId", &side_head)],
+        ) {
+            with_user("moqui.resource.GitUpdate", &[("updateId", &text(&update, "updateId"))], user);
+        }
+    };
+    let bringer = |user: &str| {
+        with_user(
+            "moqui.resource.GitCommitPush",
+            &[("repositoryId", "plain"), ("commitId", &side_head)],
+            user,
+        );
+    };
+    let mut day = 1;
+    let mut trusted = || {
+        day += 1;
+        assert_eq!(due(now + day * 25 * 60 * 60 * 1000), 1);
+        let mut side: Vec<EntityValue> = rows(&fixture, "moqui.resource.GitPipelineRun", &[("repositoryId", "plain")])
+            .into_iter()
+            .filter(|run| text(run, "pipelineName") == "side")
+            .collect();
+        side.sort_by_key(|run| super::super::ci::long(run, "runNum").unwrap_or(0));
+        let last = side.pop().unwrap();
+        assert_eq!(text(&last, "refName"), "refs/heads/side");
+        text(&last, "trusted")
+    };
+    assert_eq!(trusted(), "Y", "set and brought by an account with update");
+    setter(READER);
+    assert_eq!(trusted(), "N", "set by an account without update");
+    setter(WRITER);
+    bringer(READER);
+    assert_eq!(trusted(), "N", "brought by an account without update");
+    ok(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.store#GitBranchRule",
+        &[
+            ("repositoryId", s("plain")),
+            ("refPattern", s("side")),
+            ("pushUserGroupId", s("GIT_WRITERS")),
+        ],
     );
+    setter(READER);
+    assert_eq!(trusted(), "Y", "a protected branch is the repository's own");
 }
 
 #[test]
