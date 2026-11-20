@@ -84,10 +84,21 @@ fn keys_are_replaced_and_rewrapped_after_a_strong_sign_in_and_checks_are_signed_
     let mut bob = Client::new(&facade, "bob");
     let again = json!({ "personalKeyId": super::new_id("pk"), "public": alice.public,
                         "passphraseWrap": alice.made["passphrase_wrap"], "recoveryWrap": alice.made["recovery_wrap"] });
+    // setting up a key needs a strong sign-in too, so a weak session or a key cannot plant one
     assert!(alice
         .call("setup#PersonalKey", again.clone())
         .unwrap_err()
+        .contains("strongAuth"));
+    strong_login("alice", 0);
+    assert!(call("setup#PersonalKey", again.clone())
+        .unwrap_err()
         .contains("already"));
+    let carol_key = super::new_id("pk");
+    super::make_user(&facade, "carol");
+    let carols = json!({ "personalKeyId": carol_key, "public": alice.public,
+                         "passphraseWrap": alice.made["passphrase_wrap"], "recoveryWrap": alice.made["recovery_wrap"] });
+    super::login("carol");
+    assert!(call("setup#PersonalKey", carols).unwrap_err().contains("strongAuth"));
     assert!(alice
         .call("replace#PersonalKey", again)
         .unwrap_err()
@@ -116,7 +127,7 @@ fn keys_are_replaced_and_rewrapped_after_a_strong_sign_in_and_checks_are_signed_
     let key = bob.call("get#UserPublicKey", json!({ "userId": "alice" })).unwrap();
     let check = bob
         .op(
-            json!({ "op": "key_check_make", "checked_key_id": key["personalKeyId"], "checked_public": key["public"],
+            json!({ "op": "key_check_make", "checked_key_id": key["personalKeyId"], "checked_user_id": key["userId"], "checked_public": key["public"],
                     "fingerprint": key["fingerprint"], "checked_at": 1 }),
         )
         .unwrap();

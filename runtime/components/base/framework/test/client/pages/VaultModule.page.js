@@ -10,7 +10,7 @@ async function nativeVectors() {
 
 async function check(client, keyId, publicKey) {
     const { fingerprint } = await client.fingerprint({ public: publicKey });
-    return client.keyCheckMake({ checked_key_id: keyId, checked_public: publicKey, fingerprint, checked_at: 1 });
+    return client.keyCheckMake({ checked_key_id: keyId, checked_user_id: keyId.replace(/^pk-/, ""), checked_public: publicKey, fingerprint, checked_at: 1 });
 }
 
 test("the module in its worker makes the native known-answer vectors, the CFRG HPKE vector among them", async () => {

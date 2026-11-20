@@ -35,8 +35,8 @@ use moqui_vault::text::{hex, unhex};
 use serde_json::{json, Value as Json};
 
 use crate::common::{
-    authz_off, check_id, fail, field, find, json, now, out, refused, required, text, user, value, Out, Params, ACTIVE,
-    KEY_CHECK, PERSONAL_KEY,
+    authz_off, check_hex, check_id, fail, field, find, id_has_history, id_not_available, json, now, out, refused,
+    required, text, user, value, Out, Params, ACTIVE, KEY_CHECK, MAX_SMALL_TEXT, MAX_WRAP_HEX, PERSONAL_KEY,
 };
 use crate::events::{self, Event};
 
@@ -74,9 +74,9 @@ fn require_strong_sign_in(facade: &EntityFacade, user_id: &str) -> Result<(), Li
         .eq("userId", Value::string(user_id))
         .one()?
         .is_some_and(|account| !field(&account, "currentPassword").is_empty());
-    let device = moqui_core::user::login_key_kind() == Some(moqui_core::user::LoginKeyKind::Device);
+    // a device's key made after a password alone is no strong sign-in either: such an account sets up a factor
     let has_factor = moqui_core::user::second_factor_required(user_id).map_err(|err| fail(err.message()))?;
-    if has_password && !has_factor && !device {
+    if has_password && !has_factor {
         return Err(fail(
             "Your vault key is sent only after a sign-in with a password and a second factor, SSO, or a paired device: \
              set up a second factor first (reasonCode strongAuthNeedsFactor)",
@@ -120,6 +120,9 @@ fn public_param(params: &BTreeMap<String, Value>) -> Result<PersonalPublic, LibE
 /// The passphrase wrap, refused when its Argon2id parameters are under the floor or over the ceiling.
 fn passphrase_wrap_param(params: &BTreeMap<String, Value>) -> Result<(PasswordWrap, Json), LibError> {
     let given = json(params, "passphraseWrap")?;
+    if given.to_string().len() > MAX_SMALL_TEXT {
+        return Err(fail("passphraseWrap is too long"));
+    }
     let wrap = shapes::password_wrap_of(&json!({ "wrap": given }), "wrap").map_err(refused)?;
     wrap.params.check().map_err(refused)?;
     Ok((wrap, given))
@@ -144,13 +147,13 @@ fn create_key(facade: &EntityFacade, user_id: &str, params: &Params) -> Result<(
     let public = public_param(params)?;
     let (_, wrap) = passphrase_wrap_param(params)?;
     let recovery = required(params, "recoveryWrap")?;
-    unhex(&recovery).map_err(refused)?;
-    if find(facade, PERSONAL_KEY)?
+    check_hex("recoveryWrap", &recovery, MAX_WRAP_HEX)?;
+    let taken = find(facade, PERSONAL_KEY)?
         .eq("personalKeyId", Value::string(&key_id))
         .one()?
-        .is_some()
-    {
-        return Err(fail(format!("Personal key {key_id} exists already")));
+        .is_some();
+    if taken || id_has_history(facade, "personalKeyId", &key_id)? {
+        return Err(id_not_available("Personal key", &key_id));
     }
     let mut row = facade.make_value(PERSONAL_KEY)?;
     row.set("personalKeyId", Value::string(&key_id));
@@ -165,10 +168,12 @@ fn create_key(facade: &EntityFacade, user_id: &str, params: &Params) -> Result<(
     Ok((key_id, public))
 }
 
-/// `setup#PersonalKey`: the caller's first personal key. Refused when they have one (replace#PersonalKey).
+/// `setup#PersonalKey`: the caller's first personal key, after a strong, recent sign-in (so a weak session or a key
+/// cannot plant a key for a user who has none). Refused when they have one (replace#PersonalKey).
 fn setup_personal_key(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
+    require_strong_sign_in(facade, &me)?;
     if active_key(facade, &me)?.is_some() {
         return Err(fail(
             "You have a personal vault key already: replace it to make a new one",
@@ -242,7 +247,7 @@ fn rewrap_personal_key(params: &Params, facade: &EntityFacade) -> Out {
     row.set("passphraseWrap", Value::string(wrap.to_string()));
     let recovery = text(params, "recoveryWrap");
     if !recovery.is_empty() {
-        unhex(&recovery).map_err(refused)?;
+        check_hex("recoveryWrap", &recovery, MAX_WRAP_HEX)?;
         row.set("recoveryWrap", Value::string(recovery));
     }
     row.update(facade)?;
@@ -317,7 +322,8 @@ pub(crate) fn key_check_of(given: &Json) -> Result<KeyCheck, LibError> {
 pub(crate) fn key_check_json(row: &EntityValue) -> Json {
     let mut shaped = json!({
         "checker_user_id": field(row, "checkerUserId"), "checker_key_id": field(row, "checkerKeyId"),
-        "checked_key_id": field(row, "checkedKeyId"), "checked_encrypt": field(row, "checkedEncrypt"),
+        "checked_key_id": field(row, "checkedKeyId"), "checked_user_id": field(row, "checkedUserId"),
+        "checked_encrypt": field(row, "checkedEncrypt"),
         "checked_verify": field(row, "checkedVerify"),
         "checked_at": crate::common::int_field(row, "checkedAt"), "signature": field(row, "signature"),
     });
@@ -336,11 +342,18 @@ fn store_key_check(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("A key check is stored only by its maker, with their active key"));
     }
     check.checked_verify_key(&public_of(&mine)?.verify).map_err(refused)?;
-    if check.checked_key_id != "lease-key" {
+    if check.checked_key_id == "lease-key" {
+        if !check.checked_user_id.is_empty() {
+            return Err(fail("A check of the lease key names no user"));
+        }
+    } else {
         let checked = find(facade, PERSONAL_KEY)?
             .eq("personalKeyId", Value::string(&check.checked_key_id))
             .one()?
             .ok_or_else(|| fail(format!("No personal key {}", check.checked_key_id)))?;
+        if field(&checked, "userId") != check.checked_user_id {
+            return Err(fail("The check names another user than the key's"));
+        }
         let public = public_of(&checked)?;
         check
             .covers_personal(&public_of(&mine)?.verify, &public)
@@ -358,6 +371,7 @@ fn store_key_check(params: &Params, facade: &EntityFacade) -> Out {
     row.set("checkerUserId", Value::string(&check.checker_user_id));
     row.set("checkerKeyId", Value::string(&check.checker_key_id));
     row.set("checkedKeyId", Value::string(&check.checked_key_id));
+    row.set("checkedUserId", Value::string(&check.checked_user_id));
     row.set("checkedEncrypt", Value::string(hex(&check.checked_encrypt)));
     row.set("checkedVerify", Value::string(hex(&check.checked_verify)));
     row.set("checkedAt", Value::I64(check.checked_at));
@@ -388,7 +402,8 @@ pub(crate) fn checks_by(facade: &EntityFacade, checker_key_id: &str) -> Result<V
         .list()?;
     // a row that does not read is logged and left out: one check fewer refuses more, never less
     let mut checks = Vec::with_capacity(rows.len());
-    for row in rows.iter() {
+    // a lease-key check vouches for no personal key
+    for row in rows.iter().filter(|row| field(row, "checkedKeyId") != "lease-key") {
         match key_check_of(&key_check_json(row)) {
             Ok(check) => checks.push(check),
             Err(err) => tracing::error!("VaultKeyCheck {} does not read: {err}", field(row, "keyCheckId")),

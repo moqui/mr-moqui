@@ -81,7 +81,7 @@ impl State {
     pub(crate) fn write(&self, path: &Path) -> Result<(), Error> {
         let text = serde_json::to_string_pretty(&Value::Object(self.servers.clone()))
             .map_err(|err| Error::new(format!("vault state: {err}")))?;
-        let written = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| {
+        let written = path.parent().map_or(Ok(()), make_dir).and_then(|()| {
             let mut options = std::fs::OpenOptions::new();
             options.write(true).create(true).truncate(true);
             #[cfg(unix)]
@@ -90,10 +90,28 @@ impl State {
                 options.mode(0o600);
             }
             let mut file = options.open(path)?;
+            // a file made before, or by another tool, is its owner's alone too
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+            }
             std::io::Write::write_all(&mut file, text.as_bytes())
         });
         written.map_err(|err| Error::new(format!("vault state {}: {err}", path.display())))
     }
+}
+
+/// The state's directory, its owner's alone (0700) when this makes it.
+fn make_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
 }
 
 #[cfg(test)]

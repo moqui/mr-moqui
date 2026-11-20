@@ -127,7 +127,7 @@ grpc = [
 edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
 # Vaults (crates/moqui-vault-server, plans/Vault-Instances.md §3): personal and operational vaults, leases, machine
 # access and recovery. In every package.
-vault = ["dep:moqui-vault-server", "dep:moqui-vault"]
+vault = ["dep:moqui-vault-server", "dep:moqui-vault", "dep:zeroize"]
 # Managed instances (crates/moqui-instance, plans/Vault-Instances.md §4): kinds, provisioning on Docker and Podman hosts,
 # deploys, rotation and transit by the manager. In Maximal and Enterprise; not Lite.
 instances = ["vault", "dep:moqui-instance"]
@@ -182,6 +182,8 @@ moqui-dav = { workspace = true }
 moqui-vault-server = { workspace = true, optional = true }
 # The vault crypto's client session (ops::Session), natively, for `moqui vault` and the test client's vault member.
 moqui-vault = { workspace = true, optional = true, features = ["json"] }
+# `moqui vault`'s typed passwords and passphrases cleared from memory; already in the graph through moqui-vault.
+zeroize = { workspace = true, optional = true }
 moqui-instance = { workspace = true, optional = true }
 # The runtime files built into the binary (crates/moqui-embedded), in every build; the embed-* features add to them.
 moqui-embedded = { workspace = true }

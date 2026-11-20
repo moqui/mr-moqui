@@ -8,7 +8,13 @@
 // Run: ./moq test-client framework --serve --spec VaultShared
 
 const RUN = String(Date.now())
-const USERS = [["a", "sec.all.only", "SecAll1!!"], ["b", "sec.view.only", "SecView1!!"], ["c", "sec.none.only", "SecNone1!!"]]
+// test/ClientFixtures.spec.js makes them, each with a second factor and one single-use code: a sign-in with the code
+// is a strong one, which setting up a personal key needs
+const USERS = [
+    ["a", "sec.vault.a", "SecVaultA1!!", "70318001"],
+    ["b", "sec.vault.b", "SecVaultB1!!", "70318002"],
+    ["c", "sec.vault.c", "SecVaultC1!!", "70318003"],
+]
 const BODY = { v: 1, type: "login", name: "Bank of Example", fields: { username: "ada-at-bank", password: "hunter2-very-secret" } }
 let users = {}
 let vaultId = ""
@@ -27,7 +33,7 @@ const checks = (user) => api(user, "GET", "/keyChecks").keyCheckList
 // `from` compares `to`'s fingerprint, then stores the check its client signed
 const check = (from, to) => {
     const key = api(from, "GET", "/publicKey", { userId: to.userId })
-    const made = from.c.call("key_check_make", { checked_key_id: key.personalKeyId, checked_public: key.public,
+    const made = from.c.call("key_check_make", { checked_key_id: key.personalKeyId, checked_user_id: key.userId, checked_public: key.public,
         fingerprint: key.fingerprint, checked_at: Date.now() })
     api(from, "POST", "/keyChecks", { check: made })
 }
@@ -38,8 +44,10 @@ spec({
     timeout: 60,
     setupSpec() {
         needsFixtures("the client fixture users")
-        for (const [name, username, password] of USERS) {
-            const s = session({ user: username, password })
+        for (const [name, username, password, code] of USERS) {
+            const s = session()
+            const res = s.post("/rest/login", { json: { username, password, code }, accept: "json", csrf: false })
+            if (res.status >= 400 || !JSON.parse(res.text).loggedIn) throw new Error(`login of ${username}: ${res.status} ${res.text.slice(0, 200)}`)
             const user = { s }
             const key = api(user, "GET", "/personalKey")
             if (key.hasKey) skip("the fixture users have personal vault keys from an earlier run: --serve gives a fresh database")

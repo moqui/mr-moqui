@@ -59,12 +59,13 @@ fn create_vault(params: &Params, facade: &EntityFacade) -> Out {
     if ![PERSONAL, OPERATIONAL].contains(&kind.as_str()) || ![SINGLE_SECRET, SHARED_KEY].contains(&lock.as_str()) {
         return Err(fail("A vault is personal or operational, single-secret or shared-key"));
     }
-    if find(facade, VAULT)?
+    let taken = find(facade, VAULT)?
         .eq("vaultId", Value::string(&vault_id))
         .one()?
-        .is_some()
-    {
-        return Err(fail(format!("Vault {vault_id} exists already")));
+        .is_some();
+    // a deleted vault's events stay, readable by whoever holds its id: the id is never given again
+    if taken || crate::common::id_has_history(facade, "vaultId", &vault_id)? {
+        return Err(crate::common::id_not_available("Vault", &vault_id));
     }
     let operational = kind == OPERATIONAL;
     if operational && !moqui_core::user::has_permission("VAULT_ADMIN").map_err(|err| fail(err.message()))? {
@@ -90,7 +91,7 @@ fn create_vault(params: &Params, facade: &EntityFacade) -> Out {
         }
         let header = text(params, "headerCipher");
         if !header.is_empty() {
-            moqui_vault::text::unhex(&header).map_err(crate::common::refused)?;
+            crate::common::check_hex("headerCipher", &header, crate::common::MAX_SMALL_TEXT)?;
             vault.set("headerCipher", Value::string(header));
         }
     }
@@ -185,8 +186,14 @@ fn create_single_secret(
         return Err(fail("A single-secret vault opens by a password or a generated key"));
     }
     let wrap = crate::common::json(params, "secretWrap")?;
-    if !wrap.is_object() {
+    if !wrap.is_object() || wrap.to_string().len() > crate::common::MAX_SMALL_TEXT {
         return Err(fail("secretWrap is the vault crate's wrap"));
+    }
+    // a password's wrap carries its Argon2id parameters: refused under the floor or over the ceiling
+    if secret_kind == "VsPassword" {
+        let parsed = moqui_vault::ops::shapes::password_wrap_of(&serde_json::json!({ "wrap": wrap }), "wrap")
+            .map_err(crate::common::refused)?;
+        parsed.params.check().map_err(crate::common::refused)?;
     }
     vault.set("secretKindEnumId", Value::string(secret_kind));
     vault.set("secretWrap", Value::string(wrap.to_string()));
@@ -307,6 +314,12 @@ fn delete_vault(params: &Params, facade: &EntityFacade) -> Out {
     let me = user()?;
     let vault_id = required(params, "vaultId")?;
     let vault = vault_for(facade, &vault_id, &me, Access::Manage, true)?;
+    if field(&vault, "vaultKindEnumId") == OPERATIONAL
+        && !moqui_core::user::has_permission("VAULT_ADMIN").map_err(|err| fail(err.message()))?
+    {
+        return Err(fail("Deleting an operational vault needs the VAULT_ADMIN permission"));
+    }
+    crate::common::require_recent_auth()?;
     for entity in [ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION, RECOVERY_WRAP] {
         let rows = find(facade, entity)?.eq("vaultId", Value::string(&vault_id)).list()?;
         for row in rows.iter() {

@@ -152,13 +152,14 @@ impl Session {
         Ok(anchors)
     }
 
-    /// Refuses a personal key that is neither this session's own nor covered by a verified check.
-    fn require_checked(&self, args: &Value, public: &PersonalPublic) -> Result<(), Error> {
+    /// Refuses a personal key that is neither this session's own nor covered by a verified check of it as
+    /// `user_id`'s key.
+    fn require_checked(&self, args: &Value, user_id: &str, public: &PersonalPublic) -> Result<(), Error> {
         let me = self.me()?;
-        if *public == me.key.public() {
+        if *public == me.key.public() && user_id == me.user_id {
             return Ok(());
         }
-        fingerprint::require_checked(&self.key_checks(args)?, &me.key.public().verify, public)
+        fingerprint::require_checked(&self.key_checks(args)?, &me.key.public().verify, user_id, public)
     }
 
     fn dispatch(&mut self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
@@ -215,7 +216,7 @@ impl Session {
             "key_version_first" => {
                 let members = members_of(args)?;
                 for member in &members {
-                    self.require_checked(args, &member.public)?;
+                    self.require_checked(args, &member.user_id, &member.public)?;
                 }
                 let me = self.me()?;
                 let entry = KeyVersion::first(str_of(args, "vault_id")?, members, &me.user_id, &me.key_id, &me.key)?;
@@ -247,7 +248,7 @@ impl Session {
                 let vault_id = str_of(args, "vault_id")?;
                 let key_version = u64_of(args, "key_version")?;
                 let member_public = public_of(args, "member_public")?;
-                self.require_checked(args, &member_public)?;
+                self.require_checked(args, str_of(args, "member_user_id")?, &member_public)?;
                 let to = Recipient {
                     user_id: str_of(args, "member_user_id")?,
                     key_id: str_of(args, "member_key_id")?,
@@ -305,7 +306,7 @@ impl Session {
             "recovery_wrap" => {
                 let record = record_of(args)?;
                 let maker = public_of(args, "maker_public")?;
-                self.require_checked(args, &maker)?;
+                self.require_checked(args, &record.maker_user_id, &maker)?;
                 let vault_id = str_of(args, "vault_id")?;
                 let key_version = u64_of(args, "key_version")?;
                 let key = self.vault_key(vault_id, key_version)?;
@@ -317,7 +318,7 @@ impl Session {
                 let held = holder_share_of(args)?;
                 let maker = public_of(args, "maker_public")?;
                 let to_public = public_of(args, "to_public")?;
-                self.require_checked(args, &to_public)?;
+                self.require_checked(args, str_of(args, "to_user_id")?, &to_public)?;
                 let to = To {
                     user_id: str_of(args, "to_user_id")?,
                     key_id: str_of(args, "to_key_id")?,
@@ -331,7 +332,7 @@ impl Session {
             "recovery_combine" => {
                 let record = record_of(args)?;
                 let maker = public_of(args, "maker_public")?;
-                self.require_checked(args, &maker)?;
+                self.require_checked(args, &record.maker_user_id, &maker)?;
                 let deliveries = array_of(args, "deliveries")?
                     .iter()
                     .map(|row| Ok((delivery_of(row)?, verify_of(row, "sender_verify")?)))
@@ -411,7 +412,19 @@ impl Session {
                 return Err(Error::Refused("the fingerprint compared is not this key's"));
             }
             let checked_key_id = str_of(args, "checked_key_id")?;
-            KeyCheck::of_personal(&me.user_id, &me.key_id, &me.key, checked_key_id, &public, checked_at)
+            let checked_user_id = str_of(args, "checked_user_id")?;
+            if checked_user_id.is_empty() {
+                return Err(Error::Format("checked_user_id"));
+            }
+            KeyCheck::of_personal(
+                &me.user_id,
+                &me.key_id,
+                &me.key,
+                checked_user_id,
+                checked_key_id,
+                &public,
+                checked_at,
+            )
         };
         Ok(key_check_json(&check))
     }
@@ -424,7 +437,7 @@ impl Session {
                 .member(&member.user_id, &member.key_id)
                 .is_some_and(|m| m.public == member.public);
             if !listed {
-                self.require_checked(args, &member.public)?;
+                self.require_checked(args, &member.user_id, &member.public)?;
             }
         }
         Ok(members)
@@ -459,7 +472,7 @@ impl Session {
         let old_version = latest.version;
         let members = members_of(args)?;
         for member in &members {
-            self.require_checked(args, &member.public)?;
+            self.require_checked(args, &member.user_id, &member.public)?;
         }
         let item_rows = array_of(args, "items")?;
         let mut wrapped = Vec::with_capacity(item_rows.len());
@@ -597,7 +610,7 @@ impl Session {
     /// key, as `VaultDelivery` stores it (§3.3).
     fn delivery_send(&self, args: &Value, rng: &mut dyn Rng) -> Result<Value, Error> {
         let to_public = public_of(args, "to_public")?;
-        self.require_checked(args, &to_public)?;
+        self.require_checked(args, str_of(args, "to_user_id")?, &to_public)?;
         let to = To {
             user_id: str_of(args, "to_user_id")?,
             key_id: str_of(args, "to_key_id")?,
@@ -626,7 +639,11 @@ impl Session {
     fn delivery_open(&mut self, args: &Value) -> Result<Value, Error> {
         let sent = delivery_of(object_of(args, "delivery")?)?;
         let sender = public_of(args, "sender_public")?;
-        self.require_checked(args, &sender)?;
+        // the sender is the user the delivery names: a key checked as theirs, not just any checked key
+        if sent.sender_kind != "user" {
+            return Err(Error::Refused("only a user's delivery opens here"));
+        }
+        self.require_checked(args, &sent.sender_id, &sender)?;
         let me = self.me()?;
         if sent.recipient_user_id != me.user_id || sent.recipient_key_id != me.key_id {
             return Err(Error::Refused("the delivery is for someone else"));

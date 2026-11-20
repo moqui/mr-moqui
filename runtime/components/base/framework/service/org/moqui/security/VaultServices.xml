@@ -32,7 +32,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The caller's first personal key, made in their client: both public halves (public, the vault crate's
             64 bytes as hex), the private halves wrapped by the key passphrase (passphraseWrap, refused under the Argon2id
             floor or over its ceiling) and by the recovery code (recoveryWrap). personalKeyId is the client's (it is bound
-            into the wraps). Refused when the caller has an active key (replace#PersonalKey). An event.</description>
+            into the wraps). Needs a strong, recent sign-in as get#WrappedPersonalKey does, so a weak session or a key
+            cannot plant a key for a user who has none. Refused when the caller has an active key (replace#PersonalKey). A
+            taken id, or one a deleted record had, is "not available". An event.</description>
         <in-parameters>
             <parameter name="personalKeyId" required="true"/>
             <parameter name="public" required="true"/>
@@ -179,7 +181,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="delete" noun="Vault" type="rust" location="moqui_vault_server::vaults::delete_vault">
         <description>A manager (or a single-secret vault's owner) deletes the vault with its items, their history, its
-            members, key versions and recovery wraps. Its events stay. An event.</description>
+            members, key versions and recovery wraps, after a recent sign-in (require#RecentAuth's rule); an operational
+            vault also needs VAULT_ADMIN. Its events stay, and its id is never given to another vault. An
+            event.</description>
         <in-parameters><parameter name="vaultId" required="true"/></in-parameters>
         <out-parameters><parameter name="vaultId"/></out-parameters>
     </service>
@@ -210,7 +214,9 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="update" noun="VaultItem" type="rust" location="moqui_vault_server::items::update_vault_item">
         <description>A new revision of an item, naming the revision it was made from (expectedRevision; a stale one is
             refused), at the vault's current keyVersion (after a removal, a write at the old version is refused). The
-            revision before is kept in VaultItemHistory. An event.</description>
+            revision before is kept in VaultItemHistory. An operational item keeps its type, binding and name unless all
+            three are given, a new binding free in the vault. Every item write moves the vault's revision, so a removal
+            made from an earlier read is refused. An event.</description>
         <in-parameters>
             <parameter name="vaultItemId" required="true"/>
             <parameter name="expectedRevision" type="Long" required="true"/>
@@ -239,7 +245,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="historyList" type="List"/></out-parameters>
     </service>
     <service verb="delete" noun="VaultItem" type="rust" location="moqui_vault_server::items::delete_vault_item">
-        <description>An item and its history, by a member who may write. An event.</description>
+        <description>An item and its history, by a member who may write, after a recent sign-in. An event.</description>
         <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
         <out-parameters><parameter name="vaultItemId"/></out-parameters>
     </service>
@@ -257,6 +263,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="expectedRevision" type="Long" required="true"/>
             <parameter name="entry" type="Map" required="true"/>
             <parameter name="wrap" type="Map" required="true"/>
+            <parameter name="rewraps" type="List"><description>When the change demotes a manager or changes a manager's
+                key: a new wrap, by a manager of the new list, for each member whose wrap of this key version that manager
+                signed; the change is refused without them.</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>

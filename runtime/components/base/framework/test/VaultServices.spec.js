@@ -2,7 +2,7 @@
 // crates/moqui-vault-server, whose cargo tests hold the rules of the signed records): a vault, its items and an item's
 // history are not found to a non-member, and a write by one is refused; a delivery is listed and filed only by its
 // recipient; a wrapped personal key is sent only after a strong, recent sign-in (a password and a second factor), and an
-// account with a password and no second factor is told to set one up. The client's side, with real keys, is
+// account with a password and no second factor is told to set one up; setting up a personal key needs the same. The client's side, with real keys, is
 // test/client/VaultShared.spec.js. Run: ./moq test framework --spec VaultServices
 const A = "VAULTSPEC_A"
 const B = "VAULTSPEC_B"
@@ -69,7 +69,7 @@ feature("a vault, its items and an item's history are not found to a non-member,
         const vaultId = "vaultspec-ss-" + RUN
         const vaultItemId = "vaultspec-it-" + RUN
         const made = as(A, "create#Vault", {vaultId, vaultKindEnumId: "VkPersonal", lockEnumId: "VlSingleSecret",
-            secretKindEnumId: "VsPassword", secretWrap: {sealed: "cd".repeat(60)}})
+            secretKindEnumId: "VsGenerated", secretWrap: {sealed: "cd".repeat(60)}})
         const item = as(null, "create#VaultItem", {vaultId, vaultItemId, keyVersion: 1, wrappedItemKey: "aa".repeat(60), bodyCipher: "bb".repeat(300)})
         const own = as(null, "get#Vault", {vaultId})
         const ownItems = as(null, "list#VaultItems", {vaultId})
@@ -132,8 +132,8 @@ feature("a delivery is listed and filed only by its recipient", {
 feature("a wrapped personal key is sent only after a strong, recent sign-in: a password and a second factor", {
     when() {
         const personalKeyId = "vaultspec-pk-" + RUN
-        const setup = as(A, "setup#PersonalKey", {personalKeyId, public: PUBLIC, passphraseWrap: WRAP, recoveryWrap: "ef".repeat(100)})
-        const shown = as(null, "get#PersonalKey", {})
+        const key = {personalKeyId, public: PUBLIC, passphraseWrap: WRAP, recoveryWrap: "ef".repeat(100)}
+        const weakSetup = as(A, "setup#PersonalKey", key)
         const internal = as(null, "get#WrappedPersonalKey", {})
         const password = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
         const passwordOnly = as(null, "get#WrappedPersonalKey", {})
@@ -143,17 +143,19 @@ feature("a wrapped personal key is sent only after a strong, recent sign-in: a p
         as(A, "get#PersonalKey", {})
         const first = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {password: PASSWORD})
         const code = as(null, "org.moqui.sso.RecentAuthServices.reauthenticate#User", {code: String(codes[0])})
+        const setup = as(null, "setup#PersonalKey", key)
+        const shown = as(null, "get#PersonalKey", {})
         const strong = as(null, "get#WrappedPersonalKey", {})
-        const allowed = as(null, "get#PersonalKey", {})
         sys(() => ec.entity.find("moqui.security.UserAuthcFactor").condition("userId", A).deleteAll())
-        return {setup, shown, internal, password, passwordOnly, first, code, strong, allowed, personalKeyId}
+        return {weakSetup, setup, shown, internal, password, passwordOnly, first, code, strong, personalKeyId}
     },
-    then({setup, shown, internal, password, passwordOnly, first, code, strong, allowed, personalKeyId}) {
+    then({weakSetup, setup, shown, internal, password, passwordOnly, first, code, strong, personalKeyId}) {
+        weakSetup.errors.includes("set up a second factor")
         setup.errors == ""
         setup.personalKeyId == personalKeyId
         shown.public == PUBLIC
         shown.passphraseWrap == null
-        shown.fetchAllowed == false
+        shown.fetchAllowed == true
         internal.errors.includes("set up a second factor")
         internal.passphraseWrap == null
         password.reauthenticated == true
@@ -163,6 +165,5 @@ feature("a wrapped personal key is sent only after a strong, recent sign-in: a p
         strong.errors == ""
         strong.passphraseWrap.m_kib == 65536
         strong.recoveryWrap == "ef".repeat(100)
-        allowed.fetchAllowed == true
     }
 })

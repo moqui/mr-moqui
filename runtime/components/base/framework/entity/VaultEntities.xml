@@ -190,6 +190,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="checkerUserId" type="id"/>
         <field name="checkerKeyId" type="id"/>
         <field name="checkedKeyId" type="id"/>
+        <field name="checkedUserId" type="id"><description>The user whose key the checker compared it with, as signed; empty for the lease key</description></field>
         <field name="checkedEncrypt" type="text-medium"/>
         <field name="checkedVerify" type="text-medium"/>
         <field name="checkedAt" type="number-integer"/>

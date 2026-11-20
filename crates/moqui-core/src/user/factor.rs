@@ -282,7 +282,7 @@ pub fn login_with_code(username: &str, password: &str, code: &str) -> Result<Cod
                 .get("username")
                 .map(moqui_lib::object::to_plain_string)
                 .unwrap_or_default();
-            super::internal_login_user(&verified)?;
+            super::internal_login_user_verified(&verified, true)?;
             return Ok(CodeLogin::LoggedIn);
         }
         wrong = true;

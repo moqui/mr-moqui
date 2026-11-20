@@ -164,6 +164,11 @@ fn a_single_secret_vault_refuses_members_and_recovery_and_an_operational_vault_n
         .call("create#Vault", operational)
         .unwrap_err()
         .contains("VAULT_ADMIN"));
+    // a password's wrap under the Argon2id floor is refused
+    let mut weak = secret.clone();
+    weak["secretKindEnumId"] = json!("VsPassword");
+    weak["secretWrap"] = json!({ "m_kib": 1024, "t": 3, "p": 1, "salt": "00".repeat(16), "sealed": "ab".repeat(60) });
+    assert!(alice.call("create#Vault", weak).unwrap_err().contains("parameters"));
     alice.call("create#Vault", secret.clone()).unwrap();
     // its owner alone reads it
     let vault = alice
@@ -214,4 +219,69 @@ fn a_single_secret_vault_refuses_members_and_recovery_and_an_operational_vault_n
     let mut with_recovery = create;
     with_recovery["recoveryOn"] = json!("Y");
     alice.call("create#Vault", with_recovery).unwrap();
+
+    // an operational item's binding is unique in its vault, on update too, and its clear columns change all together
+    super::sys(|| {
+        let mut row = facade.make_value("moqui.security.vault.VaultItemType").unwrap();
+        row.set("vaultItemTypeId", moqui_lib::object::Value::string("login"));
+        row.create(&facade).unwrap();
+    });
+    let mut item =
+        |binding: &str| {
+            let item_id = new_id("item");
+            let label = json!({ "item_type": "login", "binding": binding, "name": binding });
+            let sealed = alice
+            .op(json!({ "op": "item_seal", "vault_id": vault_id, "item_id": item_id, "key_version": 1, "label": label,
+                        "body": "{}" }))
+            .unwrap();
+            let create = json!({ "vaultId": vault_id, "vaultItemId": item_id, "keyVersion": 1,
+                             "wrappedItemKey": sealed["wrapped_item_key"], "bodyCipher": sealed["sealed_body"],
+                             "vaultItemTypeId": "login", "bindingKey": binding, "itemName": binding });
+            alice.call("create#VaultItem", create.clone()).unwrap();
+            (item_id, create)
+        };
+    let (_, first) = item("b1");
+    let (second_id, second) = item("b2");
+    let mut moved = second.clone();
+    moved["vaultItemId"] = json!(second_id);
+    moved["expectedRevision"] = json!(1);
+    moved["bindingKey"] = json!("b1");
+    assert!(alice
+        .call("update#VaultItem", moved.clone())
+        .unwrap_err()
+        .contains("taken"));
+    let mut renamed = moved;
+    renamed.as_object_mut().unwrap().remove("bindingKey");
+    renamed.as_object_mut().unwrap().remove("vaultItemTypeId");
+    renamed["itemName"] = json!("other");
+    assert!(alice
+        .call("update#VaultItem", renamed)
+        .unwrap_err()
+        .contains("type, binding and name"));
+    let mut again = first;
+    again["vaultItemId"] = json!(new_id("item"));
+    assert!(alice.call("create#VaultItem", again).unwrap_err().contains("taken"));
+}
+
+/// Deleting a vault needs a recent sign-in, and its id is never given again: its events stay, and a vault made with
+/// the same id would show them to its members. A taken id is refused in the same words.
+#[test]
+fn a_deletion_needs_a_recent_sign_in_and_a_deleted_vaults_id_is_not_given_again() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let alice = Client::new(&facade, "alice");
+    let bob = Client::new(&facade, "bob");
+    let vault_id = new_id("vault");
+    let secret = json!({ "vaultId": vault_id, "vaultKindEnumId": "VkPersonal", "lockEnumId": "VlSingleSecret",
+                         "secretKindEnumId": "VsGenerated", "secretWrap": { "sealed": "00" } });
+    alice.call("create#Vault", secret.clone()).unwrap();
+    let taken = bob.call("create#Vault", secret.clone()).unwrap_err();
+    assert!(taken.contains("is not available"), "{taken}");
+    let refused = alice.call("delete#Vault", json!({ "vaultId": vault_id })).unwrap_err();
+    assert!(refused.contains("reauthRequired"), "{refused}");
+    super::strong_login("alice", 0);
+    super::call("delete#Vault", json!({ "vaultId": vault_id })).unwrap();
+    let reused = super::call("create#Vault", secret).unwrap_err();
+    assert!(reused.contains("is not available"), "{reused}");
+    assert_eq!(reused.replace("alice", ""), taken.replace("bob", ""));
 }

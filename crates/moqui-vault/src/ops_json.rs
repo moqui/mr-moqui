@@ -226,7 +226,8 @@ pub fn remembered_json(r: &Remembered) -> Value {
 pub fn key_check_json(check: &KeyCheck) -> Value {
     json!({
         "checker_user_id": check.checker_user_id, "checker_key_id": check.checker_key_id,
-        "checked_key_id": check.checked_key_id, "checked_encrypt": hex(&check.checked_encrypt),
+        "checked_key_id": check.checked_key_id, "checked_user_id": check.checked_user_id,
+        "checked_encrypt": hex(&check.checked_encrypt),
         "checked_verify": hex(&check.checked_verify), "checked_at": check.checked_at, "signature": hex(&check.signature),
     })
 }
@@ -244,6 +245,7 @@ pub fn key_checks_of(args: &Value) -> Result<Vec<KeyCheck>, Error> {
                 checker_user_id: string_of(row, "checker_user_id")?,
                 checker_key_id: string_of(row, "checker_key_id")?,
                 checked_key_id: string_of(row, "checked_key_id")?,
+                checked_user_id: string_of(row, "checked_user_id")?,
                 checked_encrypt: bytes_of(row, "checked_encrypt")?,
                 checked_verify: bytes_of(row, "checked_verify")?,
                 checked_at: i64_of(row, "checked_at")?,

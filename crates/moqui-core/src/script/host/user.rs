@@ -34,7 +34,7 @@ pub(super) static USER: HostClass = HostClass {
         ),
         method!("ec.user", "logoutUser", [], None, logout_user),
         method!("ec.user", "logoutLocal", [], None, logout_local),
-        method!("ec.user", "internalLoginUser", [Text], None, internal_login_user),
+        method!("ec.user", "internalLoginUser", [Text, OptBool], None, internal_login_user),
         method!("ec.user", "loginUserKey", [Text], None, login_user_key),
         method!(
             "ec.user",
@@ -293,7 +293,9 @@ fn logout_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn internal_login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    match crate::user::internal_login_user(call.text(0).unwrap_or_default()) {
+    // a second argument true: the caller verified this sign-in's second factor code (a strong sign-in)
+    let verified = call.bool(1).unwrap_or(false);
+    match crate::user::internal_login_user_verified(call.text(0).unwrap_or_default(), verified) {
         Ok(()) => Ok(true.into()),
         Err(err) => {
             with_ec(|ec| ec.message().add_error(err.message().to_string()))?;

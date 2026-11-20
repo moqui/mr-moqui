@@ -66,12 +66,12 @@ fn send_vault_delivery(params: &Params, facade: &EntityFacade) -> Out {
     if 2 * delivery.sealed.len() > MAX_SEALED_HEX {
         return Err(fail("A delivery is at most 64 KiB"));
     }
-    if find(facade, DELIVERY)?
+    let taken = find(facade, DELIVERY)?
         .eq("deliveryId", Value::string(&delivery.delivery_id))
         .one()?
-        .is_some()
-    {
-        return Err(fail(format!("Delivery {} exists already", delivery.delivery_id)));
+        .is_some();
+    if taken || crate::common::id_has_history(facade, "deliveryId", &delivery.delivery_id)? {
+        return Err(crate::common::id_not_available("Delivery", &delivery.delivery_id));
     }
     let mut row = facade.make_value(DELIVERY)?;
     row.set("deliveryId", Value::string(&delivery.delivery_id));

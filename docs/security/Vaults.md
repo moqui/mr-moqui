@@ -12,15 +12,17 @@ organization recovery (V4) are later phases.
   receive and one to sign. It is made in your client, under a **key passphrase** that is not your sign-in password and
   never reaches the server, with a **recovery code** to print or save. The server keeps the public halves and the two
   wraps, and no hash of either secret.
-- **A strong, recent sign-in to fetch it.** The server sends your wrapped personal key only to you, and only after a
-  sign-in with a password and a second factor, an SSO sign-in, or a request from a paired device (the desktop and
-  mobile apps) with a recent sign-in on it, within `vault@key-fetch-max-age` seconds (300 by default). An app
-  password, a login, API or scoped key, or a password alone is never enough: an account with a password and no second
-  factor is told to set one up. A new passphrase (`rewrap#PersonalKey`) and a new key (`replace#PersonalKey`) need
-  the same sign-in.
+- **A strong, recent sign-in to set it up and fetch it.** The server sends your wrapped personal key only to you, and
+  only after a sign-in with a password and a second factor, an SSO sign-in, or a request from a paired device (the
+  desktop and mobile apps) whose key a strong sign-in made (or a strong re-authentication on it renewed), with a
+  recent sign-in on it, within `vault@key-fetch-max-age` seconds (300 by default). An app password, a login, API or
+  scoped key, a device's key made after a password alone, or a password alone is never enough: an account with a
+  password and no second factor is told to set one up. Setting up a key (`setup#PersonalKey`), a new passphrase
+  (`rewrap#PersonalKey`) and a new key (`replace#PersonalKey`) need the same sign-in, so a weak session cannot plant
+  a key for someone who has none.
 - **Fingerprints.** Before you share a vault with someone, or send them a value, compare their key's fingerprint (six
-  pronounceable words) with them by another channel: in person, or on a call. Your client then signs a key check and
-  stores it. Nothing is wrapped to a key you have not checked, and when someone's key changes it is checked again:
+  pronounceable words) with them by another channel: in person, or on a call. Your client then signs a key check,
+  which names the user you compared it with, and stores it; a check vouches for that key as that user's only. Nothing is wrapped to a key you have not checked, and when someone's key changes it is checked again:
   your client refuses, and so does the server, which takes a member's wrap only when the manager who made it has a
   stored check of that member's current key. A fingerprint accepted without comparing it lets a server swap in a key
   of its own (§3.12).
@@ -30,7 +32,9 @@ organization recovery (V4) are later phases.
 - **Members.** A personal shared-key vault has manage, write and read; an operational one manage, approve and reveal.
   A manager adds a member with a wrap signed by them and a signed member list. A manager removes a member by rotating
   the vault key: a new key version without that member, every item key rewrapped and every remaining member's wrap
-  remade, all in one change that names the vault's revision it was made from, so two managers cannot interleave. The
+  remade, all in one change that names the vault's revision it was made from, so two managers cannot interleave and
+  an item written meanwhile (which also moves the revision) is never overwritten. Demoting a manager, or changing a
+  manager's key, remakes in the same change every wrap of this key version that manager signed. The
   removed member's wraps are deleted and a write at the old version is refused; the others keep their earlier wrap
   until they open the new version. Your client accepts a key version only through the chain of member lists, each
   signed by a manager of the one before, back to a signer whose key you checked, and `moqui vault` remembers the
@@ -64,8 +68,10 @@ The services are `org.moqui.security.VaultServices` (`crates/moqui-vault-server`
 (`framework/service/vault.rest.xml`). Records cross in the vault crate's JSON shapes, so a client hands an answer to
 its vault module as it came. Each service checks its caller itself: a vault and its items are "not found" to anyone
 but its members (and a single-secret vault's owner), writes need the write or manage role, the member list and a
-deletion the manage role, an operational vault `VAULT_ADMIN` to make; a delivery is listed and filed only by its
-recipient. The server checks what it can (each key version follows the latest and is signed by a manager of it, with
+deletion the manage role and a recent sign-in, an operational vault `VAULT_ADMIN` to make or delete; a delivery is
+listed and filed only by its recipient. Ids are made by the client (the vault crate binds them into what it seals);
+an id that is taken, or that a deleted record had (its events stay), is refused in the same words, so a deleted
+vault's events never show under a new vault. The server checks what it can (each key version follows the latest and is signed by a manager of it, with
 the caller's active key; each wrap by a manager of its version; each key check and delivery by its maker's active
 key; a write only at the current key version, an update only from the current item revision), and the client checks
 it all again, since a server that has been changed would not.

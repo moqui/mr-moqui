@@ -135,7 +135,10 @@ impl Client {
         let made = op(&mut session, request).unwrap();
         let setup = json!({ "personalKeyId": key_id, "public": made["public"], "passphraseWrap": made["passphrase_wrap"],
                             "recoveryWrap": made["recovery_wrap"] });
-        call_as(user, "setup#PersonalKey", setup).unwrap();
+        strong_login(user, 0);
+        call("setup#PersonalKey", setup).unwrap();
+        // the strong sign-in ends with the setup: each later call signs in as the test asks
+        sys(|| moqui_core::user::logout_local().unwrap());
         Client {
             user: user.to_string(),
             key_id,
@@ -161,7 +164,7 @@ impl Client {
     /// Checks `other`'s active key: its fingerprint compared, the check signed here and stored.
     pub(super) fn check(&mut self, other: &str) {
         let key = self.call("get#UserPublicKey", json!({ "userId": other })).unwrap();
-        let request = json!({ "op": "key_check_make", "checked_key_id": key["personalKeyId"], "checked_public": key["public"],
+        let request = json!({ "op": "key_check_make", "checked_key_id": key["personalKeyId"], "checked_user_id": key["userId"], "checked_public": key["public"],
                               "fingerprint": key["fingerprint"], "checked_at": moqui_core::user::now_millis() });
         let check = self.op(request).unwrap();
         self.call("store#KeyCheck", json!({ "check": check })).unwrap();

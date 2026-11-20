@@ -38,6 +38,11 @@ fn the_state_keeps_the_highest_entry_and_reads_back() {
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        // a file another tool left readable is made the owner's alone at the next write
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        state.write(&path).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
     }
     assert_eq!(State::read(&path), state);
     std::fs::write(&path, "not json").unwrap();

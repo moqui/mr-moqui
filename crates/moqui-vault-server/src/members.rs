@@ -39,8 +39,9 @@ use moqui_vault::vault::MemberWrap;
 use serde_json::{json, Value as Json};
 
 use crate::common::{
-    authz_off, fail, field, find, int, int_field, json, now, out, refused, required, role_enum, role_fits, user, value,
-    vault_for, Access, Out, Params, ITEM, KEY_VERSION, MEMBER, OPERATIONAL, SINGLE_SECRET,
+    authz_off, bump_revision, fail, field, find, int, int_field, json, now, out, refused, required, role_enum,
+    role_fits, user, value, vault_for, Access, Out, Params, ITEM, KEY_VERSION, MAX_WRAP_HEX, MEMBER, OPERATIONAL,
+    SINGLE_SECRET,
 };
 use crate::events::{self, Event};
 use crate::personal::{active_key, checks_by, my_key, public_of};
@@ -124,7 +125,7 @@ pub(crate) fn check_new_member(
         return Ok(());
     }
     let checks = checks_by(facade, &signer.key_id)?;
-    fingerprint::require_checked(&checks, &signer.public.verify, &member.public).map_err(|_| {
+    fingerprint::require_checked(&checks, &signer.public.verify, &member.user_id, &member.public).map_err(|_| {
         fail(format!(
             "Check {}'s key fingerprint before wrapping the vault key to it",
             member.user_id
@@ -133,17 +134,34 @@ pub(crate) fn check_new_member(
 }
 
 pub(crate) fn wraps_param(params: &Params, name: &str) -> Result<Vec<MemberWrap>, LibError> {
-    let given = json(params, name)?;
+    wraps_of(json(params, name)?, name)
+}
+
+fn wraps_of(given: Json, name: &str) -> Result<Vec<MemberWrap>, LibError> {
     let Some(rows) = given.as_array() else {
         return Err(fail(format!("{name} is a list")));
     };
-    rows.iter()
+    let wraps: Vec<MemberWrap> = rows
+        .iter()
         .map(|row| shapes::member_wrap_of(row).map_err(refused))
-        .collect()
+        .collect::<Result<_, _>>()?;
+    for wrap in &wraps {
+        check_wrap_size(wrap)?;
+    }
+    Ok(wraps)
+}
+
+fn check_wrap_size(wrap: &MemberWrap) -> Result<(), LibError> {
+    if 2 * wrap.sealed.len() > MAX_WRAP_HEX {
+        return Err(fail("A member's wrap is too long"));
+    }
+    Ok(())
 }
 
 pub(crate) fn wrap_param(params: &Params, name: &str) -> Result<MemberWrap, LibError> {
-    shapes::member_wrap_of(&json(params, name)?).map_err(refused)
+    let wrap = shapes::member_wrap_of(&json(params, name)?).map_err(refused)?;
+    check_wrap_size(&wrap)?;
+    Ok(wrap)
 }
 
 /// Stores an entry of the chain.
@@ -266,8 +284,59 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("The wrap is not of the current key version to the member added"));
     }
     chain.accept_wrap(&wrap).map_err(refused)?;
+    // A manager demoted, or whose key changed, no longer vouches for the wraps of this key version they signed:
+    // each must be remade in this change by a manager of the new list (rewraps), or the members holding them could
+    // no longer open the vault.
+    let current = version(entry.version)?;
+    let still_manages =
+        |user_id: &str, key_id: &str| entry.member(user_id, key_id).is_some_and(|m| m.role == Role::Manage);
+    let rows = find(facade, MEMBER)?
+        .eq("vaultId", Value::string(&vault_id))
+        .eq("keyVersion", Value::I64(current))
+        .list()?;
+    let stranded: Vec<EntityValue> = rows
+        .iter()
+        .filter(|row| field(row, "userId") != member.user_id)
+        .filter(|row| !still_manages(&field(row, "wrapSignerUserId"), &field(row, "wrapSignerKeyId")))
+        .cloned()
+        .collect();
+    let rewraps = match params.get("rewraps") {
+        Some(given) if !moqui_lib::object::is_empty(given) => wraps_param(params, "rewraps")?,
+        _ => Vec::new(),
+    };
+    for row in &stranded {
+        let user_id = field(row, "userId");
+        let Some(rewrap) = rewraps.iter().find(|w| w.member_user_id == user_id) else {
+            return Err(fail(format!(
+                "Remake {user_id}'s wrap: the manager who signed it no longer manages this vault with that key"
+            )));
+        };
+        if rewrap.member_key_id != field(row, "personalKeyId") || rewrap.key_version != entry.version {
+            return Err(fail(format!(
+                "The new wrap for {user_id} is not of their key and this key version"
+            )));
+        }
+        chain.accept_wrap(rewrap).map_err(refused)?;
+    }
+    if rewraps.len() != stranded.len() {
+        return Err(fail(
+            "Remake only the wraps the change leaves without a manager's signature",
+        ));
+    }
 
     store_entry(facade, &entry)?;
+    for row in &stranded {
+        row.delete(facade)?;
+        let user_id = field(row, "userId");
+        let role = entry
+            .members
+            .iter()
+            .find(|m| m.user_id == user_id)
+            .map_or(Role::Read, |m| m.role);
+        if let Some(rewrap) = rewraps.iter().find(|w| w.member_user_id == user_id) {
+            store_wrap(facade, rewrap, role)?;
+        }
+    }
     let current = find(facade, MEMBER)?
         .eq("vaultId", Value::string(&vault_id))
         .eq("userId", Value::string(&member.user_id))
@@ -277,8 +346,7 @@ fn add_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         row.delete(facade)?;
     }
     store_wrap(facade, &wrap, member.role)?;
-    vault.set("revision", Value::I64(int_field(&vault, "revision") + 1));
-    vault.update(facade)?;
+    bump_revision(facade, &mut vault)?;
     events::write(
         facade,
         Event {
@@ -404,8 +472,7 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
         row.update(facade)?;
     }
     vault.set("keyVersion", Value::I64(new_version));
-    vault.set("revision", Value::I64(int_field(&vault, "revision") + 1));
-    vault.update(facade)?;
+    bump_revision(facade, &mut vault)?;
     events::write(
         facade,
         Event {

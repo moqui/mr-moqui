@@ -59,6 +59,18 @@ fn rotation(remover: &mut Client, vault_id: &str, removed: &str) -> Json {
             "entry": rotated["entry"], "itemKeys": rotated["item_keys"], "memberWraps": rotated["member_wraps"] })
 }
 
+/// `client`'s personal key opened in a fresh client session, by its passphrase, as a new browser tab does.
+fn reopen(client: &mut Client) {
+    let mut session = moqui_vault::ops::Session::default();
+    super::op(
+        &mut session,
+        json!({ "op": "personal_open", "personal_key_id": client.key_id, "user_id": client.user, "public": client.public,
+                "passphrase_wrap": client.made["passphrase_wrap"], "passphrase": "a long pass phrase" }),
+    )
+    .unwrap();
+    client.session = session;
+}
+
 /// A removal rotates the key in one compare-and-swap: a stale revision or a rotation that leaves out an item is
 /// refused; afterwards the removed member has no wrap and is refused the vault, a write at the old key version is
 /// refused, and the others keep their earlier wraps until they open the new version. Each change writes its event.
@@ -74,6 +86,35 @@ fn a_removed_member_has_no_wrap_and_a_write_at_the_old_key_version_is_refused() 
     let first = add_item(&mut alice, &vault_id, 1, &body);
     add_item(&mut alice, &vault_id, 1, &body);
     open_vault(&mut bob, &vault_id).unwrap();
+
+    // an item written after the remover read the vault (bob, with a new item key) makes the removal stale, so it
+    // never overwrites that item's wrap with one of the key it read
+    let read_before = rotation(&mut alice, &vault_id, "bob");
+    let items = bob.call("list#VaultItems", json!({ "vaultId": vault_id })).unwrap();
+    let item = items["itemList"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["vaultItemId"] == json!(first))
+        .unwrap()
+        .clone();
+    let resealed = bob
+        .op(json!({ "op": "item_seal", "vault_id": vault_id, "item_id": first, "key_version": 1, "body": body.to_string() }))
+        .unwrap();
+    assert_eq!(resealed["new_item_key"], json!(true));
+    bob.call(
+        "update#VaultItem",
+        json!({ "vaultItemId": first, "expectedRevision": item["revision"], "keyVersion": 1,
+                "wrappedItemKey": resealed["wrapped_item_key"], "bodyCipher": resealed["sealed_body"] }),
+    )
+    .unwrap();
+    assert!(alice
+        .call("remove#VaultMember", read_before)
+        .unwrap_err()
+        .contains("changed since"));
+    // alice's client made a key it may not keep: a fresh client opens her key and the vault again
+    reopen(&mut alice);
+    open_vault(&mut alice, &vault_id).unwrap();
 
     let removal = rotation(&mut alice, &vault_id, "bob");
     let mut stale = removal.clone();
@@ -120,7 +161,7 @@ fn a_removed_member_has_no_wrap_and_a_write_at_the_old_key_version_is_refused() 
     let old = alice
         .op(json!({ "op": "item_seal", "vault_id": vault_id, "item_id": first, "key_version": 1, "body": "{}" }))
         .unwrap();
-    let write = json!({ "vaultItemId": first, "expectedRevision": 1, "keyVersion": 1,
+    let write = json!({ "vaultItemId": first, "expectedRevision": 2, "keyVersion": 1,
                         "wrappedItemKey": old["wrapped_item_key"], "bodyCipher": old["sealed_body"] });
     assert!(alice
         .call("update#VaultItem", write.clone())
@@ -212,7 +253,7 @@ fn nothing_is_wrapped_to_a_changed_personal_key_before_it_is_checked_again() {
     let key = alice.call("get#UserPublicKey", json!({ "userId": "bob" })).unwrap();
     let local = alice
         .op(
-            json!({ "op": "key_check_make", "checked_key_id": key["personalKeyId"], "checked_public": key["public"],
+            json!({ "op": "key_check_make", "checked_key_id": key["personalKeyId"], "checked_user_id": key["userId"], "checked_public": key["public"],
                     "fingerprint": key["fingerprint"], "checked_at": 2 }),
         )
         .unwrap();
@@ -389,4 +430,69 @@ fn a_key_version_or_wrap_no_manager_signed_is_refused_by_the_server_and_the_clie
     });
     let refused = open_vault(&mut bob, &vault_id).unwrap_err();
     assert!(refused.contains("manage role"), "{refused}");
+}
+
+/// Demoting a manager, or changing a manager's key, leaves the wraps of this key version they signed with no manager's
+/// signature: the change is refused until it remakes each of them, and then the member opens the vault with the new
+/// wrap.
+#[test]
+fn a_demoted_managers_wraps_are_remade_in_the_same_change() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut alice = Client::new(&facade, "alice");
+    let mut bob = Client::new(&facade, "bob");
+    let mut carol = Client::new(&facade, "carol");
+    let vault_id = shared_vault(&mut alice, &mut [(&mut bob, "manage")]);
+    open_vault(&mut bob, &vault_id).unwrap();
+
+    // bob, a manager, adds carol: her wrap is his
+    bob.check("carol");
+    let vault = bob.call("get#Vault", json!({ "vaultId": vault_id })).unwrap();
+    let members = json!([alice.member("manage"), bob.member("manage"), carol.member("read")]);
+    let checks = bob.checks();
+    let entry = bob
+        .op(
+            json!({ "op": "key_version_next", "entries": vault["entries"], "key_checks": checks, "members": members,
+                    "version": 1, "revision": 2 }),
+        )
+        .unwrap();
+    let wrap = bob
+        .op(
+            json!({ "op": "vault_key_wrap_member", "vault_id": vault_id, "key_version": 1, "member_user_id": "carol",
+                    "member_key_id": carol.key_id, "member_public": carol.public, "key_checks": checks }),
+        )
+        .unwrap();
+    bob.call(
+        "add#VaultMember",
+        json!({ "vaultId": vault_id, "expectedRevision": vault["vault"]["revision"], "entry": entry, "wrap": wrap }),
+    )
+    .unwrap();
+
+    // alice demotes bob to a writer
+    let vault = alice.call("get#Vault", json!({ "vaultId": vault_id })).unwrap();
+    let members = json!([alice.member("manage"), bob.member("write"), carol.member("read")]);
+    alice.check("carol");
+    let checks = alice.checks();
+    let entry = alice
+        .op(
+            json!({ "op": "key_version_next", "entries": vault["entries"], "key_checks": checks, "members": members,
+                    "version": 1, "revision": 3 }),
+        )
+        .unwrap();
+    let to = |client: &Client| {
+        json!({ "op": "vault_key_wrap_member", "vault_id": vault_id, "key_version": 1, "member_user_id": client.user,
+                "member_key_id": client.key_id, "member_public": client.public, "key_checks": checks })
+    };
+    let to_bob = alice.op(to(&bob)).unwrap();
+    let to_carol = alice.op(to(&carol)).unwrap();
+    let demote = json!({ "vaultId": vault_id, "expectedRevision": vault["vault"]["revision"], "entry": entry,
+                         "wrap": to_bob });
+    let refused = alice.call("add#VaultMember", demote.clone()).unwrap_err();
+    assert!(refused.contains("Remake carol's wrap"), "{refused}");
+    let mut with_rewraps = demote;
+    with_rewraps["rewraps"] = json!([to_carol]);
+    alice.call("add#VaultMember", with_rewraps).unwrap();
+    carol.check("alice");
+    let opened = open_vault(&mut carol, &vault_id).unwrap();
+    assert_eq!(opened["key_version"], json!(1));
 }

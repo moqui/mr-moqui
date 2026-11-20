@@ -1126,9 +1126,20 @@ fn a_strong_sign_in_is_a_second_factor_sso_or_a_devices_key_and_recent() {
     assert!(!strong_recent_auth(300_000));
     // the internal login that finishes a second factor (the password was checked, then the code)
     logout().unwrap();
+    // without the caller saying it verified the code, the session's flags alone are no strong sign-in
     session::set_session_attribute(PRE_AUTHC_USERNAME, Some("bob"));
     session::set_session_attribute(AUTHC_FACTOR_REQUIRED, Some("true"));
     internal_login_user("bob").unwrap();
+    assert!(recent_auth(300_000));
+    assert!(!strong_recent_auth(300_000));
+    logout().unwrap();
+    // nor is the caller's word with no password checked first
+    internal_login_user_verified("bob", true).unwrap();
+    assert!(!strong_recent_auth(300_000));
+    logout().unwrap();
+    session::set_session_attribute(PRE_AUTHC_USERNAME, Some("bob"));
+    session::set_session_attribute(AUTHC_FACTOR_REQUIRED, Some("true"));
+    internal_login_user_verified("bob", true).unwrap();
     assert!(strong_recent_auth(300_000));
     assert!(!strong_recent_auth(-1));
     // another user's login drops it, and so does a logout
@@ -1145,20 +1156,53 @@ fn a_strong_sign_in_is_a_second_factor_sso_or_a_devices_key_and_recent() {
     assert!(!strong_recent_auth(900_000));
     session::reset_session();
 
-    // a paired device's key with a recent sign-in on it is; a session's login key with one is not
-    internal_login_user("ada").unwrap();
-    let device = get_device_key("Ada's laptop").unwrap();
+    // a device's key made after a password alone is not, whatever its re-authentications by password; a session's
+    // login key with a recent sign-in is not
+    login_user("ada", "Secret1!").unwrap();
+    let weak = get_device_key("Ada's laptop").unwrap();
     let session_key = get_login_key(None).unwrap();
     session::reset_session();
-    login_user_key(&device).unwrap();
-    assert!(!strong_recent_auth(300_000));
-    note_recent_auth("ada");
-    assert!(strong_recent_auth(300_000));
-    session::reset_session();
-    login_user_key(&session_key).unwrap();
+    login_user_key(&weak).unwrap();
     note_recent_auth("ada");
     assert!(recent_auth(300_000));
     assert!(!strong_recent_auth(300_000));
+    session::reset_session();
+    login_user_key(&weak).unwrap();
+    assert!(recent_auth(300_000));
+    assert!(!strong_recent_auth(300_000));
+    session::reset_session();
+    login_user_key(&session_key).unwrap();
+    note_recent_auth("ada");
+    assert!(!strong_recent_auth(300_000));
+    session::reset_session();
+    // a strong re-authentication in a request the weak key signs in makes it a strong one, for its next requests
+    login_user_key(&weak).unwrap();
+    note_recent_auth("ada");
+    note_strong_auth("ada");
+    session::reset_session();
+    login_user_key(&weak).unwrap();
+    assert!(strong_recent_auth(300_000));
+    session::reset_session();
+
+    // a device's key made right after a strong sign-in is a strong one: strong while that sign-in is recent, and then
+    // with a recent re-authentication on the device, by password too
+    login_external_user("ada", Some(now_millis())).unwrap();
+    let strong = get_device_key("Ada's phone").unwrap();
+    session::reset_session();
+    login_user_key(&strong).unwrap();
+    assert!(strong_recent_auth(300_000));
+    let hashed = password::hash_login_key(&strong).unwrap();
+    facade
+        .find(USER_LOGIN_KEY)
+        .unwrap()
+        .eq("loginKey", Value::string(hashed))
+        .update_all([("strongAuthDate".to_string(), stamp_value(now_millis() - 3_600_000))])
+        .unwrap();
+    session::reset_session();
+    login_user_key(&strong).unwrap();
+    assert!(!strong_recent_auth(300_000));
+    note_recent_auth("ada");
+    assert!(strong_recent_auth(300_000));
     session::reset_session();
 }
 

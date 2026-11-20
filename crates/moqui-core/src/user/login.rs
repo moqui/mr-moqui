@@ -714,6 +714,17 @@ fn without_authz() -> Option<crate::context::AuthzGuard> {
 ///
 /// Returns an error when the account is unknown, disabled, terminated, or needs a password change.
 pub fn internal_login_user(username: &str) -> Result<(), Error> {
+    internal_login_user_verified(username, false)
+}
+
+/// [`internal_login_user`], where the caller says whether it verified the second factor's code of this sign-in
+/// (`second_factor_verified`). Only such a login, finishing a sign-in whose password this session checked, is a strong
+/// sign-in ([`LAST_STRONG_AUTH`]); the flag alone, or the session's flags alone, never are.
+///
+/// # Errors
+///
+/// As [`internal_login_user`].
+pub fn internal_login_user_verified(username: &str, second_factor_verified: bool) -> Result<(), Error> {
     // The login that finishes a second factor: the password of this user was checked in this session, and the caller
     // verified the code. It is a sign-in (note_recent_auth); other internal logins (jobs, a verified callback) are not.
     let finishes_factor = !username.is_empty()
@@ -730,7 +741,9 @@ pub fn internal_login_user(username: &str) -> Result<(), Error> {
     if finishes_factor {
         if let Some(user_id) = session::current_user_id()?.filter(|id| !id.is_empty()) {
             note_recent_auth(&user_id);
-            note_strong_auth(&user_id);
+            if second_factor_verified {
+                note_strong_auth(&user_id);
+            }
         }
     }
     Ok(())
@@ -1064,6 +1077,10 @@ fn check_login_key(key: &str, session_user: Option<&str>, scope: Option<&str>) -
 fn restore_key_stamps(row: &EntityValue, user_id: &str) {
     if let Some(at) = field_millis(row, "lastAuthDate") {
         keep_later_stamp(LAST_AUTH, at, user_id);
+    }
+    // the strong sign-in that made the key, or the last strong re-authentication in a request it signed in
+    if let Some(at) = field_millis(row, "strongAuthDate") {
+        keep_later_stamp(LAST_STRONG_AUTH, at, user_id);
     }
     if let Some(at) = field_millis(row, "reauthPasswordDate") {
         if (0..=REAUTH_PASSWORD_MILLIS).contains(&(now_millis() - at)) {
@@ -1491,6 +1508,14 @@ fn make_key(user_id: &str, hours: f64, device: Option<&str>, scope: Option<&str>
     if let Some(scope) = scope {
         row.set("scope", Value::string(scope));
     }
+    // A device's key made right after a strong sign-in of this session (a second factor, SSO) is a strong one: it
+    // counts toward strong_recent_auth with a recent sign-in on the device. One made after a password alone is not,
+    // until a strong re-authentication in a request it signs in (note_strong_auth_at).
+    if device.is_some() && scope.is_none() {
+        if let Some(at) = last_strong_auth_millis().filter(|at| (0..=STRONG_KEY_MILLIS).contains(&(from - at))) {
+            row.set("strongAuthDate", stamp_value(at));
+        }
+    }
     // Java creates the key with requireNewTransaction, so a caller's rollback does not lose it.
     let tx = facade.transactions_for(USER_LOGIN_KEY)?;
     tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
@@ -1640,6 +1665,8 @@ pub(crate) const LAST_STRONG_AUTH: &str = "moquiLastStrongAuth";
 pub(crate) const REAUTH_PASSWORD: &str = "moquiReauthPassword";
 /// How long a re-authentication's checked password waits for its code.
 const REAUTH_PASSWORD_MILLIS: i64 = 5 * 60 * 1000;
+/// How long after a strong sign-in a device's key made in the same session is a strong one.
+const STRONG_KEY_MILLIS: i64 = 10 * 60 * 1000;
 
 /// The session's user signed in (or confirmed who they are) now.
 pub(crate) fn note_recent_auth(user_id: &str) {
@@ -1691,6 +1718,9 @@ fn note_strong_auth_at(user_id: &str, at: i64) {
         }
     }
     session::set_session_attribute(LAST_STRONG_AUTH, Some(&format!("{at} {user_id}")));
+    // a strong re-authentication in a request a device's key signed in makes that key a strong one (a password-only
+    // re-authentication refreshes its recency, never its strength)
+    note_on_device_key(&[("strongAuthDate", stamp_value(at))]);
 }
 
 /// A login of `user_id` drops the sign-in stamps of another user, so an account switch in one session (a key, an
@@ -1733,16 +1763,40 @@ pub fn last_strong_auth_millis() -> Option<i64> {
 }
 
 /// Whether the session's user signed in strongly in the last `max_age_millis`: a password and a second factor, or an
-/// SSO login ([`LAST_STRONG_AUTH`]); or this request came by a paired device's key (the desktop and mobile apps), a
-/// factor the device holds, with a recent sign-in on that device ([`recent_auth`], kept on the key). Never an app
-/// password, an API or session login key, a scoped key, or a password alone. The vault services ask it before they
-/// send a wrapped personal key (plans/Vault-Instances.md §3.5, §9).
+/// SSO login ([`LAST_STRONG_AUTH`]); or this request came by a paired device's key (the desktop and mobile apps) that
+/// a strong sign-in made or strongly re-authenticated (`strongAuthDate` on the key), a factor the device holds, with a
+/// recent sign-in on that device ([`recent_auth`], kept on the key). Never an app password, an API or session login
+/// key, a scoped key, a device's key made after a password alone, or a password alone. The vault services ask it
+/// before they send a wrapped personal key (plans/Vault-Instances.md §3.5, §9).
 pub fn strong_recent_auth(max_age_millis: i64) -> bool {
     let recent = |at: i64| (0..=max_age_millis).contains(&(now_millis() - at));
     if last_strong_auth_millis().is_some_and(recent) {
         return true;
     }
-    session::login_key_kind() == Some(LoginKeyKind::Device) && last_auth_millis().is_some_and(recent)
+    session::login_key_kind() == Some(LoginKeyKind::Device)
+        && last_auth_millis().is_some_and(recent)
+        && device_key_strong()
+}
+
+/// Whether this request's device key carries a strong sign-in (`strongAuthDate`).
+fn device_key_strong() -> bool {
+    let Some(hashed) = session::device_key() else {
+        return false;
+    };
+    let _authz = without_authz();
+    let row = entity_facade().and_then(|facade| {
+        Ok(facade
+            .find(USER_LOGIN_KEY)?
+            .eq("loginKey", Value::string(&hashed))
+            .one()?)
+    });
+    match row {
+        Ok(row) => row.is_some_and(|row| field_millis(&row, "strongAuthDate").is_some()),
+        Err(err) => {
+            tracing::warn!("A device key's strength could not be read: {err}");
+            false
+        }
+    }
 }
 
 /// The signed-in user's id, or the error that nobody is.

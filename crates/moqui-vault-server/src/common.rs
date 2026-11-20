@@ -89,12 +89,65 @@ pub(crate) fn int(params: &Params, name: &str) -> Option<i64> {
     text(params, name).trim().parse().ok()
 }
 
+/// A yes-or-no parameter: Y, yes, true or 1 (in any case) is yes, anything else given is no; none when not given.
 pub(crate) fn flag(params: &Params, name: &str) -> Option<bool> {
-    match text(params, name).as_str() {
+    match text(params, name).trim().to_ascii_lowercase().as_str() {
         "" => None,
-        "Y" | "y" | "true" => Some(true),
+        "y" | "yes" | "true" | "1" => Some(true),
         _ => Some(false),
     }
+}
+
+/// The longest wrapped key (an item key, a member's wrap, a recovery code's wrap), in hex characters.
+pub(crate) const MAX_WRAP_HEX: usize = 1024;
+/// The longest small sealed or JSON value (a vault's header, a password wrap), in characters: what text-long holds.
+pub(crate) const MAX_SMALL_TEXT: usize = 4000;
+
+/// A hex value of at most `max` characters.
+pub(crate) fn check_hex(name: &str, value: &str, max: usize) -> Result<(), LibError> {
+    if value.len() > max {
+        return Err(fail(format!("{name} is too long")));
+    }
+    moqui_vault::text::unhex(value).map_err(refused)?;
+    Ok(())
+}
+
+/// The refusal of a client-made id that is taken, or that a deleted record had: the same words whatever the reason,
+/// so the id tells nothing more.
+pub(crate) fn id_not_available(name: &str, id: &str) -> LibError {
+    fail(format!("{name} {id} is not available: make another id"))
+}
+
+/// Whether events name `id` in `field`: a record that once had the id, whose events stay after it is deleted, so the
+/// id is never given to another (whose readers would read the old one's events).
+pub(crate) fn id_has_history(facade: &EntityFacade, field_name: &str, id: &str) -> Result<bool, LibError> {
+    Ok(find(facade, EVENT)?
+        .eq(field_name, Value::string(id))
+        .limit(1)
+        .one()?
+        .is_some())
+}
+
+/// The next vault revision: every change of its member list, key or items moves it, so a change made from a read of
+/// the vault (a removal's rotation) is refused once anything changed since (decision (a) of §9).
+pub(crate) fn bump_revision(facade: &EntityFacade, vault: &mut EntityValue) -> Result<i64, LibError> {
+    let next = int_field(vault, "revision") + 1;
+    vault.set("revision", Value::I64(next));
+    vault.update(facade)?;
+    Ok(next)
+}
+
+/// The rule of `require#RecentAuth` for a deletion: the session's user signed in, or confirmed who they are, in the
+/// last five minutes ([`moqui_core::user::recent_auth`]: a password, a second factor's code, SSO; never a key or an
+/// app password). Asked directly, not through the service, which passes any caller with authorization off, as every
+/// vault service runs its own reads and writes.
+pub(crate) fn require_recent_auth() -> Result<(), LibError> {
+    if moqui_core::user::recent_auth(5 * 60 * 1000) {
+        return Ok(());
+    }
+    Err(fail(
+        "Confirm it is you: sign in again to delete this (reasonCode reauthRequired)",
+    ))
 }
 
 /// A map or list parameter as JSON: as the request gave it, or JSON text.

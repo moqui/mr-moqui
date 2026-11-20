@@ -29,8 +29,9 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{Value, ValueMap};
 
 use crate::common::{
-    authz_off, check_id, fail, field, find, int, int_field, now, out, refused, required, text, user, vault_for, Access,
-    Out, Params, ITEM, ITEM_HISTORY, OPERATIONAL,
+    authz_off, bump_revision, check_hex, check_id, fail, field, find, id_has_history, id_not_available, int, int_field,
+    now, out, refused, require_recent_auth, required, text, user, vault_for, Access, Out, Params, ITEM, ITEM_HISTORY,
+    MAX_WRAP_HEX, OPERATIONAL,
 };
 use crate::events::{self, Event};
 
@@ -60,7 +61,7 @@ fn sealed_parts(params: &Params, vault: &EntityValue) -> Result<(String, String,
     if body.len() > MAX_BODY_HEX {
         return Err(fail("An item is at most 64 KiB"));
     }
-    moqui_vault::text::unhex(&wrapped).map_err(refused)?;
+    check_hex("wrappedItemKey", &wrapped, MAX_WRAP_HEX)?;
     moqui_vault::text::unhex(&body).map_err(refused)?;
     Ok((wrapped, body, key_version))
 }
@@ -109,15 +110,15 @@ fn create_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
     let vault_id = required(params, "vaultId")?;
-    let vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
     let item_id = required(params, "vaultItemId")?;
     check_id("vaultItemId", &item_id)?;
-    if find(facade, ITEM)?
+    let taken = find(facade, ITEM)?
         .eq("vaultItemId", Value::string(&item_id))
         .one()?
-        .is_some()
-    {
-        return Err(fail(format!("Item {item_id} exists already")));
+        .is_some();
+    if taken || id_has_history(facade, "vaultItemId", &item_id)? {
+        return Err(id_not_available("Item", &item_id));
     }
     let (wrapped, body, key_version) = sealed_parts(params, &vault)?;
     let operational = field(&vault, "vaultKindEnumId") == OPERATIONAL;
@@ -147,6 +148,7 @@ fn create_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
     row.create(facade)?;
+    bump_revision(facade, &mut vault)?;
     events::write(
         facade,
         Event {
@@ -172,7 +174,7 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     let mut row = item_row(facade, &item_id)?;
     let vault_id = field(&row, "vaultId");
     vault_for(facade, &vault_id, &me, Access::Read, false).map_err(|_| fail(format!("No item {item_id}")))?;
-    let vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
     let revision = int_field(&row, "revision");
     if int(params, "expectedRevision") != Some(revision) {
         return Err(fail(format!(
@@ -181,11 +183,25 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     }
     let (wrapped, body, key_version) = sealed_parts(params, &vault)?;
     let operational = field(&vault, "vaultKindEnumId") == OPERATIONAL;
-    let clear = if operational && text(params, "bindingKey").is_empty() {
+    // an operational item keeps its clear columns unless the write gives all three; a binding that changes must be
+    // free in the vault
+    let gives_clear = ["vaultItemTypeId", "bindingKey", "itemName"]
+        .iter()
+        .any(|name| !text(params, name).is_empty());
+    let clear = if operational && !gives_clear {
         Vec::new()
     } else {
         clear_columns(params, operational, facade)?
     };
+    if let Some((_, binding)) = clear.iter().find(|(name, _)| *name == "bindingKey") {
+        let taken = find(facade, ITEM)?
+            .eq("vaultId", Value::string(&vault_id))
+            .eq("bindingKey", Value::string(binding))
+            .one()?;
+        if taken.is_some_and(|other| field(&other, "vaultItemId") != item_id) {
+            return Err(fail(format!("The binding {binding} is taken in this vault")));
+        }
+    }
     let mut history = facade.make_value(ITEM_HISTORY)?;
     for name in [
         "vaultItemId",
@@ -217,6 +233,7 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
     row.update(facade)?;
+    bump_revision(facade, &mut vault)?;
     events::write(
         facade,
         Event {
@@ -321,7 +338,8 @@ fn delete_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     let row = item_row(facade, &item_id)?;
     let vault_id = field(&row, "vaultId");
     vault_for(facade, &vault_id, &me, Access::Read, false).map_err(|_| fail(format!("No item {item_id}")))?;
-    vault_for(facade, &vault_id, &me, Access::Write, true)?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
+    require_recent_auth()?;
     let history = find(facade, ITEM_HISTORY)?
         .eq("vaultItemId", Value::string(&item_id))
         .list()?;
@@ -329,6 +347,7 @@ fn delete_vault_item(params: &Params, facade: &EntityFacade) -> Out {
         old.delete(facade)?;
     }
     row.delete(facade)?;
+    bump_revision(facade, &mut vault)?;
     events::write(
         facade,
         Event {

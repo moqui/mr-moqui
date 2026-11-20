@@ -32,6 +32,7 @@ use std::io::Write as _;
 
 use moqui_lib::error::Error;
 use serde_json::{json, Value};
+use zeroize::Zeroizing;
 
 use client::VaultClient;
 use remote::{Login, Remote};
@@ -111,13 +112,14 @@ fn vault_err(err: String) -> Error {
     Error::new(err)
 }
 
-/// Asks for a line on the terminal; a secret is read with echo off when the input is a terminal.
-fn ask(label: &str, secret: bool) -> Result<String, Error> {
+/// Asks for a line on the terminal; a secret is read with echo off when the input is a terminal. The answer is
+/// cleared from memory when dropped.
+fn ask(label: &str, secret: bool) -> Result<Zeroizing<String>, Error> {
     eprint!("{label}: ");
     let _ = std::io::stderr().flush();
     #[cfg(unix)]
     let restore = if secret { echo_off() } else { None };
-    let mut line = String::new();
+    let mut line = Zeroizing::new(String::with_capacity(256));
     let read = std::io::stdin().read_line(&mut line);
     #[cfg(unix)]
     if let Some(saved) = restore {
@@ -128,7 +130,9 @@ fn ask(label: &str, secret: bool) -> Result<String, Error> {
     #[cfg(not(unix))]
     let _ = secret;
     read.map_err(|err| Error::new(format!("{label}: {err}")))?;
-    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+    let trimmed = line.trim_end_matches(['\r', '\n']).len();
+    line.truncate(trimmed);
+    Ok(line)
 }
 
 /// Turns the terminal's echo off; the settings to put back, or none when the input is not a terminal.
@@ -163,6 +167,19 @@ fn sign_in(remote: &mut Remote, user: &str) -> Result<(), Error> {
     }
 }
 
+/// A path segment of a vault REST path: letters, digits, `-`, `_` and `.` as they are, any other byte %-encoded.
+fn segment(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for byte in id.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.".contains(&byte) {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -185,14 +202,14 @@ fn key_init(remote: &mut Remote, client: &mut VaultClient) -> Result<(), Error> 
     if passphrase.chars().count() < 12 {
         return Err(Error::new("A key passphrase is at least 12 characters"));
     }
-    if ask("The key passphrase again", true)? != passphrase {
+    if *ask("The key passphrase again", true)? != *passphrase {
         return Err(Error::new("The two passphrases differ"));
     }
     let key_id = new_id("pk");
     let made = client
         .call(
             "personal_make",
-            json!({ "personal_key_id": key_id, "user_id": text(&key, "userId"), "passphrase": passphrase }),
+            json!({ "personal_key_id": key_id, "user_id": text(&key, "userId"), "passphrase": passphrase.as_str() }),
         )
         .map_err(vault_err)?;
     remote.post(
@@ -216,7 +233,7 @@ fn open_key(remote: &mut Remote, client: &mut VaultClient) -> Result<(), Error> 
         .call(
             "personal_open",
             json!({ "personal_key_id": wrapped["personalKeyId"], "user_id": wrapped["userId"],
-                    "public": wrapped["public"], "passphrase_wrap": wrapped["passphraseWrap"], "passphrase": passphrase }),
+                    "public": wrapped["public"], "passphrase_wrap": wrapped["passphraseWrap"], "passphrase": passphrase.as_str() }),
         )
         .map_err(vault_err)?;
     if opened["rewrapped"].is_object() {
@@ -244,7 +261,7 @@ fn key_check(remote: &mut Remote, client: &mut VaultClient, username: &str) -> R
     let check = client
         .call(
             "key_check_make",
-            json!({ "checked_key_id": key["personalKeyId"], "checked_public": key["public"],
+            json!({ "checked_key_id": key["personalKeyId"], "checked_user_id": key["userId"], "checked_public": key["public"],
                     "fingerprint": key["fingerprint"], "checked_at": now_millis() }),
         )
         .map_err(vault_err)?;
@@ -276,7 +293,7 @@ fn list(remote: &mut Remote) -> Result<(), Error> {
 /// `open <vaultId>`: the vault key opened through the vault's chain (checked against this user's checks and what was
 /// remembered), each item's name and type, or one item's body.
 fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: &str) -> Result<(), Error> {
-    let vault = remote.get(&format!("/vaults/{vault_id}"), &[])?;
+    let vault = remote.get(&format!("/vaults/{}", segment(vault_id)), &[])?;
     let key_version = vault["vault"]["keyVersion"].as_u64().unwrap_or(0);
     if text(&vault["vault"], "lockEnumId") == "VlSingleSecret" {
         if text(&vault["vault"], "secretKindEnumId") != "VsPassword" {
@@ -286,7 +303,7 @@ fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: 
         client
             .call(
                 "vault_key_password_open",
-                json!({ "vault_id": vault_id, "key_version": key_version, "wrap": vault["secretWrap"], "password": password }),
+                json!({ "vault_id": vault_id, "key_version": key_version, "wrap": vault["secretWrap"], "password": password.as_str() }),
             )
             .map_err(vault_err)?;
     } else {
@@ -314,12 +331,12 @@ fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: 
         state.write(&path)?;
         if vault["wraps"].as_array().is_some_and(|wraps| wraps.len() > 1) {
             remote.post(
-                &format!("/vaults/{vault_id}/ack"),
+                &format!("/vaults/{}/ack", segment(vault_id)),
                 &json!({ "keyVersion": key_version }),
             )?;
         }
     }
-    let items = remote.get(&format!("/vaults/{vault_id}/items"), &[])?;
+    let items = remote.get(&format!("/vaults/{}/items", segment(vault_id)), &[])?;
     for item in items["itemList"].as_array().map(Vec::as_slice).unwrap_or_default() {
         let id = text(item, "vaultItemId");
         if !item_id.is_empty() && id != item_id {

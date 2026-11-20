@@ -37,7 +37,10 @@ fn make(session: &mut Session, rng: &mut TestRng, user: &str) -> Value {
 fn check(session: &mut Session, rng: &mut TestRng, key_id: &str, public: &Value) -> Value {
     let fingerprint =
         call(session, rng, json!({ "op": "fingerprint", "public": public })).unwrap()["fingerprint"].clone();
-    let request = json!({ "op": "key_check_make", "checked_key_id": key_id, "checked_public": public, "fingerprint": fingerprint, "checked_at": 1 });
+    // the tests' key ids are pk-<user>
+    let user = key_id.strip_prefix("pk-").unwrap_or(key_id);
+    let request = json!({ "op": "key_check_make", "checked_key_id": key_id, "checked_user_id": user, "checked_public": public,
+                          "fingerprint": fingerprint, "checked_at": 1 });
     call(session, rng, request).unwrap()
 }
 
@@ -175,7 +178,7 @@ fn nothing_is_wrapped_to_an_unchecked_key_and_a_check_needs_the_right_fingerprin
     assert!(call(&mut s.alice, &mut rng, wrap)
         .unwrap_err()
         .contains("not been checked"));
-    let wrong = json!({ "op": "key_check_make", "checked_key_id": "pk-carol", "checked_public": carol_made["public"],
+    let wrong = json!({ "op": "key_check_make", "checked_key_id": "pk-carol", "checked_user_id": "carol", "checked_public": carol_made["public"],
                         "fingerprint": s.bob_made["fingerprint"], "checked_at": 1 });
     assert!(call(&mut s.alice, &mut rng, wrong).unwrap_err().contains("fingerprint"));
     // There is no call that signs arbitrary bytes.
