@@ -1,6 +1,7 @@
 # Sealed Secrets
 
-Status 2026-11-19: S3, S4 and S11 are being built with [Vault-Instances](Vault-Instances.md); the rest is a plan.
+Status 2026-11-20: S3, S4 and S11 are built, with [Vault-Instances](Vault-Instances.md) ([Run-Deploy, Sealed
+start](../docs/Run-Deploy.md)); the rest is a plan. `SealedStart` (a TPM reboot) is written and not run here.
 Before: 2026-11-14, plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §1,
 §2 and §3.11 are corrected, the design changed in §3.1 to §3.8, §3.10 and §3.12 (each change is a row of
 [§6](#6-decisions)), and what is left to decide is in [Open points](#open-points-from-the-security-review). The threat

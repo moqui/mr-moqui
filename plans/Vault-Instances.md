@@ -1,7 +1,10 @@
 # Vaults and Instances
 
-Status 2026-11-19: being built, with Sealed-Secrets S3, S4 and S11; the open points were decided on Nov 19
-([§9](#9-decisions)). Before: 2026-11-14, plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §2
+Status 2026-11-20: built, V0 to V5 and M1 to M6, with Sealed-Secrets S3, S4 and S11; the open points were decided on
+Nov 19 ([§9](#9-decisions)). Not run here: the acceptance tests `InstanceDeploy` (needs Podman) and Sealed-Secrets'
+`SealedStart` (needs a TPM); Android not compiled; Linux and Windows screen lock not watched by the desktop app. The
+guides are [Vaults](../docs/security/Vaults.md) and [Run-Deploy](../docs/Run-Deploy.md) (Sealed start, Managed
+instances). Before: 2026-11-14, plan; nothing built. Reviewed 2026-11-15 against the code in the security review: the facts of §2
 are corrected, the design of §3.2, §3.3, §3.5, §3.7 to §3.10, §3.12, §4.2, §4.4 to §4.6 and §4.9 changed (signing
 keys and signed wraps, the signed lease, machine access, recovery shares, the manager's limits), and the choices left
 to the owner are in [Open points](#open-points-from-the-security-review). It expands the user's notes of Nov 14, 2026
