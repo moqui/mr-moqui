@@ -603,9 +603,10 @@ impl ToolPolicy {
     }
 }
 
-/// The rule of one `AgentToolPolicy` row. A row that cannot be read fails closed (SEC-AI-87): it may have been a
-/// `never` or a READ cap, so it becomes a `never` rule for its pattern, and for every tool (`*`) when it names none;
-/// the rules before it in sequence still decide their tools.
+/// The rule of one `AgentToolPolicy` row. A row whose ceiling or approval mode cannot be read fails closed (SEC-AI-87):
+/// it may have been a `never` or a READ cap, so it becomes a `never` rule for its pattern; the rules before it in
+/// sequence still decide their tools. A row with no `toolPattern` decides no tool and is left out (Tools › Policies
+/// stores none).
 fn policy_rule(agent_id: &str, row: &EntityValue) -> Option<PolicyRule> {
     let sequence = super::int_of(row, "sequenceNum").unwrap_or_default();
     let never = |pattern: String| PolicyRule {
@@ -617,8 +618,8 @@ fn policy_rule(agent_id: &str, row: &EntityValue) -> Option<PolicyRule> {
         calls_per_run: None,
     };
     let Some(pattern) = super::text_of(row, "toolPattern") else {
-        tracing::error!("tool policy {sequence} of agent {agent_id} has no toolPattern, so it offers no tool from there");
-        return Some(never("*".to_string()));
+        tracing::error!("tool policy {sequence} of agent {agent_id} has no toolPattern, so it is left out");
+        return None;
     };
     let ceiling = match super::text_of(row, "classificationEnumId") {
         None => None,

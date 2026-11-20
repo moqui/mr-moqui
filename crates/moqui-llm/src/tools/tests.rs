@@ -524,11 +524,15 @@ fn policy_rows_read_from_the_database_and_a_bad_one_is_a_never_rule() {
         ("3", "x", "AgclNonsense", ""),
         // SEC-AI-87: a row that cannot be read may have been a never rule: it is one, before the rules after it
         ("0", "test_other", "", "AgamNonsense"),
+        // a row with no pattern decides no tool: it is left out, and the rules after it still decide theirs
+        ("-1", "", "", "AgamNever"),
     ] {
         let mut row = facade.make_value("moqui.agent.AgentToolPolicy").unwrap();
         row.set("agentId", Value::string("pol"));
         row.set("sequenceNum", Value::string(sequence));
-        row.set("toolPattern", Value::string(pattern));
+        if !pattern.is_empty() {
+            row.set("toolPattern", Value::string(pattern));
+        }
         if !class.is_empty() {
             row.set("classificationEnumId", Value::string(class));
         }
