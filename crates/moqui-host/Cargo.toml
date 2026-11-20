@@ -209,6 +209,8 @@ rcgen = { workspace = true }
 # The ACME client of System › Certificates (src/acme, plans/Edge-Node2.md §4.8), with the HTTPS listener (axum).
 instant-acme = { workspace = true, optional = true }
 sha2 = { workspace = true }
+# Passphrases and shares on the operator socket and in `moqui operator` (src/operator, plans/Sealed-Secrets.md §3.3).
+zeroize = { workspace = true }
 # A pool member's own key, which signs its edge link Hello (src/edge_link/member_key.rs, plans/Edge-Node2.md §4.11):
 # the crypto rustls already links.
 aws-lc-rs = { workspace = true }

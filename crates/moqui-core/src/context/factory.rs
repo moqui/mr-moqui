@@ -234,6 +234,11 @@ pub struct BootOptions {
     /// is started, no extension's after-boot hook or session hook runs, a `service-type` whose runner is not linked is
     /// logged and left out, and the factory is not the last booted one that locations fall back to.
     pub artifacts_only: bool,
+    /// The seal's gate (plans/Sealed-Secrets.md §3.3), run right after the conf is merged, before the generated secrets,
+    /// the database and every listener: a server passes the host's, which opens the operator socket and waits there
+    /// while sealed. None opens the seal unattended ([`crate::seal::open_unattended`]): a purpose other than
+    /// `production` makes or opens the `dev` seal, and an automatic method unseals. Not run for `artifacts_only`.
+    pub unseal: Option<crate::seal::UnsealHook>,
 }
 
 /// The hook in [`BootOptions::before_init`].
@@ -247,6 +252,7 @@ impl std::fmt::Debug for BootOptions {
             .field("test_confs", &self.test_confs)
             .field("framework_component", &self.framework_component)
             .field("artifacts_only", &self.artifacts_only)
+            .field("unseal", &self.unseal.as_ref().map(|_| ".."))
             .finish()
     }
 }
@@ -334,6 +340,16 @@ impl ExecutionContextFactory {
         super::conf_env::log_overrides(&overrides);
         super::conf_env::refuse_retired(&conf_node)?;
         let artifacts_only = options.artifacts_only;
+        if !artifacts_only {
+            let gate = crate::seal::GateRequest {
+                runtime_dir: &runtime_dir,
+                conf: &conf_node,
+            };
+            match &options.unseal {
+                Some(hook) => hook(&gate)?,
+                None => crate::seal::open_unattended(&gate)?,
+            }
+        }
         let native = crate::native::NativeRegistry::discover(&components, &conf_node, artifacts_only)?;
         if !artifacts_only {
             super::conf_env::generate_secrets(&conf_node, &overrides, &env_path)?;

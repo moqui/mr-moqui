@@ -13,6 +13,19 @@
         zone, and the server's own times (the entity facade's database-time-zone is the zone times are stored in). -->
     <instance purpose="production" id="" node-role="" default-locale="en_US" default-time-zone="UTC"/>
 
+    <!-- The sealed start (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md "Sealed start"): the server opens its
+        listeners only once unsealed; while sealed it answers only on the operator socket (moqui operator). method: the
+        unseal method init uses when none is named (tpm, passphrase, shamir, dev; kms and transit come later), and on a
+        production instance's first start an automatic one (tpm) makes the seal by itself; empty for none. Once
+        runtime/db/seal.json exists its method wins and this is ignored. socket: the operator socket, empty for
+        $RUNTIME_DIRECTORY/moqui.sock, else runtime/db/operator.sock (relative to the runtime). operator-group: the group
+        (a name or a number) whose members, and root, may run every operator command; the server's own user runs only
+        status. shares and threshold: the recovery shares made at init, threshold of shares recover the root key, and
+        the shamir method's shares. systemd-creds-command: the program of the tpm method. unseal-max-delay-seconds: the
+        longest wait after wrong passphrases or shares, which doubles from one second. -->
+    <seal method="" socket="" operator-group="moqui-operator" shares="5" threshold="3"
+            systemd-creds-command="systemd-creds" unseal-max-delay-seconds="300"/>
+
     <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
         nobody set up there. directory-url fills in the authority's directory on that screen, Let's Encrypt's; the screen
         offers its staging directory for a first try and takes any other authority's. account-key is the seed of the ACME

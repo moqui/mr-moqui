@@ -20,6 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:sequence>
                 <xs:element minOccurs="0" ref="instance"/>
+                <xs:element minOccurs="0" ref="seal"/>
                 <xs:element minOccurs="0" ref="comms"/>
                 <xs:element minOccurs="0" ref="demo"/>
                 <xs:element minOccurs="0" ref="acme"/>
@@ -2133,6 +2134,29 @@ along with this software (see the LICENSE.md file). If not, see
                 front, front_edge, edge or all-in-one (plans/Edge-Node2.md §4.3).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="default-locale" type="xs:string" default="en_US"/>
             <xs:attribute name="default-time-zone" type="xs:string" default="UTC"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="seal">
+        <xs:annotation><xs:documentation>The sealed start (plans/Sealed-Secrets.md §3.3): the server opens its listeners
+            only once unsealed, and while sealed answers only on the operator socket.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="method" type="xs:string"><xs:annotation><xs:documentation>The unseal method init uses when
+                none is named: tpm, passphrase, shamir or dev (kms and transit later). On a production instance's first
+                start an automatic method (tpm) makes the seal by itself. Empty for none. Once runtime/db/seal.json exists
+                its method wins and this is ignored.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket" type="xs:string"><xs:annotation><xs:documentation>The operator socket; empty for
+                $RUNTIME_DIRECTORY/moqui.sock, else runtime/db/operator.sock. Relative to the runtime.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="operator-group" type="xs:string" default="moqui-operator"><xs:annotation><xs:documentation>The
+                group (a name or a number) whose members, and root, may run every operator command; the server's own user
+                runs only status.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="shares" type="non-neg-int-expandable" default="5"><xs:annotation><xs:documentation>The
+                recovery shares made at init, and the shamir method's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="threshold" type="non-neg-int-expandable" default="3"><xs:annotation><xs:documentation>How
+                many shares recover the root key: at least 2, at most shares.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="systemd-creds-command" type="xs:string" default="systemd-creds"><xs:annotation><xs:documentation>The
+                program of the tpm method.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="unseal-max-delay-seconds" type="non-neg-int-expandable" default="300"><xs:annotation><xs:documentation>The
+                longest wait after wrong passphrases or shares; it doubles from one second.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="acme">

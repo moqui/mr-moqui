@@ -1,3 +1,7 @@
 # systemd-sysusers systemd/moqui.sysusers
 # or copy to /usr/lib/sysusers.d/moqui.conf and run systemd-sysusers.
 u moqui - "MR Moqui" /opt/moqui /usr/sbin/nologin
+# The operator group (seal@operator-group): its members, and root, run `moqui operator` on the server's socket. The
+# server's user joins it only so it can give the socket that group; the server still lets its own user run only status.
+g moqui-operator -
+m moqui moqui-operator

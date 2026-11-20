@@ -38,6 +38,8 @@ pub mod resource;
 pub mod screen;
 pub mod script;
 pub mod search;
+/// The sealed start: the root key, seal.json and its unseal methods (plans/Sealed-Secrets.md §3.3).
+pub mod seal;
 pub mod service;
 pub mod sftp;
 pub mod sso;

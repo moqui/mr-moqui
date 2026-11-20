@@ -27,6 +27,7 @@ Server
   (no command)     [options]                                Start the HTTP server (HTTP port default 8080, HTTPS 8443: moqui help serve)
   serve            [options]                                Start the HTTP server in the background, with no console log
   tui              [--path P] [--user U] [options]          The apps in this terminal, on this runtime
+  operator         status | init | unseal | seal | ...      The sealed start: a server's operator socket
 
 Data
   load             [name=value ...]                         Load data files into the configured database
@@ -753,6 +754,28 @@ moqui conf env [--names] [text]
   moqui_conf__ssh_server__port=2222 moqui
 ";
 
+const OPERATOR: &str = "\
+moqui operator <command> [--socket PATH]
+    The client of a server's operator socket (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md, Sealed
+    start). A server starts sealed: no listener opens until it is unsealed, and while sealed it answers only
+    here. The socket is seal@socket, else $RUNTIME_DIRECTORY/moqui.sock (/run/moqui/moqui.sock under the
+    unit), else runtime/db/operator.sock. The server's own user runs only status; root and the operator group
+    (seal@operator-group) run the rest. Passphrases and shares are read with echo off, or a line each from
+    standard input when it is not a terminal.
+    status                   The state (sealed, unsealing, unsealed), the method and the recovery shares
+    init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm,
+                             passphrase, shamir or dev (dev is refused on a production instance); default
+                             seal@method
+    init --take-shares       Read, once, the recovery shares an automatic first start holds in memory
+    unseal [--recovery]      Give the passphrase or one share; --recovery a recovery share, which opens any
+                             method's seal; an automatic method unseals with nothing entered
+    seal                     Drop every key from memory now and close the listeners
+
+  moqui operator status
+  moqui operator init --method tpm
+  moqui operator unseal
+";
+
 const VERSION: &str = "\
 moqui version
     The version, the package this binary was built as (lite, enterprise, maximal, or custom), and every
@@ -786,6 +809,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "lsp" => Some(LSP),
         "embedded" => Some(EMBEDDED),
         "conf" => Some(CONF),
+        "operator" => Some(OPERATOR),
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
@@ -1054,6 +1078,7 @@ pub fn command_usage(command: &str) -> Error {
         "help" => "moqui help [command]",
         "version" => "moqui version",
         "conf" => "moqui conf env [--names] [text]",
+        "operator" => "moqui operator status | init [--method M] [--take-shares] | unseal [--recovery] | seal [--socket PATH]",
         "embedded" => {
             "moqui embedded info | list | diff [<set>/<path>] | extract [<runtime dir>] | checksum [--env] [<part>...] \
              | unpack [<program>...]"

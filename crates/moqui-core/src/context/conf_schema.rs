@@ -355,6 +355,11 @@ pub static CATALOG: &[Unit] = &[
         "instance",
         Class::Restart("the purpose, role and time zone are read at boot"),
     ),
+    // the seal's gate runs before the factory is built (plans/Sealed-Secrets.md §3.3); the method seal.json records wins
+    single(
+        "seal",
+        Class::Restart("the seal is opened at start, and its method is fixed at init"),
+    ),
     single("acme", Class::Live).secrets(&[("account-key", Secret::Generated)]),
     single("client-sync", Class::Live),
     single("chat", Class::Live)
