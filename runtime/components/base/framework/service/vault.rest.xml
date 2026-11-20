@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The vault services over REST (/rest/s1/vault; org.moqui.security.VaultServices, docs/security/Vaults.md): what a client
+    off the server's pages calls, the moqui vault command and the test client's vault member among them. Each service
+    checks its caller; VaultTypeData.xml grants the path to every signed-in user. -->
+<resource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
+        name="vault" displayName="Vault REST API" version="${moqui_version}"
+        description="Vaults: personal keys, key checks, vaults, items, members and deliveries, as ciphertext and signed records">
+    <resource name="personalKey">
+        <method type="get"><service name="org.moqui.security.VaultServices.get#PersonalKey"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.setup#PersonalKey"/></method>
+        <resource name="wrapped"><method type="get"><service name="org.moqui.security.VaultServices.get#WrappedPersonalKey"/></method></resource>
+        <resource name="rewrap"><method type="post"><service name="org.moqui.security.VaultServices.rewrap#PersonalKey"/></method></resource>
+        <resource name="replace"><method type="post"><service name="org.moqui.security.VaultServices.replace#PersonalKey"/></method></resource>
+    </resource>
+    <resource name="publicKey"><method type="get"><service name="org.moqui.security.VaultServices.get#UserPublicKey"/></method></resource>
+    <resource name="keyChecks">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#KeyChecks"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.store#KeyCheck"/></method>
+    </resource>
+    <resource name="vaults">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#Vaults"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.create#Vault"/></method>
+        <id name="vaultId">
+            <method type="get"><service name="org.moqui.security.VaultServices.get#Vault"/></method>
+            <method type="delete"><service name="org.moqui.security.VaultServices.delete#Vault"/></method>
+            <resource name="items">
+                <method type="get"><service name="org.moqui.security.VaultServices.list#VaultItems"/></method>
+                <method type="post"><service name="org.moqui.security.VaultServices.create#VaultItem"/></method>
+            </resource>
+            <resource name="members">
+                <method type="post"><service name="org.moqui.security.VaultServices.add#VaultMember"/></method>
+            </resource>
+            <resource name="removeMember"><method type="post"><service name="org.moqui.security.VaultServices.remove#VaultMember"/></method></resource>
+            <resource name="ack"><method type="post"><service name="org.moqui.security.VaultServices.ack#VaultKeyVersion"/></method></resource>
+            <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>
+        </id>
+    </resource>
+    <resource name="items">
+        <id name="vaultItemId">
+            <method type="put"><service name="org.moqui.security.VaultServices.update#VaultItem"/></method>
+            <method type="delete"><service name="org.moqui.security.VaultServices.delete#VaultItem"/></method>
+            <resource name="history"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultItemHistory"/></method></resource>
+        </id>
+    </resource>
+    <resource name="deliveries">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#IncomingDeliveries"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.send#VaultDelivery"/></method>
+        <id name="deliveryId">
+            <resource name="file"><method type="post"><service name="org.moqui.security.VaultServices.file#VaultDelivery"/></method></resource>
+        </id>
+    </resource>
+    <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>
+</resource>

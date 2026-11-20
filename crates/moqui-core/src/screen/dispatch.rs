@@ -224,7 +224,7 @@ fn login(call: &Call<'_>) -> Result<bool, Error> {
         };
         if truthy(validated.get("verified")) {
             let verified_user = text_param(&validated, "username");
-            user::internal_login_user(&verified_user)?;
+            user::internal_login_user_verified(&verified_user, true)?;
             send_logged_in(true, key.as_deref());
             return Ok(true);
         }
@@ -269,7 +269,7 @@ fn verify_otp(call: &Call<'_>) -> Result<bool, Error> {
         return Ok(true);
     }
     let verified_user = text_param(&validated, "username");
-    let logged_in = match user::internal_login_user(&verified_user) {
+    let logged_in = match user::internal_login_user_verified(&verified_user, true) {
         Ok(()) => true,
         Err(err) => {
             web::record_login_error(err.message());

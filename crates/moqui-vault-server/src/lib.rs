@@ -16,12 +16,32 @@
 //! deposits, machine access, recovery and events. Core reaches this crate only through the [`moqui_core::extension`]
 //! entry below, with the feature `vault`; a binary without it still loads the vault services, which report that
 //! `vault` is not built in.
+//!
+//! The server stores and serves what clients make with the vault crate (`crates/moqui-vault`): public keys, signed
+//! records and ciphertext. It never decrypts a personal item or holds a vault key. What it can check, it checks: a
+//! key version is signed by a manager of the version before, a wrap by a manager of its version, a key check and a
+//! delivery by their maker's current personal key, and nothing is wrapped to a member's key that its signer has not
+//! checked. A client checks all of these again (§3.9), since a server that has been changed would not.
+//!
+//! - [`personal`]: personal keys (§3.5) and key checks; the wrapped private key only after a strong, recent sign-in.
+//! - [`vaults`]: vaults of both locks (§3.1, §3.11), made, listed, read and deleted.
+//! - [`items`]: items with revisions and history, written only at the vault's current key version.
+//! - [`members`]: the member-list chain, add, remove with rotation in one compare-and-swap, and the ack of a new
+//!   key version (§3.9, decisions (a) and (b) of §9).
+//! - [`deliveries`]: sealed values to one recipient (§3.3).
+//! - [`events`]: the `VaultEvent` rows of §3.13, written in the transaction of their change.
 
 use std::collections::BTreeMap;
 
 use moqui_core::extension::RustServiceFn;
-// The crypto, used by the services V1 adds.
-use moqui_vault as _;
+
+mod common;
+pub mod deliveries;
+pub mod events;
+pub mod items;
+pub mod members;
+pub mod personal;
+pub mod vaults;
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
@@ -31,6 +51,14 @@ moqui_core::extension::submit! {
     }
 }
 
-fn register_services(_map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
-    Ok(())
+fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
+    personal::register(map)?;
+    vaults::register(map)?;
+    items::register(map)?;
+    members::register(map)?;
+    deliveries::register(map)?;
+    events::register(map)
 }
+
+#[cfg(test)]
+mod tests;

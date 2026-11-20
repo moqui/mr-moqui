@@ -55,14 +55,14 @@ pub use login::stamp_value;
 pub use login::{check_counted_code, count_failed_login, take_factor_code};
 pub use login::{
     apply_header_keys, change_password, check_old_password, get_device_key, get_login_key, header_login_session,
-    internal_login_queued_user, internal_login_user, issue_device_key, login_anonymous, login_app_password,
+    internal_login_queued_user, internal_login_user, internal_login_user_verified, issue_device_key, login_anonymous, login_app_password,
     login_external_user, login_key_user_by_hash, login_ssh_key_user, login_user, login_user_key, login_verified_app_password,
     logout, logout_anonymous_only,
     logout_local, looks_like_app_password, new_app_password, note_header_login, now_value, renew_device_key,
     revoke_login_key, with_client_ip,
 };
 pub use login::{get_scoped_key, login_user_key_for, request_key_scope, LoginKeyKind, ACCESS_TOKEN_SCOPE, KEY_SCOPES};
-pub use login::{last_auth_millis, recent_auth};
+pub use login::{last_auth_millis, last_strong_auth_millis, recent_auth, strong_recent_auth};
 pub use login::{now_effective_millis, value_millis};
 pub use login::{now_effective_value, now_millis};
 pub use login::{user_account_closed, username_account_closed};

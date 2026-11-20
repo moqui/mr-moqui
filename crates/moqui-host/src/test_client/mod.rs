@@ -36,6 +36,11 @@ mod ssh;
 #[cfg(not(feature = "ssh"))]
 #[path = "ssh_off.rs"]
 mod ssh;
+#[cfg(feature = "vault")]
+mod vault;
+#[cfg(not(feature = "vault"))]
+#[path = "vault_off.rs"]
+mod vault;
 mod video;
 mod ws;
 
@@ -411,6 +416,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         recording: Arc::new(Mutex::new(None)),
         in_server: None,
         peer: Mutex::new(None),
+        vaults: vault::Clients::default(),
     })
 }
 
@@ -892,6 +898,8 @@ pub(crate) struct ClientHost {
     /// The spec's own requester address, sent as `X-Moqui-Test-Peer` by its sessions to a server on this machine,
     /// which a server of `moqui test --serve` takes as the requests' peer ([`spec_peer`]).
     peer: Mutex<Option<String>>,
+    /// The spec's vault clients (`vault`), the vault crate's own sessions.
+    vaults: vault::Clients,
 }
 
 /// The header a spec's sessions carry to a test server (moqui-host's `http::test_peer`).
@@ -1161,6 +1169,7 @@ impl ClientHost {
             recording: Arc::new(Mutex::new(None)),
             in_server: Some(in_server),
             peer: Mutex::new(None),
+            vaults: vault::Clients::default(),
         }))
     }
 
@@ -1807,6 +1816,7 @@ impl ClientHost {
                 self.require_online("ssh")?;
                 self.ssh_call(name, args)
             }
+            name if name.starts_with("vault.") => self.vaults.call(name, args),
             "files.list" => self.list(args),
             "files.read" => {
                 let path = self.confined(&text_field(args, "path"))?;
@@ -1883,6 +1893,7 @@ impl SpecHost for ClientHost {
             lock(&socket).close();
         }
         self.ssh.close_all();
+        self.vaults.clear();
         lock(&self.sessions).clear();
         lock(&self.bodies).clear();
     }

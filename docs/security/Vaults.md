@@ -1,7 +1,96 @@
 # Vaults
 
 A vault holds secrets under a key the server does not hold ([Vault-Instances](../../plans/Vault-Instances.md) has
-the design). This guide grows with each phase; so far it covers the crypto every client and the server share.
+the design). This guide grows with each phase; so far it covers the crypto every client and the server share, and what
+the server keeps and serves (V1): personal keys, key checks, vaults of both locks, items, members, deliveries and
+events, with the `moqui vault` command. Operational vaults' leases and machine access (V2), Commons › Vault (V3) and
+organization recovery (V4) are later phases.
+
+## What V1 offers
+
+- **Your personal key.** Each user who shares a vault, or receives a delivery, has one personal key: a key pair to
+  receive and one to sign. It is made in your client, under a **key passphrase** that is not your sign-in password and
+  never reaches the server, with a **recovery code** to print or save. The server keeps the public halves and the two
+  wraps, and no hash of either secret.
+- **A strong, recent sign-in to set it up and fetch it.** The server sends your wrapped personal key only to you, and
+  only after a sign-in with a password and a second factor, an SSO sign-in, or a request from a paired device (the
+  desktop and mobile apps) whose key a strong sign-in made (or a strong re-authentication on it renewed), with a
+  recent sign-in on it, within `vault@key-fetch-max-age` seconds (300 by default). An app password, a login, API or
+  scoped key, a device's key made after a password alone, or a password alone is never enough: an account with a
+  password and no second factor is told to set one up. Setting up a key (`setup#PersonalKey`), a new passphrase
+  (`rewrap#PersonalKey`) and a new key (`replace#PersonalKey`) need the same sign-in, so a weak session cannot plant
+  a key for someone who has none.
+- **Fingerprints.** Before you share a vault with someone, or send them a value, compare their key's fingerprint (six
+  pronounceable words) with them by another channel: in person, or on a call. Your client then signs a key check,
+  which names the user you compared it with, and stores it; a check vouches for that key as that user's only. Nothing is wrapped to a key you have not checked, and when someone's key changes it is checked again:
+  your client refuses, and so does the server, which takes a member's wrap only when the manager who made it has a
+  stored check of that member's current key. A fingerprint accepted without comparing it lets a server swap in a key
+  of its own (§3.12).
+- **Vaults.** A vault is **single-secret** (one password or generated key, its owner only, no members, no recovery)
+  or **shared-key** (each member's personal key holds the vault key). A personal vault's name and every item's name,
+  type and value are sealed in the client; the server sees ids, sizes, dates, members and roles, and ciphertext.
+- **Members.** A personal shared-key vault has manage, write and read; an operational one manage, approve and reveal.
+  A manager adds a member with a wrap signed by them and a signed member list. A manager removes a member by rotating
+  the vault key: a new key version without that member, every item key rewrapped and every remaining member's wrap
+  remade, all in one change that names the vault's revision it was made from, so two managers cannot interleave and
+  an item written meanwhile (which also moves the revision) is never overwritten. Demoting a manager, or changing a
+  manager's key, remakes in the same change every wrap of this key version that manager signed. The
+  removed member's wraps are deleted and a write at the old version is refused; the others keep their earlier wrap
+  until they open the new version. Your client accepts a key version only through the chain of member lists, each
+  signed by a manager of the one before, back to a signer whose key you checked, and `moqui vault` remembers the
+  highest version and member list it accepted, so a server that hands back an older one is refused.
+- **Deliveries.** A value sealed to one person's key and signed by its sender. Only the recipient lists and files it,
+  and their client checks the signature against a key they checked first.
+- **Events.** Every change writes a `VaultEvent` row in its own transaction: a vault made or deleted, a wrapped key
+  fetched, a personal key set up, replaced or rewrapped, a member added or removed, a rotation and its acks, an item
+  made, changed or deleted, a delivery sent or filed. A vault's members read its events; anyone reads their own.
+
+### Single-secret vaults
+
+Only the password or the generated key opens a single-secret vault. It is never sent to the server and it is not
+stored anywhere: not an administrator, not your organization, not the makers of this software can open the vault
+without it, and if it is lost, everything in the vault is lost for good. Keep it in a password manager you already
+trust that is not on this server, or on paper with your important papers; keep two copies in two places, and never the
+only copy inside this vault or anywhere on this server. A generated key is long and random, so it cannot be guessed:
+download or print it, then keep it the same way. Commons › Vault (V3) walks through these steps when the vault is made.
+
+## On the server
+
+The tables are `moqui.security.vault` (`framework/entity/VaultEntities.xml`): `Vault`, `VaultKeyVersion` (the signed
+member-list chain), `VaultMember` (a member's wrap of one key version, with their role), `VaultItem` and
+`VaultItemHistory`, `VaultPersonalKey`, `VaultKeyCheck`, `VaultDelivery`, `VaultEvent`, the item types
+(`VaultItemType`, `VaultItemTypeField`, seeded in `framework/data/VaultTypeData.xml`: login, note, card, identity,
+contact, SSH key, API key, database credential, TLS key pair, registry login, recovery code, recovery share), and
+for later phases `VaultLease`, `VaultMachineAccess`, `VaultRecoveryKey`, `VaultRecoveryHolder` and
+`VaultRecoveryWrap`. No column is an entity `encrypt="true"` field: they hold ciphertext and signed records already.
+
+The services are `org.moqui.security.VaultServices` (`crates/moqui-vault-server`), also at `/rest/s1/vault`
+(`framework/service/vault.rest.xml`). Records cross in the vault crate's JSON shapes, so a client hands an answer to
+its vault module as it came. Each service checks its caller itself: a vault and its items are "not found" to anyone
+but its members (and a single-secret vault's owner), writes need the write or manage role, the member list and a
+deletion the manage role and a recent sign-in, an operational vault `VAULT_ADMIN` to make or delete; a delivery is
+listed and filed only by its recipient. Ids are made by the client (the vault crate binds them into what it seals);
+an id that is taken, or that a deleted record had (its events stay), is refused in the same words, so a deleted
+vault's events never show under a new vault. The server checks what it can (each key version follows the latest and is signed by a manager of it, with
+the caller's active key; each wrap by a manager of its version; each key check and delivery by its maker's active
+key; a write only at the current key version, an update only from the current item revision), and the client checks
+it all again, since a server that has been changed would not.
+
+## The `moqui vault` command
+
+`moqui vault --server URL --user USERNAME <command>` is a vault client on your own machine. It runs the same vault
+crate natively, so the key passphrase and every key stay in its process; each run signs in with your password and
+second factor and keeps nothing of the sign-in.
+
+| Command | What it does |
+|---|---|
+| `key init` | Makes your personal key here (the passphrase twice) and prints its recovery code and fingerprint |
+| `key show` | Your key's fingerprint |
+| `key check <username>` | Shows a user's fingerprint to compare with them; on yes, stores your signed check |
+| `list` | Your vaults |
+| `open <vaultId> [--item ID]` | Opens a vault through its member list and lists its items, or prints one |
+
+What it has accepted of each vault's member list is kept in `~/.config/moqui/vault/state.json` (mode 0600, no keys).
 
 ## The crypto
 
@@ -99,3 +188,13 @@ moqui-vault` rewrites the file; read its diff before committing (and rebuild the
 `moqui test-client framework --offline --spec VaultModule` loads the module in its worker in the test browser and
 checks that it makes the same vectors, that an item seals, opens and is forgotten on lock there, and that a vault key
 crosses to a second worker only through a member list checked there.
+
+`cargo test -p moqui-vault-server` runs the server's rules against the in-memory entity facade, with clients that are
+the vault crate's own session: no row of a personal vault holds an item's name, type or value in the clear; a
+non-member gets no wrap and no body; a removed member has no wrap and a write at the old key version is refused; a
+key version or wrap no manager signed is refused by the server and by a member's client; nothing is wrapped to a
+changed personal key before it is checked again; a delivery goes only to its recipient; a wrapped personal key needs
+a strong, recent sign-in; each change writes its event. `moqui test framework --spec VaultServices` checks the
+services' access as a server spec, and `moqui test-client framework --serve --spec VaultShared` the same rules over
+REST with the test client's `vault` member ([JS-Test-Client](../dev/JS-Test-Client.md)), which is the vault crate's
+session run natively.

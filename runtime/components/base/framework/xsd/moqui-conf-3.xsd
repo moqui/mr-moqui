@@ -67,6 +67,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="dev-aide"/>
                 <xs:element minOccurs="0" ref="component-deploy"/>
                 <xs:element minOccurs="0" ref="instance-hosting"/>
+                <xs:element minOccurs="0" ref="vault"/>
                 <xs:element minOccurs="0" ref="entity-facade"/>
                 <xs:element minOccurs="0" ref="database-list"/>
                 <xs:element minOccurs="0" ref="repository-list"/>
@@ -3168,6 +3169,18 @@ along with this software (see the LICENSE.md file). If not, see
     </xs:element>
 
     <!-- ================= Development ================= -->
+    <xs:element name="vault">
+        <xs:annotation><xs:documentation>Vaults (plans/Vault-Instances.md §3, docs/security/Vaults.md): secrets under keys
+            the server does not hold, served by org.moqui.security.VaultServices.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="key-fetch-max-age" type="xs:string" default="300"><xs:annotation><xs:documentation>Seconds
+                since a strong sign-in (a password and a second factor, an SSO sign-in, or a paired device's key with a
+                recent sign-in on it; never an app password or a login, API or scoped key) within which
+                get#WrappedPersonalKey sends a user their wrapped personal key, and rewrap#PersonalKey and
+                replace#PersonalKey take a change. Read at each call.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
     <xs:element name="dev-reload">
         <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
             (instance@purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component

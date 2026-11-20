@@ -32,23 +32,23 @@ use crate::text::{hex, unhex};
 use crate::vault::{DepositPublic, MemberWrap};
 use crate::Error;
 
-pub(super) fn str_of<'a>(args: &'a Value, name: &'static str) -> Result<&'a str, Error> {
+pub fn str_of<'a>(args: &'a Value, name: &'static str) -> Result<&'a str, Error> {
     args.get(name).and_then(Value::as_str).ok_or(Error::Format(name))
 }
 
-pub(super) fn string_of(args: &Value, name: &'static str) -> Result<String, Error> {
+pub fn string_of(args: &Value, name: &'static str) -> Result<String, Error> {
     str_of(args, name).map(str::to_string)
 }
 
-pub(super) fn bytes_of(args: &Value, name: &'static str) -> Result<Vec<u8>, Error> {
+pub fn bytes_of(args: &Value, name: &'static str) -> Result<Vec<u8>, Error> {
     unhex(str_of(args, name)?)
 }
 
-pub(super) fn u64_of(args: &Value, name: &'static str) -> Result<u64, Error> {
+pub fn u64_of(args: &Value, name: &'static str) -> Result<u64, Error> {
     args.get(name).and_then(Value::as_u64).ok_or(Error::Format(name))
 }
 
-pub(super) fn i64_of(args: &Value, name: &'static str) -> Result<i64, Error> {
+pub fn i64_of(args: &Value, name: &'static str) -> Result<i64, Error> {
     args.get(name).and_then(Value::as_i64).ok_or(Error::Format(name))
 }
 
@@ -60,25 +60,25 @@ fn u32_of(args: &Value, name: &'static str) -> Result<u32, Error> {
     u32::try_from(u64_of(args, name)?).map_err(|_| Error::Format(name))
 }
 
-pub(super) fn array_of<'a>(args: &'a Value, name: &'static str) -> Result<&'a Vec<Value>, Error> {
+pub fn array_of<'a>(args: &'a Value, name: &'static str) -> Result<&'a Vec<Value>, Error> {
     args.get(name).and_then(Value::as_array).ok_or(Error::Format(name))
 }
 
-pub(super) fn object_of<'a>(args: &'a Value, name: &'static str) -> Result<&'a Value, Error> {
+pub fn object_of<'a>(args: &'a Value, name: &'static str) -> Result<&'a Value, Error> {
     args.get(name)
         .filter(|value| value.is_object())
         .ok_or(Error::Format(name))
 }
 
-pub(super) fn public_of(args: &Value, name: &'static str) -> Result<PersonalPublic, Error> {
+pub fn public_of(args: &Value, name: &'static str) -> Result<PersonalPublic, Error> {
     PersonalPublic::from_bytes(&bytes_of(args, name)?)
 }
 
-pub(super) fn verify_of(args: &Value, name: &'static str) -> Result<VerifyingKey, Error> {
+pub fn verify_of(args: &Value, name: &'static str) -> Result<VerifyingKey, Error> {
     VerifyingKey::from_bytes(&bytes_of(args, name)?)
 }
 
-pub(super) fn label_of(args: &Value) -> Result<Option<ItemLabel<'_>>, Error> {
+pub fn label_of(args: &Value) -> Result<Option<ItemLabel<'_>>, Error> {
     match args.get("label") {
         None | Some(Value::Null) => Ok(None),
         Some(label) => Ok(Some(ItemLabel {
@@ -90,7 +90,7 @@ pub(super) fn label_of(args: &Value) -> Result<Option<ItemLabel<'_>>, Error> {
 }
 
 /// Overwrites every string in `value` with zeros before it is dropped: the request's passphrase, the answer's body.
-pub(super) fn scrub(value: &mut Value) {
+pub fn scrub(value: &mut Value) {
     match value {
         Value::String(text) => text.zeroize(),
         Value::Array(items) => items.iter_mut().for_each(scrub),
@@ -115,7 +115,7 @@ impl std::io::Write for Counter {
 }
 
 /// `value` as JSON text in a buffer of exactly its size.
-pub(super) fn to_text(value: &Value) -> String {
+pub fn to_text(value: &Value) -> String {
     let mut counter = Counter(0);
     serde_json::to_writer(&mut counter, value).expect("a Value serializes");
     let mut out = Vec::with_capacity(counter.0);
@@ -123,11 +123,11 @@ pub(super) fn to_text(value: &Value) -> String {
     String::from_utf8(out).expect("serde_json writes UTF-8")
 }
 
-pub(super) fn password_wrap_json(wrap: &PasswordWrap) -> Value {
+pub fn password_wrap_json(wrap: &PasswordWrap) -> Value {
     json!({ "m_kib": wrap.params.m_kib, "t": wrap.params.t, "p": wrap.params.p, "salt": hex(&wrap.salt), "sealed": hex(&wrap.sealed) })
 }
 
-pub(super) fn password_wrap_of(args: &Value, name: &'static str) -> Result<PasswordWrap, Error> {
+pub fn password_wrap_of(args: &Value, name: &'static str) -> Result<PasswordWrap, Error> {
     let wrap = object_of(args, name)?;
     let salt: [u8; MIN_SALT_LEN] = bytes_of(wrap, "salt")?.try_into().map_err(|_| Error::Format("salt"))?;
     Ok(PasswordWrap {
@@ -141,7 +141,7 @@ pub(super) fn password_wrap_of(args: &Value, name: &'static str) -> Result<Passw
     })
 }
 
-pub(super) fn member_wrap_json(wrap: &MemberWrap) -> Value {
+pub fn member_wrap_json(wrap: &MemberWrap) -> Value {
     json!({
         "vault_id": wrap.vault_id, "key_version": wrap.key_version,
         "member_user_id": wrap.member_user_id, "member_key_id": wrap.member_key_id,
@@ -151,7 +151,7 @@ pub(super) fn member_wrap_json(wrap: &MemberWrap) -> Value {
     })
 }
 
-pub(super) fn member_wrap_of(args: &Value) -> Result<MemberWrap, Error> {
+pub fn member_wrap_of(args: &Value) -> Result<MemberWrap, Error> {
     Ok(MemberWrap {
         vault_id: string_of(args, "vault_id")?,
         key_version: u64_of(args, "key_version")?,
@@ -164,7 +164,7 @@ pub(super) fn member_wrap_of(args: &Value) -> Result<MemberWrap, Error> {
     })
 }
 
-pub(super) fn members_of(args: &Value) -> Result<Vec<Member>, Error> {
+pub fn members_of(args: &Value) -> Result<Vec<Member>, Error> {
     array_of(args, "members")?
         .iter()
         .map(|m| {
@@ -178,7 +178,7 @@ pub(super) fn members_of(args: &Value) -> Result<Vec<Member>, Error> {
         .collect()
 }
 
-pub(super) fn key_version_json(entry: &KeyVersion) -> Value {
+pub fn key_version_json(entry: &KeyVersion) -> Value {
     let members: Vec<Value> = entry
         .members
         .iter()
@@ -190,7 +190,7 @@ pub(super) fn key_version_json(entry: &KeyVersion) -> Value {
     })
 }
 
-pub(super) fn key_version_of(entry: &Value) -> Result<KeyVersion, Error> {
+pub fn key_version_of(entry: &Value) -> Result<KeyVersion, Error> {
     Ok(KeyVersion {
         vault_id: string_of(entry, "vault_id")?,
         version: u64_of(entry, "version")?,
@@ -202,11 +202,11 @@ pub(super) fn key_version_of(entry: &Value) -> Result<KeyVersion, Error> {
     })
 }
 
-pub(super) fn entries_of(args: &Value) -> Result<Vec<KeyVersion>, Error> {
+pub fn entries_of(args: &Value) -> Result<Vec<KeyVersion>, Error> {
     array_of(args, "entries")?.iter().map(key_version_of).collect()
 }
 
-pub(super) fn remembered_of(args: &Value) -> Result<Option<Remembered>, Error> {
+pub fn remembered_of(args: &Value) -> Result<Option<Remembered>, Error> {
     match args.get("remembered") {
         None | Some(Value::Null) => Ok(None),
         Some(r) => Ok(Some(Remembered {
@@ -219,19 +219,20 @@ pub(super) fn remembered_of(args: &Value) -> Result<Option<Remembered>, Error> {
     }
 }
 
-pub(super) fn remembered_json(r: &Remembered) -> Value {
+pub fn remembered_json(r: &Remembered) -> Value {
     json!({ "version": r.version, "revision": r.revision, "member_list_hash": hex(&r.member_list_hash) })
 }
 
-pub(super) fn key_check_json(check: &KeyCheck) -> Value {
+pub fn key_check_json(check: &KeyCheck) -> Value {
     json!({
         "checker_user_id": check.checker_user_id, "checker_key_id": check.checker_key_id,
-        "checked_key_id": check.checked_key_id, "checked_encrypt": hex(&check.checked_encrypt),
+        "checked_key_id": check.checked_key_id, "checked_user_id": check.checked_user_id,
+        "checked_encrypt": hex(&check.checked_encrypt),
         "checked_verify": hex(&check.checked_verify), "checked_at": check.checked_at, "signature": hex(&check.signature),
     })
 }
 
-pub(super) fn key_checks_of(args: &Value) -> Result<Vec<KeyCheck>, Error> {
+pub fn key_checks_of(args: &Value) -> Result<Vec<KeyCheck>, Error> {
     let Some(rows) = args.get("key_checks") else {
         return Ok(Vec::new());
     };
@@ -244,6 +245,7 @@ pub(super) fn key_checks_of(args: &Value) -> Result<Vec<KeyCheck>, Error> {
                 checker_user_id: string_of(row, "checker_user_id")?,
                 checker_key_id: string_of(row, "checker_key_id")?,
                 checked_key_id: string_of(row, "checked_key_id")?,
+                checked_user_id: string_of(row, "checked_user_id")?,
                 checked_encrypt: bytes_of(row, "checked_encrypt")?,
                 checked_verify: bytes_of(row, "checked_verify")?,
                 checked_at: i64_of(row, "checked_at")?,
@@ -253,7 +255,7 @@ pub(super) fn key_checks_of(args: &Value) -> Result<Vec<KeyCheck>, Error> {
         .collect()
 }
 
-pub(super) fn deposit_json(deposit: &DepositPublic) -> Value {
+pub fn deposit_json(deposit: &DepositPublic) -> Value {
     json!({
         "vault_id": deposit.vault_id, "key_version": deposit.key_version, "public": hex(deposit.public.as_bytes()),
         "signer_user_id": deposit.signer_user_id, "signer_key_id": deposit.signer_key_id,
@@ -261,7 +263,7 @@ pub(super) fn deposit_json(deposit: &DepositPublic) -> Value {
     })
 }
 
-pub(super) fn lease_of(args: &Value) -> Result<Lease, Error> {
+pub fn lease_of(args: &Value) -> Result<Lease, Error> {
     let lease = object_of(args, "lease")?;
     let items = array_of(lease, "items")?
         .iter()
@@ -287,7 +289,7 @@ pub(super) fn lease_of(args: &Value) -> Result<Lease, Error> {
     })
 }
 
-pub(super) fn record_of(args: &Value) -> Result<RecoveryKeyRecord, Error> {
+pub fn record_of(args: &Value) -> Result<RecoveryKeyRecord, Error> {
     let record = object_of(args, "record")?;
     Ok(RecoveryKeyRecord {
         recovery_key_id: string_of(record, "recovery_key_id")?,
@@ -300,7 +302,7 @@ pub(super) fn record_of(args: &Value) -> Result<RecoveryKeyRecord, Error> {
     })
 }
 
-pub(super) fn holder_share_of(args: &Value) -> Result<HolderShare, Error> {
+pub fn holder_share_of(args: &Value) -> Result<HolderShare, Error> {
     let held = object_of(args, "held")?;
     Ok(HolderShare {
         recovery_key_id: string_of(held, "recovery_key_id")?,
@@ -312,7 +314,7 @@ pub(super) fn holder_share_of(args: &Value) -> Result<HolderShare, Error> {
     })
 }
 
-pub(super) fn recovery_wrap_json(wrap: &RecoveryWrap) -> Value {
+pub fn recovery_wrap_json(wrap: &RecoveryWrap) -> Value {
     json!({
         "vault_id": wrap.vault_id, "key_version": wrap.key_version, "recovery_key_id": wrap.recovery_key_id,
         "sealed": hex(&wrap.sealed), "signer_user_id": wrap.signer_user_id, "signer_key_id": wrap.signer_key_id,
@@ -320,7 +322,7 @@ pub(super) fn recovery_wrap_json(wrap: &RecoveryWrap) -> Value {
     })
 }
 
-pub(super) fn recovery_wrap_of(args: &Value) -> Result<RecoveryWrap, Error> {
+pub fn recovery_wrap_of(args: &Value) -> Result<RecoveryWrap, Error> {
     let wrap = object_of(args, "wrap")?;
     Ok(RecoveryWrap {
         vault_id: string_of(wrap, "vault_id")?,
@@ -333,7 +335,7 @@ pub(super) fn recovery_wrap_of(args: &Value) -> Result<RecoveryWrap, Error> {
     })
 }
 
-pub(super) fn delivery_json(sent: &Delivery) -> Value {
+pub fn delivery_json(sent: &Delivery) -> Value {
     json!({
         "delivery_id": sent.delivery_id, "recipient_user_id": sent.recipient_user_id,
         "recipient_key_id": sent.recipient_key_id, "purpose": sent.purpose, "sender_kind": sent.sender_kind,
@@ -341,7 +343,7 @@ pub(super) fn delivery_json(sent: &Delivery) -> Value {
     })
 }
 
-pub(super) fn delivery_of(row: &Value) -> Result<Delivery, Error> {
+pub fn delivery_of(row: &Value) -> Result<Delivery, Error> {
     Ok(Delivery {
         delivery_id: string_of(row, "delivery_id")?,
         recipient_user_id: string_of(row, "recipient_user_id")?,

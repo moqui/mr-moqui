@@ -421,6 +421,24 @@
         }
     }));
 
+    // Vault clients (plans/Vault-Instances.md V1): each is the vault crate's own session (crates/moqui-vault ops), run
+    // natively as `moqui vault` runs it, holding its personal key and opened vault keys and refusing what a real client
+    // refuses. call(op, args) answers the result or throws the module's refusal; try(op, args) answers {ok, result,
+    // error}. The clients end with their spec.
+    class VaultClient {
+        constructor(id) { this.id = id; }
+        try(op, args) {
+            return host("vault.call", { id: this.id, request: Object.assign({}, options(args), { op: String(op) }) });
+        }
+        call(op, args) {
+            const answer = this.try(op, args);
+            if (!answer.ok) throw new Error(`vault ${op}: ${answer.error}`);
+            return answer.result;
+        }
+        close() { host("vault.close", { id: this.id }); }
+    }
+    define("vault", Object.freeze({ client() { return new VaultClient(host("vault.new")); } }));
+
     // In a load (plans/archive/LoadRunner.md L7) the handshake, a send given a name, and each receive are samples of kind ws, and
     // `expect` lists the outcomes that are not errors there: a handshake's status, a receive's "timeout" or "closed".
     const sampleOpts = (o) => ({ name: o.name == null ? null : String(o.name),

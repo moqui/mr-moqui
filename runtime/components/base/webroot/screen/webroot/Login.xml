@@ -57,7 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <service-call name="org.moqui.impl.UserServices.validate#ExternalUserAuthcCode"
                             in-map="{code:code}" out-map="validateOut"/>
                     <if condition="validateOut.verified"><then>
-                        <script>ec.user.internalLoginUser(validateOut.username)</script>
+                        <script>ec.user.internalLoginUser(validateOut.username, true)</script>
                         <return/>
                     </then><else>
                         <message error="true" public="true">Authentication code is not valid</message>
