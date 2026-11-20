@@ -393,6 +393,10 @@ pub fn run_script(source: &str) -> Result<(), Error> {
 /// tests a list's length instead (`groovy_convert`; the linter flags the rest, `lint_hazards`).
 pub fn eval_condition(expression: &str) -> Result<bool, Error> {
     refuse_null(expression)?;
+    // false, run not, in a preview asked for inside a running script (SEC-AI-102)
+    if crate::script::preview::skipped() {
+        return Ok(false);
+    }
     let source = as_expression(expression);
     note_widget_expression(expression);
     crate::script::engine::run(EntryKind::Condition, &source, crate::script::oxide::eval_condition)
@@ -404,6 +408,11 @@ pub fn expand(template: &str) -> Result<String, Error> {
         return Ok(template.to_string());
     }
     refuse_null(template)?;
+    // its text with a placeholder for each expression, run not, in a preview asked for inside a running script
+    // (SEC-AI-102)
+    if crate::script::preview::skipped() {
+        return Ok(crate::script::preview::placeholder(template));
+    }
     // the template literal itself, run as an expression
     let (literal, hash) = template_source(template);
     note_widget_expression(template);
@@ -432,6 +441,10 @@ pub fn eval_value(expression: &str) -> Result<Value, Error> {
 /// [`eval_value`] for an entry of `kind` (a value, a field's value).
 fn eval_value_as(kind: EntryKind, expression: &str) -> Result<Value, Error> {
     refuse_null(expression)?;
+    // null, run not, in a preview asked for inside a running script (SEC-AI-102)
+    if crate::script::preview::skipped() {
+        return Ok(Value::Null);
+    }
     let source = as_expression(expression);
     note_widget_expression(expression);
     crate::script::engine::run(kind, &source, crate::script::oxide::eval_value)
@@ -455,6 +468,10 @@ pub fn eval_field_value(expression: &str) -> Result<Value, Error> {
 /// Evaluate a JavaScript object expression into a map. A non-object is an error.
 pub fn eval_map(expression: &str) -> Result<std::collections::BTreeMap<String, Value>, Error> {
     refuse_null(expression)?;
+    // empty, run not, in a preview asked for inside a running script (SEC-AI-102)
+    if crate::script::preview::skipped() {
+        return Ok(std::collections::BTreeMap::new());
+    }
     let source = as_expression(expression);
     note_widget_expression(expression);
     crate::script::engine::run(EntryKind::Map, &source, crate::script::oxide::eval_map)

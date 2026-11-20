@@ -185,6 +185,9 @@ struct Read {
     from_db: bool,
     /// Each field set since the value was read or written, with what it held then (`None`: it held nothing).
     before: BTreeMap<Arc<str>, Option<Value>>,
+    /// On an entity ECA rule's value of an update that filled in fields from the stored row, the fields the write's
+    /// caller set ([`EntityValue::is_field_given`]).
+    given: Option<Arc<BTreeSet<Arc<str>>>>,
 }
 
 impl ReadState {
@@ -192,6 +195,7 @@ impl ReadState {
         Self(RwLock::new(Read {
             from_db: true,
             before: BTreeMap::new(),
+            given: None,
         }))
     }
 
@@ -541,6 +545,28 @@ impl EntityValue {
         }
     }
 
+    /// Whether the code that holds the value set `field`, to what it held or to something else: on a value not read from
+    /// the database each field it holds, on one read from it or written since each field set since then. On an entity
+    /// ECA rule's value of an update, the fields the write's caller set, not those the update filled in from the stored
+    /// row ([`Self::set_given`]). [`Self::is_field_modified`] tells a change; this tells a value given again, as a secret
+    /// entered again with a new address is (plans/Security-Review-Low.md SEC-TLS-116).
+    pub fn is_field_given(&self, field: &str) -> bool {
+        if !self.fields.contains_key(field) {
+            return false;
+        }
+        let read = self.read.get();
+        match &read.given {
+            Some(given) => given.contains(field),
+            None => !read.from_db || read.before.contains_key(field),
+        }
+    }
+
+    /// Mark the fields of this value its write's caller set ([`Self::is_field_given`]): an entity ECA rule's value of an
+    /// update that filled in the others from the stored row.
+    pub fn set_given(&mut self, given: Arc<BTreeSet<Arc<str>>>) {
+        self.read.get_mut().given = Some(given);
+    }
+
     /// Java's `isModified`: whether any field changed (see [`Self::is_field_modified`]).
     pub fn is_modified(&self) -> bool {
         let read = self.read.get();
@@ -865,7 +891,7 @@ impl EntityFacade {
         self.require_pk(&value.entity_name, &plain)?;
         fk::enforce(self, &value.entity_name, &plain, stack)?;
         self.reject_view(&value.entity_name, "create")?;
-        self.finish_write(&value.entity_name, operation, plain, None, None, None)
+        self.finish_write(&value.entity_name, operation, plain, None, None, None, None)
     }
 
     /// Fill the fields an entity definition gives a `default`, as Java's `checkSetFieldDefaults` on create.
@@ -959,6 +985,12 @@ impl EntityFacade {
         // A value read and not set since has nothing to write, unless a default or a run-before rule sets a field.
         let untouched = before.is_some_and(BTreeMap::is_empty) && !has_defaults && rules.is_empty();
         let reads_row = !untouched && (reads_row || load_feed::feed_wants_old(self, entity_name));
+        // The fields the caller set, for the ECA rules ([`EntityValue::is_field_given`]): each one set since a
+        // value was read, else each one it holds; not a default, nor a stored field the update fills in below.
+        let given: Option<BTreeSet<Arc<str>>> = (!rules.is_empty()).then(|| match before {
+            Some(before) => before.keys().cloned().collect(),
+            None => values.keys().cloned().collect(),
+        });
         let mut values = if has_defaults {
             self.fill_field_defaults(entity_name, values, DefaultFields::Pk, None)?
         } else {
@@ -1021,8 +1053,16 @@ impl EntityFacade {
             None if reads_row => Some(plain.clone()),
             None => None,
         };
-        self.finish_write(entity_name, "update", plain, Some(rules), stored, modified.as_ref())
-            .map(|_| ())
+        self.finish_write(
+            entity_name,
+            "update",
+            plain,
+            Some(rules),
+            stored,
+            modified.as_ref(),
+            given.as_ref(),
+        )
+        .map(|_| ())
     }
 
     /// The columns an update writes, after its run-before ECA rules, as Java's `update`; `None` when it writes nothing.
@@ -1150,7 +1190,15 @@ impl EntityFacade {
         if !rules.is_empty() {
             return Ok(Probe::NotTried);
         }
-        let updated = self.finish_write(entity_name, "update-probe", plain, Some(rules), None, modified.as_ref())?;
+        let updated = self.finish_write(
+            entity_name,
+            "update-probe",
+            plain,
+            Some(rules),
+            None,
+            modified.as_ref(),
+            None,
+        )?;
         Ok(if updated > 0 { Probe::Updated } else { Probe::Missing })
     }
 
@@ -1166,7 +1214,7 @@ impl EntityFacade {
             }
             Ok(())
         })?;
-        self.finish_write(entity_name, "delete", plain, None, None, None)
+        self.finish_write(entity_name, "delete", plain, None, None, None, None)
     }
 
     /// Delete the rows a bulk delete read by key in as few statements as the bind limits allow
@@ -1370,7 +1418,7 @@ impl EntityFacade {
         let mut stack = HashSet::new();
         fk::enforce(self, entity_name, &plain, &mut stack)?;
         self.reject_view(entity_name, "create")?;
-        self.finish_write(entity_name, "upsert", plain, None, None, None)
+        self.finish_write(entity_name, "upsert", plain, None, None, None, None)
             .map(|_| ())
     }
 
@@ -1378,8 +1426,10 @@ impl EntityFacade {
     /// ECA rules a caller already matched for this write; `None` matches them here. `stored` is the row an update read
     /// first; an update returns 0 without writing when [`Self::update_columns`] finds nothing to write. `modified` is
     /// the fields an update of a value read from the database changed (see [`Self::write_update`]); a field a run-before
-    /// rule sets is added to it. The ECA rules, the cache and the data feed get every field of `plain`; an update writes
-    /// (and audits, and holds in a transaction cache) only its columns.
+    /// rule sets is added to it. `given` is the fields of an update's caller, for its ECA rules (see
+    /// [`Self::write_update`]); `None` when the caller set each field of `plain`. The ECA rules, the cache and the data
+    /// feed get every field of `plain`; an update writes (and audits, and holds in a transaction cache) only its columns.
+    #[allow(clippy::too_many_arguments)]
     fn finish_write(
         &self,
         entity_name: &str,
@@ -1388,6 +1438,7 @@ impl EntityFacade {
         rules: Option<Vec<std::sync::Arc<EcaRule>>>,
         stored: Option<FieldMap>,
         modified: Option<&BTreeSet<Arc<str>>>,
+        given: Option<&BTreeSet<Arc<str>>>,
     ) -> Result<u64, Error> {
         // `update-probe` is an update that leaves no trace when it matches no row; see `update_if_exists`. It is
         // authorized as an update. Its hit is an `update` when it updated a row, and the Rust-only `update-probe`
@@ -1440,7 +1491,7 @@ impl EntityFacade {
         let mut modified = modified.cloned();
         if eca_before {
             let before = plain.clone();
-            (crate::hooks::get().run_eca)(self, entity_name, seal_operation, true, &rules, &mut plain, None)?;
+            (crate::hooks::get().run_eca)(self, entity_name, seal_operation, true, &rules, &mut plain, None, given)?;
             // A run-before rule may have set fields (`entityValue` or `set-results`): convert them as a write would.
             if plain != before {
                 plain = self.normalize_values(entity_name, std::mem::take(&mut plain), operation == "update")?;
@@ -1648,6 +1699,7 @@ impl EntityFacade {
                 &rules,
                 &mut values,
                 pre_row.as_ref(),
+                given,
             )?;
         }
         // As Java's `EntityCache`, a cache clear or cluster publish that fails is logged; the write already ran.

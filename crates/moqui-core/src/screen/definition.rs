@@ -113,8 +113,12 @@ impl Actions {
     /// the block leaves on, by a throw or an early return, ends with it, and the rest of the render (later actions,
     /// subscreens, widget finds) runs with the state it had before (SEC-RTE-92).
     ///
-    /// A proposed screen's actions run on the preview's allow-list host ([`crate::script::preview`], SEC-AI-102).
+    /// A proposed screen's actions run on the preview's allow-list host ([`crate::script::preview`], SEC-AI-102), and
+    /// are skipped in a preview asked for inside a running script ([`crate::script::preview::skipped`]).
     pub fn run(&self) -> Result<(), Error> {
+        if crate::script::preview::skipped() {
+            return Ok(());
+        }
         let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
         let _preview = crate::script::preview::enter()?;
         self.prepared.run(&self.xml, None)

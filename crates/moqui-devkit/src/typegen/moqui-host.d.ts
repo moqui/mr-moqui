@@ -156,6 +156,8 @@ interface EntityValueMethods<N extends string = string> {
     isFieldSet(field: string): boolean;
     /** Whether the entity has a field of the name. */
     isField(field: string): boolean;
+    /** Whether the code holding the value set the field, to what it held or not; in an entity ECA rule, whether the write's caller gave it. */
+    isFieldGiven(field: string): boolean;
     /** Whether the field changed since the value was read or last written, so an update writes it. */
     isFieldModified(field: string): boolean;
     isModified(): boolean;

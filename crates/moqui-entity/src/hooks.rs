@@ -135,17 +135,18 @@ pub struct EntityHooks {
     /// Call a service, with authorization off when asked.
     pub call: fn(&str, &BTreeMap<String, Value>, bool) -> Result<BTreeMap<String, Value>, Error>,
     pub store_entity: fn(&EntityFacade, &str, &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError>,
-    /// Run the matched entity ECA rules of one phase.
-    pub run_eca:
-        fn(
-            &EntityFacade,
-            &str,
-            &str,
-            bool,
-            &[std::sync::Arc<EcaRule>],
-            &mut FieldMap,
-            Option<&EntityValue>,
-        ) -> Result<(), LibError>,
+    /// Run the matched entity ECA rules of one phase. The last argument is the fields the write's caller set, when an
+    /// update filled in others from the stored row (`EntityValue::is_field_given`); `None` when it set each one.
+    pub run_eca: fn(
+        &EntityFacade,
+        &str,
+        &str,
+        bool,
+        &[std::sync::Arc<EcaRule>],
+        &mut FieldMap,
+        Option<&EntityValue>,
+        Option<&std::collections::BTreeSet<std::sync::Arc<str>>>,
+    ) -> Result<(), LibError>,
     pub run_data_file_service: fn(&EntityFacade, &DataFileService) -> Result<(), LibError>,
     pub schedule_feed_receive: fn(&EntityFacade, Vec<String>) -> Result<(), LibError>,
     /// The service a data file names, as Java's `isServiceDefined` takes it.
@@ -224,7 +225,7 @@ impl EntityHooks {
         },
         call: |name, _, _| Err(Error::new(format!("no service facade to call {name}"))),
         store_entity: |_, name, _| Err(LibError::new(format!("no service facade to store {name}"))),
-        run_eca: |_, _, _, _, _, _, _| Ok(()),
+        run_eca: |_, _, _, _, _, _, _, _| Ok(()),
         run_data_file_service: |_, service| Err(LibError::new(format!("no service facade to run {}", service.name))),
         schedule_feed_receive: |_, _| Ok(()),
         defined_service_name: |_| None,
