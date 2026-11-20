@@ -61,6 +61,9 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, check_database_postgres)?;
     moqui_core::rust_service!(map, check_database_mysql)?;
     moqui_core::rust_service!(map, reconcile_app_instances)?;
+    moqui_core::rust_service!(map, get_instance_fleet)?;
+    moqui_core::rust_service!(map, run_instance_recovery)?;
+    moqui_core::rust_service!(map, cancel_instance_recovery)?;
     Ok(())
 }
 
@@ -170,10 +173,12 @@ fn store_instance_environment(params: &Params, facade: &EntityFacade) -> Out {
             "unsealMethod",
             "transportEnumId",
             "leaseLimitMinutes",
+            "automaticRecovery",
         ],
         &|row| {
             check_vault(facade, row)?;
-            check_indicator(row, "machineAccess")
+            check_indicator(row, "machineAccess")?;
+            check_indicator(row, "automaticRecovery")
         },
     )?;
     Ok(out([("environmentId", Value::string(id))]))
@@ -577,10 +582,11 @@ fn preview_app_instance_provision(params: &Params, facade: &EntityFacade) -> Out
 }
 
 /// `request#InstanceAction`: from a screen; runs now, or asks for its lease and runs once it opens.
-fn request_instance_action(params: &Params, facade: &EntityFacade) -> Out {
-    require_instance_admin()?;
-    let _authz = authz_off();
+pub(crate) fn request_instance_action(params: &Params, facade: &EntityFacade) -> Out {
     let id = required(params, "appInstanceId")?;
+    // the caller's own authorization: INSTANCE_ADMIN and the environment's group, before it is turned off
+    crate::actions::check_instance_caller(facade, &id)?;
+    let _authz = authz_off();
     let verb = crate::actions::verb(&required(params, "actionEnumId")?)?;
     let requested = crate::actions::request(
         &factory()?,
@@ -604,10 +610,10 @@ fn action_out(outcome: &crate::provision::Outcome) -> BTreeMap<String, Value> {
     ])
 }
 
-fn act(params: &Params, facade: &EntityFacade, verb: &str) -> Out {
-    require_instance_admin()?;
-    let _authz = authz_off();
+pub(crate) fn act(params: &Params, facade: &EntityFacade, verb: &str) -> Out {
     let id = required(params, "appInstanceId")?;
+    crate::actions::check_instance_caller(facade, &id)?;
+    let _authz = authz_off();
     let lease = text(params, "leaseId");
     let outcome = crate::actions::run(
         facade,
@@ -867,8 +873,51 @@ fn reconcile_app_instances(_params: &Params, facade: &EntityFacade) -> Out {
     require_instance_admin()?;
     let _authz = authz_off();
     let done = crate::reconcile::reconcile(facade)?;
+    crate::monitor::refresh(facade);
     Ok(crate::reconcile::counts(done)
         .into_iter()
         .map(|(name, value)| (name.to_string(), value))
         .collect())
+}
+
+// ----- Monitor (§4.8) -----
+
+fn get_instance_fleet(_params: &Params, facade: &EntityFacade) -> Out {
+    require_instance_admin()?;
+    let _authz = authz_off();
+    let rows = crate::fleet::fleet(facade, moqui_core::user::now_millis())?
+        .into_iter()
+        .map(|row| Value::Map(row.into_iter().collect()))
+        .collect();
+    Ok(out([("fleetList", Value::List(rows))]))
+}
+
+/// Monitor's recovery pass calls these with authorization disabled; another caller needs INSTANCE_ADMIN. What runs and
+/// for whom comes from Monitor's rows, not the parameters (crate::recovery).
+fn run_instance_recovery(params: &Params, facade: &EntityFacade) -> Out {
+    require_instance_admin()?;
+    let _authz = authz_off();
+    let recovery_action_id = required(params, "recoveryActionId")?;
+    let answer = crate::recovery::run(&factory()?, facade, &registry()?, &recovery_action_id)?;
+    Ok(out([
+        ("status", Value::string(answer.status)),
+        (
+            "instanceActionId",
+            answer.instance_action_id.map_or(Value::Null, Value::string),
+        ),
+        ("leaseId", answer.lease_id.map_or(Value::Null, Value::string)),
+        ("state", Value::string(answer.state)),
+    ]))
+}
+
+fn cancel_instance_recovery(params: &Params, facade: &EntityFacade) -> Out {
+    require_instance_admin()?;
+    let _authz = authz_off();
+    let recovery_action_id = required(params, "recoveryActionId")?;
+    let why = Some(text(params, "reason"))
+        .filter(|why| !why.is_empty())
+        .unwrap_or_else(|| "cancelled by Monitor".to_string());
+    let registry = registry()?;
+    let cancelled = crate::recovery::cancel(facade, &registry, &recovery_action_id, &why)?;
+    Ok(out([("cancelled", Value::Bool(cancelled))]))
 }

@@ -46,3 +46,65 @@ fn a_refused_ingest_key_is_a_failed_sign_in_of_its_client() {
     note_refusal(&guard, client, true, &invalid);
     assert!(guard.admit(client).is_none(), "three refused keys ban the client");
 }
+
+/// Vault-Instances §4.8: a record naming a managed instance's `service.instance.id`, on itself or its resource, is
+/// taken only under that instance's own ingest key, since Monitor's incidents and its `instance` recovery adapter act
+/// on that id; a manager's instance metric is never taken from a sender; any other record passes.
+#[test]
+fn a_managed_instance_id_is_taken_only_under_its_own_key() {
+    use moqui_core::entity::document::Document;
+    use moqui_lib::object::Value;
+    let document = |pairs: &[(&str, &str)], resource: Option<&str>| {
+        let mut document = Document::default();
+        for (name, value) in pairs {
+            document.insert((*name).to_string(), Value::string(*value));
+        }
+        if let Some(id) = resource {
+            let mut map = Document::default();
+            map.insert("service.instance.id".to_string(), Value::string(id));
+            document.insert("resource".to_string(), Value::Map(map));
+        }
+        document
+    };
+    let managed: std::collections::HashSet<String> = ["app-1".to_string()].into();
+    let records = || {
+        vec![
+            document(
+                &[("service.instance.id", "app-1"), ("name", "http.server.duration")],
+                None,
+            ),
+            document(&[("name", "http.server.duration")], Some("app-1")),
+            document(
+                &[("service.instance.id", "other-9"), ("name", "http.server.duration")],
+                None,
+            ),
+        ]
+    };
+    // another key: both claims of app-1 refused, the other instance's record taken
+    let mut taken = records();
+    assert_eq!(
+        super::refuse_claims("otel_metrics", &mut taken, &managed, "instance:app-2"),
+        2
+    );
+    assert_eq!(taken.len(), 1);
+    let mut taken = records();
+    assert_eq!(
+        super::refuse_claims("otel_metrics", &mut taken, &managed, "ci-runner"),
+        2
+    );
+    // its own key: all taken
+    let mut taken = records();
+    assert_eq!(
+        super::refuse_claims("otel_metrics", &mut taken, &managed, "instance:app-1"),
+        0
+    );
+    // a manager's instance metric, from any sender, its own instance's key too
+    let mut taken = vec![document(&[("name", "moqui.instance.sealed_seconds")], Some("app-1"))];
+    assert_eq!(
+        super::refuse_claims("otel_metrics", &mut taken, &managed, "instance:app-1"),
+        1
+    );
+    // a span of that name is no metric
+    let mut taken = vec![document(&[("name", "moqui.instance.sealed_seconds")], None)];
+    assert_eq!(super::refuse_claims("otel_spans", &mut taken, &managed, "x"), 0);
+}

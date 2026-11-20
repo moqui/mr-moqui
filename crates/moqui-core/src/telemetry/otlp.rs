@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 use serde_json::{json, Value as Json};
+use zeroize::Zeroizing;
 
 use super::Exporter;
 use crate::entity::document::Document;
@@ -348,6 +349,39 @@ fn merge_next(
     Some((index, documents))
 }
 
+/// `otlp-headers`, or when it is empty the text of the file `otlp-headers-file` names: a `name=value` list, or a bare
+/// ingest key, sent as `Authorization: Bearer` (a managed instance's, given as a file by its provision:
+/// plans/Vault-Instances.md §4.8). Empty when neither gives one. A file that cannot be read is logged by its path, never
+/// its text.
+fn headers_setting(factory: &crate::context::ExecutionContextFactory) -> String {
+    let headers = factory.conf_setting("telemetry", "otlp-headers");
+    if !headers.is_empty() {
+        return headers;
+    }
+    let file = factory.conf_setting("telemetry", "otlp-headers-file");
+    if file.is_empty() {
+        return String::new();
+    }
+    match std::fs::read_to_string(&file) {
+        Ok(text) => headers_of_file(Zeroizing::new(text).trim()),
+        Err(error) => {
+            tracing::error!(file = file.as_str(), %error, "telemetry otlp-headers-file was not read; exporting with no headers");
+            String::new()
+        }
+    }
+}
+
+/// The headers list of an `otlp-headers-file`'s text: the list itself, or a bare key as `Authorization=Bearer <key>`.
+fn headers_of_file(text: &str) -> String {
+    if text.contains('=') {
+        text.to_string()
+    } else if text.is_empty() {
+        String::new()
+    } else {
+        format!("Authorization=Bearer {text}")
+    }
+}
+
 /// Wrap a local exporter when a configured endpoint exists. Header values are never logged. `otlp-protocol` is
 /// `http/protobuf` (the default) or `http/json`; `otlp-compression` is `gzip` (the default) or `none`.
 pub fn configured(factory: &crate::context::ExecutionContextFactory, local: Arc<dyn Exporter>) -> Arc<dyn Exporter> {
@@ -355,8 +389,8 @@ pub fn configured(factory: &crate::context::ExecutionContextFactory, local: Arc<
     if endpoint.is_empty() {
         return local;
     }
-    let headers = factory
-        .conf_setting("telemetry", "otlp-headers")
+    let headers = Zeroizing::new(headers_setting(factory));
+    let headers = headers
         .split(',')
         .filter_map(|item| {
             item.split_once('=')
@@ -759,6 +793,18 @@ fn any(value: &Value) -> Json {
 mod tests {
     use super::*;
     use crate::telemetry::ingest::{Decoder, Signal};
+
+    /// A managed instance's `otlp-headers-file` holds its bare ingest key, sent as a bearer token; a file of a headers
+    /// list is taken as it is (plans/Vault-Instances.md §4.8).
+    #[test]
+    fn a_headers_file_is_a_list_or_a_bare_key_sent_as_a_bearer_token() {
+        assert_eq!(
+            headers_of_file("mqi_abc-DEF_123"),
+            "Authorization=Bearer mqi_abc-DEF_123"
+        );
+        assert_eq!(headers_of_file("api_key=k1,x-tenant=t"), "api_key=k1,x-tenant=t");
+        assert_eq!(headers_of_file(""), "");
+    }
 
     fn document(values: Json) -> Document {
         match moqui_lib::json::from_json(&values) {

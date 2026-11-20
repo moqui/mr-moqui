@@ -290,6 +290,9 @@ pub struct Resource {
     pub instance_id: String,
     pub version: String,
     pub revision: String,
+    /// `deployment.environment` (`telemetry@deployment-environment`): the environment a manager put the server in;
+    /// left out when empty.
+    pub environment: String,
     pub attribution_uncertain: bool,
 }
 
@@ -301,6 +304,7 @@ impl Default for Resource {
             instance_id: INSTANCE.get_or_init(|| random_hex(16)).clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             revision: option_env!("MOQUI_GIT_REVISION").unwrap_or("unknown").to_string(),
+            environment: String::new(),
             attribution_uncertain: true,
         }
     }
@@ -558,6 +562,13 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
         if !name.is_empty() {
             resource.service_name = name;
         }
+        // what a manager sets on its instances (plans/Vault-Instances.md §4.8): the version at each deploy, the
+        // environment at the provision
+        let version = factory.conf_setting("telemetry", "service-version");
+        if !version.is_empty() {
+            resource.version = version;
+        }
+        resource.environment = factory.conf_setting("telemetry", "deployment-environment");
         // The database sessions carry the instance id, so the server's activity shows whose they are
         // (plans/archive/Tools-Database.md 7.3).
         crate::driver::set_application_name(&resource.instance_id);
@@ -1400,6 +1411,12 @@ impl Shared {
         ] {
             document.insert(key.to_string(), Value::string(value));
             attributes.insert(key.to_string(), Value::string(value));
+        }
+        if !resource.environment.is_empty() {
+            attributes.insert(
+                "deployment.environment".to_string(),
+                Value::string(&resource.environment),
+            );
         }
         document.insert(
             "moqui.identity.uncertain".into(),

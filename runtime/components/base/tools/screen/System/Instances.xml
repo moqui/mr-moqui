@@ -12,13 +12,13 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- System › Instances (plans/Vault-Instances.md §5; docs/Run-Deploy.md "Managed instances"): environments, the instances
-    (the fleet), hosts, images, database hosts and kinds. Every write and every action goes through
+<!-- System › Instances (plans/Vault-Instances.md §5; docs/Run-Deploy.md "Managed instances"): the fleet with Monitor's view
+    of each instance (§4.8), environments, the instances, hosts, images, database hosts and kinds. Every write and every action goes through
     org.moqui.dev.InstanceServices, which asks the sealed INSTANCE_ADMIN; an action that opens vault items asks for a
     lease, approved in System › Vaults › Lease. No screen shows a vault value: a secret is shown by its binding. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Instances" default-menu-index="42" default-menu-group="Print and hosting" menu-image="sym_o_hard_drive" menu-image-type="icon">
-    <subscreens default-item="InstanceList"/>
+    <subscreens default-item="Fleet"/>
     <widgets>
         <subscreens-panel id="InstancesPanel" type="tab"/>
     </widgets>

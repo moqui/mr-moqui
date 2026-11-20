@@ -2,8 +2,10 @@
 //! anything runs, keyed by an idempotency key, while the action holds its scope's lease, so one action is active per
 //! scope and a retried run reaches the controller with the same key. An in-process action is done at once and keeps
 //! what reverting it restores; a webhook posts a signed request to a deployment controller, which answers at once or
-//! reports back on `/v1/recovery` (or is polled at its `statusUrl`); a manual action waits for an operator. An action
-//! past its deadline is timed out and escalated.
+//! reports back on `/v1/recovery` (or is polled at its `statusUrl`); a manual action waits for an operator; an instance
+//! action runs through this server's own actions on a managed instance (plans/Vault-Instances.md §4.8), and one that
+//! waits for its vault lease is followed on its `InstanceAction`. An action past its deadline is timed out and
+//! escalated.
 
 use super::policy::{Action, AdapterKind};
 use super::{fail, Error, ExecutionContext, Value};
@@ -226,6 +228,7 @@ pub(crate) fn attempt(
             let adapter = adapter.as_ref().expect("a webhook kind came from an adapter");
             webhook(adapter, row, incident, token)
         }
+        (_, Some(AdapterKind::Instance)) => instance(row, incident),
         (_, None) => Ran::Failed(format!("adapter {adapter_id} does not exist")),
     };
     apply(ec, entity, row, ran, now, attempts)
@@ -521,6 +524,136 @@ fn webhook(adapter: &Adapter, row: &EntityValue, incident: &EntityValue, token: 
     }
 }
 
+/// The manager's service an `instance` adapter's action runs through, called by name: moqui-report does not depend on
+/// moqui-instance, and a server without the `instances` feature answers that it is not built.
+pub(crate) const INSTANCE_RECOVERY: &str = "org.moqui.dev.InstanceServices.run#InstanceRecovery";
+/// The manager's service that ends what an `instance` action waits on, when it is cancelled or timed out.
+const INSTANCE_CANCEL: &str = "org.moqui.dev.InstanceServices.cancel#InstanceRecovery";
+
+/// An `instance` adapter's action that ended here before the manager's (cancelled, timed out): the manager ends the
+/// instance action it waits on and that action's lease, so it does not run later. A failure is logged.
+fn cancel_on_manager(entity: &EntityFacade, row: &EntityValue, why: &str) {
+    let adapter_id = field(row, "adapterId");
+    let instance_kind = adapters(entity)
+        .map(|adapters| {
+            adapters
+                .iter()
+                .any(|adapter| adapter.id == adapter_id && adapter.kind == AdapterKind::Instance)
+        })
+        .unwrap_or(false);
+    if !instance_kind || field(row, "externalId").is_empty() {
+        return;
+    }
+    let parameters: std::collections::BTreeMap<String, Value> = [
+        ("recoveryActionId", field(row, "actionId")),
+        ("reason", why.to_string()),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), Value::String(value)))
+    .collect();
+    if let Err(error) = call_by_name(INSTANCE_CANCEL, &parameters) {
+        tracing::error!(action = %field(row, "actionId"), %error, "the manager's waiting instance action was not ended");
+    }
+}
+/// The manager's record of an instance action, which a waiting `instance` action is followed on.
+const INSTANCE_ACTION: &str = "moqui.server.instance.InstanceAction";
+
+/// Calls a service by name with authorization as the caller has it; the errors it recorded are taken from the message
+/// facade and returned.
+fn call_by_name(
+    name: &str,
+    parameters: &std::collections::BTreeMap<String, Value>,
+) -> Result<std::collections::BTreeMap<String, Value>, String> {
+    let answer = moqui_core::service::sync(name, parameters);
+    let errors = ExecutionContext::with_current(|ec| {
+        let text = ec.message().errors().join("; ");
+        ec.message().clear_errors();
+        text
+    })
+    .unwrap_or_default();
+    match answer {
+        Err(error) => Err(format!("{error} {errors}").trim().to_string()),
+        Ok(_) if !errors.is_empty() => Err(errors),
+        Ok(out) => Ok(out),
+    }
+}
+
+/// An `instance` adapter's action: the manager's own action on the managed instance (restart, rollback,
+/// isolate-instance, pause-rollout, promote), named by this action's id alone: the manager reads the step, its approval
+/// and the instance from the rows, and checks the approver against the instance's environment, or for an automatic
+/// policy's decision the environment's automatic recovery and machine access. One that waits for its vault lease is
+/// Running, with the `InstanceAction` as its external id and the lease named, until [`instance_status`] sees it end.
+/// Nothing here is reverted from Monitor: the manager's actions are its own.
+fn instance(row: &mut EntityValue, incident: &EntityValue) -> Ran {
+    let parameters: std::collections::BTreeMap<String, Value> =
+        [("recoveryActionId".to_string(), Value::string(field(row, "actionId")))]
+            .into_iter()
+            .collect();
+    row.set(
+        "requestJson",
+        Value::String(
+            json!({"service": INSTANCE_RECOVERY, "action": field(row, "action"), "target": field(row, "target"),
+                   "incidentInstanceId": field(incident, "instanceId")})
+            .to_string(),
+        ),
+    );
+    match call_by_name(INSTANCE_RECOVERY, &parameters) {
+        Err(error) => Ran::Failed(error),
+        Ok(out) => {
+            let text = |name: &str| {
+                out.get(name)
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            };
+            let action_id = text("instanceActionId");
+            let lease = text("leaseId");
+            if !lease.is_empty() {
+                row.set("vaultLeaseId", Value::string(&lease));
+            }
+            if !action_id.is_empty() {
+                row.set("externalId", Value::string(&action_id));
+            }
+            if text("status") == "waiting" {
+                Ran::Running {
+                    external: Some(action_id).filter(|id| !id.is_empty()),
+                    note: text("state"),
+                }
+            } else {
+                Ran::Succeeded {
+                    undo: None,
+                    state: text("state"),
+                }
+            }
+        }
+    }
+}
+
+/// How a waiting `instance` action's `InstanceAction` ended, or None while it waits or runs.
+fn instance_status(entity: &EntityFacade, row: &EntityValue) -> Result<Option<Ran>, Error> {
+    let id = field(row, "externalId");
+    if id.is_empty() {
+        return Ok(Some(Ran::Failed(
+            "the instance action names no InstanceAction".to_string(),
+        )));
+    }
+    let Some(action) = entity
+        .find(INSTANCE_ACTION)?
+        .eq("instanceActionId", Value::string(&id))
+        .one()?
+    else {
+        return Ok(Some(Ran::Failed(format!("InstanceAction {id} is gone"))));
+    };
+    let report = field(&action, "report");
+    Ok(match field(&action, "statusEnumId").as_str() {
+        "IasDone" => Some(Ran::Succeeded {
+            undo: None,
+            state: format!("InstanceAction {id} done: {report}"),
+        }),
+        "IasFailed" | "IasRefused" => Some(Ran::Failed(format!("InstanceAction {id} failed: {report}"))),
+        _ => None,
+    })
+}
+
 /// A controller's answer: `{status, externalId, message}`, `succeeded` or `failed` when it is done, else running.
 fn controller_status(body: &str) -> Ran {
     let answer: Json = serde_json::from_str(body).unwrap_or(Json::Null);
@@ -592,6 +725,7 @@ pub(crate) fn advance(
     let status = field(row, "statusId");
     if millis(row.get("deadlineDate")).is_some_and(|deadline| now > deadline) {
         row.set("statusId", Value::string("TimedOut"));
+        cancel_on_manager(entity, row, "timed out");
         finish(ec, entity, row, now);
         row.update(entity)?;
         let summary = format!("{} {} timed out", field(row, "action"), field(row, "target"));
@@ -626,6 +760,12 @@ pub(crate) fn advance(
             let Some(adapter) = adapters(entity)?.into_iter().find(|adapter| adapter.id == adapter_id) else {
                 return Ok(());
             };
+            if adapter.kind == AdapterKind::Instance {
+                return match instance_status(entity, row)? {
+                    Some(done) => apply(ec, entity, row, done, now, attempts),
+                    None => Ok(()),
+                };
+            }
             if adapter.status_url.is_empty() {
                 return Ok(());
             }
@@ -747,6 +887,7 @@ pub(crate) fn cancel(
         return Err(fail("only an active action can be cancelled"));
     }
     row.set("statusId", Value::string("Cancelled"));
+    cancel_on_manager(entity, row, "cancelled");
     finish(ec, entity, row, now);
     row.update(entity)
 }

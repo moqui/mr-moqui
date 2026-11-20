@@ -37,6 +37,13 @@
 //!   pairing, who may call an instance, and the bootstrap bundle held in memory until the instance takes it.
 //! - [`services`]: the Rust services, and the INSTANCE_ADMIN check each makes.
 //! - [`ssh`]: SSH, the other transport: the link's operator commands as `moqui operator` over SSH, the key from a lease.
+//!
+//! M4 (§6): Monitor for managed instances.
+//!
+//! - [`monitor`]: the identity a provision gives an instance (its id, environment, ingest key and OTLP address), its
+//!   scrape target, and what the shipped instance alert rules read (gauges and counters).
+//! - [`fleet`]: the fleet screen's rows.
+//! - [`recovery`]: Monitor's `instance` recovery adapter, through the manager's own actions.
 
 use std::collections::BTreeMap;
 
@@ -45,12 +52,15 @@ use moqui_core::extension::RustServiceFn;
 pub mod actions;
 mod common;
 pub mod database;
+pub mod fleet;
 pub mod kinds;
 pub mod lifecycle;
 pub mod link;
+pub mod monitor;
 pub mod plan;
 pub mod provision;
 pub mod reconcile;
+pub mod recovery;
 pub mod services;
 pub mod ssh;
 
@@ -58,6 +68,10 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["instances"],
         register_services,
+        // the gauges the shipped instance alert rules read (§4.8)
+        after_boot: monitor::start,
+        // links held before a restart are unknown until they link again (§4.8)
+        after_cluster_start: monitor::after_cluster_start,
         ..moqui_core::extension::Extension::EMPTY
     }
 }

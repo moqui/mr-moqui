@@ -92,6 +92,16 @@ impl Action {
             ),
             AdapterKind::Webhook => self != Self::Observe,
             AdapterKind::Manual => true,
+            // a managed instance's: the manager's own actions (plans/Vault-Instances.md §4.8)
+            AdapterKind::Instance => matches!(
+                self,
+                Self::Escalate
+                    | Self::IsolateInstance
+                    | Self::PauseRollout
+                    | Self::Promote
+                    | Self::Restart
+                    | Self::Rollback
+            ),
         }
     }
 }
@@ -101,6 +111,9 @@ pub enum AdapterKind {
     InProcess,
     Webhook,
     Manual,
+    /// A managed instance of this server's (plans/Vault-Instances.md §4.8): restart, isolate, pause-rollout, promote and
+    /// rollback through the manager's own actions, which wait for their vault lease.
+    Instance,
 }
 
 impl AdapterKind {
@@ -109,6 +122,7 @@ impl AdapterKind {
             "in-process" => Self::InProcess,
             "webhook" => Self::Webhook,
             "manual" => Self::Manual,
+            "instance" => Self::Instance,
             _ => return None,
         })
     }

@@ -586,9 +586,14 @@ fn scrape_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> Result
             }],
         });
     }
-    let instance = authority(url);
+    // a managed instance's target names its AppInstance (plans/Vault-Instances.md §4.8), so its metrics line up with
+    // the fleet; any other is its URL's host:port
+    let instance = match text(row, "serviceInstanceId") {
+        "" => authority(url),
+        named => named.to_string(),
+    };
     let service_name = match text(row, "serviceName") {
-        "" => instance.clone(),
+        "" => authority(url),
         name => name.to_string(),
     };
     let resource = vec![

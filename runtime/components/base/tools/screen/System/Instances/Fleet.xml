@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The fleet (plans/Vault-Instances.md §4.8; docs/tools/Monitoring.md "Managed instances"): each environment's instances
+    with kind, version, health (the host's check and how fresh the instance's telemetry is), seal and link state,
+    cluster, last deploy, open incidents and items past their rotation age, from get#InstanceFleet (INSTANCE_ADMIN; rows
+    only, nothing reaches a host). Each instance links to its page, to Monitor › Services narrowed to it (its
+    service.instance.id is its AppInstance id) and to Monitor › Releases of the versions it reports. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Fleet" default-menu-index="0">
+
+    <transition name="instanceDetail"><default-response url="../InstanceDetail"/></transition>
+    <transition name="monitorServices"><default-response url="../../Monitor/Services"/></transition>
+    <transition name="monitorReleases"><default-response url="../../Monitor/Releases"/></transition>
+
+    <actions>
+        <set field="fleetList" from="[]"/>
+        <if condition="ec.user.hasPermission('INSTANCE_ADMIN')">
+            <service-call name="org.moqui.dev.InstanceServices.get#InstanceFleet" out-map="fleetOut" ignore-error="true"
+                    transaction="force-new"/>
+            <set field="fleetList" from="fleetOut?.fleetList || []"/>
+        </if>
+    </actions>
+    <widgets>
+        <label text="Managed instances need the INSTANCE_ADMIN permission." type="p" condition="!ec.user.hasPermission('INSTANCE_ADMIN')"/>
+        <form-list name="FleetList" list="fleetList" skip-form="true">
+            <field name="environmentId"><default-field title="Environment">
+                <display text="${environmentName || environmentId}${rolloutPaused == 'Y' ? ' (rollout paused)' : ''}"/></default-field></field>
+            <field name="appInstanceId"><default-field title="Instance">
+                <link url="instanceDetail" text="${instanceName || appInstanceId}" link-type="anchor" parameter-map="{appInstanceId:appInstanceId}"/></default-field></field>
+            <field name="instanceKindId"><default-field title="Kind"><display/></default-field></field>
+            <field name="version"><default-field title="Version"><display/></default-field></field>
+            <field name="health"><default-field title="Health"><display text="${health} (check ${check}, telemetry ${telemetry})"/></default-field></field>
+            <field name="sealState"><default-field title="Seal"><display/></default-field></field>
+            <field name="linkState"><default-field title="Link"><display/></default-field></field>
+            <field name="clusterId"><default-field title="Cluster">
+                <display text="${clusterName || clusterId}${clusterMembers ? ' (' + clusterMembers + ' live)' : ''}"/></default-field></field>
+            <field name="lastDeployDate"><default-field title="Last deploy">
+                <display text="${lastDeployDate || ''} ${lastDeployStatus || ''}"/></default-field></field>
+            <field name="openIncidents"><default-field title="Open incidents"><display/></default-field></field>
+            <field name="itemsPastRotation"><default-field title="Items past rotation"><display/></default-field></field>
+            <field name="monitor"><default-field title="Monitor">
+                <link url="monitorServices" text="Services" link-type="anchor" parameter-map="{'var-instance':appInstanceId}"/>
+                <link url="monitorReleases" text="Releases" link-type="anchor" parameter-map="{instanceId:appInstanceId}"/>
+            </default-field></field>
+        </form-list>
+    </widgets>
+</screen>

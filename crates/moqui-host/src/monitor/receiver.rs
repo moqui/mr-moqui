@@ -113,21 +113,107 @@ pub(crate) async fn run_as<T: Send + 'static>(
     .unwrap_or_else(|_| Err((500, "ingest worker stopped".into())))
 }
 
+/// The ingest source of a managed instance's key, `instance:<AppInstance id>` (moqui-instance `monitor::ingest_source`).
+const INSTANCE_SOURCE: &str = "instance:";
+/// The metrics a manager records of its managed instances itself, which the shipped instance alert rules read: never
+/// taken from a sender (plans/Vault-Instances.md §4.8).
+const INSTANCE_METRICS: &str = "moqui.instance.";
+/// How long the managed instances' ids are kept before they are read again.
+const MANAGED_TTL: Duration = Duration::from_secs(30);
+
+/// The ids of the instances this server manages (`AppInstance`), read at most every [`MANAGED_TTL`]; empty when they
+/// cannot be read, which is logged.
+fn managed_instances(factory: &ExecutionContextFactory) -> Arc<std::collections::HashSet<String>> {
+    type Cached = std::sync::Mutex<Option<(std::time::Instant, Arc<std::collections::HashSet<String>>)>>;
+    let cache = factory.extension(|_| Cached::default());
+    let mut cached = moqui_lib::sync::lock(&cache);
+    if let Some((at, ids)) = cached.as_ref() {
+        if at.elapsed() < MANAGED_TTL {
+            return Arc::clone(ids);
+        }
+    }
+    let ids: std::collections::HashSet<String> = factory
+        .entity()
+        .and_then(|facade| {
+            facade
+                .find("moqui.server.instance.AppInstance")
+                .and_then(|find| find.disable_authz().list())
+                .map_err(|error| tracing::error!(%error, "the managed instances were not read for the receiver"))
+                .ok()
+        })
+        .map(|rows| {
+            rows.values()
+                .iter()
+                .filter_map(|row| row.get("appInstanceId").map(moqui_lib::object::to_plain_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let ids = Arc::new(ids);
+    *cached = Some((std::time::Instant::now(), Arc::clone(&ids)));
+    ids
+}
+
+/// Takes out of `documents` what a sender may not claim, and answers how many: a record naming a managed instance's
+/// `service.instance.id` (on the record or its resource) that did not come under that instance's own key (source
+/// `instance:<id>`), since Monitor's incidents and its `instance` recovery adapter act on that id; and a metric named
+/// like the manager's own instance metrics (`moqui.instance.*`), which its alert rules read.
+pub(crate) fn refuse_claims(
+    index: &str,
+    documents: &mut Vec<moqui_core::entity::document::Document>,
+    managed: &std::collections::HashSet<String>,
+    source: &str,
+) -> u64 {
+    let own = source.strip_prefix(INSTANCE_SOURCE);
+    let before = documents.len();
+    documents.retain(|document| {
+        let text = |value: Option<&Value>| value.map(moqui_lib::object::to_plain_string).unwrap_or_default();
+        let resource = match document.get("resource") {
+            Some(Value::Map(resource)) => text(resource.get("service.instance.id")),
+            _ => String::new(),
+        };
+        let claimed = [text(document.get("service.instance.id")), resource]
+            .into_iter()
+            .filter(|id| !id.is_empty())
+            .any(|id| managed.contains(&id) && own != Some(id.as_str()));
+        let manager_metric = index == "otel_metrics" && text(document.get("name")).starts_with(INSTANCE_METRICS);
+        !claimed && !manager_metric
+    });
+    (before - documents.len()) as u64
+}
+
 /// Decode with `decode` and hand the documents to the telemetry queue. Answers the rejected count and its message
-/// for the partial-success response.
+/// for the partial-success response. What the key's `source` may not claim is rejected ([`refuse_claims`]).
 pub(crate) fn enqueue(
     factory: &ExecutionContextFactory,
+    source: &str,
     decode: impl FnOnce(&Decoder) -> Result<Decoded, Error>,
 ) -> Result<(u64, String), Refusal> {
     let telemetry = moqui_core::telemetry::for_factory(factory);
     if !telemetry.accepting() {
         return Err((503, "telemetry is disabled".into()));
     }
-    let decoded =
+    let mut decoded =
         decode(&factory.extension(|factory| {
             Decoder::receiving(moqui_core::telemetry::for_factory(factory).resource().service_name)
         }))
         .map_err(|e| (400, e.to_string()))?;
+    let refused = refuse_claims(
+        decoded.index,
+        &mut decoded.documents,
+        &managed_instances(factory),
+        source,
+    );
+    if refused > 0 {
+        decoded.rejected += refused;
+        let note = format!(
+            "{refused} records refused: they name a managed instance this key is not, or a manager's instance metric"
+        );
+        decoded.message = if decoded.message.is_empty() {
+            note
+        } else {
+            format!("{}; {note}", decoded.message)
+        };
+    }
     telemetry.note_dropped(decoded.rejected);
     // The queue counts each record it cannot take.
     telemetry
@@ -276,7 +362,7 @@ async fn ingest(
                 .map_err(|error| (400, error.to_string()))?;
             return Ok((0, String::new()));
         }
-        let answer = enqueue(factory, |decoder| {
+        let answer = enqueue(factory, &authorized.source, |decoder| {
             decoder.decode_scoped(signal, &content_type, &body, &authorized.key, &authorized.source)
         })?;
         touch_key(factory, ec, &authorized.key);
