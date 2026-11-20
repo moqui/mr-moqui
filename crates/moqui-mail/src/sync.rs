@@ -1232,7 +1232,11 @@ fn record_outcome(
         }
         Err(SyncFailure::Auth(text)) => {
             tracing::error!(account = %account.id, "Email account {} sign-in failed: {text}", account.id);
-            let shown = format!("{} refused the sign-in", failure_place(account));
+            // the server's response code, a fixed word, is kept; its text is logged only (SEC-MAIL-94)
+            let shown = match super::implementation::response_code(text) {
+                Some(code) => format!("{} refused the sign-in ({code})", failure_place(account)),
+                None => format!("{} refused the sign-in", failure_place(account)),
+            };
             report.outcome = "authFailed";
             fields.push(("statusId", Value::string("EasAuthFailed")));
             fields.push(("lastSyncError", Value::string(clip(&shown, 4000))));

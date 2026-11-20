@@ -1287,7 +1287,7 @@ fn a_refused_sign_in_marks_the_account() {
     assert_eq!(field(&row, "statusId"), "EasAuthFailed");
     let stored = field(&row, "lastSyncError");
     assert!(
-        stored.ends_with("refused the sign-in") && !stored.contains("AUTHENTICATIONFAILED"),
+        stored.ends_with("refused the sign-in (AUTHENTICATIONFAILED)") && !stored.contains("Invalid credentials"),
         "{stored}"
     );
     {
