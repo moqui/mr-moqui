@@ -4,7 +4,7 @@
 #
 # license is CC0-1.0. The patent grant in LICENSE.md has no SPDX identifier.
 # rust-toolchain.toml pins Rust 1.100. The workspace needs 1.99: quickjs-oxide declares rust-version 1.99, mail-parser
-# 1.0 1.98, and oxc 0.153 and later 1.97. This file does not set rust-version, so `cargo metadata` and `cargo tree` still run on
+# 1.0 1.98, and oxc 0.159 1.98. This file does not set rust-version, so `cargo metadata` and `cargo tree` still run on
 # older cargo.
 
 [workspace]
@@ -277,14 +277,14 @@ getrandom = { version = "0.4", features = ["std"] }
 # The script engine, in safe Rust (plans/archive/Script-Engine-Oxide.md). The moqui fork, by exact revision;
 # local work on the fork patches it to ../quickjs-oxide outside committed files. Declares rust-version 1.99.
 quickjs-oxide = { git = "https://github.com/moqui/quickjs-oxide", rev = "b7e34e04bde919d1a76cfd01430226ea0493017f", default-features = false }
-# 0.158.0 declares rust-version 1.97.0.
-oxc_parser = "0.158"
+# 0.159.0 declares rust-version 1.98.0.
+oxc_parser = "0.159"
 # The parser's arena, kept per thread and reset after each parse. Already in the tree under oxc_parser.
-oxc_allocator = "0.158"
+oxc_allocator = "0.159"
 # The ESTree JSON of a parsed expression, for the server-static compatibility walk. Already in the tree under oxc_parser.
-oxc_ast = { version = "0.158", features = ["serialize"] }
+oxc_ast = { version = "0.159", features = ["serialize"] }
 # Spans of parsed nodes, for the test harness power-assert rewrite. Already in the tree under oxc_parser.
-oxc_span = "0.158"
+oxc_span = "0.159"
 # HTML cleaning for allow-html="safe" service parameters. MIT OR Apache-2.0. Builder::default() is the
 # conservative maintained allow-list; there is no custom list in this repo.
 ammonia = "4"
@@ -298,7 +298,7 @@ html5ever = "0.40"
 ironcalc = { git = "https://github.com/moqui/IronCalc", rev = "dbecebb36238f2111e3be91c24db4ec7e14253f6" }
 # Test fixtures only (a dev-dependency of the crates whose tests read a workbook another writer made): the xlsx writers
 # are on ironcalc. Defaults are empty; the chrono and jiff features stay off.
-rust_xlsxwriter = { version = "0.102", default-features = false }
+rust_xlsxwriter = { version = "0.103", default-features = false }
 # read#Spreadsheet: xlsx, xlsm, xlsb, xls, and ods. Defaults are empty; chrono (dates) stays off, dates are read as
 # Excel serial numbers. Shares zip with ironcalc.
 calamine = { version = "0.38", default-features = false }
@@ -448,7 +448,7 @@ sasl = { version = "0.5", default-features = false }
 # --- moqui-browser ---
 # The browser's local database (plans/archive/Wasm.md). bundled compiles the SQLite amalgamation with the
 # target C compiler, which is emcc for wasm32-unknown-emscripten. SQLite is public domain.
-rusqlite = { version = "0.42", features = ["bundled"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 # A dependency of a dependency (turn-server-proto's) held at moqui's fork (docs/Build-Test.md Forks). stun-types comes
 # from the same workspace, so both are patched to keep one copy in the graph.
