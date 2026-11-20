@@ -1303,16 +1303,17 @@ impl ScreenDef {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
-        // a screen at a preview's proposed text: each expression the render units inline runs as a region of the
-        // preview's allow-list host, and a name or size they write into the page as it is holds no markup (SEC-AI-102)
+        // a screen at a preview's proposed text: each expression the render units inline is evaluated from a string as
+        // a region of the preview's allow-list host, and a name or size they write into the page as it is holds no
+        // markup (SEC-AI-102)
         if super::overlay::active()
             && sources
                 .iter()
                 .any(|source| super::overlay::text_of(&source.location).is_some())
         {
-            wrap_inline_expressions(&node);
+            guard_proposed_attributes(&node, location)?;
             for item in extended.forms.iter().chain(extended.sections.iter()) {
-                wrap_inline_expressions(item);
+                guard_proposed_attributes(item, location)?;
             }
         }
         if crate::devtools::is_dev_instance() {
@@ -1395,7 +1396,10 @@ impl ScreenDef {
 
         // Read before the rows, so a write while they load makes this definition stale.
         let config_generation = screen_config_generation(factory);
+        let menu_from = sources.len();
         let (subscreens, rows_read) = load_subscreens(facade, factory, node, location, &mut sources)?;
+        // the subscreens' files, read for their menu titles: a proposed one does not make this screen's text proposed
+        let menu_sources = menu_from..sources.len();
         // Built without rows that could not be read, the definition is stale at once and is built again next time.
         let config_generation = if rows_read { config_generation } else { STALE_GENERATION };
         let mut macro_templates = BTreeMap::new();
@@ -1616,7 +1620,7 @@ impl ScreenDef {
             shell_providers: super::shell::ShellProviders::of(node, location),
             ext_items: super::ext::of(node, location),
             source: XmlFragment::of(node),
-            proposed: proposed_build(location, &sources),
+            proposed: proposed_build(location, &sources, menu_sources),
             sources,
             checked_at: std::sync::atomic::AtomicI64::new(super::cache::now_millis()),
             config_generation,
@@ -1626,7 +1630,8 @@ impl ScreenDef {
 }
 
 /// The attributes whose text the render units write into a unit's code as a JavaScript expression of their own (not
-/// through `ec.resource.expand`, `expression` or `condition`, nor an engine entry, which run as a region already): a
+/// through `ec.resource.expand`, `expression` or `condition`, nor an engine entry, which run as a region already), or
+/// may: a
 /// widget's or a field's `condition`, a field's `hide`, a form-single's `map`, a `text-map`, a `currency-unit-field`, a
 /// `disable-condition`, a `move-condition`, and a report's `variables`, `dashboard`, `frames`, `frame` and `panel`.
 const INLINE_EXPRESSIONS: &[&str] = &[
@@ -1657,10 +1662,46 @@ fn markup_free(text: &str) -> String {
         .replace("--", "-")
 }
 
-/// Wrap each [`INLINE_EXPRESSIONS`] attribute of `node` and its descendants so that in a preview its value comes from
-/// `ec.artifactExecution.previewRegion`, a region of the preview's allow-list host, and elsewhere is the expression as
-/// written; and take the markup out of each [`WRITTEN_AS_IS`] attribute (SEC-AI-102).
-fn wrap_inline_expressions(node: &MNode) {
+/// The elements whose content is actions, compiled and run whole as a region of the preview's allow-list host: their
+/// attributes are left as they are.
+const ACTION_ELEMENTS: &[&str] = &[
+    "actions",
+    "always-actions",
+    "pre-actions",
+    "row-actions",
+    "condition",
+    "entity-find",
+    "entity-find-one",
+    "entity-find-count",
+];
+
+/// `text` as a JavaScript string literal with every character but a letter, a digit and a space as a `\u` escape, so
+/// no quote, backtick, `${`, backslash, line end or `</script` of it is code wherever the literal is written.
+fn escaped_literal(text: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for unit in text.encode_utf16() {
+        match char::from_u32(u32::from(unit)) {
+            Some(c) if c.is_ascii_alphanumeric() || c == ' ' => out.push(c),
+            _ => {
+                let _ = write!(out, "\\u{unit:04x}");
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// For a screen at proposed text, outside its [`ACTION_ELEMENTS`]: replace each [`INLINE_EXPRESSIONS`] attribute of
+/// `node` and its descendants with `ec.resource.expression("…", "")`, its text an escaped string literal evaluated as
+/// an engine expression entry, a region of the preview's allow-list host whose value comes back as data, so no text of
+/// it is spliced into a render unit's code; refuse one that is not a single JavaScript expression alone; and take the
+/// markup out of each [`WRITTEN_AS_IS`] attribute (SEC-AI-102).
+fn guard_proposed_attributes(node: &MNode, location: &str) -> Result<(), Error> {
+    if ACTION_ELEMENTS.contains(&node.name().as_str()) {
+        return Ok(());
+    }
     for (name, value) in node.attributes() {
         if WRITTEN_AS_IS.contains(&name.as_str()) {
             let free = markup_free(&value);
@@ -1673,25 +1714,30 @@ fn wrap_inline_expressions(node: &MNode) {
         if text.is_empty() || !INLINE_EXPRESSIONS.contains(&name.as_str()) {
             continue;
         }
-        node.set_attribute(
-            name,
-            format!(
-                "(ec.artifactExecution.inPreview() ? ec.artifactExecution.previewRegion(() => ({text})) : ({text}))"
-            ),
-        );
+        // the text is not echoed: the message may be shown on the page
+        if !crate::script::parse::is_single_expression(text) {
+            return Err(Error::new(format!(
+                "{location}: the {name} of a {} is not one JavaScript expression",
+                node.name()
+            )));
+        }
+        node.set_attribute(name, format!("ec.resource.expression({}, \"\")", escaped_literal(text)));
     }
     for child in node.child_iter() {
-        wrap_inline_expressions(&child);
+        guard_proposed_attributes(&child, location)?;
     }
+    Ok(())
 }
 
-/// Whether the screen being built stands at a preview's proposed text (its own or a screen-extend's); marks its location
+/// Whether the screen being built stands at a preview's proposed text (its own, a screen-extend's, or that of a screen
+/// it includes a form, section or transition from; not a subscreen's whose menu title it reads); marks its location
 /// on the overlay when it does, so its frame is known for one ([`super::overlay::is_proposed`], SEC-AI-102).
-fn proposed_build(location: &str, sources: &[Source]) -> bool {
+fn proposed_build(location: &str, sources: &[Source], menu_sources: std::ops::Range<usize>) -> bool {
     let proposed = super::overlay::active()
         && sources
             .iter()
-            .any(|source| super::overlay::text_of(&source.location).is_some());
+            .enumerate()
+            .any(|(at, source)| !menu_sources.contains(&at) && super::overlay::text_of(&source.location).is_some());
     if proposed {
         super::overlay::mark_proposed(location);
     }

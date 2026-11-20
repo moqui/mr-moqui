@@ -249,7 +249,7 @@ a form's or tree's data are covered as the render is. The code may call:
 | The user | `ec.user` `userId`, `username`, `hasPermission`, `isInGroup`, `getUserGroupIdSet`, `getPreference`, `getPreferences`, `nowTimestamp`, `timestampMillis`, `locale`, `timeZone`, `getLocale`, `getTimeZone`, `userAccount` |
 | Helpers | `StringUtilities`, `CollectionUtilities`, the pure `WebUtilities` encoders, `compare`, the decimal and date globals |
 | `sri` | the reads of the render, its field values, options and validations, and the URL builders (`buildUrl`, `makeUrlByType`, `UrlInstance`); no render, write or redirect |
-| The lock | `ec.artifactExecution.authzLocked()`, `inPreview()`, `previewRegion(thunk)` |
+| The lock | `ec.artifactExecution.authzLocked()` |
 
 Anything else throws "... is not available in a preview of proposed screen text": every `ec.web` member (the
 response's writes, headers, redirects, errors and status, cookies, the session and the request's parameters), the rest
@@ -263,11 +263,17 @@ The preview renders on a script runtime of its own, let go after it, and the all
 objects are frozen, and so are `ec`, each facade under it, `sri`, the helpers, the host classes' prototypes and a mode's
 render functions, each once made, so the proposed text replaces no function the framework's code calls after it. The
 framework's render units and the screens' code around the proposed text run on a list of their own, the members a render
-needs (`sri`, its writes to the page, the reads of the request, the settings and `component://` files), and no
-response write of `ec.web`. An expression a render unit writes into its code (a `condition`, a field's `hide`, a
-form-single's `map`, a `text-map`, a `currency-unit-field`, a `disable-condition`, a report's `variables`, `frame` or
-`panel`) runs as the proposed text's own, through `ec.artifactExecution.previewRegion`. The response keeps the preview's
-`Content-Security-Policy`, drops a `Refresh` header and redirects only to this site.
+needs (`sri`, its writes to the page, the reads of the request, the settings, `component://` files and
+`ec.llm.isEnabled()` for the shell's client config), and no response write of `ec.web`. An expression a render unit
+would write into its code (a `condition`, a field's `hide`, a form-single's `map`, a `text-map`, a
+`currency-unit-field`, a `disable-condition`, a report's `variables`, `frame` or `panel`) is never spliced in: it must be
+one JavaScript expression alone, or the screen does not load, and it is evaluated from a string literal by
+`ec.resource.expression`, as the proposed text's own, its value copied out as data. A name, id, type or size the units
+write into the page as it is loses any markup character. The proposed text reads a copy of the page's script and
+stylesheet lists (`footer_scripts`, `html_scripts`, `footer_stylesheets`, `html_stylesheets`), so it adds no
+`<script src>` or `<link>` to the shell's page, and may not set one. A parent screen whose subscreen is proposed is not
+proposed for that alone. The response keeps the preview's `Content-Security-Policy`, drops a `Refresh` header and
+redirects only to this site.
 
 ## Server-static screens
 

@@ -124,11 +124,6 @@ pub(crate) fn restricted() -> bool {
             .unwrap_or(false)
 }
 
-/// Whether a preview holds this thread's script runtime ([`PreviewHeld`]).
-pub(crate) fn held() -> bool {
-    HELD.with(Cell::get)
-}
-
 /// Whether a screen's own code outside a region runs in a preview's runtime now: the framework's render units and the
 /// trusted screens' actions around the proposed text, which call only [`unit_allowed`]'s members. A service's body, an
 /// entity filter or an ECA rule (whose frame is on top) is not a screen's.
@@ -137,6 +132,21 @@ pub(crate) fn unit_restricted() -> bool {
         && DEPTH.with(Cell::get) == 0
         && crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::top_is_screen)
             .unwrap_or(false)
+}
+
+/// The page's script and stylesheet lists, which the shell's head and footer write as `<script src>` and
+/// `<link rel="stylesheet">` (`Footer.html.fancy`): a preview's proposed text reads a copy of each, which is never
+/// written back, and does not set one (SEC-AI-102).
+pub(crate) const PAGE_LISTS: &[&str] = &[
+    "footer_scripts",
+    "html_scripts",
+    "footer_stylesheets",
+    "html_stylesheets",
+];
+
+/// Whether `name` is one of the [`PAGE_LISTS`] and the proposed text runs now ([`restricted`]).
+pub(crate) fn page_list_guarded(name: &str) -> bool {
+    PAGE_LISTS.contains(&name) && restricted()
 }
 
 /// The error a member outside the allow-list answers in a region.
@@ -217,8 +227,6 @@ const SRI_READS: &[&str] = &[
 /// the entity definitions a find reads.
 const TOOLS: &[&str] = &[
     "authzLocked",
-    "inPreview",
-    "previewRegion",
     "contextPush",
     "contextPop",
     "contextPushContext",
@@ -268,6 +276,7 @@ const UNIT_WEB: &[&str] = &[
     "saveScreenLastInfo",
     "sendJsonResponse",
     "sendJsonError",
+    "getResourceDistinctValue",
 ];
 
 /// The `tools` members a preview's render units may call beyond [`TOOLS`]: authorization's own questions, the forms'
@@ -363,6 +372,8 @@ pub(crate) fn unit_allowed(path: &str, first: Option<&str>) -> bool {
             matches!(name, "getProperty" | "isPropertySet") && first.is_some_and(|key| key.starts_with("webapp_"))
         }
         "WebUtilities" => true,
+        // the qapps shell's client config asks whether the assistant is on (QvtConfig.js)
+        "ec.llm" => name == "isEnabled",
         "tools" => UNIT_TOOLS.contains(&name) || (LOCATION_FIRST.contains(&name) && component_location(first)),
         _ => false,
     }

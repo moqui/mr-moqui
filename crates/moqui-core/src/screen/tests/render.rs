@@ -2644,6 +2644,127 @@ fn a_previewed_screens_inline_expressions_run_on_the_allow_list_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: an inline expression of proposed text is never spliced into a render unit's code. Text that would close
+/// the code around it (`0)) : 0) || EVIL || ((`, with or without a backtick) is refused when the screen loads, as it is
+/// not one expression; text that is one expression and calls past the allow-list runs as a region and is refused there.
+/// Each for a field's `hide`, a widget's `condition` and a form-single's `map`; nothing is written.
+#[test]
+fn a_previewed_screens_inline_text_is_not_spliced_into_code() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-splice-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let evil = "sri.write('&lt;img src=x class=PWNED&gt;')";
+    let rows = r#"<actions><script>rows = [{v: 1}]</script></actions>"#;
+    let site = |name: &str, text: &str| -> String {
+        match name {
+            "hide" => format!(
+                r#"{rows}<widgets><form-list name="F" list="rows" skip-form="true"><field name="v" hide="{text}">
+                <default-field><display/></default-field></field></form-list><label text="MARK"/></widgets>"#
+            ),
+            "condition" => {
+                format!(r#"<widgets><label text="MARK"/><label text="shown" condition="{text}"/></widgets>"#)
+            }
+            _ => format!(
+                r#"<widgets><label text="MARK"/><form-single name="F" map="{text}"><field name="v"><default-field>
+                <display/></default-field></field></form-single></widgets>"#
+            ),
+        }
+    };
+    for name in ["hide", "condition", "map"] {
+        for (kind, text) in [
+            ("breakout", format!("0)) : 0) || {evil} || ((")),
+            ("backtick", format!("0)) : 0) || {evil} || ((`")),
+            ("statements", format!("0); {evil}; (0")),
+            ("unbalanced", format!("0), ({evil}, 0")),
+            ("one-expression", format!("0 || {evil}")),
+        ] {
+            let location = dir.join(format!("Splice{name}{}.xml", kind.replace('-', "")));
+            let screen = format!(
+                r#"<screen require-authentication="false">{}</screen>"#,
+                site(name, &text)
+            );
+            std::fs::write(&location, &screen).unwrap();
+            let root = location.to_string_lossy().into_owned();
+            let render = || {
+                make_render(&world.factory)
+                    .root_screen(root.clone())
+                    .screen_path("")
+                    .render_mode("html")
+                    .render()
+                    .map(|output| output.body_text())
+                    .unwrap_or_else(|err| err.message().to_string())
+            };
+            let mut overlay = crate::screen::overlay::Overlay::new();
+            overlay.insert(&root, None, &screen);
+            let previewed = crate::screen::overlay::with(overlay, render);
+            assert!(!previewed.contains("PWNED"), "{name} {kind} in a preview: {previewed}");
+            if kind == "one-expression" {
+                assert!(
+                    previewed.contains("is not available in a preview"),
+                    "{name} {kind} in a preview: {previewed}"
+                );
+            } else {
+                assert!(
+                    previewed.contains("is not one JavaScript expression"),
+                    "{name} {kind} in a preview: {previewed}"
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview's proposed text adds nothing to the page's script and stylesheet lists the shell writes as
+/// `<script src>` and `<link>` (`footer_scripts`, `html_scripts`): by name, through `context` or `ec.context`, nor
+/// sets one; the trusted root screen's own entries stay.
+#[test]
+fn a_previewed_screen_adds_no_script_to_the_page() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-scripts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let root_text = r#"<screen require-authentication="false">
+        <always-actions><script>footer_scripts = new Set(['/js/Own.js']); html_scripts = new Set()</script></always-actions>
+        <widgets><subscreens-active/>
+            <label text="SCRIPTS ${Array.from(footer_scripts).join(',')}|${Array.from(html_scripts).join(',')}"/></widgets>
+    </screen>"#;
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    let child = dir.join("Root/Child.xml");
+    let child_text = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            const tried = []
+            for (const [name, change] of [
+                ['bare', () => footer_scripts.add('/evil/bare.js')],
+                ['context', () => context.footer_scripts.add('/evil/context.js')],
+                ['get', () => ec.context.get('footer_scripts').add('/evil/get.js')],
+                ['html', () => html_scripts.add('/evil/html.js')],
+                ['set', () => { footer_scripts = new Set(['/evil/set.js']) }],
+                ['put', () => ec.context.put('html_scripts', new Set(['/evil/put.js']))],
+            ]) {
+                try { change(); tried.push(name) } catch (e) { tried.push(name + '!') }
+            }
+            out = tried.join(' ')
+        ]]></script></actions><widgets><label text="CHILD ${out}"/></widgets></screen>"#;
+    std::fs::write(&child, child_text).unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("Child")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&child.to_string_lossy(), None, child_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(previewed.contains("CHILD "), "{previewed}");
+    assert!(previewed.contains("SCRIPTS /js/Own.js|"), "{previewed}");
+    assert!(!previewed.contains("/evil/"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-AI-102: a name or a size a render unit writes into the page as it is (a `field-ref`'s name in its error note, a
 /// panel's width) holds no markup of the proposed text in a preview, so the page gains no tag of its own (a
 /// `<meta http-equiv="refresh">` that would take the viewer to another site).

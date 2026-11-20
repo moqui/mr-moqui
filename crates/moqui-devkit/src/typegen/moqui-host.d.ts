@@ -1488,10 +1488,6 @@ interface MoquiServerEc {
         authzDisabled(): boolean;
         /** Whether `disableAuthz()` (and a find's or a service call's) is refused here: a preview's proposed screen text runs. */
         authzLocked(): boolean;
-        /** Whether a preview of proposed screen text holds this thread's script runtime. */
-        inPreview(): boolean;
-        /** `thunk()`'s value, run as a preview's proposed text on its allow-list host. */
-        previewRegion<T>(thunk: () => T): T;
         /**
          * `body()` with no user and authorization off, in a fresh execution context sharing the transaction; the caller's
          * user and authorization come back after. Only a service's own code may call it (docs/security/Attack-Surface.md).
