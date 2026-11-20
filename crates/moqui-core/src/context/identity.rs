@@ -66,6 +66,8 @@ pub(crate) fn script_refused_property(name: &str) -> bool {
         || under.ends_with("_pass")
         || under.ends_with("_pw")
         || under.contains("crypt")
+        // a secret the seal's store keeps, by its own name (plans/Sealed-Secrets.md S4)
+        || crate::seal::secrets::is_secret_name(name)
 }
 
 pub(crate) fn server_address() -> &'static (String, String) {

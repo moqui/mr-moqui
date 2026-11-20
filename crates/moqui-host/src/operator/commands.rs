@@ -13,12 +13,13 @@
  */
 
 //! The operator socket's commands (plans/Sealed-Secrets.md §3.3): `status` for any peer; `init`, `unseal`, `seal`,
-//! `rekey`, `rotate-root` and `export-seal` for root and the operator group ([`super::peer`]). A request is a JSON
-//! object with `command` and that command's fields; the answer is `{"ok": true, ...}` or `{"ok": false, "error"}`.
-//! Passphrases and shares are moved into zeroizing strings as soon as they are parsed, and never logged.
+//! `rekey`, `rotate-root`, `export-seal` and `secret-put`, `secret-list` and `secret-rm` (S4) for root and the operator
+//! group ([`super::peer`]). A request is a JSON object with `command` and that command's fields; the answer is
+//! `{"ok": true, ...}` or `{"ok": false, "error"}`. Passphrases, shares and secret values are moved into zeroizing
+//! strings as soon as they are parsed, and never logged or answered.
 
 use moqui_core::context::Error;
-use moqui_core::seal::{Init, Keeper, MethodKind, Rekey, RotateRoot, UnsealInput};
+use moqui_core::seal::{secrets, Init, Keeper, MethodKind, Rekey, RotateRoot, UnsealInput};
 use serde_json::{json, Value};
 use zeroize::Zeroizing;
 
@@ -37,6 +38,9 @@ struct Request {
     shares: Vec<Zeroizing<String>>,
     /// A recovery bundle to restore (`init --from`).
     bundle: Option<String>,
+    /// A secret's name and value (`secret put`, `secret rm`).
+    name: Option<String>,
+    value: Option<Zeroizing<String>>,
 }
 
 impl Request {
@@ -51,6 +55,8 @@ impl Request {
         let passphrase = text("passphrase").map(Zeroizing::new);
         let share = text("share").map(Zeroizing::new);
         let bundle = text("bundle");
+        let name = text("name");
+        let secret_value = text("value").map(Zeroizing::new);
         let shares = match value.get_mut("shares").map(Value::take) {
             Some(Value::Array(items)) => items
                 .into_iter()
@@ -70,6 +76,8 @@ impl Request {
             take_shares: value["take_shares"] == Value::Bool(true),
             shares,
             bundle,
+            name,
+            value: secret_value,
         })
     }
 }
@@ -165,8 +173,45 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             Ok(json!({"ok": true, "method_shares": texts(&issued.method_shares), "status": status(keeper)}))
         }
         "export-seal" => Ok(json!({"ok": true, "bundle": keeper.export_bundle()?})),
+        "secret-put" => {
+            let name = secret_name(request.name)?;
+            let value = request
+                .value
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| Error::new("secret put needs a value"))?;
+            secrets::write_to(keeper, database(keeper).as_ref(), &name, &value)?;
+            tracing::info!("Operator: the secret {name} was put");
+            Ok(json!({"ok": true, "name": secrets::canonical(&name)}))
+        }
+        "secret-list" => {
+            let listed = secrets::list_from(keeper, database(keeper).as_ref())?;
+            Ok(json!({"ok": true, "secrets": listed}))
+        }
+        "secret-rm" => {
+            let name = secret_name(request.name)?;
+            let removed = secrets::remove_from(keeper, database(keeper).as_ref(), &name)?;
+            if removed {
+                tracing::info!("Operator: the secret {name} was removed");
+            }
+            Ok(json!({"ok": true, "removed": removed}))
+        }
         other => Err(Error::new(format!("unknown operator command {other:?}"))),
     }
+}
+
+/// The name a `secret` command gives.
+fn secret_name(name: Option<String>) -> Result<String, Error> {
+    name.map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| Error::new("name the secret: secret put|rm <name>"))
+}
+
+/// The entity facade of the server this keeper's runtime runs, once its database is open: where a SecretValue is kept.
+fn database(keeper: &Keeper) -> Option<moqui_core::entity::EntityFacade> {
+    let runtime = keeper.path().parent()?.parent()?;
+    moqui_core::context::ExecutionContextFactory::running()
+        .filter(|factory| factory.runtime_dir() == runtime)
+        .and_then(|factory| factory.entity())
 }
 
 /// The shares as the texts an answer carries.

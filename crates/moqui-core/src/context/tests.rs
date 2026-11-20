@@ -350,11 +350,13 @@ fn generated_secret_starts_its_own_line_in_env_without_final_newline() {
 #[test]
 fn generated_secrets_are_32_random_bytes_and_secret_names_are_known() {
     use base64::Engine as _;
-    let first = super::factory::generate_secret().unwrap();
-    let second = super::factory::generate_secret().unwrap();
+    let first = crate::seal::secrets::random_secret().unwrap();
+    let second = crate::seal::secrets::random_secret().unwrap();
     assert_ne!(first, second);
     for value in [&first, &second] {
-        let bytes = base64::engine::general_purpose::STANDARD.decode(value).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(value.as_bytes())
+            .unwrap();
         assert_eq!(bytes.len(), 32);
     }
     let secret = super::factory::property_is_secret;

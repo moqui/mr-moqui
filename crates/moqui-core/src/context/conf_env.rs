@@ -15,7 +15,8 @@
 //! Conf attributes set from the environment by their path (plans/archive/Conf-Paths.md §3): each name of the form
 //! `moqui_conf__webapp_list__webapp__WEBROOT__http_port` in the process properties (`-D`), the OS environment or
 //! `runtime/.env` sets, or adds, the attribute it names in the merged conf, over every conf file. A secret attribute
-//! the conf leaves at `CHANGEME` is generated and kept in `runtime/.env` under its canonical name.
+//! the conf leaves at `CHANGEME` is generated into the seal's store (`seal.json` or a `SecretValue` row), never into
+//! `runtime/.env` (plans/Sealed-Secrets.md S4, `crate::seal::secrets`).
 
 use std::path::Path;
 
@@ -268,15 +269,21 @@ pub fn setting(selector: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Keep settings in `env_path` (`runtime/.env`) at run time, as pairing does: each named by a conf selector, kept under
-/// its environment name, or by a property name. A selector's value is also set as the process property of that name,
-/// which [`setting`] and the scripts' `getConfValue` read first, so it holds at once, before any conf reload; a removed
-/// one is cleared.
+/// Keep settings at run time, as pairing does: each named by a conf selector, or by a property name. A secret selector
+/// ([`attribute_secret`]) goes to the seal's store of the runtime `env_path` is in (`seal.json` or a `SecretValue` row,
+/// plans/Sealed-Secrets.md S4), never to `.env` or a process property; any other setting is kept in `env_path`
+/// (`runtime/.env`) under its environment name, and a selector's value is also set as the process property of that
+/// name, which [`setting`] and the scripts' `getConfValue` read first, so it holds at once, before any conf reload; a
+/// removed one is cleared.
 ///
 /// # Errors
 ///
-/// When the file cannot be written.
+/// When the file cannot be written, or a secret cannot be kept (no running server of that runtime, or no seal).
 pub fn keep_in_env(env_path: &Path, set: &[(String, String)], remove: &[&str]) -> Result<(), Error> {
+    // a test's factory has no seal: its secrets stay where they were kept before (the file and a process property)
+    let unsealed_factory =
+        super::ExecutionContext::with_current(|ec| ec.factory().seal_keeper().is_none()).unwrap_or(false);
+    let secret = |given: &str| given.contains('@') && selector_secret(given) && !unsealed_factory;
     let name = |given: &str| {
         if given.contains('@') {
             env_name_of(given)
@@ -284,12 +291,40 @@ pub fn keep_in_env(env_path: &Path, set: &[(String, String)], remove: &[&str]) -
             given.to_string()
         }
     };
-    let pairs: Vec<(String, String)> = set.iter().map(|(given, value)| (name(given), value.clone())).collect();
-    let removed: Vec<String> = remove.iter().map(|given| name(given)).collect();
-    let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
-    env::update_dotenv_file(env_path, &pairs, &removed_refs)?;
+    let secrets: Vec<&(String, String)> = set.iter().filter(|(given, _)| secret(given)).collect();
+    let removed_secrets: Vec<&str> = remove.iter().copied().filter(|given| secret(given)).collect();
+    if !secrets.is_empty() || !removed_secrets.is_empty() {
+        let factory = runtime_factory(env_path)
+            .filter(|factory| factory.seal_keeper().is_some())
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "no running server of {} to keep its secrets in (plans/Sealed-Secrets.md S4)",
+                    env_path.display()
+                ))
+            })?;
+        for (given, value) in &secrets {
+            crate::seal::secrets::put(&factory, given, value)?;
+        }
+        for given in &removed_secrets {
+            crate::seal::secrets::remove(&factory, given)?;
+        }
+    }
+    let pairs: Vec<(String, String)> = set
+        .iter()
+        .filter(|(given, _)| !secret(given))
+        .map(|(given, value)| (name(given), value.clone()))
+        .collect();
+    let removed: Vec<String> = remove
+        .iter()
+        .filter(|given| !secret(given))
+        .map(|given| name(given))
+        .collect();
+    if !pairs.is_empty() || !removed.is_empty() {
+        let removed_refs: Vec<&str> = removed.iter().map(String::as_str).collect();
+        env::update_dotenv_file(env_path, &pairs, &removed_refs)?;
+    }
     for (given, value) in set {
-        if given.contains('@') {
+        if given.contains('@') && !secret(given) {
             env::set_property(&name(given), value.clone());
         }
     }
@@ -299,6 +334,44 @@ pub fn keep_in_env(env_path: &Path, set: &[(String, String)], remove: &[&str]) -
         }
     }
     Ok(())
+}
+
+/// The factory of the runtime whose `.env` is `env_path`: the current execution context's, else the server factory
+/// this process booted last, when its runtime is that one.
+fn runtime_factory(env_path: &Path) -> Option<std::sync::Arc<super::ExecutionContextFactory>> {
+    let runtime = env_path.parent()?;
+    let same = |factory: &super::ExecutionContextFactory| {
+        let ours = factory.runtime_dir();
+        ours == runtime || std::fs::canonicalize(runtime).is_ok_and(|canonical| canonical == ours)
+    };
+    super::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
+        .filter(|factory| same(factory))
+        .or_else(|| super::ExecutionContextFactory::running().filter(|factory| same(factory)))
+}
+
+/// The handle of the secret conf attribute `selector` (plans/Sealed-Secrets.md §3.1, Secret handles), for code with no
+/// factory at hand: a process property or OS environment variable of its environment name (an operator's, or a
+/// test's), else the current execution context's factory's [`super::ExecutionContextFactory::secret`], else that of
+/// the server factory this process booted last. `None` when none has it; an error of the store is logged.
+#[must_use]
+pub fn secret(selector: &str) -> Option<zeroize::Zeroizing<String>> {
+    let name = env_name_of(selector);
+    if !name.is_empty() {
+        let given = env::get_property(&name).or_else(|| std::env::var(&name).ok().filter(|value| !value.is_empty()));
+        if let Some(value) = given {
+            return Some(zeroize::Zeroizing::new(value.trim().to_string()));
+        }
+    }
+    let of = |factory: &super::ExecutionContextFactory| {
+        factory.secret(selector).unwrap_or_else(|err| {
+            tracing::warn!("The secret {selector} could not be read: {err}");
+            None
+        })
+    };
+    if let Some(found) = super::ExecutionContext::with_current(|ec| of(ec.factory())) {
+        return found;
+    }
+    super::ExecutionContextFactory::running().and_then(|factory| of(&factory))
 }
 
 /// [`setting`] on `factory`: the process property or OS environment variable of the attribute's environment name, else
@@ -519,111 +592,6 @@ pub fn log_overrides(overrides: &[Override]) {
             ),
             Outcome::Shadowed { .. } => {}
             Outcome::Refused(why) => tracing::error!("Conf override {name} from {source} is not used: {why}"),
-        }
-    }
-}
-
-/// Generate each secret attribute the schema marks generated whose value still ends in `CHANGEME` and no override
-/// set, write each to `env_path` (`runtime/.env`) under its canonical name, and set it in `conf`. Answers the selectors
-/// generated, after logging each.
-///
-/// # Errors
-///
-/// When random bytes cannot be read or `env_path` cannot be written: the server does not start with a secret it could
-/// not keep.
-pub fn generate_secrets(conf: &MNode, overrides: &[Override], env_path: &Path) -> Result<Vec<String>, Error> {
-    let overridden: Vec<&str> = overrides
-        .iter()
-        .filter(|item| item.applied())
-        .filter_map(|item| item.selector.as_deref())
-        .collect();
-    let mut pairs = Vec::new();
-    let mut made = Vec::new();
-    generate_cluster_pair(conf, &overridden, &mut pairs, &mut made)?;
-    let mut nodes = Vec::new();
-    collect_generated(conf, conf_schema::CATALOG, &mut nodes);
-    for (node, attribute) in nodes {
-        let value = node.attribute(attribute).unwrap_or_default();
-        if !value.ends_with("CHANGEME") {
-            continue;
-        }
-        let Some(path) = AttrPath::of(&node, attribute, &conf_schema::keying) else {
-            continue;
-        };
-        let selector = path.selector();
-        if overridden.contains(&selector.as_str()) {
-            continue;
-        }
-        let Some(env_name) = path.env_name() else {
-            tracing::error!("Conf secret {selector} is at CHANGEME and has no environment name to keep it under");
-            continue;
-        };
-        let secret = super::factory::generate_secret()?;
-        node.set_attribute(attribute, secret.clone());
-        pairs.push((env_name, secret));
-        made.push(selector);
-    }
-    if !pairs.is_empty() {
-        env::update_dotenv_file(env_path, &pairs, &[])?;
-        for selector in &made {
-            tracing::info!("Generated conf secret {selector}, kept in runtime/.env");
-        }
-    }
-    Ok(made)
-}
-
-/// The cluster TLS pair of `conf`'s `cluster-member`: made together (a certificate and its key) when both are at
-/// `CHANGEME` and neither was overridden, its environment names added to `pairs`. Set together or empty together;
-/// one without the other is an error, as a member with half a pair cannot join.
-fn generate_cluster_pair(
-    conf: &MNode,
-    overridden: &[&str],
-    pairs: &mut Vec<(String, String)>,
-    made: &mut Vec<String>,
-) -> Result<(), Error> {
-    const CERT: &str = "cluster-member@tls-cert";
-    const KEY: &str = "cluster-member@tls-key";
-    let Some(node) = conf.first_named("cluster-member") else {
-        return Ok(());
-    };
-    let cert = node.attribute("tls-cert").unwrap_or_default();
-    let key = node.attribute("tls-key").unwrap_or_default();
-    let placeholder = |value: &str| value.trim().ends_with("CHANGEME");
-    if placeholder(&cert) && placeholder(&key) && !overridden.contains(&CERT) && !overridden.contains(&KEY) {
-        #[cfg(feature = "cluster-tls")]
-        {
-            let (cert, key) = crate::cluster::generate_cert_pair()?;
-            node.set_attribute("tls-cert", cert.clone());
-            node.set_attribute("tls-key", key.clone());
-            pairs.push((env_name_of(CERT), cert));
-            pairs.push((env_name_of(KEY), key));
-            made.push(CERT.to_string());
-            made.push(KEY.to_string());
-        }
-        // without cluster-tls (the browser build) the pair stays unset; the cluster's start fails on it, nothing else
-        // reads it
-        #[cfg(not(feature = "cluster-tls"))]
-        let _ = (pairs, made);
-        return Ok(());
-    }
-    let empty = |value: &str| value.trim().is_empty() || placeholder(value);
-    if empty(&cert) != empty(&key) {
-        return Err(Error::new(format!("{CERT} and {KEY} must be set together")));
-    }
-    Ok(())
-}
-
-/// Each element of `node`'s children that a unit of `units` marks with a generated secret attribute, with the
-/// attribute, through every keyed element on the way.
-fn collect_generated(node: &MNode, units: &'static [conf_schema::Unit], out: &mut Vec<(MNode, &'static str)>) {
-    for unit in units {
-        for child in node.children_named(unit.name) {
-            for (attribute, mark) in unit.secrets {
-                if *mark == conf_schema::Secret::Generated {
-                    out.push((child.clone(), attribute));
-                }
-            }
-            collect_generated(&child, unit.children, out);
         }
     }
 }

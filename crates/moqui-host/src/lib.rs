@@ -1375,7 +1375,8 @@ fn load_embedded(
     log_files_attached(&factory);
     embedded_files::check(&factory, false);
     let opened_at = std::time::Instant::now();
-    let opened = crate::db::entity_db::transactional_conf(&factory).and_then(|conf| {
+    let opened = crate::db::entity_db::transactional_conf(&factory).and_then(|mut conf| {
+        crate::db::entity_db::embedded_password(&factory, &mut conf, cluster_dir)?;
         let pool = load_pool(&conf.pool);
         let install = crate::db::embedded::shared_install_dir(&runtime_dir, cluster_dir);
         tracing::info!(
@@ -1837,7 +1838,8 @@ fn boot_server_factory(
     embedded_files::check(&factory, true);
     // Tool checks before the database: which Chromium PDF uses, or why there is none.
     let pdf = install_pdf(&factory);
-    let conf = crate::db::entity_db::transactional_conf(&factory)?;
+    let mut conf = crate::db::entity_db::transactional_conf(&factory)?;
+    crate::db::entity_db::embedded_password(&factory, &mut conf, &cluster_dir)?;
     // `(request cap + service cap) * 2` must fit in `max - reserve`; check_serve_caps below says so.
     let pool = conf.pool.clone();
     let install = crate::db::embedded::shared_install_dir(&runtime_dir, &cluster_dir);

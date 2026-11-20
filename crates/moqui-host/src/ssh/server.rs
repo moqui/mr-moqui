@@ -215,7 +215,13 @@ pub fn start(
     let Some((host, port)) = configured_target(&attr)? else {
         return Ok(None);
     };
-    let key = host_key(&attr("host-key"))?;
+    // by its handle: the conf's, else seal's store, where it is generated (plans/Sealed-Secrets.md S4)
+    let key = host_key(
+        &factory
+            .secret("ssh-server@host-key")
+            .map_err(|err| Error::new(err.to_string()))?
+            .unwrap_or_default(),
+    )?;
     let root = match factory.conf_setting("ssh-server", "sftp-root").as_str() {
         "" => "runtime://sftp".to_string(),
         other => other.to_string(),

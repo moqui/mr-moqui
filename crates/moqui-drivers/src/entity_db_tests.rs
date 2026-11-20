@@ -12,6 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
+use moqui_lib::node::MNode;
+
 use super::*;
 
 /// A Postgres server the conf names gets the `schema-name` as its search path and the isolation level as the session's

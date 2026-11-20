@@ -153,6 +153,92 @@ impl Keeper {
         Ok(())
     }
 
+    /// The bootstrap secret `name`, or `make`'s value kept as it when there is none, under the seal file's lock, so two
+    /// processes that make one at once keep the first.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_bootstrap_secret`], or `make`'s error.
+    pub fn bootstrap_or_init(
+        &self,
+        name: &str,
+        make: impl FnOnce() -> Result<Vec<u8>, Error>,
+    ) -> Result<Zeroizing<Vec<u8>>, Error> {
+        let mut inner = self.inner();
+        if inner.root.is_none() || inner.file.is_none() {
+            return Err(Error::new(
+                "sealed, or no seal yet: a bootstrap secret is kept once unsealed",
+            ));
+        }
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
+        let (Some(root), Some(seal)) = (inner.root.as_ref(), inner.file.as_ref()) else {
+            return Err(Error::new(
+                "sealed, or no seal yet: a bootstrap secret is kept once unsealed",
+            ));
+        };
+        let key = bootstrap_key(root);
+        if let Some(sealed) = seal.bootstrap.get(name) {
+            return open_bootstrap(&key, name, sealed);
+        }
+        let value = Zeroizing::new(make()?);
+        let mut seal = seal.clone();
+        seal.bootstrap
+            .insert(name.to_string(), seal_bootstrap(&key, name, 1, &value));
+        file::stage(&self.path, &seal)?.commit()?;
+        inner.file = Some(seal);
+        Ok(value)
+    }
+
+    /// Remove the bootstrap secret `name` from `seal.json`: false when there was none.
+    ///
+    /// # Errors
+    ///
+    /// The server is sealed, has no seal file, or the file cannot be written.
+    pub fn remove_bootstrap_secret(&self, name: &str) -> Result<bool, Error> {
+        let mut inner = self.inner();
+        if inner.root.is_none() || inner.file.is_none() {
+            return Err(Error::new(
+                "sealed, or no seal yet: a bootstrap secret is removed once unsealed",
+            ));
+        }
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
+        let Some(seal) = inner.file.as_ref() else {
+            return Ok(false);
+        };
+        if !seal.bootstrap.contains_key(name) {
+            return Ok(false);
+        }
+        let mut seal = seal.clone();
+        seal.bootstrap.remove(name);
+        file::stage(&self.path, &seal)?.commit()?;
+        inner.file = Some(seal);
+        Ok(true)
+    }
+
+    /// The bootstrap secrets' names and generations, never their values.
+    ///
+    /// # Errors
+    ///
+    /// The server is sealed.
+    pub fn bootstrap_entries(&self) -> Result<Vec<(String, u64)>, Error> {
+        let inner = self.inner();
+        if inner.root.is_none() {
+            return Err(Error::new("sealed: the bootstrap secrets are listed once unsealed"));
+        }
+        Ok(inner
+            .file
+            .as_ref()
+            .map(|seal| {
+                seal.bootstrap
+                    .iter()
+                    .map(|(name, sealed)| (name.clone(), sealed.generation))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     /// The data key of `SecretValue` rows, made and kept in `seal.json` on first use.
     ///
     /// # Errors

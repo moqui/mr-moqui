@@ -645,6 +645,30 @@ fn a_script_reads_no_secret_property() -> Result<(), Error> {
     Ok(())
 }
 
+/// S4: a name the seal's store keeps (a SecretValue an operator put) is a secret to `System.getProperty`, even when a
+/// process property of that name is set.
+#[test]
+fn a_script_gets_nothing_for_a_name_the_secret_store_keeps() -> Result<(), Error> {
+    use crate::seal::{file, secrets, Keeper, Mode, SealConf};
+    clear_context_stack();
+    let dir = std::env::temp_dir().join(format!("moqui-script-secret-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let keeper = Keeper::open(&file::path_in(&dir), SealConf::with_purpose("dev"))?;
+    keeper.start(Mode::Unattended)?;
+    secrets::write_to(
+        &keeper,
+        Some(&crate::testing::open()),
+        "script-relay-token",
+        "relay-token-value",
+    )?;
+    moqui_lib::env::set_property("script-relay-token", "relay-token-value");
+    let seen = eval_value("String(System.getProperty('script-relay-token') === null)");
+    moqui_lib::env::clear_property("script-relay-token");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(moqui_lib::object::to_plain_string(&seen?), "true");
+    Ok(())
+}
+
 /// `ResourceReference` is a global of a whole runtime on each engine, as the tools shim makes it on QuickJS's main
 /// context: its one static, `isTextFilename`, by the file name's content type, and the global read-only.
 #[test]

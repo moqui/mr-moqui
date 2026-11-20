@@ -121,6 +121,44 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
             println!("Export the recovery bundle again: moqui operator export-seal <file>");
             Ok(())
         }
+        ["secret", "put", name, options @ ..] => {
+            let value = match options {
+                ["--file", path] => Zeroizing::new(
+                    std::fs::read_to_string(path)
+                        .map_err(|err| Error::new(format!("could not read {path}")).with_source(err))?,
+                ),
+                [] => secret_value()?,
+                _ => return Err(crate::usage::command_usage("operator")),
+            };
+            let request = json!({"command": "secret-put", "name": name, "value": value.as_str()});
+            let answer = call(&socket, request)?;
+            println!(
+                "Kept the secret {} (its value is never shown).",
+                answer["name"].as_str().unwrap_or(name)
+            );
+            Ok(())
+        }
+        ["secret", "list"] => {
+            let answer = call(&socket, json!({"command": "secret-list"}))?;
+            for listed in answer["secrets"].as_array().into_iter().flatten() {
+                println!(
+                    "{}  {}  generation {}",
+                    listed["name"].as_str().unwrap_or_default(),
+                    listed["kind"].as_str().unwrap_or_default(),
+                    listed["generation"]
+                );
+            }
+            Ok(())
+        }
+        ["secret", "rm", name] => {
+            let answer = call(&socket, json!({"command": "secret-rm", "name": name}))?;
+            if answer["removed"] == Value::Bool(true) {
+                println!("Removed the secret {name}.");
+            } else {
+                println!("There is no secret {name}.");
+            }
+            Ok(())
+        }
         ["export-seal", path] => {
             let answer = call(&socket, json!({"command": "export-seal"}))?;
             write_private(Path::new(path), answer["bundle"].as_str().unwrap_or_default())?;
@@ -375,6 +413,21 @@ fn read_secret(prompt: &str) -> Result<Zeroizing<String>, Error> {
         return Err(Error::new("nothing was entered"));
     }
     Ok(trimmed)
+}
+
+/// A secret's value: one line from the terminal with its echo off, else all of standard input (a PEM key piped in).
+fn secret_value() -> Result<Zeroizing<String>, Error> {
+    let stdin = std::io::stdin();
+    if rustix::termios::isatty(&stdin) {
+        return read_secret("Value: ");
+    }
+    let mut text = Zeroizing::new(String::new());
+    std::io::Read::read_to_string(&mut stdin.lock(), &mut text)
+        .map_err(|err| Error::new("could not read the value").with_source(err))?;
+    if text.trim().is_empty() {
+        return Err(Error::new("nothing was entered"));
+    }
+    Ok(text)
 }
 
 fn print_shares(answer: &Value) {

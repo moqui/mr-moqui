@@ -233,6 +233,16 @@ fn the_certificate_is_written_where_the_listener_reads_it() {
     assert_eq!(served.pair, "www.example.com");
     assert!(served.problem.is_none(), "{:?}", served.problem);
     assert!(served.cert.ends_with("www.example.com/fullchain.pem"));
+    // S4: the key is served from memory, and no file of the directory holds it
+    assert!(!dir.join("www.example.com/privkey.pem").exists());
+    for entry in std::fs::read_dir(dir.join("www.example.com")).unwrap().flatten() {
+        let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        assert!(
+            !text.contains("PRIVATE KEY"),
+            "{} holds the key",
+            entry.path().display()
+        );
+    }
     // written again unchanged: nothing to do
     store::write_files(&dir, "www.example.com", &chain, &key_pem).unwrap();
 

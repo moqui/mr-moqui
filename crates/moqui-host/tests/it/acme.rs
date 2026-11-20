@@ -498,9 +498,11 @@ fn an_order_gets_a_certificate_the_listener_serves_and_the_job_renews_it() {
         status == "AcmeIssued"
     });
     let dir = gate.runtime.join("cert").join(HOST);
-    for file in ["fullchain.pem", "privkey.pem", ".moqui-acme"] {
+    for file in ["fullchain.pem", ".moqui-acme"] {
         assert!(dir.join(file).is_file(), "{file}");
     }
+    // S4: the key is served from its encrypted row, never written to the directory
+    assert!(!dir.join("privkey.pem").exists());
     // the listener serves it once it reads the directory again
     wait_until(Duration::from_secs(8), "the listener serves the certificate", || {
         served(&rt, https, HOST, b"http/1.1").is_ok_and(|leaf| leaf.windows(HOST.len()).any(|w| w == HOST.as_bytes()))

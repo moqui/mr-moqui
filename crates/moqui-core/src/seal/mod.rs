@@ -47,6 +47,7 @@ pub mod file;
 pub mod methods;
 mod recovery;
 pub mod rotate;
+pub mod secrets;
 
 pub use file::SealFile;
 pub use methods::{Method, MethodKind};
@@ -398,6 +399,8 @@ pub struct Keeper {
     base_delay: Mutex<Duration>,
     watchers: Mutex<Vec<(u64, SealCallback)>>,
     next_watch: AtomicU64,
+    /// The SecretValue rows opened so far (S4, [`secrets`]), dropped at `seal`.
+    secret_values: Mutex<secrets::Cache>,
 }
 
 #[derive(Default)]
@@ -580,6 +583,7 @@ impl Keeper {
             base_delay: Mutex::new(Duration::from_secs(1)),
             watchers: Mutex::new(Vec::new()),
             next_watch: AtomicU64::new(1),
+            secret_values: Mutex::default(),
         };
         drop(keeper.inner());
         Ok(keeper)
@@ -678,6 +682,13 @@ impl Keeper {
     #[must_use]
     pub fn is_unsealed(&self) -> bool {
         self.unsealed.load(Ordering::SeqCst)
+    }
+
+    /// Whether this boot holds a root key in memory only, with no seal to keep anything under it (an unattended boot
+    /// of a production instance before `moqui operator init`).
+    #[must_use]
+    pub fn is_ephemeral(&self) -> bool {
+        read(&self.snapshot).0.ephemeral
     }
 
     /// The seal file as this keeper has it, if any.
@@ -1172,6 +1183,7 @@ impl Keeper {
             inner.entering = None;
             inner.operator_sealed = true;
             inner.ephemeral = false;
+            lock(&self.secret_values).clear();
             if inner.held_shares.take().is_some() {
                 tracing::error!(
                     "Sealed with the recovery shares of this server's first start still unread: they are dropped with \

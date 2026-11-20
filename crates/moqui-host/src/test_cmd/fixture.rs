@@ -488,10 +488,11 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
     };
     let factory = ExecutionContextFactory::boot_with_options(runtime, framework, options)
         .map_err(|err| Error::new(err.to_string()))?;
-    let conf = crate::db::entity_db::transactional_conf(&factory)?;
+    let mut conf = crate::db::entity_db::transactional_conf(&factory)?;
     let pool = conf.pool.clone();
     let cluster = runtime.join("db/embedded");
     std::fs::create_dir_all(&cluster).map_err(io("could not create the cluster directory"))?;
+    crate::db::entity_db::embedded_password(&factory, &mut conf, &cluster)?;
     let install = crate::db::embedded::shared_install_dir(runtime, &cluster);
     let connections = pool.max + crate::db::entity_facade::embedded_group_pool_max(&factory);
     let db = crate::db::entity_db::open(conf, &cluster, &install, connections)?;

@@ -377,9 +377,9 @@ fn tls_pair(runtime_dir: &Path, name: Option<&str>) -> Option<(Vec<u8>, Vec<u8>)
     let dir = runtime_dir.join("cert");
     let names = name.into_iter().map(str::to_string).chain(["default".to_string()]);
     for name in names {
-        if let Some((cert, key)) = crate::tls::find_files(&dir, &name) {
-            if let (Ok(cert), Ok(key)) = (std::fs::read(&cert), std::fs::read(&key)) {
-                return Some((cert, key));
+        if let Some((cert, key)) = crate::tls::find_pair(&dir, &name) {
+            if let (Ok(cert), Ok(key)) = (std::fs::read(&cert), key.read()) {
+                return Some((cert, key.to_vec()));
             }
         }
     }
