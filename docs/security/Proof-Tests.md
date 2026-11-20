@@ -186,7 +186,7 @@ Three `SecurityScreens` assertions are tighter than the Python ones they port. A
 
 - `--serve` does not prove the tarpit. `SecurityTarpit` skips while the status is not 429, which is correct for the load-test conf and is a failed proof on the production conf.
 - `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp-list/webapp[webroot]@status-ips` is rejected.
-- The HMAC replay cache is local unless a distributed cache is configured. A second server does not see the first server's replay.
+- The HMAC replay keys are rows of `moqui.security.SignatureReplay`, which every server of a cluster sees; the proof runs one server, so it does not show a replay refused on a second one (`replay_store_tests` `a_replay_key_is_taken_once_across_members` does).
 - With `search-facade@backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
 - The `/resources` feature posts `cmd=put` at the volume root `v0_cm9vdA` and expects JSON containing `write not allowed` or `error`, and not `changed`. That is the root-refusal on every conf. It does not prove a production-only block of writes under `component://`.
 - The menu feature passes when the body is not the Tools menu, including when the status is 500. An anonymous `GET /menuData/apps/tools` logged `cannot read property 'extraPathNameList' of undefined` (`screen_host.rs`). The in-process menu test expects 401 once `getMenuData` runs. The HTTP proof does not require that status.
