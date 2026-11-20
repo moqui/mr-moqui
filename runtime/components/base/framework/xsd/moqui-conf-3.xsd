@@ -2646,10 +2646,15 @@ along with this software (see the LICENSE.md file). If not, see
                     first three of a window a refusal is logged at debug.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="content-calls" type="non-neg-int-expandable" default="4">
-                <xs:annotation><xs:documentation>The content sends (PutContent) of one pairing open at once at most, at
-                    least 1: each holds up to an item's content (64 MiB) in memory, so past them a send is refused for
-                    now and tried again. A send is asked of the pairing's caps before it is read, and ends when its
-                    next part does not come within forward-idle-seconds.</xs:documentation></xs:annotation>
+                <xs:annotation><xs:documentation>The content sends (PutContent) of one pairing open at once at most (0
+                    is taken as 1, the least): each holds up to an item's content (64 MiB) in memory, so past them a
+                    send is refused for now and tried again, not counted against its item. A send is asked of the
+                    pairing's caps before it is read, and ends when its next part does not come within
+                    forward-idle-seconds or it takes over content-call-seconds in all.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="content-call-seconds" type="non-neg-int-expandable" default="900">
+                <xs:annotation><xs:documentation>The longest one content send (PutContent) may take in all, at least 1
+                    (0 is taken as 1); one past it ends and is tried again.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-mail-percent" type="non-neg-int-expandable" default="90">
                 <xs:annotation><xs:documentation>The share of a paired node's queue-max-megabytes, in percent (at most

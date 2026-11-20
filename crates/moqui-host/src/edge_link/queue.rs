@@ -188,23 +188,98 @@ pub(super) fn content_permit(node: &str, calls: usize) -> Result<tokio::sync::Ow
                 .or_insert_with(|| Arc::new(tokio::sync::Semaphore::new(calls.max(1)))),
         )
     };
+    // unavailable, not exhausted: the sender's item waits uncounted ([`delivery_error`]), so a cluster of more members
+    // than calls never fails an item for it
     semaphore.try_acquire_owned().map_err(|_| {
-        tonic::Status::resource_exhausted(format!(
+        tonic::Status::unavailable(format!(
             "this pairing has {} content calls open already (edge@content-calls); try again",
             calls.max(1)
         ))
     })
 }
 
+/// What bounds one content call: the pairing's calls at once, the longest gap between its chunks and the longest the
+/// whole call may take.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ContentLimits {
+    pub(super) calls: usize,
+    pub(super) idle: Duration,
+    pub(super) whole: Duration,
+}
+
+/// The most memory a call reserves before its chunks come; past it the content grows as it is sent.
+const FIRST_RESERVE: usize = 1024 * 1024;
+
 /// The next chunk of a content call, none at its end; a call whose next chunk does not come within `idle` ends.
-async fn next_chunk(
-    stream: &mut tonic::Streaming<proto::ContentChunk>,
-    idle: Duration,
-) -> Result<Option<proto::ContentChunk>, tonic::Status> {
-    tokio::time::timeout(idle, stream.message()).await.map_err(|_| {
-        tonic::Status::deadline_exceeded(format!(
+async fn next_chunk<S>(stream: &mut S, idle: Duration) -> Result<Option<proto::ContentChunk>, tonic::Status>
+where
+    S: futures_util::Stream<Item = Result<proto::ContentChunk, tonic::Status>> + Unpin,
+{
+    use futures_util::StreamExt as _;
+    match tokio::time::timeout(idle, stream.next()).await {
+        Ok(next) => next.transpose(),
+        Err(_) => Err(tonic::Status::deadline_exceeded(format!(
             "no content came for {} seconds (edge@forward-idle-seconds)",
             idle.as_secs()
+        ))),
+    }
+}
+
+/// Read one content call of pairing `node` from `stream`, in this order: a permit of the pairing's
+/// ([`content_permit`]), the first chunk and its item id, `admit` asked of the size it names, then the chunks, none of
+/// another item, none past that size, each within `limits.idle` of the last and all within `limits.whole`. The item id
+/// and the content.
+pub(super) async fn read_content<S>(
+    node: &str,
+    stream: &mut S,
+    limits: ContentLimits,
+    generation: impl Fn(u64) -> Result<(), tonic::Status>,
+    admit: impl AsyncFnOnce(u64) -> Result<(), tonic::Status>,
+) -> Result<(String, Vec<u8>), tonic::Status>
+where
+    S: futures_util::Stream<Item = Result<proto::ContentChunk, tonic::Status>> + Unpin,
+{
+    let _permit = content_permit(node, limits.calls)?;
+    let read = async {
+        let Some(first) = next_chunk(stream, limits.idle).await? else {
+            return Err(tonic::Status::invalid_argument("no content was sent"));
+        };
+        generation(first.generation)?;
+        queue::received_location(node, &first.queue_item_id)
+            .map_err(|err| tonic::Status::invalid_argument(err.message().to_string()))?;
+        let total = usize::try_from(first.total_size).unwrap_or(usize::MAX);
+        if total > queue::MAX_CONTENT_BYTES {
+            return Err(tonic::Status::resource_exhausted(format!(
+                "an item's content is at most {} bytes, and this one is {total}",
+                queue::MAX_CONTENT_BYTES
+            )));
+        }
+        // a paused pairing's content is not read at all, nor content that would pass its cap
+        admit(u64::try_from(total).unwrap_or(u64::MAX)).await?;
+        let id = first.queue_item_id.clone();
+        let mut content = Vec::with_capacity(total.min(FIRST_RESERVE));
+        let mut chunk = Some(first);
+        while let Some(part) = chunk {
+            if part.queue_item_id != id {
+                return Err(tonic::Status::invalid_argument(
+                    "the chunks of one call are of one item",
+                ));
+            }
+            generation(part.generation)?;
+            if content.len() + part.data.len() > total {
+                return Err(tonic::Status::invalid_argument(format!(
+                    "an item's content is the {total} bytes its first chunk named, not more"
+                )));
+            }
+            content.extend_from_slice(&part.data);
+            chunk = next_chunk(stream, limits.idle).await?;
+        }
+        Ok((id, content))
+    };
+    tokio::time::timeout(limits.whole, read).await.map_err(|_| {
+        tonic::Status::deadline_exceeded(format!(
+            "the content took over {} seconds (edge@content-call-seconds)",
+            limits.whole.as_secs()
         ))
     })?
 }
@@ -251,41 +326,15 @@ pub(crate) async fn receive_content(
         .upgrade()
         .map(|factory| moqui_core::edge::settings(&factory))
         .ok_or_else(|| tonic::Status::unavailable("the server is stopping"))?;
-    let _permit = content_permit(node, settings.content_calls)?;
-    let idle = settings.forward_idle;
-    let Some(first) = next_chunk(&mut stream, idle).await? else {
-        return Err(tonic::Status::invalid_argument("no content was sent"));
+    let limits = ContentLimits {
+        calls: settings.content_calls,
+        idle: settings.forward_idle,
+        whole: settings.content_call_time,
     };
-    generation(first.generation)?;
-    queue::received_location(node, &first.queue_item_id)
-        .map_err(|err| tonic::Status::invalid_argument(err.message().to_string()))?;
-    let total = usize::try_from(first.total_size).unwrap_or(usize::MAX);
-    if total > queue::MAX_CONTENT_BYTES {
-        return Err(tonic::Status::resource_exhausted(format!(
-            "an item's content is at most {} bytes, and this one is {total}",
-            queue::MAX_CONTENT_BYTES
-        )));
-    }
-    // a paused pairing's content is not read at all, nor content that would pass its cap
-    admit(factory, node, u64::try_from(total).unwrap_or(u64::MAX)).await?;
-    let id = first.queue_item_id.clone();
-    let mut content = Vec::with_capacity(total);
-    let mut chunk = Some(first);
-    while let Some(part) = chunk {
-        if part.queue_item_id != id {
-            return Err(tonic::Status::invalid_argument(
-                "the chunks of one call are of one item",
-            ));
-        }
-        generation(part.generation)?;
-        if content.len() + part.data.len() > total {
-            return Err(tonic::Status::invalid_argument(format!(
-                "an item's content is the {total} bytes its first chunk named, not more"
-            )));
-        }
-        content.extend_from_slice(&part.data);
-        chunk = next_chunk(&mut stream, idle).await?;
-    }
+    let (id, content) = read_content(node, &mut stream, limits, generation, async |size| {
+        admit(factory, node, size).await
+    })
+    .await?;
     let keeping = node.to_string();
     let item = id.clone();
     let kept = on_pool(factory, move |factory| {

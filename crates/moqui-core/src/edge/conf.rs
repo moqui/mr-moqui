@@ -75,6 +75,9 @@ pub struct EdgeSettings {
     /// A pairing's content calls (`PutContent`) open at once at most (`content-calls`, at least 1), each holding up to
     /// an item's content in memory; past them a call is refused for now (SEC-CLU-83).
     pub content_calls: usize,
+    /// The longest one content call may take, all of it (`content-call-seconds`, at least 1): a call that sends slowly
+    /// but never stops ends too (SEC-CLU-83).
+    pub content_call_time: Duration,
     /// The content files kept for one pairing's deliveries at most, whatever their size (`queue-max-content-files`);
     /// 0 for no cap. At it, as at `max_bytes`, an edge node pauses the pairing (SEC-CLU-02, [`super::caps`]).
     pub max_content_files: u64,
@@ -121,6 +124,8 @@ pub const MAX_WAIT: Duration = Duration::from_secs(86_400);
 
 /// The default of `content-calls`.
 pub const DEFAULT_CONTENT_CALLS: usize = 4;
+/// The default of `content-call-seconds`: 64 MiB at about 1 Mbit/s.
+pub const DEFAULT_CONTENT_CALL_TIME: Duration = Duration::from_secs(900);
 /// The most `content-calls`.
 pub const MAX_CONTENT_CALLS: usize = 1024;
 
@@ -148,6 +153,7 @@ impl Default for EdgeSettings {
             max_bytes: 1024 * 1024 * 1024,
             mail_percent: DEFAULT_MAIL_PERCENT,
             content_calls: DEFAULT_CONTENT_CALLS,
+            content_call_time: DEFAULT_CONTENT_CALL_TIME,
             max_content_files: DEFAULT_MAX_CONTENT_FILES,
             replica_max_rows: DEFAULT_REPLICA_MAX_ROWS,
             max_attempts: 10,
@@ -236,6 +242,7 @@ impl EdgeSettings {
         let at_least_one =
             |name: &str, default: Duration| Duration::from_secs(number(name, default.as_secs()).max(1)).min(MAX_WAIT);
         settings.forward_idle = at_least_one("forward-idle-seconds", DEFAULT_FORWARD_IDLE);
+        settings.content_call_time = at_least_one("content-call-seconds", DEFAULT_CONTENT_CALL_TIME);
         settings.forward_head = at_least_one("forward-head-seconds", DEFAULT_FORWARD_HEAD);
         settings.forward_first_byte =
             at_least_one("forward-first-byte-seconds", DEFAULT_FORWARD_FIRST_BYTE).min(settings.forward_head);

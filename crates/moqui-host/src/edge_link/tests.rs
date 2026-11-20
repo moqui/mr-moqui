@@ -445,8 +445,107 @@ fn a_pairings_content_calls_at_once_are_capped() {
     let first = super::queue::content_permit("cap-node-a", 2).unwrap();
     let _second = super::queue::content_permit("cap-node-a", 2).unwrap();
     let refused = super::queue::content_permit("cap-node-a", 2).unwrap_err();
-    assert_eq!(refused.code(), tonic::Code::ResourceExhausted, "{refused:?}");
+    assert_eq!(refused.code(), tonic::Code::Unavailable, "{refused:?}");
+    assert!(
+        super::queue::delivery_error(&refused).is_err(),
+        "no answer: the item waits uncounted"
+    );
     let _other = super::queue::content_permit("cap-node-b", 2).expect("another pairing's calls are its own");
     drop(first);
     let _third = super::queue::content_permit("cap-node-a", 2).expect("room again");
+}
+
+fn chunk(item: &str, data: &[u8], total: u64) -> super::proto::ContentChunk {
+    super::proto::ContentChunk {
+        generation: 1,
+        queue_item_id: item.to_string(),
+        data: data.to_vec(),
+        total_size: total,
+    }
+}
+
+/// SEC-CLU-83, through `read_content`: the permit is taken before the stream is read (a call past them reads nothing,
+/// uncounted), the named size is asked of the cap before the chunks are read, a call that sends more than it named is
+/// refused (counted), and one whose next chunk does not come, or that takes too long in all, ends (uncounted).
+#[tokio::test]
+async fn a_content_call_is_bounded_in_its_order() {
+    use super::queue::{read_content, ContentLimits};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    let limits = ContentLimits {
+        calls: 1,
+        idle: Duration::from_millis(200),
+        whole: Duration::from_secs(5),
+    };
+    let ok = |_| Ok(());
+    // the permit first: no chunk is read while the pairing's calls are taken
+    let held = super::queue::content_permit("read-node-a", 1).unwrap();
+    let polled = AtomicBool::new(false);
+    let mut watched = futures_util::stream::poll_fn(|_| {
+        polled.store(true, Ordering::SeqCst);
+        std::task::Poll::Ready(None)
+    });
+    let refused = read_content("read-node-a", &mut watched, limits, ok, async |_| Ok(()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::Unavailable);
+    assert!(!polled.load(Ordering::SeqCst), "nothing read past the permits");
+    drop(held);
+    // the named size is asked before the chunks; then one past it is refused
+    let asked = AtomicU64::new(0);
+    let mut over = futures_util::stream::iter(vec![Ok(chunk("item-1", b"abc", 4)), Ok(chunk("item-1", b"def", 0))]);
+    let refused = read_content("read-node-a", &mut over, limits, ok, async |size| {
+        asked.store(size, Ordering::SeqCst);
+        Ok(())
+    })
+    .await
+    .unwrap_err();
+    assert_eq!(asked.load(Ordering::SeqCst), 4);
+    assert_eq!(refused.code(), tonic::Code::InvalidArgument, "{refused:?}");
+    assert!(matches!(
+        super::queue::delivery_error(&refused),
+        Ok(moqui_core::edge::queue::Applied::Failed(_))
+    ));
+    // a cap that refuses: nothing past the first chunk is read
+    let mut paused = futures_util::stream::iter(vec![Ok(chunk("item-1", b"ab", 2))]);
+    let refused = read_content("read-node-a", &mut paused, limits, ok, async |_| {
+        Err(super::queue::paused_status("over its cap"))
+    })
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        super::queue::delivery_error(&refused),
+        Ok(moqui_core::edge::queue::Applied::Paused)
+    ));
+    // a call whose next chunk does not come ends after the idle wait, uncounted
+    use futures_util::StreamExt as _;
+    let mut stalled =
+        futures_util::stream::iter(vec![Ok(chunk("item-1", b"ab", 4))]).chain(futures_util::stream::pending());
+    let started = std::time::Instant::now();
+    let refused = read_content("read-node-a", &mut stalled, limits, ok, async |_| Ok(()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::DeadlineExceeded);
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(super::queue::delivery_error(&refused).is_err());
+    // one that sends a byte now and then, each within the idle wait, ends at the whole call's limit
+    let slow_limits = ContentLimits {
+        whole: Duration::from_millis(400),
+        ..limits
+    };
+    let mut trickle = futures_util::stream::unfold(0_u64, |sent| async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        Some((Ok(chunk("item-1", b"x", if sent == 0 { 1000 } else { 0 })), sent + 1))
+    })
+    .boxed();
+    let refused = read_content("read-node-a", &mut trickle, slow_limits, ok, async |_| Ok(()))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), tonic::Code::DeadlineExceeded, "{refused:?}");
+    assert!(refused.message().contains("content-call-seconds"), "{refused:?}");
+    // and a whole call, within its size, is read
+    let mut whole = futures_util::stream::iter(vec![Ok(chunk("item-1", b"ab", 4)), Ok(chunk("item-1", b"cd", 0))]);
+    let (id, content) = read_content("read-node-a", &mut whole, limits, ok, async |_| Ok(()))
+        .await
+        .unwrap();
+    assert_eq!((id.as_str(), content.as_slice()), ("item-1", b"abcd".as_slice()));
 }
