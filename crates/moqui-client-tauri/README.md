@@ -12,6 +12,8 @@ as the apps are, so Tauri stays out of the server builds.
 - `scheme`: the app schemes' answer (the shell's files, the rest forwarded with the key, kept and answered offline), the
   worker threads, and `SchemeHooks` for what an app does with an answer (the desktop saves downloads, Android takes no
   redirect status).
+- `vault`: the page's `moquiDesktop.vault` (`vault_call`, `vault_memory`), the vault module run natively for the calling
+  page's account; the schemes refuse the server's copy of the module.
 - `commands` (the shell's: accounts, sign-in and SSO, sign-out), `outbox` (the outbox and drafts), `sockets` (a page's
   server sockets, the mobile app's; the desktop has its own with the node's in process). The commands are `pub` at the
   crate root, where `generate_handler!` finds them: `moqui_client_tauri::client_state`.

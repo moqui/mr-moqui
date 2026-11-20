@@ -25,6 +25,7 @@
 //! - [`commands`]: the shell's commands (the accounts, sign-in and SSO, sign-out), [`outbox`]: the outbox and drafts,
 //!   [`sockets`]: the sockets of a page whose sockets are all the server's (the mobile app; the desktop app has its
 //!   own, with the node's in process).
+//! - [`vault`]: the page's vault, the module run natively for it (`moquiDesktop.vault`, plans/Vault-Instances.md V5).
 //!
 //! The commands are `pub` at the crate root, where `tauri::command` puts the macros `generate_handler!` looks for, so an
 //! app lists them as `moqui_client_tauri::client_state`.
@@ -34,6 +35,7 @@ pub mod outbox;
 pub mod scheme;
 pub mod shell_load;
 pub mod sockets;
+pub mod vault;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -54,6 +56,7 @@ pub use outbox::{
     outbox_retry, outbox_unsent,
 };
 pub use sockets::{socket_close, socket_open, socket_send};
+pub use vault::{vault_call, vault_memory};
 
 /// The scheme of the shell, and its origin (`http://<scheme>.localhost` on CEF and on Android's WebView).
 pub const SHELL_SCHEME: &str = "moqui-shell";
@@ -136,6 +139,13 @@ pub trait ShellHost: Send + Sync {
     /// clears that origin's storage, so one account's pages leave nothing for another's (plans/Security-Review-Medium.md
     /// SEC-CLI-81). The desktop gives each account's app windows a browser profile of their own, and does nothing here.
     fn clear_page_storage(&self) {}
+
+    /// Ask the user to confirm with the device's lock screen or biometrics, on a thread that may block, for a vault memory
+    /// key that opens only after it (the phone's Keystore, `moqui_client::vault::memory::KIND_DEVICE_LOCK`); whether
+    /// they did. False where there is no such key (the desktop, whose key store opens with the computer's sign-in).
+    fn confirm_device_user(&self) -> bool {
+        false
+    }
 }
 
 /// The shell's own files, as the scheme serves them: from disk ([`Assets`], the desktop) or from the app's embedded

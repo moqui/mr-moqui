@@ -1117,6 +1117,67 @@ impl Session {
     }
 }
 
+/// The open personal key as a desktop or mobile app's device memory keeps it (§3.5, V5): its private halves wrapped by a
+/// device memory key ([`personal::wrap_with_device_key`]), with who it is. `Debug` shows no bytes.
+#[derive(Clone, PartialEq, Eq)]
+pub struct DeviceSealed {
+    pub personal_key_id: String,
+    pub user_id: String,
+    /// Both public halves, encrypt then verify (64 bytes).
+    pub public: Vec<u8>,
+    pub sealed: Vec<u8>,
+}
+
+impl std::fmt::Debug for DeviceSealed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSealed")
+            .field("personal_key_id", &self.personal_key_id)
+            .field("user_id", &self.user_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Device memory (§3.5, V5). These are not calls of [`Session::call`]: no page can ask the module for its personal key
+/// in any form. A shell calls them natively, and keeps the device memory key in the OS key store.
+impl Session {
+    /// The open personal key wrapped by `device_key` for the memory `memory_id`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Refused`] when the personal key is locked.
+    pub fn device_seal(&self, memory_id: &str, device_key: &Key32, rng: &mut dyn Rng) -> Result<DeviceSealed, Error> {
+        let me = self.me()?;
+        Ok(DeviceSealed {
+            personal_key_id: me.key_id.clone(),
+            user_id: me.user_id.clone(),
+            public: me.key.public().to_bytes().to_vec(),
+            sealed: personal::wrap_with_device_key(&me.key, &me.key_id, memory_id, device_key, rng),
+        })
+    }
+
+    /// Opens the personal key from device memory, as `personal_open` does with the passphrase; answers as it does.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Open`] for another key or memory, or a changed wrap.
+    pub fn device_open(&mut self, kept: &DeviceSealed, memory_id: &str, device_key: &Key32) -> Result<Value, Error> {
+        let public = PersonalPublic::from_bytes(&kept.public)?;
+        let key = personal::open_with_device_key(&kept.sealed, &kept.personal_key_id, memory_id, &public, device_key)?;
+        let answer = opened_json(&kept.personal_key_id, &key);
+        self.me = Some(Me {
+            key_id: kept.personal_key_id.clone(),
+            user_id: kept.user_id.clone(),
+            key,
+        });
+        Ok(answer)
+    }
+
+    /// Which personal key is open, if one is.
+    pub fn personal_key_id(&self) -> Option<&str> {
+        self.me.as_ref().map(|me| me.key_id.as_str())
+    }
+}
+
 /// Whether a field's name says it holds a secret, whatever its type registers: a password, passphrase, secret, key,
 /// token, PIN, one-time code seed, card number or security code.
 fn secret_name(name: &str) -> bool {

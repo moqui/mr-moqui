@@ -294,6 +294,11 @@ pub fn answer(
     if worker_request(request.headers()) {
         return plain(StatusCode::FORBIDDEN, "A server's worker does not run in the app");
     }
+    // The app runs its own vault module (`moqui_client::vault`, `moquiDesktop.vault`): the server's copy of it is never
+    // loaded in the app, on any origin (plans/Vault-Instances.md §3.6, V5).
+    if vault_module_path(&bare) {
+        return plain(StatusCode::FORBIDDEN, "The app runs its own vault module");
+    }
     let Some((account, key)) = state.account_of(label) else {
         return plain(StatusCode::UNAUTHORIZED, "No account is signed in");
     };
@@ -530,6 +535,34 @@ pub fn worker_request(headers: &HeaderMap) -> bool {
         .trim()
         .to_ascii_lowercase();
     matches!(dest.as_str(), "worker" | "sharedworker" | "serviceworker") || headers.contains_key("service-worker")
+}
+
+/// Whether `path` (no query) is a file of the server's vault module, its worker's script or its wasm
+/// (`webroot/js/vault/VaultWorker.js`, `moqui_vault.wasm`), however it is cased or percent-encoded.
+pub fn vault_module_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let hex = |byte: u8| char::from(byte).to_digit(16);
+        match (
+            bytes[at],
+            bytes.get(at + 1).copied().and_then(hex),
+            bytes.get(at + 2).copied().and_then(hex),
+        ) {
+            (b'%', Some(high), Some(low)) => {
+                decoded.push(u8::try_from(high * 16 + low).unwrap_or(b'%'));
+                at += 3;
+            }
+            (byte, _, _) => {
+                decoded.push(byte);
+                at += 1;
+            }
+        }
+    }
+    let lower = String::from_utf8_lossy(&decoded).to_ascii_lowercase();
+    let name = lower.rsplit('/').next().unwrap_or("");
+    name == "vaultworker.js" || (name.starts_with("moqui_vault") && name.ends_with(".wasm"))
 }
 
 #[cfg(test)]

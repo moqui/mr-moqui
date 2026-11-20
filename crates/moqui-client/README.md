@@ -68,6 +68,10 @@ The client's core, what the desktop app's client mode and the mobile app run
   conflicts and chunked uploads), `mirror` (the current account's chat and mail read ahead) and `feeds` (the server's
   chat and mail changes feeds folded into the store, with a server at `clientApi` 4). Disappearing messages go by the
   `expired` push, the room feed's expiry marker and a sweep of what is due at each push, feed run and offline answer.
+- `vault`: the vault crate's `ops::Session` run natively for the pages, one per account (plans/Vault-Instances.md V5):
+  idle and host locking, the app's rollback memory of each vault (`vault/<account>.seen.json`), and device memory, the
+  open personal key wrapped by a memory key in the host's key store (`vault::memory::MemoryKeys`) for a time, checked
+  with the server before it opens ([Vaults](../../docs/security/Vaults.md#the-desktop-and-mobile-apps)).
 - `modes` (what each device mode keeps), `renewal` (each key renewed on a thread before it runs out) and `assets` (the
   shell's own files and their CSP: on disk for the desktop, or embedded in the mobile app, `Assets::embedded`).
 

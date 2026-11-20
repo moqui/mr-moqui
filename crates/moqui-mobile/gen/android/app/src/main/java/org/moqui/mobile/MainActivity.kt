@@ -201,6 +201,8 @@ class MainActivity : TauriActivity() {
 
   override fun onStop() {
     super.onStop()
+    // the vault locks with the app's screen; a key the phone remembers opens again with the lock or biometrics
+    Native.lockVault()
     // the outbox sent in the background (WorkManager)
     FlushWorker.background(this)
   }

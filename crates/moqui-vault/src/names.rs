@@ -39,6 +39,8 @@ pub enum Purpose {
     PersonalPassphrase,
     /// A personal key's private halves wrapped by the recovery code.
     PersonalRecoveryCode,
+    /// A personal key's private halves wrapped by a desktop or mobile app's device memory key (§3.5, V5).
+    PersonalDevice,
     /// A recovery-key share wrapped to a holder's personal key.
     RecoveryShare,
     /// A recovery-key share sealed to a recovery session's ephemeral key.
@@ -62,6 +64,7 @@ impl Purpose {
             Purpose::DepositItemKey => "deposit-item-key",
             Purpose::PersonalPassphrase => "personal-passphrase",
             Purpose::PersonalRecoveryCode => "personal-recovery-code",
+            Purpose::PersonalDevice => "personal-device",
             Purpose::RecoveryShare => "recovery-share",
             Purpose::RecoverySessionShare => "recovery-session-share",
             Purpose::Delivery => "delivery",

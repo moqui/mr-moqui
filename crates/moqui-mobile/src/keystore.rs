@@ -33,6 +33,7 @@
 use std::path::{Path, PathBuf};
 
 use moqui_client::keys::KeyStore;
+use moqui_client::vault::memory::Key32;
 use moqui_lib::error::Error;
 
 /// Seals and opens a key's bytes.
@@ -227,6 +228,106 @@ impl<S: Sealer> SealedFileStore<S> {
         }
         moved
     }
+}
+
+/// Seals and opens with a Keystore key that opens only after the user confirmed with the device's lock screen or
+/// biometrics (`KeyVault.sealAuth`, `openAuth`): the vault's device memory keys (plans/Vault-Instances.md §3.5, V5).
+pub(crate) trait AuthSealer: Send + Sync {
+    /// `plain` sealed; refused on a phone with no secure lock screen.
+    fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String>;
+
+    /// `sealed` opened: none while the user has not confirmed (the page then asks for the lock or biometrics), and an
+    /// empty value for a key the Keystore no longer has (invalidated by a new biometric, the lock screen removed).
+    fn open(&self, sealed: &[u8]) -> Result<Option<Vec<u8>>, String>;
+}
+
+/// The vault's device memory keys on the phone: each sealed by the [`AuthSealer`] in `<dir>/<entry>.sealed`. A copy of
+/// the files opens nothing without the Keystore and the user's confirmation.
+pub(crate) struct DeviceLockKeys<S: AuthSealer> {
+    files: SealedFileStore<NoSealer>,
+    sealer: S,
+}
+
+/// The file side only: [`DeviceLockKeys`] seals itself, as its sealer answers differently.
+pub(crate) struct NoSealer;
+
+impl Sealer for NoSealer {
+    fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
+        Ok(plain.to_vec())
+    }
+
+    fn open(&self, sealed: &[u8]) -> Result<Vec<u8>, String> {
+        Ok(sealed.to_vec())
+    }
+}
+
+impl<S: AuthSealer> DeviceLockKeys<S> {
+    pub(crate) fn new(dir: &Path, sealer: S) -> Self {
+        Self {
+            files: SealedFileStore::new(dir, NoSealer),
+            sealer,
+        }
+    }
+}
+
+impl<S: AuthSealer> moqui_client::vault::memory::MemoryKeys for DeviceLockKeys<S> {
+    fn kind(&self) -> &'static str {
+        moqui_client::vault::memory::KIND_DEVICE_LOCK
+    }
+
+    fn put(&self, entry: &str, key: &Key32) -> Result<(), String> {
+        use base64::Engine as _;
+        let path = self.files.file(entry).ok_or_else(|| format!("not an entry: {entry}"))?;
+        let sealed = self.sealer.seal(key.as_bytes())?;
+        let text = base64::engine::general_purpose::STANDARD.encode(sealed);
+        self.files
+            .write_sealed(&self.files.sealer, &path, &text)
+            .map_err(|err| err.to_string())
+    }
+
+    fn take(&self, entry: &str) -> Result<Option<Key32>, moqui_client::vault::memory::KeyError> {
+        use base64::Engine as _;
+        use moqui_client::vault::memory::KeyError;
+        let Some(path) = self.files.file(entry) else {
+            return Ok(None);
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Ok(None);
+        };
+        let sealed = base64::engine::general_purpose::STANDARD
+            .decode(text.trim())
+            .map_err(|err| KeyError::Failed(err.to_string()))?;
+        match self.sealer.open(&sealed).map_err(KeyError::Failed)? {
+            None => Err(KeyError::NeedsUnlock),
+            Some(plain) if plain.is_empty() => Ok(None),
+            Some(mut plain) => {
+                let key = Key32::from_slice(&plain);
+                plain.iter_mut().for_each(|byte| *byte = 0);
+                key.map(Some).map_err(|err| KeyError::Failed(err.to_string()))
+            }
+        }
+    }
+
+    fn delete(&self, entry: &str) -> Result<(), String> {
+        self.files.delete(entry).map_err(|err| err.to_string())
+    }
+}
+
+/// The vault's device memory keys of `dir`'s client in the Keystore key that needs the device's lock, once per
+/// process; none where the Keystore cannot make it (no secure lock screen), and the vault offers no device memory.
+pub(crate) fn set_vault_memory_keys(core: &moqui_client::app::Client, dir: &Path) {
+    if core.vault().has_memory_keys() {
+        return;
+    }
+    #[cfg(target_os = "android")]
+    match crate::android::AuthVault::ready() {
+        Ok(vault) => core
+            .vault()
+            .set_memory_keys(Box::new(DeviceLockKeys::new(&dir.join("vault-keys"), vault))),
+        Err(err) => log::warn!("No Keystore key for the vault's device memory (a screen lock is needed): {err}"),
+    }
+    #[cfg(not(target_os = "android"))]
+    let _ = dir;
 }
 
 /// The app's keys: the Keystore's sealed files on Android when its key can be made (tried twice: a Keystore can be

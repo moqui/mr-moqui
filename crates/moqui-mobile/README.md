@@ -6,7 +6,8 @@ bundled shell opens with no network, each account's data is kept in a store for 
 sent when the server can be reached. How it works on Android is [docs/ui/Mobile-Client.md](../../docs/ui/Mobile-Client.md).
 
 - **Code:** `src/` is the phone's part: one webview (`host.rs`), the schemes on Android's WebView (`scheme.rs`), the
-  Keystore key store (`keystore.rs`, `android.rs` and `gen/android/.../KeyVault.kt`), its own commands
+  Keystore key store (`keystore.rs`, `android.rs` and `gen/android/.../KeyVault.kt`; the vault's device memory key is a
+  third Keystore key that opens only after the lock screen or a biometric), its own commands
   (`commands.rs`), the page bridge (`bridge.js`), the lifecycle (`lib.rs`), and the incoming call on a locked phone
   (`calls.rs`, `native.rs` and the Kotlin `CallManager`, `CallConnectionService`, `CallService`,
   `IncomingCallActivity`, `Native`, `Push`; [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)),

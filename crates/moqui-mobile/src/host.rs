@@ -697,6 +697,13 @@ impl ShellHost for MobileHost {
     }
 
     fn close_remotes(&self, account: Option<&str>) {
+        // the vault of the account whose pages go locks with them (V5)
+        if let Some(core) = self.core() {
+            match account {
+                Some(account) => core.vault().lock(account),
+                None => core.vault().lock_all(),
+            }
+        }
         // the server pages are the bound account's: they are no account's, and go, before the current account changes
         let theirs = self.page.unbind_app(account);
         if theirs {
@@ -753,6 +760,15 @@ impl ShellHost for MobileHost {
         crate::android::device_secure()
             .inspect_err(|err| log::warn!("Whether the phone has a screen lock was not read: {err}"))
             .ok()
+    }
+
+    /// The phone's lock screen or biometrics, for the vault's device memory key (`KeyVault.confirmUser`, V5); never off
+    /// Android.
+    #[cfg(target_os = "android")]
+    fn confirm_device_user(&self) -> bool {
+        crate::android::confirm_user()
+            .inspect_err(|err| log::warn!("The phone's lock was not asked for: {err}"))
+            .unwrap_or(false)
     }
 
     fn account_signed_in(&self, account: &str) {

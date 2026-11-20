@@ -66,6 +66,14 @@ along with this software (see the LICENSE.md file). If not, see
         <method type="post"><service name="org.moqui.security.VaultServices.ask#VaultMachineAccess"/></method>
         <resource name="revoke"><method type="post"><service name="org.moqui.security.VaultServices.revoke#VaultMachineAccess"/></method></resource>
     </resource>
+    <resource name="deviceMemories">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#VaultDeviceMemories"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.remember#VaultDeviceMemory"/></method>
+        <id name="deviceMemoryId">
+            <method type="get"><service name="org.moqui.security.VaultServices.check#VaultDeviceMemory"/></method>
+            <method type="delete"><service name="org.moqui.security.VaultServices.forget#VaultDeviceMemory"/></method>
+        </id>
+    </resource>
     <resource name="items">
         <id name="vaultItemId">
             <method type="put"><service name="org.moqui.security.VaultServices.update#VaultItem"/></method>

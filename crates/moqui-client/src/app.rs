@@ -40,6 +40,7 @@ use crate::stores::Stores;
 use crate::sync::feeds::Feeds;
 use crate::sync::flush::Flusher;
 use crate::sync::mirror::Mirror;
+use crate::vault::Vaults;
 use crate::{modes, offline};
 
 /// What the client asks of its host, whose pages (webviews, by label) these are.
@@ -80,6 +81,8 @@ pub struct Client {
     pub(crate) flusher: Flusher,
     pub(crate) proxy: Proxy,
     pub(crate) sockets: Sockets,
+    /// The accounts' vault sessions and what the app keeps of their vaults (`vault/`).
+    vault: Vaults,
     /// Set by [`Self::shutdown`], which the threads wait on.
     stopped: Mutex<bool>,
     stop: Condvar,
@@ -105,6 +108,7 @@ impl Client {
             flusher: Flusher::default(),
             proxy: Proxy::new().map_err(|err| err.to_string())?,
             sockets: Sockets::default(),
+            vault: Vaults::new(dir),
             stopped: Mutex::new(false),
             stop: Condvar::new(),
         })
@@ -138,6 +142,11 @@ impl Client {
     /// The pages' requests forwarded to the servers.
     pub fn proxy(&self) -> &Proxy {
         &self.proxy
+    }
+
+    /// The accounts' vault sessions, rollback memory and device memory.
+    pub fn vault(&self) -> &Vaults {
+        &self.vault
     }
 
     /// The pages' sockets.

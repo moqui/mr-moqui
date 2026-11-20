@@ -128,6 +128,9 @@ device key the host keeps. The full description is [docs/ui/Desktop-Client.md](.
   Calls/Call and Calls/Dialer), precompiled into `shell/js/bundled-screens.js` with the libraries of `libs.txt`; any
   other screen opens in an app window (`windows.rs`). After a change to one:
   `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
+- **Vault:** an app window's `moquiDesktop.vault`, the vault module run natively (`moqui_client::vault`, V5), with its
+  device memory keys in the OS key store (`keystore.rs`); it locks with the account's last app window and on sleep
+  ([Vaults](../../docs/security/Vaults.md#the-desktop-and-mobile-apps)).
 - **Crypto and calls:** the shell owns the account's chat crypto device and its calls; an app window makes no device
   (`elsewhere`) and opens encrypted rooms and calls in the shell (`open_in_shell`).
 

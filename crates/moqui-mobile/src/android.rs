@@ -610,6 +610,72 @@ impl Sealer for KeyVault {
     }
 }
 
+/// The Keystore key of the vault's device memory (`KeyVault.sealAuth`, `openAuth`; plans/Vault-Instances.md §3.5, V5):
+/// it opens only for a while after the user confirmed with the phone's lock screen or biometrics.
+pub(crate) struct AuthVault;
+
+impl AuthVault {
+    /// The key, once made or found; an error on a phone with no secure lock screen, which cannot have one.
+    pub(crate) fn ready() -> Result<Self, String> {
+        with_context(|env, app| {
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
+            env.call_static_method(&class, jni_str!("readyAuth"), jni_sig!("()V"), &[])?;
+            Ok(())
+        })?;
+        Ok(Self)
+    }
+}
+
+impl crate::keystore::AuthSealer for AuthVault {
+    fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String> {
+        with_context(|env, app| {
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
+            let input = env.byte_array_from_slice(plain)?;
+            let output = env
+                .call_static_method(
+                    &class,
+                    jni_str!("sealAuth"),
+                    jni_sig!("([B)[B"),
+                    &[JValue::Object(&input)],
+                )?
+                .l()?;
+            let output = env.cast_local::<JByteArray>(output)?;
+            env.convert_byte_array(&output)
+        })
+    }
+
+    fn open(&self, sealed: &[u8]) -> Result<Option<Vec<u8>>, String> {
+        with_context(|env, app| {
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
+            let input = env.byte_array_from_slice(sealed)?;
+            let output = env
+                .call_static_method(
+                    &class,
+                    jni_str!("openAuth"),
+                    jni_sig!("([B)[B"),
+                    &[JValue::Object(&input)],
+                )?
+                .l()?;
+            // null: the user has not confirmed lately
+            if output.as_raw().is_null() {
+                return Ok(None);
+            }
+            let output = env.cast_local::<JByteArray>(output)?;
+            env.convert_byte_array(&output).map(Some)
+        })
+    }
+}
+
+/// Ask the user for the phone's lock screen or biometrics (`KeyVault.confirmUser`, which waits for the answer), for the
+/// vault's device memory key; whether they confirmed. Called on a thread that may block, never the main one.
+pub(crate) fn confirm_user() -> Result<bool, String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
+        env.call_static_method(&class, jni_str!("confirmUser"), jni_sig!("()Z"), &[])?
+            .z()
+    })
+}
+
 /// A class of the app's (`KeyVault`, `CallManager`), through the application context's class loader (`getClassLoader`,
 /// the app's; the context's own class is the framework's, and a thread of Rust's has only the system's).
 fn app_class<'local>(env: &mut Env<'local>, app: &JObject<'_>, name: &JNIStr) -> Result<JClass<'local>, Error> {

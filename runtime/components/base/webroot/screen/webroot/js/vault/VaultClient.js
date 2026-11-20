@@ -14,9 +14,20 @@
  * starts the worker from a blob: URL (the vault screens' CSP allows worker-src blob: and 'wasm-unsafe-eval') and
  * hands it the module's bytes. The vault locks after `idleMinutes` with no call (15 by default) and on lock(); a lock
  * zeroes the module's memory in the worker.
+ *
+ * In the desktop and mobile apps (plans/Vault-Instances.md V5) the page bridge has window.moquiDesktop.vault: the app
+ * runs the same module natively, one session per account, and the client calls it there with the same ops. It then
+ * loads no worker and no module from the server (the app refuses them), the app keeps what it has seen of each vault
+ * (rollback memory), and device memory (deviceMemory, remember, restore, forget) can keep the personal key open for a
+ * time under a key in the device's key store.
  */
 "use strict";
 (function (global) {
+    // the app's native vault, when the page runs in the desktop or mobile app
+    const nativeVault = () => {
+        const bridge = global.moquiDesktop;
+        return bridge && bridge.vault && typeof bridge.vault.call === "function" ? bridge.vault : null;
+    };
     const here = (global.document && global.document.currentScript && global.document.currentScript.src) || "/js/vault/VaultClient.js";
 
     class MoquiVaultClient {
@@ -33,6 +44,10 @@
             this.nextId = 1;
             this.waiting = new Map();
             this.idleTimer = null;
+            this.native = nativeVault();
+            this.nativeReady = false;
+            // a browser keeps no memory of item revisions past this client (§3.12); the app keeps it
+            this.revisions = new Map();
         }
 
         async fetchChecked(url, integrity) {
@@ -43,6 +58,13 @@
 
         /** Loads the worker and the module; resolves once the module is ready. */
         async start() {
+            if (this.native) {
+                if (!this.nativeReady) {
+                    await this.native.call("configure", { idle_minutes: Math.max(1, Math.round(this.idleMs / 60000)) });
+                    this.nativeReady = true;
+                }
+                return;
+            }
             if (this.worker) return;
             const script = await (await this.fetchChecked(this.workerUrl, this.workerIntegrity)).text();
             const blobUrl = URL.createObjectURL(new Blob([script], { type: "text/javascript" }));
@@ -74,6 +96,11 @@
 
         /** One call of the module (crates/moqui-vault/src/ops.rs); each resets the idle timer. */
         async call(op, args) {
+            if (this.native) {
+                await this.start();
+                this.touch();
+                return this.native.call(op, args || {});
+            }
             if (!this.worker) await this.start();
             this.touch();
             return this.post({ op, args: args || {} });
@@ -89,14 +116,24 @@
          * Drops every key: the module forgets them and the worker zeroes its memory. When the worker cannot answer, it is
          * ended, which drops its memory with it. Never rejects.
          */
-        async lock() {
+        async lock(options) {
             if (this.idleTimer) clearTimeout(this.idleTimer);
             this.idleTimer = null;
-            if (!this.worker) return;
-            try {
-                await this.post({ op: "lock" });
-            } catch (e) {
-                this.terminate();
+            if (this.native) {
+                // with {forget: true} (the page's Lock), the app's device memory of the key goes too
+                try {
+                    await this.native.call("lock", { forget: !!(options && options.forget) });
+                } catch (e) {
+                    // the app locks the account's session on its own as well (idle, sign-out, the device's lock)
+                }
+            } else if (!this.worker) {
+                return;
+            } else {
+                try {
+                    await this.post({ op: "lock" });
+                } catch (e) {
+                    this.terminate();
+                }
             }
             if (this.onLock) {
                 try {
@@ -110,6 +147,10 @@
         /** Ends the worker; a later call starts a new one. */
         terminate() {
             if (this.idleTimer) clearTimeout(this.idleTimer);
+            if (this.native) {
+                this.native.call("lock", {}).catch(() => {});
+                return;
+            }
             if (this.worker) this.worker.terminate();
             this.worker = null;
             for (const pending of this.waiting.values()) pending.reject(new Error("the vault worker was ended"));
@@ -142,6 +183,40 @@
                 }
             }, this.clipboardMs);
         }
+
+        /**
+         * The items of a list ({vault_id, items: [{item_id, revision}]}) whose revision is lower than one seen before
+         * ({older: [item_id]}), the highest of each kept: by the app across runs, in a browser for this client only.
+         */
+        async revisionsSeen(args) {
+            if (this.native) return this.call("revisions_seen", args);
+            const vault = (args && args.vault_id) || "";
+            const seen = this.revisions.get(vault) || new Map();
+            this.revisions.set(vault, seen);
+            const older = [];
+            for (const row of (args && args.items) || []) {
+                const kept = seen.get(row.item_id) || 0;
+                if (kept > (row.revision || 0)) older.push(row.item_id);
+                else seen.set(row.item_id, row.revision || 0);
+            }
+            return { older };
+        }
+
+        /** Device memory in the app: {available, kind, until, open, maxMinutes}; a browser has none. */
+        async deviceMemory() {
+            if (!this.native) return { available: false, kind: null, until: null, open: false };
+            return this.native.memory("state");
+        }
+        /** The app remembers the open personal key for minutes (at most what the server allows): {until, kind}. */
+        remember(minutes) { return this.native ? this.native.memory("remember", minutes) : Promise.reject(new Error("Only the desktop and mobile apps remember the key")); }
+        /**
+         * The personal key opened from the app's memory, once the server confirms it (and, on a phone, the device's lock
+         * or biometrics): {opened: true, result} as personalOpen answers, or {opened: false, reason: none, ended,
+         * unlock or unconfirmed}.
+         */
+        restore() { return this.native ? this.native.memory("restore") : Promise.resolve({ opened: false, reason: "none" }); }
+        /** The app forgets the key it remembers, and the server's record of it. */
+        forget() { return this.native ? this.native.memory("forget") : Promise.resolve({ forgotten: false }); }
 
         vectors() { return this.call("vectors"); }
         status() { return this.call("status"); }

@@ -258,6 +258,35 @@ pub fn open_with_recovery_code(
     PersonalKey::from_private_bytes(&private, expected)
 }
 
+/// Wraps the private halves under a device memory key (§3.5, V5): a random 256-bit key that a desktop or mobile app
+/// keeps in the OS key store, so no KDF. The associated data names the personal key, its public halves and the
+/// memory's id, so a wrap of one memory, key or user never opens as another's.
+pub fn wrap_with_device_key(
+    key: &PersonalKey,
+    personal_key_id: &str,
+    memory_id: &str,
+    device_key: &Key32,
+    rng: &mut dyn Rng,
+) -> Vec<u8> {
+    let public = key.public().to_bytes();
+    let parts = names(personal_key_id, Purpose::PersonalDevice).parts(&[&public, memory_id.as_bytes()]);
+    aead::seal(device_key, &refs(&parts), &key.private_bytes(), rng)
+}
+
+/// Opens a device memory wrap ([`wrap_with_device_key`]); a wrong key, memory or personal key is [`Error::Open`].
+pub fn open_with_device_key(
+    sealed: &[u8],
+    personal_key_id: &str,
+    memory_id: &str,
+    expected: &PersonalPublic,
+    device_key: &Key32,
+) -> Result<PersonalKey, Error> {
+    let public = expected.to_bytes();
+    let parts = names(personal_key_id, Purpose::PersonalDevice).parts(&[&public, memory_id.as_bytes()]);
+    let private = aead::open(device_key, &refs(&parts), sealed)?;
+    PersonalKey::from_private_bytes(&private, expected)
+}
+
 #[cfg(test)]
 #[path = "personal_tests.rs"]
 mod tests;

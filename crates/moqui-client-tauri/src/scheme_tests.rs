@@ -139,6 +139,41 @@ fn no_servers_worker_runs_on_the_apps_origin() {
     }
 }
 
+/// V5: the app runs its own vault module, so the server's (its worker's script and its wasm) is refused on the app's
+/// origins before any account is looked at, however the path is cased or encoded; the rest of the server's scripts pass.
+#[test]
+fn the_servers_vault_module_is_never_loaded_in_the_app() {
+    use super::vault_module_path;
+    for path in [
+        "/js/vault/VaultWorker.js",
+        "/js/vault/moqui_vault.wasm",
+        "/js/vault/MOQUI_VAULT.WASM",
+        "/js/vault/%56aultWorker.js",
+        "/other/mount/vaultworker.js",
+    ] {
+        assert!(vault_module_path(path), "{path}");
+    }
+    for path in [
+        "/js/vault/VaultClient.js",
+        "/js/WebrootVue.js",
+        "/qapps/boss/Commons/Vault",
+    ] {
+        assert!(!vault_module_path(path), "{path}");
+    }
+    let Fixture { state, dir, .. } = fixture("vault-module", false);
+    for path in ["/js/vault/VaultWorker.js", "/js/vault/moqui_vault.wasm"] {
+        let refused = super::answer(
+            &state,
+            "remote-1",
+            get(path, &[("sec-fetch-dest", "empty")]),
+            APP_ORIGIN,
+            &super::NoHooks,
+        );
+        assert_eq!(refused.status(), 403, "{path}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn the_chat_store_key_is_kept_from_the_servers_answer_and_dropped_on_revocation() {
     use super::{store_key_change, store_key_device};
