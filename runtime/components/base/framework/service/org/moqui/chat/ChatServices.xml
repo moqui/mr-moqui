@@ -4821,11 +4821,14 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Search the messages of the rooms the current user may read: the rooms they are in, the public rooms,
             and with chatRoomId one room they may read (a record room by its record). With search, the MoquiChatEvent
             document (filtered to those rooms: the user's rooms by id, the public ones by roomVisibilityEnumId), ranked by
-            relevance; without search, the text of the messages (newest first). Each found message: chatRoomId, eventSeq,
-            roomName, senderUserId, senderName, sentDate, snippet and highlight (with search).</description>
+            relevance; without search, the text of the messages (newest first). A room out of the user's sight (a member
+            filter: spam, blocked, a held text) is left out unless includeFiltered (the Spam view's search) or chatRoomId
+            names it. Each found message: chatRoomId, eventSeq, roomName, senderUserId, senderName, sentDate, snippet and
+            highlight (with search).</description>
         <in-parameters>
             <parameter name="searchText" required="true"/>
             <parameter name="chatRoomId"/>
+            <parameter name="includeFiltered" type="Boolean" default="false"/>
             <parameter name="limit" type="Integer" default="20"/>
             <parameter name="pageIndex" type="Integer" default="0"/>
         </in-parameters>
@@ -4858,8 +4861,10 @@ along with this software (see the LICENSE.md file). If not, see
                 myRooms = [chatRoomId]
                 includePublic = false
             } else {
+                // a room the user has out of sight (spam, blocked, held: its filterEnumId) only when asked (SEC-COM-91)
                 const directOrCurrent = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).selectField('chatRoomId')
-                        .selectField('leftDate').list())
+                        .selectField('leftDate').selectField('filterEnumId').list())
+                        .filter((row) => includeFiltered === true || !row.filterEnumId)
                 const ids = directOrCurrent.map((row) => row.chatRoomId)
                 const directIds = new Set(ids.length ? Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', ids)
                         .condition('roomTypeEnumId', 'CrtDirect').selectField('chatRoomId').list()).map((row) => row.chatRoomId) : [])
