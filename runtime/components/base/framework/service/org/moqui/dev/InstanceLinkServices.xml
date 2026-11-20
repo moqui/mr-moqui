@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+
+    <!-- The manager link (plans/Vault-Instances.md §4.4, crates/moqui-host/src/manage_link/). On a manager, each checks
+        the instance's environment and the caller: INSTANCE_ADMIN, and a member of the environment's approver group when
+        it names one. Nothing here runs an arbitrary service on an instance: only the link's commands. -->
+
+    <service verb="get" noun="InstanceLink" type="rust" location="moqui_host::manage_link::services::get_instance_link"
+            allow-remote="false" transaction="ignore">
+        <description>An instance's link as this manager sees it: linked, its generation, its last status (seal state,
+            health, version, schema hash, cluster members), the link key pinned on its row, and this manager's own link
+            key fingerprint and address, which a pairing code is shown with.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="linked" type="Boolean"/><parameter name="generation" type="Long"/>
+            <parameter name="serving" type="Boolean"/><parameter name="remote"/><parameter name="sealState"/>
+            <parameter name="health"/><parameter name="binaryVersion"/><parameter name="schemaHash"/>
+            <parameter name="clusterMembers"/><parameter name="linkState"/><parameter name="linkKeyFingerprint"/>
+            <parameter name="managerFingerprint"/><parameter name="managerUrl"/>
+        </out-parameters>
+    </service>
+    <service verb="create" noun="InstancePairingCode" type="rust"
+            location="moqui_host::manage_link::services::create_instance_pairing_code" allow-remote="false" transaction="ignore">
+        <description>A one-time code for an instance this manager did not make (an existing server being adopted), good
+            for 15 minutes and kept only as its hash; shown once, with the manager's address and link key fingerprint, for
+            the instance's pair#Manager.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="code"/><parameter name="expiresMinutes" type="Long"/><parameter name="managerUrl"/>
+            <parameter name="managerFingerprint"/>
+        </out-parameters>
+    </service>
+    <service verb="call" noun="InstanceCommand" type="rust"
+            location="moqui_host::manage_link::services::call_instance_command" allow-remote="false" transaction="ignore">
+        <description>One of the link's commands on an instance (status, seal, restart, drain, undrain, put-secret,
+            deploy-component, export-seal, surface-report) over its environment's transport: the link, SSH (status, seal
+            and put-secret as moqui operator, the SSH key under leaseId or machine access), or both (the link, SSH when it
+            is down). While the instance is sealed only status is answered.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="command" required="true"/>
+            <parameter name="name"><description>put-secret: the secret's name</description></parameter>
+            <parameter name="value"><description>put-secret: its value, never logged or kept here</description></parameter>
+            <parameter name="force"/>
+            <parameter name="attestation"/><parameter name="signature"/><parameter name="dataTypes"/>
+            <parameter name="leaseId"><description>SSH: the lease of the instance's SSH key</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ok" type="Boolean"/><parameter name="transport"/><parameter name="text"/>
+            <parameter name="sealState"/><parameter name="health"/><parameter name="binaryVersion"/>
+            <parameter name="schemaHash"/>
+        </out-parameters>
+    </service>
+    <service verb="update" noun="InstanceApprovers" type="rust"
+            location="moqui_host::manage_link::services::update_instance_approvers" allow-remote="false" transaction="ignore">
+        <description>A changed approver set for an instance: version, approverList (userId and verifyPublic, hex), signed
+            by signerPublic (an approver the instance pinned) with signature (hex), as an approver's vault client signs it
+            (moqui_vault::approvers). Checked here against the set the row pinned, sent over the link, and kept once the
+            instance took it.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="version" required="true"/>
+            <parameter name="approverList" type="List" required="true"/>
+            <parameter name="signerPublic" required="true"/>
+            <parameter name="signature" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="version" type="Long"/></out-parameters>
+    </service>
+    <service verb="revoke" noun="InstanceLink" type="rust" location="moqui_host::manage_link::services::revoke_instance_link"
+            allow-remote="false" transaction="ignore">
+        <description>The instance's link key is no longer pinned and its link closes; it links again only after pairing
+            with a new code.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+    </service>
+
+    <!-- on a managed instance -->
+    <service verb="pair" noun="Manager" type="rust" location="moqui_host::manage_link::services::pair_manager"
+            allow-remote="false" transaction="ignore">
+        <description>Pair this server with a manager by a code made in its System › Instances, pinning the manager's link
+            key fingerprint (pin), then dial it. INSTANCE_ADMIN.</description>
+        <in-parameters>
+            <parameter name="url" required="true"/><parameter name="pin" required="true"/>
+            <parameter name="code" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="appInstanceId"/><parameter name="environmentId"/><parameter name="approverCount" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="ManagerLink" type="rust" location="moqui_host::manage_link::services::get_manager_link"
+            allow-remote="false" transaction="ignore">
+        <description>This server's link to its manager, when it is managed. INSTANCE_ADMIN.</description>
+        <out-parameters>
+            <parameter name="phase"/><parameter name="generation" type="Long"/><parameter name="appInstanceId"/>
+            <parameter name="managerUrl"/><parameter name="managerFingerprint"/><parameter name="serving" type="Boolean"/>
+            <parameter name="approversVersion" type="Long"/><parameter name="message"/>
+        </out-parameters>
+    </service>
+</services>

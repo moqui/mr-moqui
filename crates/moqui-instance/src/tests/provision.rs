@@ -289,6 +289,15 @@ fn provisions_on(engine: FakeEngine, tag: &str) {
         field_of(&facade, INSTANCE, "appInstanceId", &app, "pairingTokenHash"),
         hash
     );
+    // its bootstrap bundle waits in memory for its link (M2), with its database password, and is taken once
+    assert!(crate::link::bundle_ready(&app));
+    let bundle = crate::link::take_bundle(&app).unwrap();
+    assert!(
+        bundle.contains_key(moqui_core::seal::secrets::DATASOURCE_PASSWORD),
+        "{:?}",
+        bundle.keys()
+    );
+    assert!(crate::link::take_bundle(&app).is_none());
     // no secret in any container's environment, labels or command, nor in any other request; none in a vault row
     let vault_rows = all_text(&facade, ITEM);
     for ((container, file), secret) in &files {

@@ -109,6 +109,38 @@ fn run(command: &str, args: &[&str], input: &[u8]) -> Result<Zeroizing<Vec<u8>>,
     Ok(stdout)
 }
 
+/// The program of `command`, an absolute path, else the first of [`PROGRAMS`] there is.
+fn program_of(command: &str) -> Result<String, Error> {
+    let mut conf = SealConf::with_purpose("");
+    conf.systemd_creds_command = command.trim().to_string();
+    program(&conf)
+}
+
+/// `data` as a credential named `name`, encrypted by `systemd-creds` with the host's TPM2: for a key that must open
+/// while the server is sealed and only on this host (the manager link's key, plans/Vault-Instances.md §4.4).
+///
+/// # Errors
+///
+/// No `systemd-creds`, or it failed.
+pub fn encrypt_credential(command: &str, name: &str, data: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let name = format!("--name={name}");
+    run(
+        &program_of(command)?,
+        &["encrypt", "--with-key=tpm2", &name, "-", "-"],
+        data,
+    )
+}
+
+/// A credential [`encrypt_credential`] made, opened.
+///
+/// # Errors
+///
+/// No `systemd-creds`, or the credential does not open on this host.
+pub fn decrypt_credential(command: &str, name: &str, credential: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let name = format!("--name={name}");
+    run(&program_of(command)?, &["decrypt", &name, "-", "-"], credential)
+}
+
 impl Method for Tpm {
     fn kind(&self) -> MethodKind {
         MethodKind::Tpm

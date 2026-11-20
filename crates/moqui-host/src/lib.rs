@@ -83,6 +83,12 @@ mod edge_link;
 // What the edge link and the manager link share: the role answer, the backoff, the link key's certificate.
 #[cfg(any(feature = "edge", feature = "manage"))]
 mod link;
+// The manager link (plans/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
+#[cfg(feature = "manage")]
+pub mod manage_link;
+#[cfg(all(feature = "axum", not(feature = "manage")))]
+#[path = "manage_link_off.rs"]
+mod manage_link;
 mod embedded_checksum;
 mod embedded_files;
 mod embedded_programs;

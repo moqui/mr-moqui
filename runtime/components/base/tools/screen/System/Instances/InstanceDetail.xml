@@ -17,7 +17,10 @@ along with this software (see the LICENSE.md file). If not, see
     (preview#AppInstanceProvision). Provision, Start, Stop, Restart and Remove post request#InstanceAction: it runs now
     when the action opens no vault item or the environment has machine access, else it asks for the lease and this page
     goes to the lease dialog (System › Vaults › Lease); the action runs once an approver opens it. The page reads rows
-    only; nothing here reaches a host as it renders. -->
+    only; nothing here reaches a host as it renders. The manager link (§4.4, M2): the link as this manager holds it
+    (get#InstanceLink, from memory and the row), and for an instance this manager did not make, a pairing code
+    (create#InstancePairingCode) shown once after the redirect with this manager's address and link key fingerprint;
+    Revoke unpins the instance's link key and closes its link. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Instance" default-menu-include="false">
 
@@ -28,6 +31,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="leaseId"/></conditional-response>
         <default-response url="."/></transition>
     <transition name="instanceDetail"><default-response url="."/></transition>
+    <transition name="makePairingCode">
+        <service-call name="org.moqui.dev.InstanceLinkServices.create#InstancePairingCode" in-map="{appInstanceId:appInstanceId}" out-map="codeOut"/>
+        <actions><!-- shown once, after the redirect; only its hash is kept -->
+            <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newInstancePairing = codeOut }</script></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="revokeLink" method="post">
+        <service-call name="org.moqui.dev.InstanceLinkServices.revoke#InstanceLink" in-map="{appInstanceId:appInstanceId}"/>
+        <default-response url="."/><error-response url="."/>
+    </transition>
 
     <actions>
         <entity-find-one entity-name="moqui.server.instance.AppInstance" value-field="appInstance"/>
@@ -52,6 +65,15 @@ along with this software (see the LICENSE.md file). If not, see
             <script>ec.message.clearErrors()</script>
         </if>
         <set field="made" from="recordFound &amp;&amp; !!appInstance.instanceUuid"/>
+        <!-- the manager link: what this manager holds of it now, for INSTANCE_ADMIN (the service asks it) -->
+        <set field="newPairing" from="ec.web?.sessionAttributes?.remove('newInstancePairing') || null"/>
+        <set field="link" from="null"/>
+        <if condition="recordFound &amp;&amp; ec.user.hasPermission('INSTANCE_ADMIN')">
+            <service-call name="org.moqui.dev.InstanceLinkServices.get#InstanceLink" in-map="{appInstanceId:appInstanceId}"
+                    out-map="link" ignore-error="true" transaction="force-new"/>
+            <set field="linkError" from="ec.message.hasError() ? ec.message.getErrorsString() : null"/>
+            <script>ec.message.clearErrors()</script>
+        </if>
     </actions>
     <widgets>
         <section name="NotFound" condition="!recordFound"><widgets>
@@ -109,6 +131,33 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="linkState"><default-field title="Link"><display/></default-field></field>
                     <field name="imageDigest"><default-field title="Image digest"><display/></default-field></field>
                 </form-single>
+            </box-body></container-box>
+
+            <section name="NewPairingCode" condition="newPairing"><widgets>
+                <container-box type="success"><box-header title="Pairing code"/><box-body>
+                    <label type="p" text="Enter it on the instance with this manager's address and link key fingerprint (pair#Manager). It pairs this instance, once, within ${newPairing.expiresMinutes} minutes. It is shown only this once; make another if you lose it."/>
+                    <label type="pre" text="${newPairing.code}" style="text-h6"/>
+                    <label type="div" text="Manager: ${newPairing.managerUrl || '(manage@link-url is not set: give the address the instance reaches this server at)'}"/>
+                    <label type="div" text="Manager link key: ${newPairing.managerFingerprint}"/>
+                </box-body></container-box>
+            </widgets></section>
+
+            <container-box condition="link || linkError"><box-header title="Manager link"/><box-toolbar>
+                <form-single name="PairingCode" transition="makePairingCode">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Make a pairing code"><submit/></default-field></field>
+                </form-single>
+                <form-single name="RevokeLink" transition="revokeLink">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Revoke"><submit confirmation="Unpin the link key of ${appInstanceId} and close its link? It pairs again only with a new code."/></default-field></field>
+                </form-single>
+            </box-toolbar><box-body>
+                <label text="${linkError}" type="div" style="text-danger" condition="linkError"/>
+                <label text="${link?.linked ? 'Linked (generation ' + link.generation + ', from ' + link.remote + '), ' + (link.sealState || 'state not reported') + (link.serving ? ', taking commands' : '') : 'Not linked: ' + (link?.linkState || 'never paired')}" type="div" condition="link"/>
+                <label text="Health ${link?.health}, version ${link?.binaryVersion}, schema ${link?.schemaHash || '(sealed)'}, members ${link?.clusterMembers || '-'}" type="div" condition="link?.linked"/>
+                <label text="Its link key: ${link?.linkKeyFingerprint || '(not paired)'}" type="div" condition="link"/>
+                <label text="Paired ${appInstance.linkPairedDate ? ec.l10n.format(appInstance.linkPairedDate, 'yyyy-MM-dd HH:mm') : '-'}; bootstrap bundle taken ${appInstance.bootstrapDate ? ec.l10n.format(appInstance.bootstrapDate, 'yyyy-MM-dd HH:mm') : '-'}; last from ${appInstance.linkAddress || '-'}" type="div" condition="link"/>
+                <label text="This manager's link key: ${link?.managerFingerprint || '(the listener takes no manager links)'}${link?.managerUrl ? ', dialed at ' + link.managerUrl : ''}" type="div" condition="link"/>
             </box-body></container-box>
 
             <container-box condition="preview || previewError"><box-header title="Provision preview"/><box-body>

@@ -26,6 +26,7 @@ use sha2::{Digest, Sha256};
 use crate::tls_pin::hex;
 
 /// A new link key, base64 PKCS#8 DER: the value of `edge/node@key`.
+#[cfg_attr(not(feature = "edge"), allow(dead_code))]
 pub fn new_key() -> Result<String, String> {
     let key = rcgen::KeyPair::generate().map_err(|err| format!("could not make a key: {err}"))?;
     Ok(STANDARD.encode(key.serialize_der()))

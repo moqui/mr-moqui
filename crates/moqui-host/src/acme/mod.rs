@@ -334,9 +334,10 @@ where
     Err(answered())
 }
 
-/// On an edge node, a ClientHello already read that offers `acme-tls/1` and is not a passthrough host's: answered as
-/// [`accept`] answers it. Always an error to return from the accept: there is no connection to serve.
-#[cfg(feature = "edge")]
+/// On an edge node or a manager (whose link reads the ClientHello first), a ClientHello already read that offers
+/// `acme-tls/1` and is not a passthrough host's: answered as [`accept`] answers it. Always an error to return from the
+/// accept: there is no connection to serve.
+#[cfg(any(feature = "edge", all(feature = "manage", feature = "instances")))]
 pub(crate) async fn answer<S>(
     accepted: rustls::server::Accepted,
     stream: S,

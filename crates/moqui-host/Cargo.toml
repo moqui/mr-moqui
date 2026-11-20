@@ -132,8 +132,9 @@ vault = ["dep:moqui-vault-server", "dep:moqui-vault"]
 # deploys, rotation and transit by the manager. In Maximal and Enterprise; not Lite.
 instances = ["vault", "dep:moqui-instance"]
 # The manager link (src/manage_link/, plans/Vault-Instances.md §4.4): a managed instance dials its manager on ALPN
-# moqui-manage/1, gRPC both ways on HTTP/2. In every package, so any build can be managed.
-manage = ["grpc"]
+# moqui-manage/1, gRPC both ways on HTTP/2; with instances, the manager's end on the HTTPS listener. The bootstrap
+# bundle is HPKE and the approver set Ed25519 (moqui-vault). In every package, so any build can be managed.
+manage = ["grpc", "dep:moqui-vault"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # components/dev crates. In the Maximal (default) and Debug packages; not in Lite or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]

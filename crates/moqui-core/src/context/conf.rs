@@ -467,6 +467,8 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "component-deploy",
         // vaults (plans/Vault-Instances.md §3)
         "vault",
+        // the manager link (plans/Vault-Instances.md §4.4)
+        "manage",
     ] {
         base.merge_single_child(over, name);
     }

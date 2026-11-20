@@ -23,8 +23,9 @@
 //! - [`hello`]: the ClientHello read before the HTTPS listener picks a link's TLS settings or its own.
 //! - [`identity`]: a link key, the self-signed certificate made from it, and its fingerprint.
 
-// the manager link takes these up in M2; until then a build with it and without the edge link uses none of them
-#![cfg_attr(not(feature = "edge"), allow(dead_code, unused_imports))]
+// writing an answer and reading a ClientHello are the accepting end's (an edge node, a manager), and new_key the edge
+// link's: a build that only dials a manager (Lite) uses neither
+#![cfg_attr(not(any(feature = "edge", feature = "instances")), allow(dead_code, unused_imports))]
 
 pub(crate) mod answer;
 pub(crate) mod backoff;

@@ -413,6 +413,21 @@ along with this software (see the LICENSE.md file). If not, see
             itself is only in the file given to the container -->
         <field name="pairingTokenHash" type="text-medium"/>
         <field name="pairingTokenExpires" type="date-time"/>
+        <!-- the manager link (§4.4, M2): the instance's link key (SHA-256 of its public key) and the X25519 key its
+            bootstrap bundle is sealed to, both pinned at pairing; the approvers' signing keys it pinned (JSON, version and
+            keys); when it paired, took its bundle, and the address its link last came from -->
+        <field name="linkKeyFingerprint" type="text-medium"/>
+        <field name="linkBundleKey" type="text-medium"/>
+        <field name="linkPairedDate" type="date-time"/>
+        <field name="linkAddress" type="text-medium"/>
+        <field name="approverSet" type="text-long"/>
+        <field name="bootstrapDate" type="date-time"/>
+        <!-- SSH, the other transport (§4.4): host:port of the instance's SSH admin shell or its host's sshd, the user, and
+            its host key as pinned (an OpenSSH known_hosts key: type and base64); the key it signs in with is the vault item
+            AppInstance:{id}:sshKey, used under a lease -->
+        <field name="sshAddress" type="text-medium"/>
+        <field name="sshUser" type="text-short"/>
+        <field name="sshHostKey" type="text-long"/>
         <relationship type="one" related="moqui.server.instance.InstanceKind" short-alias="kind"/>
         <relationship type="one" related="moqui.server.instance.InstanceImage" short-alias="image"/>
         <relationship type="one" related="moqui.server.instance.InstanceHost" short-alias="instanceHost"/>
@@ -430,6 +445,9 @@ along with this software (see the LICENSE.md file). If not, see
             <key-map field-name="appInstanceId"/></relationship>
         <relationship type="many" related="moqui.server.instance.AppInstanceHostConfig" short-alias="hostConfigs">
             <key-map field-name="appInstanceId"/></relationship>
+        <!-- the manager link looks an instance up by its pinned key, and a pairing by its token's hash -->
+        <index name="APP_INST_LINK_KEY"><index-field name="linkKeyFingerprint"/></index>
+        <index name="APP_INST_PAIR_TOKEN"><index-field name="pairingTokenHash"/></index>
     </entity>
     <entity entity-name="AppInstanceEnv" package="moqui.server.instance" use="configuration">
         <description>A setting of the instance's container, never a secret (a secret is an AppInstanceSecret).</description>

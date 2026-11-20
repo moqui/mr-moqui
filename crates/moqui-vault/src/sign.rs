@@ -54,6 +54,8 @@ pub enum Statement {
     LeaseApproval,
     /// A checked key (§3.5, `VaultKeyCheck`).
     KeyCheck,
+    /// A managed instance's changed approver set, by an approver it pinned (§4.4, [`crate::approvers`]).
+    ApproverSet,
 }
 
 impl Statement {
@@ -70,6 +72,7 @@ impl Statement {
             Statement::Lease => "lease",
             Statement::LeaseApproval => "lease-approval",
             Statement::KeyCheck => "key-check",
+            Statement::ApproverSet => "approver-set",
         }
     }
 }

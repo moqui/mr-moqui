@@ -499,6 +499,9 @@ pub(crate) async fn listen(
         }
     };
     let edge = started.acceptor;
+    // the manager link (plans/Vault-Instances.md §4.4): on a manager the hand-off of moqui-manage/1, which an edge node's
+    // listener does not take; on a managed instance its dialer, unless its sealed gate started it
+    let manage = crate::manage_link::start(&link_factory, shutdown_rx.clone(), edge.is_some()).acceptor;
     let in_process =
         crate::in_process::InProcess::new(web.clone(), tokio::runtime::Handle::current(), shutdown_rx.clone());
     // ready once the routes and the edge link have read what they need of the properties: a test may set others for a
@@ -574,6 +577,7 @@ pub(crate) async fn listen(
         let tls = |acceptor| Tls {
             acceptor,
             edge: edge.clone(),
+            manage: manage.clone(),
             factory: Arc::downgrade(&link_factory),
         };
         match (secure, standby) {
@@ -678,22 +682,37 @@ async fn standing_by(
 }
 
 /// The HTTPS listener's handshake: its own settings, or on an edge node the link's for a client that offers
-/// `moqui-edge/1`, and a passthrough host's connection handed to its link before any handshake (`edge_link`). A client
-/// that offers `acme-tls/1` gets an ACME challenge's answer, or is refused (`crate::acme`).
+/// `moqui-edge/1`, and a passthrough host's connection handed to its link before any handshake (`edge_link`); on a
+/// manager, the manager link's for a client that offers `moqui-manage/1` (`manage_link`). A client that offers
+/// `acme-tls/1` gets an ACME challenge's answer, or is refused (`crate::acme`).
 #[derive(Clone)]
 struct Tls {
     acceptor: tokio_rustls::TlsAcceptor,
     edge: Option<Arc<crate::edge_link::Acceptor>>,
+    manage: Option<Arc<crate::manage_link::accept::Acceptor>>,
     factory: std::sync::Weak<ExecutionContextFactory>,
 }
 
+/// A connection after the HTTPS listener's handshake: the edge link's hand-off or the listener's own, or a manager
+/// link's.
+enum Accepted {
+    Edge(crate::edge_link::Secured),
+    Manage(tokio_rustls::server::TlsStream<tokio::net::TcpStream>),
+}
+
 impl Tls {
-    async fn accept(&self, stream: tokio::net::TcpStream) -> std::io::Result<crate::edge_link::Secured> {
-        match &self.edge {
-            Some(edge) => edge.accept(stream, self.acceptor.config()).await,
-            None => crate::acme::accept(stream, Arc::clone(self.acceptor.config()), &self.factory)
+    async fn accept(&self, stream: tokio::net::TcpStream) -> std::io::Result<Accepted> {
+        match (&self.edge, &self.manage) {
+            (Some(edge), _) => edge.accept(stream, self.acceptor.config()).await.map(Accepted::Edge),
+            (None, Some(manage)) => match manage.accept(stream, self.acceptor.config(), &self.factory).await? {
+                crate::manage_link::accept::Secured::Http(stream) => {
+                    Ok(Accepted::Edge(crate::edge_link::Secured::Http(stream)))
+                }
+                crate::manage_link::accept::Secured::Link(stream) => Ok(Accepted::Manage(stream)),
+            },
+            (None, None) => crate::acme::accept(stream, Arc::clone(self.acceptor.config()), &self.factory)
                 .await
-                .map(crate::edge_link::Secured::Http),
+                .map(|stream| Accepted::Edge(crate::edge_link::Secured::Http(stream))),
         }
     }
 }
@@ -776,7 +795,17 @@ async fn serve(
                         None => Some(handshake.await),
                     };
                     match secured {
-                        Some(Ok(crate::edge_link::Secured::Link(handoff))) => {
+                        Some(Ok(Accepted::Manage(stream))) => {
+                            // a managed instance's link: it ends with the listeners' stop, and holds its connection
+                            // slots until then
+                            let hold = serving.hold.take();
+                            drop(serving);
+                            if let Some(manage) = &tls.manage {
+                                manage.serve(stream, remote).await;
+                            }
+                            drop(hold);
+                        }
+                        Some(Ok(Accepted::Edge(crate::edge_link::Secured::Link(handoff)))) => {
                             // a link, or a passthrough tunnel: each ends with the listeners' stop on its own, and holds
                             // its connection slots until then
                             let hold = serving.hold.take();
@@ -786,7 +815,7 @@ async fn serve(
                             }
                             drop(hold);
                         }
-                        Some(Ok(crate::edge_link::Secured::Http(stream))) => {
+                        Some(Ok(Accepted::Edge(crate::edge_link::Secured::Http(stream)))) => {
                             // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
                             #[cfg(feature = "xmpp")]
                             let serving = Serving {

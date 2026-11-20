@@ -624,6 +624,7 @@ async fn a_request_over_tls_is_marked_secure() {
                 Some(super::Tls {
                     acceptor: tokio_rustls::TlsAcceptor::from(config),
                     edge: None,
+                    manage: None,
                     factory: std::sync::Weak::new(),
                 }),
                 WebApp::new(app.clone(), limits, unguarded()),

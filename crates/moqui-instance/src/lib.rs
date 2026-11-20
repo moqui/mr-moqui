@@ -33,7 +33,10 @@
 //! - [`actions`]: `InstanceAction` rows, and an action asked for from a screen: run now, or a lease asked for and the
 //!   action run once it is approved.
 //! - [`reconcile`]: the job that writes what each host says of its instances and changes nothing else (§4.1).
+//! - [`link`]: the manager's rules of the manager link (M2): pairing once by a token or code, the approvers pinned at
+//!   pairing, who may call an instance, and the bootstrap bundle held in memory until the instance takes it.
 //! - [`services`]: the Rust services, and the INSTANCE_ADMIN check each makes.
+//! - [`ssh`]: SSH, the other transport: the link's operator commands as `moqui operator` over SSH, the key from a lease.
 
 use std::collections::BTreeMap;
 
@@ -44,10 +47,12 @@ mod common;
 pub mod database;
 pub mod kinds;
 pub mod lifecycle;
+pub mod link;
 pub mod plan;
 pub mod provision;
 pub mod reconcile;
 pub mod services;
+pub mod ssh;
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {

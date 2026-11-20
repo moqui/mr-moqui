@@ -30,6 +30,7 @@
 //!   the test tasks), not kept in git, and rebuilds it only when this crate, its dependencies or rustc changed.
 
 pub mod aead;
+pub mod approvers;
 pub mod delivery;
 mod error;
 pub mod fingerprint;

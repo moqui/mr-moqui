@@ -89,6 +89,7 @@ mod load_feed;
 mod lock_then_insert;
 #[cfg(all(feature = "devtools", feature = "tui"))]
 mod lsp;
+mod manage_link;
 mod mantle_search;
 mod mcp;
 mod monitor_edge;

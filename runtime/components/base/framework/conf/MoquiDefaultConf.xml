@@ -1507,6 +1507,17 @@
         approver checks again. -->
     <vault key-fetch-max-age="300" lease-max-hours="4" lease-key="CHANGEME"/>
 
+    <!-- The manager link (plans/Vault-Instances.md §4.4, docs/Run-Deploy.md "Managed instances"). On a managed instance:
+        url is its manager's HTTPS address and pin the SHA-256 fingerprint of the manager's link key, which a provision
+        sets in the container's settings (neither is a secret); token-file is the one-time pairing token a provision gives
+        it as a file; key-store is where its link key is kept, file (runtime/db/manage_link_key, mode 0600) or
+        systemd-creds (bound to the host's TPM2, with seal@systemd-creds-command); bootstrap-wait-seconds is how long a
+        first start waits for its bootstrap bundle once unsealed. On a manager: link-url is the address its instances
+        dial (its HTTPS listener, or its own edge node's passthrough host name), which a provision gives them, and
+        ssh-command is the ssh program of the SSH transport. -->
+    <manage url="" pin="" token-file="/run/secrets/moqui-pairing-token" key-store="file" bootstrap-wait-seconds="120"
+            link-url="" ssh-command="ssh"/>
+
     <!-- Rust: java names for fresh schemas; set sql-name-style="legacy" before opening an old Rust database.
         crypt-pass is the key of encrypted fields: at CHANGEME it is generated at the first start and kept in runtime/.env
         (moqui_conf__entity_facade__crypt_pass), which must be kept with the database's backups. crypt-pass-old is the

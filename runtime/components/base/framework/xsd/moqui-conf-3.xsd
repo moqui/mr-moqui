@@ -67,6 +67,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="dev-aide"/>
                 <xs:element minOccurs="0" ref="component-deploy"/>
                 <xs:element minOccurs="0" ref="vault"/>
+                <xs:element minOccurs="0" ref="manage"/>
                 <xs:element minOccurs="0" ref="entity-facade"/>
                 <xs:element minOccurs="0" ref="database-list"/>
                 <xs:element minOccurs="0" ref="repository-list"/>
@@ -3255,6 +3256,36 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="lease-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into
                 the seal's store: the seed of the server's Ed25519 lease key, which signs each lease. Members check its
                 fingerprint once; a new value is a new key, which they check again.</xs:documentation></xs:annotation></xs:attribute>
+        </xs:complexType>
+    </xs:element>
+
+    <xs:element name="manage">
+        <xs:annotation><xs:documentation>The manager link (plans/Vault-Instances.md §4.4): a managed instance dials its
+            manager's HTTPS port with ALPN moqui-manage/1, both link keys pinned by SHA-256 of the public key. Read at
+            start.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="url" type="xs:string" default=""><xs:annotation><xs:documentation>On a managed
+                instance: its manager, https://host[:port]. A provision sets it; empty for a server not
+                managed.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="pin" type="xs:string" default=""><xs:annotation><xs:documentation>On a managed
+                instance: the SHA-256 fingerprint of the manager's link key, hex; a key other than this one is
+                refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="token-file" type="xs:string" default="/run/secrets/moqui-pairing-token"><xs:annotation>
+                <xs:documentation>The one-time pairing token a provision gives a new instance as a file: it works once,
+                within 15 minutes, for that instance only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="key-store" type="xs:string" default="file"><xs:annotation><xs:documentation>Where the
+                link key is kept: file (runtime/db/manage_link_key, mode 0600) or systemd-creds (a credential bound to
+                the host's TPM2). It works while the server is sealed, so it is not under the root
+                key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="bootstrap-wait-seconds" type="xs:string" default="120"><xs:annotation>
+                <xs:documentation>How long a managed instance's first start, once unsealed, waits for its bootstrap
+                bundle before it boots on without one.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="link-url" type="xs:string" default=""><xs:annotation><xs:documentation>On a manager:
+                the address its instances dial, which a provision gives a new mr-moqui instance; its HTTPS listener, or
+                its own edge node's passthrough host name. Empty: provisions give none, and instances pair by
+                code.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="ssh-command" type="xs:string" default="ssh"><xs:annotation><xs:documentation>On a
+                manager: the ssh program of the SSH transport.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
