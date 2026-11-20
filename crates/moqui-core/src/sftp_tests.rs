@@ -309,6 +309,23 @@ fn the_client_keeps_the_java_behavior() {
     client.put_bytes("/in", "d.bin", &[0, 1]).unwrap();
     assert_eq!(connector.disk.lock().unwrap().chmods.len(), 3);
     assert!(client.get_text("/in/d.bin", "no-such-charset").is_err());
+    // A file larger than resource-facade sftp-max-read is refused, not read whole into memory (SEC-FIL-96).
+    connector
+        .disk
+        .lock()
+        .unwrap()
+        .files
+        .insert("/in/big.txt".to_string(), vec![b'x'; 1000]);
+    client.set_max_read(999);
+    let refused = client.get_text("/in/big.txt", "").unwrap_err();
+    assert!(
+        refused.message().contains("larger than 999 bytes"),
+        "{}",
+        refused.message()
+    );
+    assert!(client.get_binary("/in/big.txt").is_err());
+    client.set_max_read(1000);
+    assert_eq!(client.get_binary("/in/big.txt").unwrap().len(), 1000);
     client.close();
     assert_eq!(
         client.ls_files("/in").unwrap_err().message(),
