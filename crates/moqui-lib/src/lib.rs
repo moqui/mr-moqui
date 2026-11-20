@@ -27,6 +27,8 @@ pub mod context_stack;
 pub mod cron;
 pub mod datefmt;
 pub mod decimal_expr;
+#[cfg(feature = "docker")]
+pub mod docker;
 pub mod env;
 pub mod error;
 pub mod etl;

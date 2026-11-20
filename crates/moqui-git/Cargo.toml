@@ -14,7 +14,8 @@ publish.workspace = true
 [dependencies]
 # http as the git feature of moqui-core had it: the webhooks and fetch over HTTPS.
 moqui-core = { workspace = true, features = ["http"] }
-moqui-lib = { workspace = true, features = ["http"] }
+# docker: the container driver's Engine API client (moqui_lib::docker), under CI's run services.
+moqui-lib = { workspace = true, features = ["http", "docker"] }
 moqui-db = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }

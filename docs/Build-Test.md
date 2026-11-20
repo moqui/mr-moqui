@@ -761,7 +761,8 @@ Acceptance tests can be deleted freely, since nothing depends on them.
   repository needs no file and gets `./moq test <component> --junit` as its built-in pipeline. The same rules hold
   there: budgets are not raised, and acceptance is never part of a push's checks. The engine's own opt-in test, one
   container on a real Docker or Podman socket, is `cargo test -p moqui-git --test ci_docker` with
-  `MOQUI_CI_DOCKER_SOCKET` set.
+  `MOQUI_CI_DOCKER_SOCKET` set; the container driver's for containers that stay (a secret file put in, read back and
+  removed with its container) is `cargo test -p moqui-lib --features docker --test docker_real`, with the same variable.
 
 ### The regression budget
 
