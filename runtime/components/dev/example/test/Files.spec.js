@@ -312,7 +312,7 @@ feature("a git drive's viewer exports it under runtime/git-export; one who may n
     },
     then({ viewer, up, stranger }) {
         viewer.errors == ""
-        viewer.path.endsWith("git-export/files-spec/viewer.git")
+        viewer.path.split("\\").join("/").endsWith("git-export/files-spec/viewer.git")
         up.path == null
         up.errors.includes("runtime/git-export")
         stranger.path == null
