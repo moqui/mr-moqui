@@ -916,6 +916,8 @@ where
             }
         }
         [command, rest @ ..] if command == "test" => {
+            // its scratch runtimes and the server it serves take the dev seal (plans/Sealed-Secrets.md S4)
+            moqui_core::seal::set_test_run();
             test_cmd::dispatch_test(rest)?;
             Ok(None)
         }
@@ -939,6 +941,7 @@ where
         [command, rest @ ..] if command == "test-client" => {
             #[cfg(feature = "test-client")]
             {
+                moqui_core::seal::set_test_run();
                 test_client::dispatch_test_client(rest)?;
                 Ok(None)
             }
