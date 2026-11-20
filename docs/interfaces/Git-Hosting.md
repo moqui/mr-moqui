@@ -114,7 +114,8 @@ first branch pushed) its default branch.
   `create#UserSshKey`, so "who may add a key" is who may sign in.
 - **SSH sessions.** At most `ssh-server` `max-sessions` (8) connections are logged in at once; of those one user
   logged in by key or password holds at most `max-sessions-per-user` (4) and one address (an IPv6 /64)
-  `max-sessions-per-source` (8), so one account, or one host, cannot hold them all; 0 is no share. A git command
+  `max-sessions-per-source` (4), so one account, or one host, cannot hold them all; 0 is no share. Connections let
+  in for the login dialog with no user hold at most `max-dialog-sessions` (4), 2 of them from one address. A git command
   holds its connection only while it runs. A server that takes git over SSH from the public raises `max-sessions`
   to what it should serve at once (hundreds), keeps `max-sessions-per-user` small, and raises
   `max-sessions-per-source` where many users come from one address (an office, a CI provider); the git pool

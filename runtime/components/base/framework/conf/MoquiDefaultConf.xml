@@ -1084,7 +1084,9 @@
         git clone URLs show; the webroot webapp's http-host and port when empty. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
         most connections at once, max-sessions-per-user of them for one user logged in by key or password and
-        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. A server that takes git from
+        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. Of them, connections let in for
+        the login dialog with no user hold at most max-dialog-sessions, max-dialog-sessions-per-source from one address
+        (0 is no share), so they never fill the sessions a key or password login needs. A server that takes git from
         the public (git-any-account) raises max-sessions, and max-sessions-per-source where many users share an
         address. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
         password; by key only when false. git-any-account: git over SSH for any account that logs in by key, without
@@ -1095,8 +1097,8 @@
     -->
     <ssh-server enabled="true" port="" host="127.0.0.1" host-key="CHANGEME" public-host=""
             public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
-            max-sessions-per-user="4" max-sessions-per-source="8"
-            git-password-auth="false" git-any-account="false" login-dialog="true"/>
+            max-sessions-per-user="4" max-sessions-per-source="4" max-dialog-sessions="4"
+            max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" login-dialog="true"/>
     <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after

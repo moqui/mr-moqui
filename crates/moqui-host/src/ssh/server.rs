@@ -32,11 +32,14 @@
 //!
 //! At most `ssh-server` `max-sessions` logged-in sessions are open at once; one with no user counts too. Of those, one
 //! user logged in by key or password holds at most `max-sessions-per-user` and one address `max-sessions-per-source`
-//! (a cluster peer is counted by neither), so one account or one host does not hold them all. A connection that has
-//! not logged in has [`PREAUTH_TIMEOUT`] to do so, and at most [`MAX_PREAUTH`] such connections wait at once, at most
-//! [`PREAUTH_PER_SOURCE`] of them from one source (an IPv6 /64 is one; an edge tunnel's connection counts as the client
-//! the edge node names), so one host cannot keep SFTP, Git, edge tunnels and the SSH cluster transport out. One let in
-//! with no user is closed when its dialog has not logged in within `crate::term::LOGIN_WAIT`.
+//! (a cluster peer is counted by neither), so one account or one host does not hold them all. Those with no user, let
+//! in for the login dialog, hold at most `max-dialog-sessions`, `max-dialog-sessions-per-source` of them from one
+//! address, so connections that need no credentials never fill the sessions a key or password login needs
+//! (SEC-FIL-87). A connection that has not logged in has [`PREAUTH_TIMEOUT`] to do so, and at most [`MAX_PREAUTH`]
+//! such connections wait at once, at most [`PREAUTH_PER_SOURCE`] of them from one source (an IPv6 /64 is one; an edge
+//! tunnel's connection counts as the client the edge node names), so one host cannot keep SFTP, Git, edge tunnels and
+//! the SSH cluster transport out. One let in with no user is closed when it has opened no `apps` within [`PREAUTH_TIMEOUT`] of its connection, or its dialog
+//! has not logged in within `crate::term::LOGIN_WAIT`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::{IpAddr, SocketAddr};
@@ -64,8 +67,13 @@ const DEFAULT_MAX_SESSIONS: usize = 8;
 /// `ssh-server` `max-sessions-per-user`: the sessions one user logged in by key or password holds at once, so one
 /// account (any account, with `git-any-account`) does not hold every session.
 const DEFAULT_MAX_PER_USER: usize = 4;
-/// `ssh-server` `max-sessions-per-source`: the sessions one address (an IPv6 /64) holds at once.
-const DEFAULT_MAX_PER_SOURCE: usize = 8;
+/// `ssh-server` `max-sessions-per-source`: the sessions one address (an IPv6 /64) holds at once, under the total so
+/// one address does not hold them all.
+const DEFAULT_MAX_PER_SOURCE: usize = 4;
+/// `ssh-server` `max-dialog-sessions`: the sessions with no user, let in for the login dialog, at once.
+const DEFAULT_MAX_DIALOGS: usize = 4;
+/// `ssh-server` `max-dialog-sessions-per-source`: of those, the ones one address holds.
+const DEFAULT_MAX_DIALOGS_PER_SOURCE: usize = 2;
 const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;
 /// Session channels of one connection waiting for their request or running `sftp`; one more is refused (SEC-FIL-61).
 const MAX_SESSION_CHANNELS: usize = 8;
@@ -233,6 +241,12 @@ pub fn start(
     // 0 is no share: the total alone bounds a user or a source
     let max_per_user = factory.conf_number("ssh-server", "max-sessions-per-user", DEFAULT_MAX_PER_USER);
     let max_per_source = factory.conf_number("ssh-server", "max-sessions-per-source", DEFAULT_MAX_PER_SOURCE);
+    let max_dialogs = factory.conf_number("ssh-server", "max-dialog-sessions", DEFAULT_MAX_DIALOGS);
+    let max_dialogs_per_source = factory.conf_number(
+        "ssh-server",
+        "max-dialog-sessions-per-source",
+        DEFAULT_MAX_DIALOGS_PER_SOURCE,
+    );
     let max_file = positive(
         factory.conf_number("ssh-server", "sftp-max-file", DEFAULT_MAX_FILE),
         DEFAULT_MAX_FILE,
@@ -287,7 +301,9 @@ pub fn start(
     let intake = Arc::new(Intake {
         config,
         shared,
-        counts: Arc::new(Counts::new(max_sessions, max_per_user, max_per_source)),
+        counts: Arc::new(
+            Counts::new(max_sessions, max_per_user, max_per_source).with_dialogs(max_dialogs, max_dialogs_per_source),
+        ),
         shutdown: watch,
     });
     *moqui_lib::sync::lock(&factory.extension(|_| IntakeSlot::default()).0) = Some(Arc::clone(&intake));
@@ -318,6 +334,8 @@ struct Counts {
     /// The sessions of each user logged in by key or password, against `ssh-server` `max-sessions-per-user`.
     by_user: std::sync::Mutex<HashMap<String, usize>>,
     max_per_user: usize,
+    /// The sessions with no user, against `ssh-server` `max-dialog-sessions` and `max-dialog-sessions-per-source`.
+    dialogs: SourceSlots,
 }
 
 impl Counts {
@@ -330,7 +348,16 @@ impl Counts {
             by_source: SourceSlots::new(usize::MAX, max_per_source),
             by_user: std::sync::Mutex::default(),
             max_per_user,
+            dialogs: SourceSlots::new(usize::MAX, 0),
         }
+    }
+
+    /// With the share of the sessions with no user: at most `total` (0 for no share but `max-sessions`), and
+    /// `per_source` of them from one source (0 for no share).
+    fn with_dialogs(mut self, total: usize, per_source: usize) -> Self {
+        let total = if total == 0 { usize::MAX } else { total };
+        self.dialogs = SourceSlots::new(total, per_source);
+        self
     }
 }
 
@@ -354,6 +381,8 @@ enum SessionRefused {
     User,
     /// The source has `max-sessions-per-source` open.
     Source,
+    /// `max-dialog-sessions` with no user are open, or the source has `max-dialog-sessions-per-source` of them.
+    Dialog,
 }
 
 impl SessionRefused {
@@ -363,6 +392,7 @@ impl SessionRefused {
             Self::Total => "max-sessions",
             Self::User => "max-sessions-per-user",
             Self::Source => "max-sessions-per-source",
+            Self::Dialog => "max-dialog-sessions",
         }
     }
 }
@@ -375,10 +405,15 @@ struct Slot {
     preauth: std::sync::Mutex<Option<SourceSlot>>,
     session: AtomicBool,
     source: IpAddr,
-    /// What the session holds beside its place in `max-sessions`: its source's share, and its user's.
-    shares: std::sync::Mutex<(Option<SourceSlot>, Option<String>)>,
-    /// Let in with no user: the login dialog must log in within `crate::term::LOGIN_WAIT`.
+    /// What the session holds beside its place in `max-sessions`: its source's share, its user's, and with no user
+    /// its place in `max-dialog-sessions`.
+    shares: std::sync::Mutex<(Option<SourceSlot>, Option<String>, Option<SourceSlot>)>,
+    /// Let in with no user: the login dialog must start within [`PREAUTH_TIMEOUT`] and log in within
+    /// `crate::term::LOGIN_WAIT`.
     dialog: AtomicBool,
+    /// The connection let in with no user has started its `apps`, the login dialog.
+    #[cfg_attr(not(feature = "tui"), allow(dead_code))]
+    dialog_started: AtomicBool,
     /// The dialog logged in, set by the session's login gate.
     dialog_done: Arc<AtomicBool>,
 }
@@ -395,6 +430,7 @@ impl Slot {
             source,
             shares: std::sync::Mutex::default(),
             dialog: AtomicBool::new(false),
+            dialog_started: AtomicBool::new(false),
             dialog_done: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -403,12 +439,17 @@ impl Slot {
     ///
     /// # Errors
     ///
-    /// [`SessionRefused`] when `ssh-server` `max-sessions` are open, or the user or the source has its share.
+    /// [`SessionRefused`] when `ssh-server` `max-sessions` are open, or the user or the source has its share, or
+    /// with no user the dialogs have theirs.
     fn log_in(&self, who: Who<'_>) -> Result<(), SessionRefused> {
         if self.session.load(Ordering::Acquire) {
             return Ok(());
         }
         let counts = &self.counts;
+        let dialog = match who {
+            Who::Dialog => Some(counts.dialogs.take(self.source).map_err(|_| SessionRefused::Dialog)?),
+            Who::User(_) | Who::Cluster => None,
+        };
         let source = match who {
             Who::Cluster => None,
             Who::User(_) | Who::Dialog => Some(counts.by_source.take(self.source).map_err(|_| SessionRefused::Source)?),
@@ -433,7 +474,7 @@ impl Slot {
             self.release_user(user.as_deref());
             return Err(SessionRefused::Total);
         }
-        *moqui_lib::sync::lock(&self.shares) = (source, user);
+        *moqui_lib::sync::lock(&self.shares) = (source, user, dialog);
         self.session.store(true, Ordering::Release);
         moqui_lib::sync::lock(&self.preauth).take();
         Ok(())
@@ -463,7 +504,7 @@ impl Drop for Slot {
         if self.session.swap(false, Ordering::AcqRel) {
             self.counts.sessions.fetch_sub(1, Ordering::AcqRel);
             // the source's share goes back as its slot drops
-            let (_source, user) = std::mem::take(&mut *moqui_lib::sync::lock(&self.shares));
+            let (_source, user, _dialog) = std::mem::take(&mut *moqui_lib::sync::lock(&self.shares));
             self.release_user(user.as_deref());
         }
     }
@@ -477,11 +518,16 @@ async fn preauth_expired(slot: &Slot, since: tokio::time::Instant) {
     }
 }
 
-/// Resolves the login wait after `since` when the connection was let in with no user and its dialog has not logged in
-/// by then, so a client that opens no session, or leaves the dialog, does not hold a session slot; never otherwise.
+/// Resolves when the connection was let in with no user and has started no `apps` within [`PREAUTH_TIMEOUT`] of
+/// `since` (SEC-FIL-87), or its dialog has not logged in within the login wait, so a client that opens no session, or
+/// leaves the dialog, does not hold a session slot; never otherwise.
 async fn dialog_expired(slot: &Slot, since: tokio::time::Instant) {
     #[cfg(feature = "tui")]
     {
+        tokio::time::sleep_until(since + PREAUTH_TIMEOUT).await;
+        if slot.dialog.load(Ordering::Acquire) && !slot.dialog_started.load(Ordering::Acquire) {
+            return;
+        }
         tokio::time::sleep_until(since + crate::term::LOGIN_WAIT).await;
         if slot.dialog.load(Ordering::Acquire) && !slot.dialog_done.load(Ordering::Acquire) {
             return;
@@ -868,7 +914,10 @@ impl Connection {
                 },
                 (None, None) => return Err(DIALOG_ONLY),
             };
-            self.dialog_used |= self.username.is_none();
+            if self.username.is_none() {
+                self.dialog_used = true;
+                self.slot.dialog_started.store(true, Ordering::Release);
+            }
             Ok(crate::term::Start {
                 factory: std::sync::Weak::clone(&self.shared.factory),
                 sessions: Arc::clone(&self.shared.apps),
@@ -1556,13 +1605,49 @@ mod tests {
         assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
         assert!(moqui_lib::sync::lock(&counts.by_user).is_empty());
         // 0 is no share
-        let open = Arc::new(Counts::new(8, 0, 0));
+        let open = Arc::new(Counts::new(8, 0, 0).with_dialogs(0, 0));
         let mut many = Vec::new();
         for _ in 0..8 {
             let slot = Slot::preauth(&open, at(1)).unwrap();
             assert!(slot.log_in(Who::User("ann")).is_ok());
             many.push(slot);
         }
+    }
+
+    /// Connections with no user hold only their share of the sessions, and of it one source only its own, so they
+    /// never keep a key or password login out (SEC-FIL-87).
+    #[test]
+    fn dialogs_hold_only_their_share_of_the_sessions() {
+        let counts = Arc::new(Counts::new(8, 4, 8).with_dialogs(4, 2));
+        let at = |last: u8| std::net::IpAddr::from([198, 51, 100, last]);
+        let slot = |last: u8| Slot::preauth(&counts, at(last)).unwrap();
+        let one = [slot(1), slot(1)];
+        assert!(one.iter().all(|slot| slot.log_in(Who::Dialog).is_ok()));
+        let third = slot(1);
+        assert_eq!(
+            third.log_in(Who::Dialog),
+            Err(SessionRefused::Dialog),
+            "the source's share"
+        );
+        assert_eq!(SessionRefused::Dialog.limit(), "max-dialog-sessions");
+        // the same address still logs in by key or password
+        assert!(third.log_in(Who::User("ann")).is_ok());
+        let two = [slot(2), slot(2)];
+        assert!(two.iter().all(|slot| slot.log_in(Who::Dialog).is_ok()));
+        let past = slot(3);
+        assert_eq!(
+            past.log_in(Who::Dialog),
+            Err(SessionRefused::Dialog),
+            "the dialogs' share"
+        );
+        // the sessions a key or password login needs are still there
+        assert!(past.log_in(Who::User("bob")).is_ok());
+        drop(one);
+        let again = slot(3);
+        assert!(again.log_in(Who::Dialog).is_ok(), "a dialog's place came back");
+        drop((third, two, past, again));
+        assert_eq!(counts.dialogs.held(), 0);
+        assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
     }
 
     /// `git-any-account` serves git to an account that proved a key, and gives a password login nothing.
