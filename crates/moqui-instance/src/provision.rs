@@ -633,6 +633,7 @@ pub(crate) fn run_one_shot(
     shot: OneShot,
 ) -> Result<(i64, Vec<String>), LibError> {
     let host = connect_host(host_row)?;
+    let wait = shot.wait.unwrap_or(ONE_SHOT_WAIT);
     let mut tag = [0_u8; 4];
     moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut tag);
     let name = format!("{for_instance}-db-{}", moqui_vault::text::hex(&tag));
@@ -668,7 +669,7 @@ pub(crate) fn run_one_shot(
     let container = host.create_spec(&spec)?;
     let ran = (|| -> Result<(i64, Vec<String>), LibError> {
         host.start(&container)?;
-        let until = Instant::now() + ONE_SHOT_WAIT;
+        let until = Instant::now() + wait;
         let info = loop {
             let info = host
                 .inspect(&container)?
@@ -677,10 +678,7 @@ pub(crate) fn run_one_shot(
                 break info;
             }
             if Instant::now() > until {
-                return Err(fail(format!(
-                    "the one-shot {name} did not end in {}s",
-                    ONE_SHOT_WAIT.as_secs()
-                )));
+                return Err(fail(format!("the one-shot {name} did not end in {}s", wait.as_secs())));
             }
             std::thread::sleep(Duration::from_millis(500));
         };
@@ -702,10 +700,23 @@ pub(crate) fn run_one_shot(
 /// Pulls an image with the registry login of the lease (`X-Registry-Auth`, which the engine passes to the registry),
 /// after checking that the item's own registry is the image's.
 pub(crate) fn pull_with_login(host: &DockerHost, image: &EntityValue) -> Result<(), LibError> {
+    pull_with_login_ref(host, image, &field(image, "imageName"))
+}
+
+/// Pulls `reference` (the image's name, or a digest of its repository a rollback recorded) with the registry login of
+/// the `InstanceImage` row `image`, refused unless the reference pulls from that row's registry.
+pub(crate) fn pull_with_login_ref(host: &DockerHost, image: &EntityValue, reference: &str) -> Result<(), LibError> {
     use base64::Engine as _;
     let image_id = field(image, "instanceImageId");
     let binding = format!("InstanceImage:{image_id}:registry");
     plan::check_registry(image)?;
+    if plan::image_registry(reference) != plan::registry_name(&field(image, "registryLocation")) {
+        return Err(fail(format!(
+            "{reference} pulls from {}, not InstanceImage {image_id}'s registry: its login goes only there (reasonCode \
+             registryMismatch)",
+            plan::image_registry(reference)
+        )));
+    }
     let registry = plan::registry_name(&leased(&binding, "registry").unwrap_or_default());
     let location = plan::registry_name(&field(image, "registryLocation"));
     if registry != location {
@@ -720,21 +731,20 @@ pub(crate) fn pull_with_login(host: &DockerHost, image: &EntityValue) -> Result<
         json!({ "username": user.as_str(), "password": password.as_str(), "serveraddress": location }).to_string(),
     );
     let header = Zeroizing::new(base64::engine::general_purpose::URL_SAFE.encode(auth.as_bytes()));
-    let name = field(image, "imageName");
-    let (repository, tag) = match name.rsplit_once(':') {
-        Some((repository, tag)) if !tag.contains('/') => (repository.to_string(), tag.to_string()),
-        _ => (name.clone(), "latest".to_string()),
+    let name = reference.to_string();
+    // a digest is pulled whole; a name by its repository and tag
+    let target = if name.contains('@') {
+        format!("/images/create?fromImage={}", encode(&name))
+    } else {
+        let (repository, tag) = match name.rsplit_once(':') {
+            Some((repository, tag)) if !tag.contains('/') => (repository.to_string(), tag.to_string()),
+            _ => (name.clone(), "latest".to_string()),
+        };
+        format!("/images/create?fromImage={}&tag={}", encode(&repository), encode(&tag))
     };
     let response = host
         .client()
-        .request(
-            Method::Post,
-            host.url(&format!(
-                "/images/create?fromImage={}&tag={}",
-                encode(&repository),
-                encode(&tag)
-            )),
-        )
+        .request(Method::Post, host.url(&target))
         .header("X-Registry-Auth", header.as_str())
         .timeout(PULL_TIMEOUT)
         .allow_in_sim(true)

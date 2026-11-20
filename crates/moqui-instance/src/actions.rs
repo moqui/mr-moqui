@@ -277,7 +277,11 @@ pub fn needs(facade: &EntityFacade, instance_id: &str, verb: &str) -> Result<(Ve
         return Ok((plan.lease_bindings, plan.operation));
     }
     if verb == "rollback" {
-        let plan = crate::deploy::plan(facade, &crate::deploy::rollback_request(facade, instance_id)?)?;
+        let plan = crate::deploy::plan(
+            facade,
+            &crate::deploy::ServiceLink,
+            &crate::deploy::rollback_request(facade, instance_id)?,
+        )?;
         return Ok((plan.bindings, plan.operation));
     }
     crate::lifecycle::needs(facade, instance_id, verb)

@@ -10,11 +10,13 @@
 //     --param user=ops.admin --param password=... \
 //     --param podmanHost=PodmanHost --param environment=staging \
 //     --param nextImage=MoquiNext --param commit=<a commit of the component's repository its pipeline passed> \
-//     --param component=site --param repositoryUrl=https://manager.example.com/git/site.git --param repositoryId=site
+//     --param component=site --param repositoryId=site
 //
 // The environment holds machine access (System › Vaults) to the items its deploys open, so no lease waits for an
-// approver: its required pipeline's run for the commit must have passed. nextImage is an InstanceImage of the mr-moqui
-// kind, another version than the one provisioned (MoquiLocal). Without podmanHost every feature skips, so the
+// approver, and is single-person (singlePersonDeploy) or names no approver group: its required pipeline's run for the
+// commit must have passed, and a CI environment of repositoryId must deploy to it with its cloneUrl. nextImage is an
+// InstanceImage of the mr-moqui kind, another version than the one provisioned (MoquiLocal), whose source repository
+// and revision (recorded by the pipeline that built it) passed that pipeline. Without podmanHost every feature skips, so the
 // framework's acceptance run on a machine with no Podman passes over it.
 
 const instances = params.instancesPath ?? "/qapps/system/Instances"
@@ -92,10 +94,9 @@ feature("a component's commit is deployed over the link, gated by its passed run
         post("InstanceDetail/requestDeploy", {
             appInstanceId: state.app,
             componentName: params.component ?? "site",
-            repositoryUrl: params.repositoryUrl,
+            repositoryId: params.repositoryId ?? "site",
             refName: params.branch ?? "main",
             commitId: params.commit,
-            repositoryId: params.repositoryId ?? "",
         })
         const done = waitUntil(
             () => actions(state.app).find((row) => row.actionEnumId == "IatDeploy" && row.statusEnumId != "IasRunning"),
@@ -116,11 +117,7 @@ feature("a component's commit is deployed over the link, gated by its passed run
 feature("a new image replaces the container, keeping its volume and its seal, and comes back unsealed", {
     when() {
         if (!state.componentAction) skip("the component was not deployed")
-        post("InstanceDetail/requestDeploy", {
-            appInstanceId: state.app,
-            instanceImageId: params.nextImage,
-            commitId: params.imageCommit ?? params.commit,
-        })
+        post("InstanceDetail/requestDeploy", { appInstanceId: state.app, instanceImageId: params.nextImage })
         const done = waitUntil(
             () =>
                 actions(state.app).find(

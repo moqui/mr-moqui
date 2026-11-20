@@ -635,11 +635,25 @@ pub fn decide(
     lease_approval: Option<&Value>,
 ) -> Result<String, Error> {
     let id = field(deployment, "deploymentId").unwrap_or_default();
-    if field(deployment, "statusId").as_deref() != Some(WAITING_APPROVAL) {
+    // the row as it is now: the lease dialog's approval and a decision may cross, and the second one changes nothing
+    let deployment = {
+        let _rows = crate::rows_guard();
+        one(entity, DEPLOYMENT, "deploymentId", &id)?.unwrap_or_else(|| deployment.clone())
+    };
+    let deployment = &deployment;
+    let state = field(deployment, "statusId").unwrap_or_default();
+    if approve && field(deployment, "approvedByUserId").is_some() && matches!(state.as_str(), DEPLOYING | DEPLOYED) {
+        return Ok(state);
+    }
+    if state != WAITING_APPROVAL {
         return Err(Error::new(format!("deployment {id} does not wait for approval")));
     }
     let lease_id = field(deployment, "leaseId");
-    if let (true, Some(lease_id), Some(approval)) = (approve, &lease_id, lease_approval) {
+    let open_already = match &lease_id {
+        Some(lease_id) => lease_open(entity, lease_id)?,
+        None => false,
+    };
+    if let (true, false, Some(lease_id), Some(approval)) = (approve, open_already, &lease_id, lease_approval) {
         let parameters: BTreeMap<String, Value> = [
             ("leaseId".to_string(), Value::string(lease_id)),
             ("approval".to_string(), approval.clone()),
@@ -864,6 +878,34 @@ pub fn resume(entity: &EntityFacade, now: i64) -> Result<(usize, usize), Error> 
     let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()));
     let limit = i64::try_from(timeout().as_millis()).unwrap_or(i64::MAX) + 5 * 60_000;
     let (mut started, mut ended) = (0, 0);
+    // a deployment whose lease ended, was revoked, is past its time or is held by no member any more (a restarted member
+    // marks its leases ended) cannot deploy: it fails, so nothing waits on it
+    for row in entity
+        .find(DEPLOYMENT)?
+        .condition(Condition::is_not_null("leaseId"))
+        .list()?
+        .iter()
+    {
+        let state = field(row, "statusId").unwrap_or_default();
+        // a step that began ends its lease as it ends: the step's own time limit below covers it
+        let begun = millis(row, "startedDate").is_some();
+        if !(state == WAITING_APPROVAL || (state == DEPLOYING && !begun)) {
+            continue;
+        }
+        let id = field(row, "deploymentId").unwrap_or_default();
+        let lease_id = field(row, "leaseId").unwrap_or_default();
+        let lease = one(entity, VAULT_LEASE, "leaseId", &lease_id)?;
+        let live = lease.as_ref().is_some_and(|lease| {
+            matches!(field(lease, "statusId").as_deref(), Some("VlsRequested" | "VlsOpen"))
+                && super::long(lease, "expiresAt").is_some_and(|expires| expires > now)
+        });
+        if !live {
+            let why =
+                format!("its lease {lease_id} ended, was revoked or passed its time before it deployed: deploy again");
+            end(entity, &id, &state, FAILED, &why, vec![])?;
+            ended += 1;
+        }
+    }
     for row in entity
         .find(DEPLOYMENT)?
         .eq("statusId", Value::string(DEPLOYING))

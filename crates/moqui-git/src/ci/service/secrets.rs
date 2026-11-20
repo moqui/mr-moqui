@@ -470,7 +470,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         // waits for an approver again
         if (field(&row, "targetUrl") != *target_before || field(&row, "vaultId") != *vault_before)
             && is_yes(&row, "machineAccess")
-            && !(parameters.contains_key("machineAccess") && flag(parameters, "machineAccess"))
+            && !(gives_machine_access && parameters.contains_key("machineAccess") && flag(parameters, "machineAccess"))
         {
             row.set("machineAccess", yes_no(false));
             cleared.push("machine access to the target's token".to_string());

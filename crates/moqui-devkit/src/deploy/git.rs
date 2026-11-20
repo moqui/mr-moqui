@@ -927,15 +927,25 @@ pub fn deploy_attested(
         signature,
         moqui_core::service::util::now_millis(),
     )?;
-    deploy_checked(factory, attestation, false)
+    deploy_checked(factory, attestation, Taken::Attested)
+}
+
+/// How an attestation was taken: verified with the secret, or its manager's over the link, a rollback naming its
+/// commit explicitly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Taken {
+    Attested,
+    Managed,
+    /// A rollback (the deploy's `rollback`: true): the commit may be older than the branch's head.
+    ManagedRollback,
 }
 
 /// A managed deploy (plans/Vault-Instances.md §4.6): the commit its manager names over the manager link, with no
 /// signature, since the link's pinned keys name the caller and the manager checked the passed run itself; so the
 /// instance needs no `attestation-secret` and no `allow` entry. Not a service: only the link's command handler calls
-/// it, as the link's one identity. The commit may be older than the branch's head (a rollback to the commits an
-/// instance action recorded); otherwise as [`deploy_attested`]: claimed newer than the last the component took, and
-/// put in place under the gate.
+/// it, as the link's one identity. Only a rollback (`"rollback": true` in the deploy, to the commits an instance action
+/// recorded) may name a commit older than the branch's head; otherwise as [`deploy_attested`]: the branch's head only,
+/// claimed newer than the last the component took, and put in place under the gate.
 ///
 /// # Errors
 ///
@@ -948,6 +958,8 @@ pub fn deploy_managed(
     if attestation_text.len() > attest::MAX_TEXT {
         return Err("the deploy is longer than an attestation may be".to_string());
     }
+    let rollback = serde_json::from_str::<serde_json::Value>(attestation_text)
+        .is_ok_and(|given| given["rollback"] == serde_json::Value::Bool(true));
     let attestation: attest::Attestation =
         serde_json::from_str(attestation_text).map_err(|err| format!("the deploy is not an attestation: {err}"))?;
     if attestation.kind != attest::KIND || attestation.v != attest::VERSION || attestation.run_status != "success" {
@@ -956,7 +968,12 @@ pub fn deploy_managed(
     if attestation.commit_id.is_empty() || attestation.repository_url.is_empty() {
         return Err("the deploy names no commit or repository".to_string());
     }
-    deploy_checked(factory, attestation, true)
+    let taken = if rollback {
+        Taken::ManagedRollback
+    } else {
+        Taken::Managed
+    };
+    deploy_checked(factory, attestation, taken)
 }
 
 /// The deploy of an attestation once it is taken: verified ([`deploy_attested`]), or its manager's over the link
@@ -964,8 +981,9 @@ pub fn deploy_managed(
 fn deploy_checked(
     factory: &Arc<ExecutionContextFactory>,
     attestation: moqui_git::ci::attest::Attestation,
-    managed: bool,
+    taken: Taken,
 ) -> Result<AttestedDeploy, String> {
+    let managed = taken != Taken::Attested;
     let name = attestation.component.clone();
     check_name(&name)?;
     let facade = factory.entity().ok_or_else(|| "no entity facade".to_string())?;
@@ -1003,8 +1021,8 @@ fn deploy_checked(
                     attestation.branch()
                 ));
             }
-            // a managed deploy goes to its commit, which a rollback names below the branch's head
-            let at = managed.then_some(attestation.commit_id.as_str());
+            // a rollback goes to its commit, below the branch's head; any other deploy only to the head
+            let at = (taken == Taken::ManagedRollback).then_some(attestation.commit_id.as_str());
             let preview = preview_update_at(factory, &name, at)?;
             if preview.to != attestation.commit_id {
                 return Err(format!(

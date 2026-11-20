@@ -837,7 +837,13 @@ fn an_attested_update_puts_in_place_only_the_attested_head() {
     back.commit_id.clone_from(&first);
     back.audience = String::new();
     back.issued_at = now + 1_000;
-    let done = super::deploy_managed(factory, &serde_json::to_string(&back).unwrap()).unwrap();
+    // not marked a rollback: the branch's head only, as an attested deploy
+    let err = super::deploy_managed(factory, &serde_json::to_string(&back).unwrap()).unwrap_err();
+    assert!(err.contains("deploy its new head"), "{err}");
+    back.issued_at = now + 1_500;
+    let mut rollback = serde_json::to_value(&back).unwrap();
+    rollback["rollback"] = serde_json::Value::Bool(true);
+    let done = super::deploy_managed(factory, &rollback.to_string()).unwrap();
     assert_eq!(
         (done.status.as_str(), done.commit.as_str()),
         ("deployed", first.as_str())

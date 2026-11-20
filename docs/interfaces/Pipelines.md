@@ -613,6 +613,11 @@ for after each green merge; moqui.org's own with `approvalRequired` and its targ
 
 ### Deploy secrets as vault items
 
+**Upgrading.** The token column (`GitCiEnvironment.targetToken`) is gone from the entity, and no deployment reads it:
+an existing target's token is entered again as the vault item below, and the environment given its `vaultId`, before
+it deploys; the old column, left in the database, holds the old encrypted value until it is dropped
+(`ALTER TABLE ... DROP COLUMN TARGET_TOKEN`).
+
 What a deploy signs or opens with is an item of an operational vault ([Vault-Instances](../../plans/Vault-Instances.md)
 §3.7, §3.8), never a row's value: a target's token, and for managed instances a host's client key, a registry login,
 a replaced container's secret files and a database's admin login for its backup. Once the pipeline passed:
@@ -624,8 +629,11 @@ a replaced container's secret files and a database's admin login for its backup.
   `approve#VaultLease` under the caller's own rights: the vault's approve role and a recent sign-in), or the lease
   approved in the lease dialog by someone who may decide the deployment (an approver of the environment, not the
   requester), which the member holding the lease takes as the decision. An approval without an open lease is
-  refused; a refusal ends the lease; a lease not approved in its time (or revoked) fails the deployment; the lease
-  ends with the deploy step. A restart of the member that holds it ends it: deploy again.
+  refused; a decision that crosses the lease dialog's changes nothing the second time; a refusal ends the lease; a
+  lease not approved in its time (or revoked) fails the deployment, and `end#OverdueJobRuns` fails one whose lease
+  ended, was revoked or passed its time (a restart of the member that holds it ends it) before it deployed: deploy
+  again. The lease ends with the deploy step. For managed instances the decider is also a member of the
+  `InstanceEnvironment`'s approver group, when it names one.
 - **Under machine access.** With `machineAccess` (a target's environment) or an `InstanceEnvironment` whose
   `machineAccess` is Y, no lease is asked: the step opens the items the vault gave the environment, approved by
   "machine", and the deployment's own approval rule stands.

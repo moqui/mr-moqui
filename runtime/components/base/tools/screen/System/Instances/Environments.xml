@@ -66,6 +66,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down>
                 </default-field></field>
                 <field name="leaseLimitMinutes"><default-field title="Lease limit (minutes)"><text-line size="6"/></default-field></field>
+                <field name="singlePersonDeploy"><default-field title="Single-person deploys" tooltip="With an approver group: Yes lets a deploy that opens no vault item run as its requester asks; No (the default) waits for another member to approve it">
+                    <drop-down><option key="N" text="No"/><option key="Y" text="Yes"/></drop-down></default-field></field>
                 <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
             </form-single>
         </container-dialog>
@@ -94,10 +96,9 @@ along with this software (see the LICENSE.md file). If not, see
                             </entity-options></drop-down>
                         </default-field></field>
                         <field name="componentName"><default-field title="Or a component"><text-line size="30"/></default-field></field>
-                        <field name="repositoryUrl"><default-field title="Its repository URL"><text-line size="50"/></default-field></field>
+                        <field name="repositoryId"><default-field title="Its repository" tooltip="A repository whose CI environment deploys to this environment: its pipeline must have passed for the commit, and the instance fetches from that environment's clone URL"><text-line size="30"/></default-field></field>
                         <field name="refName"><default-field title="Its branch"><text-line size="20" default-value="main"/></default-field></field>
-                        <field name="commitId"><default-field title="Commit" tooltip="The commit the pipeline passed: the component's, or the one the image was built from"><text-line size="42"/></default-field></field>
-                        <field name="repositoryId"><default-field title="Repository here"><text-line size="30"/></default-field></field>
+                        <field name="commitId"><default-field title="Commit" tooltip="The component's commit, which its pipeline passed; an image is gated on the revision its row records"><text-line size="42"/></default-field></field>
                         <field name="submitButton"><default-field title="Deploy"><submit confirmation="Deploy to environment ${environmentId}?"/></default-field></field>
                     </form-single>
                 </container-dialog>

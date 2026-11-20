@@ -860,9 +860,12 @@ impl Manager for Service {
         self.conn.helloed.store(true, Ordering::Release);
         let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
         let seal_state = status.seal_state.clone();
+        let schema_hash = status.schema_hash.clone();
         self.server
             .on_pool(move |facade| {
                 moqui_instance::link::note_state(facade, &instance, "linked", Some(&seal_state), &remote);
+                // the schema a deploy records before it and a rollback compares (M3)
+                moqui_instance::link::note_schema(facade, &instance, &schema_hash);
                 Ok(())
             })
             .await?;
@@ -889,6 +892,15 @@ impl Manager for Service {
         let was = self.conn.sealed.swap(sealed, Ordering::AcqRel);
         self.server
             .note_status(&self.conn.instance, self.conn.generation, &status);
+        if !status.schema_hash.is_empty() {
+            let (instance, schema_hash) = (self.conn.instance.clone(), status.schema_hash.clone());
+            self.server
+                .on_pool(move |facade| {
+                    moqui_instance::link::note_schema(facade, &instance, &schema_hash);
+                    Ok(())
+                })
+                .await?;
+        }
         if was != sealed {
             let instance = self.conn.instance.clone();
             let seal_state = status.seal_state.clone();

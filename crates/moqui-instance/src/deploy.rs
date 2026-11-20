@@ -105,32 +105,26 @@ pub trait Link: Send + Sync {
     fn deploy_component(&self, instance_id: &str, attestation: &str) -> Result<String, LibError>;
 }
 
-/// The manager link of this server: `call#InstanceCommand`, which checks the caller and the instance's environment and
-/// sends only to a link it accepts.
+/// The manager link of this server: status, drain and undrain through `call#InstanceCommand`, which checks the caller and
+/// the instance's environment and sends only to a link it accepts; the unsigned deploy through the link server's Rust
+/// path ([`crate::link::link_deploy`]), never a service's parameter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ServiceLink;
 
 impl ServiceLink {
-    fn command(
-        instance_id: &str,
-        command: &str,
-        attestation: Option<&str>,
-    ) -> Result<BTreeMap<String, Value>, LibError> {
-        let mut parameters: BTreeMap<String, Value> = [
+    fn command(instance_id: &str, command: &str) -> Result<BTreeMap<String, Value>, LibError> {
+        let parameters: BTreeMap<String, Value> = [
             ("appInstanceId".to_string(), Value::string(instance_id)),
             ("command".to_string(), Value::string(command)),
         ]
         .into();
-        if let Some(attestation) = attestation {
-            parameters.insert("attestation".to_string(), Value::string(attestation));
-        }
         crate::lifecycle::call(LINK_COMMAND, &parameters)
     }
 }
 
 impl Link for ServiceLink {
     fn status(&self, instance_id: &str) -> Result<LinkStatus, LibError> {
-        let out = Self::command(instance_id, "status", None)?;
+        let out = Self::command(instance_id, "status")?;
         let text = |name: &str| out.get(name).map(to_plain_string).unwrap_or_default();
         Ok(LinkStatus {
             seal_state: text("sealState"),
@@ -140,12 +134,11 @@ impl Link for ServiceLink {
     }
 
     fn drain(&self, instance_id: &str, drained: bool) -> Result<(), LibError> {
-        Self::command(instance_id, if drained { "drain" } else { "undrain" }, None).map(|_| ())
+        Self::command(instance_id, if drained { "drain" } else { "undrain" }).map(|_| ())
     }
 
     fn deploy_component(&self, instance_id: &str, attestation: &str) -> Result<String, LibError> {
-        let out = Self::command(instance_id, "deploy-component", Some(attestation))?;
-        Ok(out.get("text").map(to_plain_string).unwrap_or_default())
+        crate::link::link_deploy(instance_id, attestation)
     }
 }
 
@@ -234,12 +227,18 @@ fn short(commit: &str) -> &str {
 // ----- the gate -----
 
 /// The gate (§4.6, step 2): the id of a passed run of the environment's required pipeline (or the request's fallback,
-/// a deployment's own) for the commit, of the request's repository when it names one. A rollback is not gated.
+/// a deployment's own) for what is deployed, never for a commit a caller names beside it:
+///
+/// - a component: of the repository a CI environment linked to this environment deploys (its `repositoryId`), at the
+///   component's commit, and from that CI environment's clone URL (a deploy by hand takes its URL from it);
+/// - an image: of the source repository and revision recorded on its `InstanceImage` by the pipeline that built it.
+///
+/// A rollback is not gated: it goes back to a version the environment ran.
 pub fn gate(facade: &EntityFacade, environment: &EntityValue, request: &Request) -> Result<String, LibError> {
+    let environment_id = field(environment, "environmentId");
     if matches!(request.change, Change::Rollback { .. }) {
         return Ok(String::new());
     }
-    let environment_id = field(environment, "environmentId");
     let pipeline = Some(field(environment, "requiredPipeline"))
         .filter(|pipeline| !pipeline.is_empty())
         .unwrap_or_else(|| request.fallback_pipeline.clone());
@@ -249,24 +248,67 @@ pub fn gate(facade: &EntityFacade, environment: &EntityValue, request: &Request)
              passed (reasonCode noGate)"
         )));
     }
-    if request.commit_id.is_empty() {
+    let (repository, commit) = match &request.change {
+        Change::Rollback { .. } => return Ok(String::new()),
+        Change::Image { image_id } => {
+            let image = one(facade, IMAGE, "instanceImageId", image_id)?
+                .ok_or_else(|| fail(format!("No InstanceImage {image_id}")))?;
+            let (repository, revision) = (field(&image, "sourceRepositoryId"), field(&image, "sourceRevision"));
+            if repository.is_empty() || revision.is_empty() {
+                return Err(fail(format!(
+                    "InstanceImage {image_id} records no source repository and revision (written by the pipeline that                      built it): its passed run cannot be checked (reasonCode noRevision)"
+                )));
+            }
+            (repository, revision)
+        }
+        Change::Component(component) => {
+            if request.repository_id.is_empty() {
+                return Err(fail(format!(
+                    "A component deploy to {environment_id} names its repository (repositoryId), whose pipeline must                      have passed for the commit (reasonCode noRepository)"
+                )));
+            }
+            let linked = find(facade, CI_ENVIRONMENT)?
+                .eq("instanceEnvironmentId", Value::string(&environment_id))
+                .eq("repositoryId", Value::string(&request.repository_id))
+                .list()?
+                .into_values();
+            let Some(ci) = linked.first() else {
+                return Err(fail(format!(
+                    "No CI environment of repository {} deploys to InstanceEnvironment {environment_id} (reasonCode                      notLinked)",
+                    request.repository_id
+                )));
+            };
+            let clone_url = field(ci, "cloneUrl");
+            if clone_url.is_empty() && request.git_deployment_id.is_empty() {
+                return Err(fail(format!(
+                    "The CI environment of repository {} names no cloneUrl: a deploy by hand takes the repository's URL                      from it (reasonCode noCloneUrl)",
+                    request.repository_id
+                )));
+            }
+            if !clone_url.is_empty() && clone_url != component.repository_url {
+                return Err(fail(format!(
+                    "The component's repository URL is not its CI environment's cloneUrl {clone_url} (reasonCode                      urlMismatch)"
+                )));
+            }
+            (request.repository_id.clone(), component.commit_id.clone())
+        }
+    };
+    if commit.is_empty() {
         return Err(fail(format!(
-            "A deploy to {environment_id} names the commit its pipeline {pipeline} passed for (reasonCode noCommit)"
+            "A deploy to {environment_id} names no commit its pipeline {pipeline} passed for (reasonCode noCommit)"
         )));
     }
-    let mut runs = find(facade, PIPELINE_RUN)?
+    let runs = find(facade, PIPELINE_RUN)?
         .eq("pipelineName", Value::string(&pipeline))
-        .eq("commitId", Value::string(&request.commit_id))
+        .eq("repositoryId", Value::string(&repository))
+        .eq("commitId", Value::string(&commit))
         .eq("statusId", Value::string("success"));
-    if !request.repository_id.is_empty() {
-        runs = runs.eq("repositoryId", Value::string(&request.repository_id));
-    }
     match runs.list()?.iter().next() {
         Some(run) => Ok(field(run, "pipelineRunId")),
         None => Err(fail(format!(
-            "No passed run of pipeline {pipeline} for commit {}: InstanceEnvironment {environment_id} deploys only a \
-             commit it passed (reasonCode notPassed)",
-            short(&request.commit_id)
+            "No passed run of pipeline {pipeline} of repository {repository} for commit {}: InstanceEnvironment \
+             {environment_id} deploys only what it passed (reasonCode notPassed)",
+            short(&commit)
         ))),
     }
 }
@@ -294,6 +336,8 @@ pub struct Target {
     pub schema_before: String,
     /// A cluster member: drained over the link while it changes.
     pub drain: bool,
+    /// Its image goes back to a recorded digest: pulled only when the host does not have it.
+    pub rollback: bool,
 }
 
 impl Target {
@@ -385,7 +429,7 @@ fn clustered(facade: &EntityFacade, instance: &EntityValue) -> Result<bool, LibE
 /// The plan of `request` (§4.6, step 4): its instances with their versions before and after, its backups, and the lease
 /// it needs. Refused when there is nothing to change, an image is not of the instances' kind, or a rollback crosses a
 /// schema change.
-pub fn plan(facade: &EntityFacade, request: &Request) -> Result<DeployPlan, LibError> {
+pub fn plan(facade: &EntityFacade, link: &dyn Link, request: &Request) -> Result<DeployPlan, LibError> {
     let environment = one(facade, ENVIRONMENT, "environmentId", &request.environment_id)?
         .ok_or_else(|| fail(format!("No InstanceEnvironment {}", request.environment_id)))?;
     let vault_id = field(&environment, "vaultId");
@@ -412,7 +456,8 @@ pub fn plan(facade: &EntityFacade, request: &Request) -> Result<DeployPlan, LibE
                 plan::check_registry(&image)?;
             }
             for row in instances_of(facade, request, &kind_id)? {
-                let mut target = target_of(facade, row)?;
+                let mut target = target_of(facade, link, row)?;
+                refuse_major(facade, &target, &image)?;
                 if kind_id == "mr-moqui" && field(&target.instance, "linkPairedDate").is_empty() {
                     return Err(fail(format!(
                         "AppInstance {} has not paired with this manager: a deploy waits for its link to report it \
@@ -427,7 +472,7 @@ pub fn plan(facade: &EntityFacade, request: &Request) -> Result<DeployPlan, LibE
         }
         Change::Component(component) => {
             for row in instances_of(facade, request, "mr-moqui")? {
-                let mut target = target_of(facade, row)?;
+                let mut target = target_of(facade, link, row)?;
                 if !component.name.is_empty() {
                     target.components_after.insert(
                         component.name.clone(),
@@ -456,13 +501,16 @@ pub fn plan(facade: &EntityFacade, request: &Request) -> Result<DeployPlan, LibE
                     request.environment_id
                 )));
             }
-            let mut target = target_of(facade, instance)?;
+            let mut target = target_of(facade, link, instance)?;
             let before = field(&action, "schemaHashBefore");
             let after = field(&action, "schemaHashAfter");
-            if !before.is_empty() && (after != before || target.schema_before != before) {
+            // an mr-moqui instance's schema is known only by its link: unknown then or now is refused, never assumed
+            let unknown = target.kind_id() == "mr-moqui"
+                && (before.is_empty() || after.is_empty() || target.schema_before.is_empty());
+            if unknown || after != before || target.schema_before != before {
                 return Err(fail(format!(
-                    "AppInstance {}'s schema changed since before InstanceAction {action_id} (schema {} then, {} now): \
-                     a rollback across a schema change is refused; restore its backup instead (reasonCode \
+                    "AppInstance {}'s schema changed since before InstanceAction {action_id}, or is not known (schema \
+                     {:?} then, {:?} now): a rollback across a schema change is refused; restore its backup instead (reasonCode \
                      schemaChanged)",
                     target.id(),
                     short(&before),
@@ -472,6 +520,18 @@ pub fn plan(facade: &EntityFacade, request: &Request) -> Result<DeployPlan, LibE
             let image_before = field(&action, "versionBefore");
             if !image_before.is_empty() && image_before != target.image_before {
                 target.image_after = Some(image_before);
+                // the image it ran before, whose registry login a pull of that digest takes
+                let image_row = one(
+                    facade,
+                    IMAGE,
+                    "instanceImageId",
+                    &field(&action, "instanceImageIdBefore"),
+                )?;
+                if let Some(image_row) = image_row.as_ref().filter(|image| field(image, "registryLogin") == "Y") {
+                    plan::check_registry(image_row)?;
+                }
+                target.image_row = image_row;
+                target.rollback = true;
             }
             let recorded: BTreeMap<String, Json> =
                 serde_json::from_str(&field(&action, "componentCommitsBefore")).unwrap_or_default();
@@ -578,7 +638,40 @@ pub fn plan(facade: &EntityFacade, request: &Request) -> Result<DeployPlan, LibE
     })
 }
 
-fn target_of(facade: &EntityFacade, instance: EntityValue) -> Result<Target, LibError> {
+/// Refuses a new image of a database or search kind whose tag's major version is not the running one's: a major
+/// upgrade is the kind's own procedure (§4.6), not a container replacement.
+fn refuse_major(facade: &EntityFacade, target: &Target, image: &EntityValue) -> Result<(), LibError> {
+    if !matches!(target.kind_id().as_str(), "postgres" | "mysql" | "opensearch") {
+        return Ok(());
+    }
+    let major = |name: &str| -> String {
+        let tag = match name.rsplit_once(':') {
+            Some((_, tag)) if !tag.contains('/') => tag,
+            _ => "",
+        };
+        tag.split(['.', '-']).next().unwrap_or_default().to_string()
+    };
+    let running = one(
+        facade,
+        IMAGE,
+        "instanceImageId",
+        &field(&target.instance, "instanceImageId"),
+    )?
+    .map(|row| field(&row, "imageName"))
+    .unwrap_or_default();
+    let (now, next) = (major(&running), major(&field(image, "imageName")));
+    if now.is_empty() || next.is_empty() || now != next {
+        return Err(fail(format!(
+            "AppInstance {} runs {running} and {} is another major version (or names none): a major upgrade is the \
+             kind's own procedure, not a deploy (reasonCode majorUpgrade)",
+            target.id(),
+            field(image, "imageName")
+        )));
+    }
+    Ok(())
+}
+
+fn target_of(facade: &EntityFacade, link: &dyn Link, instance: EntityValue) -> Result<Target, LibError> {
     let kind_id = field(&instance, "instanceKindId");
     let kind = one(facade, KIND, "instanceKindId", &kind_id)?.ok_or_else(|| {
         fail(format!(
@@ -596,8 +689,16 @@ fn target_of(facade: &EntityFacade, instance: EntityValue) -> Result<Target, Lib
         components_after: components.clone(),
         components_before: components,
         component_deploys: Vec::new(),
-        schema_before: field(&instance, "schemaHash"),
+        // an mr-moqui instance's schema as its link reports it now; unknown (empty) when it does not answer
+        schema_before: if kind_id == "mr-moqui" {
+            link.status(&field(&instance, "appInstanceId"))
+                .map(|status| status.schema_hash)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        },
         drain: false,
+        rollback: false,
         instance,
     })
 }
@@ -780,7 +881,7 @@ pub fn run(
     request: &Request,
     lease_id: Option<&str>,
 ) -> Result<Outcome, LibError> {
-    let plan = plan(facade, request)?;
+    let plan = plan(facade, link, request)?;
     let environment = one(facade, ENVIRONMENT, "environmentId", &plan.environment_id)?
         .ok_or_else(|| fail(format!("No InstanceEnvironment {}", plan.environment_id)))?;
     actions::check_caller(&environment)?;
@@ -823,14 +924,19 @@ pub fn run(
         report: plan.notes.clone(),
         ..Outcome::default()
     };
-    let ran = match &opened.lease_id {
-        Some(lease_id) => {
-            moqui_vault_server::lease::run_under(lease_id, || roll(facade, link, &plan, request, &opened, &mut outcome))
-        }
-        None => roll(facade, link, &plan, request, &opened, &mut outcome),
-    };
+    let ran = roll(facade, link, &plan, request, &opened, &mut outcome);
     actions::end_lease(facade, registry, &opened);
     ran.map(|()| outcome)
+}
+
+/// Runs `body` under the deploy's lease, when it has one: only the steps that read a leased value (a replaced
+/// container's secret files and its image's pull, a host reached with its client key, a backup's admin login); the
+/// annotations and the rows are written outside it.
+fn under<T>(opened: &Opened, body: impl FnOnce() -> T) -> T {
+    match &opened.lease_id {
+        Some(lease_id) => moqui_vault_server::lease::run_under(lease_id, body),
+        None => body(),
+    }
 }
 
 /// The backups, then each instance in turn; the first failure stops the roll.
@@ -951,7 +1057,7 @@ fn run_backup(
     if let Some(database) = &backup.database {
         parameters.insert("databaseName".to_string(), Value::string(database));
     }
-    match crate::lifecycle::call(&backup.service, &parameters) {
+    match under(opened, || crate::lifecycle::call(&backup.service, &parameters)) {
         Ok(out) => {
             let file = out.get("backupFile").map(to_plain_string).unwrap_or_default();
             let line = format!("backed up AppInstance {server_id} to {file} before the change");
@@ -1004,15 +1110,20 @@ fn change(
                 "rollbackOfActionId",
                 Value::string(plan.rollback_of.clone().unwrap_or_default()),
             ),
+            (
+                "instanceImageIdBefore",
+                Value::string(field(&target.instance, "instanceImageId")),
+            ),
         ],
     )?;
     let mut report = Vec::new();
     let changed = (|| -> Result<LinkStatus, LibError> {
         if target.drain {
             link.drain(&id, true)?;
+            wait_drained(link, &id)?;
             report.push(format!("drained AppInstance {id}"));
         }
-        let changed = apply(facade, link, target, request, &mut report);
+        let changed = apply(facade, link, target, request, opened, &mut report);
         if target.drain {
             // undrained after a failure too: the instance runs what it ran before, or what was put back
             match link.drain(&id, false) {
@@ -1038,6 +1149,10 @@ fn change(
             );
             if !status.schema_hash.is_empty() {
                 row.set("schemaHash", Value::string(&status.schema_hash));
+            }
+            // the image row it now runs, which a later rollback's pull takes its registry login from
+            if let Some(image) = target.image_row.as_ref().filter(|_| target.image_after.is_some()) {
+                row.set("instanceImageId", Value::string(field(image, "instanceImageId")));
             }
             row.update(facade)?;
             annotate(target, request, &status, &mut report);
@@ -1075,31 +1190,30 @@ fn line_of(report: &[String]) -> String {
     report.last().cloned().unwrap_or_default()
 }
 
-/// The change itself: a new container from the new image (the old one put back when the new one does not come up),
-/// then each component's update over the link; then the wait until it is up.
+/// The change itself: a new container from the new image (the old one, set aside, put back when the new one is not made,
+/// does not start or does not come up), then each component's update over the link; then the wait until it is up.
 fn apply(
     facade: &EntityFacade,
     link: &dyn Link,
     target: &Target,
     request: &Request,
+    opened: &Opened,
     report: &mut Vec<String>,
 ) -> Result<LinkStatus, LibError> {
     let id = target.id();
     if let Some(image) = &target.image_after {
-        replace(facade, target, image, target.image_row.as_ref(), report)?;
-        match wait_up(facade, link, target) {
-            Ok(_) => {}
-            Err(err) if !target.image_before.is_empty() => {
+        let swap = under(opened, || replace(facade, target, image, report))?;
+        match under(opened, || wait_up(facade, link, target)) {
+            Ok(_) => under(opened, || swap.drop_old(report)),
+            Err(err) => {
                 report.push(format!(
                     "AppInstance {id} did not come up on {image}: {}",
                     err.message()
                 ));
-                replace(facade, target, &target.image_before, None, report)?;
-                wait_up(facade, link, target)?;
-                report.push(format!("AppInstance {id} is back on {}", target.image_before));
+                under(opened, || swap.put_back(facade, report))?;
+                under(opened, || wait_up(facade, link, target))?;
                 return Err(err);
             }
-            Err(err) => return Err(err),
         }
     }
     for component in &target.component_deploys {
@@ -1115,7 +1229,35 @@ fn apply(
             }
         ));
     }
-    wait_up(facade, link, target)
+    under(opened, || wait_up(facade, link, target))
+}
+
+/// Waits until a drained instance says so (its health `draining`), then `manage@drain-wait-seconds` (30) for the
+/// requests it was serving to end, before it is changed.
+fn wait_drained(link: &dyn Link, id: &str) -> Result<(), LibError> {
+    let seconds: u64 = moqui_core::context::conf_env::setting("manage@deploy-wait-seconds")
+        .parse()
+        .unwrap_or(600);
+    let until = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        let status = link.status(id)?;
+        if status.health == "draining" {
+            break;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(fail(format!(
+                "AppInstance {id} did not report itself drained in {seconds}s ({})",
+                status.health
+            )));
+        }
+        std::thread::sleep(POLL.min(left));
+    }
+    let grace: u64 = moqui_core::context::conf_env::setting("manage@drain-wait-seconds")
+        .parse()
+        .unwrap_or(30);
+    std::thread::sleep(Duration::from_secs(grace));
+    Ok(())
 }
 
 /// What the link's deploy carries: the commit as moqui-git's attestation names it, unsigned.
@@ -1137,40 +1279,146 @@ fn attestation(component: &Component, request: &Request) -> String {
         "issuedAt": moqui_core::user::now_millis(),
         "source": request.source,
         "dataTypes": component.data_types,
+        // only a rollback may go to a commit below the branch's head (moqui-devkit's deploy_managed)
+        "rollback": matches!(request.change, Change::Rollback { .. }),
     })
     .to_string()
 }
 
-/// Replaces the instance's container with one from `image`: the old stopped and removed (its volumes kept), the new
-/// made with the same volumes, settings and secret files, and started.
-fn replace(
+/// A replaced container: the new one, and the old one set aside under another name until the new one is up.
+struct Swap {
+    host: moqui_lib::docker::DockerHost,
+    instance_id: String,
+    name: String,
+    old: Option<String>,
+    made: String,
+}
+
+impl Swap {
+    /// The new one is up: the old one goes (its volumes stay, they are the new one's).
+    fn drop_old(&self, report: &mut Vec<String>) {
+        if let Some(old) = &self.old {
+            if let Err(err) = self.host.remove_container(old, false) {
+                let line = format!(
+                    "the old container of AppInstance {} was not removed: {err}",
+                    self.instance_id
+                );
+                tracing::error!("Instances: {line}");
+                report.push(line);
+            }
+        }
+    }
+
+    /// The new one did not come up: it goes, and the old one takes its name back and starts.
+    fn put_back(&self, facade: &EntityFacade, report: &mut Vec<String>) -> Result<(), LibError> {
+        if let Err(err) = self.host.remove_container(&self.made, false) {
+            tracing::error!(
+                "Instances: the new container of AppInstance {} was not removed: {err}",
+                self.instance_id
+            );
+        }
+        let Some(old) = &self.old else {
+            return Ok(());
+        };
+        restore_old(&self.host, facade, &self.instance_id, old, &self.name)?;
+        report.push(format!("AppInstance {}: its old container is back", self.instance_id));
+        Ok(())
+    }
+}
+
+/// The old container takes its name back and starts, and the instance's row names it again.
+fn restore_old(
+    host: &moqui_lib::docker::DockerHost,
     facade: &EntityFacade,
-    target: &Target,
-    image: &str,
-    image_row: Option<&EntityValue>,
-    report: &mut Vec<String>,
+    instance_id: &str,
+    old: &str,
+    name: &str,
 ) -> Result<(), LibError> {
+    host.rename(old, name)?;
+    host.start(old)?;
+    let mut row = plan::instance(facade, instance_id)?;
+    row.set("instanceUuid", Value::string(old));
+    row.update(facade)?;
+    let info = host.inspect(old)?;
+    crate::lifecycle::observe(facade, instance_id, info.as_ref())
+}
+
+/// Pulls `image` for a replacement: a new image always (with its registry login when it needs one), a rollback's
+/// recorded digest only when the host no longer has it (with the login of the image it was, whose registry it is).
+fn pull_for(host: &moqui_lib::docker::DockerHost, target: &Target, image: &str) -> Result<(), LibError> {
+    let login = target
+        .image_row
+        .as_ref()
+        .filter(|row| field(row, "registryLogin") == "Y");
+    if target.rollback {
+        if host.image_volumes(image)?.is_some() {
+            return Ok(());
+        }
+        if image.starts_with("sha256:") {
+            return Err(fail(format!(
+                "The image {image} is no longer on the host and names no registry to pull it from"
+            )));
+        }
+    } else if login.is_none() && host.image_volumes(image)?.is_some() {
+        return Ok(());
+    }
+    match login {
+        Some(row) => crate::provision::pull_with_login_ref(host, row, image),
+        None => host.pull(image),
+    }
+}
+
+/// Replaces the instance's container with one from `image` (§4.6, step 6): the image pulled, the old one stopped and
+/// set aside under another name (its volumes kept), the new one made under the instance's name with the same volumes,
+/// settings and secret files, and started. When the new one is not made or does not start, it goes and the old one
+/// takes its name back and starts.
+fn replace(facade: &EntityFacade, target: &Target, image: &str, report: &mut Vec<String>) -> Result<Swap, LibError> {
     let id = target.id();
     let row = plan::instance(facade, &id)?;
     let host = connect_host(&crate::lifecycle::host_of(facade, &row)?)?;
-    match image_row.filter(|image| field(image, "registryLogin") == "Y") {
-        Some(image_row) => crate::provision::pull_with_login(&host, image_row)?,
-        None if host.image_volumes(image)?.is_none() => host.pull(image)?,
-        None => {}
-    }
+    pull_for(&host, target, image)?;
     let spec = crate::provision::replacement_spec(facade, &row, &target.kind, image)?;
-    let old = field(&row, "instanceUuid");
-    if !old.is_empty() {
-        if let Err(err) = host.stop(&old, STOP_GRACE) {
+    let name = spec.name.clone();
+    let old = Some(field(&row, "instanceUuid")).filter(|old| !old.is_empty());
+    if let Some(old) = &old {
+        if let Err(err) = host.stop(old, STOP_GRACE) {
             tracing::warn!("Instances: the container of AppInstance {id} did not stop cleanly: {err}");
         }
-        host.remove_container(&old, false)?;
+        let mut tag = [0_u8; 4];
+        moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut tag);
+        let aside = format!("{name}-replaced-{}", moqui_vault::text::hex(&tag));
+        if let Err(err) = host.rename(old, &aside) {
+            host.start(old)?;
+            return Err(err);
+        }
     }
-    let made = host.create_spec(&spec)?;
+    let mut made_id = None;
+    let made = (|| -> Result<String, LibError> {
+        let made = host.create_spec(&spec)?;
+        made_id = Some(made.clone());
+        host.start(&made)?;
+        Ok(made)
+    })();
+    let made = match made {
+        Ok(made) => made,
+        Err(err) => {
+            if let Some(made) = &made_id {
+                if let Err(removed) = host.remove_container(made, false) {
+                    tracing::error!("Instances: the new container of AppInstance {id} was not removed: {removed}");
+                }
+            }
+            if let Some(old) = &old {
+                restore_old(&host, facade, &id, old, &name)?;
+                report.push(format!(
+                    "AppInstance {id}: the new container failed, its old one is back"
+                ));
+            }
+            return Err(err);
+        }
+    };
     let mut row = plan::instance(facade, &id)?;
     row.set("instanceUuid", Value::string(&made));
     row.update(facade)?;
-    host.start(&made)?;
     let info = host.inspect(&made)?;
     crate::lifecycle::observe(facade, &id, info.as_ref())?;
     report.push(format!(
@@ -1178,7 +1426,13 @@ fn replace(
         made.chars().take(12).collect::<String>(),
         spec.secrets.len()
     ));
-    Ok(())
+    Ok(Swap {
+        host,
+        instance_id: id,
+        name,
+        old,
+        made,
+    })
 }
 
 /// Waits until the instance is up, at most `manage@deploy-wait-seconds`: an mr-moqui instance reports over its link that
@@ -1229,6 +1483,13 @@ fn annotate(target: &Target, request: &Request, status: &LinkStatus, report: &mu
         .component_deploys
         .last()
         .map(|component| component.commit_id.clone())
+        .or_else(|| {
+            target
+                .image_row
+                .as_ref()
+                .map(|image| field(image, "sourceRevision"))
+                .filter(|revision| !revision.is_empty())
+        })
         .unwrap_or_else(|| request.commit_id.clone());
     let version = match target.component_deploys.last() {
         Some(component) => format!("{}@{}", component.name, short(&component.commit_id)),
@@ -1286,13 +1547,36 @@ pub fn request(
     registry: &Arc<LeaseRegistry>,
     link: Arc<dyn Link>,
     request: Request,
+    stored: &str,
 ) -> Result<Requested, LibError> {
-    let plan = plan(facade, &request)?;
+    let plan = plan(facade, &*link, &request)?;
     let environment = one(facade, ENVIRONMENT, "environmentId", &plan.environment_id)?
         .ok_or_else(|| fail(format!("No InstanceEnvironment {}", plan.environment_id)))?;
     actions::check_caller(&environment)?;
     gate(facade, &environment, &request)?;
-    if plan.bindings.is_empty() || plan.machine_access {
+    let group = field(&environment, "approverUserGroupId");
+    let second_person = !group.is_empty() && field(&environment, "singlePersonDeploy") != "Y";
+    let leased = !plan.bindings.is_empty() && !plan.machine_access;
+    if !leased && second_person {
+        // no lease to open: another member of the group approves it (approve#InstanceDeploy), which runs it
+        let first = plan.targets.first().map(Target::id).unwrap_or_default();
+        let action_id = actions::record(
+            facade,
+            &first,
+            request.verb(),
+            actions::WAITING,
+            None,
+            false,
+            &format!("waiting for another member of group {group} to approve it"),
+        )?;
+        set_fields(facade, &action_id, &[("deployRequest", Value::string(stored))])?;
+        return Ok(Requested {
+            action_id,
+            status: actions::WAITING.to_string(),
+            lease_id: None,
+        });
+    }
+    if !leased {
         let outcome = run(facade, registry, &*link, &request, None)?;
         return Ok(Requested {
             action_id: outcome.action_ids.last().cloned().unwrap_or_default(),
@@ -1344,6 +1628,20 @@ pub fn request(
                 if let Err(err) = registry.wait_open(&facade, &thread_lease, limit) {
                     registry.forget(&thread_lease);
                     return Err(err);
+                }
+                // a deploy's lease is approved by another than who asked for it
+                let approver = one(&facade, "moqui.security.vault.VaultLease", "leaseId", &thread_lease)?
+                    .map(|row| field(&row, "approvedByUserId"))
+                    .unwrap_or_default();
+                if user.as_deref().is_some_and(|user| user == approver) {
+                    if let Err(err) = registry.end(&facade, &thread_lease) {
+                        registry.forget(&thread_lease);
+                        tracing::error!("Instances: the lease {thread_lease} was not marked ended: {err}");
+                    }
+                    return Err(fail(format!(
+                        "the lease {thread_lease} was approved by {approver}, who asked for the deploy: another \
+                         approves it (reasonCode selfApproval)"
+                    )));
                 }
                 run(&facade, &registry, &*link, &request, Some(&thread_lease))
             }));
@@ -1400,9 +1698,16 @@ pub fn git_request(
         )));
     }
     let commit = field(&deployment, "commitId");
+    // the URL the CI environment names, when it names one: the instance fetches from there
+    let clone_url = field(&ci_environment, "cloneUrl");
     let component = Component {
         ref_name: field(&deployment, "refName"),
         commit_id: commit.clone(),
+        repository_url: if clone_url.is_empty() {
+            component.repository_url
+        } else {
+            clone_url
+        },
         ..component
     };
     let mut request = Request::new(&environment_id, Change::Component(component));
@@ -1428,7 +1733,7 @@ pub struct Prepared {
 /// its approval is required unless the environment has machine access.
 pub fn prepare_git(facade: &EntityFacade, registry: &LeaseRegistry, deployment_id: &str) -> Result<Prepared, LibError> {
     let request = git_request(facade, deployment_id, Component::default(), "")?;
-    let plan = plan(facade, &request)?;
+    let plan = plan(facade, &ServiceLink, &request)?;
     let environment = one(facade, ENVIRONMENT, "environmentId", &plan.environment_id)?
         .ok_or_else(|| fail(format!("No InstanceEnvironment {}", plan.environment_id)))?;
     gate(facade, &environment, &request)?;

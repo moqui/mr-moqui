@@ -29,7 +29,7 @@ use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
 use crate::common::{
-    authz_off, fail, field, one, out, require_instance_admin, required, rows, text, Out, Params, APP_INSTANCE,
+    authz_off, fail, field, find, one, out, require_instance_admin, required, rows, text, Out, Params, APP_INSTANCE,
     DATABASE_HOST, ENVIRONMENT, HOST, HOST_TYPE, IMAGE, INSTANCE_DEPENDENCY, INSTANCE_ENV, INSTANCE_HOST_CONFIG,
     INSTANCE_SECRET, INSTANCE_VOLUME, KIND, KIND_DEPENDENCY, KIND_ENV, KIND_HOST_CONFIG, KIND_SECRET, KIND_VOLUME,
 };
@@ -66,6 +66,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, prepare_git_deployment)?;
     moqui_core::rust_service!(map, deploy_git_deployment)?;
     moqui_core::rust_service!(map, backup_database_instance)?;
+    moqui_core::rust_service!(map, approve_instance_deploy)?;
     Ok(())
 }
 
@@ -175,9 +176,15 @@ fn store_instance_environment(params: &Params, facade: &EntityFacade) -> Out {
             "unsealMethod",
             "transportEnumId",
             "leaseLimitMinutes",
+            "singlePersonDeploy",
         ],
         &|row| {
+            // a CI environment's machine access is named git-ci-<id> (crates/moqui-git): no InstanceEnvironment takes it
+            if field(row, "environmentId").starts_with("git-ci-") {
+                return Err(fail("An InstanceEnvironment id does not start with git-ci-, which CI environments' machine access names"));
+            }
             check_vault(facade, row)?;
+            check_indicator(row, "singlePersonDeploy")?;
             check_indicator(row, "machineAccess")
         },
     )?;
@@ -252,6 +259,8 @@ fn store_instance_image(params: &Params, facade: &EntityFacade) -> Out {
             "registryLocation",
             "registryLogin",
             "vaultId",
+            "sourceRepositoryId",
+            "sourceRevision",
         ],
         &|row| {
             let kind = field(row, "instanceKindId");
@@ -887,9 +896,19 @@ fn deploy_request(params: &Params, facade: &EntityFacade) -> Result<crate::deplo
             (true, false, true) => Change::Image { image_id: image },
             (true, true, false) => {
                 let ref_name = required(params, "refName")?;
+                // the URL is the one the CI environment of the repository deploying here names, never the caller's
+                let repository = required(params, "repositoryId")?;
+                let repository_url = find(facade, "moqui.resource.GitCiEnvironment")?
+                    .eq("instanceEnvironmentId", Value::string(&environment_id))
+                    .eq("repositoryId", Value::string(&repository))
+                    .list()?
+                    .into_values()
+                    .first()
+                    .map(|ci| field(ci, "cloneUrl"))
+                    .unwrap_or_default();
                 Change::Component(Component {
                     name: component,
-                    repository_url: required(params, "repositoryUrl")?,
+                    repository_url,
                     ref_name: if ref_name.starts_with("refs/") {
                         ref_name
                     } else {
@@ -905,12 +924,15 @@ fn deploy_request(params: &Params, facade: &EntityFacade) -> Result<crate::deplo
                 })
             }
             _ => return Err(fail(
-                "A deploy is of one of: instanceImageId, componentName (with repositoryUrl, refName and commitId), or \
+                "A deploy is of one of: instanceImageId, componentName (with repositoryId, refName and commitId), or \
                  rollbackOfActionId",
             )),
         };
     let mut request = Request::new(&environment_id, change);
-    request.commit_id = text(params, "commitId");
+    // an image's commit is the one its row records (the gate's), never a caller's
+    if matches!(request.change, Change::Component(_)) {
+        request.commit_id = text(params, "commitId");
+    }
     request.repository_id = text(params, "repositoryId");
     request.instance_id = instance_id;
     request.cluster_id = text(params, "clusterId");
@@ -926,6 +948,35 @@ fn check_deploy_caller(environment_id: &str, facade: &EntityFacade) -> Result<()
     let environment = one(facade, ENVIRONMENT, "environmentId", environment_id)?
         .ok_or_else(|| fail(format!("No InstanceEnvironment {environment_id}")))?;
     crate::actions::check_caller(&environment)
+}
+
+/// `prepare#` and `deploy#GitDeployment` are crates/moqui-git's deploy step's, which calls them with authorization
+/// disabled: a caller with it on is refused, whatever it holds; and the deployment is in `status` (waiting-pipeline,
+/// deploying), with the lease its row names (`lease`, when given).
+fn deployment_step(
+    facade: &EntityFacade,
+    deployment_id: &str,
+    status: &str,
+    lease: Option<&str>,
+) -> Result<(), LibError> {
+    let internal = ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false);
+    if !internal {
+        return Err(fail(
+            "A deployment's prepare and deploy are its deploy step's (crates/moqui-git), not a caller's",
+        ));
+    }
+    let deployment = one(facade, "moqui.resource.GitDeployment", "deploymentId", deployment_id)?
+        .ok_or_else(|| fail(format!("No GitDeployment {deployment_id}")))?;
+    if field(&deployment, "statusId") != status {
+        return Err(fail(format!(
+            "GitDeployment {deployment_id} is {}, not {status}",
+            field(&deployment, "statusId")
+        )));
+    }
+    if lease.is_some_and(|lease| lease != field(&deployment, "leaseId")) {
+        return Err(fail(format!("The lease is not GitDeployment {deployment_id}'s")));
+    }
+    Ok(())
 }
 
 /// The environment of a deployment's managed instances.
@@ -947,7 +998,7 @@ fn preview_instance_deploy(params: &Params, facade: &EntityFacade) -> Out {
     let request = deploy_request(params, facade)?;
     check_deploy_caller(&request.environment_id, facade)?;
     let _authz = authz_off();
-    let plan = crate::deploy::plan(facade, &request)?;
+    let plan = crate::deploy::plan(facade, &crate::deploy::ServiceLink, &request)?;
     Ok(out([("preview", Value::Map(crate::deploy::preview(&plan)))]))
 }
 
@@ -957,12 +1008,15 @@ fn request_instance_deploy(params: &Params, facade: &EntityFacade) -> Out {
     let request = deploy_request(params, facade)?;
     check_deploy_caller(&request.environment_id, facade)?;
     let _authz = authz_off();
+    // what was asked, kept on a deploy that waits for another member's approval (approve#InstanceDeploy)
+    let stored = moqui_lib::json::to_json(&Value::Map(params.clone().into_iter().collect())).to_string();
     let requested = crate::deploy::request(
         &factory()?,
         facade,
         &registry()?,
         Arc::new(crate::deploy::ServiceLink),
         request,
+        &stored,
     )?;
     Ok(out([
         ("instanceActionId", Value::string(requested.action_id)),
@@ -974,10 +1028,9 @@ fn request_instance_deploy(params: &Params, facade: &EntityFacade) -> Out {
 /// `prepare#GitDeployment`: crates/moqui-git's call once a deployment to managed instances passed its pipeline: the
 /// gate, and the lease of what the deploy opens, held on this member.
 fn prepare_git_deployment(params: &Params, facade: &EntityFacade) -> Out {
-    check_deploy_caller(
-        &deployment_environment(facade, &required(params, "deploymentId")?)?,
-        facade,
-    )?;
+    let deployment_id = required(params, "deploymentId")?;
+    deployment_step(facade, &deployment_id, "waiting-pipeline", None)?;
+    check_deploy_caller(&deployment_environment(facade, &deployment_id)?, facade)?;
     let _authz = authz_off();
     let prepared = crate::deploy::prepare_git(facade, &*registry()?, &required(params, "deploymentId")?)?;
     Ok(out([
@@ -994,6 +1047,7 @@ fn prepare_git_deployment(params: &Params, facade: &EntityFacade) -> Out {
 /// environment's machine access.
 fn deploy_git_deployment(params: &Params, facade: &EntityFacade) -> Out {
     let deployment_id = required(params, "deploymentId")?;
+    deployment_step(facade, &deployment_id, "deploying", Some(&text(params, "leaseId")))?;
     check_deploy_caller(&deployment_environment(facade, &deployment_id)?, facade)?;
     let _authz = authz_off();
     let component = crate::deploy::Component {
@@ -1096,6 +1150,63 @@ fn backup_database_instance(params: &Params, facade: &EntityFacade) -> Out {
         )));
     }
     Ok(out([("backupFile", Value::string(format!("{volume}:{file}")))]))
+}
+
+/// `approve#InstanceDeploy`: a deploy by hand that waits for another member of its environment's approver group (it
+/// opens no vault item, or the environment has machine access, and is not single-person): by INSTANCE_ADMIN and a
+/// member of the group, checked as the caller, never the one who asked; the deploy as it was asked then runs, and the
+/// waiting action names how it ended.
+fn approve_instance_deploy(params: &Params, facade: &EntityFacade) -> Out {
+    let action_id = required(params, "instanceActionId")?;
+    let action = one(facade, crate::common::ACTION, "instanceActionId", &action_id)?
+        .ok_or_else(|| fail(format!("No InstanceAction {action_id}")))?;
+    let row = instance(facade, &field(&action, "appInstanceId"))?;
+    check_deploy_caller(&field(&row, "environmentId"), facade)?;
+    let stored = field(&action, "deployRequest");
+    if field(&action, "statusEnumId") != crate::actions::WAITING
+        || !field(&action, "leaseId").is_empty()
+        || stored.is_empty()
+    {
+        return Err(fail(format!(
+            "InstanceAction {action_id} is not a deploy waiting for a member's approval"
+        )));
+    }
+    let approver = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    if approver.is_empty() || approver == field(&action, "userId") {
+        return Err(fail(
+            "A deploy is approved by another member of the group than who asked for it (reasonCode selfApproval)",
+        ));
+    }
+    let _authz = authz_off();
+    let asked: serde_json::Value = serde_json::from_str(&stored).map_err(|err| fail(err.to_string()))?;
+    let Value::Map(asked) = moqui_lib::json::from_json(&asked) else {
+        return Err(fail(format!("InstanceAction {action_id} keeps no deploy")));
+    };
+    let asked: Params = asked.into_iter().collect();
+    let request = deploy_request(&asked, facade)?;
+    let ran = crate::deploy::run(facade, &*registry()?, &crate::deploy::ServiceLink, &request, None);
+    let (status, report) = match &ran {
+        Ok(outcome) => (
+            crate::actions::DONE,
+            format!(
+                "approved by {approver}; ran as actions {}",
+                outcome.action_ids.join(", ")
+            ),
+        ),
+        Err(err) => (
+            crate::actions::FAILED,
+            format!("approved by {approver}; {}", err.message()),
+        ),
+    };
+    crate::actions::finish(facade, &action_id, status, &report)?;
+    let outcome = ran?;
+    Ok(out([
+        (
+            "instanceActionId",
+            Value::string(outcome.action_ids.last().cloned().unwrap_or_default()),
+        ),
+        ("statusEnumId", Value::string(crate::actions::DONE)),
+    ]))
 }
 
 // ----- the reconcile job -----

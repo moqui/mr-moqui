@@ -1026,6 +1026,20 @@ fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
         "N",
         "a new target takes no machine access given for the old one"
     );
+    // nor does one who is not a VAULT_ADMIN keep it on by asking for it with the new target
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", &id)]).remove(0);
+        row.set("machineAccess", s("Y"));
+        row.update(&fixture.entity).unwrap();
+    }
+    let cleared = change(&[
+        ("targetUrl", s("https://third.example.com")),
+        ("machineAccess", Value::Bool(true)),
+    ]);
+    assert!(cleared.contains("machine access"), "{cleared}");
+    assert_eq!(machine(), "N");
 }
 
 /// Signing needs the deployment's lease when the environment has no machine access (plans/Vault-Instances.md §4.6):
@@ -1105,6 +1119,48 @@ fn a_deployment_whose_token_is_leased_is_approved_by_opening_its_lease() {
         &[("leaseId", &lease_id), ("eventTypeEnumId", "VeLeaseUsed")],
     );
     assert_eq!(used.len(), 1);
+    // a decision that crosses the lease dialog's changes nothing the second time
+    {
+        let _entered = fixture.context.enter();
+        let row = deployment(&fixture, &id);
+        let again = deploy::decide(
+            &fixture.entity,
+            &row,
+            Some(vault.approver.user.clone()),
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(again, deploy::DEPLOYED);
+    }
+    // a deployment whose lease ended before it deployed is failed by the sweep (end#OverdueJobRuns)
+    let stale = {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, "moqui.resource.GitDeployment").unwrap();
+        row.set_sequenced_id_primary(&fixture.entity).unwrap();
+        let stale = text(&row, "deploymentId");
+        for (name, value) in [
+            ("repositoryId", "site"),
+            ("environmentId", environment_id.as_str()),
+            ("environmentName", "prod"),
+            ("statusId", deploy::WAITING_APPROVAL),
+            ("leaseId", lease_id.as_str()),
+        ] {
+            row.set(name, s(value));
+        }
+        row.create(&fixture.entity).unwrap();
+        deploy::resume(&fixture.entity, crate::ci::now_millis()).unwrap();
+        stale
+    };
+    let row = deployment(&fixture, &stale);
+    assert_eq!(text(&row, "statusId"), deploy::FAILED);
+    assert!(
+        text(&row, "errorText").contains("its lease"),
+        "{}",
+        text(&row, "errorText")
+    );
 }
 
 /// The token's vault for a lease: a new vault whose approver also decides the repository's deployments (a member of

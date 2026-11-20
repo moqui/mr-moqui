@@ -377,11 +377,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="clusterId"/>
             <parameter name="instanceImageId"/>
             <parameter name="componentName"/>
-            <parameter name="repositoryUrl"/>
             <parameter name="refName"/>
-            <parameter name="commitId"><description>The commit the gate checks: the component's, or the image's
-                revision</description></parameter>
-            <parameter name="repositoryId"><description>The repository whose pipeline passed, when known</description></parameter>
+            <parameter name="commitId"><description>A component's commit, which the gate checks; an image is gated on the
+                revision its row records</description></parameter>
+            <parameter name="repositoryId"><description>A component's repository: a CI environment of it must deploy to
+                this environment, whose cloneUrl the instance fetches from</description></parameter>
             <parameter name="dataTypes"/>
             <parameter name="rollbackOfActionId"/>
         </in-parameters>
@@ -409,8 +409,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="prepare" noun="GitDeployment" type="rust" location="moqui_instance::services::prepare_git_deployment"
             allow-remote="false" transaction="ignore">
-        <description>Called by a deployment (crates/moqui-git) whose environment names an InstanceEnvironment, once its
-            pipeline passed: the gate, and the lease of what its deploy opens, held on this server, which then runs its
+        <description>Called only by a deployment's step (crates/moqui-git, with authorization disabled) whose environment
+            names an InstanceEnvironment, once its pipeline passed (the deployment waiting-pipeline): the gate, and the lease of what its deploy opens, held on this server, which then runs its
             deploy step. None with machine access or when it opens nothing; approvalRequired unless the environment has
             machine access.</description>
         <in-parameters><parameter name="deploymentId" required="true"/></in-parameters>
@@ -422,8 +422,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="deploy" noun="GitDeployment" type="rust" location="moqui_instance::services::deploy_git_deployment"
             allow-remote="false" transaction="ignore">
-        <description>A deployment's deploy step to managed instances (crates/moqui-git): the component at the deployment's
-            commit to the environment's mr-moqui instances over the manager link, no attestation posted, under leaseId or
+        <description>A deployment's deploy step to managed instances (crates/moqui-git only, with authorization disabled; the
+            deployment deploying and leaseId its own): the component at the deployment's commit to the environment's mr-moqui instances over the manager link, no attestation posted, under leaseId or
             the environment's machine access.</description>
         <in-parameters>
             <parameter name="deploymentId" required="true"/>
@@ -448,6 +448,17 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="databaseName"/>
         </in-parameters>
         <out-parameters><parameter name="backupFile"><description>volume:file</description></parameter></out-parameters>
+    </service>
+    <service verb="approve" noun="InstanceDeploy" type="rust" location="moqui_instance::services::approve_instance_deploy"
+            allow-remote="false" transaction="ignore">
+        <description>Approve a deploy by hand that waits for another member of its environment's approver group (it opens
+            no vault item, or runs under machine access, and the environment is not singlePersonDeploy): INSTANCE_ADMIN
+            and a member of the group, never its requester; the deploy then runs as it was asked.</description>
+        <in-parameters><parameter name="instanceActionId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="instanceActionId"/>
+            <parameter name="statusEnumId"/>
+        </out-parameters>
     </service>
 
 </services>
