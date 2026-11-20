@@ -379,6 +379,21 @@ fn a_member_key_file_that_is_not_one_names_itself_and_the_remedy() {
         std::fs::read_dir(runtime.join("db")).unwrap().count() == 1,
         "no part file left"
     );
+    // a part file planted as a link (its name is predictable) is replaced, never written through (SEC-OUT-85)
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(runtime.join("db/edge_member_key")).unwrap();
+        let elsewhere = runtime.join("elsewhere");
+        std::fs::write(&elsewhere, "").unwrap();
+        let part = runtime.join(format!("db/edge_member_key.part-{}", std::process::id()));
+        std::os::unix::fs::symlink(&elsewhere, &part).unwrap();
+        MemberKey::load_or_create(&runtime).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&elsewhere).unwrap(),
+            "",
+            "the link's target is not written"
+        );
+    }
     let _ = std::fs::remove_dir_all(&runtime);
 }
 
