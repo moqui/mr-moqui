@@ -22,6 +22,9 @@ sixteenth, a reset password that could become the new password, was fixed the da
 Reading BOSS against the standard (phase P7, 2026-11-19) found 11 more (SEC-BAP-136 to 139, SEC-BOS-141 to 146,
 SEC-FIL-101): one Medium (SEC-BAP-138, a catalog user's content location read by mr-marble's catalog download), four
 Low and six Info; SEC-BOS-146 is the part of SEC-BOS-03 its fix left. The counts include them.
+Moving yrs to moqui's fork (2026-11-19) found two Medium in yrs that reach co-editing, both public upstream:
+SEC-TLS-117 (a few bytes reserve what they claim; fixed in the fork) and SEC-TLS-118 (a nested delete recurses; open).
+The counts include them.
 
 This is the findings register of the security review that the pre-0.1.0 notice in the [README](../README.md) names:
 until 0.1.0, findings are recorded openly in this repository. The map of what can be reached is
@@ -304,7 +307,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
    until it is needed.
 2. **What each slice did not reach.** Round 3 read it (2026-11-17 and 18); its coverage, under [Round 3](#round-3-1) in the coverage section, says for each area what is still not reached, and each map file's open questions what is not settled. Its twelve High findings are fixed (2026-11-18); the Medium ones are the next batch of fixes, and its 35 Medium entries with no Re-check, with every Low and Info one, have had no second reading.
 3. **Fixes.** The High findings are fixed (2026-11-15, what they left on 2026-11-16), and the Medium ones (2026-11-16).
-   Of the Medium findings none is open, none deferred, none refuted and none fixed only in part. Of the 169 Low and 46
+   Of the Medium findings only SEC-TLS-118 (filed 2026-11-19, in yrs) is open; none is deferred, refuted or fixed only in part. Of the 169 Low and 46
    Info findings, 159 are fixed (152 Low, 7 Info) and 5 Low deferred; none is refuted whole (SEC-GIT-19 and SEC-PSS-28
    are in part); 12 Low and 39 Info are as reported. The first batch of the owner's decisions (2026-11-16) finished 14
    of them: SEC-WEB-05, SEC-WEB-06, SEC-WEB-10, SEC-RTE-17, SEC-ADM-10, SEC-GIT-18, SEC-GIT-19, SEC-COM-20, SEC-DAT-11,
@@ -349,7 +352,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 
 5. **Round 3's Medium fixes, 2026-11-18 and 19.** The 54 Medium findings the lead had read were fixed in six batches (four framework, two component), each read by a reviewer and read again after its follow-ups, with SEC-TLS-87, SEC-SCR-84 (already closed by High fixes) and SEC-BAP-87; SEC-CLI-81 is fixed in part. The other 35 Medium findings, with no second reading, are item 12.
 
-   Found while fixing and fixed with them: a shell provider's, or a service's, `disableAuthz()`/`enableAuthz()` could leave the caller's authorization off for the rest of the request (and a failing one, its entity ECA and tarpit switches): `require_authz`, a new `keep_authz` and every service call now hold an `AuthzScope` that puts the caller's state back on any exit (`context/artifact.rs`, `service/call.rs`, `screen/shell.rs`); yrs is patched to decode at most 128 levels of nesting (`patches/yrs`); the CI runner's scratch files are made new and private (SEC-GIT-98); SSH keys, app passwords and device credentials, the SSO flows and SAML, SIP trunks, remote agents and MCP servers no longer keep a secret through a generic write or an endpoint change; Customer Service's customer read masks identifications; the forum's mbox import keys no author by display text; mr-marble's print screens and the Marble and mr-boss search lookups; the share-zip limits are conf settings (`resource-facade/drive-share`); a new `allow-html="app"` cleaner for rich text only signed-in users read.
+   Found while fixing and fixed with them: a shell provider's, or a service's, `disableAuthz()`/`enableAuthz()` could leave the caller's authorization off for the rest of the request (and a failing one, its entity ECA and tarpit switches): `require_authz`, a new `keep_authz` and every service call now hold an `AuthzScope` that puts the caller's state back on any exit (`context/artifact.rs`, `service/call.rs`, `screen/shell.rs`); yrs is patched to decode at most 128 levels of nesting (now at moqui's fork, docs/Build-Test.md Forks); the CI runner's scratch files are made new and private (SEC-GIT-98); SSH keys, app passwords and device credentials, the SSO flows and SAML, SIP trunks, remote agents and MCP servers no longer keep a secret through a generic write or an endpoint change; Customer Service's customer read masks identifications; the forum's mbox import keys no author by display text; mr-marble's print screens and the Marble and mr-boss search lookups; the share-zip limits are conf settings (`resource-facade/drive-share`); a new `allow-html="app"` cleaner for rich text only signed-in users read.
 
    Owner's decisions recorded with them: payroll bank accounts are kept in People with a notice and no second confirmation (SEC-BOS-82); a forum escalation needs a second owner (SEC-PFS-83); a different `Sender:` is held only when DMARC does not prove From (SEC-PFS-81); Comms reaches staff by employment, departments of one top-level organization reaching each other (SEC-BOS-98); the every-organization app permissions are sealed, ADMIN inviting into their groups (SEC-BOS-84); `DATABASE_ADMIN` is not counted held with authorization disabled (SEC-SCR-81).
 
@@ -505,7 +508,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Web authentication and controls (`WEB`) | 0 | 1 | 5 | 19 | 2 | 0 | 27 |
 | Routes, screens and REST (`RTE`) | 0 | 2 | 9 | 16 | 3 | 0 | 30 |
 | Administration, identity and sign-in (`ADM`) | 0 | 1 | 10 | 12 | 1 | 0 | 24 |
-| Tools, System, Monitor and Dashboards (`TLS`) | 0 | 4 | 20 | 28 | 3 | 0 | 55 |
+| Tools, System, Monitor and Dashboards (`TLS`) | 0 | 4 | 22 | 28 | 3 | 0 | 57 |
 | LLM, A2A, MCP and Assist (`AI`) | 0 | 0 | 5 | 26 | 4 | 0 | 35 |
 | Git hosting and pipelines (`GIT`) | 0 | 3 | 8 | 24 | 4 | 0 | 39 |
 | Mail (`MAIL`) | 0 | 3 | 10 | 17 | 6 | 0 | 36 |
@@ -523,7 +526,7 @@ Checked by a reviewer and reported as holding (none read a second time unless a 
 | Script engine, templates and parsers (`SCR`) | 0 | 3 | 7 | 13 | 2 | 0 | 25 |
 | Outbound requests, processes and packaging (`OUT`) | 0 | 0 | 7 | 15 | 5 | 0 | 27 |
 | Development tools (`DEV`) | 0 | 0 | 3 | 7 | 5 | 0 | 15 |
-| **All** | 0 | 24 | 174 | 414 | 162 | 0 | 774 |
+| **All** | 0 | 24 | 176 | 414 | 162 | 0 | 776 |
 
 ## Findings by area
 
@@ -690,6 +693,8 @@ Map file: [Attack-Surface-Tools.md](../docs/security/Attack-Surface-Tools.md). R
 | SEC-TLS-114 | `crates/moqui-calc/src/service.rs:695-711`; `crates/moqui-core/src/workbook.rs:270-273` | A workbook opened as a CalcGrid document is unpacked and parsed with no limit on its expanded size | Low | reported (likely) |
 | SEC-TLS-115 | `crates/moqui-tools/src/etl/service.rs:635-642` | The `DbaEtlRun` audit row's detail is not JSON and takes the target name unescaped | Info | reported (confirmed in code) |
 | SEC-TLS-116 | crates/moqui-llm/src/registry.rs:204-224; runtime/components/base/tools/screen/System/Llm/Models/EndpointDetail.xml:24-27; runtime/components/base/tools/screen/System/EntitySync/EntitySyncDetail.xml:20-21; crates/moqui-core/src/service/system_sync/entity_sync.rs:505-511 | A model endpoint's API key and an entity sync's password go to a new URL with no new secret | Low | fixed |
+| SEC-TLS-117 | `crates/moqui-collab/src/lib.rs:643`, `:713`, `:739`; yrs 0.28.2 `src/state_vector.rs:125`, `src/update.rs:842`, `:856` | A co-editing join or update of a few bytes that claims billions of entries makes yrs reserve them first | Medium | fixed |
+| SEC-TLS-118 | `crates/moqui-collab/src/lib.rs:713-718`, `:739-741`; yrs 0.28.2 `src/transaction.rs:785`, `:851` | A co-editing update that deletes deeply nested shared types overflows the stack, which ends the process | Medium | reported (likely) |
 
 ### LLM, A2A, MCP and Assist
 

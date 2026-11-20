@@ -375,8 +375,8 @@ write_if_changed() {
 
 # The repository's [patch.crates-io] table, its paths made absolute, for a crate that is a workspace of its own: cargo
 # takes patches only from the root manifest of the workspace it builds, so without these such a crate builds the
-# crates.io releases the repository replaces, a security fix among them (patches/README.md; plans/Security-Review.md
-# SEC-CLI-126).
+# crates.io releases the repository replaces, a security fix among them (docs/Build-Test.md Forks;
+# plans/Security-Review.md SEC-CLI-126).
 root_patch_table() {
     [ -f "$ROOT/Cargo.toml" ] || return 0
     awk -v root="$ROOT" '

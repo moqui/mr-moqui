@@ -52,8 +52,6 @@ exclude = [
     "runtime/components/test",
     "runtime/components/dev",
     "crates/moqui-desktop",
-    # patched crates.io crates, each its own package (patches/README.md)
-    "patches/yrs",
 ]
 
 [workspace.package]
@@ -457,6 +455,7 @@ rusqlite = { version = "0.42", features = ["bundled"] }
 [patch.crates-io]
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
-# yrs 0.28.1 with a depth limit on the values an update decodes, which recursed once a level with no limit
-# (patches/README.md; plans/Security-Review-Medium.md SEC-TLS-95)
-yrs = { path = "patches/yrs" }
+# yrs 0.28.2 at moqui's fork, branch moqui/0.28.2-decode-bounds (docs/Build-Test.md Forks): an update's values nest at
+# most 128 levels, which decoded by a recursion once a level with no limit (plans/Security-Review-Medium.md SEC-TLS-95),
+# and a length read from an update reserves at most 1024 entries up front (SEC-TLS-117)
+yrs = { git = "https://github.com/moqui/y-crdt", rev = "6ad5c94af9c4b50ac9c05dec67c3b96a8e8fd782" }

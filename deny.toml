@@ -85,4 +85,6 @@ allow-git = [
     "https://github.com/moqui/rust-mysql-simple",
     # stun-proto and stun-types, held at the fork by [patch.crates-io] (docs/Build-Test.md, Forks)
     "https://github.com/moqui/stun-proto",
+    # yrs, held at the fork by [patch.crates-io] (docs/Build-Test.md, Forks)
+    "https://github.com/moqui/y-crdt",
 ]

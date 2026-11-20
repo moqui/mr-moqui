@@ -88,15 +88,16 @@ and the system `ssh` for git remotes.
 #### Forks
 
 One dependency is pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because it does not keep ring out
-through a feature; another, a dependency of a dependency, is held at moqui's fork by `[patch.crates-io]`. The branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
-own branch, for a pull request. Go back to the crates.io release once upstream publishes the change, as rsipstack did
+through a feature; others are held at moqui's fork by `[patch.crates-io]`, for every crate that depends on them. The
+branch is our commits on the release we use; each `pr/` branch is one of them on upstream's own branch, for a pull
+request. Go back to the crates.io release once upstream publishes the change, as rsipstack did
 with 0.8.5.
 
 | Crate | Fork and branch (`pr/` branch) | Change |
 |---|---|---|
 | mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
 | stun-proto, stun-types 2.0.5 (through turn-server-proto) | [moqui/stun-proto](https://github.com/moqui/stun-proto) `main` (`moqui-nonce-bound`), by `[patch.crates-io]` | A change to `LongTermServerAuth`'s nonce handling, to be offered upstream. Both crates come from the fork's workspace so the graph has one stun-types |
-| yrs 0.28.1 (moqui-collab, moqui-host) | The published source in [`patches/yrs`](../patches/README.md), by `[patch.crates-io]` with a `path` | `Any::decode` reads at most 128 levels of maps and arrays, so a co-editing update nested deeper is refused, not a stack overflow (SEC-TLS-95). To move to a GitHub fork when one is made |
+| yrs 0.28.2 (moqui-collab) | [moqui/y-crdt](https://github.com/moqui/y-crdt) `moqui/0.28.2-decode-bounds` (`pr/any-decode-depth`, `pr/decode-reserve-bounded`), by `[patch.crates-io]` | `Any::decode` reads at most 128 levels of maps and arrays, so a co-editing update nested deeper is refused, not a stack overflow (SEC-TLS-95); a length read from an update or a state vector reserves at most 1024 entries up front (SEC-TLS-117). Both are upstream's issue #675 |
 
 Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
 
