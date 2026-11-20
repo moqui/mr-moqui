@@ -102,6 +102,9 @@ fn keyed(name: &str, description: &str, classification: Classification) -> ToolS
     .needs(&[TEST_CAP])
 }
 
+/// The key of `test_read` that probes the lazy catalog with a tool policy that cannot be read.
+pub(crate) const POLICY_FAILS: &str = "policy-fails";
+
 pub(crate) struct TestRead(ToolSpec);
 
 impl Default for TestRead {
@@ -115,7 +118,17 @@ impl AgentTool for TestRead {
         &self.0
     }
 
-    fn call(&self, _ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
+    fn call(&self, ctx: &mut TurnContext<'_>, args: Json) -> ToolOutcome {
+        // a probe of the lazy catalog when the tool policy cannot be read in the middle of a step (SEC-AI-87): what
+        // find_tools answers then
+        if key_of(&args) == POLICY_FAILS {
+            let facade = moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity())
+                .flatten()
+                .unwrap();
+            moqui_core::entity::cache::clear_all_list_caches(&facade).unwrap();
+            let _failing = moqui_core::testing::FailTable::new("agent_tool_policy");
+            return super::lazy::FindTools::default().call(ctx, json!({"text": "enumeration"}));
+        }
         let started = Instant::now();
         pause_for(&args);
         let key = key_of(&args);
@@ -503,12 +516,14 @@ fn a_policy_decides_by_its_first_matching_rule() {
 }
 
 #[test]
-fn policy_rows_read_from_the_database_and_bad_ones_are_left_out() {
+fn policy_rows_read_from_the_database_and_a_bad_one_is_a_never_rule() {
     let facade = moqui_core::testing::open();
     for (sequence, pattern, class, mode) in [
         ("1", "test_write", "AgclRead", "AgamAsk"),
         ("2", "test_*", "", "AgamPolicy"),
         ("3", "x", "AgclNonsense", ""),
+        // SEC-AI-87: a row that cannot be read may have been a never rule: it is one, before the rules after it
+        ("0", "test_other", "", "AgamNonsense"),
     ] {
         let mut row = facade.make_value("moqui.agent.AgentToolPolicy").unwrap();
         row.set("agentId", Value::string("pol"));
@@ -523,7 +538,15 @@ fn policy_rows_read_from_the_database_and_bad_ones_are_left_out() {
         row.create(&facade).unwrap();
     }
     let policy = ToolPolicy::load(&facade, "pol").unwrap();
-    assert_eq!(policy.rules.len(), 2, "{policy:?}");
+    assert_eq!(policy.rules.len(), 4, "{policy:?}");
+    assert!(
+        !policy.rule_as("x", Classification::Read).offered,
+        "an unknown ceiling is never offered"
+    );
+    assert!(
+        !policy.rule_as("test_other", Classification::Read).offered,
+        "an unknown mode is never offered"
+    );
     let write = TestWrite::default();
     // the ceiling of the first rule is read, so the write is not offered
     assert!(!policy.rule_for(write.spec()).offered);

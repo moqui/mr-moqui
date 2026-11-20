@@ -414,12 +414,9 @@ impl AgentTool for RunTool {
                 if let Err(error) = claim(ctx, &entry) {
                     return error.outcome();
                 }
-                let rule = match rule_for(ctx, &entry) {
-                    Ok(rule) => rule,
-                    Err(error) => return error.outcome(),
-                };
-                ctx.approvals.write_rule = rule;
-                ctx.approvals.mode = rule.mode;
+                if let Err(error) = set_write_rule(ctx, &entry) {
+                    return error.outcome();
+                }
                 run_add_on(tool.as_ref(), &entry, ctx, &parameters, None)
             }
             Target::Service(exposure) => {
@@ -442,12 +439,9 @@ impl AgentTool for RunTool {
         };
         if let Some(entry) = catalog.get(&name) {
             if let Target::AddOn(tool) = &entry.target {
-                let rule = match rule_for(ctx, entry) {
-                    Ok(rule) => rule,
-                    Err(error) => return error.outcome(),
-                };
-                ctx.approvals.write_rule = rule;
-                ctx.approvals.mode = rule.mode;
+                if let Err(error) = set_write_rule(ctx, entry) {
+                    return error.outcome();
+                }
                 let empty = json!({});
                 let parameters = args.get("parameters").unwrap_or(&empty);
                 return run_add_on(tool.as_ref(), entry, ctx, parameters, Some(input));
@@ -472,12 +466,9 @@ impl AgentTool for RunTool {
                         view.target_name
                     ));
                 };
-                let rule = match rule_for(ctx, &entry) {
-                    Ok(rule) => rule,
-                    Err(error) => return error.outcome(),
-                };
-                ctx.approvals.write_rule = rule;
-                ctx.approvals.mode = rule.mode;
+                if let Err(error) = set_write_rule(ctx, &entry) {
+                    return error.outcome();
+                }
                 let outcome = execute(ctx, &facade, &entry, &view);
                 with_service_lessons(ctx, &entry, outcome)
             }
@@ -489,6 +480,15 @@ impl AgentTool for RunTool {
 }
 
 /// The agent's policy rule for a call of the catalog entry in its class.
+/// Set the call's write rule and approval mode from the agent's policy rule for the entry; refused when the policy
+/// cannot be read.
+fn set_write_rule(ctx: &mut TurnContext<'_>, entry: &Entry) -> Result<(), ToolError> {
+    let rule = rule_for(ctx, entry)?;
+    ctx.approvals.write_rule = rule;
+    ctx.approvals.mode = rule.mode;
+    Ok(())
+}
+
 fn rule_for(ctx: &TurnContext<'_>, entry: &Entry) -> Result<super::ToolRule, ToolError> {
     Ok(policy_of(ctx, &facade()?)?.rule_as(&entry.name, entry.classification))
 }
@@ -878,12 +878,9 @@ fn run_service(
         drop(guard);
         return answer(entry, ran, &checked, None);
     }
-    let rule = match rule_for(ctx, entry) {
-        Ok(rule) => rule,
-        Err(error) => return error.outcome(),
-    };
-    ctx.approvals.write_rule = rule;
-    ctx.approvals.mode = rule.mode;
+    if let Err(error) = set_write_rule(ctx, entry) {
+        return error.outcome();
+    }
     let facade = match facade() {
         Ok(facade) => facade,
         Err(error) => return error.outcome(),

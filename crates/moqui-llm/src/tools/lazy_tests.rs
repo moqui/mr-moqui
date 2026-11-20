@@ -1275,3 +1275,22 @@ fn a_services_lessons_come_with_describe_tools_and_its_errors() {
         results[2]
     );
 }
+
+/// SEC-AI-87: a tool policy that cannot be read in the middle of a step refuses the lazy catalog's call, rather than
+/// list every tool but the destructive ones as an empty policy would.
+#[test]
+fn the_lazy_catalog_refuses_when_the_tool_policy_cannot_be_read() {
+    let bed = bed("lazy-policy-fails");
+    let _entered = bed.ctx.enter();
+    let run_id = start(
+        &bed,
+        USER,
+        vec![
+            tool_step("p1", "test_read", json!({"key": super::tests::POLICY_FAILS})),
+            fake::Reply::text("Done."),
+        ],
+    );
+    assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
+    let results = results(&bed);
+    assert!(results[0].contains("tool policy could not be read"), "{}", results[0]);
+}
