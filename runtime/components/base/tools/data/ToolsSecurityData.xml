@@ -61,6 +61,20 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="SYSTEM_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
+    <!-- System › Vaults' lease dialog and take-in (plans/Vault-Instances.md §3.2, §3.7, §5), which a vault's members open
+        from a lease's notification, a deployment's page or an incident: every signed-in user reaches these two screens and
+        their transitions at /qapps/system/Vaults, nothing else of System, and the vault services they call (VaultServices,
+        VaultTypeData.xml) check the caller's membership and role. ALWAYS, not inherited: an application that denies its
+        groups System.xml (mr-boss's Admin groups) does not take the dialogs from a vault's approver, and what runs under
+        them is still checked by its own records. -->
+    <artifactGroups artifactGroupId="SYSTEM_VAULT_DIALOGS" description="System › Vaults: the lease dialog and take-in">
+        <artifacts artifactName="component://tools/screen/System/Vaults/Lease.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="N"/>
+        <artifacts artifactName="component://tools/screen/System/Vaults/TakeIn.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="N"/>
+        <artifacts artifactName="component://tools/screen/System/Vaults/(Lease|TakeIn)\.xml/[A-Za-z]+" artifactTypeEnumId="AT_XML_SCREEN_TRANS"
+                nameIsPattern="Y" inheritAuthz="N"/>
+        <authz artifactAuthzId="SYSTEM_VAULT_DIALOGS_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
     <!-- Artifact group for all of the Moqui Tools REST API via the moqui resource (the root resource) -->
     <artifactGroups artifactGroupId="MOQUI_API" description="Moqui Tools REST API (via root resource)">
         <artifacts artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y" artifactName="/moqui"/>
