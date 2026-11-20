@@ -15,7 +15,8 @@
 //! Deliveries (plans/Vault-Instances.md §3.3, `VaultDelivery`): a value sealed to one user's personal key, from a user
 //! (their signing key) or an instance (its link key, also Ed25519), with its purpose and the sender's signature. The
 //! recipient's client checks the signature before it files the value into a vault. A recovery holder's opened share
-//! goes to the recovering holder this way (§3.10).
+//! goes to the recovering holder this way (§3.10). A client files each `delivery_id` once and drops a repeat
+//! ([`Filed`]).
 
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroizing;
@@ -120,6 +121,21 @@ pub fn send(
 pub fn open(delivery: &Delivery, me: &PersonalKey, sender: &VerifyingKey) -> Result<Zeroizing<Vec<u8>>, Error> {
     delivery.verify(sender)?;
     hpke::unwrap(me.encrypt_key(), &delivery.names(), &delivery.extra(), &delivery.sealed)
+}
+
+/// The delivery ids a client has filed. A delivery is signed but carries no freshness, so a server could hand the
+/// same one over again (a second copy of an item, a recovery share counted twice); a client files each id once and
+/// drops a repeat.
+#[derive(Clone, Debug, Default)]
+pub struct Filed {
+    ids: std::collections::BTreeSet<String>,
+}
+
+impl Filed {
+    /// True the first time `delivery`'s id is seen, false for a repeat.
+    pub fn first_time(&mut self, delivery: &Delivery) -> bool {
+        self.ids.insert(delivery.delivery_id.clone())
+    }
 }
 
 #[cfg(test)]

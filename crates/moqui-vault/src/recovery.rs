@@ -20,7 +20,9 @@
 //! the vault's wrap to the recovery key.
 
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroizing;
 
+use crate::delivery::{self, Delivery, Filed, Sender, To};
 use crate::hpke;
 use crate::keys::Key32;
 use crate::names::{refs, Names, Purpose};
@@ -179,6 +181,71 @@ pub fn combine(record: &RecoveryKeyRecord, maker: &VerifyingKey, shares: &[Share
         return Err(Error::Refused("the shares do not give this recovery key"));
     }
     Ok(secret)
+}
+
+/// The purpose of a delivery that carries an opened share of `recovery_key_id`.
+pub fn share_purpose(recovery_key_id: &str) -> String {
+    format!("recovery-share:{recovery_key_id}")
+}
+
+/// A holder's part in a recovery: opens their share (checking the maker's signature) and delivers it, signed, to the
+/// recovering holder. The share is never shown to the holder or their page.
+pub fn deliver_share(
+    held: &HolderShare,
+    me: &PersonalKey,
+    me_user_id: &str,
+    maker: &VerifyingKey,
+    delivery_id: &str,
+    to: To,
+    rng: &mut dyn Rng,
+) -> Result<Delivery, Error> {
+    let share = open_share(held, me, maker)?;
+    let mut value = Zeroizing::new(Vec::with_capacity(share.value.len() + 1));
+    value.push(share.index);
+    value.extend_from_slice(&share.value);
+    let sender = Sender {
+        kind: "user",
+        id: me_user_id,
+        key: me.signing_key(),
+    };
+    delivery::send(
+        delivery_id,
+        to,
+        &share_purpose(&held.recovery_key_id),
+        &value,
+        sender,
+        rng,
+    )
+}
+
+/// The recovering holder's combine of delivered shares, each with its sender's key: a repeated delivery id is
+/// dropped, a delivery for another recovery key refused, and the result checked against the signed record.
+pub fn combine_deliveries(
+    record: &RecoveryKeyRecord,
+    maker: &VerifyingKey,
+    deliveries: &[(Delivery, VerifyingKey)],
+    me: &PersonalKey,
+) -> Result<hpke::SecretKey, Error> {
+    let purpose = share_purpose(&record.recovery_key_id);
+    let mut filed = Filed::default();
+    let mut shares = Vec::with_capacity(deliveries.len());
+    for (sent, sender) in deliveries {
+        if !filed.first_time(sent) {
+            continue;
+        }
+        if sent.purpose != purpose {
+            return Err(Error::Refused("a delivery that is not a share of this recovery key"));
+        }
+        let value = delivery::open(sent, me, sender)?;
+        let Some((&index, rest)) = value.split_first() else {
+            return Err(Error::Format("an empty share"));
+        };
+        shares.push(Share {
+            index,
+            value: Zeroizing::new(rest.to_vec()),
+        });
+    }
+    combine(record, maker, &shares)
 }
 
 /// A vault's wrap of its key to the recovery key, signed by the member who turned recovery on.

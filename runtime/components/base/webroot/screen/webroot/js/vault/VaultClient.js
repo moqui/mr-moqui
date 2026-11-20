@@ -81,16 +81,30 @@
 
         touch() {
             if (this.idleTimer) clearTimeout(this.idleTimer);
+            // lock() does not reject; a timer has no one to report to
             if (this.idleMs > 0) this.idleTimer = setTimeout(() => this.lock(), this.idleMs);
         }
 
-        /** Drops every key: the module forgets them and the worker zeroes its memory. */
+        /**
+         * Drops every key: the module forgets them and the worker zeroes its memory. When the worker cannot answer, it is
+         * ended, which drops its memory with it. Never rejects.
+         */
         async lock() {
             if (this.idleTimer) clearTimeout(this.idleTimer);
             this.idleTimer = null;
             if (!this.worker) return;
-            await this.post({ op: "lock" });
-            if (this.onLock) this.onLock();
+            try {
+                await this.post({ op: "lock" });
+            } catch (e) {
+                this.terminate();
+            }
+            if (this.onLock) {
+                try {
+                    this.onLock();
+                } catch (e) {
+                    // the page's callback failing does not undo the lock
+                }
+            }
         }
 
         /** Ends the worker; a later call starts a new one. */
@@ -124,20 +138,28 @@
         personalMake(args) { return this.call("personal_make", args); }
         personalOpen(args) { return this.call("personal_open", args); }
         personalOpenRecovery(args) { return this.call("personal_open_recovery", args); }
+        fingerprint(args) { return this.call("fingerprint", args); }
+        /** A signed check of a key, made only with the fingerprint the user compared ({fingerprint, ...}). */
+        keyCheckMake(args) { return this.call("key_check_make", args); }
+        verify(args) { return this.call("verify", args); }
+        /** Each call that trusts a member list or wraps to a key takes the user's key_checks rows. */
+        chainVerify(args) { return this.call("chain_verify", args); }
+        keyVersionFirst(args) { return this.call("key_version_first", args); }
+        keyVersionNext(args) { return this.call("key_version_next", args); }
         vaultKeyNew(args) { return this.call("vault_key_new", args); }
         vaultKeyWrapMember(args) { return this.call("vault_key_wrap_member", args); }
-        vaultKeyOpenMember(args) { return this.call("vault_key_open_member", args); }
+        vaultKeyOpen(args) { return this.call("vault_key_open", args); }
         vaultKeyPasswordWrap(args) { return this.call("vault_key_password_wrap", args); }
         vaultKeyPasswordOpen(args) { return this.call("vault_key_password_open", args); }
-        chainVerify(args) { return this.call("chain_verify", args); }
+        vaultRotate(args) { return this.call("vault_rotate", args); }
+        depositKeyNew(args) { return this.call("deposit_key_new", args); }
         itemSeal(args) { return this.call("item_seal", args); }
         itemOpen(args) { return this.call("item_open", args); }
-        sign(args) { return this.call("sign", args); }
-        verify(args) { return this.call("verify", args); }
-        fingerprint(args) { return this.call("fingerprint", args); }
         leaseApprove(args) { return this.call("lease_approve", args); }
-        shamirSplit(args) { return this.call("shamir_split", args); }
-        shamirCombine(args) { return this.call("shamir_combine", args); }
+        recoveryWrap(args) { return this.call("recovery_wrap", args); }
+        recoveryShareDeliver(args) { return this.call("recovery_share_deliver", args); }
+        recoveryCombine(args) { return this.call("recovery_combine", args); }
+        recoveryOpenVault(args) { return this.call("recovery_open_vault", args); }
     }
 
     global.MoquiVaultClient = MoquiVaultClient;

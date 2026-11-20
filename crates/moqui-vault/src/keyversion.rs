@@ -19,18 +19,18 @@
 //! signed by the vault's maker, who is a manager in it. Every later entry is signed by a member who held the manage
 //! role in the entry before it, with the key that entry lists for them, so a server or a database writer cannot give a
 //! member a member list, or a vault key, of its own choice. A client accepts the chain only when its user has checked
-//! (§3.5) the key of at least one signer in it.
+//! (§3.5) the key of at least one signer in it, and trusts it only from the first such entry on ([`Chain`]).
 //!
 //! A client with memory keeps the highest entry it has accepted and the hash of its member list ([`Remembered`],
-//! decision (d)): a lower entry is a rollback, and the same entry with another member list is a fork; both are
-//! refused.
+//! decision (d)): a chain that does not hold that entry with that member list is a rollback or a fork, and is
+//! refused however high it goes.
 
 use sha2::{Digest as _, Sha256};
 
 use crate::names::refs;
 use crate::personal::{PersonalKey, PersonalPublic};
 use crate::sign::{Statement, VerifyingKey};
-use crate::vault::MemberWrap;
+use crate::vault::{DepositPublic, MemberWrap};
 use crate::Error;
 
 /// A member's role. A personal shared-key vault has manage, write and read; an operational vault manage, approve
@@ -105,7 +105,8 @@ fn member_list_bytes(members: &[Member]) -> Vec<u8> {
 }
 
 impl KeyVersion {
-    /// Makes and signs an entry. The caller is a manager of the entry before (or, for the first, of this one).
+    /// Makes and signs an entry. The caller is a manager of the entry before (or, for the first, of this one);
+    /// [`Chain::next`] checks that for a client. A member list that names one personal key of a user twice is refused.
     pub fn sign(
         vault_id: &str,
         version: u64,
@@ -114,7 +115,8 @@ impl KeyVersion {
         signer_user_id: &str,
         signer_key_id: &str,
         signer: &PersonalKey,
-    ) -> KeyVersion {
+    ) -> Result<KeyVersion, Error> {
+        check_members(&members)?;
         let mut entry = KeyVersion {
             vault_id: vault_id.to_string(),
             version,
@@ -128,7 +130,24 @@ impl KeyVersion {
             .signing_key()
             .sign(Statement::KeyVersion, &refs(&entry.signed_parts()))
             .to_vec();
-        entry
+        Ok(entry)
+    }
+
+    /// The vault's first entry (1.1), signed by its maker, who must be a manager in it with this key.
+    pub fn first(
+        vault_id: &str,
+        members: Vec<Member>,
+        signer_user_id: &str,
+        signer_key_id: &str,
+        signer: &PersonalKey,
+    ) -> Result<KeyVersion, Error> {
+        let entry = KeyVersion::sign(vault_id, 1, 1, members, signer_user_id, signer_key_id, signer)?;
+        match entry.manager(signer_user_id, signer_key_id) {
+            Some(maker) if maker.public.verify == signer.public().verify => Ok(entry),
+            _ => Err(Error::Refused(
+                "the maker must be a manager in the first member list, with this key",
+            )),
+        }
     }
 
     fn signed_parts(&self) -> Vec<Vec<u8>> {
@@ -162,10 +181,29 @@ impl KeyVersion {
     }
 }
 
+/// Refuses a member list that names the same personal key of a user twice.
+fn check_members(members: &[Member]) -> Result<(), Error> {
+    for (at, member) in members.iter().enumerate() {
+        if members[..at]
+            .iter()
+            .any(|m| m.user_id == member.user_id && m.key_id == member.key_id)
+        {
+            return Err(Error::Refused("a member list names one personal key twice"));
+        }
+    }
+    Ok(())
+}
+
 /// A chain that has been checked: every entry signed by a manager of the entry before.
+///
+/// The entries before the first one whose signer the user checked (the anchor) cannot be told from a forged history:
+/// their signers were placed only by the entries before them. Entries from the anchor on are signed by a checked key
+/// or by a manager its entries name, so only they are trusted: a wrap or a deposit key is accepted only for a version
+/// whose last entry is at or after the anchor.
 #[derive(Debug)]
 pub struct Chain<'a> {
     entries: &'a [KeyVersion],
+    anchor: usize,
 }
 
 impl<'a> Chain<'a> {
@@ -180,12 +218,13 @@ impl<'a> Chain<'a> {
                 "the chain does not start at the vault's first key version",
             ));
         }
-        let mut anchored = false;
+        let mut anchor = None;
         let mut previous: Option<&KeyVersion> = None;
-        for entry in entries {
+        for (at, entry) in entries.iter().enumerate() {
             if entry.vault_id != first.vault_id {
                 return Err(Error::Refused("a key version of another vault"));
             }
+            check_members(&entry.members)?;
             // The maker signs the first entry as a manager in it; each later one is signed by a manager of the one
             // before, with the key that entry lists for them.
             let signers_list = previous.unwrap_or(entry);
@@ -201,22 +240,30 @@ impl<'a> Chain<'a> {
                 .public
                 .verify
                 .verify(Statement::KeyVersion, &refs(&entry.signed_parts()), &entry.signature)?;
-            anchored |= checked.contains(&signer.public.verify);
+            if anchor.is_none() && checked.contains(&signer.public.verify) {
+                anchor = Some(at);
+            }
             previous = Some(entry);
         }
-        if !anchored {
+        let Some(anchor) = anchor else {
             return Err(Error::Refused("no signer's key in this chain has been checked"));
-        }
-        Ok(Chain { entries })
+        };
+        Ok(Chain { entries, anchor })
     }
 
     pub fn latest(&self) -> &'a KeyVersion {
         self.entries.last().expect("a verified chain has at least one entry")
     }
 
-    /// The last entry of `version`.
-    fn last_of(&self, version: u64) -> Option<&'a KeyVersion> {
-        self.entries.iter().rev().find(|entry| entry.version == version)
+    /// The last entry of `version`, when it is at or after the anchor.
+    fn trusted_last_of(&self, version: u64) -> Result<&'a KeyVersion, Error> {
+        let Some(at) = self.entries.iter().rposition(|entry| entry.version == version) else {
+            return Err(Error::Refused("a key version not in the chain"));
+        };
+        if at < self.anchor {
+            return Err(Error::Refused("a key version from before the first checked signer"));
+        }
+        Ok(&self.entries[at])
     }
 
     /// Accepts a member's wrap of `wrap.key_version`: its signer must be a manager in that version's last entry,
@@ -225,9 +272,7 @@ impl<'a> Chain<'a> {
         if wrap.vault_id != self.latest().vault_id {
             return Err(Error::Refused("a wrap of another vault"));
         }
-        let Some(entry) = self.last_of(wrap.key_version) else {
-            return Err(Error::Refused("a wrap of a key version not in the chain"));
-        };
+        let entry = self.trusted_last_of(wrap.key_version)?;
         let Some(signer) = entry.manager(&wrap.signer_user_id, &wrap.signer_key_id) else {
             return Err(Error::Refused("the wrap's signer did not hold the manage role"));
         };
@@ -236,6 +281,65 @@ impl<'a> Chain<'a> {
         };
         wrap.verify(&member.public, &signer.public.verify)?;
         Ok((member, signer.public.verify))
+    }
+
+    /// Accepts an operational vault's deposit key: of the current key version, signed by a manager of it. Returns
+    /// the signer's key, which [`crate::vault::wrap_item_key_to_deposit`] checks again.
+    pub fn accept_deposit(&self, deposit: &DepositPublic) -> Result<VerifyingKey, Error> {
+        let latest = self.latest();
+        if deposit.vault_id != latest.vault_id {
+            return Err(Error::Refused("a deposit key of another vault"));
+        }
+        if deposit.key_version != latest.version {
+            return Err(Error::Refused("a deposit key of an earlier key version"));
+        }
+        let entry = self.trusted_last_of(deposit.key_version)?;
+        let Some(signer) = entry.manager(&deposit.signer_user_id, &deposit.signer_key_id) else {
+            return Err(Error::Refused("the deposit key's signer did not hold the manage role"));
+        };
+        deposit.verify(&signer.public.verify)?;
+        Ok(signer.public.verify)
+    }
+
+    /// A manager of `version`'s last trusted entry: the signer a recovery wrap of that version is checked with.
+    pub fn manager_at(&self, version: u64, user_id: &str, key_id: &str) -> Result<&'a Member, Error> {
+        self.trusted_last_of(version)?
+            .manager(user_id, key_id)
+            .ok_or(Error::Refused("not a manager of that key version"))
+    }
+
+    /// Signs the entry after the latest: `signer` must be a manager in the latest entry, with this key.
+    pub fn next(
+        &self,
+        version: u64,
+        revision: u64,
+        members: Vec<Member>,
+        signer_user_id: &str,
+        signer_key_id: &str,
+        signer: &PersonalKey,
+    ) -> Result<KeyVersion, Error> {
+        let latest = self.latest();
+        match latest.manager(signer_user_id, signer_key_id) {
+            Some(listed) if listed.public.verify == signer.public().verify => {}
+            _ => {
+                return Err(Error::Refused(
+                    "only a manager of the latest member list signs the next",
+                ))
+            }
+        }
+        let entry = KeyVersion::sign(
+            &latest.vault_id,
+            version,
+            revision,
+            members,
+            signer_user_id,
+            signer_key_id,
+            signer,
+        )?;
+        if !latest.followed_by(&entry) {
+            return Err(Error::Refused("the next entry must follow the latest"));
+        }
+        Ok(entry)
     }
 }
 
@@ -247,8 +351,11 @@ pub struct Remembered {
     pub member_list_hash: [u8; 32],
 }
 
-/// Checks the latest entry against what the client remembers, and gives what to remember now.
-pub fn check_remembered(latest: &KeyVersion, remembered: Option<&Remembered>) -> Result<Remembered, Error> {
+/// Checks a verified chain against what the client remembers, and gives what to remember now. The chain must hold
+/// the remembered entry, with the remembered member list: a lower latest entry is a rollback, and a chain that went
+/// another way from an earlier entry (a fork, however high it goes) does not hold it.
+pub fn check_remembered(chain: &Chain, remembered: Option<&Remembered>) -> Result<Remembered, Error> {
+    let latest = chain.latest();
     let now = Remembered {
         version: latest.version,
         revision: latest.revision,
@@ -258,10 +365,13 @@ pub fn check_remembered(latest: &KeyVersion, remembered: Option<&Remembered>) ->
         if (now.version, now.revision) < (before.version, before.revision) {
             return Err(Error::Refused("an older key version than one already seen"));
         }
-        if (now.version, now.revision) == (before.version, before.revision)
-            && now.member_list_hash != before.member_list_hash
-        {
-            return Err(Error::Refused("the member list changed without a new revision"));
+        let held = chain
+            .entries
+            .iter()
+            .find(|entry| (entry.version, entry.revision) == (before.version, before.revision));
+        match held {
+            Some(entry) if entry.member_list_hash() == before.member_list_hash => {}
+            _ => return Err(Error::Refused("the member list does not continue the one already seen")),
         }
     }
     Ok(now)

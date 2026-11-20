@@ -84,7 +84,14 @@ fn make_lease(s: &mut Setup, items: Vec<LeaseItem>) -> (Lease, hpke::SecretKey) 
     (lease, secret)
 }
 
+/// The approver's clock: under three hours before the test leases' time limit.
+const NOW: i64 = 1_799_990_000_000;
+
 fn approve_as(s: &mut Setup, lease: &Lease, checked: &[VerifyingKey]) -> Result<Approval, Error> {
+    approve_at(s, lease, checked, NOW)
+}
+
+fn approve_at(s: &mut Setup, lease: &Lease, checked: &[VerifyingKey], now: i64) -> Result<Approval, Error> {
     let wrapped: Vec<(&str, &[u8])> = s.wrapped.iter().map(|(id, w)| (id.as_str(), w.as_slice())).collect();
     let lease_key = s.server_key.verifying_key();
     let input = ApproveInput {
@@ -95,8 +102,21 @@ fn approve_as(s: &mut Setup, lease: &Lease, checked: &[VerifyingKey]) -> Result<
         wrapped_item_keys: &wrapped,
         approver_user_id: "approver",
         approver: &s.approver,
+        now,
     };
     approve(input, &mut s.rng)
+}
+
+#[test]
+fn an_expired_lease_or_one_over_four_hours_is_refused() {
+    let mut s = setup();
+    let (lease, _) = make_lease(&mut s, vec![item("item-1", "AppInstance:1:dbPassword")]);
+    let checked = [s.server_key.verifying_key()];
+    let expired = approve_at(&mut s, &lease, &checked, lease.expires_at);
+    assert!(matches!(expired, Err(Error::Refused(_))));
+    let too_long = approve_at(&mut s, &lease, &checked, lease.expires_at - MAX_LEASE_MS - 1);
+    assert!(matches!(too_long, Err(Error::Refused(_))));
+    assert!(approve_at(&mut s, &lease, &checked, lease.expires_at - MAX_LEASE_MS).is_ok());
 }
 
 #[test]

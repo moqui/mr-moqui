@@ -46,6 +46,12 @@ impl<'a> ItemRef<'a> {
     fn names(&self, purpose: Purpose) -> Names<'a> {
         Names::new(purpose, self.vault_id, self.item_id, self.key_version).with_label(self.label)
     }
+
+    /// A body's names carry no key version (it is 0): a rotation rewraps item keys, not bodies, and the item key,
+    /// whose wrap names the version, already binds the body to it.
+    fn body_names(&self) -> Names<'a> {
+        Names::new(Purpose::Body, self.vault_id, self.item_id, 0).with_label(self.label)
+    }
 }
 
 fn digest(bytes: &[u8]) -> [u8; 32] {
@@ -255,13 +261,104 @@ pub fn unwrap_item_key(vault_key: &Key32, wrapped: &[u8], item: ItemRef) -> Resu
 
 /// Seals an item's JSON body under its item key, padded, at most 64 KiB.
 pub fn seal_item_body(item_key: &Key32, item: ItemRef, body: &[u8], rng: &mut dyn Rng) -> Result<Vec<u8>, Error> {
-    let parts = item.names(Purpose::Body).parts(&[]);
+    let parts = item.body_names().parts(&[]);
     aead::seal_body(item_key, &refs(&parts), body, rng)
 }
 
+/// Opens a body; `item.key_version` is not part of a body's names, so a body opens across a rotation.
 pub fn open_item_body(item_key: &Key32, item: ItemRef, sealed: &[u8]) -> Result<Zeroizing<Vec<u8>>, Error> {
-    let parts = item.names(Purpose::Body).parts(&[]);
+    let parts = item.body_names().parts(&[]);
     aead::open_body(item_key, &refs(&parts), sealed)
+}
+
+/// An item key moved from one key version to the next at a rotation: unwrapped by the old vault key, wrapped by the
+/// new. The body is not touched.
+pub fn rewrap_item_key(
+    old_key: &Key32,
+    new_key: &Key32,
+    wrapped: &[u8],
+    item: ItemRef,
+    new_version: u64,
+    rng: &mut dyn Rng,
+) -> Result<Vec<u8>, Error> {
+    let item_key = unwrap_item_key(old_key, wrapped, item)?;
+    Ok(wrap_item_key(
+        new_key,
+        &item_key,
+        ItemRef {
+            key_version: new_version,
+            ..item
+        },
+        rng,
+    ))
+}
+
+/// What a rotation makes (§3.9, Remove): the new vault key, every item key rewrapped under it, each remaining
+/// member's wrap, and for an operational vault a new deposit key, since the old one's private half was under the old
+/// vault key. The caller signs the new member list ([`crate::keyversion::Chain::next`]).
+#[derive(Debug)]
+pub struct Rotated {
+    pub key_version: u64,
+    pub vault_key: Key32,
+    pub item_keys: Vec<(String, Vec<u8>)>,
+    pub member_wraps: Vec<MemberWrap>,
+    pub deposit: Option<(DepositPublic, Vec<u8>)>,
+}
+
+/// What a rotation starts from: the old version's key and wrapped item keys, the members who stay (their keys
+/// checked by the caller), and whether the vault is operational.
+#[derive(Debug)]
+pub struct RotateInput<'a> {
+    pub vault_id: &'a str,
+    pub old_version: u64,
+    pub old_key: &'a Key32,
+    pub items: &'a [(ItemRef<'a>, &'a [u8])],
+    pub members: &'a [Recipient<'a>],
+    pub operational: bool,
+    pub signer: Signer<'a>,
+}
+
+/// Rotates a vault key to the next version.
+pub fn rotate(input: RotateInput, rng: &mut dyn Rng) -> Result<Rotated, Error> {
+    let key_version = input.old_version + 1;
+    let vault_key = new_vault_key(rng);
+    let mut item_keys = Vec::with_capacity(input.items.len());
+    for (item, wrapped) in input.items {
+        if item.vault_id != input.vault_id || item.key_version != input.old_version {
+            return Err(Error::Refused("an item key of another vault or version"));
+        }
+        let rewrapped = rewrap_item_key(input.old_key, &vault_key, wrapped, *item, key_version, rng)?;
+        item_keys.push((item.item_id.to_string(), rewrapped));
+    }
+    let mut member_wraps = Vec::with_capacity(input.members.len());
+    for member in input.members {
+        member_wraps.push(wrap_vault_key_to_member(
+            &vault_key,
+            input.vault_id,
+            key_version,
+            *member,
+            input.signer,
+            rng,
+        )?);
+    }
+    let deposit = if input.operational {
+        Some(new_deposit_key(
+            &vault_key,
+            input.vault_id,
+            key_version,
+            input.signer,
+            rng,
+        )?)
+    } else {
+        None
+    };
+    Ok(Rotated {
+        key_version,
+        vault_key,
+        item_keys,
+        member_wraps,
+        deposit,
+    })
 }
 
 // ----- The deposit key of an operational vault -----
@@ -336,8 +433,9 @@ pub fn open_deposit_key(
 }
 
 /// The server's deposit of a new item's key: checked against the deposit key's signature by `signer` (whom the
-/// caller found with the manage role in the vault's signed member list), then wrapped to it. The server can write
-/// the item but not read it back.
+/// caller found with the manage role in the vault's signed member list, [`crate::keyversion::Chain::accept_deposit`]),
+/// then wrapped to it. `item.key_version` is the vault's current version, and a deposit key of another version is
+/// refused: a rotation makes a new one. The server can write the item but not read it back.
 pub fn wrap_item_key_to_deposit(
     deposit: &DepositPublic,
     signer: &VerifyingKey,
@@ -348,6 +446,11 @@ pub fn wrap_item_key_to_deposit(
     deposit.verify(signer)?;
     if deposit.vault_id != item.vault_id {
         return Err(Error::Refused("the deposit key is another vault's"));
+    }
+    if deposit.key_version != item.key_version {
+        return Err(Error::Refused(
+            "the deposit key is not of the vault's current key version",
+        ));
     }
     hpke::wrap(
         &deposit.public,

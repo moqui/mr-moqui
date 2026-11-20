@@ -7,7 +7,8 @@
  *
  * Messages from the page:
  *   {id, op: "init", bytes?: ArrayBuffer, url?: string}  the module, as bytes the page fetched (with its integrity
- *       hash) or a URL to fetch here (moqui_vault.wasm beside this file by default)
+ *       hash) or an absolute URL to fetch here (this worker runs from a blob: URL, so nothing relative resolves); an
+ *       earlier instance is zeroed first
  *   {id, op, args}  one call of the module (crates/moqui-vault/src/ops.rs): "personal_open", "item_open", ...
  *   {id, op: "lock"}  the module drops its keys, then its whole memory is overwritten with zeros and the instance is
  *       thrown away; the next call starts a fresh one
@@ -17,7 +18,7 @@
  */
 "use strict";
 
-let module = null; // the compiled WebAssembly.Module, kept across a lock
+let compiled = null; // the compiled WebAssembly.Module, kept across a lock
 let instance = null;
 
 function memoryBytes() {
@@ -34,17 +35,31 @@ async function instantiate() {
             },
         },
     };
-    instance = await WebAssembly.instantiate(module, imports);
+    instance = await WebAssembly.instantiate(compiled, imports);
+}
+
+/** Overwrites the module's whole memory with zeros and drops the instance, whatever state it is in. */
+function wipe() {
+    if (!instance) return;
+    try {
+        memoryBytes().fill(0);
+    } finally {
+        instance = null;
+    }
 }
 
 async function init(message) {
     let bytes = message.bytes;
     if (!bytes) {
-        const response = await fetch(message.url || new URL("moqui_vault.wasm", self.location.href).href);
+        // This worker runs from a blob: URL, so a relative URL has nothing to resolve against: the page passes the
+        // module's bytes, or its absolute URL.
+        if (!/^https?:\/\//.test(message.url || "")) throw new Error("init needs the module's bytes or its absolute URL");
+        const response = await fetch(message.url);
         if (!response.ok) throw new Error("the vault module did not load: " + response.status);
         bytes = await response.arrayBuffer();
     }
-    module = await WebAssembly.compile(bytes);
+    wipe();
+    compiled = await WebAssembly.compile(bytes);
     await instantiate();
     return { ready: true };
 }
@@ -73,12 +88,19 @@ function call(request) {
     }
 }
 
+/**
+ * The module drops its keys, then its memory is zeroed and the instance thrown away even when the module trapped
+ * (a trapped instance cannot answer, but its memory still holds what it held). A fresh instance takes its place.
+ */
 async function lock() {
-    if (!instance) return { locked: true };
-    call({ op: "lock" });
-    memoryBytes().fill(0);
-    instance = null;
-    if (module) await instantiate();
+    try {
+        if (instance) call({ op: "lock" });
+    } catch (e) {
+        // the memory is zeroed below all the same
+    } finally {
+        wipe();
+    }
+    if (compiled) await instantiate();
     return { locked: true };
 }
 
@@ -97,6 +119,17 @@ self.onmessage = async (event) => {
             self.postMessage(answer.ok ? { id, ok: true, result: answer.result } : { id, ok: false, error: answer.error });
         }
     } catch (e) {
-        self.postMessage({ id, ok: false, error: String((e && e.message) || e) });
+        let error = String((e && e.message) || e);
+        if (message.op !== "init" && message.op !== "lock" && instance) {
+            // A trap leaves the instance unusable with its keys still in memory: zero it and start a fresh, locked one.
+            wipe();
+            error += " (the vault module failed and was locked)";
+            try {
+                if (compiled) await instantiate();
+            } catch (ignored) {
+                // the next call reports that the module is not loaded
+            }
+        }
+        self.postMessage({ id, ok: false, error });
     }
 };

@@ -155,10 +155,6 @@ fn an_item_key_or_body_moved_to_another_item_vault_or_version_fails() {
             vault_id: "vault-2",
             ..item(None)
         },
-        ItemRef {
-            key_version: 3,
-            ..item(None)
-        },
     ] {
         assert_eq!(
             unwrap_item_key(&vault_key, &wrapped, moved).unwrap_err(),
@@ -171,6 +167,17 @@ fn an_item_key_or_body_moved_to_another_item_vault_or_version_fails() {
             "{moved:?}"
         );
     }
+    // A wrapped item key moved to another version does not open; the body is not bound to the version, so it opens
+    // after a rotation rewraps its item key.
+    let other_version = ItemRef {
+        key_version: 3,
+        ..item(None)
+    };
+    assert_eq!(
+        unwrap_item_key(&vault_key, &wrapped, other_version).unwrap_err(),
+        Error::Open
+    );
+    assert!(open_item_body(&item_key, other_version, &body).is_ok());
     assert_eq!(
         unwrap_item_key(&new_vault_key(&mut rng), &wrapped, item(None)).unwrap_err(),
         Error::Open
@@ -265,4 +272,62 @@ fn the_server_deposits_only_to_a_signed_deposit_key_and_cannot_read_back() {
     };
     let refused = wrap_item_key_to_deposit(&public, &manager_verify, &item_key, elsewhere, &mut rng);
     assert!(matches!(refused, Err(Error::Refused(_))));
+}
+
+#[test]
+fn a_rotation_rewraps_item_keys_and_makes_a_new_deposit_key() {
+    let mut rng = TestRng::new("vault-rotate");
+    let manager = PersonalKey::generate(&mut rng);
+    let manager_public = manager.public();
+    let signer = Signer {
+        user_id: "manager",
+        key_id: "pk-a",
+        key: &manager,
+    };
+    let old_key = new_vault_key(&mut rng);
+    let item_key = new_item_key(&mut rng);
+    let old_item = item(Some(LABEL));
+    let wrapped = wrap_item_key(&old_key, &item_key, old_item, &mut rng);
+    let body = seal_item_body(&item_key, old_item, b"{}", &mut rng).unwrap();
+    let (old_deposit, _) = new_deposit_key(&old_key, "vault-1", 2, signer, &mut rng).unwrap();
+    let me = Recipient {
+        user_id: "manager",
+        key_id: "pk-a",
+        public: &manager_public,
+    };
+    let items = [(old_item, wrapped.as_slice())];
+    let rotated = rotate(
+        RotateInput {
+            vault_id: "vault-1",
+            old_version: 2,
+            old_key: &old_key,
+            items: &items,
+            members: &[me],
+            operational: true,
+            signer,
+        },
+        &mut rng,
+    )
+    .unwrap();
+    assert_eq!(rotated.key_version, 3);
+    let new_item = ItemRef {
+        key_version: 3,
+        ..old_item
+    };
+    let rewrapped = &rotated.item_keys[0].1;
+    assert_eq!(
+        unwrap_item_key(&rotated.vault_key, rewrapped, new_item).unwrap(),
+        item_key
+    );
+    assert!(open_item_body(&item_key, new_item, &body).is_ok());
+    assert_eq!(
+        open_member_wrap(&rotated.member_wraps[0], &manager, &manager_public.verify).unwrap(),
+        rotated.vault_key
+    );
+    // The old deposit key is of version 2: the server may not deposit under it at version 3.
+    let refused = wrap_item_key_to_deposit(&old_deposit, &manager_public.verify, &item_key, new_item, &mut rng);
+    assert!(matches!(refused, Err(Error::Refused(_))));
+    let (new_deposit, _) = rotated.deposit.expect("an operational rotation makes a deposit key");
+    assert_eq!(new_deposit.key_version, 3);
+    assert!(wrap_item_key_to_deposit(&new_deposit, &manager_public.verify, &item_key, new_item, &mut rng).is_ok());
 }

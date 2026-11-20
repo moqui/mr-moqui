@@ -62,3 +62,30 @@ fn a_delivery_opens_only_for_its_recipient_with_a_good_signature() {
     let forged = send("d-1", to, "login", b"planted", forged_sender, &mut rng).unwrap();
     assert_eq!(open(&forged, &bob, &alice_verify).unwrap_err(), Error::Signature);
 }
+
+#[test]
+fn a_delivery_id_is_filed_once() {
+    let mut rng = TestRng::new("delivery-filed");
+    let alice = PersonalKey::generate(&mut rng);
+    let bob_public = PersonalKey::generate(&mut rng).public();
+    let to = To {
+        user_id: "bob",
+        key_id: "pk-b",
+        public: &bob_public,
+    };
+    let sender = Sender {
+        kind: "user",
+        id: "alice",
+        key: alice.signing_key(),
+    };
+    let first = send("d-1", to, "login", b"1", sender, &mut rng).unwrap();
+    let again = send("d-1", to, "login", b"1", sender, &mut rng).unwrap();
+    let other = send("d-2", to, "login", b"2", sender, &mut rng).unwrap();
+    let mut filed = Filed::default();
+    assert!(filed.first_time(&first));
+    assert!(
+        !filed.first_time(&again),
+        "a repeat of an id is dropped, even with other ciphertext"
+    );
+    assert!(filed.first_time(&other));
+}

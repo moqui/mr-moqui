@@ -72,6 +72,42 @@ fn lock_checksum(lock: &str, name: &str, version: &str) -> Option<String> {
     None
 }
 
+/// The names of the dependencies the crate's Cargo.toml takes from the workspace (`x.workspace = true` or
+/// `x = { workspace = true, ... }`), sorted.
+fn workspace_dependency_names(manifest: &str) -> Vec<String> {
+    let mut names: Vec<String> = manifest
+        .lines()
+        .filter_map(|line| {
+            let name: String = line
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            let rest = line[name.len()..].replace(' ', "");
+            let from_workspace = rest.starts_with(".workspace=true") || rest.starts_with("={workspace=true");
+            (!name.is_empty() && from_workspace).then_some(name)
+        })
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The lines of the TOML section `header` (up to the next header), as the script's awk reads them.
+fn section<'a>(text: &'a str, header: &str) -> Vec<&'a str> {
+    let mut on = false;
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if line == header {
+            on = true;
+        } else if line.starts_with('[') {
+            on = false;
+        } else if on {
+            out.push(line);
+        }
+    }
+    out
+}
+
 #[test]
 fn the_checked_in_wasm_is_what_the_source_builds() {
     let root = root();
@@ -93,6 +129,21 @@ fn the_checked_in_wasm_is_what_the_source_builds() {
         let bytes = std::fs::read(crate_dir.join(&path)).unwrap();
         lines.push_str(&format!("{path} {}\n", sha(&bytes)));
     }
+    let manifest = std::fs::read_to_string(crate_dir.join("Cargo.toml")).unwrap();
+    let workspace = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let workspace_dependencies = section(&workspace, "[workspace.dependencies]");
+    for name in workspace_dependency_names(&manifest) {
+        let prefix = format!("{name} = ");
+        for line in workspace_dependencies.iter().filter(|line| line.starts_with(&prefix)) {
+            lines.push_str(&format!("workspace {}\n", line.trim()));
+        }
+    }
+    let config = std::fs::read_to_string(root.join(".cargo/config.toml")).unwrap();
+    for line in section(&config, "[profile.release]") {
+        if !line.trim().is_empty() && !line.trim_start().starts_with('#') {
+            lines.push_str(&format!("profile {}\n", line.trim()));
+        }
+    }
     for entry in stamp["lock"].as_array().unwrap() {
         let entry = entry.as_str().unwrap();
         let mut fields = entry.split(' ');
@@ -112,6 +163,17 @@ fn the_checked_in_wasm_is_what_the_source_builds() {
         "crates/moqui-vault changed since the module was built: run scripts/vault-wasm.sh \
          (or MOQUI_REGENERATE_WASM=1 cargo test -p moqui-vault the_checked_in_wasm) and commit both files"
     );
+    match std::process::Command::new("rustc").arg("-V").output() {
+        Ok(output) if output.status.success() => {
+            let rustc = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            assert_eq!(
+                stamp["rustc"].as_str().unwrap(),
+                rustc,
+                "the module was built by another rustc: rebuild it with scripts/vault-wasm.sh and commit both files"
+            );
+        }
+        _ => eprintln!("rustc -V did not run: the module's rustc version is not compared"),
+    }
     let wasm = std::fs::read(root.join(VAULT_JS).join("moqui_vault.wasm")).unwrap();
     assert_eq!(
         stamp["wasm_sha256"].as_str().unwrap(),

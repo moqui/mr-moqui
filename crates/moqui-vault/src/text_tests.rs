@@ -36,3 +36,41 @@ fn hex_round_trips() {
     assert!(unhex("abc").is_err());
     assert!(unhex("zz").is_err());
 }
+
+#[test]
+fn the_arithmetic_maps_agree_with_the_alphabet_for_every_character() {
+    // The reference: the Crockford alphabet as a table, used only here.
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    for v in 0..32u16 {
+        assert_eq!(base32_char(v), char::from(ALPHABET[usize::from(v)]), "value {v}");
+    }
+    for c in 0..=255u8 {
+        let upper = c.to_ascii_uppercase();
+        let expected = match upper {
+            b'O' => Some(0),
+            b'I' | b'L' => Some(1),
+            _ => ALPHABET.iter().position(|&a| a == upper).map(|at| at as u16),
+        };
+        let (value, valid) = base32_value(c);
+        match expected {
+            Some(v) => assert_eq!((value, valid), (v, 1), "char {c}"),
+            None => assert_eq!(valid, 0, "char {c}"),
+        }
+    }
+    for c in 0..=255u8 {
+        let text = [c, c];
+        let expected = char::from(c).to_digit(16);
+        let text = std::str::from_utf8(&text).ok();
+        if let Some(text) = text {
+            assert_eq!(unhex(text).ok(), expected.map(|d| vec![(d * 17) as u8]), "char {c}");
+        }
+    }
+}
+
+#[test]
+fn a_bad_character_anywhere_is_refused() {
+    assert!(base32_decode("U0000000").is_err());
+    assert!(base32_decode("0000000U").is_err());
+    assert!(unhex("g0").is_err());
+    assert!(unhex("0g").is_err());
+}

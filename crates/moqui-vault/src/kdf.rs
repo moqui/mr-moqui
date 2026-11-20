@@ -47,10 +47,11 @@ impl Argon2Params {
     };
     /// What a client writes, and wraps again to when it opens a wrap under it. Starts at the floor; raised over time.
     pub const TARGET: Self = Self::FLOOR;
-    /// The most a client opens: the server stores the parameters, and a huge value would stall a phone.
+    /// The most a client opens: 256 MiB, 6 passes, 4 lanes. The server stores the parameters, and a huge value would
+    /// stall a phone (Sealed-Secrets' passphrase seal, 256 MiB and 3 passes, is within it).
     pub const CEILING: Self = Self {
-        m_kib: 1024 * 1024,
-        t: 10,
+        m_kib: 256 * 1024,
+        t: 6,
         p: 4,
     };
 
@@ -61,7 +62,7 @@ impl Argon2Params {
             return Err(Error::Params("under the floor (m=64 MiB, t=3, p=1)"));
         }
         if self.m_kib > Self::CEILING.m_kib || self.t > Self::CEILING.t || self.p > Self::CEILING.p {
-            return Err(Error::Params("over the ceiling (m=1 GiB, t=10, p=4)"));
+            return Err(Error::Params("over the ceiling (m=256 MiB, t=6, p=4)"));
         }
         Ok(())
     }

@@ -300,6 +300,7 @@ fn lease_vector() -> Result<Value, Error> {
             wrapped_item_keys: &[("item-1", &wrapped)],
             approver_user_id: "approver",
             approver: &approver,
+            now: 1_799_990_000_000,
         },
         &mut rng,
     )?;

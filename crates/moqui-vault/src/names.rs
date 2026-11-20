@@ -102,7 +102,9 @@ impl<'a> Names<'a> {
         Names { label, ..self }
     }
 
-    /// The parts, in order, with `extra` after them: the AEAD associated data or, encoded, the HPKE `info`.
+    /// The parts, in order, with `extra` after them: the AEAD associated data or, encoded, the HPKE `info`. After the
+    /// key version comes one byte that says whether a label follows (1) or not (0), always there, so names with no
+    /// label and an `extra` that looks like one never give the bytes of labelled names.
     pub fn parts(&self, extra: &[&[u8]]) -> Vec<Vec<u8>> {
         let mut parts = vec![
             DOMAIN.to_vec(),
@@ -110,9 +112,9 @@ impl<'a> Names<'a> {
             self.vault_id.as_bytes().to_vec(),
             self.item_id.as_bytes().to_vec(),
             self.key_version.to_be_bytes().to_vec(),
+            vec![u8::from(self.label.is_some())],
         ];
         if let Some(label) = self.label {
-            parts.push(b"operational".to_vec());
             parts.push(label.item_type.as_bytes().to_vec());
             parts.push(label.binding.as_bytes().to_vec());
             parts.push(label.name.as_bytes().to_vec());
@@ -132,3 +134,7 @@ impl<'a> Names<'a> {
 pub(crate) fn refs(parts: &[Vec<u8>]) -> Vec<&[u8]> {
     parts.iter().map(Vec::as_slice).collect()
 }
+
+#[cfg(test)]
+#[path = "names_tests.rs"]
+mod tests;

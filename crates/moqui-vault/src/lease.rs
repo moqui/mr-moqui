@@ -29,6 +29,10 @@ use crate::sign::{SigningKey, Statement, VerifyingKey};
 use crate::vault::{self, ItemRef};
 use crate::Error;
 
+/// The longest a lease may run (§3.7: the operation's own limit, at most 4 hours). An approver refuses a lease whose
+/// time limit is further away, or already past.
+pub const MAX_LEASE_MS: i64 = 4 * 60 * 60 * 1000;
+
 /// One item a lease names, as signed: its id and its clear columns.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LeaseItem {
@@ -167,6 +171,8 @@ pub struct ApproveInput<'a> {
     pub wrapped_item_keys: &'a [(&'a str, &'a [u8])],
     pub approver_user_id: &'a str,
     pub approver: &'a PersonalKey,
+    /// The approver's clock, in milliseconds since the epoch.
+    pub now: i64,
 }
 
 /// Approves a lease in the member's client: checks it, unwraps each named item key under the lease's own type,
@@ -174,6 +180,12 @@ pub struct ApproveInput<'a> {
 pub fn approve(input: ApproveInput, rng: &mut dyn Rng) -> Result<Approval, Error> {
     let lease = input.lease;
     lease.verify(input.lease_key, input.checked)?;
+    if lease.expires_at <= input.now {
+        return Err(Error::Refused("the lease has expired"));
+    }
+    if lease.expires_at - input.now > MAX_LEASE_MS {
+        return Err(Error::Refused("a lease runs at most 4 hours"));
+    }
     let mut sealed = Vec::with_capacity(lease.items.len());
     for item in &lease.items {
         let Some((_, wrapped)) = input.wrapped_item_keys.iter().find(|(id, _)| *id == item.item_id) else {

@@ -3,10 +3,11 @@
 # check it in beside its stamp:
 #   scripts/vault-wasm.sh
 # writes runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm and moqui_vault.wasm.json. The stamp
-# holds the SHA-256 over the crate's source files and the Cargo.lock entries the module links, the list of those
-# entries, the rustc version and the SHA-256 of the wasm. `cargo test -p moqui-vault` recomputes the source hash and
-# fails when it no longer matches (the_checked_in_wasm_is_what_the_source_builds); MOQUI_REGENERATE_WASM=1 on that test
-# runs this script. The build is wasm32-unknown-unknown with no getrandom and no wasm-bindgen: the page gives the
+# holds the SHA-256 over the crate's source files, its workspace dependency lines, the release profile and the
+# Cargo.lock entries the module links, the list of those entries, the rustc version and the SHA-256 of the wasm.
+# `cargo test -p moqui-vault` recomputes the source hash and compares the rustc version, and fails when either no
+# longer matches (the_checked_in_wasm_is_what_the_source_builds); MOQUI_REGENERATE_WASM=1 on that test runs this
+# script. The build is wasm32-unknown-unknown with no getrandom and no wasm-bindgen: the page gives the
 # randomness. Paths are remapped so two machines on one rustc build the same bytes.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -49,12 +50,26 @@ lock_entries() {
 }
 entries=$(lock_entries)
 
-# The source hash: a line "<path> <sha256>" for Cargo.toml and each src/*.rs but the tests, then a line
-# "lock <name> <version> <checksum>" for each entry; the test computes the same lines.
+# The root Cargo.toml's [workspace.dependencies] line of each dependency the crate takes from the workspace.
+workspace_lines() {
+    grep -E '^[A-Za-z0-9_-]+(\.workspace *= *true| *= *\{ *workspace *= *true)' "$crate/Cargo.toml" |
+        sed -E 's/[ .=].*//' | LC_ALL=C sort -u |
+        while read -r name; do
+            awk -v n="$name" '$0 == "[workspace.dependencies]" { on = 1; next } /^\[/ { on = 0 }
+                on && index($0, n " = ") == 1' Cargo.toml
+        done
+}
+
+# The source hash: a line "<path> <sha256>" for Cargo.toml and each src/*.rs but the tests; a line "workspace <line>"
+# for each of those workspace dependency lines; a line "profile <line>" for each setting of [profile.release] in
+# .cargo/config.toml; then a line "lock <name> <version> <checksum>" for each entry. The test computes the same lines.
 source_sha=$(
     {
         (cd "$crate" && find Cargo.toml src -type f -name '*.rs' ! -name '*_tests.rs' -o -name Cargo.toml -type f) |
             LC_ALL=C sort -u | while read -r path; do echo "$path $(sha < "$crate/$path")"; done
+        workspace_lines | while read -r line; do echo "workspace $line"; done
+        awk '$0 == "[profile.release]" { on = 1; next } /^\[/ { on = 0 } on && NF && $1 !~ /^#/' .cargo/config.toml |
+            while read -r line; do echo "profile $line"; done
         echo "$entries" | while read -r line; do echo "lock $line"; done
     } | sha
 )

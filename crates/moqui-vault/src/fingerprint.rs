@@ -168,6 +168,26 @@ impl KeyCheck {
         }
         Ok(())
     }
+
+    /// The signing key a row checked by `checker` names (a personal key's Ed25519 half, or the lease key): a trust
+    /// anchor for a member-list chain ([`crate::keyversion::Chain::verify`]).
+    pub fn checked_verify_key(&self, checker: &VerifyingKey) -> Result<VerifyingKey, Error> {
+        checker.verify(Statement::KeyCheck, &refs(&self.signed_parts()), &self.signature)?;
+        VerifyingKey::from_bytes(&self.checked_verify)
+    }
+}
+
+/// Whether any of `checks`, signed by `checker`, covers `public`: nothing is wrapped to a personal key, or trusted
+/// as one, before this holds (§3.5).
+pub fn require_checked(checks: &[KeyCheck], checker: &VerifyingKey, public: &PersonalPublic) -> Result<(), Error> {
+    if checks
+        .iter()
+        .any(|check| check.covers_personal(checker, public).is_ok())
+    {
+        Ok(())
+    } else {
+        Err(Error::Refused("this personal key has not been checked"))
+    }
 }
 
 #[cfg(test)]
