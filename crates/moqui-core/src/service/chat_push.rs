@@ -1244,6 +1244,58 @@ pub fn fcm_body(
     }})
 }
 
+/// Why a message push written when its job was worked is no longer sent (SEC-COM-92), or None: its event was deleted
+/// (`redacted`), the user left the room, not a direct one (`left`), or the account may no longer sign in, disabled for
+/// good (not a lockout after failed logins, which ends by itself) or terminated (`accountDisabled`).
+fn gone_since_queued(
+    facade: &EntityFacade,
+    user: &str,
+    room_id: &str,
+    seq: i64,
+    now: i64,
+) -> Result<Option<&'static str>, LibError> {
+    let event = facade
+        .find(EVENT)?
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("eventSeq", Value::I64(seq))
+        .disable_authz()
+        .one()?;
+    if event.is_none_or(|event| text_of(&event, "redactedDate").is_some()) {
+        return Ok(Some("redacted"));
+    }
+    let direct = facade
+        .find(ROOM)?
+        .eq("chatRoomId", Value::string(room_id))
+        .disable_authz()
+        .one()?
+        .is_some_and(|room| text_of(&room, "roomTypeEnumId").as_deref() == Some("CrtDirect"));
+    let member = facade
+        .find(MEMBER)?
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("userId", Value::string(user))
+        .disable_authz()
+        .list()?;
+    let in_room = member
+        .values()
+        .iter()
+        .any(|member| direct || text_of(member, "leftDate").is_none());
+    if !in_room {
+        return Ok(Some("left"));
+    }
+    let account = facade
+        .find("moqui.security.UserAccount")?
+        .eq("userId", Value::string(user))
+        .disable_authz()
+        .one()?;
+    let signs_in = account.is_some_and(|account| {
+        let disabled =
+            text_of(&account, "disabled").as_deref() == Some("Y") && text_of(&account, "disabledDateTime").is_none();
+        let terminated = millis_of(&account, "terminateDate").is_some_and(|end| end <= now);
+        !disabled && !terminated
+    });
+    Ok((!signs_in).then_some("accountDisabled"))
+}
+
 /// Whether the device has a newer push of the room than `seq` that the user has not read: one waiting, or one shown
 /// and not cleared. A clear up to `seq` would remove its notification, so none is sent.
 fn newer_unread(facade: &EntityFacade, subscription: &str, room_id: &str, seq: i64) -> Result<bool, LibError> {
@@ -1316,6 +1368,14 @@ fn deliver_one(
     if clear && newer_unread(facade, &subscription, &room_id, count_of(row, "eventSeq"))? {
         finish(facade, &id, attempts, DROPPED, Some("newer"), None, now)?;
         return Ok(Step::Dropped);
+    }
+    // a push that waited (do not disturb, its push service) is of what may have changed since it was written; a test
+    // push is of no room
+    if !clear && room_id != TEST_ROOM {
+        if let Some(reason) = gone_since_queued(facade, &user, &room_id, count_of(row, "eventSeq"), now)? {
+            finish(facade, &id, attempts, DROPPED, Some(reason), None, now)?;
+            return Ok(Step::Dropped);
+        }
     }
     let provider = Provider::of(&device);
     // a native app's registration ends with its device key

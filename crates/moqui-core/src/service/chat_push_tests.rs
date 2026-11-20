@@ -668,6 +668,79 @@ fn do_not_disturb_holds_the_pushes_and_sends_one_summary() {
     }
 }
 
+/// SEC-COM-92: a push that waited (here on do not disturb) is not sent once its message is deleted, its user left the
+/// room, or the account was disabled for good; one still standing is.
+#[test]
+fn a_waiting_push_is_dropped_when_its_message_room_or_account_is_gone() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    for user in ["bob", "dave", "erin"] {
+        row(
+            &bed.facade,
+            "moqui.security.UserStatus",
+            &[("userId", text(user)), ("statusEnumId", text("UpsDnd"))],
+        );
+    }
+    login("alice");
+    send(
+        &bed.room,
+        &format!("<p>{} {}</p>", mention("erin"), mention("dave")),
+        &[],
+    );
+    run(bed.now);
+    assert!(bed.net.take().is_empty(), "all held");
+    // bob's account is disabled, dave leaves the room; erin's stands
+    update(
+        &bed.facade,
+        "moqui.security.UserAccount",
+        &[("userId", "bob")],
+        &[("disabled", text("Y"))],
+    );
+    update(
+        &bed.facade,
+        "moqui.chat.ChatRoomMember",
+        &[("chatRoomId", &bed.room), ("userId", "dave")],
+        &[("leftDate", crate::user::stamp_value(bed.now))],
+    );
+    for user in ["bob", "dave", "erin"] {
+        update(
+            &bed.facade,
+            "moqui.security.UserStatus",
+            &[("userId", user)],
+            &[("statusEnumId", text("UpsOnline"))],
+        );
+    }
+    run(bed.now + 60_000);
+    assert_eq!(devices(&bed.net.take()), set(["ERIN-PHONE"]));
+    let reason = |device: &str| field(&outbox(&bed.facade, device)[0], "reasonCode");
+    assert_eq!(reason("BOB-PHONE"), "accountDisabled");
+    assert_eq!(reason("DAVE-UP"), "left");
+
+    // a deleted message: its waiting push is dropped
+    update(
+        &bed.facade,
+        "moqui.security.UserStatus",
+        &[("userId", "erin")],
+        &[("statusEnumId", text("UpsDnd"))],
+    );
+    let seq = send(&bed.room, &format!("<p>{} again</p>", mention("erin")), &[]);
+    run(bed.now + 120_000);
+    update(
+        &bed.facade,
+        "moqui.chat.ChatEvent",
+        &[("chatRoomId", &bed.room), ("eventSeq", &seq.to_string())],
+        &[("redactedDate", crate::user::stamp_value(bed.now))],
+    );
+    update(
+        &bed.facade,
+        "moqui.security.UserStatus",
+        &[("userId", "erin")],
+        &[("statusEnumId", text("UpsOnline"))],
+    );
+    run(bed.now + 180_000);
+    assert!(bed.net.take().is_empty(), "the deleted message is not pushed");
+}
+
 /// Rule 2: the push is after the commit: a message that rolls back pushes nothing.
 #[test]
 fn a_rolled_back_message_pushes_nothing() {
