@@ -12,11 +12,8 @@ yanked = "deny"
 # An unmaintained crate fails the check only when the workspace names it
 # directly. A vulnerability always fails it.
 unmaintained = "workspace"
-ignore = [
-    # rsa 0.10.0-rc.18 via russh and huskarl. No patched release as of this
-    # advisory. plans/archive/License-Review.md accepts those crates.
-    { id = "RUSTSEC-2023-0071", reason = "Marvin timing in rsa. No safe upgrade. Used by russh and huskarl." },
-]
+# None ignored: RUSTSEC-2023-0071 (Marvin, rsa) was until rsa 0.10.0 fixed it.
+ignore = []
 
 [licenses]
 # cargo-deny 0.20 removed the `unlicensed` key. An unlicensed crate is an error.

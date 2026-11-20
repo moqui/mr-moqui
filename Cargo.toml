@@ -173,10 +173,10 @@ sha1 = { version = "0.11", features = ["oid"] }
 base64 = "0.23"
 # Inherited descriptors marked close-on-exec before the embedded Postgres starts (moqui-drivers), safely.
 close_fds = "0.3"
-# SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The rsa release candidate is the one russh and huskarl already
-# resolve, so the graph has one rsa. Its digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix).
-# plans/archive/License-Review.md records RUSTSEC-2023-0071.
-rsa = { version = "0.10.0-rc.18", features = ["sha2"] }
+# SimpleSigner (RSA SHA1withRSA, PKCS#1 v1.5). The release russh and huskarl resolve, so the graph has one rsa. Its
+# digest 0.11 is the sha1 and sha2 above (oid on sha1 for the PKCS#1 prefix). 0.10.0 is on crypto-bigint, constant time,
+# and fixes RUSTSEC-2023-0071 (Marvin).
+rsa = { version = "0.10", features = ["pkcs1v15"] }
 rand_core = "0.10"
 # Name rustls. On 0.13 that is aws-lc, but default-tls must not be inherited:
 # a later release could point default-tls back at native-tls.

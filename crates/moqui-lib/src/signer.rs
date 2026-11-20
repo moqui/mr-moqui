@@ -20,9 +20,9 @@
 //! PKCS#1 `RSA PRIVATE KEY` PEM.
 //!
 //! RSA PKCS#1 v1.5 signing is deterministic, so a signature made here equals the Java one for the same key and
-//! data. The `rsa` crate carries RUSTSEC-2023-0071 (Marvin, a timing leak in private-key operations). Every
-//! signature here is made with blinding, using a fresh system random source, which is the mitigation the
-//! advisory names. The signed strings are print job descriptions that the browser also holds, not secrets.
+//! data. The `rsa` crate's private-key operations are constant time since 0.10.0 (on `crypto-bigint`), which fixes
+//! RUSTSEC-2023-0071 (Marvin, a timing leak); every signature here is also made with blinding, using a fresh system
+//! random source. The signed strings are print job descriptions that the browser also holds, not secrets.
 
 use std::fmt;
 use std::path::Path;
