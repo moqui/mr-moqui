@@ -1231,6 +1231,15 @@ fn the_login_dialog_lets_in_a_client_with_no_key() {
             .unwrap_err()
             .contains("channel request refused"));
         channel.close().await.unwrap();
+        // and so is an env value past 256 bytes, a terminal variable's or GIT_PROTOCOL's
+        let mut channel = handle.channel_open_session().await.unwrap();
+        channel.set_env(true, "COLORTERM", "x".repeat(300)).await.unwrap();
+        let mut seen = Vec::new();
+        assert!(read_until(&mut channel, &mut seen, "never", true)
+            .await
+            .unwrap_err()
+            .contains("channel request refused"));
+        channel.close().await.unwrap();
 
         // The shell request is the apps with the login dialog, the name filled in and the password next.
         let mut channel = pty(&handle, 120, 40).await;
