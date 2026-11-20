@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One operational vault, to its members (get#Vault refuses anyone else): its members and roles, its items (names,
+    bindings, types, revisions and the days since each was last changed, its rotation age; never a value: an
+    operational body goes to no page), its leases (waiting, open, ended) with Revoke (revoke#VaultLease: a manager, an
+    approver, the requester or VAULT_ADMIN), its machine access with Revoke (revoke#VaultMachineAccess, VAULT_ADMIN,
+    which names the items to rotate) and its events. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Vault" default-menu-include="false">
+    <parameter name="vaultId" required="true"/>
+
+    <transition name="lease"><default-response url="../Lease"/></transition>
+    <transition name="revokeLease">
+        <service-call name="org.moqui.security.VaultServices.revoke#VaultLease"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="revokeMachineAccess">
+        <actions>
+            <service-call name="org.moqui.security.VaultServices.revoke#VaultMachineAccess" out-map="revoked"
+                    in-map="{environmentId:environmentId, vaultId:vaultId, vaultItemId:vaultItemId}"/>
+            <if condition="!ec.message.hasError()">
+                <script>ec.message.addMessage('Machine access revoked. Rotate these items at their source, since the server could have kept their keys: '
+                    + Array.from(revoked.rotateItemIds || []).join(', '), 'warning')</script>
+            </if>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            // each in its own transaction: one the caller may not read (not a member) leaves the page's transaction alone
+            const call = (name, parameters) => {
+                const out = ec.service.sync().name('org.moqui.security.VaultServices.' + name).requireNewTransaction(true).parameters(parameters).call()
+                if (ec.message.hasError()) { ec.message.clearErrors(); return null }
+                return out
+            }
+            const got = call('get#Vault', {vaultId})
+            vault = got?.vault || {}
+            memberList = Array.from(got?.memberList || [])
+            const now = ec.user.nowTimestamp
+            const days = (stamp) => stamp ? Math.floor((ec.user.timestampMillis(now) - ec.user.timestampMillis(stamp)) / 86400000) : null
+            itemList = Array.from(call('list#VaultItems', {vaultId})?.itemList || []).map(item => Object.assign({}, item, {
+                ageDays: days(item.lastModifiedDate || item.createdDate),
+                wrapText: item.itemKeyWrapEnumId === 'VwDeposit' ? 'Deposited: a member takes it in' : ''}))
+            leaseList = Array.from(call('list#VaultLeases', {vaultId})?.leaseList || []).map(lease => Object.assign({}, lease, {
+                expiresText: lease.expiresAt ? ec.l10n.format(Number(lease.expiresAt), 'yyyy-MM-dd HH:mm') : '',
+                approverText: lease.machineAccess === 'Y' ? 'machine' : (lease.approvedByUserId || ''),
+                canRevoke: lease.statusId === 'VlsRequested' || lease.statusId === 'VlsOpen'}))
+            accessList = Array.from(call('list#VaultMachineAccess', {vaultId})?.accessList || [])
+            eventList = Array.from(call('list#VaultEvents', {vaultId, limit: 100})?.eventList || [])
+            canAdmin = ec.user.hasPermission('VAULT_ADMIN')
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="${vault.vaultName || vaultId}" type="h5"/>
+        <label text="Key version ${vault.keyVersion ?? ''}, revision ${vault.revision ?? ''}, recovery ${vault.recoveryOn === 'Y' ? 'on' : 'off'}. Your role: ${vault.roleEnumId || ''}."
+                type="p" style="text-caption m-muted"/>
+
+        <label text="Members" type="h6"/>
+        <form-list name="MemberList" list="memberList" skip-form="true">
+            <field name="userId"><default-field title="Member"><display-entity entity-name="moqui.security.UserAccount" text="${userFullName || username}"/></default-field></field>
+            <field name="roleEnumId"><default-field title="Role"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="personalKeyId"><default-field title="Personal key"><display/></default-field></field>
+            <field name="ackedDate"><default-field title="Opened this version"><display/></default-field></field>
+        </form-list>
+
+        <label text="Items" type="h6" style="q-mt-md"/>
+        <label text="Names, bindings and types only: the server sends no operational value to a page. A member with the reveal role sees one value in their own client."
+                type="p" style="text-caption m-muted"/>
+        <form-list name="ItemList" list="itemList" skip-form="true">
+            <field name="itemName"><default-field title="Name"><display/></default-field></field>
+            <field name="bindingKey"><default-field title="Binding"><display/></default-field></field>
+            <field name="vaultItemTypeId"><default-field title="Type"><display/></default-field></field>
+            <field name="revision"><default-field title="Revision"><display/></default-field></field>
+            <field name="ageDays"><default-field title="Days since changed"><display/></default-field></field>
+            <field name="wrapText"><default-field title=""><display/></default-field></field>
+        </form-list>
+
+        <label text="Leases" type="h6" style="q-mt-md"/>
+        <form-list name="LeaseList" list="leaseList" skip-form="true">
+            <field name="operation"><default-field title="Operation"><link url="lease" text="${operation}" link-type="anchor" parameter-map="{leaseId:leaseId}"/></default-field></field>
+            <field name="bindings"><default-field title="Items"><display/></default-field></field>
+            <field name="statusId"><default-field title="Status"><display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+            <field name="approverText"><default-field title="Approved by"><display/></default-field></field>
+            <field name="clusterMemberId"><default-field title="Runs on"><display/></default-field></field>
+            <field name="expiresText"><default-field title="Until"><display/></default-field></field>
+            <field name="revoke"><default-field title="">
+                <link url="revokeLease" text="Revoke" parameter-map="{leaseId:leaseId, vaultId:vaultId}" condition="canRevoke"
+                        confirmation="Revoke this lease? The operation using it stops reading its items."/>
+            </default-field></field>
+        </form-list>
+
+        <label text="Machine access" type="h6" style="q-mt-md"/>
+        <label text="These items are as strong as the server's own keys: their item keys are sealed under a key derived from entity-facade@crypt-pass, which is on the server's disk, for the environment's unattended operations."
+                type="p" style="text-caption m-muted"/>
+        <form-list name="AccessList" list="accessList" skip-form="true">
+            <field name="environmentId"><default-field title="Environment"><display/></default-field></field>
+            <field name="itemName"><default-field title="Item"><display/></default-field></field>
+            <field name="bindingKey"><default-field title="Binding"><display/></default-field></field>
+            <field name="grantedByUserId"><default-field title="Given by"><display/></default-field></field>
+            <field name="grantedDate"><default-field title="Given"><display/></default-field></field>
+            <field name="revoke"><default-field title="">
+                <link url="revokeMachineAccess" text="Revoke" condition="canAdmin"
+                        parameter-map="{environmentId:environmentId, vaultId:vaultId, vaultItemId:vaultItemId}"
+                        confirmation="Revoke this machine access? Rotate the item at its source afterwards."/>
+            </default-field></field>
+        </form-list>
+
+        <label text="Events" type="h6" style="q-mt-md"/>
+        <form-list name="EventList" list="eventList" skip-form="true">
+            <field name="eventDate"><default-field title="When"><display/></default-field></field>
+            <field name="eventTypeEnumId"><default-field title="Event"><display-entity entity-name="moqui.basic.Enumeration" key-field-name="enumId" text="${description}"/></default-field></field>
+            <field name="userId"><default-field title="By"><display/></default-field></field>
+            <field name="leaseId"><default-field title="Lease"><display/></default-field></field>
+            <field name="detail"><default-field title="Detail"><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

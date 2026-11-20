@@ -141,6 +141,11 @@ const GLOBALS_JS: &str = concat!(
         flushAndDisableTransactionCache: () => ec.entity.stopTxCache()
     };
     if (ec.entity) ec.entity.databaseTimeZone = "UTC";
+    // a vault value, only from the lease the thread runs under, by its binding (`crate::vault_hooks`): no path hands
+    // out a vault value at will
+    ec.vault = Object.freeze({
+        leased: (binding, field) => hidden.leased(String(binding), field == null ? null : String(field))
+    });
     const resource = ec.resource || (ec.resource = {});
     for (const name of ["code128Svg", "barcodeSvg", "parseGs1", "isValidGs1CheckDigit", "template",
         "getTemplateRendererExtensionSet"]) resource[name] = hidden[name];
@@ -318,6 +323,8 @@ pub(crate) static SHIM: Shim = Shim {
         method!("ec.transaction", "resume", [], super::transaction::resume),
         method!("ec.transaction", "getStatus", [], None, leaf, super::transaction::status),
         method!("ec.transaction", "beginNew", [OptValue], super::transaction::begin_new),
+        // writes the use's event, so not a leaf
+        method!("ec.vault", "leased", [Text, OptText], None, vault_leased),
         // they read the entities, so not leaves
         method!("UserSecurityChecks", "assertPrivilegedGroupMembership", [OptValue], None, assert_privileged_group),
         method!("UserSecurityChecks", "assertSealedPermissionGrant", [OptValue], None, assert_sealed_grant),
@@ -956,6 +963,15 @@ fn is_conf_secret(call: &mut Call<'_>) -> Result<Ret, HostError> {
 /// `ec.factory.hasFeature(name)`: whether this binary has a build feature.
 fn has_feature(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(crate::build_info::has_feature(&call.text_or_empty(0)).into())
+}
+
+/// `ec.vault.leased(binding, field)`: the item's fields, or the one field, from the thread's lease.
+fn vault_leased(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let binding = call.text_or_empty(0);
+    let field = call.opt_text(1).filter(|field| !field.is_empty());
+    crate::vault_hooks::leased(&binding, field.as_deref())
+        .map(Ret::Value)
+        .map_err(HostError::Lib)
 }
 
 /// The transaction manager of the default entity group.

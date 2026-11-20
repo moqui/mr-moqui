@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The lease dialog (plans/Vault-Instances.md §3.7, §5): opened from a VaultLeaseWaiting notification, a deploy's page or
+    an instance's page with ?leaseId=. Lease.qvue shows what the signed lease names (each item's name, binding and type,
+    the operation, the cluster member and the time limit), read from the lease the server signed, never from a column,
+    and approves it in the browser through the vault worker (js/vault/VaultClient.js, its worker and wasm module loaded
+    with integrity hashes): the key passphrase opens the personal key there, the lease key is checked once by its
+    fingerprint, the vault key opens through the member-list chain, and each item key is unwrapped under the lease's
+    own names, sealed to the lease and signed; only that approval comes back here (approve#VaultLease, the approve role
+    and a recent sign-in). The passphrase and every key stay in the worker. Lease.tui.json: the terminal says where to
+    approve. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Lease" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+    <parameter name="leaseId" required="true"/>
+
+    <!-- the lease, the vault's chain and the caller's wraps, their key checks and personal key, and the module's hashes -->
+    <transition name="leaseData" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const vault = (name, parameters) => {
+                const out = ec.service.sync().name('org.moqui.security.VaultServices.' + name).requireNewTransaction(true).parameters(parameters || {}).call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                return out
+            }
+            // SRI of a webroot file: sha256 of its bytes as base64
+            const base64 = (hex) => {
+                const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+                const bytes = []
+                for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16))
+                let text = ''
+                for (let i = 0; i < bytes.length; i += 3) {
+                    const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0)
+                    text += table[(n >> 18) & 63] + table[(n >> 12) & 63] + (i + 1 < bytes.length ? table[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? table[n & 63] : '=')
+                }
+                return text
+            }
+            const sri = (file) => 'sha256-' + base64(ec.resource.digest('component://webroot/screen/webroot/js/vault/' + file, 'sha256'))
+            try {
+                const lease = vault('get#VaultLease', {leaseId})
+                const got = vault('get#Vault', {vaultId: lease.lease.vault_id})
+                const personal = vault('get#PersonalKey')
+                ec.web.sendJsonResponse({lease: lease.lease, statusId: lease.statusId, wrappedItemKeys: lease.wrappedItemKeys,
+                    leaseKey: lease.leaseKey, leaseKeyFingerprint: lease.leaseKeyFingerprint, approvedByUserId: lease.approvedByUserId || null,
+                    vaultName: got.vault.vaultName, roleEnumId: got.vault.roleEnumId, entries: got.entries, wraps: got.wraps,
+                    keyChecks: vault('list#KeyChecks').keyCheckList, personal,
+                    integrity: {client: sri('VaultClient.js'), worker: sri('VaultWorker.js'), wasm: sri('moqui_vault.wasm')}})
+            } catch (err) {
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors: String(err.message || err)})
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the caller's wrapped personal key, after a strong, recent sign-in (get#WrappedPersonalKey refuses otherwise) -->
+    <transition name="wrappedKey">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.security.VaultServices.get#WrappedPersonalKey').requireNewTransaction(true).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({personalKeyId: out.personalKeyId, userId: out.userId, public: out.public, passphraseWrap: out.passphraseWrap})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a key check the worker signed (the lease key's, after its fingerprint was compared), JSON text -->
+    <transition name="storeCheck">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.security.VaultServices.store#KeyCheck').requireNewTransaction(true).parameter('check', JSON.parse(check || '{}')).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({keyChecks: ec.service.sync().name('org.moqui.security.VaultServices.list#KeyChecks').requireNewTransaction(true).call().keyCheckList})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the approval the worker made, JSON text -->
+    <transition name="approve">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.security.VaultServices.approve#VaultLease').requireNewTransaction(true)
+                .parameters({leaseId, approval: JSON.parse(approval || '{}')}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({statusId: out.statusId})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://tools/screen/System/Vaults/Lease.qvue" template="false"/><text type="tui" location="component://tools/screen/System/Vaults/Lease.tui.json" template="false"/></render-mode>
+    </widgets>
+</screen>

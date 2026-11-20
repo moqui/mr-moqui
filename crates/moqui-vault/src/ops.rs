@@ -288,6 +288,26 @@ impl Session {
                 let (public, wrapped) = vault::new_deposit_key(key, vault_id, key_version, self.signer()?, rng)?;
                 Ok(json!({ "deposit": deposit_json(&public), "wrapped_private": hex(&wrapped) }))
             }
+            // an item the server deposited, taken in: its key unwrapped with the deposit key's private half (which only
+            // the vault key opens) and wrapped by the vault key, so a lease can name it (§3.2)
+            "deposit_adopt" => {
+                let item = ItemRef {
+                    vault_id: str_of(args, "vault_id")?,
+                    item_id: str_of(args, "item_id")?,
+                    key_version: u64_of(args, "key_version")?,
+                    label: label_of(args)?,
+                };
+                let vault_key = self.vault_key(item.vault_id, item.key_version)?;
+                let deposit = vault::open_deposit_key(
+                    vault_key,
+                    item.vault_id,
+                    item.key_version,
+                    &bytes_of(args, "deposit_wrapped_private")?,
+                )?;
+                let item_key = vault::unwrap_deposited_item_key(&deposit, &bytes_of(args, "wrapped_item_key")?, item)?;
+                let wrapped = vault::wrap_item_key(vault_key, &item_key, item, rng);
+                Ok(json!({ "wrapped_item_key": hex(&wrapped) }))
+            }
             "item_seal" => self.item_seal(args, rng),
             "item_open" => {
                 let item = ItemRef {

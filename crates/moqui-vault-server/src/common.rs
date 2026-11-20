@@ -36,6 +36,8 @@ pub(crate) const KEY_CHECK: &str = "moqui.security.vault.VaultKeyCheck";
 pub(crate) const DELIVERY: &str = "moqui.security.vault.VaultDelivery";
 pub(crate) const EVENT: &str = "moqui.security.vault.VaultEvent";
 pub(crate) const RECOVERY_WRAP: &str = "moqui.security.vault.VaultRecoveryWrap";
+pub(crate) const LEASE: &str = "moqui.security.vault.VaultLease";
+pub(crate) const MACHINE_ACCESS: &str = "moqui.security.vault.VaultMachineAccess";
 
 pub(crate) const PERSONAL: &str = "VkPersonal";
 pub(crate) const OPERATIONAL: &str = "VkOperational";
@@ -142,12 +144,27 @@ pub(crate) fn bump_revision(facade: &EntityFacade, vault: &mut EntityValue) -> R
 /// app password). Asked directly, not through the service, which passes any caller with authorization off, as every
 /// vault service runs its own reads and writes.
 pub(crate) fn require_recent_auth() -> Result<(), LibError> {
+    require_recent_auth_to("delete this")
+}
+
+/// [`require_recent_auth`] for another change, which the refusal names.
+pub(crate) fn require_recent_auth_to(what: &str) -> Result<(), LibError> {
     if moqui_core::user::recent_auth(5 * 60 * 1000) {
         return Ok(());
     }
-    Err(fail(
-        "Confirm it is you: sign in again to delete this (reasonCode reauthRequired)",
-    ))
+    Err(fail(format!(
+        "Confirm it is you: sign in again to {what} (reasonCode reauthRequired)"
+    )))
+}
+
+/// Whether the signed-in user holds `permission`.
+pub(crate) fn has_permission(permission: &str) -> Result<bool, LibError> {
+    moqui_core::user::has_permission(permission).map_err(|err| fail(err.message()))
+}
+
+/// The epoch millis now, on the framework's clock.
+pub(crate) fn now_millis() -> i64 {
+    moqui_core::user::now_millis()
 }
 
 /// A map or list parameter as JSON: as the request gave it, or JSON text.
@@ -227,6 +244,10 @@ pub(crate) enum Access {
     Write,
     /// Change the member list and delete the vault: manage; a single-secret vault's owner deletes it.
     Manage,
+    /// Approve a lease (§3.7): the approve role of an operational vault.
+    Approve,
+    /// See one value in the member's client (§3.7, Reveal): the reveal role of an operational vault.
+    Reveal,
 }
 
 /// The vault, after the caller's access to it is checked. A vault the caller may not read is "not found" to them, as
@@ -255,6 +276,8 @@ pub(crate) fn vault_for(
         Access::Read => true,
         Access::Write => role == "VrManage" || (!operational && role == "VrWrite"),
         Access::Manage => role == "VrManage",
+        Access::Approve => operational && role == "VrApprove",
+        Access::Reveal => operational && role == "VrReveal",
     };
     if !allowed {
         return Err(fail(format!("Your role in vault {vault_id} does not allow this")));

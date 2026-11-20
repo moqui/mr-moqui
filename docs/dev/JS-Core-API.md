@@ -71,6 +71,7 @@ The top-level members.
 | `search` | [`ec.search`](#ecsearch) |
 | `factory` | [`ec.factory`](#ecfactory) |
 | `llm` | [`ec.llm`](#ecllm); only in a build with the `llm` feature |
+| `vault` | [`ec.vault`](#ecvault): a value from the vault lease the code runs under |
 | `getTool(name, ...parameters)` | The object of a component's Rust tool factory; the same as `ec.factory.getTool` ([tools](#tools)) |
 | `makeNotificationMessage()` | A notification builder ([below](#ecmakenotificationmessage)) |
 | `getNotificationMessages(topic)` | The signed-in user's notification messages, of one topic or of all, as plain objects; empty with nobody signed in |
@@ -1282,6 +1283,23 @@ time the transaction has left.
 | `classify(text, labels, options)` | One of the labels; `options` `{allowInTransaction}` |
 | `extract(text, fields, options)` | A value for each field of `{name: description}`; `options` `{allowInTransaction}` |
 | `startRun(agentId, text)` | Starts a background agent run as the current user; its run id |
+
+## `ec.vault`
+
+An operational vault item's value, only from the lease the code runs under (plans/Vault-Instances.md §3.7,
+[Vaults](../security/Vaults.md#leases)): a kind's service that a provision or a deploy calls under its lease reads
+the credentials it needs by binding. There is no member that hands out a vault value at will.
+
+| Member | |
+|---|---|
+| `leased(binding)` | The fields of the item bound to `binding` (`AppInstance:demo:dbPassword`) in the thread's lease, as `{name: value}` |
+| `leased(binding, field)` | One field of it, as text |
+
+Each read writes a `VeLeaseUsed` event, committed before the value comes back; when the event cannot be written, or
+the code runs under no lease, the lease names no such item, or it has ended or been revoked, `leased` throws. A
+leased value stays in the operation: an async call, a job run, a queued call or a call's tx rules whose parameters
+hold one is refused, and it never goes into a log or an event. A build without the `vault` feature throws that the
+vault is not built in.
 
 ## Differences from Moqui Java
 

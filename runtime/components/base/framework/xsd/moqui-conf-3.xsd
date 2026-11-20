@@ -3178,6 +3178,12 @@ along with this software (see the LICENSE.md file). If not, see
                 recent sign-in on it; never an app password or a login, API or scoped key) within which
                 get#WrappedPersonalKey sends a user their wrapped personal key, and rewrap#PersonalKey and
                 replace#PersonalKey take a change. Read at each call.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="lease-max-hours" type="xs:string" default="4"><xs:annotation><xs:documentation>The longest
+                a lease of an operational vault runs (plans/Vault-Instances.md §3.7), in hours, at most 4: a client
+                refuses to approve a longer one. Read at each ask#VaultLease.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="lease-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into
+                runtime/.env: the seed of the server's Ed25519 lease key, which signs each lease. Members check its
+                fingerprint once; a new value is a new key, which they check again.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

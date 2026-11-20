@@ -51,6 +51,8 @@ pub mod telemetry;
 pub use moqui_entity::testing;
 pub use moqui_entity::transaction;
 pub mod user;
+/// Where the framework reaches the vault server: a script's leased value, and the guard on stored calls.
+pub mod vault_hooks;
 pub mod web;
 /// A workbook on the IronCalc engine, for the xlsx writers (plans/IronCalc-DB.md).
 #[cfg(feature = "xlsx")]
