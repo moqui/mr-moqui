@@ -71,9 +71,9 @@ feature("an account with its folders, and the message list in threads with its c
     when() {
         for (const id of ["mailClientOwner", "mailClientStranger"]) user(id)
         ec.user.internalLoginUser("mailClientOwner")
-        // no server listens on port 1, so a send fails at once
+        // a link-local host is refused before a socket is opened, so the failure does not wait on the operating system
         accountId = mail("create#EmailAccount", { accountKindEnumId: "EakShared", emailAddress: "team@example.com", accountName: "Team",
-            smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N" }).emailAccountId
+            smtpHost: "169.254.169.254", smtpPort: "1", smtpStartTls: "N" }).emailAccountId
         inboxId = ec.entity.find("moqui.basic.email.EmailFolder").condition("emailAccountId", accountId)
             .condition("folderKindEnumId", "EfkInbox").one().emailFolderId
         message("MCM1", "EfkInbox", 1, { messageId: "<mcm1@sender.example.com>" })
@@ -158,7 +158,7 @@ feature("filing, and a delete forever that keeps the rest of the thread", {
 
 feature("a send that cannot connect waits in the Outbox, and goes back to Drafts", {
     when() {
-        // a real connection, to port 1, where nothing listens: the capture is off for this send, whatever the run says
+        // the capture is off for this send, whatever the run says: the account's link-local host is refused before connecting
         const capture = ec.factory.getTool("MailCapture")
         capture.disable()
         try {
@@ -280,8 +280,8 @@ feature("an import, rules, the remote change queue and a sync whose server is no
         const ran = mail("run#EmailRules", { emailFolderId: inbox })
         const rules = mail("find#EmailRules")
         const labels = ec.entity.find("moqui.basic.email.EmailMessageLabel").condition("emailMessageId", invoice.emailMessageId).count()
-        // an IMAP account whose server is not there: its changes wait in the queue, and its sync says why
-        const remote = mail("create#EmailAccount", { emailAddress: "remote@example.com", storeHost: "127.0.0.1", storePort: "1",
+        // an IMAP account whose host is refused before a socket is opened: its changes wait in the queue, and its sync says why
+        const remote = mail("create#EmailAccount", { emailAddress: "remote@example.com", storeHost: "169.254.169.254", storePort: "1",
             storeProtocol: "imap", mailPassword: "secret" }).emailAccountId
         const remoteInbox = ec.entity.find("moqui.basic.email.EmailFolder").condition("emailAccountId", remote)
             .condition("folderKindEnumId", "EfkInbox").one().emailFolderId
@@ -317,7 +317,7 @@ feature("an import, rules, the remote change queue and a sync whose server is no
         queued[0].changeType == "flags"
         synced.outcome == "failed"
         // the kind of failure, not the server's own text (SEC-MAIL-94)
-        synced.message.includes("the connection was refused")
+        synced.message.includes("internal address")
         account.statusId == "EasError"
         account.syncLockedUntil == null
         due.failedCount >= 0
