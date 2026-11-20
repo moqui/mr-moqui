@@ -113,6 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="bindingKey"><default-field title="Binding"><display/></default-field></field>
             <field name="grantedByUserId"><default-field title="Given by"><display/></default-field></field>
             <field name="grantedDate"><default-field title="Given"><display/></default-field></field>
+            <field name="staleDate"><default-field title="Stale since (the item's key changed: give it again)"><display/></default-field></field>
             <field name="revoke"><default-field title="">
                 <link url="revokeMachineAccess" text="Revoke" condition="canAdmin"
                         parameter-map="{environmentId:environmentId, vaultId:vaultId, vaultItemId:vaultItemId}"

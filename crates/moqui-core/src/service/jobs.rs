@@ -810,8 +810,11 @@ impl QueuedCall {
 /// Store a call the pool queue had no room for, or did not run before it stopped, as a queued job with its caller.
 /// The pass will submit it.
 pub(crate) fn persist_queued(factory: &Arc<ExecutionContextFactory>, call: &QueuedCall) -> Result<(), Error> {
-    crate::vault_hooks::refuse_leased(&format!("queued call of {}", call.service), &call.parameters)
-        .map_err(Error::from)?;
+    let what = format!("queued call of {}", call.service);
+    crate::vault_hooks::refuse_leased(&what, &call.parameters).map_err(Error::from)?;
+    if let Some(results) = call.rules.as_ref().and_then(|rules| rules.results.as_ref()) {
+        crate::vault_hooks::refuse_leased(&what, results).map_err(Error::from)?;
+    }
     let facade = factory
         .entity()
         .ok_or_else(|| Error::new("service worker queue is full and there is no database to queue in"))?;

@@ -1507,9 +1507,9 @@
         (a password and a second factor, SSO, or a paired device's key; never an app password or a login, API or scoped
         key) within which a user's wrapped personal key is sent to them. Read at each fetch. lease-max-hours: the longest
         a lease runs (§3.7), at most 4, which a client refuses past. lease-key: the seed of the server's Ed25519 lease key,
-        which signs each lease and which members check once by its fingerprint; at CHANGEME it is generated at the first
-        start and kept in runtime/.env (moqui_conf__vault__lease_key) until Sealed-Secrets S4 keeps it as a SecretValue.
-        A new value is a new lease key, which every approver checks again. -->
+        which signs each lease and which members check once by its fingerprint; at CHANGEME it is generated at its first
+        read and kept in the seal's store (a SecretValue, Sealed-Secrets S4). A new value is a new lease key, which every
+        approver checks again. -->
     <vault key-fetch-max-age="300" lease-max-hours="4" lease-key="CHANGEME"/>
 
     <!-- Rust: java names for fresh schemas; set sql-name-style="legacy" before opening an old Rust database.

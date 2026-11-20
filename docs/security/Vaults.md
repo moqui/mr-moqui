@@ -72,7 +72,9 @@ after checking that signature against the vault's signed member list: a deposit 
 an earlier key version, is refused when it is stored and at each deposit. The server can write the item and cannot
 read it back. A removal's rotation makes and stores the new version's deposit key. A member's client checks the
 deposit key's signature on each open (`get#Vault` gives it), and takes a deposited item in by unwrapping its key with
-the deposit key's private half and wrapping it by the vault key; a lease cannot name an item until then.
+the deposit key's private half and wrapping it by the vault key (`deposit_adopt`); a lease cannot name an item until
+then. A removal never waits on one: its rotation takes every deposited item in on the way (`vault_rotate` with the old
+deposit key's wrapped private half).
 
 ### Leases
 
@@ -92,24 +94,43 @@ A lease is how the server uses operational items (§3.7):
    The server needs the approve role and a sign-in in the last five minutes (`approve#VaultLease`), checks its own
    signature on the lease and the approver's, and stores the approval with its event in one transaction, on any
    cluster member; the member that holds the lease is woken by the `vault-lease` cluster topic and also reads the row
-   every two seconds.
+   every two seconds. Before it opens the sealed keys, that member checks again that the approver's key is their
+   active one and that they hold the approve role at the lease's key version. Two people for a lease: its requester
+   does not approve it while another member holds the approve role (the dialog says so); a vault with one approver
+   lets that approver approve their own.
 3. The operation reads a value by binding: in Rust through the lease registry, in a kind's script service run under
    the lease with `ec.vault.leased(binding)` ([JS-Core-API](../dev/JS-Core-API.md#ecvault)). The member opens the
    sealed item keys with the lease's private key, checks that the item row is the one the lease names, writes a
-   `VeLeaseUsed` event in a transaction of its own and only then decrypts and returns the value. When that event
-   cannot be written, nothing is returned.
-4. The lease ends when the operation ends, at its time limit, on Revoke (`revoke#VaultLease`, by a manager, an approver,
-   its requester or `VAULT_ADMIN`), and when the server stops or seals: its keys are dropped, which zeroes them, and
-   nothing stored can open the sealed keys on its row. A restart ends the member's leases: a use after it is refused
-   with "lease ended; ask again", and the boot marks the leases it had asked for ended.
+   `VeLeaseUsed` event in a transaction of its own, checks the lease is still held, and only then decrypts and
+   returns the value. When that event cannot be written, nothing is returned. The lease is the thread's while the
+   operation runs: every script on that thread under it (a rule a service call fires, a template it renders, another
+   service it calls synchronously) can read its items by binding, not only the service the operation called. That is a
+   limit: an operation runs code it trusts under its lease.
+4. The lease ends when the operation ends, at its time limit (a timer drops it within 30 seconds, read again or
+   not), on Revoke (`revoke#VaultLease`, by a manager, an approver, its requester or `VAULT_ADMIN`), and when the
+   server stops or seals: its keys are dropped, which zeroes them, and nothing stored can open the sealed keys on its
+   row. A restart ends the member's leases: a use after it is refused with "lease ended; ask again", and once the
+   cluster has started and named the member, it marks the leases that member had asked for ended (only its own: a
+   lease names its cluster member, and another member's leases are that member's).
 
-A leased value stays in its operation. It is never a parameter of a queued or scheduled call: an async call, a job
-run, a call queued when the service queue is full and a call's tx rules kept in the outbox each refuse parameters that
-hold a value a live lease handed out. It is never written to a log or an event.
+A lease's operation, and an operational item's binding, name and type, hold no control character (a newline, an
+escape): the server refuses one, and `moqui vault approve` and the shell show any it finds escaped, so a name cannot
+forge a line of the approval prompt.
 
-**The lease key** is an Ed25519 key of the server. Until Sealed-Secrets S4 its seed is the generated secret
-`vault@lease-key`, kept in `runtime/.env` as the other generated secrets are; then a `SecretValue`, and with S1 the
-keyring's `vault-lease` purpose key. Each approver checks its fingerprint once (System › Vaults shows it, as does
+A leased value stays in its operation. It is never a parameter of a queued or scheduled call: an async call, a call
+registered for the end of a transaction, a job run, a call queued when the service queue is full and a call's tx
+rules kept in the outbox (their parameters and results) each refuse a value, or a map key, that holds a secret the
+lease handed to the operation on that thread. The secrets it looks for are the item's masked fields, by its type
+(`VaultItemTypeField.masked`), or, for a type that registers no fields, the fields named like `password`,
+`passphrase`, `secret`, `key`, `token` or `pin`, of at least 8 characters: a host, a user name or a short PIN would
+match ordinary text. Another thread's operation keeps its own out. A leased value is never written to a log or an
+event.
+
+**The lease key** is an Ed25519 key of the server. Its seed is the generated secret `vault@lease-key`, which the
+seal's store keeps as a `SecretValue` (Sealed-Secrets S4, made at its first read); with S1 it becomes the keyring's
+`vault-lease` purpose key. Its fingerprint changes once at the upgrade to S4, from a seed that was in `runtime/.env`
+to one in the store, and at every boot of an ephemeral runtime whose store does not outlive it: approvers check the
+new key once. Each approver checks its fingerprint once (System › Vaults shows it, as does
 `get#VaultLeaseKey`), comparing it with the server's operator by another channel, and their client stores the check
 as a `VaultKeyCheck` row. A client refuses a lease that is not signed, or signed by a key its user has not checked, so
 a database writer cannot put its own key or items on a lease. A new seed is a new key, which every approver checks
@@ -122,11 +143,19 @@ engine uses for queued jobs) can hold **machine access** to named items (§3.8).
 (`ask#VaultMachineAccess`), which makes a lease for the grant; an approver approves it as any lease; then the server
 seals each item key under its **machine key** with the vault crate's AES-256-GCM and the environment, vault and item
 ids as associated data, so a row moved to another environment or item does not open. Until Sealed-Secrets S1 the
-machine key is HKDF of `entity-facade@crypt-pass` with the label `vault-machine`: that pass is on the server's disk,
-so these items are as strong as the server's own keys, and the vault's page says so. The column is not an entity
-`encrypt="true"` field, so no find, cache, export or sync decrypts it. An operation of the environment then uses a
-lease approved by "machine", recorded and used as any other. Revoking machine access (`revoke#VaultMachineAccess`)
-deletes the sealed keys and names the items to rotate at their source, since the server could have kept them.
+machine key is HKDF of `entity-facade@crypt-pass` with the label `vault-machine`, read through the factory's secret
+handle as the entity facade reads it (since S4 from `seal.json` when the conf leaves it at `CHANGEME`): whoever holds
+that pass and the database opens these items, so they are as strong as the server's own keys, and the vault's page
+says so. After `operator rotate` of the pass, a row sealed under the one before (`entity-facade@crypt-pass-old`)
+still opens and is sealed again under the new one at its next use. The column is not an entity `encrypt="true"`
+field, so no find, cache, export or sync decrypts it. An operation of the environment then uses a lease approved by
+"machine", recorded and used as any other; the environment is the operation's own, which the provision, deploy and
+rotation operations (M1, M3, M5) pass from the `InstanceEnvironment` of the instance they act on, never one a request
+names. When an item is written with a new item key (a client's `item_seal` answers `new_item_key`, and the write says
+`newItemKey`), its machine access goes stale: a lease under it is refused with `machineAccessStale` and the vault's
+page shows it, until machine access is given again. Revoking machine access (`revoke#VaultMachineAccess`) deletes the
+sealed keys, ends the environment's machine leases open on the vault, and names the items to rotate at their source,
+since the server could have kept them.
 
 ### Reveal
 

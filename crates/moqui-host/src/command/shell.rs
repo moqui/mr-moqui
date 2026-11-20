@@ -367,11 +367,15 @@ fn leases(rest: &str) -> Result<Outcome, Error> {
         Ok(results) => results,
         Err(failed) => return Ok(failed),
     };
+    // a control character (a newline, an escape) in a name is shown escaped, so a name cannot forge a line
     let text = |row: &Value, name: &str| match row {
         Value::Map(map) => map
             .get(name)
             .map(moqui_lib::object::to_plain_string)
-            .unwrap_or_default(),
+            .unwrap_or_default()
+            .chars()
+            .map(|c| if c.is_control() { c.escape_default().to_string() } else { c.to_string() })
+            .collect::<String>(),
         _ => String::new(),
     };
     let lines: Vec<String> = match results.get("leaseList") {

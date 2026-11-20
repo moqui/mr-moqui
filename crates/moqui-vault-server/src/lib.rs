@@ -58,7 +58,7 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["vault"],
         register_services,
-        after_boot: lease::after_boot,
+        after_cluster_start: lease::after_cluster_start,
         before_shutdown: lease::before_shutdown,
         ..moqui_core::extension::Extension::EMPTY
     }

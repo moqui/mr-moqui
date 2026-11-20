@@ -1300,9 +1300,11 @@ the credentials it needs by binding. There is no member that hands out a vault v
 
 Each read writes a `VeLeaseUsed` event, committed before the value comes back; when the event cannot be written, or
 the code runs under no lease, the lease names no such item, or it has ended or been revoked, `leased` throws. A
-leased value stays in the operation: an async call, a job run, a queued call or a call's tx rules whose parameters
-hold one is refused, and it never goes into a log or an event. A build without the `vault` feature throws that the
-vault is not built in.
+leased value stays in the operation: an async call, a call registered for the end of the transaction, a job run, a
+queued call or a call's tx rules whose parameters or results hold one of its secret fields is refused, and it never
+goes into a log or an event. The lease is the thread's while the operation runs, so every script on that thread under
+it (a rule a call fires, another service it calls) reads it too ([Vaults](../security/Vaults.md#leases)). A build
+without the `vault` feature throws that the vault is not built in.
 
 ## Differences from Moqui Java
 

@@ -312,6 +312,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sealedItemKey" type="text-long"/>
         <field name="grantedByUserId" type="id"/>
         <field name="grantedDate" type="date-time"/>
+        <field name="staleDate" type="date-time"><description>When the item was written with a new item key, which this
+            sealed key no longer opens: a lease under it is refused until machine access is given again</description></field>
         <relationship type="one" related="moqui.security.vault.Vault"/>
         <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
     </entity>

@@ -203,6 +203,14 @@ fn deposit_in_tx(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibErro
     let chain = verify_chain(&entries)?;
     let signer = chain.accept_deposit(&public).map_err(refused)?;
     check_id("vaultItemId", deposit.item_id)?;
+    if [deposit.item_type, deposit.binding, deposit.name]
+        .iter()
+        .any(|given| given.is_empty() || crate::lease::has_control(given))
+    {
+        return Err(fail(
+            "A deposited item has its type, binding and name, with no control character",
+        ));
+    }
     let taken = find(facade, ITEM)?
         .eq("vaultItemId", Value::string(deposit.item_id))
         .one()?

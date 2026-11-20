@@ -229,6 +229,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="vaultItemTypeId"/>
             <parameter name="bindingKey"/>
             <parameter name="itemName"/>
+            <parameter name="newItemKey" type="Boolean"><description>The client made a new item key for this write (the
+                vault crate's item_seal answers new_item_key): an environment's machine access to the item goes stale and
+                is given again</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>

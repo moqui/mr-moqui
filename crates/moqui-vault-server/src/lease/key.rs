@@ -13,9 +13,11 @@
  */
 
 //! The server's lease key (plans/Vault-Instances.md §3.7): an Ed25519 key that signs each lease, whose fingerprint
-//! every approver checks once. Until Sealed-Secrets S4 its seed is the generated secret `vault@lease-key`, kept in
-//! `runtime/.env` as today's generated secrets are; S4 keeps it as a `SecretValue` (and S1 makes it the keyring's
-//! `vault-lease` purpose key). [`seed`] is the one place that reads it, so that move changes only it.
+//! every approver checks once. Its seed is the generated secret `vault@lease-key`, which Sealed-Secrets S4 keeps in the
+//! seal's store as a `SecretValue` (made at its first read), read through the factory's secret handle; S1 makes it the
+//! keyring's `vault-lease` purpose key. [`seed`] is the one place that reads it, so that move changes only it. A new
+//! seed is a new key: the fingerprint changed once at the S4 upgrade (from a seed in `runtime/.env` to one in the
+//! store), and an ephemeral boot (a store that does not outlive the process) has a new one each time.
 
 use moqui_lib::error::Error as LibError;
 use moqui_vault::sign::{SigningKey, VerifyingKey};
@@ -23,18 +25,16 @@ use zeroize::Zeroizing;
 
 use crate::common::fail;
 
-/// The setting the seed is kept under until Sealed-Secrets S4.
+/// The secret the seed is kept under.
 const SETTING: &str = "vault@lease-key";
 
-/// The lease key's seed: the generated secret, as the boot generated it into `runtime/.env`.
+/// The lease key's seed: the generated secret, from the seal's store.
 fn seed() -> Result<Zeroizing<String>, LibError> {
-    let value = Zeroizing::new(moqui_core::context::conf_env::setting(SETTING));
-    if value.trim().is_empty() || value.ends_with("CHANGEME") {
-        return Err(fail(format!(
-            "The lease key is not set: {SETTING} is generated at the first start into runtime/.env"
-        )));
-    }
-    Ok(value)
+    crate::common::server_secret(SETTING)?.ok_or_else(|| {
+        fail(format!(
+            "The lease key is not set: {SETTING} is generated into the seal's store at its first read"
+        ))
+    })
 }
 
 /// The lease key, from its seed by HKDF with the label `vault-lease`.

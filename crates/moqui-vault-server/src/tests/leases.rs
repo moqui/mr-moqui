@@ -25,16 +25,22 @@ use serde_json::{json, Value as Json};
 use super::{call, new_id, open_vault, setup, strong_login, sys, text, Client};
 use crate::lease::{self, Ask, LeaseRegistry};
 
-/// The lease key's seed and the field pass, as the boot would have generated them into `runtime/.env`.
+/// The lease key's seed and the field pass, as a test's factory reads them (process properties of their environment names).
 fn keys() {
-    moqui_lib::env::set_property(
-        "moqui_conf__vault__lease_key",
-        "dGVzdC1sZWFzZS1rZXktc2VlZC0zMi1ieXRlcy0hISE=",
-    );
-    moqui_lib::env::set_property(
-        "moqui_conf__entity_facade__crypt_pass",
-        "test-field-pass-for-the-machine-key",
-    );
+    for (name, value) in [
+        (
+            "moqui_conf__vault__lease_key",
+            "dGVzdC1sZWFzZS1rZXktc2VlZC0zMi1ieXRlcy0hISE=",
+        ),
+        (
+            "moqui_conf__entity_facade__crypt_pass",
+            "test-field-pass-for-the-machine-key",
+        ),
+    ] {
+        if moqui_lib::env::get_property(name).is_none() {
+            moqui_lib::env::set_property(name, value);
+        }
+    }
 }
 
 fn create(facade: &EntityFacade, entity: &str, fields: Json) {
@@ -53,6 +59,7 @@ struct Fixture {
     maker: Client,
     approver: Client,
     revealer: Client,
+    second: Client,
     vault_id: String,
     password: String,
     log_level: String,
@@ -67,6 +74,7 @@ fn fixture(facade: &EntityFacade, tag: &str) -> Fixture {
     let mut maker = Client::new(facade, &format!("{tag}-maker"));
     let mut approver = Client::new(facade, &format!("{tag}-approver"));
     let mut revealer = Client::new(facade, &format!("{tag}-revealer"));
+    let mut second = Client::new(facade, &format!("{tag}-second"));
     let group = format!("VT_{tag}");
     create(facade, "moqui.security.UserGroup", json!({ "userGroupId": group }));
     create(
@@ -95,11 +103,13 @@ fn fixture(facade: &EntityFacade, tag: &str) -> Fixture {
     });
     maker.check(&approver.user);
     maker.check(&revealer.user);
+    maker.check(&second.user);
     let vault_id = new_id("vault");
     let members = json!([
         maker.member("manage"),
         approver.member("approve"),
-        revealer.member("reveal")
+        revealer.member("reveal"),
+        second.member("approve")
     ]);
     let checks = maker.checks();
     let entry = maker
@@ -120,6 +130,7 @@ fn fixture(facade: &EntityFacade, tag: &str) -> Fixture {
     maker.call("create#Vault", create_vault).unwrap();
     approver.check(&maker.user);
     revealer.check(&maker.user);
+    second.check(&maker.user);
     let password = item(
         &mut maker,
         &vault_id,
@@ -128,10 +139,12 @@ fn fixture(facade: &EntityFacade, tag: &str) -> Fixture {
     );
     let log_level = item(&mut maker, &vault_id, LOG_LEVEL, &json!({ "level": "info-and-above" }));
     check_lease_key(&mut approver);
+    check_lease_key(&mut second);
     Fixture {
         maker,
         approver,
         revealer,
+        second,
         vault_id,
         password,
         log_level,
@@ -478,7 +491,32 @@ fn machine_access_opens_only_its_items_for_its_environment() {
     let moved = crate::machine::machine_lease(&registry, &facade, "env-other", &fixture.vault_id, &bindings, "deploy")
         .unwrap_err();
     assert!(!moved.message().contains("no machine access"), "{moved}");
-    // revoking deletes the sealed keys and names the items to rotate
+    // a rotation of the field pass: a row sealed under the pass before it opens with it, and is sealed again under the
+    // new pass, so it opens once the old one is gone
+    let sealed_before = sealed_key(&facade, "env-demo1");
+    let pass = moqui_lib::env::get_property("moqui_conf__entity_facade__crypt_pass").unwrap();
+    moqui_lib::env::set_property("moqui_conf__entity_facade__crypt_pass_old", pass.clone());
+    moqui_lib::env::set_property(
+        "moqui_conf__entity_facade__crypt_pass",
+        "the-field-pass-after-a-rotation",
+    );
+    let rotated =
+        crate::machine::machine_lease(&registry, &facade, "env-demo1", &fixture.vault_id, &bindings, "deploy");
+    moqui_lib::env::clear_property("moqui_conf__entity_facade__crypt_pass_old");
+    let rotated = rotated.unwrap();
+    assert_ne!(sealed_key(&facade, "env-demo1"), sealed_before);
+    let again = crate::machine::machine_lease(&registry, &facade, "env-demo1", &fixture.vault_id, &bindings, "deploy");
+    moqui_lib::env::set_property("moqui_conf__entity_facade__crypt_pass", pass);
+    again.unwrap();
+    assert_eq!(
+        registry
+            .leased(&facade, &rotated.lease_id, PASSWORD, Some("password"))
+            .unwrap(),
+        Value::string(SECRET)
+    );
+
+    // revoking deletes the sealed keys, ends the environment's machine leases open on the vault, and names the items to
+    // rotate
     super::login(&fixture.maker.user);
     let revoked = call(
         "revoke#VaultMachineAccess",
@@ -489,6 +527,319 @@ fn machine_access_opens_only_its_items_for_its_environment() {
     let gone = crate::machine::machine_lease(&registry, &facade, "env-demo1", &fixture.vault_id, &bindings, "deploy")
         .unwrap_err();
     assert!(gone.message().contains("no machine access"), "{gone}");
+    let ended = registry
+        .leased(&facade, &lease.lease_id, PASSWORD, Some("password"))
+        .unwrap_err();
+    assert!(ended.message().contains("ask again"), "{ended}");
+    assert_eq!(status(&facade, &lease.lease_id), "VlsRevoked");
+}
+
+fn sealed_key(facade: &EntityFacade, environment_id: &str) -> String {
+    sys(|| {
+        let row = facade
+            .find("moqui.security.vault.VaultMachineAccess")
+            .unwrap()
+            .eq("environmentId", Value::string(environment_id))
+            .one()
+            .unwrap()
+            .unwrap();
+        moqui_lib::object::to_plain_string(row.get("sealedItemKey").unwrap())
+    })
+}
+
+/// Machine access goes stale when its item is written with a new item key, and a lease under it is refused clearly;
+/// a grant whose lease is never approved ends, and its keys are not kept.
+#[test]
+fn machine_access_goes_stale_with_a_new_item_key_and_an_unapproved_grant_ends() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fixture = fixture(&facade, "stale");
+    let registry = LeaseRegistry::new("member-1");
+    super::login(&fixture.maker.user);
+    let bindings = [PASSWORD.to_string()];
+    let unapproved = crate::machine::ask_grant(&registry, &facade, "env-stale1", &fixture.vault_id, &bindings).unwrap();
+    let refused = crate::machine::complete_grant(&registry, &facade, &unapproved.lease_id, Duration::from_millis(50))
+        .unwrap_err();
+    assert!(refused.message().contains("not approved in time"), "{refused}");
+    assert!(!registry.holds(&unapproved.lease_id));
+    assert_eq!(status(&facade, &unapproved.lease_id), "VlsEnded");
+
+    super::login(&fixture.maker.user);
+    let grant = crate::machine::ask_grant(&registry, &facade, "env-stale1", &fixture.vault_id, &bindings).unwrap();
+    approve(&mut fixture, &grant.lease_id).unwrap();
+    crate::machine::complete_grant(&registry, &facade, &grant.lease_id, Duration::from_secs(5)).unwrap();
+    crate::machine::machine_lease(&registry, &facade, "env-stale1", &fixture.vault_id, &bindings, "deploy").unwrap();
+    // the maker writes the item with a new item key
+    let label = json!({ "item_type": "login", "binding": PASSWORD, "name": PASSWORD });
+    let body = json!({ "v": 1, "type": "login", "name": PASSWORD, "fields": { "password": "a-new-password-value" } });
+    let sealed = fixture
+        .maker
+        .op(
+            json!({ "op": "item_seal", "vault_id": fixture.vault_id, "item_id": fixture.password, "key_version": 1,
+                    "label": label, "body": body.to_string() }),
+        )
+        .unwrap();
+    assert_eq!(sealed["new_item_key"], json!(true));
+    fixture
+        .maker
+        .call(
+            "update#VaultItem",
+            json!({ "vaultItemId": fixture.password, "expectedRevision": 1, "keyVersion": 1, "newItemKey": true,
+                    "wrappedItemKey": sealed["wrapped_item_key"], "bodyCipher": sealed["sealed_body"] }),
+        )
+        .unwrap();
+    let stale = crate::machine::machine_lease(&registry, &facade, "env-stale1", &fixture.vault_id, &bindings, "deploy")
+        .unwrap_err();
+    assert!(stale.message().contains("machineAccessStale"), "{stale}");
+    let listed = fixture
+        .maker
+        .call("list#VaultMachineAccess", json!({ "vaultId": fixture.vault_id }))
+        .unwrap();
+    assert!(!text(&listed["accessList"][0], "staleDate").is_empty());
+}
+
+/// The registry is named by the member's cluster id once the cluster starts, and the start ends only that member's
+/// leases left open, never another member's.
+#[test]
+fn the_registry_takes_the_cluster_member_id_and_ends_only_its_own_leases() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let fixture = fixture(&facade, "cluster");
+    let mine = LeaseRegistry::new("vault-member-a");
+    let theirs = LeaseRegistry::new("vault-member-b");
+    let my_lease = ask(&mine, &facade, &fixture, &[PASSWORD]);
+    let their_lease = ask(&theirs, &facade, &fixture, &[PASSWORD]);
+    assert_eq!(lease::registry(ctx.factory()).member_id(), "local");
+    // the cluster's start as the host runs it, with what it reads: this member's id, the session cookie key and the
+    // cluster's certificate pair (whose fingerprint is all the start reads of it)
+    let settings = [
+        ("moqui_conf__instance__id", "vault-member-a"),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
+            "dGVzdC1jbHVzdGVyLWNvb2tpZS1rZXktMzItYnl0ZXMhIQ==",
+        ),
+        ("moqui_conf__cluster_member__tls_cert", "dGVzdC1jZXJ0aWZpY2F0ZQ=="),
+        ("moqui_conf__cluster_member__tls_key", "dGVzdC1rZXk="),
+    ];
+    for (name, value) in settings {
+        moqui_lib::env::set_property(name, value);
+    }
+    let started = moqui_core::cluster::start(ctx.factory());
+    for (name, _) in settings {
+        moqui_lib::env::clear_property(name);
+    }
+    started.unwrap();
+    assert_eq!(lease::registry(ctx.factory()).member_id(), "vault-member-a");
+    assert_eq!(status(&facade, &my_lease), "VlsEnded");
+    assert_eq!(status(&facade, &their_lease), "VlsRequested");
+}
+
+/// An approver approves a lease they asked for only when no other member holds the approve role; the member that
+/// holds the lease refuses an approval whose approver no longer holds the approve role.
+#[test]
+fn an_approver_does_not_approve_their_own_lease_and_a_demoted_approver_does_not_open_one() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fixture = fixture(&facade, "self");
+    let registry = LeaseRegistry::new("member-1");
+    super::login(&fixture.approver.user);
+    let names = [PASSWORD.to_string()];
+    let own = registry
+        .ask(
+            &facade,
+            &Ask {
+                vault_id: &fixture.vault_id,
+                bindings: &names,
+                operation: "by hand",
+                limit: None,
+                environment_id: None,
+            },
+        )
+        .unwrap();
+    let refused = approve(&mut fixture, &own.lease_id).unwrap_err();
+    assert!(refused.contains("selfApproval"), "{refused}");
+    // the other approver approves it
+    open_vault(&mut fixture.second, &fixture.vault_id).unwrap();
+    let got = fixture
+        .second
+        .call("get#VaultLease", json!({ "leaseId": own.lease_id }))
+        .unwrap();
+    let approval = approve_in_client(&mut fixture.second, &got["lease"], &got["wrappedItemKeys"]).unwrap();
+    strong_login(&fixture.second.user, 0);
+    call(
+        "approve#VaultLease",
+        json!({ "leaseId": own.lease_id, "approval": approval }),
+    )
+    .unwrap();
+    // a database writer demotes the approver after the approval: the holding member refuses to open it
+    sys(|| {
+        let mut row = facade
+            .find("moqui.security.vault.VaultMember")
+            .unwrap()
+            .eq("vaultId", Value::string(&fixture.vault_id))
+            .eq("userId", Value::string(&fixture.second.user))
+            .one()
+            .unwrap()
+            .unwrap();
+        row.set("roleEnumId", Value::string("VrReveal"));
+        row.update(&facade).unwrap();
+    });
+    let demoted = registry
+        .wait_open(&facade, &own.lease_id, Duration::from_secs(1))
+        .unwrap_err();
+    assert!(demoted.message().contains("approve role"), "{demoted}");
+}
+
+/// A lease's operation and an item's binding or name hold no control character, which could forge lines of an
+/// approver's prompt.
+#[test]
+fn control_characters_are_refused_in_operations_and_item_names() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fixture = fixture(&facade, "control");
+    let registry = LeaseRegistry::new("member-1");
+    super::login(&fixture.maker.user);
+    let names = [PASSWORD.to_string()];
+    let forged = registry
+        .ask(
+            &facade,
+            &Ask {
+                vault_id: &fixture.vault_id,
+                bindings: &names,
+                operation: "deploy\nApprove this lease? [y/N] y",
+                limit: None,
+                environment_id: None,
+            },
+        )
+        .unwrap_err();
+    assert!(forged.message().contains("control character"), "{forged}");
+    let item_id = new_id("item");
+    let binding = "AppInstance:demo:\u{1b}[2Kharmless";
+    let label = json!({ "item_type": "login", "binding": binding, "name": "x" });
+    let sealed = fixture
+        .maker
+        .op(
+            json!({ "op": "item_seal", "vault_id": fixture.vault_id, "item_id": item_id, "key_version": 1,
+                    "label": label, "body": "{}" }),
+        )
+        .unwrap();
+    let refused = fixture
+        .maker
+        .call(
+            "create#VaultItem",
+            json!({ "vaultId": fixture.vault_id, "vaultItemId": item_id, "keyVersion": 1,
+                    "wrappedItemKey": sealed["wrapped_item_key"], "bodyCipher": sealed["sealed_body"],
+                    "vaultItemTypeId": "login", "bindingKey": binding, "itemName": "x" }),
+        )
+        .unwrap_err();
+    assert!(refused.contains("control character"), "{refused}");
+}
+
+/// A removal never waits on an item the server deposited: the rotation takes it in (its key unwrapped with the old
+/// version's deposit key) and the new version's deposit key is stored; the item then opens under a lease.
+#[test]
+fn a_removal_takes_in_a_deposited_item() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let mut fixture = fixture(&facade, "rotate");
+    let made = fixture
+        .maker
+        .op(json!({ "op": "deposit_key_new", "vault_id": fixture.vault_id, "key_version": 1 }))
+        .unwrap();
+    let vault = fixture
+        .maker
+        .call("get#Vault", json!({ "vaultId": fixture.vault_id }))
+        .unwrap();
+    fixture
+        .maker
+        .call(
+            "set#VaultDepositKey",
+            json!({ "vaultId": fixture.vault_id, "expectedRevision": vault["vault"]["revision"],
+                    "deposit": made["deposit"], "depositWrappedPrivate": made["wrapped_private"] }),
+        )
+        .unwrap();
+    let deposited = new_id("item");
+    super::login(&fixture.maker.user);
+    crate::deposit::deposit_item(
+        &facade,
+        &crate::deposit::Deposit {
+            vault_id: &fixture.vault_id,
+            item_id: &deposited,
+            item_type: "login",
+            binding: "AppInstance:demo:redis",
+            name: "AppInstance:demo:redis",
+            body: br#"{"v":1,"type":"login","name":"x","fields":{"password":"made-by-the-server"}}"#,
+        },
+    )
+    .unwrap();
+    // the maker removes the revealer
+    let vault = fixture
+        .maker
+        .call("get#Vault", json!({ "vaultId": fixture.vault_id }))
+        .unwrap();
+    let rows = fixture
+        .maker
+        .call("list#VaultItems", json!({ "vaultId": fixture.vault_id }))
+        .unwrap();
+    let items: Vec<Json> = rows["itemList"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let binding = text(row, "bindingKey");
+            json!({ "item_id": row["vaultItemId"], "wrapped_item_key": row["wrappedItemKey"],
+                    "label": { "item_type": "login", "binding": binding, "name": text(row, "itemName") },
+                    "deposited": row["itemKeyWrapEnumId"] == json!("VwDeposit") })
+        })
+        .collect();
+    let members = json!([
+        fixture.maker.member("manage"),
+        fixture.approver.member("approve"),
+        fixture.second.member("approve")
+    ]);
+    let checks = fixture.maker.checks();
+    let rotated = fixture
+        .maker
+        .op(
+            json!({ "op": "vault_rotate", "entries": vault["entries"], "key_checks": checks, "members": members,
+                    "items": items, "operational": true, "deposit_wrapped_private": vault["depositWrappedPrivate"] }),
+        )
+        .unwrap();
+    fixture
+        .maker
+        .call(
+            "remove#VaultMember",
+            json!({ "vaultId": fixture.vault_id, "userId": fixture.revealer.user,
+                    "expectedRevision": vault["vault"]["revision"], "entry": rotated["entry"],
+                    "itemKeys": rotated["item_keys"], "memberWraps": rotated["member_wraps"],
+                    "deposit": rotated["deposit"]["deposit"], "depositWrappedPrivate": rotated["deposit"]["wrapped_private"] }),
+        )
+        .unwrap();
+    let after = fixture
+        .maker
+        .call("get#Vault", json!({ "vaultId": fixture.vault_id }))
+        .unwrap();
+    assert_eq!(after["deposit"]["key_version"], json!(2));
+    let rows = fixture
+        .maker
+        .call("list#VaultItems", json!({ "vaultId": fixture.vault_id }))
+        .unwrap();
+    assert!(rows["itemList"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row["itemKeyWrapEnumId"] == json!("VwVault")));
+    // the approver opens version 2 and approves a lease of the item that was deposited
+    let registry = LeaseRegistry::new("member-1");
+    let lease_id = ask(&registry, &facade, &fixture, &["AppInstance:demo:redis"]);
+    approve(&mut fixture, &lease_id).unwrap();
+    registry.wait_open(&facade, &lease_id, Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        registry
+            .leased(&facade, &lease_id, "AppInstance:demo:redis", Some("password"))
+            .unwrap(),
+        Value::string("made-by-the-server")
+    );
 }
 
 /// A client refuses a lease whose public key or item list was changed after it was signed, and one signed by a lease
@@ -800,6 +1151,18 @@ fn a_leased_value_is_not_in_a_jobs_stored_parameters() {
             .iter()
             .any(|text| text.contains(SECRET)));
     }
+    // a map key holds it as surely as a value
+    let mut keyed = BTreeMap::new();
+    let mut inner = moqui_lib::object::ValueMap::default();
+    inner.insert(SECRET.to_string(), Value::Bool(true));
+    keyed.insert("options".to_string(), Value::Map(inner));
+    assert!(moqui_core::vault_hooks::refuse_leased("a call", &keyed).is_err());
+    // the user name of the item is no secret, and another thread's operation did not read the value
+    let mut plain = BTreeMap::new();
+    plain.insert("user".to_string(), Value::string("app"));
+    assert!(moqui_core::vault_hooks::refuse_leased("a call", &plain).is_ok());
+    let elsewhere = std::thread::scope(|scope| scope.spawn(|| registry.holds_value(SECRET)).join().unwrap());
+    assert!(!elsewhere);
     // once the lease ends, the guard forgets the value with it
     registry.end(&facade, &lease_id).unwrap();
     assert!(!registry.holds_value(SECRET));
@@ -825,6 +1188,26 @@ fn a_restart_ends_the_members_leases() {
     assert_eq!(lease::end_left_open(&facade, "member-restart").unwrap(), 1);
     assert_eq!(status(&facade, &lease_id), "VlsEnded");
     assert!(lease_events(&facade, &lease_id).contains(&"VeLeaseEnded".to_string()));
+
+    // a lease past its time limit is dropped and its row marked ended by the sweep, read again or not
+    super::login(&fixture.maker.user);
+    let names = [PASSWORD.to_string()];
+    let short = after
+        .ask(
+            &facade,
+            &Ask {
+                vault_id: &fixture.vault_id,
+                bindings: &names,
+                operation: "a short one",
+                limit: Some(Duration::from_millis(1)),
+                environment_id: None,
+            },
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(5));
+    after.expire(&facade);
+    assert!(!after.holds(&short.lease_id));
+    assert_eq!(status(&facade, &short.lease_id), "VlsEnded");
 }
 
 /// Reveal is by role: the revealer gets the item's ciphertext and opens it in their client, with an event; the

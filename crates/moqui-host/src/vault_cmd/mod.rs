@@ -109,6 +109,25 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
     }
 }
 
+/// A server's text for the terminal: a control character (a newline, an escape that moves the cursor or recolors) is
+/// shown escaped, so a name cannot forge a line of the approval prompt.
+fn shown(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+/// A field of a server's answer as text for the terminal ([`shown`]).
+fn shown_field(value: &Value, name: &str) -> String {
+    shown(&text(value, name))
+}
+
 fn text(value: &Value, name: &str) -> String {
     match &value[name] {
         Value::String(text) => text.clone(),
@@ -344,11 +363,11 @@ fn leases(remote: &mut Remote, vault_id: &str) -> Result<(), Error> {
     for lease in leases["leaseList"].as_array().map(Vec::as_slice).unwrap_or_default() {
         println!(
             "{}  {}  {}  {}  {}",
-            text(lease, "leaseId"),
-            text(lease, "statusId"),
-            text(lease, "vaultId"),
-            text(lease, "operation"),
-            text(lease, "bindings"),
+            shown_field(lease, "leaseId"),
+            shown_field(lease, "statusId"),
+            shown_field(lease, "vaultId"),
+            shown_field(lease, "operation"),
+            shown_field(lease, "bindings"),
         );
     }
     Ok(())
@@ -369,21 +388,23 @@ fn approve(remote: &mut Remote, client: &mut VaultClient, lease_id: &str) -> Res
     let lease = &got["lease"];
     let vault_id = text(lease, "vault_id");
     println!(
-        "Lease {lease_id} of vault {vault_id}, for: {}",
-        text(lease, "operation")
+        "Lease {} of vault {}, for: {}",
+        shown(lease_id),
+        shown(&vault_id),
+        shown_field(lease, "operation")
     );
     for item in lease["items"].as_array().map(Vec::as_slice).unwrap_or_default() {
         println!(
             "  {}  ({}, {})",
-            text(item, "name"),
-            text(item, "binding"),
-            text(item, "item_type")
+            shown_field(item, "name"),
+            shown_field(item, "binding"),
+            shown_field(item, "item_type")
         );
     }
     let expires_at = lease["expires_at"].as_i64().unwrap_or(0);
     println!(
         "Runs on {} for at most {} minutes more.",
-        text(lease, "cluster_member"),
+        shown_field(lease, "cluster_member"),
         minutes_left(expires_at)
     );
     println!("These names are checked: an item that is not the one named does not unwrap.");

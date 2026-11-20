@@ -162,6 +162,29 @@ pub(crate) fn has_permission(permission: &str) -> Result<bool, LibError> {
     moqui_core::user::has_permission(permission).map_err(|err| fail(err.message()))
 }
 
+/// A secret of the server by its conf selector, through the entered factory's secret handle (since Sealed-Secrets S4:
+/// the conf files and the environment, else the seal's store, where a generated one is made at its first read); a
+/// test's factory, or code with no context entered, reads the setting (a process property of its environment name).
+/// None when it is not set, or still at `CHANGEME`.
+pub(crate) fn server_secret(selector: &str) -> Result<Option<zeroize::Zeroizing<String>>, LibError> {
+    let unset = |value: &str| value.trim().is_empty() || value.ends_with("CHANGEME");
+    let handle = ExecutionContext::with_current(|ec| ec.factory().secret(selector));
+    if let Some(found) = handle {
+        match found {
+            Ok(Some(value)) if !unset(&value) => return Ok(Some(value)),
+            Ok(_) => {}
+            Err(err) => {
+                return Err(fail(format!(
+                    "The secret {selector} could not be read: {}",
+                    err.message()
+                )))
+            }
+        }
+    }
+    let value = zeroize::Zeroizing::new(moqui_core::context::conf_env::setting(selector));
+    Ok((!unset(&value)).then_some(value))
+}
+
 /// The epoch millis now, on the framework's clock.
 pub(crate) fn now_millis() -> i64 {
     moqui_core::user::now_millis()

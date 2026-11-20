@@ -37,7 +37,7 @@ pub struct VaultHooks {
     /// field named. Each use writes its event before the value is returned, and no value comes back when that event
     /// cannot be written.
     pub leased: fn(binding: &str, field: Option<&str>) -> Result<Value, LibError>,
-    /// Whether `text` holds a value a live lease of this process handed out.
+    /// Whether `text` holds a secret value a live lease handed out to the operation on this thread.
     pub holds_leased: fn(text: &str) -> bool,
 }
 inventory::collect!(VaultHooks);
@@ -82,7 +82,7 @@ pub fn refuse_leased(what: &str, parameters: &BTreeMap<String, Value>) -> Result
         return Ok(());
     };
     for (name, value) in parameters {
-        if holds(hooks, value) {
+        if (hooks.holds_leased)(name) || holds(hooks, value) {
             return Err(LibError::new(format!(
                 "{what}: the parameter {name} holds a value leased from a vault, which never goes into a queued or \
                  scheduled call (plans/Vault-Instances.md §3.7)"
@@ -96,7 +96,9 @@ fn holds(hooks: &VaultHooks, value: &Value) -> bool {
     match value {
         Value::String(text) => (hooks.holds_leased)(text),
         Value::List(items) => items.iter().any(|item| holds(hooks, item)),
-        Value::Map(map) => map.values().any(|item| holds(hooks, item)),
+        Value::Map(map) => map
+            .iter()
+            .any(|(key, item)| (hooks.holds_leased)(key) || holds(hooks, item)),
         Value::Bytes(bytes) => (hooks.holds_leased)(&String::from_utf8_lossy(bytes)),
         // numbers, dates and host objects (an entity value's own fields are not a call's parameters to store)
         _ => false,

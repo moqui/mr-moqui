@@ -21,12 +21,19 @@
 //!   ([`complete_grant`]), each item key is sealed under the machine key into a `VaultMachineAccess` row, with a
 //!   `VeMachineGiven` event, and the lease ends.
 //! - The machine key is HKDF of `entity-facade@crypt-pass` with the label `vault-machine` until Sealed-Secrets S1
-//!   ([`machine_key`]): this pass is on the server's disk, so these items are now as strong as the server's own keys.
+//!   ([`machine_key`]); the pass is read through the factory's secret handle, as the entity facade's cipher is made
+//!   (since S4 from `seal.json` when the conf leaves it at `CHANGEME`). Whoever holds that pass and the database opens
+//!   these items, so they are as strong as the server's own keys. After `operator rotate` of the pass, a row sealed
+//!   under the pass before it (now `entity-facade@crypt-pass-old`) still opens and is sealed again under the new one.
 //!   The column is not an entity `encrypt="true"` field, so no find, cache, export or sync decrypts it; only this code
 //!   opens it.
-//! - An operation of the environment uses it as a lease approved by "machine" ([`machine_lease`]).
-//! - Revoking it deletes the sealed keys and names the items to rotate, since the server could have kept them
-//!   (`revoke#VaultMachineAccess`).
+//! - An operation of the environment uses it as a lease approved by "machine" ([`machine_lease`]). The environment is
+//!   the operation's own: the provision, deploy and rotation operations (M1, M3, M5) pass the `InstanceEnvironment` of
+//!   the instance they act on, never one a request names, so an environment reaches only the items it was given.
+//! - An item written with a new item key (decision (c) of §9, after a key-version change) leaves the sealed key stale:
+//!   the row is marked stale at that write, and a lease under it is refused until machine access is given again.
+//! - Revoking it deletes the sealed keys, ends the machine leases of the environment open on the vault, and names the
+//!   items to rotate, since the server could have kept them (`revoke#VaultMachineAccess`).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -41,7 +48,6 @@ use moqui_vault::lease::{Lease, LeaseItem};
 use moqui_vault::rng::OsRng;
 use moqui_vault::text::{hex, unhex};
 use moqui_vault::Key32;
-use zeroize::Zeroizing;
 
 use crate::common::{
     authz_off, check_id, fail, field, find, has_permission, now, out, refused, required, text, user, value, vault_for,
@@ -60,16 +66,23 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
 /// The operation a grant's lease names.
 const GRANT: &str = "machine-access";
 
-/// The server's machine key: HKDF of the field pass, read through the same setting the entity facade's cipher is
-/// made from, until the keyring's `vault-machine` purpose key (Sealed-Secrets S1).
+const CRYPT_PASS: &str = "entity-facade@crypt-pass";
+const CRYPT_PASS_OLD: &str = "entity-facade@crypt-pass-old";
+
+/// The server's machine key: HKDF of the field pass, read through the factory's secret handle as the entity facade's
+/// cipher is made from it, until the keyring's `vault-machine` purpose key (Sealed-Secrets S1).
 pub(crate) fn machine_key() -> Result<Key32, LibError> {
-    let pass = Zeroizing::new(moqui_core::context::conf_env::setting("entity-facade@crypt-pass"));
-    if pass.trim().is_empty() || pass.ends_with("CHANGEME") {
-        return Err(fail(
-            "Machine access needs entity-facade@crypt-pass, generated at the first start into runtime/.env",
-        ));
-    }
+    let pass = crate::common::server_secret(CRYPT_PASS)?.ok_or_else(|| {
+        fail("Machine access needs entity-facade@crypt-pass, which the first start generates into the seal's store")
+    })?;
     Ok(moqui_vault::machine::machine_key_from_crypt_pass(pass.as_bytes()))
+}
+
+/// The machine key of the field pass before the last rotation, when there is one.
+fn old_machine_key() -> Option<Key32> {
+    let pass = crate::common::server_secret(CRYPT_PASS_OLD).ok().flatten()?;
+    // the shipped default of crypt-pass-old is the public default pass, which never sealed a row
+    Some(moqui_vault::machine::machine_key_from_crypt_pass(pass.as_bytes()))
 }
 
 /// Asks for a grant's lease: the items an environment's operations need, by binding, approved as any lease. Its
@@ -102,19 +115,40 @@ pub fn complete_grant(
     lease_id: &str,
     timeout: Duration,
 ) -> Result<(), LibError> {
+    /// The grant's lease ends however this returns: its keys never outlive the grant.
+    struct EndLease<'a> {
+        registry: &'a LeaseRegistry,
+        facade: &'a EntityFacade,
+        lease_id: &'a str,
+    }
+    impl Drop for EndLease<'_> {
+        fn drop(&mut self) {
+            if let Err(err) = self.registry.end(self.facade, self.lease_id) {
+                self.registry.forget(self.lease_id);
+                tracing::error!("Vault: the grant's lease {} was not marked ended: {err}", self.lease_id);
+            }
+        }
+    }
+    let _end = EndLease {
+        registry,
+        facade,
+        lease_id,
+    };
+    // the environment and the vault as this member asked them, never read back from the row's unsigned columns
+    let environment_id = registry
+        .environment_of(lease_id)
+        .ok_or_else(|| fail(format!("The lease {lease_id} grants no machine access")))?;
+    let lease = registry
+        .held_lease(lease_id)
+        .ok_or_else(|| fail(format!("The lease {lease_id} has ended")))?;
     registry.wait_open(facade, lease_id, timeout)?;
     let _authz = authz_off();
     let row = find(facade, crate::common::LEASE)?
         .eq("leaseId", Value::string(lease_id))
         .one()?
         .ok_or_else(|| fail(format!("No lease {lease_id}")))?;
-    let environment_id = field(&row, "environmentId");
     let approver = field(&row, "approvedByUserId");
-    if environment_id.is_empty() {
-        return Err(fail(format!("The lease {lease_id} grants no machine access")));
-    }
     let machine_key = machine_key()?;
-    let lease = crate::lease::lease_of_row(&row)?;
     let keys = registry.item_keys(lease_id)?;
     let tx = facade.transactions_for(MACHINE_ACCESS)?;
     tx.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
@@ -156,8 +190,7 @@ pub fn complete_grant(
             )?;
         }
         Ok(())
-    })?;
-    registry.end(facade, lease_id)
+    })
 }
 
 /// An environment's operation under its machine access (§3.8): a lease of the named items approved by "machine",
@@ -188,8 +221,31 @@ pub fn machine_lease(
                 item.binding
             )));
         }
+        if !field(&row, "staleDate").is_empty() {
+            return Err(fail(format!(
+                "Environment {environment_id}'s machine access to {} is stale: the item was written with a new item key; \
+                 give machine access again (reasonCode machineAccessStale)",
+                item.binding
+            )));
+        }
         let sealed = unhex(&field(&row, "sealedItemKey")).map_err(refused)?;
-        moqui_vault::machine::open(&machine_key, environment_id, vault_id, &item.item_id, &sealed).map_err(refused)
+        match moqui_vault::machine::open(&machine_key, environment_id, vault_id, &item.item_id, &sealed) {
+            Ok(key) => Ok(key),
+            Err(err) => {
+                // sealed under the field pass before its rotation: opened with it and sealed again under the new one
+                let Some(old) = old_machine_key() else {
+                    return Err(refused(err));
+                };
+                let key = moqui_vault::machine::open(&old, environment_id, vault_id, &item.item_id, &sealed)
+                    .map_err(|_| refused(err))?;
+                let resealed =
+                    moqui_vault::machine::seal(&machine_key, environment_id, vault_id, &item.item_id, &key, &mut OsRng);
+                let mut row = row.clone();
+                row.set("sealedItemKey", Value::string(hex(&resealed)));
+                row.update(facade)?;
+                Ok(key)
+            }
+        }
     };
     let lease = registry.open_with_keys(
         facade,
@@ -295,6 +351,7 @@ fn list_vault_machine_access(params: &Params, facade: &EntityFacade) -> Out {
             "vaultId",
             "grantedByUserId",
             "grantedDate",
+            "staleDate",
         ] {
             if let Some(given) = row.get(name) {
                 map.insert(name.to_string(), given.clone());
@@ -346,6 +403,26 @@ fn revoke_vault_machine_access(params: &Params, facade: &EntityFacade) -> Out {
             },
         )?;
         rotate.push(Value::string(revoked));
+    }
+    // the machine leases of the environment open on the vault end too: the server forgets their keys
+    let open = find(facade, crate::common::LEASE)?
+        .eq("vaultId", Value::string(&vault_id))
+        .eq("environmentId", Value::string(&environment_id))
+        .eq("machineAccess", Value::string("Y"))
+        .eq("statusId", Value::string(crate::lease::OPEN))
+        .list()?;
+    let registry = registry(&*factory()?);
+    for lease in open.iter() {
+        let lease_id = field(lease, "leaseId");
+        crate::lease::mark_ended(
+            facade,
+            &lease_id,
+            crate::lease::REVOKED,
+            None,
+            "its machine access was revoked",
+        )?;
+        registry.forget(&lease_id);
+        crate::lease::tell_member(facade, &lease_id, &field(lease, "clusterMemberId"), "revoked");
     }
     Ok(out([
         ("revokedCount", Value::I64(rotate.len() as i64)),

@@ -147,7 +147,7 @@ fn ask_vault_lease(params: &Params, facade: &EntityFacade) -> Out {
     let operation = required(params, "operation")?;
     let limit = int(params, "limitMinutes")
         .filter(|minutes| *minutes > 0)
-        .map(|minutes| Duration::from_secs(u64::try_from(minutes).unwrap_or(0) * 60));
+        .map(|minutes| Duration::from_secs(u64::try_from(minutes).unwrap_or(0).saturating_mul(60)));
     let factory = moqui_core::context::ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory()))
         .ok_or_else(|| fail("No execution context is entered"))?;
     let lease = registry(&factory).ask(
@@ -335,6 +335,12 @@ fn approve_vault_lease(params: &Params, facade: &EntityFacade) -> Out {
     require_recent_auth_to("approve this lease")?;
     if field(&row, "statusId") != REQUESTED {
         return Err(fail(format!("The lease {lease_id} is not waiting for approval")));
+    }
+    // two people for a lease: its requester approves it only when no other member holds the approve role
+    if field(&row, "requestedByUserId") == me && approvers(facade, &vault_id)?.iter().any(|other| *other != me) {
+        return Err(fail(
+            "You asked for this lease: another member with the approve role approves it (reasonCode selfApproval)",
+        ));
     }
     let lease = lease_of_row(&row)?;
     // the row as the server signed it: a database writer cannot put its own key or items on it

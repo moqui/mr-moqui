@@ -25,15 +25,19 @@
 //!    two seconds in case a message is lost.
 //! 3. The operation reads a value by binding ([`LeaseRegistry::leased`], `ec.vault.leased` in a script run under the
 //!    lease, [`run_under`]): the member opens the sealed item keys with the lease's private key, checks the item row
-//!    is the one the lease names, writes a `VeLeaseUsed` event in its own transaction and only then decrypts and
-//!    returns the value; when the event cannot be written nothing is returned (§3.13, fail closed).
-//! 4. The lease ends at the operation's end ([`LeaseRegistry::end`]), at its time limit, on revoke and when the server
-//!    stops or seals: its keys are dropped, which zeroes them, and nothing stored can open the sealed keys again. A
-//!    restart empties the registry, so a use after it is refused with "lease ended; ask again", and the boot marks the
-//!    member's leases left open ended ([`end_left_open`]).
+//!    is the one the lease names, writes a `VeLeaseUsed` event in its own transaction, checks the lease is still held,
+//!    and only then decrypts and returns the value; when the event cannot be written nothing is returned (§3.13, fail
+//!    closed).
+//! 4. The lease ends at the operation's end ([`LeaseRegistry::end`]), at its time limit (a timer sweeps them), on
+//!    revoke and when the server stops or seals: its keys are dropped, which zeroes them, and nothing stored can open
+//!    the sealed keys again. A restart empties the registry, so a use after it is refused with "lease ended; ask
+//!    again", and once the cluster has started and named this member ([`after_cluster_start`]) its leases left open are
+//!    marked ended ([`end_left_open`]), never another member's.
 //!
-//! A leased value never goes into a stored call: the registry keeps what it handed out until the lease ends, and the
-//! framework's stored-call paths refuse parameters that hold one (`moqui_core::vault_hooks::refuse_leased`).
+//! A leased value never goes into a stored call: the registry keeps the secret fields it handed out, with the thread
+//! they went to, until the lease ends, and the framework's stored-call paths refuse parameters that hold one on that
+//! thread (`moqui_core::vault_hooks::refuse_leased`). The thread's lease ([`run_under`]) is read by every script on the
+//! thread under it, not only the service the operation called: a limit docs/security/Vaults.md states.
 
 pub(crate) mod key;
 pub(crate) mod services;
@@ -41,6 +45,7 @@ pub(crate) mod services;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
+use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use moqui_core::context::ExecutionContextFactory;
@@ -59,7 +64,7 @@ use serde_json::{json, Value as Json};
 use zeroize::Zeroizing;
 
 use crate::common::{
-    authz_off, fail, field, find, int_field, now, now_millis, refused, vault_row, ITEM, LEASE, OPERATIONAL,
+    authz_off, fail, field, find, int_field, now, now_millis, refused, vault_row, ITEM, LEASE, MEMBER, OPERATIONAL,
     PERSONAL_KEY,
 };
 use crate::events::{self, Event};
@@ -71,30 +76,36 @@ pub(crate) const REVOKED: &str = "VlsRevoked";
 
 /// How long a waiting operation sleeps before it reads the lease's row again, when no cluster message woke it.
 const POLL: Duration = Duration::from_secs(2);
-/// The shortest field value of an item of no known type that the stored-call guard looks for; a masked field of a
-/// known type is looked for from [`MIN_MASKED`] characters.
-const MIN_UNTYPED: usize = 8;
-const MIN_MASKED: usize = 4;
+/// How often the registry drops the leases past their time limit and marks their rows ended.
+const SWEEP: Duration = Duration::from_secs(30);
+/// The shortest secret the stored-call guard looks for: a shorter one (a PIN) would match ordinary text, so it is
+/// not looked for.
+const MIN_SECRET: usize = 8;
+/// The field names that hold a secret in an item whose type registers no fields (and so marks none masked).
+const SECRET_NAMES: &[&str] = &["password", "passphrase", "secret", "key", "token", "pin"];
 
 /// The refusal of a lease this member does not hold: ended, revoked, timed out, or held before a restart.
 fn ended() -> LibError {
     fail("The lease ended; ask again (reasonCode leaseEnded)")
 }
 
-/// A lease this member holds: the signed statement, its private key, the item keys once opened, and each value
-/// handed out (for the stored-call guard). Every key is a zeroizing type, dropped with the lease.
+/// A lease this member holds: the signed statement, its private key, the item keys once opened, each secret value
+/// handed out with the thread it went to (for the stored-call guard), and the environment a machine-access grant is
+/// for, as asked (never read back from the row). Every key is a zeroizing type, dropped with the lease.
 struct Held {
     lease: Lease,
     secret: hpke::SecretKey,
     item_keys: Vec<(String, Key32)>,
-    handed: Vec<Zeroizing<String>>,
+    handed: Vec<(ThreadId, Zeroizing<String>)>,
     requested_by: String,
+    environment_id: Option<String>,
 }
 
 /// The leases this cluster member holds, by id: in memory only, so a restart empties it. One per factory
-/// ([`registry`]); the tests make more, as two cluster members.
+/// ([`registry`]), named by the member's cluster id once the cluster has started ([`after_cluster_start`]); the tests
+/// make more, as two cluster members.
 pub struct LeaseRegistry {
-    member_id: String,
+    member_id: Mutex<String>,
     held: Mutex<HashMap<String, Held>>,
     changed: Condvar,
 }
@@ -102,7 +113,7 @@ pub struct LeaseRegistry {
 impl std::fmt::Debug for LeaseRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LeaseRegistry")
-            .field("member_id", &self.member_id)
+            .field("member_id", &self.member_id())
             .field("held", &lock(&self.held).len())
             .finish()
     }
@@ -122,7 +133,8 @@ pub struct Ask<'a> {
     pub environment_id: Option<&'a str>,
 }
 
-/// This factory's registry, made on first use, under the cluster member's id (`local` outside a cluster).
+/// This factory's registry, made on first use, under the cluster member's id (`local` until the cluster starts, when
+/// [`after_cluster_start`] names it by the member's id).
 pub fn registry(factory: &ExecutionContextFactory) -> Arc<LeaseRegistry> {
     factory.extension(|factory| LeaseRegistry::new(&member_id(factory)))
 }
@@ -134,13 +146,25 @@ pub(crate) fn member_id(factory: &ExecutionContextFactory) -> String {
 
 /// The longest lease, from `vault@lease-max-hours` (4 when unset), never past the vault crate's 4 hours, which a
 /// client refuses.
-fn max_lease() -> Duration {
+fn max_lease() -> Result<Duration, LibError> {
     let hours: f64 = moqui_core::context::conf_env::setting("vault@lease-max-hours")
         .parse()
         .unwrap_or(4.0);
-    let hours = if hours.is_finite() && hours > 0.0 { hours } else { 4.0 };
     let max = Duration::from_millis(u64::try_from(vault_lease::MAX_LEASE_MS).unwrap_or(0));
-    Duration::from_secs_f64(hours * 3600.0).min(max)
+    let asked = Duration::try_from_secs_f64(hours * 3600.0)
+        .ok()
+        .filter(|asked| !asked.is_zero())
+        .ok_or_else(|| {
+            fail(format!(
+                "vault@lease-max-hours is {hours}: a number of hours above 0, at most 4"
+            ))
+        })?;
+    Ok(asked.min(max))
+}
+
+/// Whether text has a control character (a newline, an escape), which could forge lines of an approver's prompt.
+pub(crate) fn has_control(text: &str) -> bool {
+    text.chars().any(char::is_control)
 }
 
 fn millis(duration: Duration) -> i64 {
@@ -157,14 +181,19 @@ fn new_lease_id() -> String {
 impl LeaseRegistry {
     pub fn new(member_id: &str) -> LeaseRegistry {
         LeaseRegistry {
-            member_id: member_id.to_string(),
+            member_id: Mutex::new(member_id.to_string()),
             held: Mutex::new(HashMap::new()),
             changed: Condvar::new(),
         }
     }
 
-    pub fn member_id(&self) -> &str {
-        &self.member_id
+    pub fn member_id(&self) -> String {
+        lock(&self.member_id).clone()
+    }
+
+    /// Names the registry by the member's cluster id, which the cluster's start set after the registry was made.
+    pub fn rekey(&self, member_id: &str) {
+        member_id.clone_into(&mut lock(&self.member_id));
     }
 
     /// Whether this member holds the lease's key now.
@@ -190,19 +219,54 @@ impl LeaseRegistry {
         self.changed.notify_all();
     }
 
-    /// Drops the leases past their time limit.
-    fn sweep(&self) {
+    /// Drops the leases past their time limit; their ids.
+    fn sweep(&self) -> Vec<String> {
         let now = now_millis();
-        lock(&self.held).retain(|_, held| held.lease.expires_at > now);
+        let mut held = lock(&self.held);
+        let expired: Vec<String> = held
+            .iter()
+            .filter(|(_, held)| held.lease.expires_at <= now)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &expired {
+            held.remove(id);
+        }
+        expired
     }
 
-    /// Whether `text` holds a value one of this member's live leases handed out.
+    /// Drops the leases past their time limit, which zeroes their keys, and marks their rows ended: the timer's work
+    /// ([`after_cluster_start`]), so a lease no operation reads again still goes at its limit. A row that cannot be
+    /// marked is logged.
+    pub fn expire(&self, facade: &EntityFacade) {
+        for lease_id in self.sweep() {
+            if let Err(err) = mark_ended(facade, &lease_id, ENDED, None, "its time limit passed") {
+                tracing::error!("Vault lease {lease_id} past its time limit was not marked ended: {err}");
+            }
+        }
+    }
+
+    /// Whether `text` holds a secret value a live lease of this member handed out to the operation on this thread: the
+    /// guard of stored calls (`moqui_core::vault_hooks::refuse_leased`). A value another thread's operation read is
+    /// that operation's to keep out.
     pub fn holds_value(&self, text: &str) -> bool {
         self.sweep();
+        let thread = std::thread::current().id();
         let held = lock(&self.held);
         held.values()
             .flat_map(|held| held.handed.iter())
-            .any(|value| text.contains(value.as_str()))
+            .any(|(to, value)| *to == thread && text.contains(value.as_str()))
+    }
+
+    /// The signed statement of a lease held here.
+    pub(crate) fn held_lease(&self, lease_id: &str) -> Option<Lease> {
+        lock(&self.held).get(lease_id).map(|held| held.lease.clone())
+    }
+
+    /// The environment a machine-access grant's lease was asked for, as asked.
+    pub(crate) fn environment_of(&self, lease_id: &str) -> Option<String> {
+        lock(&self.held)
+            .get(lease_id)
+            .and_then(|held| held.environment_id.clone())
     }
 
     /// Asks for a lease (§3.7, step 1): its items found by binding in the operational vault, its statement signed by
@@ -244,7 +308,7 @@ impl LeaseRegistry {
             },
         )?;
         services::notify_approvers(facade, &lease);
-        self.keep(&lease, secret, Vec::new(), &requested_by);
+        self.keep(&lease, secret, Vec::new(), &requested_by, ask.environment_id);
         Ok(lease)
     }
 
@@ -257,8 +321,10 @@ impl LeaseRegistry {
         if ask.bindings.is_empty() {
             return Err(fail("A lease names at least one item, by its binding"));
         }
-        if ask.operation.trim().is_empty() || ask.operation.len() > 255 {
-            return Err(fail("A lease names its operation, in at most 255 characters"));
+        if ask.operation.trim().is_empty() || ask.operation.len() > 255 || has_control(ask.operation) {
+            return Err(fail(
+                "A lease names its operation, in at most 255 characters and with no control character",
+            ));
         }
         let key_version = int_field(&vault, "keyVersion");
         let mut items = Vec::with_capacity(ask.bindings.len());
@@ -287,7 +353,7 @@ impl LeaseRegistry {
                 name: field(&row, "itemName"),
             });
         }
-        let limit = ask.limit.unwrap_or(Duration::MAX).min(max_lease());
+        let limit = ask.limit.unwrap_or(Duration::MAX).min(max_lease()?);
         let (secret, public) = vault_lease::new_lease_key(&mut OsRng).map_err(refused)?;
         let mut lease = Lease {
             lease_id: new_lease_id(),
@@ -295,7 +361,7 @@ impl LeaseRegistry {
             key_version: u64::try_from(key_version).map_err(|_| fail("a key version out of range"))?,
             items,
             operation: ask.operation.trim().to_string(),
-            cluster_member: self.member_id.clone(),
+            cluster_member: self.member_id(),
             expires_at: now_millis().saturating_add(millis(limit)),
             public,
             signature: Vec::new(),
@@ -304,7 +370,14 @@ impl LeaseRegistry {
         Ok((lease, secret))
     }
 
-    fn keep(&self, lease: &Lease, secret: hpke::SecretKey, item_keys: Vec<(String, Key32)>, requested_by: &str) {
+    fn keep(
+        &self,
+        lease: &Lease,
+        secret: hpke::SecretKey,
+        item_keys: Vec<(String, Key32)>,
+        requested_by: &str,
+        environment_id: Option<&str>,
+    ) {
         lock(&self.held).insert(
             lease.lease_id.clone(),
             Held {
@@ -313,6 +386,7 @@ impl LeaseRegistry {
                 item_keys,
                 handed: Vec::new(),
                 requested_by: requested_by.to_string(),
+                environment_id: environment_id.map(str::to_string),
             },
         );
     }
@@ -380,7 +454,7 @@ impl LeaseRegistry {
                 },
             )?;
         }
-        self.keep(&lease, secret, item_keys, &requested_by);
+        self.keep(&lease, secret, item_keys, &requested_by, ask.environment_id);
         Ok(lease)
     }
 
@@ -431,16 +505,35 @@ impl LeaseRegistry {
         }
     }
 
-    /// Opens the approval on the row with the lease's private key: the approver's signature over the lease this member
-    /// signed (not the row's copy of it), then each item key.
+    /// Opens the approval on the row with the lease's private key: the approver's key is their active one and they
+    /// hold the approve role at the lease's key version (checked again here, since the row could have been written by
+    /// anyone with the database), then their signature over the lease this member signed (not the row's copy of it),
+    /// then each item key.
     fn open_approval(&self, facade: &EntityFacade, lease_id: &str, row: &EntityValue) -> Result<(), LibError> {
         let approval = approval_of_row(row)?;
         let approver_key = find(facade, PERSONAL_KEY)?
             .eq("personalKeyId", Value::string(field(row, "approverKeyId")))
             .one()?
             .ok_or_else(|| fail("The lease's approver key is not found"))?;
-        if field(&approver_key, "userId") != approval.approver_user_id {
-            return Err(fail("The lease's approver key is not the approver's"));
+        if field(&approver_key, "userId") != approval.approver_user_id
+            || field(&approver_key, "statusId") != "VpkActive"
+        {
+            return Err(fail("The lease's approver key is not the approver's active key"));
+        }
+        let (vault_id, key_version) = {
+            let held = lock(&self.held);
+            let entry = held.get(lease_id).ok_or_else(ended)?;
+            (entry.lease.vault_id.clone(), entry.lease.key_version)
+        };
+        let role = find(facade, MEMBER)?
+            .eq("vaultId", Value::string(&vault_id))
+            .eq("userId", Value::string(&approval.approver_user_id))
+            .eq("keyVersion", Value::I64(i64::try_from(key_version).unwrap_or(-1)))
+            .one()?
+            .map(|member| field(&member, "roleEnumId"))
+            .unwrap_or_default();
+        if role != "VrApprove" {
+            return Err(fail("The lease's approver does not hold the approve role in its vault"));
         }
         let verify = crate::personal::public_of(&approver_key)?.verify;
         let mut held = lock(&self.held);
@@ -536,6 +629,10 @@ impl LeaseRegistry {
                 ..Event::default()
             },
         )?;
+        // revoked, timed out or stopped while the event was written: nothing comes back
+        if !self.holds(lease_id) {
+            return Err(ended());
+        }
         let item_ref = ItemRef {
             vault_id: &vault_id,
             item_id: &item.item_id,
@@ -553,16 +650,19 @@ impl LeaseRegistry {
         let Some(fields) = parsed.get("fields").and_then(Json::as_object) else {
             return Err(fail(format!("The item bound to {binding} has no fields")));
         };
+        // the secret fields the guard looks for: the masked ones of the item's type, or by name when its type registers
+        // none; a host, a user name or a port is not a secret, and matching it would refuse ordinary calls
         let masked = masked_fields(facade, &item.item_type);
+        let thread = std::thread::current().id();
         let mut handed = Vec::new();
         for (name, value) in fields {
             let Some(text) = value.as_str() else { continue };
-            let wanted = match &masked {
-                Some(masked) => masked.contains(name) && text.len() >= MIN_MASKED,
-                None => text.len() >= MIN_UNTYPED,
+            let secret = match &masked {
+                Some(masked) => masked.contains(name),
+                None => secret_name(name),
             };
-            if wanted {
-                handed.push(Zeroizing::new(text.to_string()));
+            if secret && text.chars().count() >= MIN_SECRET {
+                handed.push((thread, Zeroizing::new(text.to_string())));
             }
         }
         let answer = match field_name {
@@ -607,6 +707,13 @@ impl LeaseRegistry {
         let actor = (!requested_by.is_empty()).then_some(requested_by.as_str());
         mark_ended(facade, lease_id, ENDED, actor, "the operation ended")
     }
+}
+
+/// Whether a field of an item whose type registers no fields holds a secret, by its name: `password`, `dbPassword`,
+/// `apiKey`, `token`, `secret`, `passphrase`, `pin`, in any case.
+fn secret_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    SECRET_NAMES.iter().any(|secret| lower.contains(secret))
 }
 
 /// The masked fields of an item type, none when the type registers no fields.
@@ -833,13 +940,16 @@ struct Listener {
     _subscription: moqui_core::notify::Subscription,
 }
 
-/// At boot: the leases this member left open before a restart are ended, and the `vault-lease` topic is listened to.
-pub(crate) fn after_boot(factory: &ExecutionContextFactory) {
+/// Once the cluster has started and named this member (`moqui_core::extension::cluster_started`): the registry takes
+/// the member's id, the leases this member left open before a restart are ended (only its own: another member's are
+/// its to end), the `vault-lease` topic is listened to, and a timer drops leases past their time limit.
+pub(crate) fn after_cluster_start(factory: &ExecutionContextFactory) {
     let registry = registry(factory);
+    registry.rekey(&member_id(factory));
     if let Some(facade) = factory.entity() {
         let ended = {
             let _authz = authz_off();
-            end_left_open(&facade, registry.member_id())
+            end_left_open(&facade, &registry.member_id())
         };
         match ended {
             Ok(0) => {}
@@ -853,7 +963,7 @@ pub(crate) fn after_boot(factory: &ExecutionContextFactory) {
             return;
         };
         let body = &message.body;
-        if body["member"].as_str() == Some(registry.member_id()) && body["kind"].as_str() == Some("revoked") {
+        if body["member"].as_str() == Some(registry.member_id().as_str()) && body["kind"].as_str() == Some("revoked") {
             if let Some(lease_id) = body["leaseId"].as_str() {
                 registry.forget(lease_id);
             }
@@ -867,6 +977,36 @@ pub(crate) fn after_boot(factory: &ExecutionContextFactory) {
             });
         }
         Err(err) => tracing::error!("Vault: the vault-lease topic was not subscribed: {}", err.message()),
+    }
+    start_sweeper(factory, &registry);
+}
+
+/// The timer that drops leases past their time limit and marks their rows ended, every [`SWEEP`], while the factory
+/// and its registry live.
+fn start_sweeper(factory: &ExecutionContextFactory, registry: &Arc<LeaseRegistry>) {
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    let weak = Arc::downgrade(registry);
+    // the factory by its address: the sweep enters a context of its own on it while it is the running server's
+    let address = std::ptr::from_ref(factory) as usize;
+    let spawned = std::thread::Builder::new()
+        .name("vault-lease-sweep".to_string())
+        .spawn(move || loop {
+            std::thread::sleep(SWEEP);
+            let Some(registry) = weak.upgrade() else {
+                return;
+            };
+            let running = ExecutionContextFactory::running().filter(|running| Arc::as_ptr(running) as usize == address);
+            let context = running.as_ref().map(ExecutionContextFactory::new_context);
+            let _entered = context.as_ref().map(moqui_core::context::ExecutionContext::enter);
+            let swept = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| registry.expire(&facade)));
+            if swept.is_err() {
+                tracing::error!("Vault: the lease sweep failed; it runs again");
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::error!("Vault: the lease sweep did not start ({err}); leases end at their next use");
     }
 }
 

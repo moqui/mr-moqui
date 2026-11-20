@@ -52,6 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const personal = vault('get#PersonalKey')
                 ec.web.sendJsonResponse({lease: lease.lease, statusId: lease.statusId, wrappedItemKeys: lease.wrappedItemKeys,
                     leaseKey: lease.leaseKey, leaseKeyFingerprint: lease.leaseKeyFingerprint, approvedByUserId: lease.approvedByUserId || null,
+                    requestedByUserId: lease.requestedByUserId || null,
                     vaultName: got.vault.vaultName, roleEnumId: got.vault.roleEnumId, entries: got.entries, wraps: got.wraps,
                     keyChecks: vault('list#KeyChecks').keyCheckList, personal,
                     integrity: {client: sri('VaultClient.js'), worker: sri('VaultWorker.js'), wasm: sri('moqui_vault.wasm')}})
