@@ -44,6 +44,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, list_vault_items)?;
     moqui_core::rust_service!(map, list_vault_item_history)?;
     moqui_core::rust_service!(map, delete_vault_item)?;
+    moqui_core::rust_service!(map, set_vault_item_rotation)?;
     Ok(())
 }
 
@@ -152,6 +153,7 @@ fn create_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     row.set("createdByUserId", Value::string(&me));
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
+    row.set("rotatedDate", now());
     row.create(facade)?;
     bump_revision(facade, &mut vault)?;
     events::write(
@@ -251,6 +253,11 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     // environment's sealed key of this item stale (§3.8): marked here, so a machine lease under it is refused clearly
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
+    // a value the writer changed at its source by hand (a credential the manager cannot rotate, §4.7): its age starts
+    // again; taking a deposit in, or a change of its notes, leaves it
+    if crate::common::flag(params, "rotated").unwrap_or(false) {
+        row.set("rotatedDate", now());
+    }
     row.update(facade)?;
     if new_item_key {
         let access = find(facade, crate::common::MACHINE_ACCESS)?
@@ -388,4 +395,48 @@ fn delete_vault_item(params: &Params, facade: &EntityFacade) -> Out {
         },
     )?;
     Ok(out([("vaultItemId", Value::string(item_id))]))
+}
+
+/// `set#VaultItemRotation`: an operational item's own rotation age in days, over its type's (plans/Vault-Instances.md
+/// §4.7), by a manager of its vault; empty clears it, so the type's applies. An event, with no value.
+fn set_vault_item_rotation(params: &Params, facade: &EntityFacade) -> Out {
+    let _authz = authz_off();
+    let me = user()?;
+    let item_id = required(params, "vaultItemId")?;
+    let mut row = item_row(facade, &item_id)?;
+    let vault_id = field(&row, "vaultId");
+    vault_for(facade, &vault_id, &me, Access::Read, false).map_err(|_| fail(format!("No item {item_id}")))?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Manage, true)?;
+    if field(&vault, "vaultKindEnumId") != OPERATIONAL {
+        return Err(fail("A rotation age is an operational item's"));
+    }
+    let given = text(params, "rotationDays");
+    let days = if given.is_empty() {
+        None
+    } else {
+        Some(
+            given
+                .parse::<i64>()
+                .ok()
+                .filter(|days| (1..=3650).contains(days))
+                .ok_or_else(|| fail("rotationDays is a whole number of days from 1 to 3650, or empty"))?,
+        )
+    };
+    row.set("rotationDays", days.map_or(Value::Null, Value::I64));
+    row.update(facade)?;
+    bump_revision(facade, &mut vault)?;
+    events::write(
+        facade,
+        Event {
+            kind: "VeItemUpdated",
+            vault_id: Some(&vault_id),
+            item_id: Some(&item_id),
+            detail: Some(match days {
+                Some(days) => format!("rotation age {days} days"),
+                None => "rotation age of its type".to_string(),
+            }),
+            ..Event::default()
+        },
+    )?;
+    Ok(out([("rotationDays", days.map_or(Value::Null, Value::I64))]))
 }

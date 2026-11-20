@@ -262,6 +262,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="newItemKey" type="Boolean"><description>The client made a new item key for this write (the
                 vault crate's item_seal answers new_item_key): an environment's machine access to the item goes stale and
                 is given again</description></parameter>
+            <parameter name="rotated" type="Boolean"><description>The value was changed at its source by hand (a credential the
+                manager cannot rotate, plans/Vault-Instances.md §4.7): the item's age starts again (rotatedDate). Taking a
+                deposit in, or changing notes, leaves it</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="revision" type="Long"/></out-parameters>
     </service>
@@ -279,6 +282,16 @@ along with this software (see the LICENSE.md file). If not, see
         <description>An item's earlier revisions, newest first, to a member of its vault.</description>
         <in-parameters><parameter name="vaultItemId" required="true"/></in-parameters>
         <out-parameters><parameter name="historyList" type="List"/></out-parameters>
+    </service>
+    <service verb="set" noun="VaultItemRotation" type="rust" location="moqui_vault_server::items::set_vault_item_rotation">
+        <description>An operational item's own rotation age in days (1 to 3650), over its type's
+            (VaultItemType.rotationDays), by a manager of its vault; empty clears it. Past its age from rotatedDate the item
+            is due (plans/Vault-Instances.md §4.7). An event.</description>
+        <in-parameters>
+            <parameter name="vaultItemId" required="true"/>
+            <parameter name="rotationDays"/>
+        </in-parameters>
+        <out-parameters><parameter name="rotationDays" type="Long"/></out-parameters>
     </service>
     <service verb="delete" noun="VaultItem" type="rust" location="moqui_vault_server::items::delete_vault_item">
         <description>An item and its history, by a member who may write, after a recent sign-in. An event.</description>
@@ -316,7 +329,10 @@ along with this software (see the LICENSE.md file). If not, see
             a recovery used it). A vault keeps a manager, and an operational vault recovery on or two
             members. An operational vault takes the new version's
             deposit key the rotation made (deposit, depositWrappedPrivate, signed by the caller), else its deposit key is
-            cleared. Two events: the removal and the rotation.</description>
+            cleared. Two events: the removal and the rotation. A removed member may have kept item keys or values, so the
+            answer of an operational vault's removal offers to rotate the credentials at their source (rotationOffer: each
+            item's binding, name, whether the instance manager can rotate it, else what to do by hand;
+            plans/Vault-Instances.md §3.9, §4.7), which request#InstanceRotation does.</description>
         <in-parameters>
             <parameter name="vaultId" required="true"/>
             <parameter name="userId" required="true"/>
@@ -333,6 +349,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="keyVersion" type="Long"/>
             <parameter name="revision" type="Long"/>
+            <parameter name="rotationOffer" type="List"/>
         </out-parameters>
     </service>
     <service verb="ack" noun="VaultKeyVersion" type="rust" location="moqui_vault_server::members::ack_vault_key_version">

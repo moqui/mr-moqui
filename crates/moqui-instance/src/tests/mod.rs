@@ -36,6 +36,7 @@ mod kinds;
 mod link;
 mod monitor;
 mod provision;
+mod rotate;
 
 pub(super) fn setup() -> (ExecutionContext, EntityFacade) {
     keys();

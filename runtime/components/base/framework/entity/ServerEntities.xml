@@ -348,6 +348,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="whenDependency" type="text-short"><description>Bound only when the instance has a dependency of this
             role (an mr-moqui instance's database password, with a database)</description></field>
         <field name="description" type="text-medium"/>
+        <field name="rotateService" type="text-medium"><description>The kind's rotate#Credential for this secret
+            (plans/Vault-Instances.md §4.7), of org.moqui.dev.InstanceServices only: the manager sets a new value at its
+            source, puts it on the instances that use it, checks them and writes the item's new revision. Empty: the
+            manager cannot change it, and rotateByHand says what to do</description></field>
+        <field name="rotateByHand" type="text-long"><description>What to do by hand to rotate a secret with no
+            rotateService, which the rotation list shows when it is due</description></field>
         <relationship type="one" related="moqui.server.instance.InstanceKind"/>
     </entity>
     <entity entity-name="InstanceKindDependency" package="moqui.server.instance" use="configuration">

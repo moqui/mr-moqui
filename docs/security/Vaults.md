@@ -192,6 +192,26 @@ A member with the reveal role can see one value: `reveal#VaultItem` sends that i
 their client, which opens it with the vault key, and writes a `VeReveal` event first. No other call sends an
 operational body to a client.
 
+### Rotation of operational items
+
+An operational item has a rotation age: its own (`rotationDays`, which a manager of the vault sets with
+`set#VaultItemRotation`), else its type's (`VaultItemType.rotationDays`), counted from `rotatedDate`, when its value
+last changed at its source. Making or depositing an item sets it, and so does a write marked `rotated`
+(`update#VaultItem`) after the value was changed by hand; taking a deposit in or changing notes does not. Past its age
+the item is due.
+
+The instance manager rotates the credentials it can change at their source (Vault-Instances §4.7,
+[Run-Deploy](../Run-Deploy.md#rotation)) and writes each new value as the item's next revision, deposited
+(`deposit_revision`, event `VeItemRotated`): a new item key wrapped to the deposit key, so the server writes the value
+and cannot read it back, and the revision before kept in `VaultItemHistory` with its wrapped key and body as they were,
+the way back that a member opens in their client. Like any deposit, a member takes the new revision in before a lease
+names the item again; an environment's machine access to it is marked stale, since its sealed key is of the old item
+key. A rotation checks the deposit key before it changes anything at a source.
+
+Removing a member from an operational vault rotates the vault key, but the removed member may have kept item keys or
+values, so the removal's answer (`rotationOffer`) lists the vault's items: which the instance manager can rotate at
+their source, and what to do by hand for the rest (§3.9).
+
 ### System › Vaults
 
 The operational vaults the user is a member of; a vault's members and roles, its items (names, bindings, types,

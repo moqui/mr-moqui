@@ -134,6 +134,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="vaultItemTypeId" type="id"><description>Operational only</description></field>
         <field name="bindingKey" type="text-medium"><description>Operational only: AppInstance:&lt;id&gt;:dbPassword</description></field>
         <field name="itemName" type="text-medium"><description>Operational only</description></field>
+        <field name="rotationDays" type="number-integer"><description>Operational only: this binding's rotation age in
+            days, over its type's (VaultItemType.rotationDays); past it the item is due (plans/Vault-Instances.md
+            §4.7)</description></field>
+        <field name="rotatedDate" type="date-time"><description>When the value last changed at its source: set when the item
+            is made or deposited, by a rotation's new revision, and by update#VaultItem when it says rotated; an item's
+            age is from it</description></field>
         <field name="createdDate" type="date-time"/>
         <field name="createdByUserId" type="id"/>
         <field name="lastModifiedDate" type="date-time"/>
@@ -404,6 +410,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="vaultItemTypeId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
         <field name="sequenceNum" type="number-integer"/>
+        <field name="rotationDays" type="number-integer"><description>The rotation age in days of an operational item of
+            the type, unless its binding sets its own (VaultItem.rotationDays); empty: none (plans/Vault-Instances.md
+            §4.7)</description></field>
         <relationship type="many" related="moqui.security.vault.VaultItemTypeField" short-alias="fields">
             <key-map field-name="vaultItemTypeId"/></relationship>
     </entity>

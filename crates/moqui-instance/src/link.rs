@@ -101,6 +101,35 @@ pub(crate) fn link_deploy(instance_id: &str, deploy: &str) -> Result<String, Lib
     send(instance_id, deploy).map_err(|err| fail(format!("AppInstance {instance_id} refused the deploy: {err}")))
 }
 
+/// The link server's put-secret on an instance (`moqui operator secret put` over its link): a rotation's new value
+/// (M5, plans/Vault-Instances.md §4.7), from Rust, never a service's parameter. The host installs it
+/// ([`install_link_put`]). An instance that is not linked now answers an error that starts `not linked`.
+pub type LinkPut = fn(instance_id: &str, name: &str, value: &str) -> Result<(), String>;
+
+static LINK_PUT: std::sync::OnceLock<LinkPut> = std::sync::OnceLock::new();
+
+/// Install the link server's put-secret: the host does, once.
+pub fn install_link_put(put: LinkPut) {
+    let _ = LINK_PUT.set(put);
+}
+
+/// Put the secret `name` on the instance over its link: Err(None) when it is not linked now (SSH may take it), else
+/// its refusal.
+pub(crate) fn link_put(instance_id: &str, name: &str, value: &str) -> Result<(), Option<LibError>> {
+    let Some(send) = LINK_PUT.get() else {
+        return Err(None);
+    };
+    send(instance_id, name, value).map_err(|err| {
+        if err.starts_with("not linked") {
+            None
+        } else {
+            Some(fail(format!(
+                "AppInstance {instance_id} refused the secret {name}: {err}"
+            )))
+        }
+    })
+}
+
 /// Keep the schema hash an instance's link reported (`AppInstance.schemaHash`), which a deploy records before it and a
 /// rollback compares (§4.6). An empty one (sealed) is not kept; a failure is logged.
 pub fn note_schema(facade: &EntityFacade, instance_id: &str, schema_hash: &str) {
