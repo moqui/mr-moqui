@@ -43,8 +43,10 @@ zeroize = { workspace = true, optional = true }
 http = ["dep:reqwest", "dep:bytes"]
 # The age file format (src/age.rs).
 age = ["dep:hmac", "dep:hkdf", "dep:chacha20poly1305", "dep:curve25519-dalek"]
+# AWS Signature Version 4 (src/sigv4.rs): the S3 client's and the seal's AWS KMS method's.
+sigv4 = ["dep:hmac"]
 # An S3 client with SigV4 signing (src/s3.rs), for encrypted backups.
-s3 = ["http", "age"]
+s3 = ["http", "age", "sigv4"]
 # The Docker and Podman Engine API client (src/docker), which CI's runs and managed instances share.
 docker = ["http", "dep:tar", "dep:zeroize"]
 # The fake engine (src/docker/fake.rs) for the tests of a crate that uses the driver.

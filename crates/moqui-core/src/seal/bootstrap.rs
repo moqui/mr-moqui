@@ -76,7 +76,7 @@ fn open_secret_value_key(root: &RootKey, sealed: &SealedValue) -> Result<Key32, 
     Key32::from_slice(&opened).map_err(|err| Error::new(format!("the SecretValue data key: {err}")))
 }
 
-fn seal_secret_value_key(root: &RootKey, generation: u64, key: &Key32) -> SealedValue {
+pub(super) fn seal_secret_value_key(root: &RootKey, generation: u64, key: &Key32) -> SealedValue {
     let ad = secret_value_ad(generation);
     let parts: Vec<&[u8]> = ad.iter().map(Vec::as_slice).collect();
     SealedValue {

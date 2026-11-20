@@ -123,7 +123,7 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
                 None if !keeper.conf().method.is_empty() => keeper.conf().method,
                 None => {
                     return Err(Error::new(
-                        "name the unseal method: init --method tpm|passphrase|shamir|dev",
+                        "name the unseal method: init --method tpm|kms|transit|passphrase|shamir|dev",
                     ))
                 }
             };
@@ -154,10 +154,9 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             Ok(json!({"ok": true, "status": status(keeper)}))
         }
         "rekey" => {
-            let method = request
-                .method
-                .filter(|method| !method.is_empty())
-                .ok_or_else(|| Error::new("name the new unseal method: rekey --method tpm|passphrase|shamir|dev"))?;
+            let method = request.method.filter(|method| !method.is_empty()).ok_or_else(|| {
+                Error::new("name the new unseal method: rekey --method tpm|kms|transit|passphrase|shamir|dev")
+            })?;
             let issued = keeper.rekey(Rekey {
                 shares: request.shares,
                 method: MethodKind::parse(&method)?,

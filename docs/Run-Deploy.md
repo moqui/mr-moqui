@@ -1042,18 +1042,44 @@ moqui operator secret rm NAME
 | `tpm` | Yes: `systemd-creds` with the TPM2, bound to its PCRs (`/usr/bin/systemd-creds`, or `seal@systemd-creds-command`, an absolute path) | A home or office server; the default for BOSS |
 | `passphrase` | No: Argon2id at m=256 MiB, t=3; a production instance refuses less | A laptop, or the highest care |
 | `shamir` | No: `seal@threshold` of `seal@shares` operators each enter a share | Separation of duties |
+| `kms` | Yes: a cloud KMS key wraps the root key, and unwraps it at each start (below) | A cloud host; the default for an edge node in the cloud |
+| `transit` | Yes: an OpenBao or Vault Transit key wraps it (below) | Where an OpenBao or Vault runs already; a managed instance, whose manager keeps its transit key |
 | `dev` | Yes: the key is in `seal.json` itself, so its recovery bundle carries the root key in the clear | Development and tests only; refused when `instance@purpose` is `production` |
-| `kms`, `transit` | Yes | Not built yet (S11) |
+
+**`kms` and `transit`.** No cloud SDK: each is a few HTTPS calls (S11). `seal.json` keeps only the wrapped root key;
+where it is sent and whose credential goes with it are `seal` attributes read from the conf files only (an environment
+name or `runtime/.env` that sets one is ignored, with an error logged), so a writer of `seal.json` or `.env` cannot send
+the server's credential elsewhere. A credential is never written in the conf: `seal@kms-credentials` and
+`seal@transit-token` name a file of root's, writable by its owner only (an absolute path), or `systemd:NAME`, the unit's
+`LoadCredential=`/`LoadCredentialEncrypted=` credential `NAME`; `kms-credentials` empty uses the host's own identity.
+
+| Provider | Settings | Calls | Credentials |
+|---|---|---|---|
+| AWS KMS (`kms-provider="aws"`) | `kms-key` (key id, ARN or alias), `kms-region` | `TrentService.Encrypt` and `Decrypt`, signed with SigV4, encryption context `moqui-seal=root-key` | The instance role by IMDSv2; or a file `{"access_key_id", "secret_access_key", "session_token"}`. The role needs `kms:Encrypt` and `kms:Decrypt` on the key |
+| GCP Cloud KMS (`kms-provider="gcp"`) | `kms-key` (`projects/P/locations/L/keyRings/R/cryptoKeys/K`) | `:encrypt` and `:decrypt`, additional authenticated data `moqui-seal root-key` | The metadata server's token of the VM's service account; or a service account's JSON key file. It needs `roles/cloudkms.cryptoKeyEncrypterDecrypter` |
+| Azure Key Vault (`kms-provider="azure"`) | `kms-key` (`https://VAULT.vault.azure.net/keys/NAME`) | `wrapkey` and `unwrapkey`, RSA-OAEP-256 (an RSA key); the key version the wrap used is kept, and taken only under the conf's key | The managed identity by IMDS; or a file `{"tenant_id", "client_id", "client_secret"}` for the client credentials grant. It needs the key's wrap and unwrap permissions |
+| OpenBao or Vault Transit (`method="transit"`) | `transit-url`, `transit-key`, `transit-mount` (`transit`), `transit-namespace`, `transit-ca-file` | `POST /v1/<mount>/encrypt/<key>` and `/decrypt/<key>` with `X-Vault-Token` | `transit-token`: a token whose policy allows `update` on those two paths |
+
+`kms-endpoint` and `kms-token-endpoint` replace the provider's API and token addresses (a private endpoint). A failed
+call at a start leaves the server sealed with `STATUS=sealed: auto-unseal failed` and the reason in `moqui operator
+status`; the recovery shares open it, and `moqui operator unseal` tries the method again. Move a server to `kms` or
+`transit` with `moqui operator rekey --method kms` (or `transit`) once the settings are in the conf.
+
+```xml
+<seal method="kms" kms-provider="aws" kms-key="alias/moqui-seal" kms-region="eu-west-1"/>
+<seal method="transit" transit-url="https://bao.example:8200" transit-key="moqui-erp" transit-token="systemd:bao-token"/>
+```
 
 The method is fixed at init: `seal.json` records it, and a conf, `.env` or environment that names another is ignored
 and logged, so whoever can write those files cannot move the server to the `dev` seal. Only `rekey` changes it.
-`seal@socket`, `seal@systemd-creds-command` and `seal@unseal-max-delay-seconds` are read from the conf files only: an
-environment name or `runtime/.env` that sets one is ignored, with an error logged. The `tpm` program is never taken
+`seal@socket`, `seal@systemd-creds-command`, `seal@unseal-max-delay-seconds` and the `kms-*` and `transit-*`
+settings are read from the conf files only: an environment name or `runtime/.env` that sets one is ignored, with an
+error logged. The `tpm` program is never taken
 from `seal.json`, so a restored bundle cannot name a program to run.
 
 **The first start with no `seal.json`.** A dev or test instance makes the `dev` seal by itself, so `./moq run` and the
 tests start as before. A production instance waits sealed for `moqui operator init`, unless `seal@method` names an
-automatic method (`tpm`): then it makes its seal and starts, and holds the recovery shares in memory, logging an error
+automatic method (`tpm`, `kms`, `transit`): then it makes its seal and starts, and holds the recovery shares in memory, logging an error
 until `moqui operator init --take-shares` reads them once (they are lost if the server stops or is sealed first).
 `moqui load` and other commands that boot a runtime open its seal with no operator: an automatic method, or on a
 production runtime with no seal yet a root key in memory only, never a seal of their own; a `passphrase` or `shamir`

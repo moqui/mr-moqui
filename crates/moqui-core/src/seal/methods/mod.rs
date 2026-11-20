@@ -12,22 +12,29 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The unseal methods (plans/Sealed-Secrets.md §3.3). An automatic method (`dev`, `tpm`, and in S11 `kms` and
-//! `transit`) wraps and unwraps the root key with no operator and is a [`Method`]; the built-in ones are here, and S11
-//! (and a managed instance's manager link, Vault-Instances M6) adds its own with [`register`]. The operator methods,
-//! `passphrase` and `shamir`, take what an operator enters on the socket and have functions of their own.
+//! The unseal methods (plans/Sealed-Secrets.md §3.3). An automatic method (`dev`, `tpm`, `kms` and `transit`) wraps
+//! and unwraps the root key with no operator and is a [`Method`]; the built-in ones are here, and a managed instance's
+//! manager link (Vault-Instances M6) installs its own transit with [`register`], from the host: core never calls the
+//! host. The operator methods, `passphrase` and `shamir`, take what an operator enters on the socket and have functions
+//! of their own. `kms` and `transit` call out over HTTP, so a build with no `http` feature has neither.
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use serde_json::{Map, Value};
+use zeroize::Zeroizing;
 
 use super::{RootKey, SealConf};
 use crate::context::Error;
 
 pub mod dev;
+#[cfg(feature = "http")]
+pub mod kms;
 pub mod passphrase;
 pub mod shamir;
 pub mod tpm;
+#[cfg(feature = "http")]
+pub mod transit;
 
 /// The unseal methods by name, as `seal@method` and `seal.json` name them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,8 +146,13 @@ pub fn automatic(kind: MethodKind) -> Result<Arc<dyn Method>, Error> {
     match kind {
         MethodKind::Dev => Ok(Arc::new(dev::Dev)),
         MethodKind::Tpm => Ok(Arc::new(tpm::Tpm)),
+        #[cfg(feature = "http")]
+        MethodKind::Kms => Ok(Arc::new(kms::Kms)),
+        #[cfg(feature = "http")]
+        MethodKind::Transit => Ok(Arc::new(transit::Transit)),
+        #[cfg(not(feature = "http"))]
         MethodKind::Kms | MethodKind::Transit => Err(Error::new(format!(
-            "the {} unseal method is not built yet (plans/Sealed-Secrets.md S11)",
+            "the {} unseal method calls out over HTTP, which this build has not (the http feature)",
             kind.name()
         ))),
         MethodKind::Passphrase | MethodKind::Shamir => Err(Error::new(format!(
@@ -149,6 +161,173 @@ pub fn automatic(kind: MethodKind) -> Result<Arc<dyn Method>, Error> {
         ))),
     }
 }
+
+/// The cloud KMS providers of the `kms` method.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KmsProvider {
+    Aws,
+    Gcp,
+    Azure,
+}
+
+impl KmsProvider {
+    /// The provider's name, as `seal@kms-provider` gives it.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Aws => "aws",
+            Self::Gcp => "gcp",
+            Self::Azure => "azure",
+        }
+    }
+}
+
+/// Where a method's credential comes from (`seal@kms-credentials`, `seal@transit-token`): never the conf itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Credentials {
+    /// The host's own identity: the instance role (AWS IMDSv2), the metadata server (GCP), the managed identity
+    /// (Azure). `transit` has none.
+    #[default]
+    Metadata,
+    /// A file, an absolute path or `$CREDENTIALS_DIRECTORY/<name>` for `systemd:<name>` (a systemd credential), whose
+    /// owner alone may write it.
+    File(PathBuf),
+}
+
+impl Credentials {
+    /// Parse `seal@kms-credentials` or `seal@transit-token`: empty or `metadata`, an absolute path, or
+    /// `systemd:<name>`. A secret written there itself is refused, so a credential is never a conf literal.
+    ///
+    /// # Errors
+    ///
+    /// Anything else, or `systemd:` with no `$CREDENTIALS_DIRECTORY` or a name that is a path.
+    pub fn parse(selector: &str, given: &str) -> Result<Self, Error> {
+        let given = given.trim();
+        if given.is_empty() || given == "metadata" {
+            return Ok(Self::Metadata);
+        }
+        if let Some(name) = given.strip_prefix("systemd:") {
+            if name.is_empty() || name.contains('/') || name.starts_with('.') {
+                return Err(Error::new(format!(
+                    "{selector}: {given:?} is not a systemd credential's name"
+                )));
+            }
+            let dir = std::env::var_os("CREDENTIALS_DIRECTORY").ok_or_else(|| {
+                Error::new(format!(
+                    "{selector} names the systemd credential {name}, and the service has no CREDENTIALS_DIRECTORY \
+                     (LoadCredential= or LoadCredentialEncrypted= in the unit)"
+                ))
+            })?;
+            return Ok(Self::File(Path::new(&dir).join(name)));
+        }
+        if Path::new(given).is_absolute() {
+            return Ok(Self::File(PathBuf::from(given)));
+        }
+        Err(Error::new(format!(
+            "{selector} names a file (an absolute path), a systemd credential (systemd:NAME) or metadata, never the \
+             secret itself"
+        )))
+    }
+
+    /// The credential's text, trimmed.
+    ///
+    /// # Errors
+    ///
+    /// No file named, or a file that cannot be read, or that its group or others may write.
+    pub fn read(&self, selector: &str) -> Result<Zeroizing<String>, Error> {
+        let Self::File(path) = self else {
+            return Err(Error::new(format!("{selector} names no file")));
+        };
+        let meta =
+            std::fs::metadata(path).map_err(|err| Error::new(format!("{selector} {}: {err}", path.display())))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            if meta.mode() & 0o022 != 0 {
+                return Err(Error::new(format!(
+                    "{selector} {} may be written by its group or others: make it its owner's alone (root's)",
+                    path.display()
+                )));
+            }
+        }
+        if !meta.is_file() {
+            return Err(Error::new(format!("{selector} {} is not a file", path.display())));
+        }
+        let text = Zeroizing::new(
+            std::fs::read_to_string(path).map_err(|err| Error::new(format!("{selector} {}: {err}", path.display())))?,
+        );
+        Ok(Zeroizing::new(text.trim().to_string()))
+    }
+}
+
+/// The settings of the `kms` and `transit` methods (`seal@kms-*`, `seal@transit-*`), read from the conf files only:
+/// they decide where the root key is sent and whose credential goes with it, so an environment name or `runtime/.env`
+/// that sets one is ignored ([`SealConf::from_gate`]).
+#[derive(Clone, Debug, Default)]
+pub struct CloudConf {
+    /// `aws`, `gcp` or `azure`.
+    pub kms_provider: String,
+    /// The key: an AWS key id, ARN or alias; a GCP `projects/.../locations/.../keyRings/.../cryptoKeys/...`; an Azure
+    /// key URL (`https://<vault>.vault.azure.net/keys/<name>`).
+    pub kms_key: String,
+    /// The AWS region.
+    pub kms_region: String,
+    /// The KMS API's base URL in place of the provider's (a private endpoint; a test's stub).
+    pub kms_endpoint: String,
+    /// Where tokens come from in place of the provider's: the instance metadata (AWS, Azure IMDS), the metadata server
+    /// (GCP) or the sign-in endpoint (Azure's client credentials).
+    pub kms_token_endpoint: String,
+    pub kms_credentials: Credentials,
+    /// The OpenBao or Vault address, its Transit mount (`transit`), key and namespace, and a PEM of the authorities its
+    /// HTTPS is checked against in place of the system's.
+    pub transit_url: String,
+    pub transit_mount: String,
+    pub transit_key: String,
+    pub transit_namespace: String,
+    pub transit_ca_file: String,
+    pub transit_token: Credentials,
+}
+
+impl CloudConf {
+    /// The provider `seal@kms-provider` names.
+    ///
+    /// # Errors
+    ///
+    /// None or another is named.
+    pub fn kms_provider(&self) -> Result<KmsProvider, Error> {
+        match self.kms_provider.trim() {
+            "aws" => Ok(KmsProvider::Aws),
+            "gcp" => Ok(KmsProvider::Gcp),
+            "azure" => Ok(KmsProvider::Azure),
+            other => Err(Error::new(format!("seal@kms-provider is {other:?}: aws, gcp or azure"))),
+        }
+    }
+
+    /// The key `seal@kms-key` names.
+    ///
+    /// # Errors
+    ///
+    /// None is named.
+    pub fn kms_key(&self) -> Result<&str, Error> {
+        Some(self.kms_key.trim())
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| Error::new("seal@kms-key is not set (the KMS key that wraps the root key)"))
+    }
+
+    /// The base of the token calls: `seal@kms-token-endpoint`, else `default`.
+    #[must_use]
+    pub fn token_base(&self, default: &str) -> String {
+        if self.kms_token_endpoint.is_empty() {
+            default.to_string()
+        } else {
+            self.kms_token_endpoint.trim_end_matches('/').to_string()
+        }
+    }
+}
+
+#[cfg(all(test, feature = "http"))]
+#[path = "cloud_tests.rs"]
+mod cloud_tests;
 
 /// A base64 field of a method's metadata.
 pub(crate) fn bytes_field(metadata: &Map<String, Value>, name: &str) -> Result<Vec<u8>, Error> {

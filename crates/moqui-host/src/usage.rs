@@ -763,8 +763,8 @@ moqui operator <command> [--socket PATH]
     The server's own user runs only status; root and the socket's group run the rest. Passphrases and shares are read with echo off, or a line each from
     standard input when it is not a terminal.
     status                   The state (sealed, unsealing, unsealed), the method and the recovery shares
-    init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm,
-                             passphrase, shamir or dev (dev is refused on a production instance); default
+    init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm, kms,
+                             transit, passphrase, shamir or dev (dev is refused on a production instance); default
                              seal@method
     init --take-shares       Read, once, the recovery shares an automatic first start holds in memory
     unseal [--recovery]      Give the passphrase or one share; --recovery a recovery share, which opens any

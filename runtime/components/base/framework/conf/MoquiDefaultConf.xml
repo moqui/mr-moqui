@@ -15,8 +15,8 @@
 
     <!-- The sealed start (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md "Sealed start"): the server opens its
         listeners only once unsealed; while sealed it answers only on the operator socket (moqui operator). method: the
-        unseal method init uses when none is named (tpm, passphrase, shamir, dev; kms and transit come later), and on a
-        production instance's first start an automatic one (tpm) makes the seal by itself; empty for none. Once
+        unseal method init uses when none is named (tpm, kms, transit, passphrase, shamir, dev), and on a production
+        instance's first start an automatic one (tpm, kms, transit) makes the seal by itself; empty for none. Once
         runtime/db/seal.json exists its method wins and this is ignored. socket: where a server binds its own operator
         socket when root hands it none (systemd/moqui-operator.socket, moqui operator bind), relative to the runtime,
         empty for db/operator.sock: a development setup, not a protection boundary. Who may use the socket is root's to
@@ -25,8 +25,18 @@
         empty for /usr/bin/systemd-creds or /bin/systemd-creds. unseal-max-delay-seconds: the longest wait after wrong
         passphrases or shares, which doubles from one second. socket, systemd-creds-command and
         unseal-max-delay-seconds are read from the conf files only: an environment name or runtime/.env that sets one
-        is ignored. -->
-    <seal method="" socket="" shares="5" threshold="3" systemd-creds-command="" unseal-max-delay-seconds="300"/>
+        is ignored. kms-*: the kms method (plans/Sealed-Secrets.md S11): kms-provider aws, gcp or azure; kms-key the key
+        (an AWS key id, ARN or alias, a GCP projects/.../cryptoKeys/... name, an Azure key URL); kms-region AWS's;
+        kms-endpoint and kms-token-endpoint the API's and the tokens' addresses in place of the provider's;
+        kms-credentials empty for the host's own identity (instance role, metadata server, managed identity), else a
+        file of root's (an absolute path, writable by its owner only) or systemd:NAME, never the credential itself.
+        transit-*: the transit method's OpenBao or Vault address, Transit mount, key, namespace, a PEM of the
+        authorities its HTTPS is checked against, and transit-token, the file (or systemd:NAME) holding its token. The
+        kms and transit settings are read from the conf files only, as socket is. -->
+    <seal method="" socket="" shares="5" threshold="3" systemd-creds-command="" unseal-max-delay-seconds="300"
+            kms-provider="" kms-key="" kms-region="" kms-endpoint="" kms-token-endpoint="" kms-credentials=""
+            transit-url="" transit-mount="transit" transit-key="" transit-namespace="" transit-ca-file=""
+            transit-token=""/>
 
     <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
         nobody set up there. directory-url fills in the authority's directory on that screen, Let's Encrypt's; the screen
