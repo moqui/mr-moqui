@@ -13,14 +13,15 @@
  */
 
 //! The devices that remember a user's personal key (plans/Vault-Instances.md §3.5, V5). The desktop and mobile apps keep
-//! the open key wrapped by a key in the device's own key store for a time the user chooses; the server holds no part of
-//! it, only a record that the device remembers it and until when, which the user's Vault key settings list. A device
-//! asks the server before it opens the key from memory, so a record ended here (taken off the list, past its time) or a
-//! device key the server no longer takes is a memory that does not open again.
+//! the open key for a time the user chooses, wrapped by a key made of two halves: one in the device's own key store, and
+//! a 32-byte secret of this record, which the server hands the device only while the record is live. So the record
+//! ending (taken off the user's list, past its time, the personal key replaced) or a device key the server no longer
+//! takes is a memory that cannot open again: the cryptography keeps the rule, not only the device. The server alone
+//! opens nothing: it has no part of the device's half or of the wrap.
 //!
-//! - Only a device's key (the apps' sign-in) records a memory, for the caller's active personal key, for at most
-//!   `vault@device-memory-max-hours`.
-//! - Each user reads, checks and ends only their own records.
+//! - Only a device's key (the apps' sign-in) records a memory or reads its secret, for the caller's active personal key
+//!   (the one the device names), for at most `vault@device-memory-max-hours`.
+//! - Each user reads, checks and ends only their own records. The secret is an encrypted field.
 
 use std::collections::BTreeMap;
 
@@ -28,6 +29,9 @@ use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_core::extension::RustServiceFn;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
+use moqui_vault::rng::{OsRng, Rng as _};
+use moqui_vault::text::hex;
+use zeroize::Zeroizing;
 
 use crate::common::{
     authz_off, check_id, fail, field, find, int, int_field, now, now_millis, out, required, text, user, Out, Params,
@@ -53,6 +57,16 @@ fn max_hours() -> i64 {
         .min(24)
 }
 
+/// Refuses unless the caller signed in by a device's key (the desktop or mobile app).
+fn require_device() -> Result<(), LibError> {
+    if moqui_core::user::login_key_kind() != Some(moqui_core::user::LoginKeyKind::Device) {
+        return Err(fail(
+            "Only the desktop or mobile app remembers the vault key on a device",
+        ));
+    }
+    Ok(())
+}
+
 /// The caller's own record `id`.
 fn own(facade: &EntityFacade, me: &str, id: &str) -> Result<Option<EntityValue>, LibError> {
     Ok(find(facade, DEVICE_MEMORY)?
@@ -61,16 +75,13 @@ fn own(facade: &EntityFacade, me: &str, id: &str) -> Result<Option<EntityValue>,
         .filter(|row| field(row, "userId") == me))
 }
 
-/// `remember#VaultDeviceMemory`: the calling device remembers the caller's active personal key for `minutes`, at most
-/// the setting's; answers when the record ends (`thruStamp`, epoch millis). Only a device's key may ask.
+/// `remember#VaultDeviceMemory`: the calling device remembers the caller's active personal key (`personalKeyId`, which
+/// must be it) for `minutes`, at most the setting's; answers when the record ends (`thruStamp`, epoch millis) and the
+/// record's secret, the server's half of the memory's key (`memorySecret`, hex). Only a device's key may ask.
 fn remember_vault_device_memory(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
-    if moqui_core::user::login_key_kind() != Some(moqui_core::user::LoginKeyKind::Device) {
-        return Err(fail(
-            "Only the desktop or mobile app remembers the vault key on a device",
-        ));
-    }
+    require_device()?;
     let id = required(params, "deviceMemoryId")?;
     check_id("deviceMemoryId", &id)?;
     let device_name = text(params, "deviceName");
@@ -86,6 +97,9 @@ fn remember_vault_device_memory(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("minutes must be at least 1"));
     }
     let key = crate::personal::my_key(facade, &me)?;
+    if required(params, "personalKeyId")? != field(&key, "personalKeyId") {
+        return Err(fail("That is not your active personal key"));
+    }
     if find(facade, DEVICE_MEMORY)?
         .eq("deviceMemoryId", Value::string(&id))
         .one()?
@@ -94,6 +108,9 @@ fn remember_vault_device_memory(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("That device memory id is taken"));
     }
     let thru = now_millis().saturating_add(minutes.min(max_minutes).saturating_mul(60_000));
+    let mut secret = Zeroizing::new([0u8; 32]);
+    OsRng.fill(&mut secret[..]);
+    let secret = Zeroizing::new(hex(&secret[..]));
     let mut row = facade.make_value(DEVICE_MEMORY)?;
     row.set("deviceMemoryId", Value::string(&id));
     row.set("userId", Value::string(&me));
@@ -101,10 +118,12 @@ fn remember_vault_device_memory(params: &Params, facade: &EntityFacade) -> Out {
     row.set("deviceName", Value::string(device_name));
     row.set("createdDate", now());
     row.set("thruStamp", Value::I64(thru));
+    row.set("memorySecret", Value::string(secret.as_str()));
     row.create(facade)?;
     Ok(out([
         ("deviceMemoryId", Value::string(id)),
         ("thruStamp", Value::I64(thru)),
+        ("memorySecret", Value::string(secret.as_str())),
     ]))
 }
 
@@ -117,17 +136,24 @@ fn live(facade: &EntityFacade, me: &str, row: &EntityValue) -> Result<bool, LibE
     Ok(active.is_some_and(|key| key == field(row, "personalKeyId")))
 }
 
-/// `check#VaultDeviceMemory`: whether the caller's record `deviceMemoryId` is still good (`live`); false for one ended,
-/// past its time, made for a personal key since replaced, or not the caller's.
+/// `check#VaultDeviceMemory`: whether the caller's record `deviceMemoryId` is still good (`live`), and while it is, its
+/// secret (`memorySecret`); false and no secret for one ended, past its time, made for a personal key since replaced, or
+/// not the caller's. Only a device's key may ask.
 fn check_vault_device_memory(params: &Params, facade: &EntityFacade) -> Out {
     let _authz = authz_off();
     let me = user()?;
+    require_device()?;
     let id = required(params, "deviceMemoryId")?;
-    let good = match own(facade, &me, &id)? {
-        Some(row) => live(facade, &me, &row)?,
-        None => false,
+    let row = match own(facade, &me, &id)? {
+        Some(row) if live(facade, &me, &row)? => row,
+        _ => return Ok(out([("live", Value::Bool(false))])),
     };
-    Ok(out([("live", Value::Bool(good))]))
+    let secret = Zeroizing::new(field(&row, "memorySecret"));
+    Ok(out([
+        ("live", Value::Bool(true)),
+        ("thruStamp", Value::I64(int_field(&row, "thruStamp"))),
+        ("memorySecret", Value::string(secret.as_str())),
+    ]))
 }
 
 /// `forget#VaultDeviceMemory`: ends the caller's record (the device forgot the key, or the user took it off the list).

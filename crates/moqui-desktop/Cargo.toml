@@ -71,6 +71,17 @@ tracing = "0.1"
 # The Keychain on macOS.
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1", features = ["keychain"] }
+# The screen's lock and the computer's sleep, which lock the vault (src/client/screen_lock.rs): the Foundation, AppKit
+# and block bindings Tauri's macOS runtime already builds.
+block2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "NSDistributedNotificationCenter",
+    "NSNotification",
+    "NSString",
+] }
 
 # The Credential Manager on Windows. Its default search feature (regex) stays off.
 [target.'cfg(windows)'.dependencies]

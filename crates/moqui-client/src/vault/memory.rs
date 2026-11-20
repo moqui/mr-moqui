@@ -12,11 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Device memory's two halves (plans/Vault-Instances.md §3.5, V5): the open personal key wrapped by a random memory
-//! key (`moqui_vault::personal::wrap_with_device_key`), kept in a file of the client's directory with its time limit
-//! (`vault/<account>.memory.json`, owner-only), and the memory key itself in the host's key store ([`MemoryKeys`]): the
-//! OS key store on the desktop, a Keystore key that opens only after the device's lock or biometrics on the phone. A
-//! copy of the file is no use without the key store; the key alone opens nothing.
+//! Device memory on the device (plans/Vault-Instances.md §3.5, V5): the open personal key wrapped
+//! (`moqui_vault::personal::wrap_with_device_key`, its memory, user and time in the associated data), kept in a file of
+//! the client's directory (`vault/<account>.memory.json`, owner-only), and the device's half of the wrap's key in the
+//! host's key store ([`MemoryKeys`]): the OS key store on the desktop, a Keystore key that opens only after the device's
+//! lock or biometrics, each time, on the phone. The other half is the server's ([`super::server`]). A copy of the file
+//! is no use without both.
 
 use std::path::{Path, PathBuf};
 
@@ -144,14 +145,14 @@ impl std::fmt::Debug for Record {
 }
 
 impl Record {
-    pub(crate) fn new(memory_id: &str, sealed: &DeviceSealed, until: i64) -> Self {
+    pub(crate) fn new(memory_id: &str, sealed: &DeviceSealed) -> Self {
         Self {
             memory_id: memory_id.to_string(),
             personal_key_id: sealed.personal_key_id.clone(),
             user_id: sealed.user_id.clone(),
             public: hex(&sealed.public),
             sealed: hex(&sealed.sealed),
-            until,
+            until: sealed.until,
         }
     }
 
@@ -160,6 +161,7 @@ impl Record {
             personal_key_id: self.personal_key_id.clone(),
             user_id: self.user_id.clone(),
             public: unhex(&self.public).map_err(|err| err.to_string())?,
+            until: self.until,
             sealed: unhex(&self.sealed).map_err(|err| err.to_string())?,
         })
     }

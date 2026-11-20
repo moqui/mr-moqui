@@ -1125,6 +1125,8 @@ pub struct DeviceSealed {
     pub user_id: String,
     /// Both public halves, encrypt then verify (64 bytes).
     pub public: Vec<u8>,
+    /// When the memory ends, epoch millis: in the associated data.
+    pub until: i64,
     pub sealed: Vec<u8>,
 }
 
@@ -1133,6 +1135,7 @@ impl std::fmt::Debug for DeviceSealed {
         f.debug_struct("DeviceSealed")
             .field("personal_key_id", &self.personal_key_id)
             .field("user_id", &self.user_id)
+            .field("until", &self.until)
             .finish_non_exhaustive()
     }
 }
@@ -1140,18 +1143,31 @@ impl std::fmt::Debug for DeviceSealed {
 /// Device memory (§3.5, V5). These are not calls of [`Session::call`]: no page can ask the module for its personal key
 /// in any form. A shell calls them natively, and keeps the device memory key in the OS key store.
 impl Session {
-    /// The open personal key wrapped by `device_key` for the memory `memory_id`.
+    /// The open personal key wrapped by `wrap_key` ([`personal::device_wrap_key`]) for the memory `memory_id`, which
+    /// ends at `until` (epoch millis).
     ///
     /// # Errors
     ///
     /// [`Error::Refused`] when the personal key is locked.
-    pub fn device_seal(&self, memory_id: &str, device_key: &Key32, rng: &mut dyn Rng) -> Result<DeviceSealed, Error> {
+    pub fn device_seal(
+        &self,
+        memory_id: &str,
+        until: i64,
+        wrap_key: &Key32,
+        rng: &mut dyn Rng,
+    ) -> Result<DeviceSealed, Error> {
         let me = self.me()?;
+        let memory = personal::DeviceMemory {
+            memory_id,
+            user_id: &me.user_id,
+            until,
+        };
         Ok(DeviceSealed {
             personal_key_id: me.key_id.clone(),
             user_id: me.user_id.clone(),
             public: me.key.public().to_bytes().to_vec(),
-            sealed: personal::wrap_with_device_key(&me.key, &me.key_id, memory_id, device_key, rng),
+            until,
+            sealed: personal::wrap_with_device_key(&me.key, &me.key_id, memory, wrap_key, rng),
         })
     }
 
@@ -1160,9 +1176,14 @@ impl Session {
     /// # Errors
     ///
     /// [`Error::Open`] for another key or memory, or a changed wrap.
-    pub fn device_open(&mut self, kept: &DeviceSealed, memory_id: &str, device_key: &Key32) -> Result<Value, Error> {
+    pub fn device_open(&mut self, kept: &DeviceSealed, memory_id: &str, wrap_key: &Key32) -> Result<Value, Error> {
         let public = PersonalPublic::from_bytes(&kept.public)?;
-        let key = personal::open_with_device_key(&kept.sealed, &kept.personal_key_id, memory_id, &public, device_key)?;
+        let memory = personal::DeviceMemory {
+            memory_id,
+            user_id: &kept.user_id,
+            until: kept.until,
+        };
+        let key = personal::open_with_device_key(&kept.sealed, &kept.personal_key_id, memory, &public, wrap_key)?;
         let answer = opened_json(&kept.personal_key_id, &key);
         self.me = Some(Me {
             key_id: kept.personal_key_id.clone(),

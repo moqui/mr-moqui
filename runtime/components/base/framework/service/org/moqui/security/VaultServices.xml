@@ -484,24 +484,32 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Devices that remember the personal key (§3.5, V5) -->
 
     <service verb="remember" noun="VaultDeviceMemory" type="rust" location="moqui_vault_server::device_memory::remember_vault_device_memory">
-        <description>The calling desktop or mobile app remembers the caller's active personal key for minutes, at most
-            vault@device-memory-max-hours; the key stays on the device. Only a device's key may ask. Answers when the
-            record ends (thruStamp, epoch millis), which the device takes as its limit.</description>
+        <description>The calling desktop or mobile app remembers the caller's active personal key (personalKeyId, refused
+            when it is not that key) for minutes, at most vault@device-memory-max-hours; the key stays on the device. Only
+            a device's key may ask. Answers when the record ends (thruStamp, epoch millis), which the device takes as its
+            limit, and the record's secret (memorySecret), the server's half of the memory's key.</description>
         <in-parameters>
             <parameter name="deviceMemoryId" required="true"/>
+            <parameter name="personalKeyId" required="true"/>
             <parameter name="deviceName"/>
             <parameter name="minutes" type="Long" required="true"/>
         </in-parameters>
         <out-parameters>
             <parameter name="deviceMemoryId"/>
             <parameter name="thruStamp" type="Long"/>
+            <parameter name="memorySecret"/>
         </out-parameters>
     </service>
     <service verb="check" noun="VaultDeviceMemory" type="rust" location="moqui_vault_server::device_memory::check_vault_device_memory">
         <description>Whether the caller's device memory is still good (live): before its time and for their active
-            personal key. A device asks before it opens the key from memory, and forgets it when the answer is no.</description>
+            personal key; while it is, its thruStamp and secret (memorySecret), without which the device cannot open the
+            key from memory. Only a device's key may ask. A device forgets the memory when the answer is no.</description>
         <in-parameters><parameter name="deviceMemoryId" required="true"/></in-parameters>
-        <out-parameters><parameter name="live" type="Boolean"/></out-parameters>
+        <out-parameters>
+            <parameter name="live" type="Boolean"/>
+            <parameter name="thruStamp" type="Long"/>
+            <parameter name="memorySecret"/>
+        </out-parameters>
     </service>
     <service verb="forget" noun="VaultDeviceMemory" type="rust" location="moqui_vault_server::device_memory::forget_vault_device_memory">
         <description>Ends the caller's device memory record: the device forgot the key, or the user takes the device off

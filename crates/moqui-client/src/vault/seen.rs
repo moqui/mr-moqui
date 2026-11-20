@@ -34,6 +34,37 @@ pub(crate) struct Seen {
     pub items: BTreeMap<String, BTreeMap<String, u64>>,
 }
 
+/// The most vaults whose items are kept for an account, and the most items of a vault: past them, a new vault's or
+/// item's revision is not kept (logged), so a server that lists endless ids does not grow the file without bound.
+pub(crate) const MAX_VAULTS: usize = 1_000;
+pub(crate) const MAX_ITEMS: usize = 20_000;
+
+impl Seen {
+    /// The highest revision of `item` of `vault` seen.
+    pub(crate) fn item(&self, vault: &str, item: &str) -> Option<u64> {
+        self.items.get(vault).and_then(|items| items.get(item)).copied()
+    }
+
+    /// Keep `revision` of `item` when it is higher than the one seen; never lowers one.
+    pub(crate) fn raise(&mut self, vault: &str, item: &str, revision: u64) {
+        if !self.items.contains_key(vault) && self.items.len() >= MAX_VAULTS {
+            tracing::warn!("Item revisions are kept for {MAX_VAULTS} vaults at most; this one's are not");
+            return;
+        }
+        let items = self.items.entry(vault.to_string()).or_default();
+        let full = items.len() >= MAX_ITEMS;
+        match items.get_mut(item) {
+            Some(kept) => *kept = (*kept).max(revision),
+            None if full => {
+                tracing::warn!("Item revisions are kept for {MAX_ITEMS} items of a vault at most; this one's is not");
+            }
+            None => {
+                items.insert(item.to_string(), revision);
+            }
+        }
+    }
+}
+
 fn path(dir: &Path, account: &str) -> Option<PathBuf> {
     super::memory::plain_name(account).then(|| dir.join(format!("{account}.seen.json")))
 }

@@ -13,12 +13,17 @@
  */
 
 //! The server's record of a device memory (`org.moqui.security.VaultServices`, `/rest/s1/vault/deviceMemories`): made
-//! when the user asks the device to remember the key, read before the device opens the key from memory, and ended when
-//! the device forgets it. The user's Vault key settings list the devices that remember the key, and one taken off the
-//! list there, or a device key the server no longer takes, is a memory that does not open again.
+//! when the user asks the device to remember the key, read before the device opens the key from memory and while a
+//! session opened from it is open, and ended when the device forgets it. The record holds the server's half of the
+//! memory's key (`memorySecret`), which the server hands out only while the record is live: one taken off the user's
+//! list, past its time, for a replaced personal key, or asked for with a device key the server no longer takes is a
+//! memory that cannot open again. The secret is kept in this process only while the key is made, and zeroed after.
 
 use moqui_lib::error::Error;
+use moqui_vault::keys::Key32;
+use moqui_vault::text::unhex;
 use serde_json::{json, Value};
+use zeroize::Zeroizing;
 
 /// What the server said, or why it did not.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,22 +46,35 @@ impl std::fmt::Display for ServerError {
     }
 }
 
+/// A memory the server recorded: when it ends (epoch millis, perhaps sooner than asked: its
+/// `vault@device-memory-max-hours`) and its secret, cleared on drop.
+pub struct Registered {
+    pub until: i64,
+    pub secret: Key32,
+}
+
 /// The server's side of device memory, for an account.
 pub trait MemoryServer {
-    /// Record the memory `memory_id` of this device, named `device_name`, for `minutes`; when the server says it ends
-    /// (epoch millis), which may be sooner than asked (its `vault@device-memory-max-hours`).
+    /// Record the memory `memory_id` of this device, named `device_name`, of the personal key `personal_key_id`, for
+    /// `minutes`.
     ///
     /// # Errors
     ///
     /// Returns why it was not recorded.
-    fn register(&self, memory_id: &str, device_name: &str, minutes: u32) -> Result<i64, ServerError>;
+    fn register(
+        &self,
+        memory_id: &str,
+        personal_key_id: &str,
+        device_name: &str,
+        minutes: u32,
+    ) -> Result<Registered, ServerError>;
 
-    /// Whether the memory is still on the server's list.
+    /// The memory's secret while the record is live; none once it is not.
     ///
     /// # Errors
     ///
     /// [`ServerError::Revoked`] when the device key is no longer taken, else why the server did not answer.
-    fn check(&self, memory_id: &str) -> Result<bool, ServerError>;
+    fn check(&self, memory_id: &str) -> Result<Option<Key32>, ServerError>;
 
     /// End the memory on the server.
     ///
@@ -71,6 +89,17 @@ pub struct RestMemoryServer<'a> {
     /// The server's base url.
     pub server: &'a str,
     pub key: &'a str,
+}
+
+/// The secret of a server's answer, which is then scrubbed from it.
+fn secret_of(answer: &mut Value) -> Result<Key32, ServerError> {
+    let text = Zeroizing::new(answer["memorySecret"].as_str().unwrap_or("").to_string());
+    moqui_vault::ops::shapes::scrub(answer);
+    let bytes = Zeroizing::new(
+        unhex(&text).map_err(|_| ServerError::Refused("the server's memory secret is not hex".to_string()))?,
+    );
+    Key32::from_slice(&bytes)
+        .map_err(|_| ServerError::Refused("the server's memory secret is not 32 bytes".to_string()))
 }
 
 impl RestMemoryServer<'_> {
@@ -95,7 +124,7 @@ impl RestMemoryServer<'_> {
         if status == 401 {
             return Err(ServerError::Revoked);
         }
-        let text = response.text().unwrap_or_default();
+        let text = Zeroizing::new(response.text().unwrap_or_default());
         let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         if status >= 400 {
             let reason = body["errors"]
@@ -113,21 +142,35 @@ impl RestMemoryServer<'_> {
 }
 
 impl MemoryServer for RestMemoryServer<'_> {
-    fn register(&self, memory_id: &str, device_name: &str, minutes: u32) -> Result<i64, ServerError> {
-        let body = json!({ "deviceMemoryId": memory_id, "deviceName": device_name, "minutes": minutes });
+    fn register(
+        &self,
+        memory_id: &str,
+        personal_key_id: &str,
+        device_name: &str,
+        minutes: u32,
+    ) -> Result<Registered, ServerError> {
+        let body = json!({ "deviceMemoryId": memory_id, "personalKeyId": personal_key_id, "deviceName": device_name,
+                           "minutes": minutes });
         let request = Self::client()?
             .post(self.url(None))
             .header("Content-Type", "application/json")
             .body(body.to_string());
-        let answer = self.send(request)?;
-        answer["thruStamp"]
+        let mut answer = self.send(request)?;
+        let until = answer["thruStamp"]
             .as_i64()
-            .ok_or_else(|| ServerError::Refused("the server did not say when the memory ends".to_string()))
+            .ok_or_else(|| ServerError::Refused("the server did not say when the memory ends".to_string()))?;
+        Ok(Registered {
+            until,
+            secret: secret_of(&mut answer)?,
+        })
     }
 
-    fn check(&self, memory_id: &str) -> Result<bool, ServerError> {
-        let answer = self.send(Self::client()?.get(self.url(Some(memory_id))))?;
-        Ok(answer["live"].as_bool() == Some(true))
+    fn check(&self, memory_id: &str) -> Result<Option<Key32>, ServerError> {
+        let mut answer = self.send(Self::client()?.get(self.url(Some(memory_id))))?;
+        if answer["live"].as_bool() != Some(true) {
+            return Ok(None);
+        }
+        secret_of(&mut answer).map(Some)
     }
 
     fn forget(&self, memory_id: &str) -> Result<(), ServerError> {

@@ -258,9 +258,29 @@
     // The vault module the app runs natively for the window's account (moqui_client_tauri::vault, plans/Vault-Instances.md
     // V5): VaultClient.js calls it in place of its wasm worker, with the same ops; memory is device memory (state,
     // remember, restore, forget). The keys stay in the app.
+    // the page's user activation (a click), read with the getter and navigator taken before any page script ran, so a
+    // script cannot fake it: remembering or opening the key from device memory needs one (moqui_client_tauri::vault)
+    const userGesture = ((nav) => {
+        let getter = null;
+        try {
+            const described = Object.getOwnPropertyDescriptor(Navigator.prototype, "userActivation");
+            getter = described && described.get;
+        } catch (err) {
+            getter = null;
+        }
+        return () => {
+            try {
+                const activation = getter && getter.call(nav);
+                return !!(activation && activation.isActive);
+            } catch (err) {
+                return false;
+            }
+        };
+    })(navigator);
     const vault = Object.freeze({
         call: (op, args) => ask("vault_call", { op: String(op || ""), args: args || {} }),
-        memory: (action, minutes) => ask("vault_memory", { action: String(action || ""), minutes: minutes == null ? null : Math.max(0, Math.floor(Number(minutes)) || 0) })
+        memory: (action, minutes) => ask("vault_memory", { action: String(action || ""), minutes: minutes == null ? null : Math.max(0, Math.floor(Number(minutes)) || 0),
+            gesture: userGesture() })
     });
     if (appWindow) {
         // the scopes the host gave this window to clear, once (its later pages carry the same list)

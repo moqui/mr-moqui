@@ -139,13 +139,6 @@ pub trait ShellHost: Send + Sync {
     /// clears that origin's storage, so one account's pages leave nothing for another's (plans/Security-Review-Medium.md
     /// SEC-CLI-81). The desktop gives each account's app windows a browser profile of their own, and does nothing here.
     fn clear_page_storage(&self) {}
-
-    /// Ask the user to confirm with the device's lock screen or biometrics, on a thread that may block, for a vault memory
-    /// key that opens only after it (the phone's Keystore, `moqui_client::vault::memory::KIND_DEVICE_LOCK`); whether
-    /// they did. False where there is no such key (the desktop, whose key store opens with the computer's sign-in).
-    fn confirm_device_user(&self) -> bool {
-        false
-    }
 }
 
 /// The shell's own files, as the scheme serves them: from disk ([`Assets`], the desktop) or from the app's embedded
@@ -191,6 +184,9 @@ pub struct ClientState {
     /// The token of the shell's last load by the host with a query ([`Self::load_shell`]), which the shell's
     /// `client_state` answers once: the shell takes its query (signIn, failed, server) only from such a load.
     pub load_token: Mutex<Option<String>>,
+    /// Which pages (by webview label) may call the vault: those whose top-level document is a vault screen's and that
+    /// loaded no other screen or frame since ([`vault::note_request`]).
+    pub vault_pages: Mutex<HashMap<String, bool>>,
 }
 
 impl ClientState {
@@ -211,6 +207,7 @@ impl ClientState {
             sso: Mutex::new(None),
             open_pending: Mutex::new(None),
             load_token: Mutex::new(None),
+            vault_pages: Mutex::new(HashMap::new()),
         }
     }
 

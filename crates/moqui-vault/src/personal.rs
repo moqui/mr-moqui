@@ -258,32 +258,61 @@ pub fn open_with_recovery_code(
     PersonalKey::from_private_bytes(&private, expected)
 }
 
-/// Wraps the private halves under a device memory key (§3.5, V5): a random 256-bit key that a desktop or mobile app
-/// keeps in the OS key store, so no KDF. The associated data names the personal key, its public halves and the
-/// memory's id, so a wrap of one memory, key or user never opens as another's.
+/// What a device memory is (§3.5, V5): its id, whose it is, and when it ends (epoch millis). All three are in the wrap's
+/// associated data, so a memory file whose user or time was changed does not open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeviceMemory<'a> {
+    pub memory_id: &'a str,
+    pub user_id: &'a str,
+    pub until: i64,
+}
+
+const DEVICE_INFO: &[u8] = b"moqui-vault device memory key";
+
+/// The key a device memory is wrapped by: HKDF over the device's own key (kept in its OS key store) and the server's
+/// secret for the memory (which the server hands out only while its record is live), salted by the memory's id. Neither
+/// half alone opens the memory, so the server's record ending (revoked, past its time, taken off the list) ends it.
+pub fn device_wrap_key(device_key: &Key32, server_secret: &Key32, memory_id: &str) -> Key32 {
+    let mut ikm = Zeroizing::new([0u8; 64]);
+    ikm[..32].copy_from_slice(device_key.as_bytes());
+    ikm[32..].copy_from_slice(server_secret.as_bytes());
+    kdf::hkdf_sha256(&ikm[..], memory_id.as_bytes(), DEVICE_INFO)
+}
+
+fn device_parts(personal_key_id: &str, public: &[u8; 64], memory: DeviceMemory<'_>) -> Vec<Vec<u8>> {
+    let until = memory.until.to_be_bytes();
+    names(personal_key_id, Purpose::PersonalDevice).parts(&[
+        public,
+        memory.memory_id.as_bytes(),
+        memory.user_id.as_bytes(),
+        &until,
+    ])
+}
+
+/// Wraps the private halves under a device memory's key ([`device_wrap_key`], 256 bits, so no Argon2id). The
+/// associated data names the personal key, its public halves, the memory, its user and its time.
 pub fn wrap_with_device_key(
     key: &PersonalKey,
     personal_key_id: &str,
-    memory_id: &str,
-    device_key: &Key32,
+    memory: DeviceMemory<'_>,
+    wrap_key: &Key32,
     rng: &mut dyn Rng,
 ) -> Vec<u8> {
-    let public = key.public().to_bytes();
-    let parts = names(personal_key_id, Purpose::PersonalDevice).parts(&[&public, memory_id.as_bytes()]);
-    aead::seal(device_key, &refs(&parts), &key.private_bytes(), rng)
+    let parts = device_parts(personal_key_id, &key.public().to_bytes(), memory);
+    aead::seal(wrap_key, &refs(&parts), &key.private_bytes(), rng)
 }
 
-/// Opens a device memory wrap ([`wrap_with_device_key`]); a wrong key, memory or personal key is [`Error::Open`].
+/// Opens a device memory wrap ([`wrap_with_device_key`]); a wrong key, memory, user, time or personal key is
+/// [`Error::Open`].
 pub fn open_with_device_key(
     sealed: &[u8],
     personal_key_id: &str,
-    memory_id: &str,
+    memory: DeviceMemory<'_>,
     expected: &PersonalPublic,
-    device_key: &Key32,
+    wrap_key: &Key32,
 ) -> Result<PersonalKey, Error> {
-    let public = expected.to_bytes();
-    let parts = names(personal_key_id, Purpose::PersonalDevice).parts(&[&public, memory_id.as_bytes()]);
-    let private = aead::open(device_key, &refs(&parts), sealed)?;
+    let parts = device_parts(personal_key_id, &expected.to_bytes(), memory);
+    let private = aead::open(wrap_key, &refs(&parts), sealed)?;
     PersonalKey::from_private_bytes(&private, expected)
 }
 

@@ -606,24 +606,17 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
     }
 }
 
-/// An app window closed: its sockets go, and it is no longer the account's. The account's vault locks with its last
-/// app window, as a browser's worker goes with its tab (plans/Vault-Instances.md §3.6).
+/// An app window closed: its sockets go, and it is no longer the account's. Its vault session locks, as a browser's
+/// worker goes with its tab (plans/Vault-Instances.md §3.6).
 pub(crate) fn closed(app: &AppHandle, label: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;
     };
     client.core.sockets().close_for(label);
-    let last_of = {
-        let mut windows = moqui_lib::sync::lock(&client.windows);
-        let owner = windows
-            .iter()
-            .find(|(window, _)| window == label)
-            .map(|(_, account)| account.clone());
-        windows.retain(|(window, _)| window != label);
-        owner.filter(|account| !windows.iter().any(|(_, other)| other == account))
-    };
-    if let Some(account) = last_of {
-        client.core.vault().lock(&account);
+    moqui_lib::sync::lock(&client.windows).retain(|(window, _)| window != label);
+    client.core.vault().lock_label(label);
+    if let Some(state) = app.try_state::<moqui_client_tauri::ClientState>() {
+        moqui_lib::sync::lock(&state.vault_pages).remove(label);
     }
 }
 

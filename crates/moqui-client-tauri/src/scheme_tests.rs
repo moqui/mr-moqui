@@ -150,6 +150,7 @@ fn the_servers_vault_module_is_never_loaded_in_the_app() {
         "/js/vault/MOQUI_VAULT.WASM",
         "/js/vault/%56aultWorker.js",
         "/other/mount/vaultworker.js",
+        "/js/vault/VaultWorker.js/",
     ] {
         assert!(vault_module_path(path), "{path}");
     }
@@ -170,6 +171,9 @@ fn the_servers_vault_module_is_never_loaded_in_the_app() {
             &super::NoHooks,
         );
         assert_eq!(refused.status(), 403, "{path}");
+        // the shell's origin too, before its own files are looked at
+        let on_shell = super::answer(&state, "main", get(path, &[]), SHELL_ORIGIN, &super::NoHooks);
+        assert_eq!(on_shell.status(), 403, "{path} on the shell");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

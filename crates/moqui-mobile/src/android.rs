@@ -611,7 +611,8 @@ impl Sealer for KeyVault {
 }
 
 /// The Keystore key of the vault's device memory (`KeyVault.sealAuth`, `openAuth`; plans/Vault-Instances.md §3.5, V5):
-/// it opens only for a while after the user confirmed with the phone's lock screen or biometrics.
+/// each use asks the user for the phone's lock screen or a strong biometric (BiometricPrompt with the cipher), so these
+/// calls block until they answer: never on the main thread.
 pub(crate) struct AuthVault;
 
 impl AuthVault {
@@ -664,16 +665,6 @@ impl crate::keystore::AuthSealer for AuthVault {
             env.convert_byte_array(&output).map(Some)
         })
     }
-}
-
-/// Ask the user for the phone's lock screen or biometrics (`KeyVault.confirmUser`, which waits for the answer), for the
-/// vault's device memory key; whether they confirmed. Called on a thread that may block, never the main one.
-pub(crate) fn confirm_user() -> Result<bool, String> {
-    with_context(|env, app| {
-        let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
-        env.call_static_method(&class, jni_str!("confirmUser"), jni_sig!("()Z"), &[])?
-            .z()
-    })
 }
 
 /// A class of the app's (`KeyVault`, `CallManager`), through the application context's class loader (`getClassLoader`,

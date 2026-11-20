@@ -27,20 +27,29 @@ fn device_login(user: &str) {
     });
 }
 
-/// Only a device's key records a memory, for at most the setting's time; the record is checked, listed and ended by its
-/// own user only, and one for a replaced personal key is no longer good.
+/// Only a device's key records a memory, for the caller's active personal key and at most the setting's time, and only
+/// a device's key reads its secret, while the record is live; the record is checked, listed and ended by its own user
+/// only, and a record ended, or one for a replaced personal key, hands out no secret.
 #[test]
 fn a_device_memory_is_recorded_by_a_device_key_and_ended_by_its_user() {
     let (ctx, facade) = setup();
     let _guard = ctx.enter();
-    let _alice = Client::new(&facade, "alice");
+    let alice = Client::new(&facade, "alice");
     let _bob = Client::new(&facade, "bob");
-    let remember = json!({ "deviceMemoryId": "0123456789abcdef", "deviceName": "Alice's phone", "minutes": 60 * 48 });
+    let remember = json!({ "deviceMemoryId": "0123456789abcdef", "personalKeyId": alice.key_id,
+                           "deviceName": "Alice's phone", "minutes": 60 * 48 });
+    let check = json!({ "deviceMemoryId": "0123456789abcdef" });
 
     let refused = call_as("alice", "remember#VaultDeviceMemory", remember.clone()).unwrap_err();
     assert!(refused.contains("desktop or mobile app"), "{refused}");
 
     device_login("alice");
+    let mut wrong_key = remember.clone();
+    wrong_key["personalKeyId"] = json!("pk-someone-else");
+    assert!(
+        call("remember#VaultDeviceMemory", wrong_key).is_err(),
+        "another personal key"
+    );
     let before = moqui_core::user::now_millis();
     let made = call("remember#VaultDeviceMemory", remember.clone()).unwrap();
     let thru = made["thruStamp"].as_i64().unwrap();
@@ -48,38 +57,46 @@ fn a_device_memory_is_recorded_by_a_device_key_and_ended_by_its_user() {
         thru <= before + 8 * 3_600_000 + 60_000,
         "capped at device-memory-max-hours"
     );
+    let secret = made["memorySecret"].as_str().unwrap().to_string();
+    assert_eq!(secret.len(), 64);
     assert!(
         call("remember#VaultDeviceMemory", remember).is_err(),
         "an id is taken once"
     );
-    let check = json!({ "deviceMemoryId": "0123456789abcdef" });
-    assert_eq!(
-        call("check#VaultDeviceMemory", check.clone()).unwrap()["live"],
-        json!(true)
-    );
+    let checked = call("check#VaultDeviceMemory", check.clone()).unwrap();
+    assert_eq!(checked["live"], json!(true));
+    assert_eq!(checked["memorySecret"], json!(secret));
     let listed = call("list#VaultDeviceMemories", json!({})).unwrap();
     assert_eq!(listed["deviceMemoryList"][0]["deviceName"], json!("Alice's phone"));
+    assert!(listed["deviceMemoryList"][0].get("memorySecret").is_none());
 
-    // another user neither sees nor ends it
+    // a session that is not a device's key gets no secret
+    let refused = call_as("alice", "check#VaultDeviceMemory", check.clone()).unwrap_err();
+    assert!(refused.contains("desktop or mobile app"), "{refused}");
+
+    // another user neither sees, reads nor ends it
+    device_login("bob");
+    let theirs = call("check#VaultDeviceMemory", check.clone()).unwrap();
+    assert_eq!(theirs["live"], json!(false));
+    assert!(theirs.get("memorySecret").is_none());
     assert_eq!(
-        call_as("bob", "check#VaultDeviceMemory", check.clone()).unwrap()["live"],
+        call("forget#VaultDeviceMemory", check.clone()).unwrap()["ended"],
         json!(false)
     );
     assert_eq!(
-        call_as("bob", "forget#VaultDeviceMemory", check.clone()).unwrap()["ended"],
-        json!(false)
-    );
-    assert_eq!(
-        call_as("bob", "list#VaultDeviceMemories", json!({})).unwrap()["deviceMemoryList"],
+        call("list#VaultDeviceMemories", json!({})).unwrap()["deviceMemoryList"],
         json!([])
     );
 
-    // Alice takes the device off her list: it is no longer good
+    // Alice takes the device off her list: it is no longer good, and its secret is gone
     assert_eq!(
         call_as("alice", "forget#VaultDeviceMemory", check.clone()).unwrap()["ended"],
         json!(true)
     );
-    assert_eq!(call("check#VaultDeviceMemory", check).unwrap()["live"], json!(false));
+    device_login("alice");
+    let ended = call("check#VaultDeviceMemory", check).unwrap();
+    assert_eq!(ended["live"], json!(false));
+    assert!(ended.get("memorySecret").is_none());
     assert_eq!(
         call("list#VaultDeviceMemories", json!({})).unwrap()["deviceMemoryList"],
         json!([])

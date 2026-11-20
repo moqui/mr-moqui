@@ -42,6 +42,7 @@
 mod conf;
 pub(crate) mod keystore;
 mod scheme;
+mod screen_lock;
 pub(crate) mod sockets;
 pub(crate) mod windows;
 
@@ -208,6 +209,9 @@ pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     windows::shell_window(app)?;
     moqui_client::renewal::start(&core, &host);
     moqui_client::vault::start(&core);
+    // the device's lock and sleep lock the vault, as the OS tells them (where it can: screen_lock.rs)
+    let locking = Arc::clone(&core);
+    screen_lock::watch(Box::new(move || locking.vault().lock_all()));
     moqui_client::sync::flush::start(&core, &host);
     Ok(())
 }

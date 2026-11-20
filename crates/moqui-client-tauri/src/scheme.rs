@@ -258,6 +258,12 @@ pub fn answer(
         .path_and_query()
         .map_or_else(|| "/".to_string(), |path| path.as_str().to_string());
     let bare = path.split_once('?').map_or(path.as_str(), |(bare, _)| bare).to_string();
+    // The app runs its own vault module (`moqui_client::vault`, `moquiDesktop.vault`): the server's copy of it is never
+    // loaded in the app, on any origin, the shell's included (plans/Vault-Instances.md §3.6, V5). By path, so best
+    // effort: a page of the server's can still carry code of its own, which is §3.12's limit.
+    if vault_module_path(&bare) {
+        return plain(StatusCode::FORBIDDEN, "The app runs its own vault module");
+    }
     // The shell's own paths (its page, `/shell/`, `/js/`, `/libs/`, `/css/`) are its staged files or nothing: never
     // forwarded, so no script of the server's comes to the shell's origin by a path its CSP allows (a library not staged).
     if origin == SHELL_ORIGIN && state.files.is_static(&bare) {
@@ -294,10 +300,9 @@ pub fn answer(
     if worker_request(request.headers()) {
         return plain(StatusCode::FORBIDDEN, "A server's worker does not run in the app");
     }
-    // The app runs its own vault module (`moqui_client::vault`, `moquiDesktop.vault`): the server's copy of it is never
-    // loaded in the app, on any origin (plans/Vault-Instances.md §3.6, V5).
-    if vault_module_path(&bare) {
-        return plain(StatusCode::FORBIDDEN, "The app runs its own vault module");
+    // which pages may call the vault: by the documents and screens each loads (crate::vault)
+    if origin != SHELL_ORIGIN {
+        crate::vault::note_request(state, label, &bare, request.headers());
     }
     let Some((account, key)) = state.account_of(label) else {
         return plain(StatusCode::UNAUTHORIZED, "No account is signed in");
@@ -538,7 +543,7 @@ pub fn worker_request(headers: &HeaderMap) -> bool {
 }
 
 /// Whether `path` (no query) is a file of the server's vault module, its worker's script or its wasm
-/// (`webroot/js/vault/VaultWorker.js`, `moqui_vault.wasm`), however it is cased or percent-encoded.
+/// (`webroot/js/vault/VaultWorker.js`, `moqui_vault.wasm`), however it is cased, percent-encoded or ended with slashes.
 pub fn vault_module_path(path: &str) -> bool {
     let bytes = path.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -561,7 +566,7 @@ pub fn vault_module_path(path: &str) -> bool {
         }
     }
     let lower = String::from_utf8_lossy(&decoded).to_ascii_lowercase();
-    let name = lower.rsplit('/').next().unwrap_or("");
+    let name = lower.trim_end_matches('/').rsplit('/').next().unwrap_or("");
     name == "vaultworker.js" || (name.starts_with("moqui_vault") && name.ends_with(".wasm"))
 }
 

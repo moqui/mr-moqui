@@ -15,7 +15,6 @@ import androidx.annotation.RequiresApi
 import java.security.KeyStore
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -31,16 +30,14 @@ import javax.crypto.spec.GCMParameterSpec
  * phone is unlocked, from Android 9 (`setUnlockedDeviceRequired`; plans/Security-Review.md SEC-CLI-113): its methods
  * are the `...Unlocked` ones, and before Android 9 `readyUnlocked` refuses, so Rust seals those by the first key.
  *
- * A third key, the vault's device memory key (`...Auth`, plans/Vault-Instances.md V5), opens only for a short while after
- * the user confirmed with the lock screen or a strong biometric ([confirmUser]).
+ * A third key, the vault's device memory key (`...Auth`, plans/Vault-Instances.md V5), is used only after the user confirms
+ * with the lock screen or a strong biometric, each time.
  */
 object KeyVault {
     private const val ALIAS = "org.moqui.mobile.device-keys"
     private const val UNLOCKED_ALIAS = "org.moqui.mobile.unlocked-keys"
     private const val TAG_BITS = 128
     private const val AUTH_ALIAS = "org.moqui.mobile.vault-memory"
-    /** How long after the user confirms the device memory key opens. */
-    private const val AUTH_SECONDS = 30
 
     private fun key(alias: String = ALIAS): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
@@ -95,12 +92,12 @@ object KeyVault {
     fun openUnlocked(sealed: ByteArray): ByteArray = openBy(UNLOCKED_ALIAS, sealed)
 
     /**
-     * The vault's device memory key (plans/Vault-Instances.md §3.5, V5): it seals and opens only for [AUTH_SECONDS]
-     * after the user confirmed with the lock screen or a strong biometric ([confirmUser]), only while the phone is
-     * unlocked, and a new biometric enrolled invalidates it. Android 9 and later; a phone with no secure lock screen
-     * cannot make it, and the app then offers no device memory.
+     * The vault's device memory key (plans/Vault-Instances.md §3.5, V5): authentication for each use (no time window), by
+     * a strong biometric or the lock screen through BiometricPrompt with the cipher as its CryptoObject, only while the
+     * phone is unlocked; a new biometric enrolled invalidates it. Android 11 and later, which takes the lock screen for
+     * such a key; a phone with no secure lock screen cannot make it, and the app then offers no device memory.
      */
-    @RequiresApi(Build.VERSION_CODES.P)
+    @RequiresApi(Build.VERSION_CODES.R)
     private fun authKey(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (store.getKey(AUTH_ALIAS, null) as? SecretKey)?.let { return it }
@@ -110,17 +107,9 @@ object KeyVault {
             .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
             .setKeySize(256)
             .setUserAuthenticationRequired(true)
+            .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
             .setInvalidatedByBiometricEnrollment(true)
             .setUnlockedDeviceRequired(true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            spec.setUserAuthenticationParameters(
-                AUTH_SECONDS,
-                KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL,
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            spec.setUserAuthenticationValidityDurationSeconds(AUTH_SECONDS)
-        }
         generator.init(spec.build())
         return generator.generateKey()
     }
@@ -129,42 +118,41 @@ object KeyVault {
         KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(AUTH_ALIAS)
     }
 
-    /** Make or find the device memory key; refused before Android 9 and on a phone with no secure lock screen. */
+    /** Make or find the device memory key; refused before Android 11 and on a phone with no secure lock screen. */
     @JvmStatic
     fun readyAuth() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            throw UnsupportedOperationException("the vault's device memory needs Android 9")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            throw UnsupportedOperationException("the vault's device memory needs Android 11")
         }
         authKey()
     }
 
     /**
-     * `plain` (a device memory key) sealed by the device memory key. The user is asked to confirm first when they have
-     * not lately; refused when they do not. A key the Keystore invalidated is made again.
+     * `plain` (the device's half of a memory's key) sealed by the device memory key, after the user confirms
+     * ([authenticated]); refused when they do not. A key the Keystore invalidated is made again, once.
      */
-    @RequiresApi(Build.VERSION_CODES.P)
+    @RequiresApi(Build.VERSION_CODES.R)
     @JvmStatic
     fun sealAuth(plain: ByteArray): ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        var cipher = Cipher.getInstance("AES/GCM/NoPadding")
         try {
             cipher.init(Cipher.ENCRYPT_MODE, authKey())
         } catch (err: KeyPermanentlyInvalidatedException) {
             dropAuthKey()
-            return sealAuth(plain)
-        } catch (err: UserNotAuthenticatedException) {
-            if (!confirmUser()) throw SecurityException("the user did not confirm with the lock screen")
+            cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, authKey())
         }
-        val iv = cipher.iv
-        return byteArrayOf(iv.size.toByte()) + iv + cipher.doFinal(plain)
+        val confirmed = authenticated(cipher) ?: throw SecurityException("the user did not confirm with the lock screen")
+        val iv = confirmed.iv
+        return byteArrayOf(iv.size.toByte()) + iv + confirmed.doFinal(plain)
     }
 
     /**
-     * `sealed` opened by the device memory key: null while the user has not confirmed lately (Rust then asks,
-     * [confirmUser], and tries again), and an empty array when the Keystore invalidated the key, whose memories no
-     * longer open.
+     * `sealed` opened by the device memory key, after the user confirms ([authenticated]): null when they do not, and
+     * an empty array when the Keystore invalidated the key (a new biometric, the lock screen removed), whose memories
+     * no longer open.
      */
-    @RequiresApi(Build.VERSION_CODES.P)
+    @RequiresApi(Build.VERSION_CODES.R)
     @JvmStatic
     fun openAuth(sealed: ByteArray): ByteArray? {
         require(sealed.isNotEmpty()) { "nothing sealed" }
@@ -176,58 +164,53 @@ object KeyVault {
         } catch (err: KeyPermanentlyInvalidatedException) {
             dropAuthKey()
             return ByteArray(0)
-        } catch (err: UserNotAuthenticatedException) {
-            return null
         }
-        return cipher.doFinal(sealed, 1 + ivSize, sealed.size - 1 - ivSize)
+        val confirmed = authenticated(cipher) ?: return null
+        return confirmed.doFinal(sealed, 1 + ivSize, sealed.size - 1 - ivSize)
     }
 
     /**
-     * Ask the user for the lock screen or a strong biometric (BiometricPrompt over the app's activity) and wait for
-     * the answer, up to two minutes; whether they confirmed. Called from Rust's threads, never the main one, and only
-     * while the app's activity is there.
+     * `cipher` authorized by the user: BiometricPrompt over the app's activity with it as the CryptoObject, a strong
+     * biometric or the lock screen, waited for up to two minutes; null when they do not confirm, there is no activity,
+     * or this is the main thread (Rust calls from its own threads).
      */
-    @JvmStatic
-    fun confirmUser(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
-        if (Looper.myLooper() == Looper.getMainLooper()) return false
-        val activity = CallManager.appActivity() ?: return false
+    @RequiresApi(Build.VERSION_CODES.R)
+    private fun authenticated(cipher: Cipher): Cipher? {
+        if (Looper.myLooper() == Looper.getMainLooper()) return null
+        val activity = CallManager.appActivity() ?: return null
         val answered = CountDownLatch(1)
-        val confirmed = AtomicBoolean(false)
+        var confirmed: Cipher? = null
         val cancel = CancellationSignal()
         activity.runOnUiThread {
             try {
-                val builder = BiometricPrompt.Builder(activity)
+                BiometricPrompt.Builder(activity)
                     .setTitle(activity.getString(R.string.vault_unlock_title))
                     .setDescription(activity.getString(R.string.vault_unlock_reason))
-                when {
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> builder.setAllowedAuthenticators(
+                    .setAllowedAuthenticators(
                         BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL,
                     )
-                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
-                        @Suppress("DEPRECATION")
-                        builder.setDeviceCredentialAllowed(true)
-                    }
-                    else -> builder.setNegativeButton(activity.getString(android.R.string.cancel), activity.mainExecutor) { _, _ ->
-                        answered.countDown()
-                    }
-                }
-                builder.build().authenticate(cancel, activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        confirmed.set(true)
-                        answered.countDown()
-                    }
+                    .build()
+                    .authenticate(
+                        BiometricPrompt.CryptoObject(cipher),
+                        cancel,
+                        activity.mainExecutor,
+                        object : BiometricPrompt.AuthenticationCallback() {
+                            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                                confirmed = result.cryptoObject?.cipher
+                                answered.countDown()
+                            }
 
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        answered.countDown()
-                    }
-                })
+                            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                                answered.countDown()
+                            }
+                        },
+                    )
             } catch (err: RuntimeException) {
                 answered.countDown()
             }
         }
         if (!answered.await(120, TimeUnit.SECONDS)) cancel.cancel()
-        return confirmed.get()
+        return confirmed
     }
 
     private fun sealBy(alias: String, plain: ByteArray): ByteArray {

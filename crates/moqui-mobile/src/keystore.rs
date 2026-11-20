@@ -230,14 +230,14 @@ impl<S: Sealer> SealedFileStore<S> {
     }
 }
 
-/// Seals and opens with a Keystore key that opens only after the user confirmed with the device's lock screen or
-/// biometrics (`KeyVault.sealAuth`, `openAuth`): the vault's device memory keys (plans/Vault-Instances.md §3.5, V5).
+/// Seals and opens with a Keystore key that the user authorizes at each use with the device's lock screen or a strong
+/// biometric (`KeyVault.sealAuth`, `openAuth`): the vault's device memory keys (plans/Vault-Instances.md §3.5, V5).
 pub(crate) trait AuthSealer: Send + Sync {
     /// `plain` sealed; refused on a phone with no secure lock screen.
     fn seal(&self, plain: &[u8]) -> Result<Vec<u8>, String>;
 
-    /// `sealed` opened: none while the user has not confirmed (the page then asks for the lock or biometrics), and an
-    /// empty value for a key the Keystore no longer has (invalidated by a new biometric, the lock screen removed).
+    /// `sealed` opened, once the user confirms: none when they did not, and an empty value for a key the Keystore no
+    /// longer has (invalidated by a new biometric, the lock screen removed).
     fn open(&self, sealed: &[u8]) -> Result<Option<Vec<u8>>, String>;
 }
 

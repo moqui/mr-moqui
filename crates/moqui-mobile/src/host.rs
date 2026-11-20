@@ -762,15 +762,6 @@ impl ShellHost for MobileHost {
             .ok()
     }
 
-    /// The phone's lock screen or biometrics, for the vault's device memory key (`KeyVault.confirmUser`, V5); never off
-    /// Android.
-    #[cfg(target_os = "android")]
-    fn confirm_device_user(&self) -> bool {
-        crate::android::confirm_user()
-            .inspect_err(|err| log::warn!("The phone's lock was not asked for: {err}"))
-            .unwrap_or(false)
-    }
-
     fn account_signed_in(&self, account: &str) {
         crate::native::account_back(account);
         let (Some(core), true) = (self.core(), self.network_ready()) else {
