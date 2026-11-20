@@ -1334,7 +1334,7 @@ fn feed_indexes_and_deletes_through_search() {
     let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
     moqui_host::load_data(&runtime, &framework, &cluster_dir, &moqui_host::LoadFlags::default()).unwrap();
 
-    let (cluster, driver) = EmbeddedCluster::start(&cluster_dir, 30).unwrap();
+    let (cluster, driver) = crate::common::start_loaded(&runtime, &cluster_dir, 30);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
     let factory = ExecutionContextFactory::boot_with_framework(&runtime, &framework).unwrap();
     let facade = moqui_host::db::entity_facade::open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();

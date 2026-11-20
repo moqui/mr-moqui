@@ -69,6 +69,7 @@ fn empty_db_startup_persists_audit_artifact_stack() {
     // not a value computed by an entity read or a stack supplied by the test.
     let mut options = StartOptions::new(20);
     options.install_dir = Some(moqui_host::db::embedded::install_dir(&runtime));
+    options.password = crate::common::cluster_password(&runtime);
     let (_cluster, driver) = EmbeddedCluster::start_with(&cluster_dir, &options).unwrap();
     let mut conn = driver.connect_postgres().unwrap();
     let audits = conn
@@ -211,7 +212,10 @@ fn rest_enum_types_login_and_session_survive_restart() {
     );
     drop(server);
 
-    assert_eq!(password_hash_type(&framework, &cluster_dir).as_deref(), Some("argon2"));
+    assert_eq!(
+        password_hash_type(&runtime, &framework, &cluster_dir).as_deref(),
+        Some("argon2")
+    );
 
     let server = start_server(&runtime, &framework, &cluster_dir, bind).unwrap();
     let (again_status, _, again_body) = exchange(
@@ -228,8 +232,8 @@ fn rest_enum_types_login_and_session_survive_restart() {
 const S1: &str = "/rest/s1/moqui/basic/enumTypes";
 const E1: &str = "/rest/e1/moqui.basic.EnumerationType";
 
-fn password_hash_type(framework: &Path, cluster_dir: &Path) -> Option<String> {
-    let (cluster, driver) = EmbeddedCluster::start(cluster_dir, 20).unwrap();
+fn password_hash_type(runtime: &Path, framework: &Path, cluster_dir: &Path) -> Option<String> {
+    let (cluster, driver) = crate::common::start_loaded(runtime, cluster_dir, 20);
     let driver: std::sync::Arc<dyn moqui_core::driver::DbDriver> = std::sync::Arc::new(driver);
     let facade = open_entity_facade(
         framework,

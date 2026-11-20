@@ -833,6 +833,39 @@ fn drop_telemetry(cluster_dir: &Path) {
 #[cfg(not(feature = "embedded-postgres"))]
 fn drop_telemetry(_cluster_dir: &Path) {}
 
+/// The superuser password of the embedded cluster that [`load_data`] or a server of `runtime` made, for a test that
+/// opens the cluster again. A fresh runtime boots as a dev instance (the built-in `conf/MoquiDevConf.xml`), which keeps
+/// the password in the runtime's dev seal, not a `pgpass` beside the data (plans/Sealed-Secrets.md S4). `None` for a
+/// runtime with no seal (a production one, as the template's): the start then reads the cluster's `pgpass`.
+#[cfg(feature = "embedded-postgres")]
+#[allow(dead_code)]
+pub fn cluster_password(runtime: &Path) -> Option<moqui_host::db::embedded::SuperuserPassword> {
+    moqui_core::seal::keeper_of(runtime)
+        .and_then(|keeper| {
+            keeper
+                .bootstrap_secret(moqui_core::seal::secrets::DATASOURCE_PASSWORD)
+                .unwrap()
+        })
+        .map(|value| moqui_host::db::embedded::SuperuserPassword(String::from_utf8(value.to_vec()).unwrap()))
+}
+
+/// Start the embedded cluster at `cluster_dir` that [`load_data`] made for `runtime`, with its password
+/// ([`cluster_password`]).
+#[cfg(feature = "embedded-postgres")]
+#[allow(dead_code)]
+pub fn start_loaded(
+    runtime: &Path,
+    cluster_dir: &Path,
+    max_connections: u32,
+) -> (
+    moqui_host::db::embedded::EmbeddedCluster,
+    moqui_host::db::postgres::PostgresDriver,
+) {
+    let mut options = moqui_host::db::embedded::StartOptions::new(max_connections);
+    options.password = cluster_password(runtime);
+    moqui_host::db::embedded::EmbeddedCluster::start_with(cluster_dir, &options).unwrap()
+}
+
 /// A second seeded server beside the gate a test holds, on its own runtime and database: a remote for a client of the
 /// first (the A2A and MCP clients over loopback). It runs under the first gate's lock, so it takes none, and sets no
 /// process property; drop it before the first.

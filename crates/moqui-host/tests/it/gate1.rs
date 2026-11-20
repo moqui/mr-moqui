@@ -105,10 +105,10 @@ fn framework_seed_and_fixture_load() {
     // service run, and `load_entity_data` does not add them to the record count.
     assert_eq!(fixture.records, 1, "fixture records {}", fixture.records);
 
-    let (enumeration, permissions, medium_a, medium_b, medium_e) = read_back(&framework, &cluster_dir);
+    let (enumeration, permissions, medium_a, medium_b, medium_e) = read_back(&runtime, &framework, &cluster_dir);
     assert!(enumeration > 0, "enumeration {enumeration}");
     assert!(permissions > 0, "user group permission {permissions}");
-    let extra = read_extra(&framework, &cluster_dir);
+    let extra = read_extra(&runtime, &framework, &cluster_dir);
     // SearchRemote is a sealed permission that only seed-initial grants.
     assert_eq!(extra.sealed_grant, 1, "sealed SearchRemote grant");
     // BTC is in CurrencyData, which is seed-initial only.
@@ -132,10 +132,8 @@ struct Extra {
 }
 
 #[cfg(all(unix, feature = "embedded-postgres"))]
-fn read_extra(framework: &Path, cluster_dir: &Path) -> Extra {
-    use moqui_host::db::embedded::EmbeddedCluster;
-
-    let (cluster, driver) = EmbeddedCluster::start(cluster_dir, 20).unwrap();
+fn read_extra(runtime: &Path, framework: &Path, cluster_dir: &Path) -> Extra {
+    let (cluster, driver) = crate::common::start_loaded(runtime, cluster_dir, 20);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
     let facade = open_entity_facade(framework, Arc::clone(&driver), pool()).unwrap();
     let sealed_grant = facade
@@ -189,7 +187,7 @@ fn load_flag_types_selects_data_files() {
     assert!(report.enumeration > 0, "enumerations are seed");
     assert!(report.security_checks > 0, "entity ECAs stayed on");
     // CurrencyData is seed-initial, so its BTC unit of measure was not loaded.
-    assert_eq!(read_extra(&framework, &cluster_dir).initial_uom, 0);
+    assert_eq!(read_extra(&runtime, &framework, &cluster_dir).initial_uom, 0);
 }
 
 /// `raw` turns off entity ECAs, so no security check runs, and the rows still land.
@@ -400,10 +398,12 @@ fn framework_dir() -> PathBuf {
 }
 
 #[cfg(all(unix, feature = "embedded-postgres"))]
-fn read_back(framework: &Path, cluster_dir: &Path) -> (i64, i64, Option<String>, Option<String>, Option<String>) {
-    use moqui_host::db::embedded::EmbeddedCluster;
-
-    let (cluster, driver) = EmbeddedCluster::start(cluster_dir, 20).unwrap();
+fn read_back(
+    runtime: &Path,
+    framework: &Path,
+    cluster_dir: &Path,
+) -> (i64, i64, Option<String>, Option<String>, Option<String>) {
+    let (cluster, driver) = crate::common::start_loaded(runtime, cluster_dir, 20);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
     let facade = open_entity_facade(framework, driver, pool()).unwrap();
     let enumeration = facade.find("moqui.basic.Enumeration").unwrap().count().unwrap();
