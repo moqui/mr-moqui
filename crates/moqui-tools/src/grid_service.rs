@@ -138,6 +138,7 @@ fn get_data_grid_rows(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         0 => 100,
         size => size,
     };
+    let actor = Actor::current();
     match grid::rows(
         facade,
         &source,
@@ -146,9 +147,13 @@ fn get_data_grid_rows(parameters: &BTreeMap<String, Value>, facade: &EntityFacad
         size,
         &grid::parse_sort(parameters.get("sort")),
         &grid::parse_filter(parameters.get("filter")),
-        &Actor::current(),
+        &actor,
     ) {
         Ok(outcome) => {
+            // a SQL source's query is audited where it runs; an entity source's page here (SEC-TLS-102)
+            if matches!(source, grid::Source::Entity { .. }) {
+                grid::audit_read(facade, &actor, "DbaGridRead", &source, outcome.data.len(), None);
+            }
             let mut out = BTreeMap::new();
             out.insert("last_page".to_string(), int(outcome.last_page));
             out.insert("last_row".to_string(), outcome.last_row.map_or(Value::Null, Value::I64));

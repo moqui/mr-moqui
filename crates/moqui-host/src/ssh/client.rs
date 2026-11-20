@@ -200,7 +200,21 @@ pub(crate) async fn login(config: &SftpConfig, trust: Trust) -> Result<client::H
         nodelay: true,
         ..client::Config::default()
     });
-    let connecting = client::connect(ssh_config, (config.host.as_str(), config.port), check);
+    // the addresses checked are the ones connected to: a name is not looked up again (SEC-TLS-96)
+    let (host, port) = (config.host.clone(), config.port);
+    let deny_internal = config.deny_internal;
+    let addresses = tokio::task::spawn_blocking(move || {
+        if deny_internal {
+            moqui_lib::net::public_addresses(&host, port)
+        } else {
+            moqui_lib::net::non_link_local_addresses(&host, port)
+        }
+        .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| Error::new(format!("could not look up {target}: {err}")))?
+    .map_err(|err| Error::new(format!("could not connect to {target}: {err}")))?;
+    let connecting = client::connect(ssh_config, addresses.as_slice(), check);
     let mut handle = match tokio::time::timeout(TIMEOUT, connecting).await {
         Ok(Ok(handle)) => handle,
         Ok(Err(err)) => {
@@ -683,3 +697,7 @@ impl Drop for RusshSession {
         self.close();
     }
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;

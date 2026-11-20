@@ -27,8 +27,9 @@ use super::xml::load_xml_reader;
 use super::LoadOptions;
 use crate::entity::facade::EntityFacade;
 
-/// Largest nested zip entry. It is read into memory, because a zip is read from its end.
-const MAX_NESTED_ZIP: u64 = 256 * 1024 * 1024;
+/// Largest nested zip entry. It is read into memory, because a zip is read from its end, and each enclosing one is
+/// held while it loads (SEC-DAT-91).
+const MAX_NESTED_ZIP: u64 = super::pull::MAX_UNIT as u64;
 /// Deepest zip-in-zip nesting.
 const MAX_ZIP_DEPTH: u32 = 4;
 

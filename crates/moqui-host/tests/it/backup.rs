@@ -65,6 +65,8 @@ fn the_backup_service_mirrors_a_rotated_dump() {
             ("sendUrl", &format!("127.0.0.1:{}", address.port())),
             ("username", "john.doe"),
             ("password", "moqui"),
+            // the mirror is this machine: the private network is allowed by the row (SEC-TLS-96)
+            ("allowPrivateNetwork", "Y"),
         ]),
     )
     .unwrap_or_else(|err| panic!("update remote: {err}"));

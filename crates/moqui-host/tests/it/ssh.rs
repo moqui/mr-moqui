@@ -355,6 +355,8 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
             ("sendUrl", Value::string(&host)),
             ("username", Value::string("john.doe")),
             ("password", Value::string("moqui")),
+            // the server is this machine: the private network is allowed by the row (SEC-TLS-96)
+            ("allowPrivateNetwork", Value::string("Y")),
         ],
     );
     assert_eq!(errors, "");

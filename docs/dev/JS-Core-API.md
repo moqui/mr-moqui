@@ -148,6 +148,7 @@ the user services call.
 | `context` | A map for the user of this execution context, read by the entity filters. `get`, `put`, `putAll`, `remove`, `containsKey`, and names as properties. A list read from it is a copy |
 | `hasPermission(permissionId)` | Whether the user has the permission |
 | `isInGroup(userGroupId)` | Whether the user is in the group |
+| `heldBeyond(userId)` | Why the user may not act as or on that account (bounded delegation: the account is in a privileged group the user is not in, or holds through a current group a sealed permission the user lacks), or null when they may |
 | `getUserGroupIdSet(userId)` | The group ids of the current user, or of the user given, as a list (so it works as the value of an `in` condition) |
 | `visitId`, `visit` | The `moqui.server.Visit` of the session, its id and the record as a map; null outside one |
 | `getVisitUserId()` | The user of the visit, which a later login in the same visit does not change |

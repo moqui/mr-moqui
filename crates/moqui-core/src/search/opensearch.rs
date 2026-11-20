@@ -175,10 +175,35 @@ fn kind_of(mapping: &DocumentMapping, name: &str) -> Option<FieldKind> {
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 4);
     for ch in text.chars() {
-        if "+-=&|><!(){}[]^\"~*?:\\/ ".contains(ch) {
-            out.push('\\');
+        push_escaped(&mut out, ch);
+    }
+    out
+}
+
+/// One character of a `query_string` term, escaped when it is query syntax.
+fn push_escaped(out: &mut String, ch: char) {
+    if "+-=&|><!(){}[]^\"~*?:\\/ ".contains(ch) {
+        out.push('\\');
+    }
+    out.push(ch);
+}
+
+/// A wildcard term as `query_string` text: the parser's unescaped `*` and `?` stay wildcards, and every other character
+/// (one the parser escaped with a backslash among them) is escaped, so a `:`, `/` or `\` the word held is text, never
+/// query syntax such as a field or a regular expression (SEC-DAT-87).
+fn escape_wildcard(terms: &str) -> String {
+    let mut out = String::with_capacity(terms.len() + 4);
+    let mut chars = terms.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                if let Some(literal) = chars.next() {
+                    push_escaped(&mut out, literal);
+                }
+            }
+            '*' | '?' => out.push(ch),
+            other => push_escaped(&mut out, other),
         }
-        out.push(ch);
     }
     out
 }
@@ -288,8 +313,7 @@ fn compile(mapping: &DocumentMapping, query: &Query, prefix: &str) -> Json {
                     .join(" "),
                 TextMatch::Contains => format!("*{}*", escape(terms)),
                 TextMatch::Phrase => format!("\"{}\"", terms.replace('\\', "\\\\").replace('"', "\\\"")),
-                // Already escaped by the parser: `\*` is literal, `*` and `?` are wildcards.
-                TextMatch::Wildcard => terms.clone(),
+                TextMatch::Wildcard => escape_wildcard(terms),
             };
             let names: Vec<Json> = match fields {
                 TextFields::All => vec![Json::String("*".into())],
@@ -985,9 +1009,9 @@ impl OpenSearchBackend {
     /// hits, total, and aggregations miss those shards' documents, and no caller can tell.
     fn searched(&self, path: &str, body: Json) -> Result<Json, Error> {
         let mut body = body;
-        if let Some(timeout) = super::limits::remaining()? {
-            body["timeout"] = json!(format!("{}ms", timeout.as_millis().max(1)));
-        }
+        // a report's budget, else the search's own time limit (SEC-DAT-84)
+        let timeout = super::limits::remaining()?.unwrap_or_else(super::limits::search_timeout);
+        body["timeout"] = json!(format!("{}ms", timeout.as_millis().max(1)));
         let response = self.checked("POST", path, Some(Body::Json(body)))?;
         if response["timed_out"] == true {
             return Err(Error::new("report query timeout exceeded"));

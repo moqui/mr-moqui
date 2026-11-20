@@ -176,6 +176,9 @@ pub struct Facts {
     pub allow_automatic: bool,
     /// The highest confidence of the incident's open regressions; 0 with none.
     pub confidence: f64,
+    /// The incident has regressions. One with none (an alert's, an operator's, a row written by hand) takes no
+    /// automatic step: nothing measured its confidence (SEC-TLS-107).
+    pub regressed: bool,
     pub degraded: bool,
     /// version, instance or unknown.
     pub locality: String,
@@ -439,6 +442,12 @@ fn refusal(
 fn automatic_refusal(facts: &Facts, action: Action) -> Option<String> {
     if !facts.allow_automatic {
         return Some("automatic actions are not allowed (telemetry/recovery allow-automatic)".into());
+    }
+    if !facts.regressed && action.changes_system() {
+        return Some(
+            "an incident with no regression (an alert's or an operator's) takes an automatic step only once approved"
+                .into(),
+        );
     }
     if action == Action::Rollback {
         // An automatic rollback needs the release to be the leading cause, by a clear score.

@@ -564,6 +564,13 @@ fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owne
         super::alert::validate_rule(ec, &body)?;
     }
     super::alert::validate_shared(kind, &body)?;
+    // who a notification contact reaches and under what topic is the saver's to name (SEC-TLS-106)
+    super::alert::authorize_contacts(
+        kind,
+        &body,
+        previous.as_ref().map(|previous| &previous["body"]),
+        &current,
+    )?;
     if kind == "dataset" && !owned {
         super::business::definition_saved(ec, id, previous.as_ref().map(|previous| &previous["body"]), &body)?;
     }

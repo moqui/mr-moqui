@@ -609,7 +609,9 @@ pub(crate) fn holds_as(ec: &ExecutionContext, username: &str, artifact: &str, ac
 
 /// A dataset whose rows depend on who reads it: a business dataset, and any dataset scoped by a `rowFilterService` or by
 /// `contextFilters` (the viewer's id, groups or account), whatever its signal, such as a business events dataset over
-/// the annotations. Its owner's result is not another user's to receive unchecked.
+/// the annotations. Its owner's result is not another user's to receive unchecked. A service dataset (only a shipped
+/// one names its service, SEC-TLS-91) is not: its schedule goes in owner mode, to others only while its owner holds the
+/// group delivery grant (SEC-TLS-105).
 fn viewer_scoped(body: &Json) -> bool {
     crate::business::is_business(body)
         || body["rowFilterService"].is_string()
@@ -694,6 +696,7 @@ pub(crate) fn reason_text(code: &str) -> &'static str {
         "external" => "The account is not an internal user",
         "no-address" => "The account has no email address",
         "over-cap" => "The audience is larger than the recipient cap",
+        "topic" => "The alert's notification topic is no longer registered for alerts",
         "owner-unauthorized" => "The owner may not deliver to other users",
         "removed-audience" => "No longer a recipient of the schedule",
         "schedule-changed" => "The schedule changed before this delivery",
@@ -2242,6 +2245,8 @@ mod tests {
         assert!(viewer_scoped(
             &json!({"documentType":"Mine","contextFilters":[{"field":"userId","contextKey":"userId"}]})
         ));
+        // a shipped service dataset goes in owner mode, behind the group delivery grant (SEC-TLS-105)
+        assert!(!viewer_scoped(&json!({"serviceName":"a.b.get#Rows"})));
         // a technical dataset: the same rows for every reader, as before
         assert!(!viewer_scoped(
             &json!({"indexName":"otel_logs","rowFilter":{"field":{"name":"level","op":"eq","value":"error"}},
