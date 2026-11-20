@@ -1224,7 +1224,8 @@ instances from the rows; nothing reaches a host as it renders. Each row shows:
 - health: the host's check (running, and not unhealthy) and how fresh the telemetry is (the ingest key last seen, or
   the scrape target last read, within 10 minutes): `failing`, `stale`, `ok` or `unknown`;
 - seal and link state, and the cluster with its live members as the link reports them;
-- the last deploy, open incidents (`MonitorIncident.instanceId`), and items past their rotation age (rotation, M5);
+- the last deploy, open incidents (`MonitorIncident.instanceId`), and the items bound to it (`AppInstance:<id>:...`)
+  past their rotation age ([Run-Deploy, Rotation](../Run-Deploy.md#rotation));
 - whether the environment's rolling deploys are paused.
 
 Each instance links to Monitor › Services narrowed to it (`var-instance`) and to Releases of the versions it reports.
@@ -1237,7 +1238,7 @@ Each instance links to Monitor › Services narrowed to it (`var-instance`) and 
 | `moqui.instance.sealed_seconds` | How long its link has said it is sealed |
 | `moqui.instance.link_down_seconds` | How long the link of an instance that paired has been down |
 | `moqui.instance.check_failing` | 1 while it should run and its host says it does not, or its check fails |
-| `moqui.instance.items_past_rotation` | Items of the environment past their rotation age (0 until rotation, M5) |
+| `moqui.instance.items_past_rotation` | Items of the environment's vault past their rotation age ([Run-Deploy, Rotation](../Run-Deploy.md#rotation)) |
 | `moqui.instance.unseals` | Each unseal, with `moqui.instance.new_address` true from an address it never unsealed from |
 | `moqui.instance.deploys_failed` | Each failed deploy, upgrade or rollback |
 | `moqui.instance.machine_access` | Each action that opened items under machine access and is not a deploy |

@@ -15,7 +15,9 @@
 //! Opt-in, against a real Docker or Podman socket (plans/Vault-Instances.md §6 M1, §7): a Postgres instance provisioned
 //! with its admin password as a file, checked by a health check that signs in over TCP with that file (so the
 //! password the server made, deposited and never read back is the one Postgres took); a second instance's database
-//! and user (a SCRAM verifier) made on it by the one-shot client on their network; both removed with their volumes.
+//! and user (a SCRAM verifier) made on it by the one-shot client on their network; then a rotation (M5) of the user's
+//! password and of the admin's, each set at the source by a one-shot and signed in with before its new revision is
+//! deposited; both removed with their volumes.
 //! Run by name, with the socket named:
 //!
 //! `MOQUI_CI_DOCKER_SOCKET=$HOME/.docker/run/docker.sock cargo test -p moqui-instance docker_real -- --ignored`
@@ -41,7 +43,7 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
     let _guard = ctx.enter();
     load(&facade, "InstanceTypeData.xml");
     load(&facade, "VaultTypeData.xml");
-    let vault = vault(&facade, "real");
+    let mut vault = vault(&facade, "real");
     let tag = format!("{}", std::process::id());
     let environment = format!("realenv{tag}");
     create(
@@ -98,7 +100,7 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
         "moqui.server.instance.InstanceKindSecret",
         json!({ "instanceKindId": "postgres", "secretName": "dbPassword", "vaultItemTypeId": "database-credential",
                 "bindingPattern": "AppInstance:{id}:dbPassword", "fieldName": "password", "generated": "Y",
-                "whenDependency": "database" }),
+                "whenDependency": "database", "rotateService": crate::rotate::ROTATE_SERVICE }),
     );
     let user = sys(|| {
         create_instance(
@@ -174,6 +176,38 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
         }
         Ok(())
     })();
+    // M5: the user's password, then the admin's, rotated at the source by one-shots on their network and signed in with
+    let rotated = checked.as_ref().map_err(String::clone).and_then(|()| {
+        let bindings = [
+            format!("AppInstance:{user}:dbPassword"),
+            format!("AppInstance:{pg}:admin"),
+        ];
+        for binding in &bindings {
+            super::rotate::take_in(&mut vault, &facade, binding);
+        }
+        let plan = sys(|| crate::rotate::plan(&facade, &environment, &bindings)).map_err(|err| err.to_string())?;
+        if plan.credentials.len() != 2 {
+            return Err(format!("{:?}", plan.not_rotated));
+        }
+        let lease_id = super::rotate::approved(&mut vault, &facade, &registry, &plan);
+        let outcome = sys(|| {
+            crate::rotate::run(
+                &facade,
+                &registry,
+                &crate::rotate::LinkInstances { facade: &facade },
+                &plan,
+                Some(&lease_id),
+                &crate::rotate::Options {
+                    wait: Duration::from_secs(120),
+                },
+            )
+        })
+        .map_err(|err| err.to_string())?;
+        if !outcome.failed.is_empty() || outcome.rotated.len() != 2 {
+            return Err(format!("{:?}\n{}", outcome.failed, outcome.report.join("\n")));
+        }
+        Ok(())
+    });
     // removed whatever the check found, with their volumes and network
     let removed_user = sys(|| crate::lifecycle::act(&facade, &registry, &user, "remove", None, true));
     let removed = sys(|| crate::lifecycle::act(&facade, &registry, &pg, "remove", None, true));
@@ -182,6 +216,7 @@ fn a_postgres_instance_on_a_real_engine_takes_its_password_from_a_file() {
         eprintln!("the network was not removed: {err}");
     }
     checked.unwrap();
+    rotated.unwrap();
     removed.unwrap();
     assert!(host.inspect(&container).unwrap().is_none());
 }

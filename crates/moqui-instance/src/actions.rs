@@ -59,6 +59,10 @@ pub const ACTIONS: &[(&str, &str)] = &[
 /// The actions a deploy records (plans/Vault-Instances.md §4.6), which are not asked for by request#InstanceAction.
 pub const DEPLOY_ACTIONS: &[(&str, &str)] = &[("IatDeploy", "deploy"), ("IatBackup", "backup")];
 
+/// The action a rotation records on each instance whose credential it rotates (M5, [`crate::rotate`]), which is asked
+/// for by request#InstanceRotation.
+pub const ROTATE_ACTIONS: &[(&str, &str)] = &[("IatRotate", "rotate")];
+
 /// The verb of an action's enumeration id.
 pub fn verb(action_enum: &str) -> Result<&'static str, LibError> {
     ACTIONS
@@ -76,6 +80,7 @@ fn action_enum(verb: &str) -> &'static str {
     ACTIONS
         .iter()
         .chain(DEPLOY_ACTIONS)
+        .chain(ROTATE_ACTIONS)
         .find(|(_, name)| *name == verb)
         .map_or("IatProvision", |(id, _)| *id)
 }
@@ -420,13 +425,49 @@ pub fn request(
         &format!("waiting for an approver to open lease {lease_id}"),
     )?;
     let limit = Duration::from_millis(u64::try_from(lease.expires_at - moqui_core::user::now_millis()).unwrap_or(0));
+    let instance = instance_id.to_string();
+    let verb_owned = verb.to_string();
+    wait_then_run(
+        factory,
+        registry,
+        &action_id,
+        &lease_id,
+        limit,
+        &format!("instance-{verb}-{instance_id}"),
+        move |facade, registry, lease_id| {
+            run(facade, registry, &instance, &verb_owned, Some(lease_id), remove_volumes)
+                .map(|outcome| format!("ran as action {}", outcome.action_id))
+        },
+    )?;
+    Ok(Requested {
+        action_id,
+        status: WAITING.to_string(),
+        lease_id: Some(lease_id),
+    })
+}
+
+/// The thread on this member that waits for `lease_id` to open (at most `limit`) and then runs `body` under it, as the
+/// user who asked, for the waiting action `action_id`: marked running, then done with `body`'s line or failed with its
+/// error. An action cancelled while it waited ([`cancel_waiting`]) runs nothing; its lease is ended. A request#
+/// service's waiting action (an instance action, a deploy, a rotation) is run by this.
+pub fn wait_then_run(
+    factory: &Arc<ExecutionContextFactory>,
+    registry: &Arc<LeaseRegistry>,
+    action_id: &str,
+    lease_id: &str,
+    limit: Duration,
+    thread_name: &str,
+    body: impl FnOnce(&EntityFacade, &LeaseRegistry, &str) -> Result<String, LibError> + Send + 'static,
+) -> Result<(), LibError> {
+    // the facade a spawn that fails marks the waiting row failed with
+    let here = factory.entity();
     let (factory, registry) = (Arc::clone(factory), Arc::clone(registry));
-    let (instance_id, verb, waiting_action) = (instance_id.to_string(), verb.to_string(), action_id.clone());
-    let thread_lease = lease_id.clone();
+    let waiting_action = action_id.to_string();
+    let thread_lease = lease_id.to_string();
     // the user who asked, so the action and its lease's use are theirs on the thread too
     let user = moqui_core::user::current_user_id().ok().flatten();
     let spawned = std::thread::Builder::new()
-        .name(format!("instance-{verb}-{instance_id}"))
+        .name(thread_name.chars().take(60).collect())
         .spawn(move || {
             let context = factory.new_context();
             let _entered = context.enter();
@@ -467,17 +508,10 @@ pub fn request(
                 }
                 // running: a cancel from here on leaves it to end as it does
                 finish(&facade, &waiting_action, RUNNING, "its lease is open: running")?;
-                run(
-                    &facade,
-                    &registry,
-                    &instance_id,
-                    &verb,
-                    Some(&thread_lease),
-                    remove_volumes,
-                )
+                body(&facade, &registry, &thread_lease)
             }));
             let (status, report) = match ran {
-                Ok(Ok(outcome)) => (DONE, format!("ran as action {}", outcome.action_id)),
+                Ok(Ok(line)) => (DONE, line),
                 Ok(Err(err)) => (FAILED, err.message().to_string()),
                 Err(_) => (FAILED, "the action failed".to_string()),
             };
@@ -491,12 +525,9 @@ pub fn request(
             }
         });
     if let Err(err) = spawned {
-        finish(facade, &action_id, FAILED, "the action could not wait for its lease")?;
+        let facade = here.ok_or_else(|| fail("No entity facade is installed"))?;
+        finish(&facade, action_id, FAILED, "the action could not wait for its lease")?;
         return Err(fail(format!("The action could not wait for its lease: {err}")));
     }
-    Ok(Requested {
-        action_id,
-        status: WAITING.to_string(),
-        lease_id: Some(lease_id),
-    })
+    Ok(())
 }

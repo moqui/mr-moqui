@@ -499,4 +499,83 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="cancelled" type="Boolean"/></out-parameters>
     </service>
 
+    <!-- Rotation (plans/Vault-Instances.md §4.7, M5; crates/moqui-instance/src/rotate) -->
+    <service verb="rotate" noun="Credential" type="rust" location="moqui_instance::rotate::services::rotate_credential"
+            allow-remote="false" transaction="ignore">
+        <description>The kinds' rotate service (InstanceKindSecret.rotateService): one instance's secret, now, under the
+            lease handed to it (whose operation is this rotation's) or the environment's machine access; refused without
+            either, and when the caller is not INSTANCE_ADMIN or not in the environment's approver group. In order: each
+            instance that uses it must be up and unsealed; a new value set at its source (a database user's or admin's
+            password from a one-shot on the database's network or over verified TLS, an OpenSearch admin password through
+            its security API); put on each instance that uses it, which is restarted; the source and the instances
+            checked; the item's next revision deposited, the one before kept in VaultItemHistory. A failure after the
+            source puts the old value back there and on the instances. An InstanceAction (IatRotate) with its report, never
+            a value.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/>
+            <parameter name="secretName" required="true"/>
+            <parameter name="leaseId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="instanceActionId"/>
+            <parameter name="revision" type="Long"/>
+            <parameter name="report"/>
+        </out-parameters>
+    </service>
+    <service verb="request" noun="InstanceRotation" type="rust" location="moqui_instance::rotate::services::request_instance_rotation"
+            allow-remote="false" transaction="ignore">
+        <description>Rotates credentials of an environment: those named (bindingList, bindingKey, or appInstanceId with
+            secretName), or every item the manager can rotate (all, the incident list of Sealed-Secrets §3.12), or those
+            past their age (dueOnly). It runs now under the environment's machine access; else it asks for one lease of
+            them and records a waiting rotate action (the page goes to the lease dialog), and rotates on this member once an
+            approver opens it. What is not rotated comes back with why (notRotatedList: no rotate service and what to do by
+            hand, or deposited and not taken in yet). INSTANCE_ADMIN, and the environment's approver group when it names
+            one.</description>
+        <in-parameters>
+            <parameter name="environmentId"><description>Else the environment of appInstanceId</description></parameter>
+            <parameter name="bindingList" type="List"/>
+            <parameter name="bindingKey"/>
+            <parameter name="appInstanceId"/>
+            <parameter name="secretName"/>
+            <parameter name="all" type="Boolean"/>
+            <parameter name="dueOnly" type="Boolean"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="instanceActionId"/>
+            <parameter name="statusEnumId"/>
+            <parameter name="leaseId"/>
+            <parameter name="bindingList" type="List"/>
+            <parameter name="notRotatedList" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="InstanceRotations" type="rust" location="moqui_instance::rotate::services::get_instance_rotations"
+            allow-remote="false" transaction="ignore">
+        <description>The rotation list of an environment: each item of its vault with its type, binding, name, age in days,
+            rotation age (its own, else its type's), whether it is due, the instance and secret it is bound to, whether
+            the manager rotates it, whether it waits for a member to take it in, and what to do by hand when the manager
+            cannot change it. No value. INSTANCE_ADMIN, and the environment's approver group when it names one.</description>
+        <in-parameters><parameter name="environmentId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="itemList" type="List"/>
+            <parameter name="dueCount" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="rotate" noun="DueCredentials" type="rust" location="moqui_instance::rotate::services::rotate_due_credentials"
+            allow-remote="false" transaction="ignore">
+        <description>The job at the policy age (rotate_DueInstanceCredentials): in each environment, the items past their
+            age that the manager rotates and a member has taken in are rotated under its machine access, or one lease of
+            them is asked for, not again while a rotation waits for its lease. An item whose last rotation failed within
+            manage@rotate-retry-days is held back and told to the administrators (topic InstanceRotationFailed). An
+            environment that fails is logged and the rest go on. INSTANCE_ADMIN, or authorization disabled (the job); a
+            caller with authorization on rotates only the environments whose approver group they are in, or that name
+            none.</description>
+        <out-parameters>
+            <parameter name="rotatedCount" type="Long"/>
+            <parameter name="askedCount" type="Long"/>
+            <parameter name="failedCount" type="Long"/>
+            <parameter name="heldBackCount" type="Long"/>
+            <parameter name="skippedCount" type="Long"/>
+        </out-parameters>
+    </service>
+
 </services>

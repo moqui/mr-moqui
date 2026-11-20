@@ -101,10 +101,12 @@ along with this software (see the LICENSE.md file). If not, see
         <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="curl -fsS http://127.0.0.1:8080/health"/>
         <secrets secretName="dbPassword" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:dbPassword"
-                fieldName="password" generated="Y" whenDependency="database" description="Its database user's password, for the bootstrap bundle (M2)"/>
+                fieldName="password" generated="Y" whenDependency="database" description="Its database user's password, for the bootstrap bundle (M2)"
+                rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
         <secrets secretName="ingestKey" vaultItemTypeId="api-key" bindingPattern="AppInstance:{id}:ingestKey"
                 fieldName="secret" fileName="moqui-ingest-key" envName="moqui_conf__telemetry__otlp_headers_file"
-                generated="Y" description="Its Monitor ingest key (M4): a file its telemetry export reads (otlp-headers-file)"/>
+                generated="Y" description="Its Monitor ingest key (M4): a file its telemetry export reads (otlp-headers-file)"
+                rotateByHand="Make a new ingest key in Monitor › Sources for the source instance:{id} and write it to this item in your vault client, marked rotated; deploy the instance's image again so its new container has the new file, then revoke the old key"/>
     </moqui.server.instance.InstanceKind>
 
     <moqui.server.instance.InstanceKind instanceKindId="postgres" description="Postgres" confName="postgres" containerPort="5432"
@@ -117,7 +119,7 @@ along with this software (see the LICENSE.md file). If not, see
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="pg_isready -U postgres"/>
         <secrets secretName="admin" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:admin"
                 fieldName="password" fileName="postgres-password" envName="POSTGRES_PASSWORD_FILE" generated="Y"
-                description="The superuser postgres's password"/>
+                description="The superuser postgres's password" rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
     </moqui.server.instance.InstanceKind>
     <moqui.server.instance.InstanceKind instanceKindId="mysql" description="MySQL" confName="mysql" containerPort="3306"
             runAsUser="999:999" createDatabaseService="org.moqui.dev.InstanceServices.create#DatabaseMySQL"
@@ -129,7 +131,7 @@ along with this software (see the LICENSE.md file). If not, see
         <hostConfigs hostConfigName="HealthCmd" hostConfigValue="mysqladmin ping -h 127.0.0.1 --silent"/>
         <secrets secretName="admin" vaultItemTypeId="database-credential" bindingPattern="AppInstance:{id}:admin"
                 fieldName="password" fileName="mysql-root-password" envName="MYSQL_ROOT_PASSWORD_FILE" generated="Y"
-                description="The root user's password"/>
+                description="The root user's password" rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
     </moqui.server.instance.InstanceKind>
     <!-- OpenSearch reads no *_FILE setting: its entrypoint is wrapped to read the admin password from its file into the
         setting its demo security configuration takes (crates/moqui-instance/src/kinds.rs), so it is in no container's
@@ -143,7 +145,8 @@ along with this software (see the LICENSE.md file). If not, see
         <hostConfigs hostConfigName="RestartPolicy" hostConfigValue="unless-stopped"/>
         <secrets secretName="admin" vaultItemTypeId="login" bindingPattern="AppInstance:{id}:admin"
                 fieldName="password" fileName="opensearch-admin-password" generated="Y"
-                description="The admin user's password, which an mr-moqui instance that searches here is given (M2)"/>
+                description="The admin user's password, which an mr-moqui instance that searches here is given (M2)"
+                rotateService="org.moqui.dev.InstanceServices.rotate#Credential"/>
     </moqui.server.instance.InstanceKind>
     <!-- Monitor (plans/Vault-Instances.md §4.8): a provision adds each database and search instance's exporter as a
         ScrapeTarget (scrapeUrlTemplate: postgres_exporter, mysqld_exporter, and elasticsearch_exporter for OpenSearch's
@@ -166,4 +169,12 @@ along with this software (see the LICENSE.md file). If not, see
             persistOnSend="Y" receiveNotifications="N" isPrivate="Y" linkTemplate="/qapps/system/Instances/InstanceList"/>
     <moqui.service.job.ServiceJob jobName="reconcile_AppInstances" description="Observe managed instances"
             serviceName="org.moqui.dev.InstanceServices.reconcile#AppInstances" cronExpression="0 0/5 * * * ?" paused="N"/>
+    <!-- Rotation at the policy age (plans/Vault-Instances.md §4.7): each environment's items past their age that have a
+        rotate service are rotated under its machine access, or a lease of them is asked for (once while one waits) -->
+    <!-- A due item whose last rotation failed is not tried again for manage@rotate-retry-days: told to the administrators -->
+    <moqui.security.user.NotificationTopic topic="InstanceRotationFailed" inboxEnumId="NinUpdates"
+            description="Managed instance: a due credential's last rotation failed" typeString="warning" showAlert="Y"
+            persistOnSend="Y" receiveNotifications="N" isPrivate="Y" linkTemplate="/qapps/system/Instances/Rotation"/>
+    <moqui.service.job.ServiceJob jobName="rotate_DueInstanceCredentials" description="Rotate managed credentials past their age"
+            serviceName="org.moqui.dev.InstanceServices.rotate#DueCredentials" cronExpression="0 30 3 * * ?" paused="N"/>
 </entity-facade-xml>

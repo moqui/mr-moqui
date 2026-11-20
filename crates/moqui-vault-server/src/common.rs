@@ -31,6 +31,7 @@ pub(crate) const KEY_VERSION: &str = "moqui.security.vault.VaultKeyVersion";
 pub(crate) const MEMBER: &str = "moqui.security.vault.VaultMember";
 pub(crate) const ITEM: &str = "moqui.security.vault.VaultItem";
 pub(crate) const ITEM_HISTORY: &str = "moqui.security.vault.VaultItemHistory";
+pub(crate) const ITEM_PENDING: &str = "moqui.security.vault.VaultItemPending";
 pub(crate) const PERSONAL_KEY: &str = "moqui.security.vault.VaultPersonalKey";
 pub(crate) const KEY_CHECK: &str = "moqui.security.vault.VaultKeyCheck";
 pub(crate) const DELIVERY: &str = "moqui.security.vault.VaultDelivery";

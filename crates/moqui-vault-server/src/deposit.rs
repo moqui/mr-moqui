@@ -18,7 +18,9 @@
 //! half, after it checks that signature against the vault's signed member list (`Chain::accept_deposit`): it can write
 //! the item and cannot read it back. A deposit key with no manager's signature, or of an earlier key version, is
 //! refused, both when it is stored (`set#VaultDepositKey`) and at each deposit ([`deposit_item`]). A removal's
-//! rotation stores the new version's deposit key (`remove#VaultMember`, [`store_rotated`]).
+//! rotation stores the new version's deposit key (`remove#VaultMember`, [`store_rotated`]). A credential the instance
+//! manager rotated at its source (§4.7) is written the same way, as the item's next revision with the one before kept in
+//! its history: staged before its source changes ([`stage_revision`]), then promoted ([`promote_revision`]).
 
 use std::collections::BTreeMap;
 
@@ -36,8 +38,8 @@ use serde_json::{json, Value as Json};
 
 use crate::common::{
     authz_off, bump_revision, check_hex, check_id, fail, field, find, id_has_history, id_not_available, int_field,
-    json, now, out, refused, required, user, vault_for, vault_row, Access, Out, Params, ITEM, MAX_WRAP_HEX,
-    OPERATIONAL,
+    json, now, out, refused, required, user, vault_for, vault_row, Access, Out, Params, ITEM, ITEM_PENDING,
+    MACHINE_ACCESS, MAX_WRAP_HEX, OPERATIONAL,
 };
 use crate::events::{self, Event};
 use crate::members::{chain_entries, check_revision, verify_chain};
@@ -186,22 +188,40 @@ pub fn deposit_item(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibE
     })
 }
 
-fn deposit_in_tx(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibError> {
-    let mut vault = vault_row(facade, deposit.vault_id, true)?;
-    if field(&vault, "vaultKindEnumId") != OPERATIONAL {
+/// The vault's deposit key once its signature is checked against the vault's signed member list (of the current key
+/// version, signed by a manager of it), with its signer.
+fn accepted_key(
+    facade: &EntityFacade,
+    vault: &EntityValue,
+) -> Result<(DepositPublic, moqui_vault::sign::VerifyingKey), LibError> {
+    let vault_id = field(vault, "vaultId");
+    if field(vault, "vaultKindEnumId") != OPERATIONAL {
         return Err(fail("The server deposits only into an operational vault"));
     }
-    let shaped = deposit_json(&vault);
+    let shaped = deposit_json(vault);
     if shaped.is_null() {
         return Err(fail(format!(
-            "Vault {} has no deposit key: a manager makes one in their client",
-            deposit.vault_id
+            "Vault {vault_id} has no deposit key: a manager makes one in their client"
         )));
     }
     let public = deposit_of(&shaped)?;
-    let entries = chain_entries(facade, deposit.vault_id)?;
+    let entries = chain_entries(facade, &vault_id)?;
     let chain = verify_chain(&entries)?;
     let signer = chain.accept_deposit(&public).map_err(refused)?;
+    Ok((public, signer))
+}
+
+/// Whether the server could deposit into `vault_id` now: its deposit key is there and its signature checks. A rotation
+/// asks this before it changes anything at a source (plans/Vault-Instances.md §4.7), since its last step deposits.
+pub fn check_deposit_key(facade: &EntityFacade, vault_id: &str) -> Result<(), LibError> {
+    let _authz = authz_off();
+    let vault = vault_row(facade, vault_id, false)?;
+    accepted_key(facade, &vault).map(|_| ())
+}
+
+fn deposit_in_tx(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibError> {
+    let mut vault = vault_row(facade, deposit.vault_id, true)?;
+    let (public, signer) = accepted_key(facade, &vault)?;
     check_id("vaultItemId", deposit.item_id)?;
     if [deposit.item_type, deposit.binding, deposit.name]
         .iter()
@@ -262,6 +282,7 @@ fn deposit_in_tx(facade: &EntityFacade, deposit: &Deposit) -> Result<(), LibErro
     row.set("itemName", Value::string(deposit.name));
     row.set("createdDate", now());
     row.set("lastModifiedDate", now());
+    row.set("rotatedDate", now());
     if let Some(actor) = &actor {
         row.set("createdByUserId", Value::string(actor));
         row.set("lastModifiedByUserId", Value::string(actor));
@@ -294,9 +315,11 @@ pub fn withdraw_item(facade: &EntityFacade, vault_id: &str, item_id: &str, bindi
             .eq("vaultItemId", Value::string(item_id))
             .one()?
             .ok_or_else(|| fail(format!("No item {item_id}")))?;
+        // revision 1 only: a rotated item is wrapped to the deposit key too, and is not the provision's to withdraw
         if field(&row, "vaultId") != vault_id
             || field(&row, "bindingKey") != binding
             || field(&row, "itemKeyWrapEnumId") != "VwDeposit"
+            || int_field(&row, "revision") != 1
         {
             return Err(fail(format!(
                 "Item {item_id} is not the server's deposit of {binding}: it is not withdrawn"
@@ -312,7 +335,222 @@ pub fn withdraw_item(facade: &EntityFacade, vault_id: &str, item_id: &str, bindi
                 vault_id: Some(vault_id),
                 item_id: Some(item_id),
                 actor: Some("server"),
-                detail: Some(format!("{binding} withdrawn: the operation that deposited it was undone")),
+                detail: Some(format!(
+                    "{binding} withdrawn: the operation that deposited it was undone"
+                )),
+                ..Event::default()
+            },
+        )
+    })
+}
+
+// ----- a rotation's new value (plans/Vault-Instances.md §4.7) -----
+
+/// A rotation's new body of an item, to stage before its source changes: the item, by id and binding, the revision the
+/// rotation started from, and the whole new JSON body (the item's own, with the rotated field changed: the lease's
+/// [`crate::lease::LeaseRegistry::stage_rotation`] makes it, so the rest of the body never leaves this crate).
+#[derive(Debug, Clone, Copy)]
+pub struct Staged<'a> {
+    pub vault_id: &'a str,
+    pub item_id: &'a str,
+    pub binding: &'a str,
+    pub expected_revision: i64,
+    pub body: &'a [u8],
+}
+
+fn pending_row(facade: &EntityFacade, item_id: &str, pending_id: &str) -> Result<EntityValue, LibError> {
+    find(facade, ITEM_PENDING)?
+        .eq("vaultItemId", Value::string(item_id))
+        .eq("pendingId", Value::string(pending_id))
+        .one()?
+        .ok_or_else(|| fail(format!("No pending revision {pending_id} of item {item_id}")))
+}
+
+/// The item of a rotation, refused unless it is `binding` of `vault_id` at `expected` (another write or rotation came
+/// first: reasonCode itemChanged).
+fn item_at(
+    facade: &EntityFacade,
+    vault_id: &str,
+    item_id: &str,
+    binding: &str,
+    expected: i64,
+) -> Result<EntityValue, LibError> {
+    let row = find(facade, ITEM)?
+        .eq("vaultItemId", Value::string(item_id))
+        .one()?
+        .ok_or_else(|| fail(format!("No item {item_id}")))?;
+    if field(&row, "vaultId") != vault_id || field(&row, "bindingKey") != binding {
+        return Err(fail(format!("Item {item_id} is not {binding} of vault {vault_id}")));
+    }
+    let revision = int_field(&row, "revision");
+    if revision != expected {
+        return Err(fail(format!(
+            "{binding} changed since the rotation read it (revision {revision}, not {expected}): another write or rotation \
+             came first (reasonCode itemChanged)"
+        )));
+    }
+    Ok(row)
+}
+
+/// Stages a rotation's new value before its source is changed, with no lease: a new item key wrapped to the vault's
+/// deposit key (checked as [`deposit_item`] checks it), the body sealed under it at the vault's current key version,
+/// kept as a `VaultItemPending` row the server cannot read back. Refused when the item is not at the revision the
+/// rotation started from. The vault's revision moves, so a member removal computed before it is refused. Its pending id.
+pub fn stage_revision(facade: &EntityFacade, staged: &Staged) -> Result<String, LibError> {
+    let _authz = authz_off();
+    let tx = facade.transactions_for(ITEM)?;
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        let mut vault = vault_row(facade, staged.vault_id, true)?;
+        let (public, signer) = accepted_key(facade, &vault)?;
+        let row = item_at(
+            facade,
+            staged.vault_id,
+            staged.item_id,
+            staged.binding,
+            staged.expected_revision,
+        )?;
+        let (item_type, name) = (field(&row, "vaultItemTypeId"), field(&row, "itemName"));
+        let key_version = int_field(&vault, "keyVersion");
+        let item = ItemRef {
+            vault_id: staged.vault_id,
+            item_id: staged.item_id,
+            key_version: u64::try_from(key_version).map_err(|_| fail("a key version out of range"))?,
+            label: Some(moqui_vault::names::ItemLabel {
+                item_type: &item_type,
+                binding: staged.binding,
+                name: &name,
+            }),
+        };
+        let item_key = vault::new_item_key(&mut OsRng);
+        let wrapped =
+            vault::wrap_item_key_to_deposit(&public, &signer, &item_key, item, &mut OsRng).map_err(refused)?;
+        let sealed = vault::seal_item_body(&item_key, item, staged.body, &mut OsRng).map_err(refused)?;
+        let mut tag = [0_u8; 8];
+        moqui_vault::rng::Rng::fill(&mut OsRng, &mut tag);
+        let pending_id = format!("rot-{}", hex(&tag));
+        let mut pending = facade.make_value(ITEM_PENDING)?;
+        pending.set("vaultItemId", Value::string(staged.item_id));
+        pending.set("pendingId", Value::string(&pending_id));
+        pending.set("vaultId", Value::string(staged.vault_id));
+        pending.set("itemKeyWrapEnumId", Value::string("VwDeposit"));
+        pending.set("wrappedItemKey", Value::string(hex(&wrapped)));
+        pending.set("keyVersion", Value::I64(key_version));
+        pending.set("bodyCipher", Value::string(hex(&sealed)));
+        pending.set("vaultItemTypeId", Value::string(&item_type));
+        pending.set("bindingKey", Value::string(staged.binding));
+        pending.set("itemName", Value::string(&name));
+        pending.set("expectedRevision", Value::I64(staged.expected_revision));
+        pending.set("createdDate", now());
+        if let Ok(Some(actor)) = moqui_core::user::current_user_id() {
+            pending.set("createdByUserId", Value::string(actor));
+        }
+        pending.create(facade)?;
+        bump_revision(facade, &mut vault)?;
+        Ok(pending_id)
+    })
+}
+
+/// Makes a staged value the item's next revision, once the source and the instances took it: refused unless the item
+/// is still at the revision the rotation started from and the vault at the key version it was staged at. The revision
+/// before is kept in `VaultItemHistory` with its wrapped key and body as they were (the way back, which a member opens
+/// in their client); the item is wrapped to the deposit key, so a member takes it in before a lease names it again, and
+/// an environment's machine access to it is marked stale (§3.8: its sealed key is of the old item key). The item's
+/// `rotatedDate` is now, the vault's revision moves, and the `VeItemRotated` event is in the same transaction. Its new
+/// revision.
+pub fn promote_revision(
+    facade: &EntityFacade,
+    vault_id: &str,
+    item_id: &str,
+    binding: &str,
+    pending_id: &str,
+) -> Result<i64, LibError> {
+    let _authz = authz_off();
+    let tx = facade.transactions_for(ITEM)?;
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        let mut vault = vault_row(facade, vault_id, true)?;
+        let pending = pending_row(facade, item_id, pending_id)?;
+        let expected = int_field(&pending, "expectedRevision");
+        let mut row = item_at(facade, vault_id, item_id, binding, expected)?;
+        let key_version = int_field(&vault, "keyVersion");
+        if int_field(&pending, "keyVersion") != key_version {
+            return Err(fail(format!(
+                "The vault key of {vault_id} changed during the rotation of {binding}: its new value is not written"
+            )));
+        }
+        let actor = moqui_core::user::current_user_id().ok().flatten();
+        crate::items::keep_history(facade, &row, actor.as_deref())?;
+        let next = expected + 1;
+        for name in ["itemKeyWrapEnumId", "wrappedItemKey", "bodyCipher"] {
+            row.set(name, pending.get(name).cloned().unwrap_or(Value::Null));
+        }
+        row.set("keyVersion", Value::I64(key_version));
+        row.set("itemKeyVersion", Value::I64(key_version));
+        row.set("revision", Value::I64(next));
+        row.set("rotatedDate", now());
+        row.set("lastModifiedDate", now());
+        if let Some(actor) = &actor {
+            row.set("lastModifiedByUserId", Value::string(actor));
+        }
+        row.update(facade)?;
+        pending.delete(facade)?;
+        for granted in find(facade, MACHINE_ACCESS)?
+            .eq("vaultItemId", Value::string(item_id))
+            .list()?
+            .iter()
+        {
+            let mut granted = granted.clone();
+            granted.set("staleDate", now());
+            granted.update(facade)?;
+        }
+        bump_revision(facade, &mut vault)?;
+        events::write(
+            facade,
+            Event {
+                kind: "VeItemRotated",
+                vault_id: Some(vault_id),
+                item_id: Some(item_id),
+                key_version: Some(key_version),
+                actor: Some("server"),
+                detail: Some(format!(
+                    "{binding} rotated at its source: revision {next} deposited by the server, the one before kept in \
+                     its history"
+                )),
+                ..Event::default()
+            },
+        )?;
+        Ok(next)
+    })
+}
+
+/// Drops a staged value: the rotation put the old value back, so nothing holds the new one.
+pub fn drop_pending(facade: &EntityFacade, item_id: &str, pending_id: &str) -> Result<(), LibError> {
+    let _authz = authz_off();
+    pending_row(facade, item_id, pending_id)?.delete(facade)
+}
+
+/// Keeps a staged value when the rotation could not put the old value back at its source, which then holds this one:
+/// a member opens it in their client (list#VaultItemHistory) to recover it. An event, with `why` and no value.
+pub fn keep_pending(facade: &EntityFacade, item_id: &str, pending_id: &str, why: &str) -> Result<(), LibError> {
+    let _authz = authz_off();
+    let tx = facade.transactions_for(ITEM)?;
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        let mut pending = pending_row(facade, item_id, pending_id)?;
+        pending.set("keptDate", now());
+        pending.set("keptReason", Value::string(why.chars().take(250).collect::<String>()));
+        pending.update(facade)?;
+        let vault_id = field(&pending, "vaultId");
+        events::write(
+            facade,
+            Event {
+                kind: "VeItemUpdated",
+                vault_id: Some(&vault_id),
+                item_id: Some(item_id),
+                actor: Some("server"),
+                detail: Some(format!(
+                    "{}: a rotation's new value is kept as pending revision {pending_id}, since its source may hold it: \
+                     open it in your client",
+                    field(&pending, "bindingKey")
+                )),
                 ..Event::default()
             },
         )

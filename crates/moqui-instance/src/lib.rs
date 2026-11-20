@@ -47,6 +47,12 @@
 //!   scrape target, and what the shipped instance alert rules read (gauges and counters).
 //! - [`fleet`]: the fleet screen's rows.
 //! - [`recovery`]: Monitor's `instance` recovery adapter, through the manager's own actions.
+//!
+//! M5 (§6): rotation.
+//!
+//! - [`rotate`]: a managed credential changed at its source, put on each instance that uses it and checked, then
+//!   written as the item's new revision with the one before kept in its history; the old value put back when a step
+//!   fails. Rotation ages ([`rotate::due`]), the job at the policy age, the incident list and a member removal's offer.
 
 use std::collections::BTreeMap;
 
@@ -65,6 +71,7 @@ pub mod plan;
 pub mod provision;
 pub mod reconcile;
 pub mod recovery;
+pub mod rotate;
 pub mod services;
 pub mod ssh;
 
@@ -81,7 +88,10 @@ moqui_core::extension::submit! {
 }
 
 fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
-    services::register(map)
+    // a member's removal from an operational vault offers to rotate its items at their source (§3.9, M5)
+    moqui_vault_server::members::install_rotation_offer(rotate::due::offer);
+    services::register(map)?;
+    rotate::services::register(map)
 }
 
 #[cfg(test)]

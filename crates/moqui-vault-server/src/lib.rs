@@ -64,6 +64,8 @@ moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["vault"],
         register_services,
+        // an item written before rotation ages counts its age from the upgrade (plans/Vault-Instances.md §4.7)
+        after_boot: items::backfill_rotated_dates,
         after_cluster_start: lease::after_cluster_start,
         before_shutdown: lease::before_shutdown,
         ..moqui_core::extension::Extension::EMPTY

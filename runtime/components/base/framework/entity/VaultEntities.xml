@@ -134,6 +134,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="vaultItemTypeId" type="id"><description>Operational only</description></field>
         <field name="bindingKey" type="text-medium"><description>Operational only: AppInstance:&lt;id&gt;:dbPassword</description></field>
         <field name="itemName" type="text-medium"><description>Operational only</description></field>
+        <field name="rotationDays" type="number-integer"><description>Operational only: this binding's rotation age in
+            days, over its type's (VaultItemType.rotationDays); past it the item is due (plans/Vault-Instances.md
+            §4.7)</description></field>
+        <field name="rotatedDate" type="date-time"><description>When the value last changed at its source: set when the item
+            is made or deposited, by a rotation's new revision, and by update#VaultItem when it says rotated; an item's
+            age is from it</description></field>
         <field name="createdDate" type="date-time"/>
         <field name="createdByUserId" type="id"/>
         <field name="lastModifiedDate" type="date-time"/>
@@ -163,6 +169,34 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="changedByUserId" type="id"/>
         <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
         <index name="VAULT_ITEM_HIST_VAULT"><index-field name="vaultId"/></index>
+    </entity>
+
+    <entity entity-name="VaultItemPending" package="moqui.security.vault" use="transactional" cache="never">
+        <description>A rotation's new value of an operational item (plans/Vault-Instances.md §4.7), deposited before the
+            source is changed: its own item key wrapped to the deposit key (VwDeposit) and the item's body with the new
+            value, sealed, so the server cannot read it back. The rotation makes it the item's next revision when the
+            instances took the value, and drops it when the old value was put back. When it could not put the old value
+            back, the row is kept (keptDate, keptReason): the source then holds this value, and a member opens it in
+            their client (list#VaultItemHistory's pendingList) to recover it. A manager that stopped mid-rotation leaves
+            one with no keptDate.</description>
+        <field name="vaultItemId" type="id" is-pk="true"/>
+        <field name="pendingId" type="id" is-pk="true"/>
+        <field name="vaultId" type="id"/>
+        <field name="itemKeyWrapEnumId" type="id"/>
+        <field name="wrappedItemKey" type="text-long"/>
+        <field name="keyVersion" type="number-integer"/>
+        <field name="bodyCipher" type="text-very-long"/>
+        <field name="vaultItemTypeId" type="id"/>
+        <field name="bindingKey" type="text-medium"/>
+        <field name="itemName" type="text-medium"/>
+        <field name="expectedRevision" type="number-integer"><description>The item's revision the rotation started from;
+            it becomes the next only from that one</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="keptDate" type="date-time"/>
+        <field name="keptReason" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.security.vault.VaultItem"/>
+        <index name="VAULT_ITEM_PEND_VAULT"><index-field name="vaultId"/></index>
     </entity>
 
     <entity entity-name="VaultPersonalKey" package="moqui.security.vault" use="transactional" cache="never">
@@ -404,6 +438,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="vaultItemTypeId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
         <field name="sequenceNum" type="number-integer"/>
+        <field name="rotationDays" type="number-integer"><description>The rotation age in days of an operational item of
+            the type, unless its binding sets its own (VaultItem.rotationDays); empty: none (plans/Vault-Instances.md
+            §4.7)</description></field>
         <relationship type="many" related="moqui.security.vault.VaultItemTypeField" short-alias="fields">
             <key-map field-name="vaultItemTypeId"/></relationship>
     </entity>
