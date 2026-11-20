@@ -103,7 +103,7 @@ fn context(approvers: &ApproverSet) -> std::sync::Arc<LinkContext> {
         ..LinkState::default()
     };
     state.pin_approvers(approvers);
-    LinkContext::new(state, None)
+    LinkContext::new(state, None, "fp-prod-1")
 }
 
 #[test]
@@ -206,7 +206,7 @@ fn a_changed_approver_set_is_taken_only_signed_by_a_pinned_approver() {
     // signed by the manager's own key: refused, and the pinned set stays
     let mut forged = set_to_proto(&next);
     forged.signer_public = mallory.verifying_key().as_bytes().to_vec();
-    forged.signature = next.sign("prod-1", &mallory).to_vec();
+    forged.signature = next.sign("prod-1", "fp-prod-1", &mallory).to_vec();
     let reply = run(&fake, &link, command(Body::Approvers(forged)));
     assert!(!reply.ok && reply.error.contains("not an approver"), "{reply:?}");
     // unsigned: refused
@@ -218,7 +218,7 @@ fn a_changed_approver_set_is_taken_only_signed_by_a_pinned_approver() {
     // signed by alice, whom it pinned: taken
     let mut signed = set_to_proto(&next);
     signed.signer_public = alice.verifying_key().as_bytes().to_vec();
-    signed.signature = next.sign("prod-1", &alice).to_vec();
+    signed.signature = next.sign("prod-1", "fp-prod-1", &alice).to_vec();
     let reply = run(&fake, &link, command(Body::Approvers(signed)));
     assert!(reply.ok, "{reply:?}");
     let state = link.snapshot();
@@ -331,4 +331,82 @@ fn manager_urls_take_a_host_and_an_optional_port_over_https_only() {
     assert!(super::check_versions(1, 2, "x").is_ok());
     assert!(super::check_versions(1, 3, "x").is_err());
     assert!(super::check_versions(1, 0, "x").is_err());
+}
+
+#[test]
+fn an_unknown_key_store_is_refused_not_taken_as_the_plain_file() {
+    let setting = |value: &'static str| {
+        move |name: &str| {
+            if name == "manage@key-store" {
+                value.to_string()
+            } else {
+                String::new()
+            }
+        }
+    };
+    assert_eq!(KeyStore::from_settings(&setting("")), Ok(KeyStore::File));
+    assert_eq!(KeyStore::from_settings(&setting("file")), Ok(KeyStore::File));
+    assert!(matches!(
+        KeyStore::from_settings(&setting("systemd-creds")),
+        Ok(KeyStore::SystemdCreds { .. })
+    ));
+    assert!(KeyStore::from_settings(&setting("tpm")).is_err());
+}
+
+#[test]
+fn a_bundle_keeps_only_bootstrap_secrets_and_never_another_crypt_pass() {
+    use moqui_core::seal::{secrets, Init, Keeper, MethodKind, SealConf};
+    let dir = scratch("bundle");
+    let keeper = Keeper::open(&dir.join("db").join("seal.json"), SealConf::with_purpose("dev")).unwrap();
+    let sealed: Values = [(
+        secrets::DATASOURCE_PASSWORD.to_string(),
+        Zeroizing::new("p".to_string()),
+    )]
+    .into_iter()
+    .collect();
+    assert!(super::commands::store_bundle_in(&keeper, None, &sealed)
+        .unwrap_err()
+        .starts_with("sealed"));
+    keeper
+        .init(Init {
+            method: MethodKind::Dev,
+            passphrase: None,
+        })
+        .unwrap();
+    let kept_pass = keeper.bootstrap_secret(secrets::CRYPT_PASS).unwrap().unwrap();
+    let values: Values = [
+        (
+            secrets::DATASOURCE_PASSWORD.to_string(),
+            Zeroizing::new("db-pass".to_string()),
+        ),
+        (
+            secrets::CRYPT_PASS.to_string(),
+            Zeroizing::new("another-pass".to_string()),
+        ),
+        (
+            "webapp-list/webapp[webroot]/session-config@cookie-key".to_string(),
+            Zeroizing::new("not a bootstrap secret".to_string()),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let refused = super::commands::store_bundle_in(&keeper, None, &values).unwrap_err();
+    assert!(
+        refused.contains(secrets::CRYPT_PASS) && refused.contains("cookie-key"),
+        "{refused}"
+    );
+    // the datasource password is kept; the crypt pass is the one there was
+    assert_eq!(
+        keeper
+            .bootstrap_secret(secrets::DATASOURCE_PASSWORD)
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        b"db-pass"
+    );
+    assert_eq!(
+        keeper.bootstrap_secret(secrets::CRYPT_PASS).unwrap().unwrap(),
+        kept_pass
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }

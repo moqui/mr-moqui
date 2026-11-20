@@ -23,8 +23,16 @@
 //! own edge node's passthrough host name when it is behind a firewall (docs/Run-Deploy.md "Managed instances").
 //!
 //! A link's calls: Pair on a pairing connection alone, a few times an hour from one address; on a link connection the
-//! instance's key must be pinned on a row, Hello comes first, and while its last Hello or Status said sealed only
-//! Hello, Status, Bootstrap and Unseal are answered (Unseal "not built" until M6).
+//! instance's key must be pinned on a row (looked up again at its Hello, so a revoke in between holds), Hello comes
+//! first, and while its last Hello or Status said sealed only Hello, Status, Bootstrap and Unseal are answered (Unseal
+//! "not built" until M6).
+//!
+//! **A link from a new address.** Until M6 ties "unsealed" to the transit unseal, the manager's view of the instance's
+//! seal is the instance's own claim, so whoever holds its link key can claim unsealed and be sent a put-secret's value
+//! or a deploy's attestation. So a new link of an instance from another address than its live link's, or than its last
+//! link's within `manage@address-change-wait-seconds` of that link going down, is refused and told to the
+//! administrators, until an operator confirms the move (`confirm#InstanceLinkAddress`) or the wait passes; a pairing
+//! confirms it too. A thief at the same address, or after the wait, is not stopped by this ([`admit_address`]).
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -56,6 +64,12 @@ use crate::tls_pin::{hex, public_key_sha256, Pin, PinVerifier};
 /// The name in the manager's link key certificate.
 const CERT_NAME: &str = "moqui-manager";
 
+/// What a link whose key is not pinned is told.
+const NOT_PAIRED: &str = "this instance's link key is not pinned on the manager, or was revoked: pair again";
+
+/// The most of an event's message that is logged.
+const MAX_EVENT_TEXT: usize = 200;
+
 /// The manager's timings and limits.
 #[derive(Clone, Debug)]
 pub struct AcceptConfig {
@@ -68,6 +82,9 @@ pub struct AcceptConfig {
     /// The Pair calls one address may make in `pair_window`.
     pub pair_attempts: usize,
     pub pair_window: Duration,
+    /// How long after an instance's link went down a link from another address is refused unless confirmed
+    /// (`manage@address-change-wait-seconds`).
+    pub address_wait: Duration,
 }
 
 impl Default for AcceptConfig {
@@ -78,6 +95,7 @@ impl Default for AcceptConfig {
             pairing_lifetime: Duration::from_secs(30),
             pair_attempts: 10,
             pair_window: Duration::from_secs(600),
+            address_wait: Duration::from_secs(300),
         }
     }
 }
@@ -117,7 +135,49 @@ pub struct ManagerServer {
     generation: AtomicU64,
     command_ids: AtomicU64,
     pair_calls: Mutex<HashMap<IpAddr, Vec<Instant>>>,
+    /// Each instance's last link address, and since when it is down (none while it is linked).
+    seen: Mutex<HashMap<String, (IpAddr, Option<Instant>)>>,
+    /// Instances whose next link may come from a new address: an operator confirmed it, or it paired.
+    confirmed: Mutex<std::collections::HashSet<String>>,
+    /// When each instance's refused move was last told to the administrators.
+    alerted: Mutex<HashMap<String, Instant>>,
     shutdown: watch::Receiver<bool>,
+}
+
+/// How often a refused move of one instance is told to the administrators.
+const ALERT_EVERY: Duration = Duration::from_secs(3600);
+
+/// The notification topic of a link refused from a new address.
+pub const ADDRESS_TOPIC: &str = "InstanceLinkAddress";
+
+/// Whether a new link of an instance from `new` is admitted (see the module doc): `live` is the address of its live
+/// link, `last` that of its last link and how long ago it went down. Refused while another address's link is live, or
+/// went down less than `wait` ago, unless `confirmed`.
+pub fn admit_address(
+    live: Option<IpAddr>,
+    last: Option<(IpAddr, Duration)>,
+    new: IpAddr,
+    wait: Duration,
+    confirmed: bool,
+) -> Result<(), String> {
+    if confirmed {
+        return Ok(());
+    }
+    if let Some(live) = live.filter(|live| *live != new) {
+        return Err(format!(
+            "a link of this instance is live from {live}, and this one comes from {new}: an operator confirms a move \
+             (System › Instances)"
+        ));
+    }
+    if let Some((last, since)) = last.filter(|(last, since)| *last != new && *since < wait) {
+        return Err(format!(
+            "this instance's link from {last} went down {} s ago, and this one comes from {new}: an operator \
+             confirms a move (System › Instances), or it is taken after {} s",
+            since.as_secs(),
+            wait.as_secs()
+        ));
+    }
+    Ok(())
 }
 
 impl std::fmt::Debug for ManagerServer {
@@ -161,7 +221,9 @@ pub(crate) fn start(
         return None;
     }
     let file = factory.runtime_dir().join("db").join(super::KEY_FILE);
-    let key = match LinkKey::load_or_create(&file, &KeyStore::from_settings(&super::server_setting), CERT_NAME) {
+    let key = KeyStore::from_settings(&super::server_setting)
+        .and_then(|store| LinkKey::load_or_create(&file, &store, CERT_NAME));
+    let key = match key {
         Ok(key) => key,
         Err(err) => {
             tracing::error!("Manager link: managed instances cannot link here: {err}");
@@ -171,7 +233,11 @@ pub(crate) fn start(
     let link_url = super::server_setting("manage@link-url");
     moqui_instance::link::set_manager(&link_url, key.fingerprint());
     let instance_id = moqui_core::cluster::instance_id(factory).unwrap_or_default();
-    let acceptor = acceptor(factory, &key, &instance_id, AcceptConfig::default(), shutdown);
+    let mut config = AcceptConfig::default();
+    if let Ok(seconds) = super::server_setting("manage@address-change-wait-seconds").parse::<u64>() {
+        config.address_wait = Duration::from_secs(seconds);
+    }
+    let acceptor = acceptor(factory, &key, &instance_id, config, shutdown);
     if acceptor.is_some() {
         tracing::info!(
             "Manager link: taking managed instances' links on the HTTPS listener (link key {}{})",
@@ -224,6 +290,9 @@ pub(crate) fn acceptor(
         generation: AtomicU64::new(0),
         command_ids: AtomicU64::new(0),
         pair_calls: Mutex::new(HashMap::new()),
+        seen: Mutex::new(HashMap::new()),
+        confirmed: Mutex::new(std::collections::HashSet::new()),
+        alerted: Mutex::new(HashMap::new()),
         shutdown,
     });
     *lock(&factory.extension(|_| Kept::default()).0) = Some(Arc::clone(&server));
@@ -278,6 +347,8 @@ struct Conn {
     bundle_key: Vec<u8>,
     generation: u64,
     remote: SocketAddr,
+    /// The key the connection presented: a link's pinned one, a pairing connection's new one.
+    fingerprint: String,
     /// The pairing connection's new key.
     pairing_key: Option<String>,
     close: Mutex<Option<watch::Sender<bool>>>,
@@ -388,6 +459,7 @@ impl ManagerServer {
                     bundle_key: Vec::new(),
                     generation: 0,
                     remote,
+                    fingerprint: fingerprint.clone(),
                     pairing_key: Some(fingerprint),
                     close: Mutex::new(None),
                 });
@@ -402,7 +474,6 @@ impl ManagerServer {
     }
 
     async fn serve_up(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr, fingerprint: String) {
-        const NOT_PAIRED: &str = "this instance's link key is not pinned on the manager, or was revoked: pair again";
         let lookup = fingerprint.clone();
         let linked = self
             .on_pool(move |facade| moqui_instance::link::linked(facade, &lookup))
@@ -432,6 +503,7 @@ impl ManagerServer {
             bundle_key: linked.bundle_key,
             generation,
             remote,
+            fingerprint,
             pairing_key: None,
             close: Mutex::new(Some(close)),
         });
@@ -450,6 +522,9 @@ impl ManagerServer {
             current
         };
         if gone {
+            if let Some(seen) = lock(&self.seen).get_mut(&conn.instance) {
+                seen.1 = Some(Instant::now());
+            }
             let instance = conn.instance.clone();
             let _ = self
                 .on_pool(move |facade| {
@@ -531,12 +606,23 @@ impl ManagerServer {
         }
     }
 
-    /// Register a link that said Hello: it replaces the instance's older one, whose connection closes.
-    fn register(&self, conn: &Conn, status: InstanceStatus) {
+    /// Register a link that said Hello: it replaces the instance's older one, whose connection closes. A link older
+    /// than the one registered is refused.
+    fn register(&self, conn: &Conn, status: InstanceStatus) -> Result<(), Status> {
+        let mut linked = lock(&self.linked);
+        if let Some(live) = linked
+            .get(&conn.instance)
+            .filter(|live| live.generation > conn.generation)
+        {
+            return Err(Status::failed_precondition(format!(
+                "a newer link of this instance is up (generation {})",
+                live.generation
+            )));
+        }
         let Some(close) = lock(&conn.close).take() else {
-            return;
+            return Err(Status::failed_precondition("this link said Hello already"));
         };
-        let replaced = lock(&self.linked).insert(
+        let replaced = linked.insert(
             conn.instance.clone(),
             Linked {
                 generation: conn.generation,
@@ -547,6 +633,8 @@ impl ManagerServer {
                 _close: close,
             },
         );
+        drop(linked);
+        lock(&self.seen).insert(conn.instance.clone(), (conn.remote.ip(), None));
         if let Some(old) = replaced {
             tracing::info!(
                 "Manager link of AppInstance {}: generation {} from {} replaces generation {}",
@@ -554,6 +642,76 @@ impl ManagerServer {
                 conn.generation,
                 conn.remote,
                 old.generation
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether a link of `instance` from `remote` is admitted, by [`admit_address`]; a confirmation is used up.
+    fn admit(&self, instance: &str, remote: SocketAddr) -> Result<(), String> {
+        let live = lock(&self.linked).get(instance).map(|link| link.remote.ip());
+        let last = lock(&self.seen)
+            .get(instance)
+            .and_then(|(ip, down)| down.map(|down| (*ip, down.elapsed())));
+        let confirmed = lock(&self.confirmed).contains(instance);
+        admit_address(live, last, remote.ip(), self.config.address_wait, confirmed)?;
+        lock(&self.confirmed).remove(instance);
+        Ok(())
+    }
+
+    /// Let `instance`'s next link come from a new address: an operator confirmed the move.
+    pub fn confirm_move(&self, instance: &str) {
+        lock(&self.confirmed).insert(instance.to_string());
+        tracing::warn!("Manager link: an operator let AppInstance {instance} link from a new address");
+    }
+
+    /// Forget where `instance` linked from, and let its next link come from anywhere: it paired again.
+    fn repaired(&self, instance: &str) {
+        self.close(instance);
+        lock(&self.seen).remove(instance);
+        lock(&self.confirmed).insert(instance.to_string());
+    }
+
+    /// Tell the administrators that a link of `instance` from `remote` was refused, at most once an hour each; a
+    /// failure is logged.
+    async fn tell_move(&self, instance: &str, remote: SocketAddr, why: &str) {
+        {
+            let mut alerted = lock(&self.alerted);
+            if alerted.get(instance).is_some_and(|at| at.elapsed() < ALERT_EVERY) {
+                return;
+            }
+            alerted.insert(instance.to_string(), Instant::now());
+        }
+        let (instance, remote, why) = (instance.to_string(), remote.ip().to_string(), why.to_string());
+        let told = self
+            .on_pool(move |_| {
+                let mut message = moqui_lib::object::ValueMap::default();
+                for (name, value) in [
+                    ("appInstanceId", &instance),
+                    ("remoteAddress", &remote),
+                    ("reason", &why),
+                ] {
+                    message.insert(name.to_string(), moqui_lib::object::Value::string(value));
+                }
+                let clean = |text: &str| text.replace(['$', '{', '}'], "");
+                moqui_core::notify::NotificationMessage::new()
+                    .topic(ADDRESS_TOPIC)
+                    .user_group_id("ADMIN")
+                    .notification_type("warning")
+                    .message_map(message)
+                    .title(format!(
+                        "Instance {}: a link from a new address {} was refused",
+                        clean(&instance),
+                        clean(&remote)
+                    ))
+                    .send()
+                    .map_err(|err| moqui_lib::error::Error::new(err.message().to_string()))
+            })
+            .await;
+        if let Err(err) = told {
+            tracing::error!(
+                "Manager link: the administrators were not told of a refused move: {}",
+                err.message()
             );
         }
     }
@@ -583,9 +741,16 @@ impl ManagerServer {
             .unwrap_or_default()
     }
 
-    /// Close `instance`'s link (a revoke).
+    /// Close `instance`'s link (a revoke, a pairing again).
     pub fn close(&self, instance: &str) {
         lock(&self.linked).remove(instance);
+    }
+
+    /// Forget `instance`'s link and where it came from (a revoke).
+    pub fn revoked(&self, instance: &str) {
+        self.close(instance);
+        lock(&self.seen).remove(instance);
+        lock(&self.confirmed).remove(instance);
     }
 
     /// Run `body` on `instance` over its link and wait for the answer, up to the command's time. While the instance
@@ -653,6 +818,8 @@ impl Manager for Service {
             .server
             .on_pool(move |facade| moqui_instance::link::pair(facade, &secret, &fingerprint, &bundle_key))
             .await?;
+        // a link of the key it replaces, if one is up, ends now; the new key may link from wherever it is
+        self.server.repaired(&paired.app_instance_id);
         Ok(Response::new(PairReply {
             app_instance_id: paired.app_instance_id,
             environment_id: paired.environment_id,
@@ -665,10 +832,31 @@ impl Manager for Service {
         refuse(Call::Hello, &self.conn)?;
         let status = request.into_inner().status.unwrap_or_default();
         check_versions(LINK_VERSION, status.link_version, "instance").map_err(Status::failed_precondition)?;
+        // the key again: a revoke or a pairing again between this connection's start and its Hello holds
+        let (lookup, instance) = (self.conn.fingerprint.clone(), self.conn.instance.clone());
+        let pinned = self
+            .server
+            .on_pool(move |facade| {
+                Ok(moqui_instance::link::linked(facade, &lookup)?
+                    .is_some_and(|linked| linked.app_instance_id == instance))
+            })
+            .await?;
+        if !pinned {
+            return Err(Status::permission_denied(NOT_PAIRED));
+        }
+        if let Err(why) = self.server.admit(&self.conn.instance, self.conn.remote) {
+            tracing::error!(
+                "Manager link of AppInstance {} from {} refused: {why}",
+                self.conn.instance,
+                self.conn.remote
+            );
+            self.server.tell_move(&self.conn.instance, self.conn.remote, &why).await;
+            return Err(Status::permission_denied(why));
+        }
         self.conn
             .sealed
             .store(status.seal_state != "unsealed", Ordering::Release);
-        self.server.register(&self.conn, status.clone());
+        self.server.register(&self.conn, status.clone())?;
         self.conn.helloed.store(true, Ordering::Release);
         let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
         let seal_state = status.seal_state.clone();
@@ -745,17 +933,21 @@ impl Manager for Service {
     async fn event(&self, request: Request<EventRequest>) -> Result<Response<EventReply>, Status> {
         refuse(Call::Event, &self.conn)?;
         let event = request.into_inner();
-        if !matches!(event.kind.as_str(), "started" | "unsealed" | "failed") {
-            return Err(Status::invalid_argument("an event is started, unsealed or failed"));
+        if !matches!(event.kind.as_str(), "started" | "sealed" | "unsealed" | "failed") {
+            return Err(Status::invalid_argument(
+                "an event is started, sealed, unsealed or failed",
+            ));
         }
+        // the instance's own text: cut, and escaped so it adds no line or control character to the log
+        let message: String = event.message.chars().take(MAX_EVENT_TEXT).collect();
         tracing::info!(
             "Manager link: AppInstance {} {}{}",
             self.conn.instance,
             event.kind,
-            if event.message.is_empty() {
+            if message.is_empty() {
                 String::new()
             } else {
-                format!(": {}", event.message)
+                format!(": {}", message.escape_debug())
             }
         );
         Ok(Response::new(EventReply {}))

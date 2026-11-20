@@ -115,7 +115,7 @@ impl ManageConfig {
         let pin = Some(state.pin.clone())
             .filter(|pin| !pin.is_empty())
             .unwrap_or_else(|| setting("manage@pin"));
-        let key = LinkKey::load_or_create(&db.join(super::KEY_FILE), &KeyStore::from_settings(setting), CERT_NAME)?;
+        let key = LinkKey::load_or_create(&db.join(super::KEY_FILE), &KeyStore::from_settings(setting)?, CERT_NAME)?;
         let mut config = Self::new(&url, &pin, Arc::new(key));
         config.state_file = Some(state_file);
         if state.app_instance_id.is_empty() {
@@ -348,7 +348,7 @@ impl Dialer {
                 message: String::new(),
                 serving: false,
             }),
-            link: LinkContext::new(state, config.state_file.clone()),
+            link: LinkContext::new(state, config.state_file.clone(), config.key.fingerprint()),
             pending: Mutex::new(None),
         });
         let (stop, stopped) = watch::channel(false);
@@ -399,8 +399,19 @@ fn store_pending(shared: &Shared, managed: &dyn Managed) -> bool {
             tracing::info!("Manager link: the bootstrap bundle is kept in the seal");
             true
         }
+        Err(err) if managed.sealed() => {
+            tracing::debug!("Manager link: the bootstrap bundle waits for the unseal: {err}");
+            false
+        }
         Err(err) => {
-            tracing::debug!("Manager link: the bootstrap bundle waits: {err}");
+            // a refusal does not change by waiting: the bundle is dropped and the first start is over, so a boot does
+            // not wait for it again; its secrets are then put by the manager or `moqui operator secret put`
+            tracing::error!("Manager link: the bootstrap bundle was not kept: {err}");
+            *pending = None;
+            drop(pending);
+            if let Err(err) = shared.link.update(|state| state.bootstrap_done = true) {
+                tracing::error!("Manager link: the pairing state was not written: {err}");
+            }
             false
         }
     }
@@ -820,7 +831,7 @@ pub(crate) fn pair_by_code(runtime_dir: &Path, url: &str, pin: &str, code: &str)
     let db = runtime_dir.join("db");
     let key = LinkKey::load_or_create(
         &db.join(super::KEY_FILE),
-        &KeyStore::from_settings(&super::server_setting),
+        &KeyStore::from_settings(&super::server_setting)?,
         CERT_NAME,
     )?;
     let mut config = ManageConfig::new(url, pin, Arc::new(key));

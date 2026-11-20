@@ -31,10 +31,14 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="leaseId"/></conditional-response>
         <default-response url="."/></transition>
     <transition name="instanceDetail"><default-response url="."/></transition>
-    <transition name="makePairingCode">
+    <transition name="makePairingCode" method="post">
         <service-call name="org.moqui.dev.InstanceLinkServices.create#InstancePairingCode" in-map="{appInstanceId:appInstanceId}" out-map="codeOut"/>
         <actions><!-- shown once, after the redirect; only its hash is kept -->
             <script>if (!ec.message.hasError()) { ec.web.sessionAttributes.newInstancePairing = codeOut }</script></actions>
+        <default-response url="."/><error-response url="."/>
+    </transition>
+    <transition name="confirmLinkAddress" method="post">
+        <service-call name="org.moqui.dev.InstanceLinkServices.confirm#InstanceLinkAddress" in-map="{appInstanceId:appInstanceId}"/>
         <default-response url="."/><error-response url="."/>
     </transition>
     <transition name="revokeLink" method="post">
@@ -146,6 +150,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-single name="PairingCode" transition="makePairingCode">
                     <field name="appInstanceId"><default-field><hidden/></default-field></field>
                     <field name="submitButton"><default-field title="Make a pairing code"><submit/></default-field></field>
+                </form-single>
+                <form-single name="ConfirmLinkAddress" transition="confirmLinkAddress">
+                    <field name="appInstanceId"><default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Allow a new address"><submit confirmation="Let the next link of ${appInstanceId} come from another address? A holder of its stolen link key could take its place."/></default-field></field>
                 </form-single>
                 <form-single name="RevokeLink" transition="revokeLink">
                     <field name="appInstanceId"><default-field><hidden/></default-field></field>

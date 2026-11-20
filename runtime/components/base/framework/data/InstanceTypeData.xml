@@ -146,6 +146,10 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.server.instance.InstanceImage instanceImageId="OpenSearch3" instanceKindId="opensearch" imageName="docker.io/opensearchproject/opensearch:3.4.0"/>
 
     <!-- Observes each instance that has a container and writes what its host says; changes nothing (§4.1) -->
+    <!-- A managed instance's link from a new address was refused (the manager link, until M6): told to the administrators -->
+    <moqui.security.user.NotificationTopic topic="InstanceLinkAddress" inboxEnumId="NinUpdates"
+            description="Managed instance: a link from a new address was refused" typeString="warning" showAlert="Y"
+            persistOnSend="Y" receiveNotifications="N" isPrivate="Y" linkTemplate="/qapps/system/Instances/InstanceList"/>
     <moqui.service.job.ServiceJob jobName="reconcile_AppInstances" description="Observe managed instances"
             serviceName="org.moqui.dev.InstanceServices.reconcile#AppInstances" cronExpression="0 0/5 * * * ?" paused="N"/>
 </entity-facade-xml>

@@ -39,18 +39,17 @@ pub enum KeyStore {
 }
 
 impl KeyStore {
-    /// From `manage@key-store` and `seal@systemd-creds-command`, as `setting` reads them.
-    #[must_use]
-    pub fn from_settings(setting: super::Settings<'_>) -> Self {
+    /// From `manage@key-store` and `seal@systemd-creds-command`, as `setting` reads them. A value that is neither
+    /// `file` nor `systemd-creds` is refused, never taken as the plain file.
+    pub fn from_settings(setting: super::Settings<'_>) -> Result<Self, String> {
         match setting("manage@key-store").trim() {
-            "systemd-creds" => Self::SystemdCreds {
+            "systemd-creds" => Ok(Self::SystemdCreds {
                 command: setting("seal@systemd-creds-command").trim().to_string(),
-            },
-            "" | "file" => Self::File,
-            other => {
-                tracing::error!("manage@key-store=\"{other}\" is not file or systemd-creds; the file is used");
-                Self::File
-            }
+            }),
+            "" | "file" => Ok(Self::File),
+            other => Err(format!(
+                "manage@key-store=\"{other}\" is not file or systemd-creds: the manager link is not started"
+            )),
         }
     }
 }

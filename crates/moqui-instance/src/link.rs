@@ -33,6 +33,7 @@ use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
 
 use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::transaction::TransactionAttribute;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
@@ -85,63 +86,83 @@ fn sha256_hex(secret: &str) -> String {
 /// Take a pairing token or code once (see the module doc): the instance whose row holds its hash, in time, pins
 /// `key_fingerprint` (its link key) and `bundle_key`, and the token is cleared. Refused: an unknown, used or expired
 /// secret, a bundle key that is not one, and an instance whose environment is gone.
+///
+/// Once: the row is read for update in a transaction and its hash checked again under that lock, and this process
+/// takes one pairing at a time, so two calls with one token never both pair.
 pub fn pair(facade: &EntityFacade, secret: &str, key_fingerprint: &str, bundle_key: &[u8]) -> Result<Paired, LibError> {
     const UNKNOWN: &str =
         "the pairing token or code is unknown, used or expired: make a new code in System › Instances";
+    static PAIRING: Mutex<()> = Mutex::new(());
     let _authz = authz_off();
     if secret.trim().is_empty() || moqui_vault::hpke::PublicKey::from_bytes(bundle_key).is_err() {
         return Err(fail(UNKNOWN));
     }
     let hash = sha256_hex(secret);
-    let Some(mut row) = find(facade, APP_INSTANCE)?
-        .eq("pairingTokenHash", Value::string(&hash))
-        .one()?
-    else {
-        return Err(fail(UNKNOWN));
-    };
-    // the row was found by its hash; compared again in constant time, so a match is never decided by the database's
-    // comparison alone
-    if !bool::from(field(&row, "pairingTokenHash").as_bytes().ct_eq(hash.as_bytes())) {
-        return Err(fail(UNKNOWN));
-    }
-    let expires = row
-        .get("pairingTokenExpires")
-        .and_then(moqui_core::user::value_millis)
-        .unwrap_or(0);
-    let id = field(&row, "appInstanceId");
-    if expires <= moqui_core::user::now_millis() {
-        // spent either way: an expired token is cleared, so it is refused the same again
-        row.set("pairingTokenHash", Value::Null);
-        row.set("pairingTokenExpires", Value::Null);
-        row.update(facade)?;
-        tracing::warn!("Manager link: an expired pairing token or code for AppInstance {id} was refused");
-        return Err(fail(UNKNOWN));
-    }
-    let environment_id = field(&row, "environmentId");
-    let approvers = approver_set(facade, &environment_id, 1)?;
-    row.set("pairingTokenHash", Value::Null);
-    row.set("pairingTokenExpires", Value::Null);
-    row.set("linkKeyFingerprint", Value::string(key_fingerprint));
-    row.set("linkBundleKey", Value::string(moqui_vault::text::hex(bundle_key)));
-    row.set("linkPairedDate", moqui_core::user::now_value());
-    row.set("linkState", Value::string("paired"));
-    row.set("approverSet", Value::string(approvers_json(&approvers)));
-    row.update(facade)?;
-    tracing::info!("Manager link: AppInstance {id} paired with link key {key_fingerprint}");
-    Ok(Paired {
-        app_instance_id: id,
-        environment_id,
-        approvers,
-    })
+    let _one = lock(&PAIRING);
+    let tx = facade.transactions_for(APP_INSTANCE)?;
+    let taken = tx.run(
+        TransactionAttribute::UseOrBegin,
+        None,
+        || -> Result<Result<Paired, &'static str>, LibError> {
+            let Some(mut row) = find(facade, APP_INSTANCE)?
+                .eq("pairingTokenHash", Value::string(&hash))
+                .for_update(true)
+                .one()?
+            else {
+                return Ok(Err(UNKNOWN));
+            };
+            // the row was found by its hash, under its lock; compared again in constant time, so a match is never decided
+            // by the database's comparison alone, and a token another call took meanwhile is gone from it
+            if !bool::from(field(&row, "pairingTokenHash").as_bytes().ct_eq(hash.as_bytes())) {
+                return Ok(Err(UNKNOWN));
+            }
+            let expires = row
+                .get("pairingTokenExpires")
+                .and_then(moqui_core::user::value_millis)
+                .unwrap_or(0);
+            let id = field(&row, "appInstanceId");
+            row.set("pairingTokenHash", Value::Null);
+            row.set("pairingTokenExpires", Value::Null);
+            if expires <= moqui_core::user::now_millis() {
+                // spent either way: an expired token is cleared, so it is refused the same again
+                row.update(facade)?;
+                tracing::warn!("Manager link: an expired pairing token or code for AppInstance {id} was refused");
+                return Ok(Err(UNKNOWN));
+            }
+            let environment_id = field(&row, "environmentId");
+            let approvers = approver_set(facade, &environment_id, 1)?;
+            if approvers.approvers.is_empty() {
+                // nothing for the instance to check its recovery holders' keys against, and no approver can sign a new
+                // set: it pairs, and pairs again once the environment has approvers with personal keys
+                tracing::warn!(
+                "Manager link: AppInstance {id} pins no approver: its environment {environment_id} names no approver \
+                 group, or none of its members has a personal key; pair it again once one does"
+            );
+            }
+            row.set("linkKeyFingerprint", Value::string(key_fingerprint));
+            row.set("linkBundleKey", Value::string(moqui_vault::text::hex(bundle_key)));
+            row.set("linkPairedDate", moqui_core::user::now_value());
+            row.set("linkState", Value::string("paired"));
+            row.set("approverSet", Value::string(approvers_json(&approvers)));
+            row.update(facade)?;
+            tracing::info!("Manager link: AppInstance {id} paired with link key {key_fingerprint}");
+            Ok(Ok(Paired {
+                app_instance_id: id,
+                environment_id,
+                approvers,
+            }))
+        },
+    )?;
+    taken.map_err(fail)
 }
 
 /// A pairing code for `instance_id`, an instance the manager did not make (§4.4: an existing server being adopted):
 /// shown once, kept as its hash, good for 15 minutes. INSTANCE_ADMIN and the environment's approver group.
 pub fn make_pairing_code(facade: &EntityFacade, instance_id: &str) -> Result<Zeroizing<String>, LibError> {
-    require_instance_admin()?;
-    let _authz = authz_off();
+    // the caller is checked under its own authorization: with it disabled, both checks would pass
     let mut row = instance(facade, instance_id)?;
     check_caller(facade, &row)?;
+    let _authz = authz_off();
     let code = new_credential();
     let expires = moqui_core::user::now_millis() + crate::kinds::PAIRING_TOKEN_MINUTES * 60 * 1000;
     row.set("pairingTokenHash", Value::string(sha256_hex(&code)));
@@ -175,7 +196,8 @@ pub fn instance(facade: &EntityFacade, instance_id: &str) -> Result<EntityValue,
 
 /// The caller may call the manager link of `instance` (§4.4, Authorization): INSTANCE_ADMIN, and when the instance's
 /// environment names an approver group, a member of it; a caller with authorization disabled (the framework's own
-/// call, a job) passes.
+/// call, a job) passes, so a service checks its caller before it turns authorization off (the row reads here turn it
+/// off for themselves).
 pub fn check_caller(facade: &EntityFacade, instance: &EntityValue) -> Result<(), LibError> {
     require_instance_admin()?;
     let environment_id = field(instance, "environmentId");
@@ -290,12 +312,18 @@ pub fn check_approver_update(
 ) -> Result<(), LibError> {
     let row = instance(facade, instance_id)?;
     check_caller(facade, &row)?;
-    set.verify_update(instance_id, &pinned_approvers(&row), signer, signature)
-        .map_err(|err| {
-            fail(format!(
-                "the approver set for AppInstance {instance_id} is refused: {err}"
-            ))
-        })
+    set.verify_update(
+        instance_id,
+        &field(&row, "linkKeyFingerprint"),
+        &pinned_approvers(&row),
+        signer,
+        signature,
+    )
+    .map_err(|err| {
+        fail(format!(
+            "the approver set for AppInstance {instance_id} is refused: {err}"
+        ))
+    })
 }
 
 /// Keep `set` as the approvers `instance_id` pinned, once it took it.
@@ -342,9 +370,12 @@ pub fn note_bootstrap(facade: &EntityFacade, instance_id: &str) -> Result<(), Li
 /// Revoke `instance_id`'s link: its link key is no longer pinned, so a link of it is refused until it pairs again with
 /// a new code. INSTANCE_ADMIN and the environment's group.
 pub fn revoke(facade: &EntityFacade, instance_id: &str) -> Result<(), LibError> {
-    let _authz = authz_off();
     let mut row = instance(facade, instance_id)?;
     check_caller(facade, &row)?;
+    let _authz = authz_off();
+    // a pairing token or code not yet used would pair it again
+    row.set("pairingTokenHash", Value::Null);
+    row.set("pairingTokenExpires", Value::Null);
     row.set("linkKeyFingerprint", Value::Null);
     row.set("linkBundleKey", Value::Null);
     row.set("linkState", Value::string("revoked"));

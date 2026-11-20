@@ -2163,13 +2163,27 @@ every package; the manager's end needs `instances` too). The instance opens no p
   instance pinned is `runtime/db/manage_link.json` (mode 0600, no secret).
 - **Approvers.** At pairing the instance takes and pins the signing keys (the Ed25519 halves of the personal keys) of
   its environment's approver group, version 1; it uses them in M6 to check its recovery holders' keys. A changed set
-  reaches it only signed by an approver it pinned, over the instance, the new version and every key
-  (`update#InstanceApprovers`, `moqui_vault::approvers`); a set the manager signed itself is refused. A manager that is
-  compromised at pairing can give a set of its own choice; one compromised later cannot change the pinned set (§4.9).
+  reaches it only signed by an approver it pinned, over the instance's id and its link key fingerprint (so a signed set
+  does not replay to another manager's instance of the same id), the new version and every key
+  (`update#InstanceApprovers`, `moqui_vault::approvers`); a set the manager signed itself is refused. Any one pinned
+  approver can replace the whole set. An environment with no approver group, or none of whose members has a personal
+  key, pins an empty set, which no one can change: the pairing logs a warning, and the instance pairs again once the
+  environment has approvers. A manager that is compromised at pairing can give a set of its own choice; one compromised
+  later cannot change the pinned set (§4.9).
 - **Sealed.** While the instance is sealed it makes only the sealed calls, and the manager answers no other: Hello and
   its status, the bootstrap bundle on a first start, and unseal (by transit, M6: answered "not built" until then). Once
   unsealed it sends an event (started, unsealed) and opens the stream the manager's commands come down; a seal closes
   that stream, and the manager then answers a status from what the instance last said.
+- **"Unsealed" is the instance's claim, until M6.** The manager knows the seal state only from what the instance says,
+  so whoever holds a stolen link key can claim unsealed and be sent a put-secret's value or a deploy's attestation. Until
+  M6 ties "unsealed" to the transit unseal, the manager limits that: a link of an instance from another address than
+  its live link's, or than its last link's within `manage@address-change-wait-seconds` (300) of that link going down,
+  is refused and told to the administrators (topic `InstanceLinkAddress`), until an operator confirms the move on the
+  instance's page (*Allow a new address*, `confirm#InstanceLinkAddress`) or the wait passes; pairing again confirms it
+  too. A thief at the instance's own address (behind the same NAT), or one that waits out a downed link, is not stopped
+  by this; the instance's key file and revoke are the protection then. M6 must close it: answer the commands that need
+  the instance unsealed only on a link whose unseal the manager itself made (the transit unseal over that link
+  generation, or an approved one), and treat a claim of unsealed without one as sealed.
 - **The bootstrap bundle.** A provision holds a new instance's bootstrap secrets (its database password, as
   `entity-facade/datasource[transactional]@password`) in the manager's memory, never in a row, until the instance takes
   them over its link, HPKE-sealed to the bundle key it pinned, with its id as associated data; a manager restart or the
@@ -2188,11 +2202,18 @@ every package; the manager's end needs `instances` too). The instance opens no p
 - **SSH, the other transport.** An environment's transport is link, SSH or both (`InstanceEnvironment.transportEnumId`;
   both is the link, and SSH while it is down). Over SSH the manager runs `moqui operator status`, `seal` and
   `secret put` (the value on standard input) by the instance's SSH admin shell or its host's sshd (`sshAddress`,
-  `sshUser` on the instance's row), with its host key pinned (`sshHostKey`; an unknown one is refused). The key is the
+  `sshUser` on the instance's row), with its host key pinned (`sshHostKey`, one known_hosts key; an unknown one is
+  refused). ssh reads no conf file (`-F /dev/null`) and no known host but the pinned one, takes the user by `-l` and
+  the host after `--`; a user, host or host key that is not a plain name, host name or address, or one key line, is
+  refused before it runs. The key is the
   `ssh-key` item `AppInstance:<id>:sshKey`, used under a lease (`leaseId`) or the environment's machine access and
   written for the one call to a file of mode 0600 that is removed after. The other commands are the link's.
-- **Revoke** (`revoke#InstanceLink`, the page's Revoke) unpins the instance's link key and closes its link; it pairs again
-  only with a new code.
+- **Revoke** (`revoke#InstanceLink`, the page's Revoke) unpins the instance's link key, clears a pairing token or code not
+  yet used, and closes its link; it pairs again only with a new code. A link whose key was revoked or replaced between
+  its connection and its Hello is refused at the Hello, and pairing again closes the old key's link.
+- **What the bundle keeps.** Only bootstrap secrets, and never a crypt pass other than the one the instance keeps
+  already; each refused one is logged as an error and named, and the first start goes on without it. On an instance
+  with no seal (its root key in memory only) the bundle cannot be kept, said as an error.
 
 The instance's page in System › Instances shows the link: linked or not, its generation, the address it came from, its
 last status, its pinned key, when it paired and took its bundle, and this manager's own key fingerprint. Tests:

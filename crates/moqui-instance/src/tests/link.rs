@@ -210,10 +210,15 @@ fn ssh_runs_only_operator_commands_with_its_key_in_a_file_of_its_own_and_the_val
     let printed = run(&stub.display().to_string(), &target, b"PRIVATE KEY", &put).unwrap();
     assert_eq!(printed.trim(), "ok");
     let args = std::fs::read_to_string(dir.join("args")).unwrap();
-    assert!(
-        args.contains("StrictHostKeyChecking=yes") && args.contains("moqui@box.example"),
-        "{args}"
-    );
+    // no conf file and no known host but the pinned one; the user by -l, and the host after `--`
+    for expected in [
+        "-F /dev/null",
+        "StrictHostKeyChecking=yes",
+        "GlobalKnownHostsFile=/dev/null",
+        "-l moqui -- box.example 'moqui'",
+    ] {
+        assert!(args.contains(expected), "{expected}: {args}");
+    }
     assert!(!args.contains("the value") && !args.contains("PRIVATE KEY"), "{args}");
     assert!(std::fs::read_to_string(dir.join("key"))
         .unwrap()
@@ -224,5 +229,136 @@ fn ssh_runs_only_operator_commands_with_its_key_in_a_file_of_its_own_and_the_val
         !std::path::Path::new(key_path.trim()).exists(),
         "the key file outlived the call"
     );
+
+    // what ssh would read as an option, or what would add a line to the pinned known_hosts file, is refused before ssh
+    // runs
+    let calls = std::fs::read_to_string(dir.join("args")).unwrap();
+    for (host, user, key) in [
+        ("-oProxyCommand=touch /tmp/x", "moqui", "ssh-ed25519 AAAA"),
+        ("box.example", "-oProxyCommand=x", "ssh-ed25519 AAAA"),
+        ("box example", "moqui", "ssh-ed25519 AAAA"),
+        ("box.example\nother", "moqui", "ssh-ed25519 AAAA"),
+        ("box.example", "mo qui", "ssh-ed25519 AAAA"),
+        (
+            "box.example",
+            "moqui",
+            "ssh-ed25519 AAAA\nevil.example ssh-ed25519 BBBB",
+        ),
+        ("box.example", "moqui", "ssh-ed25519 AAAA comment"),
+        ("box.example", "moqui", "not-a-key AAAA"),
+    ] {
+        let bad = SshTarget {
+            host: host.to_string(),
+            port: 22,
+            user: user.to_string(),
+            host_key: key.to_string(),
+        };
+        assert!(
+            run(&stub.display().to_string(), &bad, b"K", &put).is_err(),
+            "{host:?} {user:?} {key:?}"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.join("args")).unwrap(),
+        calls,
+        "ssh ran for a refused target"
+    );
+    let ip = SshTarget {
+        host: "2001:db8::1".to_string(),
+        port: 22,
+        user: "moqui".to_string(),
+        host_key: "ecdsa-sha2-nistp256 AAAA+/=".to_string(),
+    };
+    assert!(ip.check().is_ok());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn two_pairings_with_one_token_at_once_pair_once() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let (environment, _) = rows(&facade, "race");
+    instance(&facade, "race-a", &environment, "token-race", 60_000);
+    let factory = std::sync::Arc::clone(ctx.factory());
+    let start = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let tries: Vec<_> = (0..4)
+        .map(|n| {
+            let (factory, facade, start) = (
+                std::sync::Arc::clone(&factory),
+                facade.clone(),
+                std::sync::Arc::clone(&start),
+            );
+            std::thread::spawn(move || {
+                let context = factory.new_context();
+                let _entered = context.enter();
+                start.wait();
+                sys(|| link::pair(&facade, "token-race", &format!("fp-race-{n}"), &[7; 32])).is_ok()
+            })
+        })
+        .collect();
+    let paired = tries
+        .into_iter()
+        .map(|try_| try_.join().unwrap())
+        .filter(|paired| *paired)
+        .count()
+        == 1;
+    assert!(paired, "one token paired more than once, or never");
+    assert_eq!(
+        field_of(&facade, INSTANCE, "appInstanceId", "race-a", "pairingTokenHash"),
+        ""
+    );
+}
+
+#[test]
+fn a_caller_outside_instance_admin_or_the_environment_group_is_refused() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let (environment, _) = rows(&facade, "authz");
+    instance(&facade, "authz-a", &environment, "unused-authz", 60_000);
+    // an INSTANCE_ADMIN who is not in the environment's approver group, and a user with neither
+    create(
+        &facade,
+        "moqui.security.UserAccount",
+        json!({ "userId": "authz-admin", "username": "authz-admin" }),
+    );
+    create(
+        &facade,
+        "moqui.security.UserGroup",
+        json!({ "userGroupId": "IT_AUTHZ_ADMINS" }),
+    );
+    create(
+        &facade,
+        "moqui.security.UserGroupMember",
+        json!({ "userGroupId": "IT_AUTHZ_ADMINS", "userId": "authz-admin", "fromDate": 0 }),
+    );
+    create(
+        &facade,
+        "moqui.security.UserGroupPermission",
+        json!({ "userGroupId": "IT_AUTHZ_ADMINS", "userPermissionId": "INSTANCE_ADMIN", "fromDate": 0 }),
+    );
+    create(
+        &facade,
+        "moqui.security.UserAccount",
+        json!({ "userId": "authz-none", "username": "authz-none" }),
+    );
+    for user in ["authz-admin", "authz-none"] {
+        login(user);
+        let row = link::instance(&facade, "authz-a").unwrap();
+        assert!(link::check_caller(&facade, &row).is_err(), "{user} passed");
+        assert!(
+            link::make_pairing_code(&facade, "authz-a").is_err(),
+            "{user} made a code"
+        );
+        assert!(link::revoke(&facade, "authz-a").is_err(), "{user} revoked");
+        let set = moqui_vault::approvers::ApproverSet {
+            version: 2,
+            approvers: Vec::new(),
+        };
+        assert!(link::check_approver_update(&facade, "authz-a", &set, &[0; 32], &[0; 64]).is_err());
+        sys(|| moqui_core::user::logout_local().unwrap());
+    }
+    assert_eq!(
+        field_of(&facade, INSTANCE, "appInstanceId", "authz-a", "pairingTokenHash"),
+        hash("unused-authz")
+    );
 }

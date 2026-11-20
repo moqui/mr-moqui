@@ -237,8 +237,14 @@ plans/Vault-Instances.md §4.4.
     generation and closes the one before. Pair is refused on a link connection.
   - What a holder of a pinned key (a stolen instance disk) can do: report a status and events for that instance, take
     its bootstrap bundle if one is still held (the manager holds it in memory only, until taken, a restart or 15
-    minutes), and answer the manager's commands. Under the plan's automatic unseal policy (M6) it would get the root
-    key: the limit of the link key the plan names (§4.4). Revoke (`revoke#InstanceLink`) unpins it and closes the link.
+    minutes), and answer the manager's commands. Until M6 the manager's view of "unsealed" is the instance's claim, so
+    such a holder can claim unsealed and be sent put-secret values and deploy attestations; a link of the instance from
+    a new address is refused while its link is live or within `manage@address-change-wait-seconds` of it going down,
+    and told to the administrators, unless an operator confirms (`confirm#InstanceLinkAddress`). A holder at the same
+    address, or after the wait, is not stopped. Under the plan's automatic unseal policy (M6) it would get the root key:
+    the limit of the link key the plan names (§4.4). Revoke (`revoke#InstanceLink`) unpins it, clears an unused pairing
+    code, and closes the link; the key is looked up again at each Hello. A pairing takes the row's token under a row
+    lock in a transaction, so one token pairs once.
 - **On the instance** the link opens no listener. It pins the manager's key from `manage@pin` (a provision's setting, or
   what a code is shown with); a manager that presents another key is refused before any secret is sent. The manager's
   commands run as the link's one identity and only these: status, seal, restart, drain, undrain, put-secret (the
@@ -250,8 +256,9 @@ plans/Vault-Instances.md §4.4.
 - **What a compromised manager can do** (§4.9): every command above on every instance it manages, including put-secret
   and seal; it cannot change a pinned approver set without an approver's signature, nor read a value an instance does
   not send it. A manager compromised at pairing chooses the approver set the instance pins.
-- **SSH transport**: the manager runs `ssh` (`manage@ssh-command`) with `StrictHostKeyChecking=yes` against the host key
-  pinned on the row, the key (an `ssh-key` vault item under a lease or machine access) in a file of mode 0600 in a
+- **SSH transport**: the manager runs `ssh` (`manage@ssh-command`) with `-F /dev/null`, `GlobalKnownHostsFile=/dev/null`
+  and `StrictHostKeyChecking=yes` against the host key pinned on the row (one key line, checked), the user by `-l` and
+  the host after `--` (each checked to be a plain name, host name or address, so none is read as an option), the key (an `ssh-key` vault item under a lease or machine access) in a file of mode 0600 in a
   directory of its own, removed after; the remote command is `moqui operator` with single-quoted words (a secret name
   with a quote, space or control character is refused), and a secret's value goes on standard input.
 

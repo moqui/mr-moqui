@@ -22,6 +22,7 @@ fn conn(pairing: bool, helloed: bool, sealed: bool) -> Conn {
         bundle_key: Vec::new(),
         generation: 1,
         remote: "127.0.0.1:1".parse().unwrap(),
+        fingerprint: "fp".to_string(),
         pairing_key: pairing.then(|| "fp".to_string()),
         close: Mutex::new(None),
     }
@@ -66,4 +67,21 @@ fn the_manager_answers_a_sealed_instance_only_its_sealed_calls() {
             Call::Serve
         ]
     );
+}
+
+#[test]
+fn a_link_from_a_new_address_waits_for_an_operator_or_the_wait() {
+    let (old, new): (IpAddr, IpAddr) = ("10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap());
+    let wait = Duration::from_secs(300);
+    // first seen, or from the same address: taken
+    assert!(admit_address(None, None, new, wait, false).is_ok());
+    assert!(admit_address(Some(new), None, new, wait, false).is_ok());
+    assert!(admit_address(None, Some((new, Duration::from_secs(1))), new, wait, false).is_ok());
+    // another address while its link is live, or soon after it went down: refused
+    let live = admit_address(Some(old), None, new, wait, false).unwrap_err();
+    assert!(live.contains("live from 10.0.0.1"), "{live}");
+    assert!(admit_address(None, Some((old, Duration::from_secs(10))), new, wait, false).is_err());
+    // after the wait, or once an operator confirmed (or it paired): taken
+    assert!(admit_address(None, Some((old, Duration::from_secs(301))), new, wait, false).is_ok());
+    assert!(admit_address(Some(old), None, new, wait, true).is_ok());
 }

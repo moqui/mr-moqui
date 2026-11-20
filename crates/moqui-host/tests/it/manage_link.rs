@@ -98,6 +98,18 @@ fn data(token_hash: &str, approver_key: &str) -> String {
         r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="ML_APPROVER" username="ml.approver"/>
     <moqui.security.UserGroup userGroupId="ML_APPROVERS"/>
+    <moqui.security.UserGroupPermission userGroupId="ML_APPROVERS" userPermissionId="INSTANCE_ADMIN" fromDate="2020-01-01 00:00:00"/>
+    <moqui.security.UserAccount userId="ML_ADMIN" username="ml.admin"/>
+    <moqui.security.UserGroup userGroupId="ML_ADMINS"/>
+    <moqui.security.UserGroupMember userGroupId="ML_ADMINS" userId="ML_ADMIN" fromDate="2020-01-01 00:00:00"/>
+    <moqui.security.UserGroupPermission userGroupId="ML_ADMINS" userPermissionId="INSTANCE_ADMIN" fromDate="2020-01-01 00:00:00"/>
+    <moqui.security.UserAccount userId="ML_NOBODY" username="ml.nobody"/>
+    <!-- the test lets every user call the services, so what refuses a caller is each service's own check -->
+    <moqui.security.ArtifactGroup artifactGroupId="ML_LINK_SERVICES"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="ML_LINK_SERVICES" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"
+            nameIsPattern="Y" artifactName="org\.moqui\.dev\.InstanceLinkServices\..*"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="ML_LINK_SERVICES_ALL" userGroupId="ALL_USERS"
+            artifactGroupId="ML_LINK_SERVICES" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     <moqui.security.UserGroupMember userGroupId="ML_APPROVERS" userId="ML_APPROVER" fromDate="2020-01-01 00:00:00"/>
     <moqui.security.vault.VaultPersonalKey personalKeyId="ML_PK" userId="ML_APPROVER" encryptPublic="00"
             verifyPublic="{approver_key}" statusId="VpkActive"/>
@@ -127,6 +139,36 @@ fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTr
     let _entered = context.enter();
     moqui_core::user::internal_login_user("john.doe").unwrap();
     let _authz = context.disable_authz();
+    let parameters: BTreeMap<String, Value> = parameters
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
+        .collect();
+    let out =
+        moqui_core::service::sync(&format!("{SERVICES}.{verb_noun}"), &parameters).map_err(|err| err.to_string())?;
+    let errors = moqui_core::context::ExecutionContext::with_current(|ec| {
+        let text = ec.message().errors().join("\n");
+        ec.message().clear_errors();
+        text
+    })
+    .unwrap_or_default();
+    if errors.is_empty() {
+        Ok(out)
+    } else {
+        Err(errors)
+    }
+}
+
+/// A service of InstanceLinkServices on the manager as `user`, under that user's own authorization.
+fn call_as(
+    gate: &Gate,
+    user: &str,
+    verb_noun: &str,
+    parameters: &[(&str, &str)],
+) -> Result<BTreeMap<String, Value>, String> {
+    let factory = gate.server.factory();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user(user).unwrap();
     let parameters: BTreeMap<String, Value> = parameters
         .iter()
         .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
@@ -403,6 +445,45 @@ fn an_instance_pairs_once_links_sealed_then_unsealed_and_a_revoke_cuts_it() {
             "sealState",
         ) == "sealed"
     });
+
+    // each manager service checks its caller under the caller's own authorization: INSTANCE_ADMIN outside the
+    // environment's approver group and a user with neither are refused; a member of the group with it is not
+    for user in ["ml.admin", "ml.nobody"] {
+        for (service, parameters) in [
+            ("get#InstanceLink", vec![("appInstanceId", "ML_APP")]),
+            (
+                "call#InstanceCommand",
+                vec![("appInstanceId", "ML_APP"), ("command", "status")],
+            ),
+            ("create#InstancePairingCode", vec![("appInstanceId", "ML_APP")]),
+            (
+                "update#InstanceApprovers",
+                vec![
+                    ("appInstanceId", "ML_APP"),
+                    ("version", "2"),
+                    ("signerPublic", "00"),
+                    ("signature", "00"),
+                ],
+            ),
+            ("revoke#InstanceLink", vec![("appInstanceId", "ML_APP")]),
+        ] {
+            let refused = call_as(&gate, user, service, &parameters).unwrap_err();
+            assert!(
+                refused.contains("INSTANCE_ADMIN") || refused.contains("notEnvironmentMember"),
+                "{user} was not refused by the service's own check of {service}: {refused}"
+            );
+        }
+    }
+    let allowed = call_as(&gate, "ml.approver", "get#InstanceLink", &[("appInstanceId", "ML_APP")]);
+    assert!(
+        allowed.is_ok(),
+        "a member of the approver group with INSTANCE_ADMIN was refused: {allowed:?}"
+    );
+    assert_eq!(
+        dialer.status().phase,
+        LinkPhase::Linked,
+        "a refused revoke cut the link"
+    );
 
     // a revoke cuts the link, and the key is refused after
     call(&gate, "revoke#InstanceLink", &[("appInstanceId", "ML_APP")]).unwrap();

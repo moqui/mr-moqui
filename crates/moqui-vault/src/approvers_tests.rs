@@ -39,42 +39,59 @@ fn a_new_set_signed_by_a_pinned_approver_is_taken_and_any_other_is_refused() {
     let (alice, bob, mallory) = (key(1), key(2), key(3));
     let pinned = set(1, &[("alice", &alice)]);
     let next = set(2, &[("alice", &alice), ("bob", &bob)]);
-    let signature = next.sign("prod-1", &alice);
-    next.verify_update("prod-1", &pinned, alice.verifying_key().as_bytes(), &signature)
+    let signature = next.sign("prod-1", "fp-1", &alice);
+    next.verify_update("prod-1", "fp-1", &pinned, alice.verifying_key().as_bytes(), &signature)
         .unwrap();
     // the order the approvers are listed in does not change what is signed
     let reordered = set(2, &[("bob", &bob), ("alice", &alice)]);
     reordered
-        .verify_update("prod-1", &pinned, alice.verifying_key().as_bytes(), &signature)
+        .verify_update("prod-1", "fp-1", &pinned, alice.verifying_key().as_bytes(), &signature)
         .unwrap();
 
     // a signer the instance did not pin (the manager's own key)
-    let forged = next.sign("prod-1", &mallory);
+    let forged = next.sign("prod-1", "fp-1", &mallory);
     assert_eq!(
-        next.verify_update("prod-1", &pinned, mallory.verifying_key().as_bytes(), &forged),
+        next.verify_update("prod-1", "fp-1", &pinned, mallory.verifying_key().as_bytes(), &forged),
         Err(Error::Refused("the signer is not an approver this instance pinned"))
     );
     // a key put in after the approver signed
     let swapped = set(2, &[("alice", &alice), ("bob", &mallory)]);
     assert_eq!(
-        swapped.verify_update("prod-1", &pinned, alice.verifying_key().as_bytes(), &signature),
+        swapped.verify_update("prod-1", "fp-1", &pinned, alice.verifying_key().as_bytes(), &signature),
+        Err(Error::Signature)
+    );
+    // another manager's instance of the same id (another link key)
+    assert_eq!(
+        next.verify_update("prod-1", "fp-2", &pinned, alice.verifying_key().as_bytes(), &signature),
         Err(Error::Signature)
     );
     // another instance's set, an old version, and no approver at all
     assert_eq!(
-        next.verify_update("prod-2", &pinned, alice.verifying_key().as_bytes(), &signature),
+        next.verify_update("prod-2", "fp-1", &pinned, alice.verifying_key().as_bytes(), &signature),
         Err(Error::Signature)
     );
     let old = set(1, &[("bob", &bob)]);
-    let old_signature = old.sign("prod-1", &alice);
+    let old_signature = old.sign("prod-1", "fp-1", &alice);
     assert!(matches!(
-        old.verify_update("prod-1", &pinned, alice.verifying_key().as_bytes(), &old_signature),
+        old.verify_update(
+            "prod-1",
+            "fp-1",
+            &pinned,
+            alice.verifying_key().as_bytes(),
+            &old_signature
+        ),
         Err(Error::Refused(_))
     ));
     let empty = set(3, &[]);
-    let empty_signature = empty.sign("prod-1", &alice);
+    let empty_signature = empty.sign("prod-1", "fp-1", &alice);
     assert!(matches!(
-        empty.verify_update("prod-1", &pinned, alice.verifying_key().as_bytes(), &empty_signature),
+        empty.verify_update(
+            "prod-1",
+            "fp-1",
+            &pinned,
+            alice.verifying_key().as_bytes(),
+            &empty_signature
+        ),
         Err(Error::Refused(_))
     ));
 }

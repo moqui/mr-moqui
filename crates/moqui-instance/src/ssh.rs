@@ -111,14 +111,55 @@ impl SshTarget {
                 "AppInstance {id} has no sshAddress or no pinned sshHostKey: SSH needs both (an unknown host key is refused)"
             )));
         }
-        Ok(Self {
+        let target = Self {
             host,
             port,
             user: Some(field(row, "sshUser"))
                 .filter(|user| !user.is_empty())
                 .unwrap_or_else(|| "moqui".to_string()),
             host_key,
-        })
+        };
+        target
+            .check()
+            .map_err(|err| fail(format!("AppInstance {id}: {}", err.message())))?;
+        Ok(target)
+    }
+
+    /// Refuses what ssh would read as an option or what would add a line to the pinned known_hosts file: a user that
+    /// is not a plain name, a host that is not a host name or an IP address, a host key that is not one line of a key
+    /// type and its base64.
+    pub fn check(&self) -> Result<(), LibError> {
+        let plain = |text: &str, extra: &str| {
+            !text.is_empty()
+                && !text.starts_with(['-', '.'])
+                && text.chars().all(|ch| ch.is_ascii_alphanumeric() || extra.contains(ch))
+        };
+        if !plain(&self.user, "._-") || self.user.len() > 64 {
+            return Err(fail(format!("the SSH user {:?} is not a user name", self.user)));
+        }
+        let host_name = plain(&self.host, ".-") && self.host.len() <= 253;
+        if !host_name && self.host.parse::<std::net::IpAddr>().is_err() {
+            return Err(fail(format!(
+                "the SSH host {:?} is not a host name or an IP address",
+                self.host
+            )));
+        }
+        let words: Vec<&str> = self.host_key.split(' ').collect();
+        let key_type = |text: &str| {
+            text.starts_with("ssh-")
+                || text.starts_with("ecdsa-sha2-")
+                || text.starts_with("sk-ssh-")
+                || text.starts_with("sk-ecdsa-")
+        };
+        let base64 =
+            |text: &str| !text.is_empty() && text.chars().all(|ch| ch.is_ascii_alphanumeric() || "+/=".contains(ch));
+        let one_key = matches!(words.as_slice(), [kind, key] if key_type(kind) && plain(kind, "-@.") && base64(key));
+        if !one_key {
+            return Err(fail(
+                "the pinned SSH host key is not one known_hosts key (its type and base64, nothing else)",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -143,6 +184,7 @@ fn private_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, LibErro
 /// Run `command` on `target` with `program` (`ssh`, or a test's) and the private key `key` (OpenSSH format): its
 /// standard output. The key and the pinned host key are files of a directory of this call's alone, removed after.
 pub fn run(program: &str, target: &SshTarget, key: &[u8], command: &SshCommand) -> Result<String, LibError> {
+    target.check()?;
     let remote = remote_command(command)?;
     let mut nonce = [0_u8; 8];
     moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut nonce);
@@ -164,8 +206,11 @@ pub fn run(program: &str, target: &SshTarget, key: &[u8], command: &SshCommand) 
             format!("[{}]:{}", target.host, target.port)
         };
         let known = private_file(&dir, "known_hosts", format!("{host} {}\n", target.host_key).as_bytes())?;
+        // no conf file of the user's or the system's, no known host but the pinned one, the user by -l, and the
+        // destination after `--`, so nothing in a row is read as an option
         let mut child = Command::new(program)
             .arg("-T")
+            .args(["-F", "/dev/null"])
             .args([
                 "-o",
                 "BatchMode=yes",
@@ -173,6 +218,8 @@ pub fn run(program: &str, target: &SshTarget, key: &[u8], command: &SshCommand) 
                 "StrictHostKeyChecking=yes",
                 "-o",
                 "IdentitiesOnly=yes",
+                "-o",
+                "GlobalKnownHostsFile=/dev/null",
             ])
             .arg("-o")
             .arg(format!("UserKnownHostsFile={}", known.display()))
@@ -180,8 +227,10 @@ pub fn run(program: &str, target: &SshTarget, key: &[u8], command: &SshCommand) 
             .arg(&key_file)
             .arg("-p")
             .arg(target.port.to_string())
-            .arg(format!("{}@{}", target.user, target.host))
+            .arg("-l")
+            .arg(&target.user)
             .arg("--")
+            .arg(&target.host)
             .arg(&remote)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

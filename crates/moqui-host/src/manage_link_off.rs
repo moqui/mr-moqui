@@ -99,6 +99,7 @@ pub(crate) mod services {
         moqui_core::rust_service!(map, call_instance_command)?;
         moqui_core::rust_service!(map, update_instance_approvers)?;
         moqui_core::rust_service!(map, revoke_instance_link)?;
+        moqui_core::rust_service!(map, confirm_instance_link_address)?;
         moqui_core::rust_service!(map, pair_manager)?;
         moqui_core::rust_service!(map, get_manager_link)?;
         Ok(())
@@ -125,6 +126,9 @@ pub(crate) mod services {
         not_built()
     }
     fn revoke_instance_link(_params: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
+    fn confirm_instance_link_address(_params: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
         not_built()
     }
     fn pair_manager(_params: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {

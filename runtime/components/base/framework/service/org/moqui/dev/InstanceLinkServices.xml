@@ -73,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="appInstanceId" required="true"/>
             <parameter name="version" required="true"/>
-            <parameter name="approverList" type="List" required="true"/>
+            <parameter name="approverList" type="List"><description>Required; checked after the caller</description></parameter>
             <parameter name="signerPublic" required="true"/>
             <parameter name="signature" required="true"/>
         </in-parameters>
@@ -83,6 +83,14 @@ along with this software (see the LICENSE.md file). If not, see
             allow-remote="false" transaction="ignore">
         <description>The instance's link key is no longer pinned and its link closes; it links again only after pairing
             with a new code.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+    </service>
+
+    <service verb="confirm" noun="InstanceLinkAddress" type="rust"
+            location="moqui_host::manage_link::services::confirm_instance_link_address" allow-remote="false" transaction="ignore">
+        <description>Let the instance's next link come from a new address. Until M6 ties "unsealed" to the transit
+            unseal, a link from another address than its live or recent one is refused and told to the administrators,
+            since a holder of a stolen link key could claim the instance unsealed.</description>
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
     </service>
 

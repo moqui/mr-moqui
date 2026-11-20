@@ -54,13 +54,16 @@ pub trait Managed: Send + Sync + 'static {
 pub(crate) struct LinkContext {
     pub state: Mutex<LinkState>,
     pub file: Option<PathBuf>,
+    /// This instance's link key fingerprint, which an approver set is signed over with its id.
+    pub link_key: String,
 }
 
 impl LinkContext {
-    pub(crate) fn new(state: LinkState, file: Option<PathBuf>) -> Arc<Self> {
+    pub(crate) fn new(state: LinkState, file: Option<PathBuf>, link_key: &str) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(state),
             file,
+            link_key: link_key.to_string(),
         })
     }
 
@@ -149,6 +152,7 @@ fn take_approvers(link: &LinkContext, set: &super::proto::ApproverSet) -> Result
     }
     new.verify_update(
         &state.app_instance_id,
+        &link.link_key,
         &state.approver_set(),
         &set.signer_public,
         &set.signature,
@@ -344,23 +348,47 @@ impl Managed for ServerManaged {
     }
 }
 
-/// Keep a bundle's secrets with the seal's API: the bootstrap ones in `seal.json`, any other as a SecretValue once the
-/// database is open. Each is kept or its failure named; one that fails does not stop the rest.
+/// Keep a bundle's secrets with the seal's bootstrap API in `seal.json`: only bootstrap secrets (what the boot needs
+/// before its database opens), and never a crypt pass other than one kept already (as `moqui operator secret put`
+/// refuses one without force). Each is kept or its refusal named; one that fails does not stop the rest.
 pub(crate) fn store_bundle_in(
     keeper: &moqui_core::seal::Keeper,
     facade: Option<&moqui_core::entity::EntityFacade>,
     values: &Values,
 ) -> Result<(), String> {
+    use moqui_core::seal::secrets;
     if !keeper.is_unsealed() {
         return Err("sealed: the bundle is kept once the instance is unsealed".to_string());
     }
+    if keeper.is_ephemeral() {
+        let message = "this server has no seal (its root key is in memory only): the bootstrap bundle cannot be kept; \
+                       run `moqui operator init`";
+        tracing::error!("Manager link: {message}");
+        return Err(message.to_string());
+    }
     let mut failed = Vec::new();
     for (name, value) in values {
-        match moqui_core::seal::secrets::write_to(keeper, facade, name, value) {
+        let name = secrets::canonical(name);
+        let kept = if !secrets::is_bootstrap(&name) {
+            Err(format!(
+                "{name} is not a bootstrap secret, which is all a bundle carries"
+            ))
+        } else if name == secrets::CRYPT_PASS || name == secrets::CRYPT_PASS_OLD {
+            match keeper.bootstrap_secret(&name) {
+                Ok(Some(old)) if old.as_slice() != value.as_bytes() => Err(format!(
+                    "{name} is kept already with another value, which a bundle does not replace"
+                )),
+                Ok(_) => secrets::write_to(keeper, facade, &name, value).map_err(|err| err.to_string()),
+                Err(err) => Err(err.to_string()),
+            }
+        } else {
+            secrets::write_to(keeper, facade, &name, value).map_err(|err| err.to_string())
+        };
+        match kept {
             Ok(()) => tracing::info!("Manager link: kept the bootstrap secret {name}"),
             Err(err) => {
                 tracing::error!("Manager link: the bootstrap secret {name} was not kept: {err}");
-                failed.push(name.clone());
+                failed.push(name);
             }
         }
     }

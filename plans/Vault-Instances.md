@@ -506,6 +506,12 @@ The user's answer: a link like the edge link, with SSH as a fallback, or as the 
 - **The link key on the instance** must work while the instance is sealed, so it cannot be under the root key. It sits
   in `runtime/` with mode 0600, or in `systemd-creds` on a host with a TPM. With it, the instance can ask the manager
   only for what a sealed instance may ask ([§4.5](#45-sealed-start-of-a-managed-instance)).
+- **"Unsealed" before M6.** Until M6 ties it to the transit unseal, the manager knows an instance's seal state only
+  from the instance's own claim, so a holder of its link key can claim unsealed and be sent a put-secret's value or a
+  deploy's attestation. M2 refuses, and tells the administrators of, a link of the instance from another address than
+  its live or recently down link's unless an operator confirms; a holder at the same address, or after the wait, is not
+  stopped. M6 must answer the commands that need an unsealed instance only on a link generation whose unseal the
+  manager made (by transit, or approved), and take a claim of unsealed without one as sealed.
 - **The limit of that key.** Without a TPM it is a usable key on disk, an exception to Sealed-Secrets' goal that the
   plan names. Under the automatic unseal policy, a stolen disk with the link key and `seal.json` gets the root key from
   the manager until someone revokes the instance. The manager alerts on an unseal from an address the instance has not

@@ -14,8 +14,10 @@
 
 //! A managed instance's approvers (plans/Vault-Instances.md §4.4): the signing keys of its environment's approvers,
 //! which the instance pins at pairing and uses to check its recovery holders' keys (§4.5). A changed set reaches the
-//! instance only signed by an approver of the set it has pinned, over the instance, the new version and every key of
-//! the new set, so a manager cannot put a key of its own in the set after pairing (§4.9).
+//! instance only signed by an approver of the set it has pinned, over the instance (its id and the fingerprint of its
+//! link key, so a set signed for one manager's instance does not replay to another manager's instance of the same id),
+//! the new version and every key of the new set, so a manager cannot put a key of its own in the set after pairing
+//! (§4.9). Any one pinned approver can replace the whole set.
 
 use crate::sign::{Statement, VerifyingKey};
 use crate::Error;
@@ -52,9 +54,14 @@ impl ApproverSet {
             .any(|approver| approver.verify_public.as_slice() == key)
     }
 
-    /// The parts of the statement an approver signs for this set as the set of `instance_id`.
-    fn parts(&self, instance_id: &str) -> Vec<Vec<u8>> {
-        let mut parts = vec![instance_id.as_bytes().to_vec(), self.version.to_be_bytes().to_vec()];
+    /// The parts of the statement an approver signs for this set as the set of `instance_id`, whose link key is
+    /// `link_key` (its SHA-256 fingerprint, hex).
+    fn parts(&self, instance_id: &str, link_key: &str) -> Vec<Vec<u8>> {
+        let mut parts = vec![
+            instance_id.as_bytes().to_vec(),
+            link_key.as_bytes().to_vec(),
+            self.version.to_be_bytes().to_vec(),
+        ];
         for approver in &self.approvers {
             parts.push(approver.user_id.as_bytes().to_vec());
             parts.push(approver.verify_public.to_vec());
@@ -62,7 +69,7 @@ impl ApproverSet {
         parts
     }
 
-    /// Checks `self`, a new set for `instance_id`, signed by `signer` with `signature`, against the `pinned` set: the
+    /// Checks `self`, a new set for `instance_id` with link key `link_key`, signed by `signer` with `signature`, against the `pinned` set: the
     /// signer is an approver of the pinned set, the version is higher than the pinned one, the set is not empty and its
     /// keys are keys, and the signature is over this set.
     ///
@@ -73,6 +80,7 @@ impl ApproverSet {
     pub fn verify_update(
         &self,
         instance_id: &str,
+        link_key: &str,
         pinned: &ApproverSet,
         signer: &[u8],
         signature: &[u8],
@@ -92,16 +100,22 @@ impl ApproverSet {
             VerifyingKey::from_bytes(&approver.verify_public)?;
         }
         let set = self.clone().sorted();
-        let parts = set.parts(instance_id);
+        let parts = set.parts(instance_id, link_key);
         let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         VerifyingKey::from_bytes(signer)?.verify(Statement::ApproverSet, &parts, signature)
     }
 
-    /// The signature of `key` on this set as the set of `instance_id`: what an approver's client makes.
+    /// The signature of `key` on this set as the set of `instance_id` with link key `link_key`: what an approver's
+    /// client makes.
     #[must_use]
-    pub fn sign(&self, instance_id: &str, key: &crate::sign::SigningKey) -> [u8; crate::sign::SIGNATURE_LEN] {
+    pub fn sign(
+        &self,
+        instance_id: &str,
+        link_key: &str,
+        key: &crate::sign::SigningKey,
+    ) -> [u8; crate::sign::SIGNATURE_LEN] {
         let set = self.clone().sorted();
-        let parts = set.parts(instance_id);
+        let parts = set.parts(instance_id, link_key);
         let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
         key.sign(Statement::ApproverSet, &parts)
     }

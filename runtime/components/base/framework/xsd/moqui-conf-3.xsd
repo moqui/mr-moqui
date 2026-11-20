@@ -3300,6 +3300,10 @@ along with this software (see the LICENSE.md file). If not, see
                 code.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="ssh-command" type="xs:string" default="ssh"><xs:annotation><xs:documentation>On a
                 manager: the ssh program of the SSH transport.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="address-change-wait-seconds" type="xs:string" default="300"><xs:annotation>
+                <xs:documentation>On a manager: how long after an instance's link went down a link of it from another
+                address is refused (and told to the administrators) unless an operator confirms the move; while its link
+                is live, such a link is always refused unless confirmed.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

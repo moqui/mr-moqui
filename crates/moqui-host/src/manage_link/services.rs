@@ -40,6 +40,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, call_instance_command)?;
     moqui_core::rust_service!(map, update_instance_approvers)?;
     moqui_core::rust_service!(map, revoke_instance_link)?;
+    moqui_core::rust_service!(map, confirm_instance_link_address)?;
     moqui_core::rust_service!(map, pair_manager)?;
     moqui_core::rust_service!(map, get_manager_link)?;
     Ok(())
@@ -145,8 +146,9 @@ mod manager {
         })
     }
 
+    /// The instance's row, once its caller is checked under the caller's own authorization (with it disabled every
+    /// caller would pass); the row reads turn authorization off for themselves.
     fn checked(facade: &EntityFacade, instance_id: &str) -> Result<moqui_core::entity::EntityValue, LibError> {
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         let row = moqui_instance::link::instance(facade, instance_id)?;
         moqui_instance::link::check_caller(facade, &row)?;
         Ok(row)
@@ -299,6 +301,8 @@ mod manager {
     pub(super) fn update_instance_approvers(params: &Params, facade: &EntityFacade) -> Out {
         use moqui_vault::approvers::{Approver, ApproverSet};
         let instance_id = required(params, "appInstanceId")?;
+        // the caller first, before anything it sent is read
+        checked(facade, &instance_id)?;
         let version: u64 = required(params, "version")?
             .parse()
             .map_err(|_| LibError::new("version is a whole number"))?;
@@ -345,12 +349,20 @@ mod manager {
         Ok(out([("version", Value::I64(i64::try_from(version).unwrap_or(0)))]))
     }
 
+    pub(super) fn confirm_instance_link_address(params: &Params, facade: &EntityFacade) -> Out {
+        let instance_id = required(params, "appInstanceId")?;
+        checked(facade, &instance_id)?;
+        let factory = factory()?;
+        server(&factory)?.confirm_move(&instance_id);
+        Ok(BTreeMap::new())
+    }
+
     pub(super) fn revoke_instance_link(params: &Params, facade: &EntityFacade) -> Out {
         let instance_id = required(params, "appInstanceId")?;
         moqui_instance::link::revoke(facade, &instance_id)?;
         let factory = factory()?;
         if let Some(server) = super::super::accept::server_of(&factory) {
-            server.close(&instance_id);
+            server.revoked(&instance_id);
         }
         Ok(BTreeMap::new())
     }
@@ -381,6 +393,9 @@ mod manager {
     pub(super) fn revoke_instance_link(_params: &Params, _facade: &EntityFacade) -> Out {
         not_built()
     }
+    pub(super) fn confirm_instance_link_address(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
 }
 
 /// `get#InstanceLink`: an instance's link as the manager sees it, and the manager's key.
@@ -401,6 +416,11 @@ fn call_instance_command(params: &Params, facade: &EntityFacade) -> Out {
 /// `update#InstanceApprovers`: a changed approver set, signed by an approver the instance pinned.
 fn update_instance_approvers(params: &Params, facade: &EntityFacade) -> Out {
     manager::update_instance_approvers(params, facade)
+}
+
+/// `confirm#InstanceLinkAddress`: the instance's next link may come from a new address.
+fn confirm_instance_link_address(params: &Params, facade: &EntityFacade) -> Out {
+    manager::confirm_instance_link_address(params, facade)
 }
 
 /// `revoke#InstanceLink`: the instance's link key is no longer pinned, and its link closes.
