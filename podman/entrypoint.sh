@@ -34,7 +34,10 @@ if [ "$(id -u)" = 0 ]; then
     link install "$data/install"
     link txlog "$data/txlog"
     link .env "$data/env"
-    exec setpriv --reuid=moqui --regid=moqui --init-groups --inh-caps=-all /opt/moqui/moqui "$@"
+    # the operator socket of the sealed start, made as root in a directory of root's and handed on to the server
+    # (docs/Run-Deploy.md, Sealed start): only root in the container (podman exec -u 0) runs moqui operator
+    exec /opt/moqui/moqui operator bind /run/moqui-operator/moqui.sock -- \
+        setpriv --reuid=moqui --regid=moqui --init-groups --inh-caps=-all /opt/moqui/moqui "$@"
 fi
 
 exec /opt/moqui/moqui "$@"

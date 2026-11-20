@@ -758,9 +758,9 @@ const OPERATOR: &str = "\
 moqui operator <command> [--socket PATH]
     The client of a server's operator socket (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md, Sealed
     start). A server starts sealed: no listener opens until it is unsealed, and while sealed it answers only
-    here. The socket is seal@socket, else $RUNTIME_DIRECTORY/moqui.sock (/run/moqui/moqui.sock under the
-    unit), else runtime/db/operator.sock. The server's own user runs only status; root and the operator group
-    (seal@operator-group) run the rest. Passphrases and shares are read with echo off, or a line each from
+    here. The socket is /run/moqui-operator/moqui.sock (systemd/moqui-operator.socket, or moqui operator bind
+    in a container), else for a user other than root runtime/db/operator.sock, or --socket; no conf names it.
+    The server's own user runs only status; root and the socket's group run the rest. Passphrases and shares are read with echo off, or a line each from
     standard input when it is not a terminal.
     status                   The state (sealed, unsealing, unsealed), the method and the recovery shares
     init [--method M]        Make the root key, seal.json and the recovery shares (printed once). M is tpm,
@@ -778,6 +778,9 @@ moqui operator <command> [--socket PATH]
                              with the offline backups; a restore needs it and the recovery shares
     init --from FILE         Restore a recovery bundle on a clean runtime; then unseal --recovery, and rekey
                              to this host's method
+    bind PATH [--group G] -- COMMAND ...
+                             As root: make the operator socket at PATH (root's, mode 0660 with group G or
+                             0600) and run COMMAND with it open, for a server that then drops to its own user
 
   moqui operator status
   moqui operator init --method tpm

@@ -41,13 +41,16 @@ fn socket_dir(label: &str) -> DirGuard {
     DirGuard(dir)
 }
 
-/// The conf of a test runtime whose operator socket is `socket` and whose operator group is this user's own group.
+/// The conf of a test runtime whose operator socket is `socket`.
 fn seal_conf(socket: &Path) -> String {
-    format!(
-        r#"<seal socket="{}" operator-group="{}"/>"#,
-        socket.display(),
-        rustix::process::getegid().as_raw()
-    )
+    format!(r#"<seal socket="{}"/>"#, socket.display())
+}
+
+/// Count this test's user as an operator: not the server's own user, and in the operator group the socket grants (as
+/// root's socket unit would).
+fn as_operator() {
+    moqui_host::operator::set_service_uid_for_tests(u32::MAX - 7);
+    moqui_host::operator::set_operator_gid_for_tests(rustix::process::getegid().as_raw());
 }
 
 /// The server's start on its own thread, since it blocks while sealed.
@@ -74,7 +77,7 @@ fn wait_for(path: &Path) {
 }
 
 fn status(socket: &Path) -> Value {
-    call(socket, &json!({"command": "status"})).unwrap()["status"].clone()
+    call(socket, json!({"command": "status"})).unwrap()["status"].clone()
 }
 
 fn refused(port: u16) -> bool {
@@ -122,12 +125,12 @@ fn a_sealed_server_opens_no_port_and_its_own_user_runs_only_status() {
 
     // this test's user is the server's own user: status only
     for command in ["init", "unseal", "seal"] {
-        let err = call(&socket, &json!({"command": command, "method": "dev"})).unwrap_err();
+        let err = call(&socket, json!({"command": command, "method": "dev"})).unwrap_err();
         assert!(err.to_string().contains("only status"), "{command}: {err}");
     }
     // as an operator (the operator group), the dev seal is still refused on a production instance
-    moqui_host::operator::set_service_uid_for_tests(u32::MAX - 7);
-    let err = call(&socket, &json!({"command": "init", "method": "dev"})).unwrap_err();
+    as_operator();
+    let err = call(&socket, json!({"command": "init", "method": "dev"})).unwrap_err();
     assert!(err.to_string().contains("refused on a production instance"), "{err}");
     assert!(!seeded.runtime.join("db/seal.json").exists());
     assert!(refused(http));
@@ -146,7 +149,7 @@ fn a_dev_instance_makes_its_seal_and_seal_closes_the_listeners_until_unseal() {
     }
     let _serial = crate::common::serial();
     moqui_host::operator::require_gate();
-    moqui_host::operator::set_service_uid_for_tests(u32::MAX - 7);
+    as_operator();
     let sockets = socket_dir("dev");
     let socket = sockets.0.join("op.sock");
     moqui_lib::env::set_property("moqui_conf__instance__purpose", "dev");
@@ -160,7 +163,7 @@ fn a_dev_instance_makes_its_seal_and_seal_closes_the_listeners_until_unseal() {
     assert_eq!(status(&socket)["state"], "unsealed");
 
     // seal: the key leaves memory and the listener closes
-    let answer = call(&socket, &json!({"command": "seal"})).unwrap();
+    let answer = call(&socket, json!({"command": "seal"})).unwrap();
     assert_eq!(answer["status"]["state"], "sealed");
     let deadline = Instant::now() + Duration::from_secs(60);
     while !server.is_stopped() {
@@ -176,7 +179,7 @@ fn a_dev_instance_makes_its_seal_and_seal_closes_the_listeners_until_unseal() {
     std::thread::sleep(Duration::from_millis(500));
     assert!(!starting.is_finished());
     assert!(refused(http));
-    let answer = call(&socket, &json!({"command": "unseal"})).unwrap();
+    let answer = call(&socket, json!({"command": "unseal"})).unwrap();
     assert_eq!(answer["status"]["state"], "unsealed");
     let server = starting.join().unwrap().unwrap();
     assert!(serves(http));
@@ -226,7 +229,7 @@ fn a_shamir_server_counts_a_wrong_share_ignores_another_conf_method_and_unseals_
     }
     let _serial = crate::common::serial();
     moqui_host::operator::require_gate();
-    moqui_host::operator::set_service_uid_for_tests(u32::MAX - 7);
+    as_operator();
     let sockets = socket_dir("shamir");
     let socket = sockets.0.join("op.sock");
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
@@ -234,13 +237,13 @@ fn a_shamir_server_counts_a_wrong_share_ignores_another_conf_method_and_unseals_
     let http = free_port();
     let starting = start(&seeded, http);
     wait_for(&socket);
-    let made = call(&socket, &json!({"command": "init", "method": "shamir"})).unwrap();
+    let made = call(&socket, json!({"command": "init", "method": "shamir"})).unwrap();
     let method_shares = shares(&made, "method_shares");
     assert_eq!((method_shares.len(), shares(&made, "recovery_shares").len()), (5, 5));
     // init opens the seal, and the server that waited serves
     let server = starting.join().unwrap().unwrap();
     assert!(serves(http));
-    call(&socket, &json!({"command": "seal"})).unwrap();
+    call(&socket, json!({"command": "seal"})).unwrap();
     wait_stopped(&server);
     drop(server);
 
@@ -259,18 +262,18 @@ fn a_shamir_server_counts_a_wrong_share_ignores_another_conf_method_and_unseals_
 
     // a wrong share is refused at once and counted, and the next attempt waits twice as long
     let wrong = "share-01-AAAAA-AAAAA-AAAAA";
-    let err = call(&socket, &json!({"command": "unseal", "share": wrong})).unwrap_err();
+    let err = call(&socket, json!({"command": "unseal", "share": wrong})).unwrap_err();
     assert!(err.to_string().contains("wrong share"), "{err}");
     let first = status(&socket);
     assert_eq!(first["failures"], 1);
     let first_wait = first["retry_after_ms"].as_u64().unwrap();
     assert!(first_wait > 0 && first_wait <= 300);
-    assert!(call(&socket, &json!({"command": "unseal", "share": method_shares[0]}))
+    assert!(call(&socket, json!({"command": "unseal", "share": method_shares[0]}))
         .unwrap_err()
         .to_string()
         .contains("wait"));
     std::thread::sleep(Duration::from_millis(first_wait + 20));
-    assert!(call(&socket, &json!({"command": "unseal", "share": wrong})).is_err());
+    assert!(call(&socket, json!({"command": "unseal", "share": wrong})).is_err());
     let second = status(&socket);
     assert_eq!(second["failures"], 2);
     let second_wait = second["retry_after_ms"].as_u64().unwrap();
@@ -278,7 +281,7 @@ fn a_shamir_server_counts_a_wrong_share_ignores_another_conf_method_and_unseals_
     std::thread::sleep(Duration::from_millis(second_wait + 20));
 
     for (entered, share) in method_shares[1..4].iter().enumerate() {
-        let answer = call(&socket, &json!({"command": "unseal", "share": share})).unwrap();
+        let answer = call(&socket, json!({"command": "unseal", "share": share})).unwrap();
         let expected = if entered < 2 { "unsealing" } else { "unsealed" };
         assert_eq!(answer["status"]["state"], expected);
     }
@@ -295,16 +298,15 @@ fn a_tpm_first_start_holds_its_shares_once_and_a_failed_auto_unseal_waits_for_th
     }
     let _serial = crate::common::serial();
     moqui_host::operator::require_gate();
-    moqui_host::operator::set_service_uid_for_tests(u32::MAX - 7);
+    as_operator();
     let sockets = socket_dir("tpm");
     let socket = sockets.0.join("op.sock");
     let stub = stub_systemd_creds(&sockets.0);
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
     let conf = format!(
-        r#"<seal method="tpm" systemd-creds-command="{}" socket="{}" operator-group="{}"/>"#,
+        r#"<seal method="tpm" systemd-creds-command="{}" socket="{}"/>"#,
         stub.display(),
-        socket.display(),
-        rustix::process::getegid().as_raw()
+        socket.display()
     );
     let seeded = seeded("tpm", &conf);
     let http = free_port();
@@ -312,23 +314,23 @@ fn a_tpm_first_start_holds_its_shares_once_and_a_failed_auto_unseal_waits_for_th
     let server = start(&seeded, http).join().unwrap().unwrap();
     assert!(serves(http));
     assert_eq!(status(&socket)["shares_waiting"], true);
-    let taken = call(&socket, &json!({"command": "init", "take_shares": true})).unwrap();
+    let taken = call(&socket, json!({"command": "init", "take_shares": true})).unwrap();
     let recovery = shares(&taken, "recovery_shares");
     assert_eq!(recovery.len(), 5);
-    assert!(call(&socket, &json!({"command": "init", "take_shares": true})).is_err());
-    call(&socket, &json!({"command": "seal"})).unwrap();
+    assert!(call(&socket, json!({"command": "init", "take_shares": true})).is_err());
+    call(&socket, json!({"command": "seal"})).unwrap();
     wait_stopped(&server);
     drop(server);
 
     // the TPM refuses: the server waits sealed, and the recovery shares open it
     std::fs::write(sockets.0.join("fail"), "").unwrap();
-    let unseal = call(&socket, &json!({"command": "unseal"})).unwrap_err();
+    let unseal = call(&socket, json!({"command": "unseal"})).unwrap_err();
     assert!(unseal.to_string().contains("no TPM"), "{unseal}");
     let starting = start(&seeded, http);
     std::thread::sleep(Duration::from_millis(300));
     assert!(refused(http));
     for share in &recovery[2..5] {
-        call(&socket, &json!({"command": "unseal", "recovery": true, "share": share})).unwrap();
+        call(&socket, json!({"command": "unseal", "recovery": true, "share": share})).unwrap();
     }
     let server = starting.join().unwrap().unwrap();
     assert!(serves(http));
@@ -342,7 +344,7 @@ fn a_restore_of_the_bundle_on_a_new_runtime_unseals_with_the_shares_then_rekeys_
     }
     let _serial = crate::common::serial();
     moqui_host::operator::require_gate();
-    moqui_host::operator::set_service_uid_for_tests(u32::MAX - 7);
+    as_operator();
     let sockets = socket_dir("restore");
     moqui_lib::env::set_property("moqui_conf__cluster_member__https_port", "0");
 
@@ -352,7 +354,7 @@ fn a_restore_of_the_bundle_on_a_new_runtime_unseals_with_the_shares_then_rekeys_
     let http = free_port();
     let starting = start(&first, http);
     wait_for(&first_socket);
-    let made = call(&first_socket, &json!({"command": "init", "method": "shamir"})).unwrap();
+    let made = call(&first_socket, json!({"command": "init", "method": "shamir"})).unwrap();
     let recovery = shares(&made, "recovery_shares");
     let server = starting.join().unwrap().unwrap();
     let first_keeper = moqui_core::seal::keeper_of(&first.runtime).unwrap();
@@ -360,7 +362,7 @@ fn a_restore_of_the_bundle_on_a_new_runtime_unseals_with_the_shares_then_rekeys_
         .set_bootstrap_secret("transactional-password", b"from-the-first-host")
         .unwrap();
     let root_id = first_keeper.status().root_id;
-    let bundle = call(&first_socket, &json!({"command": "export-seal"})).unwrap()["bundle"]
+    let bundle = call(&first_socket, json!({"command": "export-seal"})).unwrap()["bundle"]
         .as_str()
         .unwrap()
         .to_string();
@@ -372,13 +374,13 @@ fn a_restore_of_the_bundle_on_a_new_runtime_unseals_with_the_shares_then_rekeys_
     let http = free_port();
     let starting = start(&second, http);
     wait_for(&second_socket);
-    let restored = call(&second_socket, &json!({"command": "init", "bundle": bundle})).unwrap();
+    let restored = call(&second_socket, json!({"command": "init", "bundle": bundle})).unwrap();
     assert_eq!(restored["status"]["state"], "sealed");
     assert_eq!(restored["status"]["method"], "shamir");
     for share in &recovery[..3] {
         call(
             &second_socket,
-            &json!({"command": "unseal", "recovery": true, "share": share}),
+            json!({"command": "unseal", "recovery": true, "share": share}),
         )
         .unwrap();
     }
@@ -398,14 +400,14 @@ fn a_restore_of_the_bundle_on_a_new_runtime_unseals_with_the_shares_then_rekeys_
     // rekey keeps the root key; rotate-root makes a new one; both by the recovery shares
     let rekeyed = call(
         &second_socket,
-        &json!({"command": "rekey", "method": "shamir", "shares": recovery[1..4]}),
+        json!({"command": "rekey", "method": "shamir", "shares": recovery[1..4]}),
     )
     .unwrap();
     assert_eq!(shares(&rekeyed, "method_shares").len(), 5);
     assert_eq!(rekeyed["status"]["root_id"], root_id.as_str());
     let rotated = call(
         &second_socket,
-        &json!({"command": "rotate-root", "shares": recovery[2..5]}),
+        json!({"command": "rotate-root", "shares": recovery[2..5]}),
     )
     .unwrap();
     assert_ne!(rotated["status"]["root_id"], root_id.as_str());
@@ -419,7 +421,7 @@ fn a_restore_of_the_bundle_on_a_new_runtime_unseals_with_the_shares_then_rekeys_
     );
     assert!(call(
         &second_socket,
-        &json!({"command": "rotate-root", "shares": recovery[..2]})
+        json!({"command": "rotate-root", "shares": recovery[..2]})
     )
     .is_err());
     drop(server);

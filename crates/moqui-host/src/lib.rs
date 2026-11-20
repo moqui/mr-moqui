@@ -235,17 +235,29 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
         } else {
             logging::install();
         }
-        // the binary's server starts sealed (plans/Sealed-Secrets.md §3.3): its boot opens the operator socket first
+        // the binary's server starts sealed (plans/Sealed-Secrets.md §3.3): its boot opens the operator socket first;
+        // with no Unix socket, a production server starts only with its seal
         #[cfg(unix)]
         operator::require_gate();
+        #[cfg(not(unix))]
+        NO_SOCKET_GATE.store(true, std::sync::atomic::Ordering::SeqCst);
         let mut silenced = false;
         loop {
-            let server = start_server_in(
+            let started = start_server_in(
                 runtime.clone(),
                 framework.clone(),
                 cluster.clone(),
                 ListenBind::Property,
-            )?;
+            );
+            let server = match started {
+                Ok(server) => server,
+                // sealed while it booted: the listener did not open, and the gate waits again
+                Err(err) if systemd_notify::take_sealed_stop() => {
+                    tracing::warn!("Sealed while starting ({err}): no listener is open until `moqui operator unseal`");
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
             if detached && !silenced {
                 println!("Listening on {} (pid {})", server.address(), std::process::id());
                 let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -258,9 +270,9 @@ fn run_server(detached: bool) -> Result<(), moqui_lib::error::Error> {
             if moqui_core::devtools::restart::restart_requested() {
                 return run_again();
             }
-            // `moqui operator seal` stopped the server: the process stays, sealed, until `unseal` (§3.5)
-            #[cfg(unix)]
-            if operator::sealed_by_operator(&runtime) {
+            // `moqui operator seal` stopped the server, even if an unseal followed at once: the process stays, and boots
+            // again through the gate (§3.5)
+            if systemd_notify::take_sealed_stop() {
                 tracing::warn!("Sealed: no listener is open until `moqui operator unseal`");
                 continue;
             }
@@ -1673,9 +1685,17 @@ fn serve_thread(
             std::sync::Arc::new(move || tls::certificate_expiries(&cert_dir)),
         );
     }
-    // `moqui operator seal` stops the listener as a stop does (plans/Sealed-Secrets.md §3.5)
+    // `moqui operator seal` stops the listener as a stop does (plans/Sealed-Secrets.md §3.5); sealed already, while the
+    // database opened and the data loaded, the listener does not open at all
     #[cfg(unix)]
     let (stop, _seal_watch) = operator::stop_on_seal(runtime, factory.runtime_dir(), stop);
+    #[cfg(unix)]
+    if operator::sealed_now(factory.runtime_dir()) {
+        tracing::warn!("Sealed while the server started: the listener stays closed");
+        return Ok(());
+    }
+    #[cfg(unix)]
+    operator::set_serving(true);
     let listened = runtime.block_on(http::listen(
         factory,
         address,
@@ -1685,6 +1705,8 @@ fn serve_thread(
         stop,
         sender,
     ));
+    #[cfg(unix)]
+    operator::set_serving(false);
     tracing::info!("HTTP listener stopped, shutting down");
     if let Some(factory) = process.factory.as_ref() {
         moqui_core::web::servlet::stopping(factory);
@@ -1760,6 +1782,11 @@ enum Listeners {
     None,
 }
 
+/// Set by the binary's server on a host with no Unix socket (plans/Sealed-Secrets.md §3.3): its boots open the seal with
+/// no operator, and a production server with no seal does not start.
+#[cfg(all(not(unix), feature = "axum", any(feature = "postgres", feature = "mysql")))]
+static NO_SOCKET_GATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// Set by `moqui test`: a server this process boots (`moqui test --serve`) merges each component's `test/MoquiConf.xml`,
 /// as the test factory does ([`moqui_core::context::BootOptions::test_confs`]).
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
@@ -1797,6 +1824,10 @@ fn boot_server_factory(
         // (plans/Sealed-Secrets.md §3.3); none boots unattended
         #[cfg(unix)]
         unseal: operator::hook(),
+        #[cfg(not(unix))]
+        unseal: NO_SOCKET_GATE
+            .load(std::sync::atomic::Ordering::SeqCst)
+            .then(|| std::sync::Arc::new(moqui_core::seal::open_without_socket) as moqui_core::seal::UnsealHook),
         ..moqui_core::context::BootOptions::default()
     };
     let factory =

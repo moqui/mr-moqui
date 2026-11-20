@@ -24,7 +24,7 @@ use moqui_vault::rng::OsRng;
 use zeroize::Zeroizing;
 
 use super::file::SealedValue;
-use super::{decode, encode, file, lock, Keeper, RootKey, SealFile};
+use super::{decode, encode, file, Keeper, RootKey, SealFile};
 use crate::context::Error;
 
 /// The key the bootstrap secrets are sealed under.
@@ -112,7 +112,7 @@ impl Keeper {
     ///
     /// The server is sealed, or the value does not open (moved, changed, or of another root key).
     pub fn bootstrap_secret(&self, name: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
-        let inner = lock(&self.inner);
+        let inner = self.inner();
         let (Some(root), Some(seal)) = (inner.root.as_ref(), inner.file.as_ref()) else {
             return Err(Error::new("sealed: the bootstrap secrets open only once unsealed"));
         };
@@ -128,7 +128,15 @@ impl Keeper {
     ///
     /// The server is sealed, has no seal file (an unattended boot's root in memory only), or the file cannot be written.
     pub fn set_bootstrap_secret(&self, name: &str, value: &[u8]) -> Result<(), Error> {
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
+        if inner.root.is_none() || inner.file.is_none() {
+            return Err(Error::new(
+                "sealed, or no seal yet: a bootstrap secret is kept once unsealed",
+            ));
+        }
+        // under the lock, on the file as it is on disk, so another process's change is not lost
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
         let (Some(root), Some(seal)) = (inner.root.as_ref(), inner.file.as_ref()) else {
             return Err(Error::new(
                 "sealed, or no seal yet: a bootstrap secret is kept once unsealed",
@@ -151,7 +159,14 @@ impl Keeper {
     ///
     /// The server is sealed, has no seal file, or the file cannot be written.
     pub fn secret_value_key(&self) -> Result<Key32, Error> {
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
+        if inner.root.is_none() || inner.file.is_none() {
+            return Err(Error::new(
+                "sealed, or no seal yet: the SecretValue key opens once unsealed",
+            ));
+        }
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
         let (Some(root), Some(seal)) = (inner.root.as_ref(), inner.file.as_ref()) else {
             return Err(Error::new(
                 "sealed, or no seal yet: the SecretValue key opens once unsealed",

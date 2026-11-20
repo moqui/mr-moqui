@@ -91,8 +91,8 @@ On the server:
    `tpm` unseals it again at each reboot; write down the recovery shares `init` prints, one per holder.
 
    ```sh
-   sudo cp systemd/moqui.service /etc/systemd/system/
-   sudo systemctl daemon-reload && sudo systemctl enable --now moqui
+   sudo cp systemd/moqui.service systemd/moqui-operator.socket /etc/systemd/system/
+   sudo systemctl daemon-reload && sudo systemctl enable --now moqui-operator.socket moqui
    sudo /opt/moqui/moqui operator init --method tpm
    sudo /opt/moqui/moqui operator export-seal /root/moqui-seal-bundle.json   # with the offline backups
    ```
@@ -994,10 +994,22 @@ is then in memory only. While sealed it answers only on its operator socket. `ru
 wrapped by the unseal method and by the recovery key, and nothing usable alone; the bootstrap secrets and the
 `SecretValue` data key go in it as well once S4 moves them there.
 
-**The operator socket** is `seal@socket`, else `moqui.sock` in the unit's `RuntimeDirectory=` (`/run/moqui`), else
-`runtime/db/operator.sock`; mode 0660, given to `seal@operator-group` (`moqui-operator`, which `systemd/moqui.sysusers`
-makes). Root and members of that group run every command; the server's own user, and so every child and job of the
+**The operator socket** is root's: where it is and who may use it come from nothing the server's user can write (not
+the conf, `runtime/.env` or the environment), so a child of the server can neither replace it nor read what an operator
+enters there. Root and the socket's group run every command; the server's own user, and so every child and job of the
 server, runs only `status`. Reach it at the console, or through the host's own sshd running `moqui operator`.
+
+- **Under systemd**, `systemd/moqui-operator.socket` makes `/run/moqui-operator/moqui.sock` (the directory root's, mode
+  0755; the socket root's, group `moqui-operator`, mode 0660) and hands it to the service. `systemd/moqui.sysusers`
+  makes the group; add operators to it, never the `moqui` user.
+- **In a container**, the entrypoint, still root, makes the same socket with `moqui operator bind
+  /run/moqui-operator/moqui.sock [--group NAME] -- <command>` before it drops to the server's user, and the server takes
+  it over. With no group, only root (`podman exec -u 0`) runs operator commands.
+- **Anywhere else** (a development machine, macOS), the server binds `seal@socket`, default `runtime/db/operator.sock`,
+  itself, mode 0600, and logs that it is not a protection boundary: its own user could replace it.
+
+`moqui operator` reaches `/run/moqui-operator/moqui.sock` (always, when run as root), or `runtime/db/operator.sock` for
+another user when that one is not there, or `--socket PATH`; it reads no conf for it.
 
 ```sh
 moqui operator status                    # sealed, unsealing or unsealed; the method; the recovery shares
@@ -1015,21 +1027,26 @@ moqui operator init --from FILE          # restore a bundle on a clean runtime, 
 
 | Method | Unattended reboot | For |
 |---|---|---|
-| `tpm` | Yes: `systemd-creds` with the TPM2, bound to its PCRs (`seal@systemd-creds-command`) | A home or office server; the default for BOSS |
+| `tpm` | Yes: `systemd-creds` with the TPM2, bound to its PCRs (`/usr/bin/systemd-creds`, or `seal@systemd-creds-command`, an absolute path) | A home or office server; the default for BOSS |
 | `passphrase` | No: Argon2id at m=256 MiB, t=3; a production instance refuses less | A laptop, or the highest care |
 | `shamir` | No: `seal@threshold` of `seal@shares` operators each enter a share | Separation of duties |
-| `dev` | Yes: the key is in `seal.json` itself | Development and tests only; refused when `instance@purpose` is `production` |
+| `dev` | Yes: the key is in `seal.json` itself, so its recovery bundle carries the root key in the clear | Development and tests only; refused when `instance@purpose` is `production` |
 | `kms`, `transit` | Yes | Not built yet (S11) |
 
 The method is fixed at init: `seal.json` records it, and a conf, `.env` or environment that names another is ignored
 and logged, so whoever can write those files cannot move the server to the `dev` seal. Only `rekey` changes it.
+`seal@socket`, `seal@systemd-creds-command` and `seal@unseal-max-delay-seconds` are read from the conf files only: an
+environment name or `runtime/.env` that sets one is ignored, with an error logged. The `tpm` program is never taken
+from `seal.json`, so a restored bundle cannot name a program to run.
 
 **The first start with no `seal.json`.** A dev or test instance makes the `dev` seal by itself, so `./moq run` and the
 tests start as before. A production instance waits sealed for `moqui operator init`, unless `seal@method` names an
 automatic method (`tpm`): then it makes its seal and starts, and holds the recovery shares in memory, logging an error
-until `moqui operator init --take-shares` reads them once (they are lost if the server stops first). `moqui load` and
-other commands that boot a runtime open its seal with no operator: an automatic method, or on a production runtime
-with no seal yet a root key in memory only; a `passphrase` or `shamir` seal is opened only on the server's socket.
+until `moqui operator init --take-shares` reads them once (they are lost if the server stops or is sealed first).
+`moqui load` and other commands that boot a runtime open its seal with no operator: an automatic method, or on a
+production runtime with no seal yet a root key in memory only, never a seal of their own; a `passphrase` or `shamir`
+seal is opened only on the server's socket. A server on a host with no Unix socket (Windows) does not start in
+production without its `seal.json`.
 
 **Recovery shares** (3 of 5 by default, `seal@threshold` of `seal@shares`) are made at init for every method but
 `dev`, printed once and never stored on the server: give each to a different holder. They unseal when the TPM or the
@@ -1046,9 +1063,11 @@ is refused when it is entered: `seal.json` keeps a salted hash of each.
 **systemd.** The unit is `Type=notify`. A server waiting for a passphrase or shares sends `READY=1` with
 `STATUS=sealed` once its socket is open, so `TimeoutStartSec` does not end it; an automatic method's server is ready
 once unsealed and listening. A failed automatic unseal leaves it sealed and ready with `STATUS=sealed: auto-unseal
-failed`, for the recovery shares. `seal` stops the listeners, the jobs and the embedded Postgres, and the process waits
-sealed for `unseal`, even with an automatic method; a stop while sealed ends it. The unit sets `RuntimeDirectory=moqui`
-for the socket, `SupplementaryGroups=moqui-operator` so the server can give the socket to that group, and `LimitCORE=0`.
+failed`, for the recovery shares. `seal` stops the listeners, the jobs and the embedded Postgres and says
+`STATUS=sealed` (not stopping), and the process waits sealed for `unseal`, even with an automatic method: the file
+`db/sealed-by-operator` keeps a restart, or a reboot, sealed until `unseal` too. A signal while sealed, or after the
+unseal and before the listener opens, ends the process. The unit takes the socket from `moqui-operator.socket` and sets
+`LimitCORE=0`. The server logs an error when it runs as root, since every child of it would be root too.
 
 **Backup and restore.** A database backup is useless without the matching `seal.json`. Write the recovery bundle at
 init and after each `rekey`, `rotate-root` and bootstrap-secret change, and keep it with the offline backups, apart

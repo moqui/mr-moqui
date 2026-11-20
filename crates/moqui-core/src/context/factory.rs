@@ -344,6 +344,7 @@ impl ExecutionContextFactory {
             let gate = crate::seal::GateRequest {
                 runtime_dir: &runtime_dir,
                 conf: &conf_node,
+                overrides: &overrides,
             };
             match &options.unseal {
                 Some(hook) => hook(&gate)?,

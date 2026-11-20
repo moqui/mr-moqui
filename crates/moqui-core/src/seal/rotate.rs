@@ -21,7 +21,7 @@
 
 use zeroize::Zeroizing;
 
-use super::{bootstrap, check_root, file, lock, recovery, Inner, Issued, Keeper, MethodKind, RootKey, SealFile};
+use super::{bootstrap, check_root, file, recovery, Inner, Issued, Keeper, MethodKind, RootKey, SealFile};
 use crate::context::Error;
 
 /// What `rekey` changes to.
@@ -88,7 +88,9 @@ impl Keeper {
         if request.method == MethodKind::Dev && conf.production() {
             return Err(super::dev_refused());
         }
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
         let (root, _) = self.recover(&mut inner, &request.shares)?;
         let (method, issued) = self.wrap_method(
             &root,
@@ -150,7 +152,9 @@ impl Keeper {
         let Some(_attempt) = moqui_lib::sync::try_lock(&self.attempt) else {
             return Err(Error::new("another unseal attempt is running; try again when it ends"));
         };
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
         let (seal, root, issued) = self.rotated(&mut inner, &request)?;
         file::stage(&self.path, &seal)?.commit()?;
         inner.file = Some(seal);

@@ -20,6 +20,28 @@
 //! stop the server.
 
 use std::io::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set when `moqui operator seal` stops the server (plans/Sealed-Secrets.md §3.3): the stop says `STATUS=sealed`, not
+/// `STOPPING=1`, since the process stays and waits sealed, and the binary's server boots again into the gate.
+static SEALED_STOP: AtomicBool = AtomicBool::new(false);
+
+/// Mark the server's stop as a seal's.
+#[cfg_attr(not(any(feature = "postgres", feature = "mysql")), allow(dead_code))]
+pub(crate) fn mark_sealed_stop() {
+    SEALED_STOP.store(true, Ordering::SeqCst);
+}
+
+/// Whether the server's stop is a seal's.
+pub(crate) fn sealed_stop() -> bool {
+    SEALED_STOP.load(Ordering::SeqCst)
+}
+
+/// Whether the server stopped for a seal, clearing the mark.
+#[cfg_attr(not(any(feature = "postgres", feature = "mysql")), allow(dead_code))]
+pub(crate) fn take_sealed_stop() -> bool {
+    SEALED_STOP.swap(false, Ordering::SeqCst)
+}
 
 /// Tell systemd `state` (`READY=1`, `STOPPING=1`). A missing newline is added. Nothing happens when
 /// `NOTIFY_SOCKET` is unset or empty.

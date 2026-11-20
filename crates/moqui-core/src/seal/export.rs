@@ -20,7 +20,7 @@
 
 use serde_json::{json, Value};
 
-use super::{file, lock, Keeper, SealFile};
+use super::{file, Keeper, MethodKind, SealFile};
 use crate::context::Error;
 
 /// The `format` of a bundle.
@@ -33,11 +33,20 @@ impl Keeper {
     ///
     /// The runtime has no seal yet.
     pub fn export_bundle(&self) -> Result<String, Error> {
-        let inner = lock(&self.inner);
+        let inner = self.inner();
         let seal = inner
             .file
             .as_ref()
             .ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+        if seal.method_kind() == MethodKind::Dev.name() {
+            // the dev seal's file holds its root key in the clear, and so would the bundle
+            if self.conf().production() {
+                return Err(Error::new(
+                    "the dev seal is refused on a production instance, and so is its bundle",
+                ));
+            }
+            tracing::warn!("The recovery bundle of a dev seal holds the root key in the clear");
+        }
         let seal: Value =
             serde_json::to_value(seal).map_err(|err| Error::new(format!("seal.json does not serialize: {err}")))?;
         let bundle = json!({
@@ -67,7 +76,17 @@ impl Keeper {
             ));
         }
         let seal = SealFile::parse(&bundle["seal"].to_string())?;
-        let mut inner = lock(&self.inner);
+        let kind = MethodKind::parse(seal.method_kind())?;
+        if kind == MethodKind::Dev && self.conf().production() {
+            return Err(super::dev_refused());
+        }
+        if kind != MethodKind::Dev && seal.recovery.is_none() {
+            return Err(Error::new(
+                "the bundle's seal has no recovery part, so its shares cannot open it",
+            ));
+        }
+        let mut inner = self.inner();
+        let held = file::lock(&self.path)?;
         if inner.file.is_none() {
             inner.file = file::load(&self.path)?;
         }
@@ -76,7 +95,7 @@ impl Keeper {
                 "this runtime has a seal already; a bundle is restored only on a clean runtime",
             ));
         }
-        if !file::stage(&self.path, &seal)?.commit_new()? {
+        if !file::stage(&self.path, &seal)?.commit_new(&held)? {
             return Err(Error::new("another process made this runtime's seal at the same time"));
         }
         tracing::warn!(

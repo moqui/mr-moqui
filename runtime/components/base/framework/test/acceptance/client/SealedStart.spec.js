@@ -16,7 +16,7 @@
 // every feature skips, so the framework's acceptance run on this machine passes over it.
 
 const phase = params.phase ?? "before"
-const operator = `sudo -n ${params.moquiBin ?? "/opt/moqui/moqui"} operator --socket ${params.socket ?? "/run/moqui/moqui.sock"}`
+const operator = `sudo -n ${params.moquiBin ?? "/opt/moqui/moqui"} operator --socket ${params.socket ?? "/run/moqui-operator/moqui.sock"}`
 
 const host = () => {
     if (!params.hostSsh) skip("no host to reboot: --param hostSsh=host:port (and hostUser, MOQUI_TEST_HOST_KEY)")
@@ -60,9 +60,9 @@ feature("before the reboot: the server is unsealed by the tpm method and serves"
         sealJson.recovery.threshold >= 2
         log.info(`rootId=${sealJson.root_id}: pass it to the after run`)
         // the unit as Sealed-Secrets §3.5 and §3.3 have it
-        const unit = conn.exec("systemctl show moqui -p LimitCORE -p RuntimeDirectory -p Type", { timeout: 30 })
+        const unit = conn.exec("systemctl show moqui -p LimitCORE -p Type -p Sockets", { timeout: 30 })
         unit.stdout.includes("LimitCORE=0")
-        unit.stdout.includes("RuntimeDirectory=moqui")
+        unit.stdout.includes("moqui-operator.socket")
         unit.stdout.includes("Type=notify")
         // the reboot: the connection drops with it
         conn.exec("sudo -n systemctl reboot", { timeout: 10, expect: ["timeout"] })
@@ -91,9 +91,8 @@ feature("after the reboot: the TPM unsealed the same root key with no operator, 
         file.generation >= 1
         // systemd heard the unsealed status
         conn.exec("systemctl show moqui -p StatusText", { timeout: 30 }).stdout.includes("StatusText=unsealed")
-        // the operator socket refuses the service user anything but status
-        const asService = conn.exec(`sudo -n -u moqui ${params.moquiBin ?? "/opt/moqui/moqui"} operator --socket /run/moqui/moqui.sock seal`, { timeout: 30 })
+        // the server's own user cannot seal: the socket is not open to it, and the server would grant it only status
+        const asService = conn.exec(`sudo -n -u moqui ${params.moquiBin ?? "/opt/moqui/moqui"} operator --socket /run/moqui-operator/moqui.sock seal`, { timeout: 30 })
         asService.status != 0
-        asService.stderr.includes("only status") || asService.stdout.includes("only status")
     },
 })

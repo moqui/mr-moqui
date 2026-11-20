@@ -14,14 +14,42 @@
 
 //! `moqui operator …` (plans/Sealed-Secrets.md §3.3): the client of a server's operator socket, run at the console or
 //! through the host's own sshd. Passphrases and shares are read with the terminal's echo off (from standard input, a
-//! line each, when it is not a terminal), and the shares `init` issues are printed once.
+//! line each, when it is not a terminal), and the shares `init` issues are printed once. The socket is
+//! [`UNIT_SOCKET`] or `--socket`, never one a conf, `runtime/.env` or the environment names, so whoever can write those
+//! cannot point root's passphrase at a socket of their own. `moqui operator bind` makes the socket as root for a
+//! server that drops to its own user (a container's entrypoint).
 
 use std::io::{BufRead as _, BufReader, Write as _};
+use std::os::fd::AsRawFd as _;
+use std::os::unix::fs::{FileTypeExt as _, PermissionsExt as _};
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 
 use moqui_lib::error::Error;
 use serde_json::{json, Value};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize as _, Zeroizing};
+
+/// The operator socket the socket unit (`systemd/moqui-operator.socket`) and a container's entrypoint make, in a
+/// directory of root's.
+pub const UNIT_SOCKET: &str = "/run/moqui-operator/moqui.sock";
+
+/// Clear every text in `value`: a request or an answer that carried a passphrase or shares.
+pub fn scrub(value: &mut Value) {
+    match value {
+        Value::String(text) => text.zeroize(),
+        Value::Array(items) => {
+            for item in items {
+                scrub(item);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                scrub(item);
+            }
+        }
+        _ => {}
+    }
+}
 
 /// `moqui operator <command>`.
 ///
@@ -29,6 +57,11 @@ use zeroize::Zeroizing;
 ///
 /// A usage error, no server on the socket, or a refused command.
 pub fn dispatch(args: &[String]) -> Result<(), Error> {
+    if let [command, path, rest @ ..] = args {
+        if command == "bind" {
+            return bind_and_exec(path, rest);
+        }
+    }
     let mut socket: Option<PathBuf> = None;
     let mut rest = Vec::new();
     let mut words = args.iter();
@@ -49,12 +82,12 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
     let socket = socket.unwrap_or_else(socket_path);
     match rest.as_slice() {
         ["status"] => {
-            let answer = call(&socket, &json!({"command": "status"}))?;
+            let answer = call(&socket, json!({"command": "status"}))?;
             print_status(&answer["status"]);
             Ok(())
         }
         ["seal"] => {
-            let answer = call(&socket, &json!({"command": "seal"}))?;
+            let answer = call(&socket, json!({"command": "seal"}))?;
             println!("Sealed: the root key is dropped from memory and the listeners close.");
             print_status(&answer["status"]);
             Ok(())
@@ -67,27 +100,29 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
                 request["passphrase"] = Value::String(new_passphrase()?.to_string());
             }
             with_recovery_shares(&socket, &mut request)?;
-            let answer = call(&socket, &request)?;
+            let mut answer = call(&socket, request)?;
             print_shares(&answer);
             print_status(&answer["status"]);
+            scrub(&mut answer);
             println!("Export the recovery bundle again: moqui operator export-seal <file>");
             Ok(())
         }
         ["rotate-root"] => {
             let mut request = json!({"command": "rotate-root"});
-            let status = call(&socket, &json!({"command": "status"}))?;
+            let status = call(&socket, json!({"command": "status"}))?;
             if status["status"]["method"] == "passphrase" {
                 request["passphrase"] = Value::String(read_secret("Passphrase: ")?.to_string());
             }
             with_recovery_shares(&socket, &mut request)?;
-            let answer = call(&socket, &request)?;
+            let mut answer = call(&socket, request)?;
             print_shares(&answer);
             print_status(&answer["status"]);
+            scrub(&mut answer);
             println!("Export the recovery bundle again: moqui operator export-seal <file>");
             Ok(())
         }
         ["export-seal", path] => {
-            let answer = call(&socket, &json!({"command": "export-seal"}))?;
+            let answer = call(&socket, json!({"command": "export-seal"}))?;
             write_private(Path::new(path), answer["bundle"].as_str().unwrap_or_default())?;
             println!("Wrote the recovery bundle to {path}: keep it with the offline backups, apart from the shares.");
             Ok(())
@@ -96,34 +131,101 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
     }
 }
 
-/// The socket a client reaches: `seal@socket` of this runtime's conf, else the unit's `/run/moqui/moqui.sock` when
-/// it is there (`$RUNTIME_DIRECTORY` is the server's, not a shell's), else `db/operator.sock` in the runtime.
+/// The socket a client reaches with no `--socket`: [`UNIT_SOCKET`], always for root; for another user, when it is
+/// not there, `db/operator.sock` in the runtime (a development server that binds its own; no conf is read).
 fn socket_path() -> PathBuf {
-    let (runtime, framework) = crate::runtime_framework_dirs();
-    if let Ok(conf) = moqui_core::context::load_merged_conf(&framework, &runtime) {
-        let set = moqui_core::context::conf_env::conf_attribute(&conf, "seal@socket");
-        if !set.is_empty() {
-            return runtime.join(set);
-        }
-    }
-    if let Ok(dirs) = std::env::var("RUNTIME_DIRECTORY") {
-        if let Some(first) = dirs.split(':').next().filter(|first| !first.is_empty()) {
-            return PathBuf::from(first).join("moqui.sock");
-        }
-    }
-    let unit = Path::new("/run/moqui/moqui.sock");
-    if unit.exists() {
+    let unit = Path::new(UNIT_SOCKET);
+    if unit.exists() || rustix::process::geteuid().is_root() {
         return unit.to_path_buf();
     }
+    let (runtime, _) = crate::runtime_framework_dirs();
     runtime.join("db").join("operator.sock")
 }
 
-/// Send one request to the socket at `socket` and read its answer: the answer when `ok`, else its error.
+/// `moqui operator bind <path> [--group NAME] -- <command> ...`, as root: make the operator socket at `path` (its
+/// directory root's, mode 0755; the socket root's, mode 0660 with the group or 0600 with none), then run `command` in
+/// this process with the socket open on it, named by `MOQUI_OPERATOR_FD` and this process's id: a container's
+/// entrypoint runs it before `setpriv` drops to the server's user, which keeps the process and the descriptor.
+fn bind_and_exec(path: &str, rest: &[String]) -> Result<(), Error> {
+    let usage = || crate::usage::command_usage("operator");
+    let (group, command) = match rest {
+        [flag, name, dash, command @ ..] if flag == "--group" && dash == "--" => (Some(name.as_str()), command),
+        [dash, command @ ..] if dash == "--" => (None, command),
+        _ => return Err(usage()),
+    };
+    let [program, args @ ..] = command else {
+        return Err(usage());
+    };
+    if !rustix::process::geteuid().is_root() {
+        return Err(Error::new(
+            "moqui operator bind runs as root, before the server drops to its own user",
+        ));
+    }
+    let path = Path::new(path);
+    let Some(dir) = path.parent().filter(|_| path.is_absolute()) else {
+        return Err(Error::new("moqui operator bind takes an absolute path"));
+    };
+    let gid = match group {
+        Some(name) => Some(resolve_group(name).ok_or_else(|| Error::new(format!("no group {name} on this host")))?),
+        None => None,
+    };
+    let failed = |what: &str, err: std::io::Error| Error::new(format!("{what} {}", path.display())).with_source(err);
+    std::fs::create_dir_all(dir).map_err(|err| failed("could not make the directory of", err))?;
+    rustix::fs::chown(dir, Some(rustix::fs::Uid::ROOT), Some(rustix::fs::Gid::ROOT))
+        .map_err(|err| failed("could not give root the directory of", err.into()))?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
+        .map_err(|err| failed("could not set the mode of the directory of", err))?;
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if !meta.file_type().is_socket() {
+            return Err(Error::new(format!("{} is there and is not a socket", path.display())));
+        }
+        std::fs::remove_file(path).map_err(|err| failed("could not remove", err))?;
+    }
+    let listener = std::os::unix::net::UnixListener::bind(path).map_err(|err| failed("could not bind", err))?;
+    rustix::fs::chown(path, Some(rustix::fs::Uid::ROOT), gid.map(rustix::fs::Gid::from_raw))
+        .map_err(|err| failed("could not give root", err.into()))?;
+    let mode = if gid.is_some() { 0o660 } else { 0o600 };
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .map_err(|err| failed("could not set the mode of", err))?;
+    // kept open across the exec, for the server to take
+    rustix::io::fcntl_setfd(&listener, rustix::io::FdFlags::empty())
+        .map_err(|err| failed("could not keep open", err.into()))?;
+    let err = std::process::Command::new(program)
+        .args(args)
+        .env("MOQUI_OPERATOR_FD", listener.as_raw_fd().to_string())
+        .env("MOQUI_OPERATOR_PID", std::process::id().to_string())
+        .exec();
+    Err(Error::new(format!("could not run {program}")).with_source(err))
+}
+
+/// A group's id: a number as given, else the name's line in `/etc/group`.
+fn resolve_group(name: &str) -> Option<u32> {
+    let name = name.trim();
+    if let Ok(gid) = name.parse() {
+        return Some(gid);
+    }
+    let groups = std::fs::read_to_string("/etc/group").ok()?;
+    groups.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        (fields.next() == Some(name))
+            .then(|| fields.nth(1).and_then(|gid| gid.parse().ok()))
+            .flatten()
+    })
+}
+
+/// Send one request to the socket at `socket` and read its answer: the answer when `ok`, else its error. The request's
+/// texts are cleared once sent.
 ///
 /// # Errors
 ///
 /// No server on the socket, a connection that ends early, or a refused command (its error text).
-pub fn call(socket: &Path, request: &Value) -> Result<Value, Error> {
+pub fn call(socket: &Path, mut request: Value) -> Result<Value, Error> {
+    let answer = send(socket, &request);
+    scrub(&mut request);
+    answer
+}
+
+fn send(socket: &Path, request: &Value) -> Result<Value, Error> {
     let mut stream = std::os::unix::net::UnixStream::connect(socket).map_err(|err| {
         Error::new(format!(
             "no server answers on the operator socket {} (--socket names another)",
@@ -171,9 +273,10 @@ fn init(socket: &Path, options: &[&str]) -> Result<(), Error> {
     if request["method"] == "passphrase" {
         request["passphrase"] = Value::String(new_passphrase()?.to_string());
     }
-    let answer = call(socket, &request)?;
+    let mut answer = call(socket, request)?;
     print_shares(&answer);
     print_status(&answer["status"]);
+    scrub(&mut answer);
     Ok(())
 }
 
@@ -183,7 +286,7 @@ fn unseal(socket: &Path, options: &[&str]) -> Result<(), Error> {
         ["--recovery"] => true,
         _ => return Err(crate::usage::command_usage("operator")),
     };
-    let status = call(socket, &json!({"command": "status"}))?;
+    let status = call(socket, json!({"command": "status"}))?;
     let method = status["status"]["method"].as_str().unwrap_or_default().to_string();
     let request = if recovery {
         json!({"command": "unseal", "recovery": true, "share": read_secret("Recovery share: ")?.as_str()})
@@ -194,14 +297,14 @@ fn unseal(socket: &Path, options: &[&str]) -> Result<(), Error> {
     } else {
         json!({"command": "unseal"})
     };
-    let answer = call(socket, &request)?;
+    let answer = call(socket, request)?;
     print_status(&answer["status"]);
     Ok(())
 }
 
 /// Read the threshold of recovery shares the server's seal asks for into `request["shares"]`.
 fn with_recovery_shares(socket: &Path, request: &mut Value) -> Result<(), Error> {
-    let status = call(socket, &json!({"command": "status"}))?;
+    let status = call(socket, json!({"command": "status"}))?;
     let threshold = status["status"]["recovery"][0].as_u64().unwrap_or(0);
     if threshold == 0 {
         return Err(Error::new("this seal has no recovery shares (the dev seal)"));

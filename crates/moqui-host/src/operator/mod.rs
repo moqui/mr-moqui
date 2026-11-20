@@ -29,23 +29,29 @@ pub(crate) mod peer;
 mod socket;
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-pub use peer::set_service_uid_for_tests;
+pub use peer::{set_operator_gid_for_tests, set_service_uid_for_tests};
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 pub use server::require_gate;
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-pub(crate) use server::{hook, sealed_by_operator, stop_on_seal};
+pub(crate) use server::{hook, sealed_now, stop_on_seal};
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+pub(crate) use socket::set_serving;
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 mod server {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, LazyLock, Mutex};
 
     use moqui_core::context::Error;
-    use moqui_core::seal::{GateRequest, Mode, SealWatch, Start, State, UnsealHook};
+    use moqui_core::seal::{GateRequest, Mode, SealWatch, Start, UnsealHook};
 
     /// Whether this process's server boots run the operator gate.
     static GATE: AtomicBool = AtomicBool::new(false);
+
+    /// The watches the gate keeps for the life of the process, one per runtime: each marks the server's stop as a
+    /// seal's ([`crate::systemd_notify::mark_sealed_stop`]), even when the seal comes while the server boots.
+    static WATCHES: LazyLock<Mutex<Vec<(PathBuf, SealWatch)>>> = LazyLock::new(Mutex::default);
 
     /// Run the operator gate in this process's server boots: the `moqui` binary's server, and a test of the sealed start.
     pub fn require_gate() {
@@ -59,13 +65,21 @@ mod server {
 
     /// The gate: open the operator socket, then open the seal or wait there until an operator does.
     fn gate(request: &GateRequest<'_>) -> Result<(), Error> {
+        if rustix::process::geteuid().is_root() {
+            tracing::error!(
+                "This server runs as root: every child and job of it is root too, and the operator socket's rule that \
+                 the server's own user runs only status protects nothing. Run it as its own user (systemd/moqui.service)"
+            );
+        }
         let keeper = request.keeper()?;
-        let path = super::socket::path(request.runtime_dir, request.conf);
-        super::socket::serve(
-            &path,
-            Arc::clone(&keeper),
-            super::peer::Settings::from_conf(request.conf),
-        )?;
+        let path = super::socket::serve(request.runtime_dir, &keeper.conf().socket, Arc::clone(&keeper))?;
+        {
+            let mut watches = moqui_lib::sync::lock(&WATCHES);
+            if !watches.iter().any(|(dir, _)| dir == request.runtime_dir) {
+                let watch = keeper.on_seal(Arc::new(crate::systemd_notify::mark_sealed_stop));
+                watches.push((request.runtime_dir.to_path_buf(), watch));
+            }
+        }
         match keeper.start(Mode::Operator)? {
             Start::Unsealed => {
                 crate::systemd_notify::notify("STATUS=unsealed");
@@ -90,15 +104,15 @@ mod server {
         }
     }
 
-    /// Whether the seal of `runtime_dir` was closed by `moqui operator seal`, so the server that stopped waits sealed
-    /// for `unseal` rather than ending.
-    pub(crate) fn sealed_by_operator(runtime_dir: &Path) -> bool {
-        GATE.load(Ordering::SeqCst)
-            && moqui_core::seal::keeper_of(runtime_dir).is_some_and(|keeper| keeper.status().state != State::Unsealed)
+    /// Whether the seal of `runtime_dir` is closed now (an operator sealed it while the server booted): the listener
+    /// then does not open.
+    pub(crate) fn sealed_now(runtime_dir: &Path) -> bool {
+        moqui_core::seal::keeper_of(runtime_dir).is_some_and(|keeper| !keeper.is_unsealed())
     }
 
     /// `stop`, which also fires when the seal of `runtime_dir` is closed (§3.5: `seal` closes the listeners), and the
-    /// watch that keeps that callback while the listener runs.
+    /// watch that keeps that callback while the listener runs. Registered before [`sealed_now`] is asked, so a seal
+    /// between the two still stops the listener.
     pub(crate) fn stop_on_seal(
         runtime: &tokio::runtime::Runtime,
         runtime_dir: &Path,

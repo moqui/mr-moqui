@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{access, resolve_group, Access, Settings};
+use super::{access, Access, Settings};
 
 #[test]
 fn root_and_the_operator_group_run_everything_and_the_service_user_only_status() {
@@ -24,15 +24,6 @@ fn root_and_the_operator_group_run_everything_and_the_service_user_only_status()
     let other = own.wrapping_add(1).max(1);
     assert_eq!(access(other, 4242, None, &settings), Access::All);
     assert_eq!(access(other, 100, None, &settings), Access::Status);
+    // no group root set: only root
     assert_eq!(access(other, 4242, None, &Settings::default()), Access::Status);
-}
-
-#[test]
-fn a_group_is_a_number_or_a_name_in_etc_group() {
-    assert_eq!(resolve_group("1234"), Some(1234));
-    assert_eq!(resolve_group(""), None);
-    assert_eq!(resolve_group("no-such-group-of-moqui"), None);
-    if std::fs::read_to_string("/etc/group").is_ok_and(|text| text.lines().any(|line| line.starts_with("wheel:"))) {
-        assert!(resolve_group("wheel").is_some());
-    }
 }

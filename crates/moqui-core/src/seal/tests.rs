@@ -217,7 +217,24 @@ fn a_write_stopped_before_its_rename_leaves_the_old_file() {
     // a crash: the staged file is left on disk and never renamed
     std::mem::forget(file::stage(&scratch.seal_path(), &changed).unwrap());
     assert_eq!(std::fs::read_to_string(scratch.seal_path()).unwrap(), before);
-    // the next keeper removes the leftover and opens the old seal
+    // a temporary file this new may be another process's write in progress: it stays
+    let temps = || {
+        std::fs::read_dir(scratch.seal_path().parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.to_string_lossy().contains(".tmp-"))
+            .collect::<Vec<_>>()
+    };
+    keeper(&scratch, "dev");
+    assert_eq!(temps().len(), 1);
+    let old = std::time::SystemTime::now() - Duration::from_secs(120);
+    std::fs::File::options()
+        .write(true)
+        .open(&temps()[0])
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    // the next keeper removes the old leftover and opens the old seal
     let next = keeper(&scratch, "dev");
     assert_eq!(next.start(Mode::Operator).unwrap(), Start::Unsealed);
     assert_eq!(next.status().generation, 1);
@@ -602,10 +619,7 @@ fn a_tpm_first_start_holds_the_shares_once_and_a_failed_unseal_waits_for_the_rec
     assert!(first.take_shares().is_err(), "the shares are read once");
     assert!(!first.status().shares_waiting);
     let seal = file::load(&scratch.seal_path()).unwrap().unwrap();
-    assert_eq!(
-        (seal.method_kind(), seal.method_text("command")),
-        ("tpm", Some(command.as_str()))
-    );
+    assert_eq!((seal.method_kind(), seal.method_text("command")), ("tpm", None));
 
     // an unattended reboot of the same host unseals itself
     let reboot = Keeper::open(&scratch.seal_path(), conf.clone()).unwrap();
@@ -671,4 +685,182 @@ fn a_bundle_restored_on_a_new_runtime_unseals_with_the_recovery_shares() {
 /// [`keeper`], for a test whose own variable is named `keeper`.
 fn reopen(scratch: &Scratch, purpose: &str) -> Keeper {
     keeper(scratch, purpose)
+}
+
+#[test]
+fn an_unattended_production_boot_never_makes_a_seal_even_with_an_automatic_method() {
+    let scratch = Scratch::new();
+    let command = stub_systemd_creds(&scratch.0);
+    let conf = SealConf {
+        method: "tpm".to_string(),
+        systemd_creds_command: command,
+        ..SealConf::with_purpose("production")
+    };
+    let tool = Keeper::open(&scratch.seal_path(), conf.clone()).unwrap();
+    assert_eq!(tool.start(Mode::Unattended).unwrap(), Start::Unsealed);
+    assert!(tool.status().ephemeral);
+    assert!(!scratch.seal_path().exists());
+    // and no secret is kept under its root key
+    assert!(tool.set_bootstrap_secret("x", b"y").is_err());
+    // a server on a host with no socket does not start without its seal
+    let no_socket = keeper(&scratch, "production");
+    assert!(no_socket
+        .start(Mode::NoSocket)
+        .unwrap_err()
+        .to_string()
+        .contains("no operator socket"));
+    let dev = keeper(&scratch, "dev");
+    assert_eq!(dev.start(Mode::NoSocket).unwrap(), Start::Unsealed);
+}
+
+#[test]
+fn a_seal_by_an_operator_lasts_across_a_restart_until_unseal_and_drops_the_held_shares() {
+    let scratch = Scratch::new();
+    let command = stub_systemd_creds(&scratch.0);
+    let conf = SealConf {
+        method: "tpm".to_string(),
+        systemd_creds_command: command,
+        ..SealConf::with_purpose("production")
+    };
+    let first = Keeper::open(&scratch.seal_path(), conf.clone()).unwrap();
+    first.start(Mode::Operator).unwrap();
+    assert!(first.status().shares_waiting);
+    first.seal();
+    assert!(!first.status().shares_waiting, "seal drops the held shares");
+    assert!(first.take_shares().is_err());
+    // a restart (a new process) with the automatic method stays sealed
+    let restarted = Keeper::open(&scratch.seal_path(), conf.clone()).unwrap();
+    assert!(matches!(restarted.start(Mode::Operator).unwrap(), Start::Waiting(_)));
+    assert!(matches!(restarted.start(Mode::Unattended).unwrap(), Start::Waiting(_)));
+    restarted.unseal(UnsealInput::Automatic).unwrap();
+    let after = Keeper::open(&scratch.seal_path(), conf).unwrap();
+    assert_eq!(after.start(Mode::Operator).unwrap(), Start::Unsealed);
+}
+
+#[test]
+fn status_answers_while_an_unseal_holds_the_state() {
+    let scratch = Scratch::new();
+    let keeper = keeper(&scratch, "dev");
+    keeper.start(Mode::Operator).unwrap();
+    let held = lock(&keeper.inner);
+    assert_eq!(keeper.status().state, State::Unsealed);
+    assert!(keeper.is_unsealed());
+    keeper.abandon();
+    drop(held);
+}
+
+#[test]
+fn writes_from_two_processes_keep_each_others_changes_and_a_stale_rekey_is_refused() {
+    let scratch = Scratch::new();
+    let first = keeper(&scratch, "production");
+    let issued = init(&first, MethodKind::Shamir, None);
+    let second = reopen(&scratch, "production");
+    for share in &issued.method_shares[..3] {
+        second
+            .unseal(UnsealInput::Share(Zeroizing::new(share.to_string())))
+            .unwrap();
+    }
+    first.set_bootstrap_secret("a", b"first").unwrap();
+    second.set_bootstrap_secret("b", b"second").unwrap();
+    let on_disk = file::load(&scratch.seal_path()).unwrap().unwrap();
+    assert!(on_disk.bootstrap.contains_key("a") && on_disk.bootstrap.contains_key("b"));
+    assert_eq!(first.bootstrap_secret("a").unwrap().unwrap().as_slice(), b"first");
+    // the first one rotates the root key; the second, still on the old generation, may not write over it
+    first
+        .rotate_root(rotate::RotateRoot {
+            shares: texts(&issued.recovery_shares[..3]),
+            passphrase: None,
+        })
+        .unwrap();
+    assert!(second
+        .set_bootstrap_secret("c", b"third")
+        .unwrap_err()
+        .to_string()
+        .contains("another process"));
+    assert!(second
+        .rekey(rotate::Rekey {
+            shares: texts(&issued.recovery_shares[..3]),
+            method: MethodKind::Shamir,
+            passphrase: None,
+        })
+        .is_err());
+}
+
+#[test]
+fn a_restore_refuses_a_bundle_that_is_not_sound() {
+    let scratch = Scratch::new();
+    let made = keeper(&scratch, "production");
+    init(&made, MethodKind::Shamir, None);
+    let bundle: Value = serde_json::from_str(&made.export_bundle().unwrap()).unwrap();
+    let with = |change: &dyn Fn(&mut Value)| {
+        let mut changed = bundle.clone();
+        change(&mut changed);
+        changed.to_string()
+    };
+    let elsewhere = Scratch::new();
+    let restored = keeper(&elsewhere, "production");
+    let unknown = with(&|bundle| bundle["seal"]["method"]["kind"] = Value::String("rot13".to_string()));
+    assert!(restored.restore(&unknown).is_err());
+    let no_recovery = with(&|bundle| {
+        bundle["seal"].as_object_mut().unwrap().remove("recovery");
+    });
+    assert!(restored
+        .restore(&no_recovery)
+        .unwrap_err()
+        .to_string()
+        .contains("no recovery"));
+    let dev = with(&|bundle| bundle["seal"]["method"]["kind"] = Value::String("dev".to_string()));
+    assert!(restored
+        .restore(&dev)
+        .unwrap_err()
+        .to_string()
+        .contains("refused on a production instance"));
+    assert!(!elsewhere.seal_path().exists());
+}
+
+#[test]
+fn the_socket_pacing_and_tpm_program_settings_come_only_from_the_conf_files() {
+    use crate::context::conf_env::{Outcome, Override, Source};
+    let conf = moqui_lib::node::MNode::parse_text(
+        "conf",
+        r#"<moqui-conf><seal socket="db/op.sock" unseal-max-delay-seconds="9"
+            systemd-creds-command="/opt/creds"/></moqui-conf>"#,
+    )
+    .unwrap();
+    let from_files = SealConf::from_gate(&conf, &[]).unwrap();
+    assert_eq!(
+        (
+            from_files.socket.as_str(),
+            from_files.unseal_max_delay.as_secs(),
+            from_files.systemd_creds_command.as_str()
+        ),
+        ("db/op.sock", 9, "/opt/creds")
+    );
+    let set_by = |selector: &str, source: Source| Override {
+        name: "moqui_conf__seal__x".to_string(),
+        source,
+        selector: Some(selector.to_string()),
+        secret: false,
+        outcome: Outcome::Set,
+    };
+    let overrides = [
+        set_by("seal@socket", Source::DotEnv),
+        set_by("seal@unseal-max-delay-seconds", Source::Environment),
+        set_by("seal@systemd-creds-command", Source::DotEnv),
+    ];
+    let overridden = SealConf::from_gate(&conf, &overrides).unwrap();
+    assert_eq!(
+        (
+            overridden.socket.as_str(),
+            overridden.unseal_max_delay.as_secs(),
+            overridden.systemd_creds_command.as_str()
+        ),
+        ("", 300, "")
+    );
+    let relative = moqui_lib::node::MNode::parse_text(
+        "conf",
+        r#"<moqui-conf><seal systemd-creds-command="creds"/></moqui-conf>"#,
+    )
+    .unwrap();
+    assert!(SealConf::from_conf(&relative).is_err());
 }

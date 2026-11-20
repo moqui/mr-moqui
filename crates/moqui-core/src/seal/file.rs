@@ -17,7 +17,7 @@
 //! the root key wrapped by a recovery key whose shares are issued, with a salted hash of each share so a wrong one is
 //! refused on entry; the bootstrap secrets, sealed under a key derived from the root key; and one data key for
 //! `SecretValue`, wrapped by the root key. A write goes to a temporary file, is synced, and is renamed over the old
-//! file (a new one is linked into place, never over another), so a reader sees the old file or the new one, never
+//! file (a first one only where there is none, under the file's lock), so a reader sees the old file or the new one, never
 //! part of one, and a crash before the rename leaves the old file in use.
 
 use std::collections::BTreeMap;
@@ -236,26 +236,23 @@ impl Staged {
         Ok(())
     }
 
-    /// Link the staged file in as the target only when there is none, so two processes that make a seal at once do
-    /// not replace each other's: false when another file was there first (the staged one is dropped).
+    /// Put the staged file in place only when there is none, under the seal file's lock, so two processes that make
+    /// a seal at once do not replace each other's: false when another file was there first (the staged one is
+    /// dropped). A rename, so it works on a file system with no hard links.
     ///
     /// # Errors
     ///
-    /// The link fails for another reason than an existing file.
-    pub fn commit_new(self) -> Result<bool, Error> {
-        match std::fs::hard_link(&self.temp, &self.target) {
-            Ok(()) => {
-                sync_dir(&self.target);
-                Ok(true)
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-            Err(err) => Err(Error::new(format!("could not put {} in place", self.target.display())).with_source(err)),
+    /// The rename fails.
+    pub fn commit_new(self, _held: &FileLock) -> Result<bool, Error> {
+        if self.target.exists() {
+            return Ok(false);
         }
+        self.commit().map(|()| true)
     }
 }
 
 impl Drop for Staged {
-    /// Uncommitted, or linked in by [`Staged::commit_new`]: the temporary name goes. After a rename it is gone already.
+    /// Uncommitted: the temporary name goes. After a rename it is gone already.
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.temp);
     }
@@ -274,14 +271,53 @@ fn sync_dir(path: &Path) {
 }
 
 /// Remove the temporary files a crash left beside `target` (a write stopped before its rename).
+/// Only one older than a minute goes: a newer one may be another live process's write in progress.
 pub fn remove_stale_temps(target: &Path) {
     let (Some(dir), Some(name)) = (target.parent(), target.file_name().and_then(|name| name.to_str())) else {
         return;
     };
     let prefix = format!("{name}.tmp-");
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        if entry.file_name().to_str().is_some_and(|file| file.starts_with(&prefix)) {
+        let old = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > std::time::Duration::from_secs(60));
+        if old && entry.file_name().to_str().is_some_and(|file| file.starts_with(&prefix)) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// The exclusive lock on a runtime's seal file (`seal.json.lock` beside it), held while a write reads the file again
+/// and replaces it, so writes in two processes do not lose each other's changes. Released when dropped.
+pub struct FileLock {
+    _file: std::fs::File,
+}
+
+/// Take the lock of the seal file at `target`, waiting for another process that holds it.
+///
+/// # Errors
+///
+/// The lock file cannot be made or locked.
+pub fn lock(target: &Path) -> Result<FileLock, Error> {
+    if let Some(dir) = target.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|err| Error::new(format!("could not make {}", dir.display())).with_source(err))?;
+    }
+    let path = target.with_file_name(format!("{FILE_NAME}.lock"));
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let file = options
+        .open(&path)
+        .map_err(|err| Error::new(format!("could not open {}", path.display())).with_source(err))?;
+    file.lock()
+        .map_err(|err| Error::new(format!("could not lock {}", path.display())).with_source(err))?;
+    Ok(FileLock { _file: file })
 }

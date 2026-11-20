@@ -17,14 +17,16 @@
         listeners only once unsealed; while sealed it answers only on the operator socket (moqui operator). method: the
         unseal method init uses when none is named (tpm, passphrase, shamir, dev; kms and transit come later), and on a
         production instance's first start an automatic one (tpm) makes the seal by itself; empty for none. Once
-        runtime/db/seal.json exists its method wins and this is ignored. socket: the operator socket, empty for
-        $RUNTIME_DIRECTORY/moqui.sock, else runtime/db/operator.sock (relative to the runtime). operator-group: the group
-        (a name or a number) whose members, and root, may run every operator command; the server's own user runs only
-        status. shares and threshold: the recovery shares made at init, threshold of shares recover the root key, and
-        the shamir method's shares. systemd-creds-command: the program of the tpm method. unseal-max-delay-seconds: the
-        longest wait after wrong passphrases or shares, which doubles from one second. -->
-    <seal method="" socket="" operator-group="moqui-operator" shares="5" threshold="3"
-            systemd-creds-command="systemd-creds" unseal-max-delay-seconds="300"/>
+        runtime/db/seal.json exists its method wins and this is ignored. socket: where a server binds its own operator
+        socket when root hands it none (systemd/moqui-operator.socket, moqui operator bind), relative to the runtime,
+        empty for db/operator.sock: a development setup, not a protection boundary. Who may use the socket is root's to
+        say, on the socket itself. shares and threshold: the recovery shares made at init, threshold of shares recover
+        the root key, and the shamir method's shares. systemd-creds-command: the tpm method's program, an absolute path,
+        empty for /usr/bin/systemd-creds or /bin/systemd-creds. unseal-max-delay-seconds: the longest wait after wrong
+        passphrases or shares, which doubles from one second. socket, systemd-creds-command and
+        unseal-max-delay-seconds are read from the conf files only: an environment name or runtime/.env that sets one
+        is ignored. -->
+    <seal method="" socket="" shares="5" threshold="3" systemd-creds-command="" unseal-max-delay-seconds="300"/>
 
     <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
         nobody set up there. directory-url fills in the authority's directory on that screen, Let's Encrypt's; the screen

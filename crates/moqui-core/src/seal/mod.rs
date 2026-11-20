@@ -26,8 +26,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, LazyLock, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, RwLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -38,7 +38,7 @@ use serde_json::{Map, Value};
 use sha2::Digest as _;
 use zeroize::Zeroizing;
 
-use crate::context::conf_env::{conf_attribute, PURPOSE};
+use crate::context::conf_env::{conf_attribute, Override, Source, PURPOSE};
 use crate::context::Error;
 
 mod bootstrap;
@@ -61,8 +61,12 @@ pub struct SealConf {
     /// `seal@shares` and `seal@threshold`: the recovery shares made at init, and those of the `shamir` method.
     pub shares: u8,
     pub threshold: u8,
-    /// `seal@systemd-creds-command`: the `systemd-creds` program of the `tpm` method.
+    /// `seal@systemd-creds-command`: the `systemd-creds` program of the `tpm` method, an absolute path; empty for the
+    /// first of [`methods::tpm::PROGRAMS`] there is.
     pub systemd_creds_command: String,
+    /// `seal@socket`: where a server with no socket handed to it by root binds its own operator socket (a development
+    /// instance; not a protection boundary). Empty for `db/operator.sock` in the runtime.
+    pub socket: String,
     /// `seal@unseal-max-delay-seconds`: the longest wait the doubling delay after a wrong passphrase or share reaches.
     pub unseal_max_delay: Duration,
     /// `instance@purpose`.
@@ -73,22 +77,50 @@ pub struct SealConf {
 }
 
 impl SealConf {
-    /// The settings from a merged conf.
+    /// The settings from a merged conf, with no environment names applied over it.
     ///
     /// # Errors
     ///
-    /// Share counts that are not numbers, a threshold under 2 or over the shares, or a method that is none.
+    /// As [`Self::from_gate`].
     pub fn from_conf(conf: &MNode) -> Result<Self, Error> {
-        let number = |selector: &str, default: u64| -> Result<u64, Error> {
-            let text = conf_attribute(conf, selector);
+        Self::from_gate(conf, &[])
+    }
+
+    /// The settings from the merged conf of a boot and the environment names it applied. The settings that place the
+    /// socket, pace the unseal attempts and name the program the `tpm` method runs come only from the conf files (the
+    /// server's user can write `runtime/.env`, and its children set the environment): one an environment name or
+    /// `runtime/.env` set is ignored, with an error logged, and its default is used.
+    ///
+    /// # Errors
+    ///
+    /// Share counts that are not numbers, a threshold under 2 or over the shares, a method that is none, or a
+    /// `systemd-creds` program that is not an absolute path.
+    pub fn from_gate(conf: &MNode, overrides: &[Override]) -> Result<Self, Error> {
+        let protected = |selector: &str| -> String {
+            let set_outside = overrides.iter().any(|applied| {
+                applied.applied()
+                    && applied.selector.as_deref() == Some(selector)
+                    && matches!(applied.source, Source::Environment | Source::DotEnv)
+            });
+            if set_outside {
+                tracing::error!(
+                    "{selector} is set by an environment name or runtime/.env, which the server's own user can write: \
+                     it is ignored and its default used; set it in a conf file (plans/Sealed-Secrets.md §3.3)"
+                );
+                return String::new();
+            }
+            conf_attribute(conf, selector)
+        };
+        let number = |selector: &str, default: u64, text: String| -> Result<u64, Error> {
             if text.is_empty() {
                 return Ok(default);
             }
             text.parse()
                 .map_err(|_| Error::new(format!("{selector} is {text:?}, not a whole number")))
         };
-        let shares = u8::try_from(number("seal@shares", 5)?).unwrap_or(u8::MAX);
-        let threshold = u8::try_from(number("seal@threshold", 3)?).unwrap_or(u8::MAX);
+        let shares = u8::try_from(number("seal@shares", 5, conf_attribute(conf, "seal@shares"))?).unwrap_or(u8::MAX);
+        let threshold =
+            u8::try_from(number("seal@threshold", 3, conf_attribute(conf, "seal@threshold"))?).unwrap_or(u8::MAX);
         if threshold < 2 || threshold > shares {
             return Err(Error::new(format!(
                 "seal@threshold {threshold} must be at least 2 and at most seal@shares {shares}"
@@ -98,17 +130,20 @@ impl SealConf {
         if !method.is_empty() {
             MethodKind::parse(&method).map_err(|err| Error::new(format!("seal@method: {err}")))?;
         }
-        let command = conf_attribute(conf, "seal@systemd-creds-command");
+        let command = protected("seal@systemd-creds-command");
+        if !command.is_empty() && !Path::new(&command).is_absolute() {
+            return Err(Error::new(format!(
+                "seal@systemd-creds-command {command:?} is not an absolute path"
+            )));
+        }
+        let max_delay = protected("seal@unseal-max-delay-seconds");
         Ok(Self {
             method,
             shares,
             threshold,
-            systemd_creds_command: if command.is_empty() {
-                "systemd-creds".to_string()
-            } else {
-                command
-            },
-            unseal_max_delay: Duration::from_secs(number("seal@unseal-max-delay-seconds", 300)?),
+            systemd_creds_command: command,
+            socket: protected("seal@socket"),
+            unseal_max_delay: Duration::from_secs(number("seal@unseal-max-delay-seconds", 300, max_delay)?),
             purpose: conf_attribute(conf, PURPOSE),
             database_identity: database_identity(conf),
         })
@@ -121,7 +156,8 @@ impl SealConf {
             method: String::new(),
             shares: 5,
             threshold: 3,
-            systemd_creds_command: "systemd-creds".to_string(),
+            systemd_creds_command: String::new(),
+            socket: String::new(),
             unseal_max_delay: Duration::from_secs(300),
             purpose: purpose.to_string(),
             database_identity: Value::Null,
@@ -224,9 +260,10 @@ pub fn decode(text: &str) -> Result<Vec<u8>, Error> {
 }
 
 /// The three states (§3.3).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
+    #[default]
     Sealed,
     Unsealing,
     Unsealed,
@@ -245,7 +282,7 @@ impl State {
 }
 
 /// What `moqui operator status` shows: nothing secret.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Status {
     pub state: State,
     /// Whether this runtime has a `seal.json`.
@@ -332,6 +369,9 @@ pub enum Mode {
     Unattended,
     /// A server boot: the host's socket is open and the boot waits there while sealed.
     Operator,
+    /// A server boot where there is no operator socket (not a Unix host): as unattended, but a production instance
+    /// with no seal, or a seal that needs an operator, does not start.
+    NoSocket,
 }
 
 /// A callback run when the keeper is sealed ([`Keeper::on_seal`]).
@@ -342,6 +382,15 @@ pub struct Keeper {
     path: PathBuf,
     conf: RwLock<SealConf>,
     inner: Mutex<Inner>,
+    /// What `status` shows, published whenever the state changes, so `status` never waits on a slow unseal
+    /// (Argon2id, `systemd-creds`) that holds `inner`.
+    snapshot: RwLock<(Status, Option<Instant>)>,
+    /// Whether the root key is in memory, and whether the wait for it is given up: read with no lock, by the signal
+    /// path among others.
+    unsealed: AtomicBool,
+    abandoned: AtomicBool,
+    /// The mutex `changed` waits with.
+    wake: Mutex<()>,
     changed: Condvar,
     /// One unseal attempt at a time (§3.3, Unseal attempts).
     attempt: Mutex<()>,
@@ -363,11 +412,37 @@ struct Inner {
     reason: String,
     /// The recovery shares an automatic init made, until `init --take-shares` reads them.
     held_shares: Option<Vec<Zeroizing<String>>>,
-    /// `seal` ran: a start waits for `unseal` even with an automatic method.
+    /// `seal` ran: a start waits for `unseal` even with an automatic method. Kept on disk beside seal.json
+    /// ([`Keeper::marker`]), so a restart stays sealed too.
     operator_sealed: bool,
     ephemeral: bool,
-    /// The wait is given up (a test or a server stopping while sealed).
-    abandoned: bool,
+}
+
+/// The keeper's state, locked; publishes what `status` shows when dropped.
+struct InnerGuard<'a> {
+    keeper: &'a Keeper,
+    guard: MutexGuard<'a, Inner>,
+}
+
+impl std::ops::Deref for InnerGuard<'_> {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for InnerGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Inner {
+        &mut self.guard
+    }
+}
+
+impl Drop for InnerGuard<'_> {
+    fn drop(&mut self) {
+        let status = self.keeper.status_of(&self.guard);
+        self.keeper.unsealed.store(self.guard.root.is_some(), Ordering::SeqCst);
+        *write(&self.keeper.snapshot) = (status, self.guard.retry_at);
+    }
 }
 
 impl std::fmt::Debug for Keeper {
@@ -408,10 +483,11 @@ pub fn keeper_of(runtime_dir: &Path) -> Option<Arc<Keeper>> {
     })
 }
 
-/// What the factory's gate is given: the runtime directory and the merged conf.
+/// What the factory's gate is given: the runtime directory, the merged conf, and the environment names applied over it.
 pub struct GateRequest<'a> {
     pub runtime_dir: &'a Path,
     pub conf: &'a MNode,
+    pub overrides: &'a [Override],
 }
 
 impl GateRequest<'_> {
@@ -421,12 +497,24 @@ impl GateRequest<'_> {
     ///
     /// Settings that do not parse, or a `seal.json` that cannot be read.
     pub fn keeper(&self) -> Result<Arc<Keeper>, Error> {
-        keeper_for(self.runtime_dir, SealConf::from_conf(self.conf)?)
+        keeper_for(self.runtime_dir, SealConf::from_gate(self.conf, self.overrides)?)
     }
 }
 
 /// The hook in `BootOptions::unseal`: a server's gate, which returns once the seal is open (or the boot is to stop).
 pub type UnsealHook = Arc<dyn Fn(&GateRequest<'_>) -> Result<(), Error> + Send + Sync>;
+
+/// The gate of a server boot on a host with no operator socket ([`Mode::NoSocket`]).
+///
+/// # Errors
+///
+/// A production instance with no seal, a seal that needs an operator, or a failed automatic unseal.
+pub fn open_without_socket(request: &GateRequest<'_>) -> Result<(), Error> {
+    match request.keeper()?.start(Mode::NoSocket)? {
+        Start::Unsealed => Ok(()),
+        Start::Waiting(reason) => Err(Error::new(reason)),
+    }
+}
 
 /// The gate of a boot with no hook: open the seal with no operator ([`Mode::Unattended`]).
 ///
@@ -474,19 +562,40 @@ impl Keeper {
     pub fn open(path: &Path, conf: SealConf) -> Result<Self, Error> {
         file::remove_stale_temps(path);
         let loaded = file::load(path)?;
-        Ok(Self {
+        let operator_sealed = marker_of(path).exists();
+        let keeper = Self {
             path: path.to_path_buf(),
             conf: RwLock::new(conf),
             inner: Mutex::new(Inner {
                 file: loaded,
+                operator_sealed,
                 ..Inner::default()
             }),
+            snapshot: RwLock::new((Status::default(), None)),
+            unsealed: AtomicBool::new(false),
+            abandoned: AtomicBool::new(false),
+            wake: Mutex::new(()),
             changed: Condvar::new(),
             attempt: Mutex::new(()),
             base_delay: Mutex::new(Duration::from_secs(1)),
             watchers: Mutex::new(Vec::new()),
             next_watch: AtomicU64::new(1),
-        })
+        };
+        drop(keeper.inner());
+        Ok(keeper)
+    }
+
+    /// The state, locked.
+    fn inner(&self) -> InnerGuard<'_> {
+        InnerGuard {
+            keeper: self,
+            guard: lock(&self.inner),
+        }
+    }
+
+    /// The marker of a seal an operator closed: present, a start waits for `unseal` whatever the method.
+    fn marker(&self) -> PathBuf {
+        marker_of(&self.path)
     }
 
     /// Where the seal file is.
@@ -510,8 +619,11 @@ impl Keeper {
     /// The state, and what an operator needs to know.
     #[must_use]
     pub fn status(&self) -> Status {
-        let inner = lock(&self.inner);
-        self.status_of(&inner)
+        let (mut status, retry_at) = read(&self.snapshot).clone();
+        status.retry_after_ms = retry_at
+            .and_then(|at| at.checked_duration_since(Instant::now()))
+            .map_or(0, |wait| u64::try_from(wait.as_millis()).unwrap_or(u64::MAX));
+        status
     }
 
     fn status_of(&self, inner: &Inner) -> Status {
@@ -565,13 +677,13 @@ impl Keeper {
     /// Whether the root key is in memory.
     #[must_use]
     pub fn is_unsealed(&self) -> bool {
-        lock(&self.inner).root.is_some()
+        self.unsealed.load(Ordering::SeqCst)
     }
 
     /// The seal file as this keeper has it, if any.
     #[must_use]
     pub fn seal_file(&self) -> Option<SealFile> {
-        lock(&self.inner).file.clone()
+        self.inner().file.clone()
     }
 
     /// Open the seal at a start (§3.3, §6 "A first start with no seal.json").
@@ -582,7 +694,7 @@ impl Keeper {
     /// unseal.
     pub fn start(&self, mode: Mode) -> Result<Start, Error> {
         let conf = self.conf();
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
         if inner.root.is_some() {
             return Ok(Start::Unsealed);
         }
@@ -616,7 +728,7 @@ impl Keeper {
                     "sealed: waiting for `moqui operator unseal` ({})",
                     kind.name()
                 ))),
-                Mode::Unattended => Err(Error::new(format!(
+                Mode::Unattended | Mode::NoSocket => Err(Error::new(format!(
                     "this runtime's seal ({}) is opened by an operator on the server's operator socket: start the \
                      server and run `moqui operator unseal`",
                     kind.name()
@@ -638,7 +750,7 @@ impl Keeper {
                 );
                 match mode {
                     Mode::Operator => Ok(Start::Waiting(inner.reason.clone())),
-                    Mode::Unattended => Err(Error::new(inner.reason.clone())),
+                    Mode::Unattended | Mode::NoSocket => Err(Error::new(inner.reason.clone())),
                 }
             }
         }
@@ -667,6 +779,17 @@ impl Keeper {
                 Start::Unsealed
             });
         }
+        // a boot that is not the server's (moqui load, a tool, a test) never makes a production seal: the recovery
+        // shares of one made here would end with the process
+        if mode == Mode::Unattended {
+            inner.root = Some(RootKey::random()?);
+            inner.ephemeral = true;
+            tracing::info!(
+                "No seal.json on this production instance: this boot holds a root key in memory only and makes no \
+                 seal; the server's start makes it"
+            );
+            return Ok(Start::Unsealed);
+        }
         if let Some(kind) = conf
             .method_kind()
             .filter(|kind| kind.automatic() && *kind != MethodKind::Dev)
@@ -686,15 +809,10 @@ impl Keeper {
             Mode::Operator => Ok(Start::Waiting(
                 "no seal yet: waiting for `moqui operator init` (a production instance)".to_string(),
             )),
-            Mode::Unattended => {
-                inner.root = Some(RootKey::random()?);
-                inner.ephemeral = true;
-                tracing::info!(
-                    "No seal.json on this production instance: this boot holds a root key in memory only; the server's \
-                     start waits for `moqui operator init`"
-                );
-                Ok(Start::Unsealed)
-            }
+            Mode::NoSocket | Mode::Unattended => Err(Error::new(
+                "a production server starts only with its seal, and this host has no operator socket to make one: set \
+                 seal@method to an automatic method, or make the seal on a Unix host and bring its seal.json",
+            )),
         }
     }
 
@@ -704,22 +822,27 @@ impl Keeper {
     ///
     /// The wait was given up ([`Self::abandon`]).
     pub fn wait_unsealed(&self) -> Result<(), Error> {
-        let mut inner = lock(&self.inner);
         loop {
-            if inner.root.is_some() {
+            if self.unsealed.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            if inner.abandoned {
-                inner.abandoned = false;
+            if self.abandoned.swap(false, Ordering::SeqCst) {
                 return Err(Error::new("stopped while sealed"));
             }
-            inner = moqui_lib::sync::wait(&self.changed, inner);
+            // a short wait, so a wake that came between the checks and the wait is not missed for long
+            let wake = lock(&self.wake);
+            drop(moqui_lib::sync::wait_timeout(
+                &self.changed,
+                wake,
+                Duration::from_millis(200),
+            ));
         }
     }
 
-    /// Give up a [`Self::wait_unsealed`] in progress: a server stopping while sealed.
+    /// Give up a [`Self::wait_unsealed`] in progress: a server stopping while sealed. Takes no lock, so a signal
+    /// handler can call it while an unseal attempt runs.
     pub fn abandon(&self) {
-        lock(&self.inner).abandoned = true;
+        self.abandoned.store(true, Ordering::SeqCst);
         self.changed.notify_all();
     }
 
@@ -731,7 +854,7 @@ impl Keeper {
     /// cannot be written.
     pub fn init(&self, request: Init) -> Result<Issued, Error> {
         let conf = self.conf();
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
         if inner.file.is_none() {
             inner.file = file::load(&self.path)?;
         }
@@ -763,6 +886,7 @@ impl Keeper {
             issued.recovery_shares = shares;
             Some(recovery)
         };
+        let held = file::lock(&self.path)?;
         let seal = SealFile {
             format: file::FORMAT.to_string(),
             version: file::VERSION,
@@ -774,7 +898,7 @@ impl Keeper {
             bootstrap: std::collections::BTreeMap::new(),
             secret_value_key: None,
         };
-        if !file::stage(&self.path, &seal)?.commit_new()? {
+        if !file::stage(&self.path, &seal)?.commit_new(&held)? {
             // another process made this runtime's seal first: use that one
             inner.file = file::load(&self.path)?;
             let other = inner
@@ -793,6 +917,21 @@ impl Keeper {
         inner.file = Some(seal);
         self.opened(inner, root);
         Ok(issued)
+    }
+
+    /// Under the seal file's lock: take the file on disk as this keeper's, refusing one whose root key or generation
+    /// another process changed (a rekey or rotate-root there), so no write here undoes one there.
+    fn refresh(&self, inner: &mut Inner, _held: &file::FileLock) -> Result<(), Error> {
+        let disk = file::load(&self.path)?.ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+        if let Some(held) = inner.file.as_ref() {
+            if held.root_id != disk.root_id || held.generation != disk.generation {
+                return Err(Error::new(
+                    "seal.json was changed by another process (a rekey or rotate-root there): restart this server",
+                ));
+            }
+        }
+        inner.file = Some(disk);
+        Ok(())
     }
 
     /// The method's metadata for `root`, with `kind` in it, and the shares a method issues.
@@ -845,6 +984,13 @@ impl Keeper {
         inner.retry_at = None;
         inner.reason.clear();
         inner.operator_sealed = false;
+        let marker = self.marker();
+        if marker.exists() {
+            if let Err(err) = std::fs::remove_file(&marker) {
+                tracing::error!("Could not remove {}: {err}", marker.display());
+            }
+        }
+        self.unsealed.store(true, Ordering::SeqCst);
         self.changed.notify_all();
     }
 
@@ -859,7 +1005,7 @@ impl Keeper {
             return Err(Error::new("another unseal attempt is running; try again when it ends"));
         };
         let conf = self.conf();
-        let mut inner = lock(&self.inner);
+        let mut inner = self.inner();
         if inner.root.is_some() {
             return Ok(self.status_of(&inner));
         }
@@ -1020,12 +1166,28 @@ impl Keeper {
     /// listeners. A start then waits for `unseal`, whatever the method.
     pub fn seal(&self) {
         {
-            let mut inner = lock(&self.inner);
+            let mut inner = self.inner();
             inner.root = None;
             inner.entered.clear();
             inner.entering = None;
             inner.operator_sealed = true;
             inner.ephemeral = false;
+            if inner.held_shares.take().is_some() {
+                tracing::error!(
+                    "Sealed with the recovery shares of this server's first start still unread: they are dropped with \
+                     every other key, and no copy is left; make new ones with rekey or rotate-root once unsealed"
+                );
+            }
+            self.unsealed.store(false, Ordering::SeqCst);
+            if inner.file.is_some() {
+                let marker = self.marker();
+                if let Err(err) = std::fs::write(&marker, "sealed by moqui operator seal\n") {
+                    tracing::error!(
+                        "Could not write {} ({err}): a restart with an automatic method unseals again",
+                        marker.display()
+                    );
+                }
+            }
             self.changed.notify_all();
         }
         tracing::warn!("Sealed by an operator: the root key is dropped from memory and the listeners close");
@@ -1054,12 +1216,17 @@ impl Keeper {
     ///
     /// None are held: read already, or this seal was made by `moqui operator init`.
     pub fn take_shares(&self) -> Result<Vec<Zeroizing<String>>, Error> {
-        lock(&self.inner)
+        self.inner()
             .held_shares
             .take()
             .ok_or_else(|| Error::new("no recovery shares are held: they were read already, or never held"))
             .inspect(|_| tracing::info!("The recovery shares held since this server's first start were read"))
     }
+}
+
+/// The marker beside the seal file at `path` that an operator sealed it.
+fn marker_of(path: &Path) -> PathBuf {
+    path.with_file_name("sealed-by-operator")
 }
 
 /// Check that `root` is the root key `file` names.
