@@ -168,15 +168,16 @@ pub fn configured_domains() -> Vec<String> {
         .collect()
 }
 
-/// Where a new `mail-delivery/dkim@key` is written: the server's `runtime/.env`, set by the host at its start
-/// ([`enable_key_generation`]). Without it (a unit test, a tool) no key is made.
+/// The server's `runtime/.env`, set by the host at its start ([`enable_key_generation`]): a new `mail-delivery/dkim@key`
+/// is made only when it is set, and kept by its server's conf (the seal's store, plans/Sealed-Secrets.md S4) or in it.
+/// Without it (a unit test, a tool) no key is made.
 fn env_file() -> &'static Mutex<Option<std::path::PathBuf>> {
     static ENV_FILE: Mutex<Option<std::path::PathBuf>> = Mutex::new(None);
     &ENV_FILE
 }
 
-/// Let [`key`] make the node's DKIM key when `mail-delivery/dkim@key` is not set, written to `env_file` (`runtime/.env`). The
-/// host calls it at its start; the first server of a process names the file.
+/// Let [`key`] make the node's DKIM key when `mail-delivery/dkim@key` is not set ([`keep_new_key`]). The host calls it at
+/// its start; the first server of a process names its `runtime/.env`.
 pub fn enable_key_generation(env_file_path: std::path::PathBuf) {
     let mut file = lock(env_file());
     if file.is_none() {
@@ -185,8 +186,8 @@ pub fn enable_key_generation(env_file_path: std::path::PathBuf) {
 }
 
 /// The node's DKIM key, or none when `mail-delivery/dkim@key` is not set and this process makes none. When it is still
-/// `CHANGEME` or empty on a server, an RSA-2048 key is made and written to `runtime/.env`, once per process, as the
-/// other generated secrets are.
+/// `CHANGEME` or empty on a server, an RSA-2048 key is made and kept, once per process, as the other generated secrets
+/// are ([`keep_new_key`]).
 ///
 /// # Errors
 ///
@@ -204,16 +205,16 @@ pub fn key() -> Result<Option<Arc<DkimKey>>, String> {
         };
         text = DkimKey::generate()?;
         keep_new_key(&env, &text)?;
-        tracing::info!("Generated secret {DKIM_KEY} (RSA-2048) into {}", env.display());
+        tracing::info!("Generated secret {DKIM_KEY} (RSA-2048)");
     }
     let key = Arc::new(DkimKey::parse(&text)?);
     *kept = Some(Arc::clone(&key));
     Ok(Some(key))
 }
 
-/// Keep a new key: by the running factory's conf when this thread has one or the process booted one (written to its
-/// `runtime/.env` under the attribute's environment name, and set in its live conf), else in `env` and as a process
-/// property of that name, which [`moqui_core::context::conf_env::setting`] reads first.
+/// Keep a new key: by the running factory's conf when this thread has one or the process booted one (into its seal's
+/// store, or a test factory's `runtime/.env`, and set in its live conf), else in `env` and as a process property of the
+/// attribute's environment name, which [`moqui_core::context::conf_env::setting`] reads first.
 fn keep_new_key(env: &std::path::Path, text: &str) -> Result<(), String> {
     use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
     let factory =

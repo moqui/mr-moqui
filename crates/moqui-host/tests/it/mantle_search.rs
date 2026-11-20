@@ -29,7 +29,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::driver::DbDriver;
 use moqui_core::transaction::PoolConfig;
-use moqui_host::db::embedded::EmbeddedCluster;
+use moqui_host::db::embedded::{EmbeddedCluster, StartOptions, SuperuserPassword};
 use moqui_host::{load_data, LoadFlags};
 use moqui_lib::object::{to_plain_string, Value};
 
@@ -139,7 +139,20 @@ fn mantle_search_callers_on_the_search_facade() {
     };
     load_data(&runtime, &framework, &cluster_dir, &flags).unwrap();
 
-    let (cluster, driver) = EmbeddedCluster::start(&cluster_dir, 30).unwrap();
+    // the cluster's superuser password is in the seal.json the load made, not a pgpass file (plans/Sealed-Secrets.md S4)
+    let mut options = StartOptions::new(30);
+    options.password = moqui_core::seal::keeper_of(&runtime)
+        .and_then(|keeper| {
+            keeper
+                .bootstrap_secret(moqui_core::seal::secrets::DATASOURCE_PASSWORD)
+                .unwrap()
+        })
+        .map(|value| SuperuserPassword(String::from_utf8(value.to_vec()).unwrap()));
+    assert!(
+        options.password.is_some(),
+        "the load kept the cluster's password in seal.json"
+    );
+    let (cluster, driver) = EmbeddedCluster::start_with(&cluster_dir, &options).unwrap();
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
     let factory = ExecutionContextFactory::boot_with_framework(&runtime, &framework).unwrap();
     let entity_dirs = moqui_host::db::entity_facade::component_entity_dirs(&factory);

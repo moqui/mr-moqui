@@ -43,13 +43,14 @@ const PROPERTIES: [(&str, &str); 2] = [
     ("moqui_conf__media_server__port", "0"),
     ("moqui_conf__media_server__cascade_enabled", "true"),
 ];
-/// The generated secrets a second member of the cluster takes from the first.
+/// The generated secrets a second member of the cluster takes from the first, by selector: kept in the first's seal
+/// (plans/Sealed-Secrets.md S4), not its properties, and given to the child by their environment names.
 const SHARED_SECRETS: [&str; 5] = [
-    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
-    "moqui_conf__cluster_member__tls_cert",
-    "moqui_conf__cluster_member__tls_key",
-    "moqui_conf__entity_facade__crypt_pass",
-    "moqui_conf__media_server__turn_server__auth_secret",
+    "webapp-list/webapp[webroot]/session-config@cookie-key",
+    "cluster-member@tls-cert",
+    "cluster-member@tls-key",
+    "entity-facade@crypt-pass",
+    "media-server/turn-server@auth-secret",
 ];
 
 /// The second server, in its child process.
@@ -66,10 +67,9 @@ impl LegNode {
         let mut command = Command::new(std::env::current_exe().unwrap());
         // the cluster's members share their secrets: the session key and the cluster's certificate (each member checks
         // the others' fingerprints), and the key of the encrypted fields of the one database
-        for name in SHARED_SECRETS {
-            let value = moqui_lib::env::get_prop_or_env(name);
-            if !value.is_empty() {
-                command.env(name, value);
+        for selector in SHARED_SECRETS {
+            if let Some(value) = moqui_core::context::conf_env::secret(selector).filter(|value| !value.is_empty()) {
+                command.env(moqui_core::context::conf_env::env_name_of(selector), value.as_str());
             }
         }
         let mut child = command

@@ -469,10 +469,16 @@ fn the_smtp_listener_stores_gateway_mail_for_hosted_and_shared_accounts() {
         headers.contains("dkim=pass header.d=example.com header.s=moqui"),
         "{headers}"
     );
+    // the key made is kept in the seal's store, never in runtime/.env (plans/Sealed-Secrets.md S4)
     let env = std::fs::read_to_string(factory.runtime_dir().join(".env")).unwrap_or_default();
     assert!(
-        env.contains("moqui_conf__mail_delivery__dkim__key="),
-        "the key made into runtime/.env"
+        !env.contains("moqui_conf__mail_delivery__dkim__key="),
+        "no key in runtime/.env"
+    );
+    let kept = moqui_core::seal::secrets::get(&factory, "mail-delivery/dkim@key").unwrap();
+    assert!(
+        kept.is_some_and(|key| moqui_mail::auth::DkimKey::parse(&key).is_ok()),
+        "the key made into the seal's store"
     );
 }
 
