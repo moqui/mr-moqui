@@ -17,6 +17,10 @@
 //! approver set and a revoke, each checked against the instance's environment and the caller (INSTANCE_ADMIN, and the
 //! environment's approver group when it names one); on a managed instance, pairing with a manager by its code and the
 //! link's state.
+//!
+//! The managed sealed start (M6): an approver's approval of a waiting unseal, the recovery bundle deposited again, a
+//! pinned unsealed-proof key forgotten; and for a recovery holder (over REST, `/rest/s1/vault`), a sealed instance's
+//! unseal key, a share sealed to it, and a holder's confirmation of a share they filed.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -43,6 +47,12 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, confirm_instance_link_address)?;
     moqui_core::rust_service!(map, pair_manager)?;
     moqui_core::rust_service!(map, get_manager_link)?;
+    moqui_core::rust_service!(map, approve_instance_unseal)?;
+    moqui_core::rust_service!(map, store_instance_seal_bundle)?;
+    moqui_core::rust_service!(map, forget_instance_unseal_proof_key)?;
+    moqui_core::rust_service!(map, get_instance_unseal_key)?;
+    moqui_core::rust_service!(map, send_instance_sealed_share)?;
+    moqui_core::rust_service!(map, confirm_instance_recovery_share)?;
     Ok(())
 }
 
@@ -173,6 +183,25 @@ mod manager {
         Ok(out([
             ("linked", Value::Bool(view.linked)),
             ("generation", Value::I64(i64::try_from(view.generation).unwrap_or(0))),
+            ("unsealVerified", Value::Bool(view.verified)),
+            ("unsealProofTrust", Value::string(field(&row, "unsealProofTrust"))),
+            ("recoverySetId", Value::string(field(&row, "recoverySetId"))),
+            (
+                "recoveryShares",
+                Value::string(
+                    moqui_instance::shares::share_report(facade, &instance_id)?
+                        .iter()
+                        .map(|(index, holder, confirmed)| {
+                            format!(
+                                "{index} {holder}{}",
+                                if *confirmed { " confirmed" } else { " unconfirmed" }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                ),
+            ),
+            ("sealBundleDate", Value::string(field(&row, "sealBundleDate"))),
             ("serving", Value::Bool(view.serving)),
             ("remote", Value::string(&view.remote)),
             ("sealState", Value::string(&view.status.seal_state)),
@@ -357,6 +386,69 @@ mod manager {
         Ok(BTreeMap::new())
     }
 
+    pub(super) fn approve_instance_unseal(params: &Params, facade: &EntityFacade) -> Out {
+        let action_id = required(params, "instanceActionId")?;
+        let instance_id = moqui_instance::transit::approve(facade, &action_id)?;
+        Ok(out([("appInstanceId", Value::string(instance_id))]))
+    }
+
+    pub(super) fn store_instance_seal_bundle(params: &Params, facade: &EntityFacade) -> Out {
+        let instance_id = required(params, "appInstanceId")?;
+        checked(facade, &instance_id)?;
+        let factory = factory()?;
+        let reply = server(&factory)?
+            .call(&instance_id, Body::ExportSeal(Default::default()))
+            .map_err(LibError::new)?;
+        if !reply.ok {
+            return Err(LibError::new(format!(
+                "AppInstance {instance_id} gave no recovery bundle: {}",
+                reply.error
+            )));
+        }
+        let item_id = moqui_instance::shares::deposit_seal_bundle(facade, &instance_id, &reply.text)?;
+        Ok(out([("vaultItemId", Value::string(item_id))]))
+    }
+
+    pub(super) fn forget_instance_unseal_proof_key(params: &Params, facade: &EntityFacade) -> Out {
+        let instance_id = required(params, "appInstanceId")?;
+        moqui_instance::transit::forget_proof_key(facade, &instance_id)?;
+        Ok(BTreeMap::new())
+    }
+
+    pub(super) fn get_instance_unseal_key(params: &Params, facade: &EntityFacade) -> Out {
+        let instance_id = required(params, "appInstanceId")?;
+        let Some((key, link_public, fingerprint)) = moqui_instance::shares::unseal_key(facade, &instance_id)? else {
+            return Ok(out([("waiting", Value::Bool(false))]));
+        };
+        Ok(out([
+            ("waiting", Value::Bool(true)),
+            (
+                "unsealPublic",
+                Value::string(moqui_vault::text::hex(&key.unseal_public)),
+            ),
+            ("signature", Value::string(moqui_vault::text::hex(&key.signature))),
+            ("linkPublic", Value::string(moqui_vault::text::hex(&link_public))),
+            ("linkKeyFingerprint", Value::string(fingerprint)),
+        ]))
+    }
+
+    pub(super) fn send_instance_sealed_share(params: &Params, facade: &EntityFacade) -> Out {
+        let instance_id = required(params, "appInstanceId")?;
+        let unseal_public = moqui_vault::text::unhex(&required(params, "unsealPublic")?)
+            .map_err(|_| LibError::new("unsealPublic is hex"))?;
+        let sealed =
+            moqui_vault::text::unhex(&required(params, "sealed")?).map_err(|_| LibError::new("sealed is hex"))?;
+        moqui_instance::shares::post_sealed_share(facade, &instance_id, &unseal_public, &sealed)?;
+        Ok(BTreeMap::new())
+    }
+
+    pub(super) fn confirm_instance_recovery_share(params: &Params, facade: &EntityFacade) -> Out {
+        let delivery_id = required(params, "deliveryId")?;
+        let signature = required(params, "confirmation")?;
+        let instance_id = moqui_instance::shares::confirm(facade, &delivery_id, &signature)?;
+        Ok(out([("appInstanceId", Value::string(instance_id))]))
+    }
+
     pub(super) fn revoke_instance_link(params: &Params, facade: &EntityFacade) -> Out {
         let instance_id = required(params, "appInstanceId")?;
         moqui_instance::link::revoke(facade, &instance_id)?;
@@ -396,6 +488,24 @@ mod manager {
     pub(super) fn confirm_instance_link_address(_params: &Params, _facade: &EntityFacade) -> Out {
         not_built()
     }
+    pub(super) fn approve_instance_unseal(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
+    pub(super) fn store_instance_seal_bundle(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
+    pub(super) fn forget_instance_unseal_proof_key(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
+    pub(super) fn get_instance_unseal_key(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
+    pub(super) fn send_instance_sealed_share(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
+    pub(super) fn confirm_instance_recovery_share(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
 }
 
 /// `get#InstanceLink`: an instance's link as the manager sees it, and the manager's key.
@@ -426,4 +536,35 @@ fn confirm_instance_link_address(params: &Params, facade: &EntityFacade) -> Out 
 /// `revoke#InstanceLink`: the instance's link key is no longer pinned, and its link closes.
 fn revoke_instance_link(params: &Params, facade: &EntityFacade) -> Out {
     manager::revoke_instance_link(params, facade)
+}
+
+/// `approve#InstanceUnseal`: a member approves an unseal that waits under the environment's approval policy (M6).
+fn approve_instance_unseal(params: &Params, facade: &EntityFacade) -> Out {
+    manager::approve_instance_unseal(params, facade)
+}
+
+/// `store#InstanceSealBundle`: the instance's recovery bundle over the link, deposited again (after a rekey).
+fn store_instance_seal_bundle(params: &Params, facade: &EntityFacade) -> Out {
+    manager::store_instance_seal_bundle(params, facade)
+}
+
+/// `forget#InstanceUnsealProofKey`: an operator confirms an instance's new root key under a method the manager does
+/// not unseal; its next proof is pinned again.
+fn forget_instance_unseal_proof_key(params: &Params, facade: &EntityFacade) -> Out {
+    manager::forget_instance_unseal_proof_key(params, facade)
+}
+
+/// `get#InstanceUnsealKey`: a sealed instance's key for this unseal, signed with its link key, for a recovery holder.
+fn get_instance_unseal_key(params: &Params, facade: &EntityFacade) -> Out {
+    manager::get_instance_unseal_key(params, facade)
+}
+
+/// `send#InstanceSealedShare`: a recovery holder's share sealed to that key, relayed as ciphertext.
+fn send_instance_sealed_share(params: &Params, facade: &EntityFacade) -> Out {
+    manager::send_instance_sealed_share(params, facade)
+}
+
+/// `confirm#InstanceRecoveryShare`: a holder's signed confirmation that they filed a share an instance sent them.
+fn confirm_instance_recovery_share(params: &Params, facade: &EntityFacade) -> Out {
+    manager::confirm_instance_recovery_share(params, facade)
 }

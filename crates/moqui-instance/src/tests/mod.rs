@@ -35,6 +35,7 @@ mod kinds;
 mod link;
 mod monitor;
 mod provision;
+mod transit;
 
 pub(super) fn setup() -> (ExecutionContext, EntityFacade) {
     keys();

@@ -44,6 +44,15 @@
 //!   scrape target, and what the shipped instance alert rules read (gauges and counters).
 //! - [`fleet`]: the fleet screen's rows.
 //! - [`recovery`]: Monitor's `instance` recovery adapter, through the manager's own actions.
+//!
+//! M6 (§6): managed sealed start.
+//!
+//! - [`transit`]: the manager's transit key per instance, the unseal under the environment's policy (automatic or
+//!   approval), and when the manager takes an instance's "unsealed" (a transit unseal on that link, or a proof by the
+//!   key derived from its root key).
+//! - [`shares`]: the recovery holders' keys an instance takes, its share deliveries and their confirmations, the relay
+//!   of shares sealed to a sealed instance's unseal key (ciphertext only), and its recovery bundle as an operational
+//!   item.
 
 use std::collections::BTreeMap;
 
@@ -62,7 +71,9 @@ pub mod provision;
 pub mod reconcile;
 pub mod recovery;
 pub mod services;
+pub mod shares;
 pub mod ssh;
+pub mod transit;
 
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {

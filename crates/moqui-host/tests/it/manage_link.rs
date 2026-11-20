@@ -19,6 +19,10 @@
 //! key and its approvers; while sealed the instance makes only the sealed calls, and the manager runs only status on
 //! it; once unsealed the bootstrap bundle goes into its seal and the manager's commands run over the link; a revoke
 //! cuts it.
+//!
+//! M6: the manager's transit unseals the instance only for its pinned link key and not after a revoke, the approval
+//! policy waits for a member, and a claim of unsealed runs no command that needs it until the manager unsealed the
+//! instance on that link or the instance proved it holds its root key.
 
 #![cfg(all(unix, feature = "manage", feature = "instances", feature = "embedded-postgres"))]
 
@@ -40,12 +44,14 @@ use crate::common::Gate;
 const SERVICES: &str = "org.moqui.dev.InstanceLinkServices";
 const TOKEN: &str = "a-pairing-token-of-the-test-ABCDEFGH";
 
-/// An instance whose seal the test opens and closes, keeping what the link put in it.
+/// An instance whose seal the test opens and closes, keeping what the link put in it; its unsealed proof is by the key
+/// the test gives it (the one derived from its root key, or a thief's).
 #[derive(Default)]
 struct Fake {
     sealed: AtomicBool,
     secrets: Mutex<Vec<String>>,
     bundle: Mutex<Option<BTreeMap<String, String>>>,
+    proof: Mutex<Option<moqui_vault::sign::SigningKey>>,
 }
 
 impl Managed for Fake {
@@ -79,6 +85,12 @@ impl Managed for Fake {
     fn export_seal(&self) -> Result<String, String> {
         Ok("wrapped values only".to_string())
     }
+    fn unsealed_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        if self.sealed.load(Ordering::SeqCst) {
+            return None;
+        }
+        self.proof.lock().unwrap().clone()
+    }
     fn store_bundle(&self, values: &Values) -> Result<(), String> {
         if self.sealed.load(Ordering::SeqCst) {
             return Err("sealed".to_string());
@@ -94,6 +106,10 @@ impl Managed for Fake {
 }
 
 fn data(token_hash: &str, approver_key: &str) -> String {
+    data_with(token_hash, approver_key, "IupAutomatic", "tpm")
+}
+
+fn data_with(token_hash: &str, approver_key: &str, policy: &str, method: &str) -> String {
     format!(
         r#"<entity-facade-xml type="seed">
     <moqui.security.UserAccount userId="ML_APPROVER" username="ml.approver"/>
@@ -114,7 +130,7 @@ fn data(token_hash: &str, approver_key: &str) -> String {
     <moqui.security.vault.VaultPersonalKey personalKeyId="ML_PK" userId="ML_APPROVER" encryptPublic="00"
             verifyPublic="{approver_key}" statusId="VpkActive"/>
     <moqui.server.instance.InstanceEnvironment environmentId="ML_ENV" approverUserGroupId="ML_APPROVERS"
-            transportEnumId="ItrLink"/>
+            transportEnumId="ItrLink" unsealPolicyEnumId="{policy}" unsealMethod="{method}"/>
     <moqui.server.instance.AppInstance appInstanceId="ML_APP" instanceKindId="mr-moqui" environmentId="ML_ENV"
             pairingTokenHash="{token_hash}" pairingTokenExpires="2099-01-01 00:00:00"/>
 </entity-facade-xml>"#
@@ -390,9 +406,19 @@ fn an_instance_pairs_once_links_sealed_then_unsealed_and_a_revoke_cuts_it() {
     assert!(status.message.contains("unknown, used or expired"), "{status:?}");
     again.stop();
 
-    // unsealed: the bundle goes into the seal, Serve opens, and the manager's commands run over the link
+    // unsealed: the bundle goes into the seal, Serve opens, and the manager's commands run over the link (its first
+    // proof pins its key: the environment's method, tpm, is not the manager's to unseal)
+    *fake.proof.lock().unwrap() = Some(moqui_vault::sign::SigningKey::from_seed(
+        &moqui_vault::Key32::from_bytes([3; 32]),
+    ));
     fake.sealed.store(false, Ordering::SeqCst);
     wait_status(&dialer, "serving once unsealed", |status| status.serving);
+    wait_until("the manager takes its unsealed", || {
+        text(
+            &call(&gate, "get#InstanceLink", &[("appInstanceId", "ML_APP")]).unwrap(),
+            "unsealVerified",
+        ) == "true"
+    });
     let kept = fake.bundle.lock().unwrap().clone().unwrap();
     assert_eq!(
         kept["entity-facade/datasource[transactional]@password"],
@@ -492,4 +518,187 @@ fn an_instance_pairs_once_links_sealed_then_unsealed_and_a_revoke_cuts_it() {
     });
     assert!(status.message.contains("not pinned"), "{status:?}");
     dialer.stop();
+}
+
+/// The manager's transit over the link (M6), with a dialer the test drives: the root key wrapped to the transit key the
+/// Hello gave, and unwrapped by the manager for this instance's pinned link key only.
+#[test]
+fn transit_unseals_only_a_pinned_instance_under_its_policy_and_unsealed_is_taken_only_then() {
+    use moqui_host::manage_link::proto::UnsealRequest;
+    if !crate::common::own_process() {
+        return;
+    }
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    let approver = moqui_vault::sign::SigningKey::from_seed(&moqui_vault::Key32::from_bytes([5; 32]));
+    let token_hash = moqui_vault::text::hex(&sha2::Sha256::digest(TOKEN.as_bytes()));
+    let port = crate::common::free_port();
+    let port_text = port.to_string();
+    let gate = crate::common::start_with_files(
+        "manage-transit",
+        Some(&data_with(
+            &token_hash,
+            &moqui_vault::text::hex(approver.verifying_key().as_bytes()),
+            "IupAutomatic",
+            "transit",
+        )),
+        &[(
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+            &port_text,
+        )],
+        &[
+            ("cert/default.crt", &pem("CERTIFICATE", cert.der())),
+            ("cert/default.key", &pem("PRIVATE KEY", &key.serialize_der())),
+        ],
+    );
+    let url = format!("https://localhost:{port}");
+    let pin = text(
+        &call(&gate, "get#InstanceLink", &[("appInstanceId", "ML_APP")]).unwrap(),
+        "managerFingerprint",
+    );
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (_shutdown, shutdown) = watch::channel(false);
+    let dir = gate.runtime.join("instance-side");
+    std::fs::create_dir_all(&dir).unwrap();
+    let link_key = Arc::new(LinkKey::generate("instance-t").unwrap());
+    let state_file = dir.join("instance-t.json");
+    let dial = |fake: &Arc<Fake>, secret: Option<&str>| {
+        let mut config = ManageConfig::new(&url, &pin, Arc::clone(&link_key));
+        config.secret = secret.map(|secret| Arc::new(Zeroizing::new(secret.to_string())));
+        config.state_file = Some(state_file.clone());
+        quick(&mut config);
+        Dialer::start(
+            config,
+            Arc::clone(fake) as Arc<dyn Managed>,
+            rt.handle(),
+            shutdown.clone(),
+        )
+    };
+    let unsealed_in = |dialer: &Dialer, wrapped: &[u8], wait: Duration| {
+        let ephemeral = moqui_vault::hpke::SecretKey::random(&mut moqui_vault::rng::OsRng);
+        let reply = dialer.unseal_call(
+            UnsealRequest {
+                wrapped_root: wrapped.to_vec(),
+                ephemeral_public: ephemeral.public().unwrap().as_bytes().to_vec(),
+            },
+            wait,
+        )?;
+        if !reply.waiting.is_empty() {
+            return Err(format!("waiting: {}", reply.waiting));
+        }
+        moqui_vault::managed::open_reply(&ephemeral, "ML_APP", &reply.sealed_root)
+            .map(|root| *root)
+            .map_err(|err| err.to_string())
+    };
+    let unsealed = |dialer: &Dialer, wrapped: &[u8]| unsealed_in(dialer, wrapped, Duration::from_secs(5));
+    let put = || {
+        call(
+            &gate,
+            "call#InstanceCommand",
+            &[
+                ("appInstanceId", "ML_APP"),
+                ("command", "put-secret"),
+                ("name", "webapp-list/webapp[webroot]/session-config@cookie-key"),
+                ("value", "a-cookie-key"),
+            ],
+        )
+    };
+
+    // paired and linked while sealed: the Hello gave its transit key, and the root key is wrapped to it
+    let fake = Arc::new(Fake::default());
+    fake.sealed.store(true, Ordering::SeqCst);
+    let dialer = dial(&fake, Some(TOKEN));
+    wait_status(&dialer, "linked while sealed", |status| {
+        status.phase == LinkPhase::Linked
+    });
+    let (instance_id, transit) = dialer.transit_key(Duration::from_secs(5)).unwrap();
+    assert_eq!(instance_id, "ML_APP");
+    let root = [21_u8; 32];
+    let wrapped = moqui_vault::managed::wrap_root(
+        &moqui_vault::hpke::PublicKey::from_bytes(&transit).unwrap(),
+        &instance_id,
+        &root,
+        &mut moqui_vault::rng::OsRng,
+    )
+    .unwrap();
+
+    // a claim of unsealed by a holder of the link key alone (no root key, so a proof by a key of its own): it serves,
+    // and a command that needs it unsealed is refused, taken as sealed
+    *fake.proof.lock().unwrap() = Some(moqui_vault::sign::SigningKey::from_seed(
+        &moqui_vault::Key32::from_bytes([66; 32]),
+    ));
+    fake.sealed.store(false, Ordering::SeqCst);
+    wait_status(&dialer, "serving on a claim", |status| status.serving);
+    let refused = put().unwrap_err();
+    assert!(refused.contains("taken as sealed"), "{refused}");
+    assert!(fake.secrets.lock().unwrap().is_empty());
+    fake.sealed.store(true, Ordering::SeqCst);
+    wait_status(&dialer, "sealed again", |status| !status.serving);
+
+    // the manager's transit unseals it, for its pinned key: that link's unsealed is taken
+    assert_eq!(unsealed(&dialer, &wrapped).unwrap(), root);
+    let seed = moqui_core::seal::unsealed_proof_seed(&moqui_core::seal::RootKey::from_slice(&root).unwrap());
+    *fake.proof.lock().unwrap() = Some(moqui_vault::sign::SigningKey::from_seed(&seed));
+    fake.sealed.store(false, Ordering::SeqCst);
+    wait_status(&dialer, "serving once unsealed", |status| status.serving);
+    put().unwrap();
+    assert_eq!(fake.secrets.lock().unwrap().len(), 1);
+
+    // a new link of the same instance: its proof, by the key derived from the root key the manager saw, is taken
+    dialer.stop();
+    let again = dial(&fake, None);
+    wait_status(&again, "serving on a new link", |status| {
+        status.serving && status.generation > 1
+    });
+    wait_until("the proof taken on the new link", || {
+        text(
+            &call(&gate, "get#InstanceLink", &[("appInstanceId", "ML_APP")]).unwrap(),
+            "unsealVerified",
+        ) == "true"
+    });
+    put().unwrap();
+
+    // the approval policy: the unseal waits for a member's approval, then the next one is answered
+    {
+        let factory = gate.server.factory();
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut env = facade
+            .find("moqui.server.instance.InstanceEnvironment")
+            .unwrap()
+            .eq("environmentId", Value::string("ML_ENV"))
+            .one()
+            .unwrap()
+            .unwrap();
+        env.set("unsealPolicyEnumId", Value::string("IupApproval"));
+        env.update(&facade).unwrap();
+    }
+    let waiting = unsealed(&again, &wrapped).unwrap_err();
+    assert!(waiting.contains("waiting"), "{waiting}");
+    let action_id = waiting
+        .split("InstanceAction ")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .unwrap()
+        .to_string();
+    assert!(unsealed(&again, &wrapped).unwrap_err().contains(&action_id));
+    call(&gate, "approve#InstanceUnseal", &[("instanceActionId", &action_id)]).unwrap();
+    assert_eq!(unsealed(&again, &wrapped).unwrap(), root);
+
+    // a revoke: transit refuses the instance (its link key is not pinned), so its link is refused too
+    call(&gate, "revoke#InstanceLink", &[("appInstanceId", "ML_APP")]).unwrap();
+    wait_status(&again, "refused after the revoke", |status| {
+        status.phase == LinkPhase::Refused
+    });
+    assert!(unsealed_in(&again, &wrapped, Duration::from_millis(500)).is_err());
+    again.stop();
 }

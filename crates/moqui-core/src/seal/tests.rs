@@ -865,3 +865,35 @@ fn the_socket_pacing_and_tpm_program_settings_come_only_from_the_conf_files() {
     .unwrap();
     assert!(SealConf::from_conf(&relative).is_err());
 }
+
+#[test]
+fn a_new_share_set_replaces_the_old_one_and_the_proof_key_follows_the_root_key() {
+    // a managed instance whose recovery holder was replaced (plans/Vault-Instances.md §4.5, M6)
+    let scratch = Scratch::new();
+    let made = keeper(&scratch, "test");
+    let issued = init(&made, MethodKind::Shamir, None);
+    let root_id = made.status().root_id;
+    // the unsealed proof's key is derived from the root key: the same while it stays, and none while sealed
+    let proof = made.unsealed_proof_seed().unwrap();
+    let fresh = made.new_recovery_shares().unwrap();
+    assert_eq!(fresh.len(), 5);
+    assert_eq!(made.status().root_id, root_id);
+    assert_eq!(made.seal_file().unwrap().generation, 2);
+    assert_eq!(made.unsealed_proof_seed().unwrap().as_bytes(), proof.as_bytes());
+    made.seal();
+    assert!(made.unsealed_proof_seed().is_err());
+    // the old shares no longer open the seal; the new ones do
+    let reopened = reopen(&scratch, "test");
+    reopened.set_base_delay(std::time::Duration::from_millis(1));
+    let old = UnsealInput::Recovery(Zeroizing::new(issued.recovery_shares[0].to_string()));
+    assert!(reopened.unseal(old).is_err());
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    for share in &fresh[..3] {
+        reopened
+            .unseal(UnsealInput::Recovery(Zeroizing::new(share.to_string())))
+            .unwrap();
+    }
+    assert!(reopened.is_unsealed());
+    assert_eq!(reopened.status().root_id, root_id);
+    assert_eq!(reopened.unsealed_proof_seed().unwrap().as_bytes(), proof.as_bytes());
+}

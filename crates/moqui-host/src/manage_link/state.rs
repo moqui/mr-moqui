@@ -28,6 +28,34 @@ pub struct PinnedApprover {
     pub verify_public: String,
 }
 
+/// One recovery share the instance sent (M6): to whom, the key it checks their confirmation with, and SHA-256 of the
+/// share (`moqui_vault::managed::share_digest`), never the share.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SentShare {
+    pub index: u32,
+    pub user_id: String,
+    /// The holder's Ed25519 key, hex, as an approver checked it.
+    pub verify_public: String,
+    pub digest: String,
+    pub confirmed: bool,
+}
+
+/// The recovery share set the instance sent to its holders (§4.5).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShareSet {
+    pub set_id: String,
+    pub threshold: u32,
+    pub shares: Vec<SentShare>,
+}
+
+impl ShareSet {
+    /// Every share's holder confirmed it: init is complete.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        !self.shares.is_empty() && self.shares.iter().all(|share| share.confirmed)
+    }
+}
+
 /// The instance's side of a pairing.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LinkState {
@@ -42,6 +70,11 @@ pub struct LinkState {
     pub approvers: Vec<PinnedApprover>,
     /// The instance stored its bootstrap bundle, or its manager had none for it: a first start is over.
     pub bootstrap_done: bool,
+    /// The recovery shares sent to holders (M6), none before.
+    pub share_set: Option<ShareSet>,
+    /// A share set not yet taken by the manager: the encoded `SharesRequest`, hex, sent again on the next link. It holds
+    /// only deliveries, each sealed to one holder.
+    pub pending_shares: String,
 }
 
 impl LinkState {
@@ -73,6 +106,8 @@ impl LinkState {
                         })
                         .unwrap_or_default(),
                     bootstrap_done: kept.get("bootstrapDone").and_then(Value::as_bool).unwrap_or(false),
+                    share_set: kept.get("shareSet").filter(|set| set.is_object()).map(share_set_from),
+                    pending_shares: text("pendingShares"),
                 })
             }
             _ => {
@@ -95,6 +130,15 @@ impl LinkState {
                 "verifyPublic": approver.verify_public,
             })).collect::<Vec<_>>(),
             "bootstrapDone": self.bootstrap_done,
+            "shareSet": self.share_set.as_ref().map(|set| json!({
+                "setId": set.set_id,
+                "threshold": set.threshold,
+                "shares": set.shares.iter().map(|share| json!({
+                    "index": share.index, "userId": share.user_id, "verifyPublic": share.verify_public,
+                    "digest": share.digest, "confirmed": share.confirmed,
+                })).collect::<Vec<_>>(),
+            })),
+            "pendingShares": self.pending_shares,
         });
         let text = serde_json::to_string_pretty(&kept).map_err(|err| err.to_string())?;
         super::key::write_private(file, text.as_bytes())
@@ -130,6 +174,31 @@ impl LinkState {
                 verify_public: moqui_vault::text::hex(&approver.verify_public),
             })
             .collect();
+    }
+}
+
+fn share_set_from(kept: &Value) -> ShareSet {
+    let text = |value: &Value, name: &str| value[name].as_str().unwrap_or_default().to_string();
+    ShareSet {
+        set_id: text(kept, "setId"),
+        threshold: kept["threshold"]
+            .as_u64()
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(0),
+        shares: kept["shares"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .map(|share| SentShare {
+                        index: share["index"].as_u64().and_then(|n| u32::try_from(n).ok()).unwrap_or(0),
+                        user_id: text(share, "userId"),
+                        verify_public: text(share, "verifyPublic"),
+                        digest: text(share, "digest"),
+                        confirmed: share["confirmed"].as_bool().unwrap_or(false),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

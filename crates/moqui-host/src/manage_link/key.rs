@@ -154,6 +154,14 @@ impl LinkKey {
     pub(crate) fn bundle_secret(&self) -> &hpke::SecretKey {
         &self.bundle
     }
+
+    /// The link key as the Ed25519 key it is (its seed is the TLS key's), which signs the instance's share deliveries
+    /// and its unseal keys (M6): a holder checks it against the fingerprint the manager pinned
+    /// (`moqui_vault::managed::link_fingerprint`).
+    #[must_use]
+    pub fn signing_key(&self) -> moqui_vault::sign::SigningKey {
+        moqui_vault::sign::SigningKey::from_seed(&moqui_vault::Key32::from_bytes(*self.seed))
+    }
 }
 
 /// Write `bytes` to `file`, readable by its owner alone, by a rename so a reader never sees half of it.

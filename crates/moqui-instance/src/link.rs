@@ -388,6 +388,8 @@ pub fn revoke(facade: &EntityFacade, instance_id: &str) -> Result<(), LibError> 
     row.set("linkCheckedDate", moqui_core::user::now_value());
     row.update(facade)?;
     drop_bundle(instance_id);
+    // its transit refuses it from now on (the key is not pinned), and no share waits for it (M6)
+    crate::shares::drop_relay(instance_id);
     tracing::warn!("Manager link: the link of AppInstance {instance_id} was revoked");
     Ok(())
 }

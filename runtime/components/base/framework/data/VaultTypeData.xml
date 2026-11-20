@@ -182,6 +182,10 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.security\.VaultServices\..*"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y"
             artifactName="/vault"/>
+    <!-- a managed instance's recovery holder's services (plans/Vault-Instances.md §4.5): each checks that the caller holds
+        a share of the instance -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.dev\.InstanceLinkServices\.(get#InstanceUnsealKey|send#InstanceSealedShare|confirm#InstanceRecoveryShare)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="VaultServicesALL" userGroupId="ALL_USERS" artifactGroupId="VaultServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

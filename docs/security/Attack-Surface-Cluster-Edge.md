@@ -232,19 +232,25 @@ plans/Vault-Instances.md §4.4.
     replacing a key pinned before (a code is made only by INSTANCE_ADMIN, in the environment's group when it names one).
   - Role `U` (link): the key's SHA-256 must be an `AppInstance.linkKeyFingerprint`, read on a request worker by an
     indexed equality find; an unknown key is refused before any call, and nothing is written. Hello must come within
-    10 s. While the instance's last Hello or Status says sealed, only Hello, Status, Bootstrap and Unseal are answered
-    (Unseal: "not built", M6); Event and the Serve stream need it unsealed. Each new link of an instance has a higher
-    generation and closes the one before. Pair is refused on a link connection.
+    10 s. While the instance's last Hello or Status says sealed, only Hello, Status, Bootstrap, Unseal (by the
+    manager's transit) and SealedShares (a relay of holders' shares sealed to the sealed instance's key: ciphertext only)
+    are answered; Event, the Serve stream and the recovery share calls need it unsealed. Each new link of an instance has
+    a higher generation and closes the one before. Pair is refused on a link connection.
   - What a holder of a pinned key (a stolen instance disk) can do: report a status and events for that instance, take
     its bootstrap bundle if one is still held (the manager holds it in memory only, until taken, a restart or 15
-    minutes), and answer the manager's commands. Until M6 the manager's view of "unsealed" is the instance's claim, so
-    such a holder can claim unsealed and be sent put-secret values and deploy attestations; a link of the instance from
-    a new address is refused while its link is live or within `manage@address-change-wait-seconds` of it going down,
-    and told to the administrators, unless an operator confirms (`confirm#InstanceLinkAddress`). A holder at the same
-    address, or after the wait, is not stopped. Under the plan's automatic unseal policy (M6) it would get the root key:
-    the limit of the link key the plan names (§4.4). Revoke (`revoke#InstanceLink`) unpins it, clears an unused pairing
-    code, and closes the link; the key is looked up again at each Hello. A pairing takes the row's token under a row
-    lock in a transaction, so one token pairs once.
+    minutes), and answer the manager's commands. Its claim of unsealed runs no command but status and seal (M6): the
+    manager takes "unsealed" only on a link it unsealed by transit, or on which the instance signed the link's generation
+    and a challenge with the key derived from its root key, pinned on the row (from the root key at a transit unseal; on
+    first use for a method the manager does not unseal). A link of the instance from a new address is refused while its
+    link is live or within `manage@address-change-wait-seconds` of it going down, and told to the administrators, unless
+    an operator confirms (`confirm#InstanceLinkAddress`). Under the automatic unseal policy such a holder, at the same
+    address or after the wait, gets the root key by transit: the limit of the link key the plan names (§4.4); the
+    approval policy holds every unseal for a member, and an unseal from a new address raises Monitor's alert. Revoke
+    (`revoke#InstanceLink`) unpins it, so transit refuses it, clears an unused pairing code, and closes the link; the key
+    is looked up again at each Hello and each unseal. A pairing takes the row's token under a row lock in a transaction,
+    so one token pairs once. The manager keeps one transit key per instance in its keyring and sees each root key it
+    unwraps; a holder's key reaches an instance only with an approver's signed key check the instance pinned the
+    approver for, and the manager relays a share sealed to a sealed instance's one-unseal key without opening it.
 - **On the instance** the link opens no listener. It pins the manager's key from `manage@pin` (a provision's setting, or
   what a code is shown with); a manager that presents another key is refused before any secret is sent. The manager's
   commands run as the link's one identity and only these: status, seal, restart, drain, undrain, put-secret (the

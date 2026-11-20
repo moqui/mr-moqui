@@ -2165,7 +2165,7 @@ every package; the manager's end needs `instances` too). The instance opens no p
   `org.moqui.dev.InstanceLinkServices.pair#Manager` (`url`, `pin`, `code`, INSTANCE_ADMIN) pairs and dials. What the
   instance pinned is `runtime/db/manage_link.json` (mode 0600, no secret).
 - **Approvers.** At pairing the instance takes and pins the signing keys (the Ed25519 halves of the personal keys) of
-  its environment's approver group, version 1; it uses them in M6 to check its recovery holders' keys. A changed set
+  its environment's approver group, version 1; it uses them to check its recovery holders' keys (below). A changed set
   reaches it only signed by an approver it pinned, over the instance's id and its link key fingerprint (so a signed set
   does not replay to another manager's instance of the same id), the new version and every key
   (`update#InstanceApprovers`, `moqui_vault::approvers`); a set the manager signed itself is refused. Any one pinned
@@ -2174,19 +2174,28 @@ every package; the manager's end needs `instances` too). The instance opens no p
   environment has approvers. A manager that is compromised at pairing can give a set of its own choice; one compromised
   later cannot change the pinned set (§4.9).
 - **Sealed.** While the instance is sealed it makes only the sealed calls, and the manager answers no other: Hello and
-  its status, the bootstrap bundle on a first start, and unseal (by transit, M6: answered "not built" until then). Once
-  unsealed it sends an event (started, unsealed) and opens the stream the manager's commands come down; a seal closes
-  that stream, and the manager then answers a status from what the instance last said.
-- **"Unsealed" is the instance's claim, until M6.** The manager knows the seal state only from what the instance says,
-  so whoever holds a stolen link key can claim unsealed and be sent a put-secret's value or a deploy's attestation. Until
-  M6 ties "unsealed" to the transit unseal, the manager limits that: a link of an instance from another address than
-  its live link's, or than its last link's within `manage@address-change-wait-seconds` (300) of that link going down,
-  is refused and told to the administrators (topic `InstanceLinkAddress`), until an operator confirms the move on the
-  instance's page (*Allow a new address*, `confirm#InstanceLinkAddress`) or the wait passes; pairing again confirms it
-  too. A thief at the instance's own address (behind the same NAT), or one that waits out a downed link, is not stopped
-  by this; the instance's key file and revoke are the protection then. M6 must close it: answer the commands that need
-  the instance unsealed only on a link whose unseal the manager itself made (the transit unseal over that link
-  generation, or an approved one), and treat a claim of unsealed without one as sealed.
+  its status, the bootstrap bundle on a first start, and unseal, by transit or by recovery shares sealed to it
+  ([Managed sealed start](#managed-sealed-start)). Once unsealed it sends an event (started, unsealed) and opens the
+  stream the manager's commands come down; a seal closes that stream, and the manager then answers a status from what
+  the instance last said.
+- **"Unsealed" as the manager takes it.** The instance's own claim is not enough. Every command but status and seal
+  runs only on a link whose "unsealed" the manager took: it unsealed the instance on that link by transit, or the
+  instance proved on it that it holds its root key, by a signature over the link's generation and a challenge of the
+  manager's with an Ed25519 key derived from the root key (`moqui_core::seal::unsealed_proof_seed`), whose public half
+  the manager pinned (`AppInstance.unsealProofKey`). A claim with neither is taken as sealed, and the command is refused
+  ("taken as sealed"). The manager pins that key from the root key it unwraps at a transit unseal (`unsealProofTrust`
+  transit); for an environment whose method it does not unseal (tpm, passphrase, shamir) it takes the key the instance
+  gives on its first unsealed link (first-use: nothing the manager holds checks that first one, so whoever held a new
+  instance's link key before its first unseal could pin a key of its own, and the instance's own proofs would then fail,
+  which shows; `forget#InstanceUnsealProofKey` lets the next proof pin again after a rotate-root under such a method).
+  `get#InstanceLink` shows it (`unsealVerified`, `unsealProofTrust`).
+- **A link from a new address.** A link of an instance from another address than its live link's, or than its last
+  link's within `manage@address-change-wait-seconds` (300) of that link going down, is refused and told to the
+  administrators (topic `InstanceLinkAddress`), until an operator confirms the move on the instance's page (*Allow a new
+  address*, `confirm#InstanceLinkAddress`) or the wait passes; pairing again confirms it too. A holder of a stolen link
+  key gets no command from a claim of unsealed; under the automatic unseal policy it still gets the root key by
+  transit from the instance's own address, or after the wait, until the instance is revoked (the limit of the link key,
+  §4.4), and that unseal from a new address raises Monitor's alert.
 - **The bootstrap bundle.** A provision holds a new instance's bootstrap secrets (its database password, as
   `entity-facade/datasource[transactional]@password`) in the manager's memory, never in a row, until the instance takes
   them over its link, HPKE-sealed to the bundle key it pinned, with its id as associated data; a manager restart or the
@@ -2222,6 +2231,69 @@ The instance's page in System › Instances shows the link: linked or not, its g
 last status, its pinned key, when it paired and took its bundle, and this manager's own key fingerprint. Tests:
 `cargo test -p moqui-host --lib manage_link`, `cargo test -p moqui-host --test it -- manage_link` (a real manager and the
 instance's dialer in one process) and `cargo test -p moqui-instance link`.
+
+### Managed sealed start
+
+A managed instance's seal (plans/Vault-Instances.md §4.5, M6; [Sealed start](#sealed-start) is the seal itself).
+
+- **The method.** A provision sets `moqui_conf__seal__method` on a new MR Moqui container from its environment's
+  `unsealMethod`: `transit` (the manager's, the default for a container) or `tpm`, each automatic, so the first start
+  makes its seal by itself; `passphrase` and `shamir` leave it waiting sealed for `moqui operator init` on its socket.
+  A passphrase for it is a vault item an operator uses under a lease; shares are never typed into the manager.
+- **Transit by the manager.** The manager keeps one X25519 transit key per instance in its own keyring
+  (`SecretValue` `instance-transit/<id>`, a platform secret: an unattended unseal needs it) and gives the public half in
+  the link's Hello. At init the instance wraps its root key to it (HPKE, its id as associated data: `seal.json` records
+  `backend: moqui-manager` and the wrap), so the manager sees no root key then. At each start the instance sends the wrap
+  with a key it made for that one unseal; while its link key is pinned (a revoke unpins it) the manager unwraps it with
+  that instance's transit key and seals the root key to that key. The manager sees the root key during the unwrap, as
+  every transit seal does. Right after init the instance has the manager unwrap it once on that link, so the manager
+  pins its unsealed-proof key; a seal.json whose transit is OpenBao's, or a `seal@transit-url`, stays the core's transit.
+- **The unseal policy** (`InstanceEnvironment.unsealPolicyEnumId`): `IupAutomatic` answers while the link key is pinned;
+  `IupApproval` holds each unseal for a member's approval: an unseal `InstanceAction` waits, the approver group hears of
+  it (topic `InstanceUnsealApproval`), `approve#InstanceUnseal` (INSTANCE_ADMIN and the approver group) lets the
+  instance's next unseal through, once. Every unseal is an `InstanceAction` and a Monitor unseal
+  (`moqui.instance.unseals`), told apart when it comes from an address the instance never unsealed from
+  (`moqui.instance.new_address`, the shipped alert rule). The policy is a rule the manager keeps: a compromised manager
+  holds the transit keys whatever it says (§4.9).
+- **While sealed.** When the transit unseal fails (the manager out of reach, or holding the unseal for an approval) the
+  instance stays sealed and ready (`STATUS=sealed: auto-unseal failed`), tries again on each status of its link, and
+  takes recovery shares: it makes a key for this unseal, signs it with its link key, and offers it over the link
+  (`SealedShares`); a holder runs `moqui vault --server <manager> --user <them> seal-share <appInstanceId>`, which checks
+  that key's signature against the instance's link key as the manager pinned it, and seals their share to it; the
+  manager relays the ciphertext, which only that unseal opens. A holder can also enter a share at the instance's own
+  operator socket (`moqui operator unseal --recovery`), the way when the manager is gone; `rekey` then moves the
+  instance to another method.
+- **Recovery shares to holders.** The environment names its holders (`recoveryUserGroupId`). After an automatic first
+  start the instance takes each holder's public keys over the link with the key checks of them, and takes a key only
+  with a check signed by an approver it pinned at pairing; a key without one is refused, so the manager cannot put a key
+  of its own in a holder's place. It seals each share to one holder (one each, so no place holds two) and sends it as a
+  delivery signed with its link key. The holder runs `moqui vault --server <manager> --user <them> shares --vault
+  <their personal vault>`: the delivery is checked against the instance's pinned link key, the share filed as a
+  `recovery-share` item ("Recovery share 2 of 5, <instance>"), and a confirmation signed with their key goes back,
+  which the instance checks itself. Init is complete when every share is confirmed; the instance logs the unconfirmed
+  ones, and `get#InstanceLink` lists each share with its holder and whether it is confirmed. When fewer holders have a
+  checked key than there are shares, nothing is sent and the shares wait for `moqui operator init --take-shares` on the
+  socket, printed. When a holder is replaced (no longer among the checked holders), the instance makes a new set and
+  the old shares stop opening its seal.
+- **The recovery bundle.** The first time a link the manager takes as unsealed serves commands, the manager runs
+  export-seal over it and deposits the bundle (wrapped values only) as a `note` item of the environment's operational
+  vault (`AppInstance:<id>:sealBundle:<time>`, `sealBundleDate` on the row); `store#InstanceSealBundle` deposits it again
+  after a rekey or rotate-root. The manager does not read it back without a lease, though it could unwrap the root key
+  in it with the transit key (§4.9).
+- **The limits** (plans/Vault-Instances.md §4.4, §4.9). The link key works while sealed, so without a TPM it is a usable
+  key on disk; under the automatic policy a stolen disk with the link key and `seal.json` gets the root key from the
+  manager until someone revokes the instance (`revoke#InstanceLink`, after which transit refuses it): production uses
+  the approval policy or a TPM-bound link key (`manage@key-store`). A compromised manager sees each instance's root key
+  at its next transit unseal, can unwrap the root key in any recovery bundle it reads, and with a backup reads every
+  row, whatever the policy. A manager compromised when an instance pairs can give it approvers of its own choice and
+  then get its shares; the holders' confirmations show a holder who received nothing. The manager seals with tpm, kms,
+  passphrase or shamir, never by transit to an instance it manages.
+
+Tests: `cargo test -p moqui-vault managed`, `cargo test -p moqui-instance transit`, `cargo test -p moqui-host --lib
+manage_link`, `cargo test -p moqui-host --test it manage_link`; the acceptance test `ManagedSealedStart` is
+`cargo test -p moqui-host --test it managed_sealed_start -- --ignored` (a restart unseals by transit; with the manager
+out of reach the instance stays sealed and the link-down alert's gauge fires; shares, at the socket and relayed, unseal
+it).
 
 ## Components
 

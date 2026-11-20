@@ -273,6 +273,14 @@ impl RootKey {
     }
 }
 
+/// The seed of the Ed25519 key a managed instance proves with, on each link to its manager, that it holds its root key
+/// (plans/Vault-Instances.md §4.4, "Unsealed" after M6): derived from the root key, so a holder of the instance's link
+/// key alone cannot make it, and the manager derives the same from the root key it sees at a transit unseal.
+#[must_use]
+pub fn unsealed_proof_seed(root: &RootKey) -> moqui_vault::keys::Key32 {
+    moqui_vault::kdf::hkdf_sha256(root.expose(), b"moqui-seal", b"unsealed-proof/1")
+}
+
 impl std::fmt::Debug for RootKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RootKey(..)")
@@ -1282,6 +1290,52 @@ impl Keeper {
             keeper: Arc::clone(self),
             id,
         }
+    }
+
+    /// The seed of this instance's unsealed proof ([`unsealed_proof_seed`]), while unsealed with a seal (not a boot
+    /// whose root key is in memory only, which no manager can have seen).
+    ///
+    /// # Errors
+    ///
+    /// Sealed, or a boot with no seal.
+    pub fn unsealed_proof_seed(&self) -> Result<moqui_vault::keys::Key32, Error> {
+        let inner = self.inner();
+        match inner.root.as_ref() {
+            Some(_) if inner.ephemeral => Err(Error::new("this boot has no seal: its root key is in memory only")),
+            Some(root) => Ok(unsealed_proof_seed(root)),
+            None => Err(Error::new("sealed")),
+        }
+    }
+
+    /// A new set of recovery shares in place of the old one, while unsealed: a managed instance whose recovery holder
+    /// was replaced (plans/Vault-Instances.md §4.5). The root key stays; the old shares no longer open the seal.
+    ///
+    /// # Errors
+    ///
+    /// Sealed, a boot with no seal, the dev seal (which has no shares), or the file cannot be written.
+    pub fn new_recovery_shares(&self) -> Result<Vec<Zeroizing<String>>, Error> {
+        let conf = self.conf();
+        let mut inner = self.inner();
+        if inner.ephemeral {
+            return Err(Error::new("this boot has no seal: its root key is in memory only"));
+        }
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
+        let mut seal = inner
+            .file
+            .clone()
+            .ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+        if seal.recovery.is_none() {
+            return Err(Error::new("this seal has no recovery shares (the dev seal)"));
+        }
+        let root = inner.root.as_ref().ok_or_else(|| Error::new("sealed"))?;
+        let (recovery, shares) = recovery::make(root, &conf)?;
+        seal.recovery = Some(recovery);
+        seal.generation += 1;
+        file::stage(&self.path, &seal)?.commit()?;
+        inner.file = Some(seal);
+        tracing::warn!("Made a new set of recovery shares: the old ones no longer open this seal");
+        Ok(shares)
     }
 
     /// The recovery shares an automatic init held in memory, once (§6 "A first start with no seal.json").

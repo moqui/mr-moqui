@@ -196,6 +196,9 @@ along with this software (see the LICENSE.md file). If not, see
             machine access for this environment, with no approver (§3.8); the items must have been given</description></field>
         <field name="unsealPolicyEnumId" type="id"/>
         <field name="unsealMethod" type="text-short"><description>transit, tpm, passphrase or shamir (M6)</description></field>
+        <field name="recoveryUserGroupId" type="id"><description>The group whose members hold its instances' recovery shares,
+            one each, in their personal vaults; a holder's key is taken only with a key check by an approver the instance
+            pinned (M6, plans/Vault-Instances.md §4.5)</description></field>
         <field name="transportEnumId" type="id"/>
         <field name="leaseLimitMinutes" type="number-integer"><description>A lease's time limit for its operations; at most
             vault@lease-max-hours</description></field>
@@ -440,6 +443,16 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="linkAddress" type="text-medium"/>
         <field name="approverSet" type="text-long"/>
         <field name="bootstrapDate" type="date-time"/>
+        <!-- managed sealed start (§4.5, M6): the Ed25519 key derived from its root key that proves on a link that it is
+            unsealed (hex) and how the manager came to pin it (transit: derived from the root key it unwrapped; first-use:
+            taken from the instance on its first unsealed link, for a method the manager does not unseal); its link key's
+            Ed25519 half (hex), which signs its share deliveries and is checked against linkKeyFingerprint; its current
+            recovery share set; and when its seal bundle was last deposited -->
+        <field name="unsealProofKey" type="text-medium"/>
+        <field name="unsealProofTrust" type="text-short"/>
+        <field name="linkSignPublic" type="text-medium"/>
+        <field name="recoverySetId" type="text-short"/>
+        <field name="sealBundleDate" type="date-time"/>
         <!-- SSH, the other transport (§4.4): host:port of the instance's SSH admin shell or its host's sshd, the user, and
             its host key as pinned (an OpenSSH known_hosts key: type and base64); the key it signs in with is the vault item
             AppInstance:{id}:sshKey, used under a lease -->
@@ -512,6 +525,23 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="hostConfigName" type="text-medium" is-pk="true"/>
         <field name="hostConfigValue" type="text-medium"/>
         <relationship type="one" related="moqui.server.instance.AppInstance"/>
+    </entity>
+    <entity entity-name="InstanceRecoveryShare" package="moqui.server.instance" use="nontransactional" cache="never">
+        <description>One recovery share of a managed instance's share set (plans/Vault-Instances.md §4.5, M6): which
+            holder it was sealed to, its delivery, and the holder's confirmation (their signature, which the instance
+            checks). The share itself is never here: the delivery holds it sealed to the holder.</description>
+        <field name="appInstanceId" type="id" is-pk="true"/>
+        <field name="setId" type="id" is-pk="true"/>
+        <field name="shareIndex" type="number-integer" is-pk="true"/>
+        <field name="holderUserId" type="id"/>
+        <field name="holderKeyId" type="id"/>
+        <field name="deliveryId" type="id"/>
+        <field name="threshold" type="number-integer"/>
+        <field name="sentDate" type="date-time"/>
+        <field name="confirmedDate" type="date-time"/>
+        <field name="confirmation" type="text-medium"/>
+        <relationship type="one-nofk" related="moqui.server.instance.AppInstance"/>
+        <index name="INST_RSHARE_DELIVERY"><index-field name="deliveryId"/></index>
     </entity>
     <entity entity-name="InstanceAction" package="moqui.server.instance" use="nontransactional" cache="never">
         <description>A change to an instance (§4.1): provision, deploy, upgrade, start, stop, restart, drain, rotate,

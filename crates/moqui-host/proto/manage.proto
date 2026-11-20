@@ -20,7 +20,8 @@ syntax = "proto3";
 package moqui.manage.v1;
 
 // On the manager. A pairing connection (role P) serves Pair alone; a link connection (role U) the rest. While the
-// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap and Unseal are answered.
+// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap, Unseal and SealedShares (unseal by
+// recovery shares) are answered.
 service Manager {
   // Pair with the one-time token a provision gave the instance as a file, or a code made in System › Instances.
   rpc Pair(PairRequest) returns (PairReply);
@@ -30,8 +31,18 @@ service Manager {
   rpc Status(InstanceStatus) returns (StatusReply);
   // The bootstrap bundle on a first start, sealed to the bundle key the instance pinned at pairing.
   rpc Bootstrap(BootstrapRequest) returns (BootstrapReply);
-  // Unseal by transit (M6): answered "not built" until then.
+  // Unseal by transit (M6): the root key wrapped to the instance's transit key, opened by the manager with that key and
+  // sealed to the ephemeral key the instance made for this unseal; under the approval policy it waits for a member.
   rpc Unseal(UnsealRequest) returns (UnsealReply);
+  // Unseal by recovery shares (M6): the key a sealed instance made for this unseal, signed with its link key, and the
+  // shares its holders sealed to it since. The manager relays ciphertext only.
+  rpc SealedShares(SealedSharesRequest) returns (SealedSharesReply);
+  // The recovery holders' public keys, each with the key checks of it (M6).
+  rpc Holders(HoldersRequest) returns (HoldersReply);
+  // The recovery shares, each sealed to one holder and signed with the link key, as deliveries (M6).
+  rpc Shares(SharesRequest) returns (SharesReply);
+  // The holders' confirmations of a share set, each signed with the holder's key (M6).
+  rpc ShareConfirmations(ShareConfirmationsRequest) returns (ShareConfirmationsReply);
   // An event of the instance: started, unsealed, failed. Only while unsealed.
   rpc Event(EventRequest) returns (EventReply);
   // The manager's calls of the instance: each Command down, each CommandReply up. Only while unsealed.
@@ -51,6 +62,12 @@ message InstanceStatus {
   // the instance has not stored a bootstrap bundle yet
   bool first_start = 7;
   uint32 link_version = 8;
+  // the instance's unsealed proof on this link (M6): the Ed25519 key derived from its root key, and its signature over
+  // the instance id, link key, generation and the Hello's challenge; empty while sealed and in Hello
+  bytes proof_public = 9;
+  bytes proof = 10;
+  // the method its seal.json records
+  string seal_method = 11;
 }
 
 message Approver {
@@ -95,9 +112,16 @@ message HelloReply {
   uint64 generation = 4;
   // a bootstrap bundle waits for the instance
   bool bootstrap_ready = 5;
+  // the X25519 key of this instance's transit on the manager, which its root key is wrapped to (M6)
+  bytes transit_public = 6;
+  // what the instance's unsealed proof on this link signs, with the generation
+  bytes challenge = 7;
 }
 
-message StatusReply {}
+message StatusReply {
+  // the manager takes this link's "unsealed" (M6): it unsealed the instance on it by transit, or the instance proved it
+  bool unsealed_verified = 1;
+}
 
 message BootstrapRequest {}
 
@@ -113,6 +137,85 @@ message UnsealRequest {
 
 message UnsealReply {
   bytes sealed_root = 1;
+  // empty when answered; else why it waits (the environment's approval policy)
+  string waiting = 2;
+}
+
+message SealedSharesRequest {
+  // the X25519 key the instance made for this unseal, and its signature by the link key (moqui_vault::managed)
+  bytes unseal_public = 1;
+  bytes signature = 2;
+  // the link key's public half, which the manager checks against the pinned fingerprint for the holders
+  bytes link_public = 3;
+}
+
+message SealedShare {
+  bytes sealed = 1;
+  string holder_user_id = 2;
+}
+
+message SealedSharesReply {
+  repeated SealedShare shares = 1;
+}
+
+message KeyCheck {
+  string checker_user_id = 1;
+  string checker_key_id = 2;
+  string checked_key_id = 3;
+  string checked_user_id = 4;
+  bytes checked_encrypt = 5;
+  bytes checked_verify = 6;
+  int64 checked_at = 7;
+  bytes signature = 8;
+}
+
+message Holder {
+  string user_id = 1;
+  string personal_key_id = 2;
+  bytes encrypt_public = 3;
+  bytes verify_public = 4;
+  // the checks of this key that the environment's approvers signed; the instance takes the key only with one by an
+  // approver it pinned
+  repeated KeyCheck checks = 5;
+}
+
+message HoldersRequest {}
+
+message HoldersReply {
+  repeated Holder holders = 1;
+}
+
+message ShareDelivery {
+  string delivery_id = 1;
+  string recipient_user_id = 2;
+  string recipient_key_id = 3;
+  string purpose = 4;
+  bytes sealed = 5;
+  bytes signature = 6;
+  uint32 index = 7;
+}
+
+message SharesRequest {
+  string set_id = 1;
+  bytes link_public = 2;
+  uint32 threshold = 3;
+  repeated ShareDelivery deliveries = 4;
+}
+
+message SharesReply {}
+
+message ShareConfirmationsRequest {
+  string set_id = 1;
+}
+
+message ShareConfirmation {
+  uint32 index = 1;
+  string holder_user_id = 2;
+  bytes signature = 3;
+}
+
+message ShareConfirmationsReply {
+  repeated ShareConfirmation confirmations = 1;
 }
 
 message EventRequest {

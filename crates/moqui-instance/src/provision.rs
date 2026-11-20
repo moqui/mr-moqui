@@ -846,6 +846,15 @@ fn make_container(
                  dial it; pair it with a code from System › Instances"
             ));
         }
+        // its first start makes its seal with the environment's method (§4.5, M6): an automatic one (the manager's
+        // transit, the default, or tpm) by itself; passphrase and shamir wait for `moqui operator init` on its socket
+        match crate::transit::environment_method(facade, &step.instance)?.as_str() {
+            method @ ("transit" | "tpm") => env.push(("moqui_conf__seal__method".to_string(), method.to_string())),
+            method => report.push(format!(
+                "AppInstance {id}: its environment's unseal method is {method}: its first start waits sealed for \
+                 `moqui operator init` on its operator socket"
+            )),
+        }
         // its bootstrap secrets wait in memory for its link, sealed to its key when it takes them (§4.5)
         let mut bundle = crate::link::BundleValues::new();
         if let Some(password) = values.get("dbPassword") {

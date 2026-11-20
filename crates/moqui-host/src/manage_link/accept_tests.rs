@@ -25,15 +25,21 @@ fn conn(pairing: bool, helloed: bool, sealed: bool) -> Conn {
         fingerprint: "fp".to_string(),
         pairing_key: pairing.then(|| "fp".to_string()),
         close: Mutex::new(None),
+        challenge: Vec::new(),
+        verified: AtomicBool::new(false),
     }
 }
 
-const CALLS: [Call; 7] = [
+const CALLS: [Call; 11] = [
     Call::Pair,
     Call::Hello,
     Call::Status,
     Call::Bootstrap,
     Call::Unseal,
+    Call::SealedShares,
+    Call::Holders,
+    Call::Shares,
+    Call::ShareConfirmations,
     Call::Event,
     Call::Serve,
 ];
@@ -48,10 +54,16 @@ fn the_manager_answers_a_sealed_instance_only_its_sealed_calls() {
     assert_eq!(allowed(&conn(true, false, true)), [Call::Pair]);
     // a link connection: Hello first
     assert_eq!(allowed(&conn(false, false, true)), [Call::Hello]);
-    // sealed: Hello and status, the bootstrap bundle, unseal
+    // sealed: Hello and status, the bootstrap bundle, unseal by transit or by recovery shares
     assert_eq!(
         allowed(&conn(false, true, true)),
-        [Call::Hello, Call::Status, Call::Bootstrap, Call::Unseal]
+        [
+            Call::Hello,
+            Call::Status,
+            Call::Bootstrap,
+            Call::Unseal,
+            Call::SealedShares
+        ]
     );
     let refused = refuse(Call::Serve, &conn(false, true, true)).unwrap_err();
     assert!(refused.message().starts_with("sealed:"), "{refused:?}");
@@ -63,10 +75,33 @@ fn the_manager_answers_a_sealed_instance_only_its_sealed_calls() {
             Call::Status,
             Call::Bootstrap,
             Call::Unseal,
+            Call::SealedShares,
+            Call::Holders,
+            Call::Shares,
+            Call::ShareConfirmations,
             Call::Event,
             Call::Serve
         ]
     );
+}
+
+#[test]
+fn only_status_and_seal_run_on_a_link_whose_unsealed_the_manager_did_not_take() {
+    // M6: a claim of unsealed without the manager's own unseal or the instance's proof is taken as sealed for these
+    for kind in [
+        CommandKind::Restart,
+        CommandKind::Drain,
+        CommandKind::Undrain,
+        CommandKind::PutSecret,
+        CommandKind::DeployComponent,
+        CommandKind::ExportSeal,
+        CommandKind::SurfaceReport,
+        CommandKind::Approvers,
+    ] {
+        assert!(kind.needs_verified_unseal(), "{kind:?}");
+    }
+    assert!(!CommandKind::Status.needs_verified_unseal());
+    assert!(!CommandKind::Seal.needs_verified_unseal());
 }
 
 #[test]
