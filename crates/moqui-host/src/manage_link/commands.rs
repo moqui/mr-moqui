@@ -49,6 +49,65 @@ pub trait Managed: Send + Sync + 'static {
     fn export_seal(&self) -> Result<String, String>;
     /// Keep the bootstrap bundle's secrets in the seal's store.
     fn store_bundle(&self, values: &Values) -> Result<(), String>;
+
+    // The managed sealed start (plans/Vault-Instances.md §4.5, M6). The defaults are an instance with no seal of its
+    // own (a test's), which proves nothing and holds no share.
+
+    /// The key derived from the root key, which proves on a link that this instance is unsealed; none while sealed.
+    fn unsealed_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        None
+    }
+    /// The method seal.json records, and its root key wrapped to the manager's transit when that is its method.
+    fn seal_method(&self) -> (String, Option<Vec<u8>>) {
+        (String::new(), None)
+    }
+    /// Whether `root` is this seal's root key: the manager's transit answered the right one.
+    fn is_root(&self, _root: &[u8; 32]) -> bool {
+        false
+    }
+    /// Sealed after an automatic unseal failed (the manager down, or holding the unseal for an approval).
+    fn auto_unseal_failed(&self) -> bool {
+        false
+    }
+    /// The automatic unseal again.
+    fn retry_unseal(&self) -> Result<(), String> {
+        Err("this instance has no seal".to_string())
+    }
+    /// Sealed and opened by recovery shares now: an operator method, or an automatic one that failed.
+    fn takes_shares(&self) -> bool {
+        false
+    }
+    /// One recovery share toward the unseal.
+    fn enter_share(&self, _share: &str) -> Result<(), String> {
+        Err("this instance has no seal".to_string())
+    }
+    /// The recovery shares of an automatic init, read without taking them: they stay on the operator socket until
+    /// every holder confirmed theirs.
+    fn held_shares(&self) -> Option<Vec<zeroize::Zeroizing<String>>> {
+        None
+    }
+    /// Drop the held shares: every holder confirmed theirs.
+    fn release_held_shares(&self) {}
+    /// A new set of recovery shares in place of the old one (a holder was replaced), made but not kept until
+    /// [`Managed::commit_new_shares`].
+    fn prepare_new_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
+        Err("this instance has no seal".to_string())
+    }
+    /// Keep the prepared set: the manager took its deliveries.
+    fn commit_new_shares(&self) -> Result<(), String> {
+        Err("no new recovery shares are prepared".to_string())
+    }
+    /// Drop the prepared set: the manager refused its deliveries.
+    fn drop_new_shares(&self) {}
+    /// The proof key of the root key a rotate-root of this process replaced, until the manager pinned the new one.
+    fn previous_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        None
+    }
+    fn forget_previous_proof(&self) {}
+    /// The recovery shares' threshold and count.
+    fn recovery_counts(&self) -> (u32, u32) {
+        (0, 0)
+    }
 }
 
 /// The link's state on the instance: what it pinned, where that is kept.
@@ -167,12 +226,15 @@ fn take_approvers(link: &LinkContext, set: &super::proto::ApproverSet) -> Result
 /// The server's own link: its seal's keeper and its factory, by its runtime directory.
 pub(crate) struct ServerManaged {
     runtime_dir: PathBuf,
+    /// A new set of recovery shares made, until the manager takes its deliveries (M6).
+    prepared: Mutex<Option<moqui_core::seal::PreparedRecovery>>,
 }
 
 impl ServerManaged {
     pub(crate) fn new(runtime_dir: &Path) -> Self {
         Self {
             runtime_dir: runtime_dir.to_path_buf(),
+            prepared: Mutex::new(None),
         }
     }
 
@@ -263,6 +325,9 @@ impl Managed for ServerManaged {
             ("unsealed", None, _) => "starting",
             _ => "sealed",
         };
+        // from the keeper's published status: this runs while an unseal holds the keeper's state (a transit unwrap
+        // that waits on this link), so it takes no lock of the keeper's
+        let seal_method = self.keeper().map(|keeper| keeper.status().method).unwrap_or_default();
         InstanceStatus {
             binary_version: env!("CARGO_PKG_VERSION").to_string(),
             seal_state,
@@ -272,7 +337,120 @@ impl Managed for ServerManaged {
             drained,
             first_start: false,
             link_version: LINK_VERSION,
+            proof_public: Vec::new(),
+            proof: Vec::new(),
+            seal_method,
         }
+    }
+
+    fn unsealed_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        let seed = self.keeper()?.unsealed_proof_seed().ok()?;
+        Some(moqui_vault::sign::SigningKey::from_seed(&seed))
+    }
+
+    fn seal_method(&self) -> (String, Option<Vec<u8>>) {
+        let Some(file) = self.keeper().and_then(|keeper| keeper.seal_file()) else {
+            return (String::new(), None);
+        };
+        let transit = (file.method.get("backend").and_then(serde_json::Value::as_str) == Some(super::unseal::BACKEND))
+            .then(|| super::unseal::wrapped_root(&file.method).ok())
+            .flatten();
+        (file.method_kind().to_string(), transit)
+    }
+
+    fn is_root(&self, root: &[u8; 32]) -> bool {
+        let (Some(file), Ok(root)) = (
+            self.keeper().and_then(|keeper| keeper.seal_file()),
+            moqui_core::seal::RootKey::from_slice(root),
+        ) else {
+            return false;
+        };
+        // the root id is public (seal.json and `moqui operator status` show it)
+        root.id() == file.root_id
+    }
+
+    fn auto_unseal_failed(&self) -> bool {
+        self.keeper().is_some_and(|keeper| {
+            let status = keeper.status();
+            status.state == moqui_core::seal::State::Sealed && status.reason.starts_with("auto-unseal failed")
+        })
+    }
+
+    fn retry_unseal(&self) -> Result<(), String> {
+        let keeper = self.keeper_or_err()?;
+        keeper
+            .unseal(moqui_core::seal::UnsealInput::Automatic)
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
+    fn takes_shares(&self) -> bool {
+        self.keeper().is_some_and(|keeper| {
+            let status = keeper.status();
+            status.state != moqui_core::seal::State::Unsealed
+                && status.recovery.is_some()
+                && (matches!(status.method.as_str(), "passphrase" | "shamir")
+                    || status.reason.starts_with("auto-unseal failed"))
+        })
+    }
+
+    fn enter_share(&self, share: &str) -> Result<(), String> {
+        let keeper = self.keeper_or_err()?;
+        keeper
+            .unseal(moqui_core::seal::UnsealInput::Recovery(zeroize::Zeroizing::new(
+                share.trim().to_string(),
+            )))
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    }
+
+    fn held_shares(&self) -> Option<Vec<zeroize::Zeroizing<String>>> {
+        self.keeper()?.held_shares()
+    }
+
+    fn release_held_shares(&self) {
+        if let Some(keeper) = self.keeper() {
+            let _ = keeper.take_shares();
+        }
+    }
+
+    fn prepare_new_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
+        let (prepared, shares) = self
+            .keeper_or_err()?
+            .prepare_recovery_shares()
+            .map_err(|err| err.to_string())?;
+        *lock(&self.prepared) = Some(prepared);
+        Ok(shares)
+    }
+
+    fn commit_new_shares(&self) -> Result<(), String> {
+        let prepared = lock(&self.prepared)
+            .take()
+            .ok_or_else(|| "no new recovery shares are prepared".to_string())?;
+        self.keeper_or_err()?
+            .commit_recovery_shares(prepared)
+            .map_err(|err| err.to_string())
+    }
+
+    fn drop_new_shares(&self) {
+        *lock(&self.prepared) = None;
+    }
+
+    fn previous_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        let seed = self.keeper()?.previous_proof_seed()?;
+        Some(moqui_vault::sign::SigningKey::from_seed(&seed))
+    }
+
+    fn forget_previous_proof(&self) {
+        if let Some(keeper) = self.keeper() {
+            keeper.forget_previous_proof();
+        }
+    }
+
+    fn recovery_counts(&self) -> (u32, u32) {
+        self.keeper()
+            .and_then(|keeper| keeper.status().recovery)
+            .map_or((0, 0), |(threshold, shares)| (u32::from(threshold), u32::from(shares)))
     }
 
     fn seal(&self) -> Result<(), String> {

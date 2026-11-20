@@ -19,8 +19,9 @@
 //!
 //! 0. **Before anything changes**: the binding is claimed (one rotation of an item at a time across a cluster,
 //!    [`claim`]); the vault's deposit key is checked; each instance that uses the credential must be up and unsealed on
-//!    its link (until M6 ties "unsealed" to the transit unseal, that is the instance's own claim; a rotated value goes
-//!    only to an instance the manager would deploy to); and the value it holds now must be one that could go back.
+//!    its link (as the manager takes it, M6: unsealed by its transit on that link, or proved by the key derived from the
+//!    root key; a bare claim reads `unverified` and the put is refused; a rotated value goes only to an instance the
+//!    manager would deploy to); and the value it holds now must be one that could go back.
 //! 1. **Staged**: a new value made here and deposited before anything else
 //!    ([`moqui_vault_server::lease::LeaseRegistry::stage_rotation`]): the item's body, opened under the lease with only
 //!    the rotated field changed, sealed under a new item key wrapped to the deposit key, a pending revision the manager

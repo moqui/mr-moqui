@@ -15,7 +15,8 @@
 //! Deliveries (plans/Vault-Instances.md §3.3, `VaultDelivery`): a value sealed in the client to one user's personal
 //! key and signed by its sender. The server takes one only signed by the caller's own active key, to the recipient's
 //! active key, and lists it only to that recipient, who checks the signature again before filing the value. An
-//! instance's deliveries (signed with its link key) are M6's.
+//! instance's deliveries (its recovery shares, signed with its link key, M6) are written by the manager's link
+//! (`moqui_instance::shares`); listed, they carry the link key and the fingerprint the manager pinned for it.
 
 use std::collections::BTreeMap;
 
@@ -101,12 +102,28 @@ fn send_vault_delivery(params: &Params, facade: &EntityFacade) -> Out {
 /// A delivery as the vault crate reads it, with the sender key's public halves for the client to check (against a
 /// key its user checked) and the dates.
 fn delivery_json(facade: &EntityFacade, row: &EntityValue) -> Result<Json, LibError> {
-    let sender_public = match find(facade, PERSONAL_KEY)?
-        .eq("personalKeyId", Value::string(field(row, "senderKeyId")))
-        .one()?
-    {
-        Some(key) => hex(&public_of(&key)?.to_bytes()),
-        None => String::new(),
+    // an instance's delivery (a recovery share, M6): its link key's Ed25519 half and the fingerprint the manager pinned
+    // for it, which the holder's client checks it against before it trusts the signature
+    let (sender_public, sender_fingerprint) = if field(row, "senderKind") == "instance" {
+        match find(facade, "moqui.server.instance.AppInstance")?
+            .eq("appInstanceId", Value::string(field(row, "senderId")))
+            .one()?
+        {
+            Some(instance) => (
+                field(&instance, "linkSignPublic"),
+                field(&instance, "linkKeyFingerprint"),
+            ),
+            None => (String::new(), String::new()),
+        }
+    } else {
+        let public = match find(facade, PERSONAL_KEY)?
+            .eq("personalKeyId", Value::string(field(row, "senderKeyId")))
+            .one()?
+        {
+            Some(key) => hex(&public_of(&key)?.to_bytes()),
+            None => String::new(),
+        };
+        (public, String::new())
     };
     Ok(json!({
         "deliveryId": field(row, "deliveryId"),
@@ -118,6 +135,7 @@ fn delivery_json(facade: &EntityFacade, row: &EntityValue) -> Result<Json, LibEr
         },
         "senderKeyId": field(row, "senderKeyId"),
         "senderPublic": sender_public,
+        "senderFingerprint": sender_fingerprint,
         "sentDate": field(row, "sentDate"),
         "filedDate": field(row, "filedDate"),
     }))

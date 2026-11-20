@@ -90,6 +90,7 @@ mod lock_then_insert;
 #[cfg(all(feature = "devtools", feature = "tui"))]
 mod lsp;
 mod manage_link;
+mod managed_sealed_start;
 mod mantle_search;
 mod mcp;
 mod monitor_edge;

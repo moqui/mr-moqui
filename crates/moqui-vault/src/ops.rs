@@ -483,6 +483,7 @@ impl Session {
             "recovery_rekey" => self.recovery_rekey(args, rng),
             "delivery_send" => self.delivery_send(args, rng),
             "delivery_open" => self.delivery_open(args),
+            "instance_share_open" => self.instance_share_open(args),
             _ => Err(Error::Format("unknown op")),
         }
     }
@@ -884,6 +885,42 @@ impl Session {
         let value = delivery::open(&sent, &me.key, &sender.verify)?;
         let text = std::str::from_utf8(&value).map_err(|_| Error::Format("a delivery's value is UTF-8"))?;
         let answer = json!({ "delivery_id": sent.delivery_id, "purpose": sent.purpose, "value": text });
+        if !self.filed.first_time(&sent) {
+            return Err(Error::Refused("that delivery was opened already"));
+        }
+        Ok(answer)
+    }
+
+    /// Opens a managed instance's recovery share to this session's key (§4.5): the delivery's signature first, by the
+    /// link key the manager pinned for that instance (`link_fingerprint`), then the share, and this holder's
+    /// confirmation of it, signed here. A delivery id already opened here is refused.
+    fn instance_share_open(&mut self, args: &Value) -> Result<Value, Error> {
+        use crate::managed;
+        let sent = delivery_of(object_of(args, "delivery")?)?;
+        if sent.sender_kind != "instance" || sent.purpose != managed::SHARE_PURPOSE {
+            return Err(Error::Refused("only an instance's recovery share opens here"));
+        }
+        let fingerprint = str_of(args, "link_fingerprint")?;
+        let link = managed::pinned_link_key(&bytes_of(args, "link_public")?, fingerprint)?;
+        let me = self.me()?;
+        if sent.recipient_user_id != me.user_id || sent.recipient_key_id != me.key_id {
+            return Err(Error::Refused("the delivery is for someone else"));
+        }
+        let value = delivery::open(&sent, &me.key, &link)?;
+        let text = std::str::from_utf8(&value).map_err(|_| Error::Format("a delivery's value is UTF-8"))?;
+        let share = managed::ShareValue::parse(text)?;
+        if share.instance_id != sent.sender_id {
+            return Err(Error::Refused("the share names another instance than its sender"));
+        }
+        let confirmation = managed::confirm_share(me.key.signing_key(), &share);
+        let answer = json!({
+            "delivery_id": sent.delivery_id, "value": text, "item_name": share.item_name(),
+            "instance_id": share.instance_id, "set_id": share.set_id, "index": share.index,
+            "confirmation": hex(&confirmation),
+            // filed with the share: the holder's own anchor of the instance's link key, which `seal-share` checks a
+            // sealed instance's unseal key against (never the fingerprint a manager hands over then)
+            "link_fingerprint": fingerprint.to_ascii_lowercase(),
+        });
         if !self.filed.first_time(&sent) {
             return Err(Error::Refused("that delivery was opened already"));
         }

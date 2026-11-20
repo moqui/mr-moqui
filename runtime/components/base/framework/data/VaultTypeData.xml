@@ -177,6 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldName="shareIndex" label="Share" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="sharesNeeded" label="Shares needed" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="share" label="Share" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
+        <fields fieldName="linkKeyFingerprint" label="Instance link key" fieldKindEnumId="VfText" masked="N" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
 
     <!-- the services and their REST paths (/rest/s1/vault) for every signed-in user; each checks the caller itself -->
@@ -185,6 +186,10 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.security\.VaultServices\..*"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_REST_PATH" inheritAuthz="Y"
             artifactName="/vault"/>
+    <!-- a managed instance's recovery holder's services (plans/Vault-Instances.md §4.5): each checks that the caller holds
+        a share of the instance -->
+    <moqui.security.ArtifactGroupMember artifactGroupId="VaultServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.dev\.InstanceLinkServices\.(get#InstanceUnsealKey|send#InstanceSealedShare|confirm#InstanceRecoveryShare)"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="VaultServicesALL" userGroupId="ALL_USERS" artifactGroupId="VaultServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 </entity-facade-xml>

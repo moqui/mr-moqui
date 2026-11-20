@@ -56,6 +56,15 @@ pub enum Statement {
     KeyCheck,
     /// A managed instance's changed approver set, by an approver it pinned (§4.4, [`crate::approvers`]).
     ApproverSet,
+    /// A managed instance's proof, on one link to its manager, that it holds its root key: by a key derived from it
+    /// (§4.4, "Unsealed" after M6).
+    UnsealedProof,
+    /// The key a sealed managed instance made for one unseal, by its link key: a holder seals a share to it (§4.5).
+    UnsealKey,
+    /// A recovery holder's confirmation that they filed a managed instance's share, by their signing key (§4.5).
+    ShareConfirm,
+    /// A managed instance's new proof key after a rotate-root, by its old one (§4.4).
+    ProofRotated,
 }
 
 impl Statement {
@@ -73,6 +82,10 @@ impl Statement {
             Statement::LeaseApproval => "lease-approval",
             Statement::KeyCheck => "key-check",
             Statement::ApproverSet => "approver-set",
+            Statement::UnsealedProof => "unsealed-proof",
+            Statement::UnsealKey => "unseal-key",
+            Statement::ShareConfirm => "share-confirm",
+            Statement::ProofRotated => "proof-rotated",
         }
     }
 }

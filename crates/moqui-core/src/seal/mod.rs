@@ -273,6 +273,14 @@ impl RootKey {
     }
 }
 
+/// The seed of the Ed25519 key a managed instance proves with, on each link to its manager, that it holds its root key
+/// (plans/Vault-Instances.md §4.4, "Unsealed" after M6): derived from the root key, so a holder of the instance's link
+/// key alone cannot make it, and the manager derives the same from the root key it sees at a transit unseal.
+#[must_use]
+pub fn unsealed_proof_seed(root: &RootKey) -> moqui_vault::keys::Key32 {
+    moqui_vault::kdf::hkdf_sha256(root.expose(), b"moqui-seal", b"unsealed-proof/1")
+}
+
 impl std::fmt::Debug for RootKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("RootKey(..)")
@@ -451,6 +459,9 @@ struct Inner {
     reason: String,
     /// The recovery shares an automatic init made, until `init --take-shares` reads them.
     held_shares: Option<Vec<Zeroizing<String>>>,
+    /// The unsealed proof seed of the root key a rotate-root of this process replaced, until the manager pins the new
+    /// one ([`Keeper::previous_proof_seed`]).
+    previous_proof: Option<moqui_vault::keys::Key32>,
     /// `seal` ran: a start waits for `unseal` even with an automatic method. Kept on disk beside seal.json
     /// ([`Keeper::marker`]), so a restart stays sealed too.
     operator_sealed: bool,
@@ -1236,6 +1247,7 @@ impl Keeper {
         {
             let mut inner = self.inner();
             inner.root = None;
+            inner.previous_proof = None;
             inner.entered.clear();
             inner.entering = None;
             inner.operator_sealed = true;
@@ -1284,6 +1296,100 @@ impl Keeper {
         }
     }
 
+    /// The seed of this instance's unsealed proof ([`unsealed_proof_seed`]), while unsealed with a seal (not a boot
+    /// whose root key is in memory only, which no manager can have seen).
+    ///
+    /// # Errors
+    ///
+    /// Sealed, or a boot with no seal.
+    pub fn unsealed_proof_seed(&self) -> Result<moqui_vault::keys::Key32, Error> {
+        let inner = self.inner();
+        match inner.root.as_ref() {
+            Some(_) if inner.ephemeral => Err(Error::new("this boot has no seal: its root key is in memory only")),
+            Some(root) => Ok(unsealed_proof_seed(root)),
+            None => Err(Error::new("sealed")),
+        }
+    }
+
+    /// A new set of recovery shares in place of the old one, made but not yet kept: a managed instance whose recovery
+    /// holder was replaced (plans/Vault-Instances.md §4.5). The old shares open the seal until
+    /// [`Self::commit_recovery_shares`] keeps the new set, which the instance does once its manager took the new
+    /// deliveries; dropped, nothing changes.
+    ///
+    /// # Errors
+    ///
+    /// Sealed, a boot with no seal, or the dev seal (which has no shares).
+    pub fn prepare_recovery_shares(&self) -> Result<(PreparedRecovery, Vec<Zeroizing<String>>), Error> {
+        let conf = self.conf();
+        let inner = self.inner();
+        if inner.ephemeral {
+            return Err(Error::new("this boot has no seal: its root key is in memory only"));
+        }
+        let file = inner
+            .file
+            .as_ref()
+            .ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+        if file.recovery.is_none() {
+            return Err(Error::new("this seal has no recovery shares (the dev seal)"));
+        }
+        let root = inner.root.as_ref().ok_or_else(|| Error::new("sealed"))?;
+        let (recovery, shares) = recovery::make(root, &conf)?;
+        Ok((
+            PreparedRecovery {
+                recovery,
+                generation: file.generation,
+                root_id: file.root_id.clone(),
+            },
+            shares,
+        ))
+    }
+
+    /// Keep a prepared set of recovery shares in place of the old one: the old shares no longer open the seal.
+    ///
+    /// # Errors
+    ///
+    /// The seal changed since it was prepared (a rekey, a rotate-root or another set), or the file cannot be written.
+    pub fn commit_recovery_shares(&self, prepared: PreparedRecovery) -> Result<(), Error> {
+        let mut inner = self.inner();
+        let held = file::lock(&self.path)?;
+        self.refresh(&mut inner, &held)?;
+        let mut seal = inner
+            .file
+            .clone()
+            .ok_or_else(|| Error::new("this runtime has no seal yet"))?;
+        if seal.generation != prepared.generation || seal.root_id != prepared.root_id {
+            return Err(Error::new(
+                "seal.json changed since the new recovery shares were made: they are dropped",
+            ));
+        }
+        seal.recovery = Some(prepared.recovery);
+        seal.generation += 1;
+        file::stage(&self.path, &seal)?.commit()?;
+        inner.file = Some(seal);
+        tracing::warn!("Kept a new set of recovery shares: the old ones no longer open this seal");
+        Ok(())
+    }
+
+    /// The recovery shares an automatic init holds, read without taking them: a managed instance keeps them on the
+    /// operator socket until its holders confirmed theirs. None when none are held.
+    #[must_use]
+    pub fn held_shares(&self) -> Option<Vec<Zeroizing<String>>> {
+        self.inner().held_shares.clone()
+    }
+
+    /// The seed of the unsealed proof of the root key a rotate-root of this process replaced: the instance signs its
+    /// new proof key with it, so its manager pins the new one (plans/Vault-Instances.md §4.4). None after
+    /// [`Self::forget_previous_proof`], a seal, or a restart.
+    #[must_use]
+    pub fn previous_proof_seed(&self) -> Option<moqui_vault::keys::Key32> {
+        self.inner().previous_proof.clone()
+    }
+
+    /// Drop the previous root key's proof seed: the manager pinned the new one.
+    pub fn forget_previous_proof(&self) {
+        self.inner().previous_proof = None;
+    }
+
     /// The recovery shares an automatic init held in memory, once (§6 "A first start with no seal.json").
     ///
     /// # Errors
@@ -1295,6 +1401,22 @@ impl Keeper {
             .take()
             .ok_or_else(|| Error::new("no recovery shares are held: they were read already, or never held"))
             .inspect(|_| tracing::info!("The recovery shares held since this server's first start were read"))
+    }
+}
+
+/// A new recovery split made but not yet kept ([`Keeper::prepare_recovery_shares`]): the seal's generation and root id it
+/// was made for. Holds no share.
+pub struct PreparedRecovery {
+    recovery: file::Recovery,
+    generation: u64,
+    root_id: String,
+}
+
+impl std::fmt::Debug for PreparedRecovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreparedRecovery")
+            .field("generation", &self.generation)
+            .finish_non_exhaustive()
     }
 }
 

@@ -335,6 +335,8 @@ second factor and keeps nothing of the sign-in.
 | `recovery share <recoverySessionId>` | As another holder: shows what a recovery recovers and seals your share to it |
 | `recovery replace <vaultId> --key ID` | As a manager: lists a new recovery key in place of a used one, in one rotation |
 | `export-open FILE [--item ID]` | Opens an encrypted export file of Commons › Vault here, with its password: no server, no sign-in |
+| `shares [--vault ID]` | As a managed instance's recovery holder: checks each share an instance delivered to you against its link key as the manager pinned it, files it into your personal vault ID as a `recovery-share` item with that link key's fingerprint (else prints both once), and sends your signed confirmation ([Run-Deploy](../Run-Deploy.md#managed-sealed-start)) |
+| `seal-share <appInstanceId> --vault ID` | As a recovery holder: takes the share you filed for the instance in vault ID, checks the key the sealed instance made for this unseal against the link key fingerprint filed with it (not one the manager gives) and its expiry, and seals the share to it; the manager relays only the ciphertext |
 
 What it has accepted of each vault's member list is kept in `~/.config/moqui/vault/state.json` (mode 0600, no keys).
 

@@ -7,10 +7,10 @@
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
      Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Board               │ ┌─ All enumerations ───┐ ┌─ Screen Theme Resour─┐
-     Calendar            │ │ 663                  │ │ 35                   │
+     Calendar            │ │ 664                  │ │ 35                   │
      Split               │ └──────────────────────┘ └──────────────────────┘
      Settings            │                          ┌─ Vault event ────────┐
-     Wizard              │                          │ 32                   │
+     Wizard              │                          │ 33                   │
      Dialog              │                          └──────────────────────┘
      Report              │                          ┌─ DB Form Field Type ─┐
      Panel               │                          │ 20                   │
@@ -28,7 +28,7 @@
                          │ │   Approve Made Up                       Example Type                   Yesterday     │ ┌─ Enumerations by type ─────────────────────────────────────┐
                          │ │   Retire Real World                     Example Type                   Fri           │ │                           Enumerations                     │
                          │ │   Check QZ Print Enabled (true/false)   User Preference Key (optional) Mon           │ │ Screen Theme Resource T…            35  ██████████████████ │
-                         │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ Vault event                         32  ████████████████   │
+                         │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ Vault event                         33  █████████████████  │
                          │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ DB Form Field Type                  20  ██████████         │
                          │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ UOM Type                            16  ████████           │
                          │ ┌─ Changed last ───────────────────────────────────────────────────────────────────────┐ │ Entity Comparison Opera…            14  ███████            │

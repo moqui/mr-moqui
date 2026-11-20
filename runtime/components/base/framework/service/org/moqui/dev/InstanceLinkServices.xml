@@ -26,6 +26,12 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="linked" type="Boolean"/><parameter name="generation" type="Long"/>
+            <parameter name="unsealVerified" type="Boolean"><description>The manager takes the link's "unsealed": it
+                unsealed it there by transit, or the instance proved it holds its root key (M6)</description></parameter>
+            <parameter name="unsealProofTrust"/><parameter name="recoverySetId"/>
+            <parameter name="recoveryShares"><description>Each share of the current set: its index, holder and whether
+                they confirmed it</description></parameter>
+            <parameter name="sealBundleDate"/>
             <parameter name="serving" type="Boolean"/><parameter name="remote"/><parameter name="sealState"/>
             <parameter name="health"/><parameter name="binaryVersion"/><parameter name="schemaHash"/>
             <parameter name="clusterMembers"/><parameter name="linkState"/><parameter name="linkKeyFingerprint"/>
@@ -48,7 +54,9 @@ along with this software (see the LICENSE.md file). If not, see
         <description>One of the link's commands on an instance (status, seal, restart, drain, undrain, put-secret,
             deploy-component, export-seal, surface-report) over its environment's transport: the link, SSH (status, seal
             and put-secret as moqui operator, the SSH key under leaseId or machine access), or both (the link, SSH when it
-            is down). While the instance is sealed only status is answered.</description>
+            is down). While the instance is sealed only status is answered; over the link every command but status and
+            seal runs only on a link whose "unsealed" the manager took (its transit unseal there, or the instance's proof
+            that it holds its root key: M6).</description>
         <in-parameters>
             <parameter name="appInstanceId" required="true"/>
             <parameter name="command" required="true"/>
@@ -88,10 +96,78 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="confirm" noun="InstanceLinkAddress" type="rust"
             location="moqui_host::manage_link::services::confirm_instance_link_address" allow-remote="false" transaction="ignore">
-        <description>Let the instance's next link come from a new address. Until M6 ties "unsealed" to the transit
-            unseal, a link from another address than its live or recent one is refused and told to the administrators,
-            since a holder of a stolen link key could claim the instance unsealed.</description>
+        <description>Let the instance's next link come from a new address. A link from another address than its live or
+            recent one is refused and told to the administrators: a holder of a stolen link key gets no command from a
+            claim of unsealed (M6), but under the automatic unseal policy it would get the root key by transit.</description>
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+    </service>
+
+    <!-- the managed sealed start (plans/Vault-Instances.md §4.5, M6) -->
+    <service verb="approve" noun="InstanceUnseal" type="rust"
+            location="moqui_host::manage_link::services::approve_instance_unseal" allow-remote="false" transaction="ignore">
+        <description>A member approves an unseal that waits under its environment's approval policy (an unseal
+            InstanceAction in waiting): the instance's next unseal by transit takes it, once. INSTANCE_ADMIN and the
+            environment's approver group.</description>
+        <in-parameters><parameter name="instanceActionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="appInstanceId"/></out-parameters>
+    </service>
+    <service verb="store" noun="InstanceSealBundle" type="rust"
+            location="moqui_host::manage_link::services::store_instance_seal_bundle" allow-remote="false" transaction="ignore">
+        <description>The instance's recovery bundle (export-seal: wrapped values only) over its link, deposited as an
+            operational item of its environment's vault; the manager does so by itself the first time a link serves.
+            Again after a rekey or rotate-root.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters><parameter name="vaultItemId"/></out-parameters>
+    </service>
+    <service verb="confirm" noun="InstanceUnsealProofKey" type="rust"
+            location="moqui_host::manage_link::services::confirm_instance_unseal_proof_key" allow-remote="false"
+            transaction="ignore">
+        <description>An operator confirms the key an instance proves it is unsealed with, which it gave on its first
+            unsealed link (an environment whose method is tpm, passphrase or shamir): its claims of unsealed are taken
+            from then on. Its administrators were told when it gave it. INSTANCE_ADMIN and the environment's approver
+            group.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters><parameter name="unsealProofKey"/></out-parameters>
+    </service>
+    <service verb="forget" noun="InstanceUnsealProofKey" type="rust"
+            location="moqui_host::manage_link::services::forget_instance_unseal_proof_key" allow-remote="false"
+            transaction="ignore">
+        <description>Forget the key the instance proves it is unsealed with, when a rotate-root's new key could not be
+            signed by the old one (the instance restarted between): under the manager's transit its next unseal pins the
+            new one with a member's approval; under another method its next proof waits for
+            confirm#InstanceUnsealProofKey.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+    </service>
+    <!-- for a recovery holder, over REST (vault.rest.xml): each checks that the caller holds a share of the instance -->
+    <service verb="get" noun="InstanceUnsealKey" type="rust"
+            location="moqui_host::manage_link::services::get_instance_unseal_key" transaction="ignore">
+        <description>The key a sealed instance made for this unseal, its signature by the instance's link key, the link
+            key and when the key stops being taken. moqui vault seal-share checks the link key against the fingerprint the
+            holder filed with their share, never one this manager hands over. waiting is false when the instance asks for
+            no shares.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="waiting" type="Boolean"/><parameter name="unsealPublic"/><parameter name="signature"/>
+            <parameter name="linkPublic"/><parameter name="expires" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="send" noun="InstanceSealedShare" type="rust"
+            location="moqui_host::manage_link::services::send_instance_sealed_share" transaction="ignore">
+        <description>A holder's share sealed to the instance's unseal key (hex): relayed to the instance as ciphertext,
+            never opened here.</description>
+        <in-parameters>
+            <parameter name="appInstanceId" required="true"/><parameter name="unsealPublic" required="true"/>
+            <parameter name="sealed" required="true"/>
+        </in-parameters>
+    </service>
+    <service verb="confirm" noun="InstanceRecoveryShare" type="rust"
+            location="moqui_host::manage_link::services::confirm_instance_recovery_share" transaction="ignore">
+        <description>A holder's confirmation (hex, signed with their personal key) that they filed the share delivered
+            as deliveryId; the instance checks it. Only the delivery's recipient.</description>
+        <in-parameters>
+            <parameter name="deliveryId" required="true"/><parameter name="confirmation" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="appInstanceId"/></out-parameters>
     </service>
 
     <!-- on a managed instance -->

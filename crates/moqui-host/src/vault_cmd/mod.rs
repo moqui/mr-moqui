@@ -28,8 +28,10 @@
 //! - `leases [--vault <id>]`: the leases waiting for this user's approval and those they asked for, or a vault's.
 //! - `approve <leaseId>`: show what the signed lease names, check the server's lease key once, and approve it here
 //!   (§3.7): the item keys unwrapped under the lease's own names and sealed to it, signed by this user's key.
+//! - `shares` and `seal-share <appInstanceId> --vault <id>`: a managed instance's recovery holder's steps (§4.5, [`managed`]).
 
 pub(crate) mod client;
+mod managed;
 mod recovery;
 mod remote;
 mod state;
@@ -67,6 +69,11 @@ Usage: moqui vault --server URL --user USERNAME <command>
                             Open an encrypted export file (Commons › Vault) here, with its password: no server
   leases [--vault ID]       Leases waiting for your approval and those you asked for, or one vault's leases
   approve <leaseId>         Show what a lease names and approve it here, with your personal key
+  shares [--vault ID]       As a managed instance's recovery holder: check each share an instance delivered to you,
+                            file it into your personal vault ID (else print it once), and confirm it
+  seal-share <appInstanceId> --vault ID
+                            As a recovery holder: seal the share you filed in vault ID to the key a sealed instance
+                            made for this unseal, checked against the link key filed with it
 
 Each run signs in with your password, and your second factor's code when your account has one: the server sends your
 wrapped personal key only after such a sign-in. The key passphrase never leaves this process. What this client has
@@ -126,6 +133,8 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         ["recovery", rest @ ..] => recovery::dispatch(&mut remote, &mut client, &user, rest),
         ["leases"] => leases(&mut remote, &vault),
         ["approve", lease_id] => approve(&mut remote, &mut client, lease_id),
+        ["shares"] => managed::shares(&mut remote, &mut client, &vault),
+        ["seal-share", instance_id] => managed::seal_share(&mut remote, &mut client, instance_id, &vault),
         _ => Err(Error::new(USAGE)),
     }
 }

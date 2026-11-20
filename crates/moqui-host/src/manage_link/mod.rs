@@ -28,8 +28,14 @@
 //!   Bootstrap, Unseal and Event; the manager's calls of the instance go down the Serve stream. Each new link of an
 //!   instance has a higher generation and closes the one before.
 //! - **Sealed.** While the instance is sealed it dials out and opens no listener (Sealed-Secrets §3.3), and only the
-//!   calls of [`Call::sealed_ok`] are answered: Hello and status, the bootstrap bundle on a first start, and unseal (M6;
-//!   answered "not built" until then). Every other call needs the instance unsealed, on both ends.
+//!   calls of [`Call::sealed_ok`] are answered: Hello and status, the bootstrap bundle on a first start, and unseal (by
+//!   transit, or by recovery shares sealed to the instance's unseal key). Every other call needs the instance unsealed,
+//!   on both ends.
+//! - **Unsealed, as the manager takes it** (M6). The manager runs a command that needs an unsealed instance (all but
+//!   status and seal) only on a link it unsealed by transit, or on which the instance proved it holds its root key
+//!   ([`unseal`], `moqui_instance::transit`); a claim of unsealed without either is taken as sealed.
+//! - **Recovery shares** ([`shares`], M6): the instance seals each share to one holder whose key an approver it pinned
+//!   checked, sends it as a delivery signed with its link key, and checks each holder's confirmation itself.
 //! - **Commands** ([`commands`]). The manager's calls run on the instance as one system identity that runs only the
 //!   commands of [`CommandKind`]; nothing on the link runs an arbitrary service. A command that is none of them is
 //!   refused.
@@ -47,7 +53,9 @@ pub mod dial;
 pub(crate) mod key;
 pub mod proto;
 pub(crate) mod services;
+pub(crate) mod shares;
 pub(crate) mod state;
+pub mod unseal;
 
 #[cfg(feature = "instances")]
 pub(crate) mod accept;
@@ -103,16 +111,24 @@ pub enum Call {
     Status,
     Bootstrap,
     Unseal,
+    SealedShares,
+    Holders,
+    Shares,
+    ShareConfirmations,
+    RotateProof,
     Event,
     Serve,
 }
 
 impl Call {
     /// Whether the call is answered while the instance is sealed (§4.4): Hello and status, the bootstrap bundle on a
-    /// first start, and unseal. Pair is a pairing connection's alone.
+    /// first start, and unseal, by transit or by recovery shares. Pair is a pairing connection's alone.
     #[must_use]
     pub fn sealed_ok(self) -> bool {
-        matches!(self, Self::Hello | Self::Status | Self::Bootstrap | Self::Unseal)
+        matches!(
+            self,
+            Self::Hello | Self::Status | Self::Bootstrap | Self::Unseal | Self::SealedShares
+        )
     }
 
     #[must_use]
@@ -123,6 +139,11 @@ impl Call {
             Self::Status => "Status",
             Self::Bootstrap => "Bootstrap",
             Self::Unseal => "Unseal",
+            Self::SealedShares => "SealedShares",
+            Self::Holders => "Holders",
+            Self::Shares => "Shares",
+            Self::ShareConfirmations => "ShareConfirmations",
+            Self::RotateProof => "RotateProof",
             Self::Event => "Event",
             Self::Serve => "Serve",
         }
@@ -203,6 +224,13 @@ impl CommandKind {
     #[must_use]
     pub fn sealed_ok(self) -> bool {
         self == Self::Status
+    }
+
+    /// Whether the manager runs it only on a link whose "unsealed" it verified (M6): all but status and seal, which
+    /// give nothing to a holder of the link key alone.
+    #[must_use]
+    pub fn needs_verified_unseal(self) -> bool {
+        !matches!(self, Self::Status | Self::Seal)
     }
 
     /// How long the manager waits for the command's answer.

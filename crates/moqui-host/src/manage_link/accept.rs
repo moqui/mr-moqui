@@ -24,15 +24,23 @@
 //!
 //! A link's calls: Pair on a pairing connection alone, a few times an hour from one address; on a link connection the
 //! instance's key must be pinned on a row (looked up again at its Hello, so a revoke in between holds), Hello comes
-//! first, and while its last Hello or Status said sealed only Hello, Status, Bootstrap and Unseal are answered (Unseal
-//! "not built" until M6).
+//! first, and while its last Hello or Status said sealed only Hello, Status, Bootstrap, Unseal and SealedShares are
+//! answered.
 //!
-//! **A link from a new address.** Until M6 ties "unsealed" to the transit unseal, the manager's view of the instance's
-//! seal is the instance's own claim, so whoever holds its link key can claim unsealed and be sent a put-secret's value
-//! or a deploy's attestation. So a new link of an instance from another address than its live link's, or than its last
-//! link's within `manage@address-change-wait-seconds` of that link going down, is refused and told to the
+//! **Unsealed, as the manager takes it** (M6). The instance's own claim of unsealed is not enough: a command that
+//! needs an unsealed instance (all but status and seal) runs only on a link generation whose unseal this manager made
+//! (by transit, under the environment's policy: `moqui_instance::transit::unseal`) or on which the instance proved,
+//! with the key derived from its root key, that it holds that key (`moqui_instance::transit::check_proof`). A claim with
+//! neither is taken as sealed ([`ManagerServer::call`]): its status reports `sealState` `unverified`, which a deploy and a
+//! rotation read as not up, and Monitor's rows keep it sealed. Once a link is taken as unsealed and serves commands, the
+//! instance's recovery bundle is deposited when it changed (`moqui_instance::shares::deposit_seal_bundle`).
+//!
+//! **A link from a new address.** A new link of an instance from another address than its live link's, or than its
+//! last link's within `manage@address-change-wait-seconds` of that link going down, is refused and told to the
 //! administrators, until an operator confirms the move (`confirm#InstanceLinkAddress`) or the wait passes; a pairing
-//! confirms it too. A thief at the same address, or after the wait, is not stopped by this ([`admit_address`]).
+//! confirms it too ([`admit_address`]). With M6 a holder of a stolen link key gets no command from a claim of unsealed;
+//! under the automatic policy it still gets the root key from transit until the instance is revoked (plans/
+//! Vault-Instances.md §4.4, the limit of that key), and that unseal from a new address raises Monitor's alert.
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -54,7 +62,9 @@ use super::key::{KeyStore, LinkKey};
 use super::proto::manager_server::{Manager, ManagerServer as ManagerGrpc};
 use super::proto::{
     BootstrapReply, BootstrapRequest, Command, CommandReply, EventReply, EventRequest, HelloReply, HelloRequest,
-    InstanceStatus, PairReply, PairRequest, StatusReply, UnsealReply, UnsealRequest,
+    HoldersReply, HoldersRequest, InstanceStatus, PairReply, PairRequest, SealedShare, SealedSharesReply,
+    SealedSharesRequest, ShareConfirmation, ShareConfirmationsReply, ShareConfirmationsRequest, SharesReply,
+    SharesRequest, StatusReply, UnsealReply, UnsealRequest,
 };
 use super::state::set_to_proto;
 use super::{check_versions, Call, CommandKind, ALPN, LINK_VERSION, MAX_MESSAGE, ROLE_PAIR, ROLE_UP};
@@ -107,6 +117,8 @@ type Waiting = std::sync::mpsc::SyncSender<CommandReply>;
 struct Linked {
     generation: u64,
     status: InstanceStatus,
+    /// The manager takes this link's "unsealed" (M6): it unsealed it by transit, or the instance proved it.
+    verified: bool,
     remote: SocketAddr,
     /// Its Serve stream, while open.
     commands: Option<tokio::sync::mpsc::UnboundedSender<Command>>,
@@ -123,6 +135,8 @@ pub struct LinkView {
     pub status: InstanceStatus,
     pub serving: bool,
     pub remote: String,
+    /// The manager takes the link's "unsealed" (M6).
+    pub verified: bool,
 }
 
 /// The manager's end: its link key, the linked instances, and how to reach its database.
@@ -146,6 +160,9 @@ pub struct ManagerServer {
 
 /// How often a refused move of one instance is told to the administrators.
 const ALERT_EVERY: Duration = Duration::from_secs(3600);
+
+/// The seal state a status reports for a claim of unsealed the manager does not take (M6).
+pub const UNVERIFIED: &str = "unverified";
 
 /// The notification topic of a link refused from a new address.
 pub const ADDRESS_TOPIC: &str = "InstanceLinkAddress";
@@ -352,6 +369,13 @@ struct Conn {
     /// The pairing connection's new key.
     pairing_key: Option<String>,
     close: Mutex<Option<watch::Sender<bool>>>,
+    /// What the instance's unsealed proof on this link signs (M6), random for each link.
+    challenge: Vec<u8>,
+    /// The manager takes this link's "unsealed" (M6).
+    verified: AtomicBool,
+    /// The seal state last written to the instance's row for Monitor: a claim of unsealed the manager does not take is
+    /// written as `unverified`, so the instance stays sealed there.
+    noted: Mutex<String>,
 }
 
 #[derive(Clone)]
@@ -462,6 +486,9 @@ impl ManagerServer {
                     fingerprint: fingerprint.clone(),
                     pairing_key: Some(fingerprint),
                     close: Mutex::new(None),
+                    challenge: Vec::new(),
+                    verified: AtomicBool::new(false),
+                    noted: Mutex::new(String::new()),
                 });
                 let lifetime = self.config.pairing_lifetime;
                 self.serve_h2(stream, conn, None, Some(lifetime)).await;
@@ -506,6 +533,13 @@ impl ManagerServer {
             fingerprint,
             pairing_key: None,
             close: Mutex::new(Some(close)),
+            challenge: {
+                let mut challenge = vec![0_u8; 32];
+                moqui_vault::rng::Rng::fill(&mut moqui_vault::rng::OsRng, &mut challenge);
+                challenge
+            },
+            verified: AtomicBool::new(false),
+            noted: Mutex::new(String::new()),
         });
         let deadline = self.config.handshake_timeout;
         Arc::clone(&self)
@@ -529,6 +563,8 @@ impl ManagerServer {
             let _ = self
                 .on_pool(move |facade| {
                     moqui_instance::link::note_state(facade, &instance, "down", None, "");
+                    // what holders sealed to its unseal goes with the link (M6)
+                    moqui_instance::shares::drop_relay(facade, &instance);
                     Ok(())
                 })
                 .await;
@@ -627,6 +663,7 @@ impl ManagerServer {
             Linked {
                 generation: conn.generation,
                 status,
+                verified: false,
                 remote: conn.remote,
                 commands: None,
                 waiting: Arc::default(),
@@ -740,8 +777,77 @@ impl ManagerServer {
                 status: link.status.clone(),
                 serving: link.commands.is_some(),
                 remote: link.remote.to_string(),
+                verified: link.verified,
             })
             .unwrap_or_default()
+    }
+
+    /// Whether the manager takes the "unsealed" of `instance`'s link `generation` (M6), kept for its commands.
+    fn set_verified(&self, conn: &Conn, verified: bool) {
+        let was = conn.verified.swap(verified, Ordering::AcqRel);
+        if let Some(link) = lock(&self.linked)
+            .get_mut(&conn.instance)
+            .filter(|link| link.generation == conn.generation)
+        {
+            link.verified = verified;
+        }
+        if was != verified {
+            tracing::info!(
+                "Manager link: AppInstance {} (generation {}) is {} as unsealed",
+                conn.instance,
+                conn.generation,
+                if verified { "taken" } else { "not taken" }
+            );
+        }
+    }
+
+    /// The instance's recovery bundle over its link, deposited as an operational item when it is not the one deposited
+    /// last (the first time, and after a rekey or rotate-root; plans/Vault-Instances.md §4.5): in the background, once
+    /// its Serve stream is up; a failure is logged.
+    fn deposit_bundle(self: Arc<Self>, instance: &str) {
+        let instance = instance.to_string();
+        tokio::spawn(async move {
+            let (server, asked) = (Arc::clone(&self), instance.clone());
+            let exported = tokio::task::spawn_blocking(move || {
+                // the Serve stream is up as its first status as unsealed reaches the manager: a few seconds for both
+                for _ in 0..30 {
+                    let view = server.view(&asked);
+                    if view.serving && view.verified && view.status.seal_state == "unsealed" {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                server.call(&asked, super::proto::command::Body::ExportSeal(Default::default()))
+            })
+            .await;
+            let bundle = match exported {
+                Ok(Ok(reply)) if reply.ok && !reply.text.is_empty() => reply.text,
+                Ok(Ok(reply)) => {
+                    tracing::warn!(
+                        "Manager link: AppInstance {instance} gave no recovery bundle: {}",
+                        reply.error
+                    );
+                    return;
+                }
+                Ok(Err(err)) => {
+                    tracing::warn!("Manager link: no recovery bundle from AppInstance {instance}: {err}");
+                    return;
+                }
+                Err(err) => {
+                    tracing::error!("Manager link: the recovery bundle of AppInstance {instance}: {err}");
+                    return;
+                }
+            };
+            let kept = self
+                .on_pool(move |facade| moqui_instance::shares::deposit_seal_bundle(facade, &instance, &bundle))
+                .await;
+            if let Err(status) = kept {
+                tracing::warn!(
+                    "Manager link: the recovery bundle was not deposited: {}",
+                    status.message()
+                );
+            }
+        });
     }
 
     /// Close `instance`'s link (a revoke, a pairing again).
@@ -757,33 +863,52 @@ impl ManagerServer {
     }
 
     /// Run `body` on `instance` over its link and wait for the answer, up to the command's time. While the instance
-    /// is sealed only status is answered, from what it last said.
+    /// is sealed only status is answered, from what it last said; a command that needs it unsealed runs only on a link
+    /// whose "unsealed" the manager took (M6: see the module doc), and is refused on one it did not.
     pub fn call(&self, instance: &str, body: super::proto::command::Body) -> Result<CommandReply, String> {
         let command = Command {
             id: 0,
             body: Some(body),
         };
         let kind = CommandKind::of(&command).ok_or("not a command of the manager link")?;
-        let (sender, waiting, status) = {
+        let (sender, waiting, status, verified) = {
             let linked = lock(&self.linked);
             let link = linked
                 .get(instance)
                 .ok_or_else(|| format!("AppInstance {instance} is not linked"))?;
-            (link.commands.clone(), Arc::clone(&link.waiting), link.status.clone())
+            (
+                link.commands.clone(),
+                Arc::clone(&link.waiting),
+                link.status.clone(),
+                link.verified,
+            )
         };
         let sealed = status.seal_state != "unsealed";
+        // a claim of unsealed the manager does not take: `unverified`, which a deploy and a rotation read as not up
+        let taken = |mut status: InstanceStatus| {
+            if status.seal_state == "unsealed" && !verified {
+                status.seal_state = UNVERIFIED.to_string();
+            }
+            status
+        };
         if kind == CommandKind::Status && (sealed || sender.is_none()) {
             return Ok(CommandReply {
                 id: 0,
                 ok: true,
                 error: String::new(),
-                status: Some(status),
+                status: Some(taken(status)),
                 text: String::new(),
             });
         }
         if sealed && !kind.sealed_ok() {
             return Err(format!(
                 "AppInstance {instance} is sealed: {} waits until it is unsealed",
+                kind.name()
+            ));
+        }
+        if kind.needs_verified_unseal() && !verified {
+            return Err(format!(
+                "AppInstance {instance} says it is unsealed, and this manager neither unsealed it on this link nor had it prove it holds its root key: {} waits, taken as sealed (plans/Vault-Instances.md §4.4)",
                 kind.name()
             ));
         }
@@ -797,11 +922,55 @@ impl ManagerServer {
         }
         let reply = answered.recv_timeout(kind.timeout());
         lock(&waiting).remove(&id);
-        reply.map_err(|_| format!("AppInstance {instance} did not answer {} in time", kind.name()))
+        let mut reply = reply.map_err(|_| format!("AppInstance {instance} did not answer {} in time", kind.name()))?;
+        reply.status = reply.status.map(taken);
+        Ok(reply)
     }
 }
 
 type CommandStream = BoxPin<Box<dyn Stream<Item = Result<Command, Status>> + Send>>;
+
+impl Service {
+    /// Write the instance's seal state for Monitor when it changed: a claim of unsealed the manager does not take is
+    /// `unverified` (sealed there); once taken, `unsealed`, and the relay of its unseal by shares goes (M6).
+    async fn note_seal(&self, claimed: &str) -> Result<(), Status> {
+        let effective = if claimed == "unsealed" && !self.conn.verified.load(Ordering::Acquire) {
+            UNVERIFIED.to_string()
+        } else {
+            claimed.to_string()
+        };
+        {
+            let mut noted = lock(&self.conn.noted);
+            if *noted == effective {
+                return Ok(());
+            }
+            noted.clone_from(&effective);
+        }
+        let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
+        tracing::info!("Manager link: AppInstance {instance} is {effective}");
+        self.server
+            .on_pool(move |facade| {
+                moqui_instance::link::note_state(facade, &instance, "linked", Some(&effective), &remote);
+                if effective == "unsealed" {
+                    moqui_instance::shares::drop_relay(facade, &instance);
+                }
+                Ok(())
+            })
+            .await
+    }
+
+    /// The recovery share calls run only on a link the manager takes as unsealed (M6): a holder of the link key alone
+    /// sends no share set in the instance's name and reads no confirmation.
+    fn require_verified(&self, call: Call) -> Result<(), Status> {
+        if self.conn.verified.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        Err(Status::failed_precondition(format!(
+            "{} waits until the manager takes this link's unsealed (its transit unseal, or the instance's proof)",
+            call.name()
+        )))
+    }
+}
 
 #[tonic::async_trait]
 impl Manager for Service {
@@ -861,12 +1030,12 @@ impl Manager for Service {
             .store(status.seal_state != "unsealed", Ordering::Release);
         self.server.register(&self.conn, status.clone())?;
         self.conn.helloed.store(true, Ordering::Release);
-        let (instance, remote) = (self.conn.instance.clone(), self.conn.remote.ip().to_string());
-        let (seal_state, members) = (status.seal_state.clone(), status.cluster_members.clone());
+        self.note_seal(&status.seal_state).await?;
+        let instance = self.conn.instance.clone();
+        let members = status.cluster_members.clone();
         let schema_hash = status.schema_hash.clone();
         self.server
             .on_pool(move |facade| {
-                moqui_instance::link::note_state(facade, &instance, "linked", Some(&seal_state), &remote);
                 // its cluster's live members, which Monitor compares (plans/Vault-Instances.md §4.8)
                 moqui_instance::monitor::note_members(facade, &instance, &members);
                 // the schema a deploy records before it and a rollback compares (M3)
@@ -881,12 +1050,39 @@ impl Manager for Service {
             status.seal_state,
             self.conn.remote
         );
+        // the public half of its transit key, made at its first link (M6), when its environment's method is the
+        // manager's transit: a manager that cannot keep one (no seal of its own) says so, and the instance's transit
+        // init fails with that
+        let instance = self.conn.instance.clone();
+        let transit_public = match self
+            .server
+            .on_pool(move |facade| {
+                let row = moqui_instance::link::instance(facade, &instance)?;
+                if moqui_instance::transit::environment_method(facade, &row)? != "transit" {
+                    return Ok(Vec::new());
+                }
+                moqui_instance::transit::transit_public(facade, &instance).map(|public| public.to_vec())
+            })
+            .await
+        {
+            Ok(public) => public,
+            Err(status) => {
+                tracing::error!(
+                    "Manager link: no transit key for AppInstance {}: {}",
+                    self.conn.instance,
+                    status.message()
+                );
+                Vec::new()
+            }
+        };
         Ok(Response::new(HelloReply {
             link_version: LINK_VERSION,
             manager_id: self.server.manager_id.clone(),
             app_instance_id: self.conn.instance.clone(),
             generation: self.conn.generation,
             bootstrap_ready: moqui_instance::link::bundle_ready(&self.conn.instance),
+            transit_public,
+            challenge: self.conn.challenge.clone(),
         }))
     }
 
@@ -894,7 +1090,40 @@ impl Manager for Service {
         refuse(Call::Status, &self.conn)?;
         let status = request.into_inner();
         let sealed = status.seal_state != "unsealed";
-        let was = self.conn.sealed.swap(sealed, Ordering::AcqRel);
+        self.conn.sealed.store(sealed, Ordering::Release);
+        // "unsealed" as the manager takes it (M6): a transit unseal on this link stands until a sealed status; else the
+        // instance's proof on this link, checked against the key pinned for it
+        if sealed {
+            self.server.set_verified(&self.conn, false);
+        } else if !self.conn.verified.load(Ordering::Acquire) && !status.proof.is_empty() {
+            let (instance, fingerprint, generation, challenge) = (
+                self.conn.instance.clone(),
+                self.conn.fingerprint.clone(),
+                self.conn.generation,
+                self.conn.challenge.clone(),
+            );
+            let (proof_public, proof) = (status.proof_public.clone(), status.proof.clone());
+            let proved = self
+                .server
+                .on_pool(move |facade| {
+                    moqui_instance::transit::check_proof(
+                        facade,
+                        &moqui_vault::managed::ProofLink {
+                            instance_id: &instance,
+                            link_fingerprint: &fingerprint,
+                            generation,
+                            challenge: &challenge,
+                        },
+                        &proof_public,
+                        &proof,
+                    )
+                })
+                .await
+                .unwrap_or(false);
+            if proved {
+                self.server.set_verified(&self.conn, true);
+            }
+        }
         let members_changed = self
             .server
             .note_status(&self.conn.instance, self.conn.generation, &status);
@@ -934,18 +1163,10 @@ impl Manager for Service {
                 );
             }
         }
-        if was != sealed {
-            let instance = self.conn.instance.clone();
-            let seal_state = status.seal_state.clone();
-            tracing::info!("Manager link: AppInstance {instance} is {seal_state}");
-            self.server
-                .on_pool(move |facade| {
-                    moqui_instance::link::note_state(facade, &instance, "linked", Some(&seal_state), "");
-                    Ok(())
-                })
-                .await?;
-        }
-        Ok(Response::new(StatusReply {}))
+        self.note_seal(&status.seal_state).await?;
+        Ok(Response::new(StatusReply {
+            unsealed_verified: self.conn.verified.load(Ordering::Acquire),
+        }))
     }
 
     async fn bootstrap(&self, request: Request<BootstrapRequest>) -> Result<Response<BootstrapReply>, Status> {
@@ -969,10 +1190,197 @@ impl Manager for Service {
 
     async fn unseal(&self, request: Request<UnsealRequest>) -> Result<Response<UnsealReply>, Status> {
         refuse(Call::Unseal, &self.conn)?;
+        let request = request.into_inner();
+        let (instance, fingerprint, remote, generation) = (
+            self.conn.instance.clone(),
+            self.conn.fingerprint.clone(),
+            self.conn.remote.ip().to_string(),
+            self.conn.generation,
+        );
+        let answer = self
+            .server
+            .on_pool(move |facade| {
+                moqui_instance::transit::unseal(
+                    facade,
+                    &moqui_instance::transit::Ask {
+                        instance_id: &instance,
+                        link_fingerprint: &fingerprint,
+                        remote: &remote,
+                        generation,
+                        wrapped_root: &request.wrapped_root,
+                        ephemeral_public: &request.ephemeral_public,
+                    },
+                )
+            })
+            .await?;
+        match answer {
+            moqui_instance::transit::Answer::Sealed { sealed_root, .. } => {
+                // this manager unsealed it on this link: its "unsealed" here is taken
+                self.server.set_verified(&self.conn, true);
+                // transit::unseal wrote the unseal to the row (Monitor's unseal event), and the relay went
+                *lock(&self.conn.noted) = "unsealed".to_string();
+                let instance = self.conn.instance.clone();
+                self.server
+                    .on_pool(move |facade| {
+                        moqui_instance::shares::drop_relay(facade, &instance);
+                        Ok(())
+                    })
+                    .await?;
+                Ok(Response::new(UnsealReply {
+                    sealed_root,
+                    waiting: String::new(),
+                }))
+            }
+            moqui_instance::transit::Answer::Waiting(why) => Ok(Response::new(UnsealReply {
+                sealed_root: Vec::new(),
+                waiting: why,
+            })),
+        }
+    }
+
+    async fn sealed_shares(
+        &self,
+        request: Request<SealedSharesRequest>,
+    ) -> Result<Response<SealedSharesReply>, Status> {
+        refuse(Call::SealedShares, &self.conn)?;
+        let request = request.into_inner();
+        let instance = self.conn.instance.clone();
+        let shares = self
+            .server
+            .on_pool(move |facade| {
+                let unseal_public: [u8; 32] = request
+                    .unseal_public
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| moqui_lib::error::Error::new("the unseal key is an X25519 key"))?;
+                let key = moqui_vault::managed::UnsealKey {
+                    instance_id: instance.clone(),
+                    unseal_public,
+                    expires: request.expires,
+                    signature: request.signature,
+                };
+                moqui_instance::shares::offer_unseal_key(facade, &instance, &request.link_public, &key)
+            })
+            .await?;
+        Ok(Response::new(SealedSharesReply {
+            shares: shares
+                .into_iter()
+                .map(|(holder_user_id, sealed)| SealedShare { sealed, holder_user_id })
+                .collect(),
+        }))
+    }
+
+    async fn holders(&self, request: Request<HoldersRequest>) -> Result<Response<HoldersReply>, Status> {
+        refuse(Call::Holders, &self.conn)?;
+        self.require_verified(Call::Holders)?;
         let _ = request;
-        Err(Status::unimplemented(
-            "unseal by transit over the manager link is not built yet (M6)",
-        ))
+        let instance = self.conn.instance.clone();
+        let holders = self
+            .server
+            .on_pool(move |facade| moqui_instance::shares::holders(facade, &instance))
+            .await?;
+        Ok(Response::new(HoldersReply {
+            holders: holders
+                .into_iter()
+                .map(|holder| super::proto::Holder {
+                    user_id: holder.user_id,
+                    personal_key_id: holder.personal_key_id,
+                    encrypt_public: holder.encrypt_public.to_vec(),
+                    verify_public: holder.verify_public.to_vec(),
+                    checks: holder
+                        .checks
+                        .into_iter()
+                        .map(|check| super::proto::KeyCheck {
+                            checker_user_id: check.checker_user_id,
+                            checker_key_id: check.checker_key_id,
+                            checked_key_id: check.checked_key_id,
+                            checked_user_id: check.checked_user_id,
+                            checked_encrypt: check.checked_encrypt,
+                            checked_verify: check.checked_verify,
+                            checked_at: check.checked_at,
+                            signature: check.signature,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }))
+    }
+
+    async fn shares(&self, request: Request<SharesRequest>) -> Result<Response<SharesReply>, Status> {
+        refuse(Call::Shares, &self.conn)?;
+        self.require_verified(Call::Shares)?;
+        let request = request.into_inner();
+        let instance = self.conn.instance.clone();
+        let sent: Vec<moqui_instance::shares::SentShare> = request
+            .deliveries
+            .into_iter()
+            .map(|delivery| moqui_instance::shares::SentShare {
+                index: delivery.index,
+                delivery: moqui_vault::delivery::Delivery {
+                    delivery_id: delivery.delivery_id,
+                    recipient_user_id: delivery.recipient_user_id,
+                    recipient_key_id: delivery.recipient_key_id,
+                    purpose: delivery.purpose,
+                    sender_kind: "instance".to_string(),
+                    sender_id: instance.clone(),
+                    sealed: delivery.sealed,
+                    signature: delivery.signature,
+                },
+            })
+            .collect();
+        let (set_id, threshold, link_public) = (request.set_id, request.threshold, request.link_public);
+        self.server
+            .on_pool(move |facade| {
+                moqui_instance::shares::record_shares(facade, &instance, &link_public, &set_id, threshold, &sent)
+            })
+            .await?;
+        Ok(Response::new(SharesReply {}))
+    }
+
+    async fn rotate_proof(
+        &self,
+        request: Request<super::proto::RotateProofRequest>,
+    ) -> Result<Response<super::proto::RotateProofReply>, Status> {
+        refuse(Call::RotateProof, &self.conn)?;
+        let request = request.into_inner();
+        let (instance, fingerprint) = (self.conn.instance.clone(), self.conn.fingerprint.clone());
+        self.server
+            .on_pool(move |facade| {
+                moqui_instance::transit::rotate_proof(
+                    facade,
+                    &instance,
+                    &fingerprint,
+                    &request.new_public,
+                    &request.wrapped_root,
+                    &request.signature,
+                )
+            })
+            .await?;
+        Ok(Response::new(super::proto::RotateProofReply {}))
+    }
+
+    async fn share_confirmations(
+        &self,
+        request: Request<ShareConfirmationsRequest>,
+    ) -> Result<Response<ShareConfirmationsReply>, Status> {
+        refuse(Call::ShareConfirmations, &self.conn)?;
+        self.require_verified(Call::ShareConfirmations)?;
+        let set_id = request.into_inner().set_id;
+        let instance = self.conn.instance.clone();
+        let confirmations = self
+            .server
+            .on_pool(move |facade| moqui_instance::shares::confirmations(facade, &instance, &set_id))
+            .await?;
+        Ok(Response::new(ShareConfirmationsReply {
+            confirmations: confirmations
+                .into_iter()
+                .map(|confirmation| ShareConfirmation {
+                    index: confirmation.index,
+                    holder_user_id: confirmation.holder_user_id,
+                    signature: confirmation.signature,
+                })
+                .collect(),
+        }))
     }
 
     async fn event(&self, request: Request<EventRequest>) -> Result<Response<EventReply>, Status> {
@@ -1042,6 +1450,9 @@ impl Manager for Service {
                 link.commands = None;
             }
         });
+        if self.conn.verified.load(Ordering::Acquire) {
+            Arc::clone(&self.server).deposit_bundle(&self.conn.instance);
+        }
         let stream = futures_util::stream::unfold(commands, |mut commands| async move {
             commands.recv().await.map(|command| (Ok(command), commands))
         });

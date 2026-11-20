@@ -88,6 +88,16 @@ along with this software (see the LICENSE.md file). If not, see
         <method type="post"><service name="org.moqui.security.VaultServices.send#VaultDelivery"/></method>
         <id name="deliveryId">
             <resource name="file"><method type="post"><service name="org.moqui.security.VaultServices.file#VaultDelivery"/></method></resource>
+            <!-- a managed instance's recovery share (plans/Vault-Instances.md §4.5): the holder's signed confirmation -->
+            <resource name="confirmShare"><method type="post"><service name="org.moqui.dev.InstanceLinkServices.confirm#InstanceRecoveryShare"/></method></resource>
+        </id>
+    </resource>
+    <!-- a sealed managed instance's unseal by recovery shares (§4.5): the key it made for this unseal, signed with its
+        link key, and a holder's share sealed to it; each service checks that the caller holds a share of the instance -->
+    <resource name="managedInstances">
+        <id name="appInstanceId">
+            <resource name="unsealKey"><method type="get"><service name="org.moqui.dev.InstanceLinkServices.get#InstanceUnsealKey"/></method></resource>
+            <resource name="sealedShares"><method type="post"><service name="org.moqui.dev.InstanceLinkServices.send#InstanceSealedShare"/></method></resource>
         </id>
     </resource>
     <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>

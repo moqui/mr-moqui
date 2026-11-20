@@ -21,6 +21,15 @@ pub struct InstanceStatus {
     pub first_start: bool,
     #[prost(uint32, tag = "8")]
     pub link_version: u32,
+    /// the instance's unsealed proof on this link (M6): the Ed25519 key derived from its root key, and its signature over
+    /// the instance id, link key, generation and the Hello's challenge; empty while sealed and in Hello
+    #[prost(bytes = "vec", tag = "9")]
+    pub proof_public: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "10")]
+    pub proof: ::prost::alloc::vec::Vec<u8>,
+    /// the method its seal.json records
+    #[prost(string, tag = "11")]
+    pub seal_method: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct Approver {
@@ -85,9 +94,19 @@ pub struct HelloReply {
     /// a bootstrap bundle waits for the instance
     #[prost(bool, tag = "5")]
     pub bootstrap_ready: bool,
+    /// the X25519 key of this instance's transit on the manager, which its root key is wrapped to (M6)
+    #[prost(bytes = "vec", tag = "6")]
+    pub transit_public: ::prost::alloc::vec::Vec<u8>,
+    /// what the instance's unsealed proof on this link signs, with the generation
+    #[prost(bytes = "vec", tag = "7")]
+    pub challenge: ::prost::alloc::vec::Vec<u8>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct StatusReply {}
+pub struct StatusReply {
+    /// the manager takes this link's "unsealed" (M6): it unsealed the instance on it by transit, or the instance proved it
+    #[prost(bool, tag = "1")]
+    pub unsealed_verified: bool,
+}
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BootstrapRequest {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -107,7 +126,139 @@ pub struct UnsealRequest {
 pub struct UnsealReply {
     #[prost(bytes = "vec", tag = "1")]
     pub sealed_root: ::prost::alloc::vec::Vec<u8>,
+    /// empty when answered; else why it waits (the environment's approval policy)
+    #[prost(string, tag = "2")]
+    pub waiting: ::prost::alloc::string::String,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SealedSharesRequest {
+    /// the X25519 key the instance made for this unseal, and its signature by the link key (moqui_vault::managed)
+    #[prost(bytes = "vec", tag = "1")]
+    pub unseal_public: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+    /// the link key's public half, which the manager checks against the pinned fingerprint for the holders
+    #[prost(bytes = "vec", tag = "3")]
+    pub link_public: ::prost::alloc::vec::Vec<u8>,
+    /// when the key stops being taken, epoch milliseconds, signed with it
+    #[prost(int64, tag = "4")]
+    pub expires: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SealedShare {
+    #[prost(bytes = "vec", tag = "1")]
+    pub sealed: ::prost::alloc::vec::Vec<u8>,
+    #[prost(string, tag = "2")]
+    pub holder_user_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SealedSharesReply {
+    #[prost(message, repeated, tag = "1")]
+    pub shares: ::prost::alloc::vec::Vec<SealedShare>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct KeyCheck {
+    #[prost(string, tag = "1")]
+    pub checker_user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub checker_key_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub checked_key_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub checked_user_id: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "5")]
+    pub checked_encrypt: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "6")]
+    pub checked_verify: ::prost::alloc::vec::Vec<u8>,
+    #[prost(int64, tag = "7")]
+    pub checked_at: i64,
+    #[prost(bytes = "vec", tag = "8")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Holder {
+    #[prost(string, tag = "1")]
+    pub user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub personal_key_id: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub encrypt_public: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "4")]
+    pub verify_public: ::prost::alloc::vec::Vec<u8>,
+    /// the checks of this key that the environment's approvers signed; the instance takes the key only with one by an
+    /// approver it pinned
+    #[prost(message, repeated, tag = "5")]
+    pub checks: ::prost::alloc::vec::Vec<KeyCheck>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct HoldersRequest {}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct HoldersReply {
+    #[prost(message, repeated, tag = "1")]
+    pub holders: ::prost::alloc::vec::Vec<Holder>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ShareDelivery {
+    #[prost(string, tag = "1")]
+    pub delivery_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub recipient_user_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub recipient_key_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "4")]
+    pub purpose: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "5")]
+    pub sealed: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "6")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint32, tag = "7")]
+    pub index: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SharesRequest {
+    #[prost(string, tag = "1")]
+    pub set_id: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "2")]
+    pub link_public: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint32, tag = "3")]
+    pub threshold: u32,
+    #[prost(message, repeated, tag = "4")]
+    pub deliveries: ::prost::alloc::vec::Vec<ShareDelivery>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SharesReply {}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ShareConfirmationsRequest {
+    #[prost(string, tag = "1")]
+    pub set_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ShareConfirmation {
+    #[prost(uint32, tag = "1")]
+    pub index: u32,
+    #[prost(string, tag = "2")]
+    pub holder_user_id: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "3")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ShareConfirmationsReply {
+    #[prost(message, repeated, tag = "1")]
+    pub confirmations: ::prost::alloc::vec::Vec<ShareConfirmation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RotateProofRequest {
+    /// the new root key's proof key, its wrap to the transit key (empty for a method the manager does not unseal), and
+    /// the old proof key's signature over them (moqui_vault::managed::sign_rotation)
+    #[prost(bytes = "vec", tag = "1")]
+    pub new_public: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub wrapped_root: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RotateProofReply {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EventRequest {
     /// started, unsealed or failed
@@ -212,7 +363,8 @@ pub mod manager_client {
     use tonic::codegen::*;
     use tonic::codegen::http::Uri;
     /// On the manager. A pairing connection (role P) serves Pair alone; a link connection (role U) the rest. While the
-    /// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap and Unseal are answered.
+    /// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap, Unseal and SealedShares (unseal by
+    /// recovery shares) are answered.
     #[derive(Debug, Clone)]
     pub struct ManagerClient<T> {
         inner: tonic::client::Grpc<T>,
@@ -370,7 +522,8 @@ pub mod manager_client {
                 .insert(GrpcMethod::new("moqui.manage.v1.Manager", "Bootstrap"));
             self.inner.unary(req, path, codec).await
         }
-        /// Unseal by transit (M6): answered "not built" until then.
+        /// Unseal by transit (M6): the root key wrapped to the instance's transit key, opened by the manager with that key and
+        /// sealed to the ephemeral key the instance made for this unseal; under the approval policy it waits for a member.
         pub async fn unseal(
             &mut self,
             request: impl tonic::IntoRequest<super::UnsealRequest>,
@@ -390,6 +543,128 @@ pub mod manager_client {
             let mut req = request.into_request();
             req.extensions_mut()
                 .insert(GrpcMethod::new("moqui.manage.v1.Manager", "Unseal"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// Unseal by recovery shares (M6): the key a sealed instance made for this unseal, signed with its link key, and the
+        /// shares its holders sealed to it since. The manager relays ciphertext only.
+        pub async fn sealed_shares(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SealedSharesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SealedSharesReply>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.manage.v1.Manager/SealedShares",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.manage.v1.Manager", "SealedShares"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// The recovery holders' public keys, each with the key checks of it (M6).
+        pub async fn holders(
+            &mut self,
+            request: impl tonic::IntoRequest<super::HoldersRequest>,
+        ) -> std::result::Result<tonic::Response<super::HoldersReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.manage.v1.Manager/Holders",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.manage.v1.Manager", "Holders"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// The recovery shares, each sealed to one holder and signed with the link key, as deliveries (M6).
+        pub async fn shares(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SharesRequest>,
+        ) -> std::result::Result<tonic::Response<super::SharesReply>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.manage.v1.Manager/Shares",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.manage.v1.Manager", "Shares"));
+            self.inner.unary(req, path, codec).await
+        }
+        /// The holders' confirmations of a share set, each signed with the holder's key (M6).
+        pub async fn share_confirmations(
+            &mut self,
+            request: impl tonic::IntoRequest<super::ShareConfirmationsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ShareConfirmationsReply>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.manage.v1.Manager/ShareConfirmations",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("moqui.manage.v1.Manager", "ShareConfirmations"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// A rotate-root's new unsealed proof key, signed by the old one, with the new transit wrap (M6).
+        pub async fn rotate_proof(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RotateProofRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RotateProofReply>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.manage.v1.Manager/RotateProof",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.manage.v1.Manager", "RotateProof"));
             self.inner.unary(req, path, codec).await
         }
         /// An event of the instance: started, unsealed, failed. Only while unsealed.
@@ -474,11 +749,47 @@ pub mod manager_server {
             &self,
             request: tonic::Request<super::BootstrapRequest>,
         ) -> std::result::Result<tonic::Response<super::BootstrapReply>, tonic::Status>;
-        /// Unseal by transit (M6): answered "not built" until then.
+        /// Unseal by transit (M6): the root key wrapped to the instance's transit key, opened by the manager with that key and
+        /// sealed to the ephemeral key the instance made for this unseal; under the approval policy it waits for a member.
         async fn unseal(
             &self,
             request: tonic::Request<super::UnsealRequest>,
         ) -> std::result::Result<tonic::Response<super::UnsealReply>, tonic::Status>;
+        /// Unseal by recovery shares (M6): the key a sealed instance made for this unseal, signed with its link key, and the
+        /// shares its holders sealed to it since. The manager relays ciphertext only.
+        async fn sealed_shares(
+            &self,
+            request: tonic::Request<super::SealedSharesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SealedSharesReply>,
+            tonic::Status,
+        >;
+        /// The recovery holders' public keys, each with the key checks of it (M6).
+        async fn holders(
+            &self,
+            request: tonic::Request<super::HoldersRequest>,
+        ) -> std::result::Result<tonic::Response<super::HoldersReply>, tonic::Status>;
+        /// The recovery shares, each sealed to one holder and signed with the link key, as deliveries (M6).
+        async fn shares(
+            &self,
+            request: tonic::Request<super::SharesRequest>,
+        ) -> std::result::Result<tonic::Response<super::SharesReply>, tonic::Status>;
+        /// The holders' confirmations of a share set, each signed with the holder's key (M6).
+        async fn share_confirmations(
+            &self,
+            request: tonic::Request<super::ShareConfirmationsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::ShareConfirmationsReply>,
+            tonic::Status,
+        >;
+        /// A rotate-root's new unsealed proof key, signed by the old one, with the new transit wrap (M6).
+        async fn rotate_proof(
+            &self,
+            request: tonic::Request<super::RotateProofRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RotateProofReply>,
+            tonic::Status,
+        >;
         /// An event of the instance: started, unsealed, failed. Only while unsealed.
         async fn event(
             &self,
@@ -497,7 +808,8 @@ pub mod manager_server {
         ) -> std::result::Result<tonic::Response<Self::ServeStream>, tonic::Status>;
     }
     /// On the manager. A pairing connection (role P) serves Pair alone; a link connection (role U) the rest. While the
-    /// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap and Unseal are answered.
+    /// instance's last Hello or Status says sealed, only Hello, Status, Bootstrap, Unseal and SealedShares (unseal by
+    /// recovery shares) are answered.
     #[derive(Debug)]
     pub struct ManagerServer<T> {
         inner: Arc<T>,
@@ -774,6 +1086,227 @@ pub mod manager_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = UnsealSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.manage.v1.Manager/SealedShares" => {
+                    #[allow(non_camel_case_types)]
+                    struct SealedSharesSvc<T: Manager>(pub Arc<T>);
+                    impl<
+                        T: Manager,
+                    > tonic::server::UnaryService<super::SealedSharesRequest>
+                    for SealedSharesSvc<T> {
+                        type Response = super::SealedSharesReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SealedSharesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Manager>::sealed_shares(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SealedSharesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.manage.v1.Manager/Holders" => {
+                    #[allow(non_camel_case_types)]
+                    struct HoldersSvc<T: Manager>(pub Arc<T>);
+                    impl<T: Manager> tonic::server::UnaryService<super::HoldersRequest>
+                    for HoldersSvc<T> {
+                        type Response = super::HoldersReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::HoldersRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Manager>::holders(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = HoldersSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.manage.v1.Manager/Shares" => {
+                    #[allow(non_camel_case_types)]
+                    struct SharesSvc<T: Manager>(pub Arc<T>);
+                    impl<T: Manager> tonic::server::UnaryService<super::SharesRequest>
+                    for SharesSvc<T> {
+                        type Response = super::SharesReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SharesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Manager>::shares(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SharesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.manage.v1.Manager/ShareConfirmations" => {
+                    #[allow(non_camel_case_types)]
+                    struct ShareConfirmationsSvc<T: Manager>(pub Arc<T>);
+                    impl<
+                        T: Manager,
+                    > tonic::server::UnaryService<super::ShareConfirmationsRequest>
+                    for ShareConfirmationsSvc<T> {
+                        type Response = super::ShareConfirmationsReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::ShareConfirmationsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Manager>::share_confirmations(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ShareConfirmationsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.manage.v1.Manager/RotateProof" => {
+                    #[allow(non_camel_case_types)]
+                    struct RotateProofSvc<T: Manager>(pub Arc<T>);
+                    impl<
+                        T: Manager,
+                    > tonic::server::UnaryService<super::RotateProofRequest>
+                    for RotateProofSvc<T> {
+                        type Response = super::RotateProofReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RotateProofRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Manager>::rotate_proof(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RotateProofSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
