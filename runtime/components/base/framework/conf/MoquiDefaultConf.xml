@@ -1341,7 +1341,7 @@
         (System › Edge Clients › Ports). call-legs-per-pairing: on a node that takes links, the most call legs of one
         paired node on its media node at once (200; 0 for no cap). smtp-tunnel-host: on a front node, where an EdgePort
         row of kind smtp listens (empty for every address). -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-mail-percent="90" queue-max-content-files="10000" content-calls="4" queue-max-attempts="10"
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-mail-percent="90" queue-max-content-files="10000" content-calls="4" up-refusals="30" queue-max-attempts="10"
             queue-retry-seconds="5" replica-max-rows="1000000" link-key="CHANGEME" link-url="" offline-page=""
             ssh-tunnel-port="" ssh-tunnel-host="" smtp-tunnel-host="" xmpp-port="" xmpp-tls-port="" xmpp-host=""
             call-legs-per-pairing=""

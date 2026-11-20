@@ -2609,6 +2609,12 @@ along with this software (see the LICENSE.md file). If not, see
                     now, and tells its administrators (EdgeContentRefused) once until it takes content again.
                 </xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="up-refusals" type="non-neg-int-expandable" default="30">
+                <xs:annotation><xs:documentation>On a node that takes links, the up connections with a key that is not
+                    paired (or was revoked) one address may make in ten minutes; past them the next is refused before
+                    its key is looked up, so a client with any certificate does not cost a transaction each. Past the
+                    first three of a window a refusal is logged at debug.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="content-calls" type="non-neg-int-expandable" default="4">
                 <xs:annotation><xs:documentation>The content sends (PutContent) of one pairing open at once at most, at
                     least 1: each holds up to an item's content (64 MiB) in memory, so past them a send is refused for

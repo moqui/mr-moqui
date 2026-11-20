@@ -507,6 +507,9 @@ pub(crate) struct EdgeServer {
     registry: Mutex<Registry>,
     /// Pair calls by source.
     pair_attempts: Mutex<PairAttempts>,
+    /// Up connections refused (a key not paired or revoked) by source, so an anonymous client with any certificate
+    /// stops costing a transaction and a log line past `up_refusals` in the window (SEC-CLU-84).
+    refused_up: Mutex<PairAttempts>,
     shutdown: watch::Receiver<bool>,
     /// The paired nodes' public host names (§5.3).
     pub(crate) hosts: Hosts,
@@ -537,6 +540,9 @@ pub(crate) struct EdgeServer {
 /// How long the edge cluster's list is answered before its member rows are read again: every link's Ping asks it.
 const EDGE_MEMBERS_FOR: Duration = Duration::from_secs(2);
 
+/// The refused up connections of one source in a window that are logged at info; the rest at debug (SEC-CLU-84).
+const LOGGED_UP_REFUSALS: u32 = 3;
+
 /// The sources whose Pair calls are counted at once; a new source past it is refused until a sweep frees room.
 const MAX_PAIR_SOURCES: usize = 10_000;
 
@@ -553,6 +559,20 @@ impl PairAttempts {
     /// Count a call from `ip` at `now`: false when its source made more than `limit` in `window`, or when the table
     /// is full of sources still in their window.
     pub(super) fn allowed(&mut self, ip: IpAddr, now: Instant, window: Duration, limit: u32) -> bool {
+        self.charge(ip, now, window) <= limit
+    }
+
+    /// Whether `ip`'s source made `limit` or more in `window` by `now`, without counting this one.
+    pub(super) fn reached(&self, ip: IpAddr, now: Instant, window: Duration, limit: u32) -> bool {
+        let key = moqui_lib::source_guard::source_key(ip);
+        self.by_source
+            .get(&key)
+            .is_some_and(|(started, count)| now.duration_since(*started) < window && *count >= limit)
+    }
+
+    /// Count a call from `ip` at `now`: how many its source made in its window, this one with them; `u32::MAX` when
+    /// the table is full of sources still in their window.
+    pub(super) fn charge(&mut self, ip: IpAddr, now: Instant, window: Duration) -> u32 {
         let key = moqui_lib::source_guard::source_key(ip);
         if self.next_sweep.is_none_or(|at| now >= at) {
             self.by_source
@@ -560,14 +580,14 @@ impl PairAttempts {
             self.next_sweep = Some(now + window);
         }
         if self.by_source.len() >= MAX_PAIR_SOURCES && !self.by_source.contains_key(&key) {
-            return false;
+            return u32::MAX;
         }
         let (started, count) = self.by_source.entry(key).or_insert((now, 0));
         if now.duration_since(*started) >= window {
             (*started, *count) = (now, 0);
         }
-        *count += 1;
-        *count <= limit
+        *count = count.saturating_add(1);
+        *count
     }
 
     #[cfg(test)]
@@ -607,6 +627,7 @@ impl EdgeServer {
             link_fingerprint: link_fingerprint.to_string(),
             registry: Mutex::new(Registry::default()),
             pair_attempts: Mutex::new(PairAttempts::default()),
+            refused_up: Mutex::new(PairAttempts::default()),
             shutdown,
             hosts: Hosts::default(),
             telemetry: Arc::clone(&telemetry),
@@ -1571,6 +1592,13 @@ impl EdgeServer {
             let _ = write_answer(&mut stream, Answer::Refused, message).await;
             return;
         };
+        // a source refused often lately is refused before the lookup: no transaction, and no log line (SEC-CLU-84)
+        let (window, limit) = (self.config.pair_window, self.config.up_refusals);
+        if lock(&self.refused_up).reached(remote.ip(), Instant::now(), window, limit) {
+            tracing::debug!("Edge link from {remote} refused before its key was looked up: refused too often lately");
+            let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
+            return;
+        }
         let lookup = fingerprint.clone();
         let linked = self
             .on_pool(move |factory| store::link_up(factory, &lookup, remote))
@@ -1578,7 +1606,12 @@ impl EdgeServer {
         let (node, generation) = match linked {
             Ok(Some(linked)) => linked,
             Ok(None) => {
-                tracing::info!("Edge link from {remote} refused: key {fingerprint} is not paired or was revoked");
+                let refusals = lock(&self.refused_up).charge(remote.ip(), Instant::now(), window);
+                if refusals <= LOGGED_UP_REFUSALS {
+                    tracing::info!("Edge link from {remote} refused: key {fingerprint} is not paired or was revoked");
+                } else {
+                    tracing::debug!("Edge link from {remote} refused: key {fingerprint} is not paired or was revoked");
+                }
                 let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
                 return;
             }

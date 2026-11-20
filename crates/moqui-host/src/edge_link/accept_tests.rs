@@ -114,3 +114,23 @@ fn pair_attempts_count_by_source_in_a_window() {
     assert!(attempts.allowed(a, later, window, 2), "a new window");
     assert_eq!(attempts.sources(), 1, "the expired source was swept");
 }
+
+/// SEC-CLU-84: refused up connections are counted by source, and a source that reached the limit in the window is
+/// refused before its key is looked up; asking does not count, and the next window starts again.
+#[test]
+fn refused_up_connections_are_counted_by_source() {
+    let mut refused = PairAttempts::default();
+    let window = Duration::from_secs(600);
+    let t0 = Instant::now();
+    let ip: IpAddr = "203.0.113.84".parse().unwrap();
+    assert!(!refused.reached(ip, t0, window, 2));
+    assert_eq!(refused.charge(ip, t0, window), 1);
+    assert!(!refused.reached(ip, t0, window, 2), "asking does not count");
+    assert_eq!(refused.charge(ip, t0, window), 2);
+    assert!(refused.reached(ip, t0, window, 2));
+    assert!(
+        !refused.reached("203.0.113.85".parse().unwrap(), t0, window, 2),
+        "another source"
+    );
+    assert!(!refused.reached(ip, t0 + window, window, 2), "a new window");
+}

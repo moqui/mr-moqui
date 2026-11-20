@@ -453,6 +453,9 @@ pub struct EdgeConfig {
     /// The Pair calls one address may make in `pair_window`.
     pub pair_attempts: u32,
     pub pair_window: Duration,
+    /// The up connections of a key not paired one address may make in `pair_window` before the next is refused with no
+    /// look-up (`edge@up-refusals`, SEC-CLU-84).
+    pub up_refusals: u32,
     /// The port that pipes SSH down a link (`edge@ssh-tunnel-port` on `edge@ssh-tunnel-host`), none when empty: to
     /// the one node linked. A port per pairing is an `EdgePort` row (E16, `tunnel.rs`).
     pub ssh_tunnel: Option<std::net::SocketAddr>,
@@ -506,6 +509,7 @@ impl EdgeConfig {
             pairing_calls: 4,
             pair_attempts: 10,
             pair_window: Duration::from_secs(600),
+            up_refusals: up_refusals(),
             ssh_tunnel: tunnel_bind(TUNNEL_PORTS[0].0, TUNNEL_PORTS[0].1, TUNNEL_PORTS[0].2),
             xmpp_tunnel: tunnel_bind(TUNNEL_PORTS[1].0, TUNNEL_PORTS[1].1, TUNNEL_PORTS[1].2),
             xmpp_tls_tunnel: tunnel_bind(TUNNEL_PORTS[2].0, TUNNEL_PORTS[2].1, TUNNEL_PORTS[2].2),
@@ -523,6 +527,21 @@ impl EdgeConfig {
         }
     }
 }
+
+/// `edge@up-refusals`, else its default of 30; a bad number is logged and the default used.
+fn up_refusals() -> u32 {
+    let raw = moqui_core::context::conf_env::setting("edge@up-refusals");
+    match raw.trim() {
+        "" => DEFAULT_UP_REFUSALS,
+        raw => raw.parse().unwrap_or_else(|_| {
+            tracing::error!("edge up-refusals=\"{raw}\" is not a whole number; {DEFAULT_UP_REFUSALS} is used");
+            DEFAULT_UP_REFUSALS
+        }),
+    }
+}
+
+/// The default of `edge@up-refusals`.
+const DEFAULT_UP_REFUSALS: u32 = 30;
 
 /// The tunnel ports: the port property, the host property, and what the tunnel is for its errors.
 const TUNNEL_PORTS: [(&str, &str, &str); 3] = [
