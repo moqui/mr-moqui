@@ -582,6 +582,52 @@ fn safe_name(given: Option<&str>, content_type: &str) -> String {
     format!("file{extension}")
 }
 
+/// The counter of bridge `bridge_id`'s inbound file bytes today (UTC), a `moqui.call.SmsSendCount` row keyed
+/// `media-in:(bridge)`, read for update; None when there is none yet.
+fn media_day_counter(facade: &EntityFacade, bridge_id: &str) -> Result<Option<crate::entity::EntityValue>, LibError> {
+    facade
+        .find("moqui.call.SmsSendCount")?
+        .eq("counterKey", Value::string(format!("media-in:{bridge_id}")))
+        .eq("dayDate", Value::string(utc_day()))
+        .for_update(true)
+        .disable_authz()
+        .one()
+}
+
+/// Add `size` bytes to bridge `bridge_id`'s count of today, in the caller's transaction (the message's).
+fn count_media_day(
+    facade: &EntityFacade,
+    bridge_id: &str,
+    counter: Option<crate::entity::EntityValue>,
+    size: i64,
+) -> Result<(), LibError> {
+    let now = crate::user::stamp_value(crate::user::now_millis());
+    match counter {
+        Some(mut row) => {
+            let used = row
+                .get("sentCount")
+                .and_then(|count| moqui_lib::object::to_plain_string(count).parse::<i64>().ok())
+                .unwrap_or(0);
+            row.set("sentCount", Value::I64(used.saturating_add(size)));
+            row.set("lastSentDate", now);
+            row.update(facade)
+        }
+        None => {
+            let mut row = facade.make_value("moqui.call.SmsSendCount")?;
+            row.set("counterKey", Value::string(format!("media-in:{bridge_id}")));
+            row.set("dayDate", Value::string(utc_day()));
+            row.set("sentCount", Value::I64(size));
+            row.set("lastSentDate", now);
+            row.create(facade)
+        }
+    }
+}
+
+/// Today in UTC, `yyyy-MM-dd`, as the SMS day counters key it.
+fn utc_day() -> String {
+    jiff::Timestamp::now().strftime("%Y-%m-%d").to_string()
+}
+
 /// `store#BridgeMedia`: fetch the file at `url` of a message from bridge `chatBridgeId` (its adapter's
 /// [`fetch_media`](super::ChatBridgeAdapter::fetch_media), at most `maxBytes`) and keep it as a `ChatAttachment` of room
 /// `chatRoomId` with no uploader and no event yet, at `chat@attachment-root`/(room)/(attachment)/(name), in the caller's
@@ -617,6 +663,30 @@ fn store_bridge_media(
             Value::string(format!("The file was not fetched: {error}")),
         )]))
     };
+    // the bridge's files of a day, at most channels@inbound-media-bytes-per-day: files from outside senders are no one's
+    // upload, so no user's quota counts them (SEC-COM-91); past it a file is named as not received
+    let day_quota = crate::context::conf_env::setting("channels@inbound-media-bytes-per-day")
+        .trim()
+        .parse::<u64>()
+        .unwrap_or(0);
+    let day_counter = if day_quota > 0 {
+        let counter = media_day_counter(facade, &bridge_id)?;
+        let used = counter
+            .as_ref()
+            .and_then(|row| row.get("sentCount"))
+            .and_then(|count| moqui_lib::object::to_plain_string(count).parse::<u64>().ok())
+            .unwrap_or(0);
+        if used >= day_quota {
+            tracing::warn!(
+                "chat bridge {bridge_id}: its files of today are past {day_quota} bytes; a file is not fetched"
+            );
+            return not_fetched(format!("the bridge's files of today are past {day_quota} bytes"));
+        }
+        Some((counter, day_quota - used))
+    } else {
+        None
+    };
+    let max = day_counter.as_ref().map_or(max, |(_, left)| max.min(*left));
     let fetched = match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.fetch_media(&info, &url, max))) {
         Ok(Ok(fetched)) => fetched,
         Ok(Err(error)) => return not_fetched(error),
@@ -643,6 +713,9 @@ fn store_bridge_media(
         .write_bytes(&location, &fetched.bytes)
         .map_err(|error| LibError::new(format!("The file was not kept: {}", error.message())))?;
     let size = i64::try_from(fetched.bytes.len()).unwrap_or(i64::MAX);
+    if let Some((counter, _)) = day_counter {
+        count_media_day(facade, &bridge_id, counter, size)?;
+    }
     attachment.set("chatRoomId", Value::string(&room));
     attachment.set("location", Value::string(&location));
     attachment.set("fileName", Value::string(&file_name));

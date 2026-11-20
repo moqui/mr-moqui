@@ -730,6 +730,23 @@ function receive(p) {
     const routed = memberText(p, ours, theirs, keyword, sub)
     if (routed) return routed
   }
+  // a new pair room: at most channels@new-pair-rooms-per-day a day for one of our numbers, so outside senders cannot make
+  // rooms (a member row for each user of the number, and their files) without end; past it the text is not taken, and
+  // logged (SEC-COM-91). A keyword above is kept whatever the cap.
+  if (!groupNumbers && !threadList) {
+    const pairRooms = Number(ec.factory.getConfValue('channels@new-pair-rooms-per-day') || 0)
+    const known = find(MAPPING).condition('chatBridgeId', p.chatBridgeId).condition('externalRoomId', pairKey(ours, pairTheirs))
+      .condition('thruDate', null).count() > 0
+    if (!known && pairRooms > 0) {
+      const day = today()
+      const pairsKey = 'pairs:' + ours
+      if (sentToday(pairsKey, day) >= pairRooms) {
+        ec.logger.warn(`SMS ${p.messageId}: a text from a new number ${theirs} to ${ours} past the day's ${pairRooms} new conversations; not taken`)
+        return { outcome: 'ignored', reasonCode: 'tooManyNewConversations' }
+      }
+      ec.transaction.runRequireNew(null, 'The new conversation was not counted', () => countSent([pairsKey], day, 1))
+    }
+  }
   // the blocks and the spam filter (SmsSpam.js judge, in a transaction of its own): what each user's room is (in sight,
   // blocked, spam); one that fails lets the text in unfiltered
   let verdict = { memberFilterMap: {}, spam: false, judged: false }

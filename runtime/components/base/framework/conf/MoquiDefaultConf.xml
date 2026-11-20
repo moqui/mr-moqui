@@ -86,8 +86,12 @@
         them; the local node does): webhooks-per-minute and webhooks-per-client-minute cap the webhooks a minute it queues
         for the bridge and from one client address, unverified-max-bytes their body, and unverified-waiting how many of
         the bridge's wait in its queue; media-max-bytes is the largest file it keeps for an MMS, and media-node-megabytes
-        the files of one local node it keeps at most. -->
-    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60">
+        the files of one local node it keeps at most. Texts and files from outside senders, which no user's quota counts:
+        new-pair-rooms-per-day caps the new conversations (pair rooms) a day for one of our numbers, a text from another
+        new number past it is not taken; inbound-media-bytes-per-day caps the files a bridge fetches from its network a
+        day, a file past it is named as not received (0 for either: no cap). -->
+    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60"
+            new-pair-rooms-per-day="200" inbound-media-bytes-per-day="2147483648">
         <edge-limits webhooks-per-minute="600" webhooks-per-client-minute="120" unverified-max-bytes="32768"
                 unverified-waiting="500" media-max-bytes="5242880" media-node-megabytes="256"/>
     </channels>

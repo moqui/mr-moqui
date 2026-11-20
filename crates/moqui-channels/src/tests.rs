@@ -2137,6 +2137,37 @@ fn an_older_keyword_does_not_undo_a_later_one() {
     assert_eq!(opted_out(), "N", "a later START does");
 }
 
+/// SEC-COM-91: texts from outside senders are capped: past channels@new-pair-rooms-per-day new conversations a day a
+/// text from another new number is not taken (a known one still is), and past channels@inbound-media-bytes-per-day a
+/// bridge's file is named as not received.
+#[test]
+fn new_conversations_and_inbound_files_have_a_day_cap() {
+    let bed =
+        bed_with(r#"<moqui-conf><channels new-pair-rooms-per-day="1" inbound-media-bytes-per-day="6"/></moqui-conf>"#);
+    let _entered = bed.ctx.enter();
+    let picture = bed.fake.file("pic.jpg", "image/jpeg", &[1, 2, 3, 4, 5]);
+    let media = |url: &str| json!([{"url": url, "content_type": "image/jpeg", "size": 5}]);
+    let (first, _) = bed.text_in(THEIRS, "Hi", media(&picture));
+    assert_eq!(body_json(&first)["outcome"], "accepted");
+    let room = bed.room(THEIRS).unwrap();
+    const NEW: &str = "+15556667777";
+    let (refused, _) = bed.text_in(NEW, "Hello", json!([]));
+    assert_eq!(
+        (
+            body_json(&refused)["outcome"].clone(),
+            body_json(&refused)["reasonCode"].clone()
+        ),
+        (json!("ignored"), json!("tooManyNewConversations"))
+    );
+    assert!(bed.room(NEW).is_none(), "no room for the new number");
+    // the known number's next text comes in, and its file is past the bridge's bytes of the day
+    let (again, _) = bed.text_in(THEIRS, "Another", media(&picture));
+    assert_eq!(body_json(&again)["outcome"], "accepted");
+    let messages = bed.messages(&room);
+    assert_eq!(messages.len(), 2);
+    assert!(messages[1].1.contains("A file not received"), "{}", messages[1].1);
+}
+
 /// A bridge whose provider carries no group texts (its capabilities say `groupTexts` false): Text a number with several
 /// numbers is refused saying why, a group room the bridge had is refused at the send (before the provider, not
 /// counted), and a group text that comes in is the sender's pair room; a text to one number still goes.

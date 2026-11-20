@@ -2216,6 +2216,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="public-url" type="xs:string"/>
             <xs:attribute name="media-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="media-minutes" type="non-neg-int-expandable" default="60"/>
+            <xs:attribute name="new-pair-rooms-per-day" type="non-neg-int-expandable" default="200"><xs:annotation><xs:documentation>The new conversations (pair rooms) a day for one of our numbers; a text from another new number past it is not taken. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="inbound-media-bytes-per-day" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>The bytes of files a bridge fetches from its network a day (MMS pictures); a file past it is named as not received. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="push">
