@@ -455,6 +455,38 @@ fn a_pairings_content_calls_at_once_are_capped() {
     let _third = super::queue::content_permit("cap-node-a", 2).expect("room again");
 }
 
+/// SEC-CLU-82: a revoked id pairs again only with a code made for it, whatever key it brings, its own revoked one too;
+/// an id paired before with another key likewise; a new id with any code, an active one with its own key.
+#[test]
+fn a_revoked_id_pairs_again_only_with_a_code_made_for_it() {
+    use super::store::re_pair_refusal;
+    let revoked = Some("EdgeClientRevoked");
+    let active = Some("EdgeClientActive");
+    assert!(
+        re_pair_refusal("local-a", revoked, false, "").is_some(),
+        "the same revoked key, any code"
+    );
+    assert!(
+        re_pair_refusal("local-a", revoked, false, "local-b").is_some(),
+        "a code for another node"
+    );
+    assert!(
+        re_pair_refusal("local-a", revoked, true, "").is_some(),
+        "a new key, any code"
+    );
+    assert!(re_pair_refusal("local-a", revoked, false, "local-a").is_none());
+    assert!(re_pair_refusal("local-a", revoked, true, "local-a").is_none());
+    assert!(
+        re_pair_refusal("local-a", active, true, "local-a").is_some(),
+        "revoke it first"
+    );
+    assert!(
+        re_pair_refusal("local-a", active, false, "").is_none(),
+        "its own key again"
+    );
+    assert!(re_pair_refusal("local-new", None, false, "").is_none(), "a new id");
+}
+
 fn chunk(item: &str, data: &[u8], total: u64) -> super::proto::ContentChunk {
     super::proto::ContentChunk {
         generation: 1,

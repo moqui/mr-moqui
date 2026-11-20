@@ -455,7 +455,7 @@ fn pairing_links_both_ways_and_unpairing_cuts_the_link() {
     let any = rt
         .block_on(pair(&pair_config(&url, &code(&gate), "local-a", &certs)))
         .unwrap_err();
-    assert!(any.message().contains("paired before with another key"), "{any:?}");
+    assert!(any.message().contains("was paired before"), "{any:?}");
     let for_other =
         to_plain_string(&call(&gate, "create#PairingCode", &[("pairedNodeId", "local-z")]).unwrap()["code"]);
     assert!(rt

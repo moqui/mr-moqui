@@ -124,6 +124,27 @@ pub(crate) enum Paired {
     Refused(String),
 }
 
+/// Why `node` may not pair now, or none: active with another key (its operator revokes it first), or revoked (with any
+/// key, its own too) or paired before with another key, with a code not made for it (`for_node`). Such an id keeps its
+/// hosts, ports, copies and queued items for a re-pair: only a code the operator made for that id gives them back
+/// (SEC-CLU-82). `status` is the id's row's, none for a new id.
+pub(crate) fn re_pair_refusal(node: &str, status: Option<&str>, key_changed: bool, for_node: &str) -> Option<String> {
+    let active = status == Some(ACTIVE);
+    if active && key_changed {
+        return Some(format!(
+            "local node {node} is already paired with another key; revoke it on the edge node first"
+        ));
+    }
+    let revoked = status.is_some() && !active;
+    if (revoked || key_changed) && for_node != node {
+        return Some(format!(
+            "local node {node} was paired before; the edge node's operator makes a pairing code for {node} to pair it \
+             again"
+        ));
+    }
+    None
+}
+
 /// Use the pairing code and pin `fingerprint` for `node`. A node that is active with another key is refused: its
 /// operator revokes it first, so a code cannot take over a linked node. A code made for a node (`forNodeId`) pairs that
 /// node only, and a node paired before with another key pairs again only with a code made for it (SEC-CLU-82).
@@ -165,20 +186,10 @@ pub(crate) fn pair_client(
             .for_update(true)
             .one()?;
         let old_key = existing.as_ref().map(|row| text(row.get("keyFingerprint")));
-        let active = existing.as_ref().is_some_and(|row| text(row.get("statusId")) == ACTIVE);
+        let status = existing.as_ref().map(|row| text(row.get("statusId")));
         let key_changed = old_key.as_deref().is_some_and(|old| old != fingerprint);
-        if active && key_changed {
-            return Ok(Paired::Refused(format!(
-                "local node {node} is already paired with another key; revoke it on the edge node first"
-            )));
-        }
-        // an id paired before with another key (revoked) keeps its hosts, ports, copies and queued items for a re-pair:
-        // only a code the operator made for that id gives them to a new key, never any code (SEC-CLU-82)
-        if key_changed && for_node != node {
-            return Ok(Paired::Refused(format!(
-                "local node {node} was paired before with another key; the edge node's operator makes a pairing code \
-                 for {node} to pair it again"
-            )));
+        if let Some(why) = re_pair_refusal(node, status.as_deref(), key_changed, &for_node) {
+            return Ok(Paired::Refused(why));
         }
         let mut used = facade.make_value(PAIRING_CODE)?;
         used.set(
