@@ -2601,11 +2601,17 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="queue-max-megabytes" type="non-neg-int-expandable" default="1024">
                 <xs:annotation><xs:documentation>The waiting items' payloads and content at most, for each paired
                     node alone (on a node that takes links, a pairing's EdgeClient.queueMaxMegabytes above 0 in place of
-                    it); past it that node's oldest fail. The content a paired node's link sends before its
+                    it); past it that node's oldest fail, items of other kinds before mail. The content a paired node's link sends before its
                     deliveries, kept until each is answered, counts against it too: at it the pairing pauses on an
                     edge node (as at replica-max-rows), and a local node refuses more content from its edge node for
                     now, and tells its administrators (EdgeContentRefused) once until it takes content again.
                 </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="queue-mail-percent" type="non-neg-int-expandable" default="90">
+                <xs:annotation><xs:documentation>The share of a paired node's queue-max-megabytes, in percent (at most
+                    100), past which an edge or all-in-one node's SMTP listener refuses new mail for that node for now
+                    (452 4.3.1 at RCPT TO, 451 after the data), so the sender keeps it and tries again rather than the
+                    cap failing mail already answered 250.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-content-files" type="non-neg-int-expandable" default="10000">
                 <xs:annotation><xs:documentation>The content files a paired node's link sends before its deliveries,

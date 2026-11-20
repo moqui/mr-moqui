@@ -1183,6 +1183,38 @@ pub(super) fn fail_edge_outbound_mail(
     Ok(BTreeMap::new())
 }
 
+/// `fail#EdgeMail`, on the edge node, the failed-service of kind `mail`: mail its listener answered 250 for that never
+/// reached the local node (unpairing, the retention period, the size cap) is logged as an error with its sender and
+/// recipients, so whoever reads the log can tell them (SEC-MAIL-86).
+pub(super) fn fail_edge_mail(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let payload = payload(parameters)?;
+    tracing::error!(
+        "{}",
+        failed_mail_text(
+            &param_text(parameters, "queueItemId"),
+            &payload,
+            &param_text(parameters, "error")
+        )
+    );
+    Ok(BTreeMap::new())
+}
+
+/// The log line of a `mail` item that failed for good: its id, envelope sender, recipient addresses and why.
+fn failed_mail_text(item: &str, payload: &serde_json::Value, why: &str) -> String {
+    let recipients: Vec<&str> = payload["recipients"]
+        .as_array()
+        .map(|list| list.iter().filter_map(|entry| entry["address"].as_str()).collect())
+        .unwrap_or_default();
+    format!(
+        "Mail item {item} taken for the local node failed for good and was not delivered: from <{}> to {}: {why}",
+        json_text(payload, "mailFrom"),
+        recipients.join(", ")
+    )
+}
+
 #[cfg(all(test, feature = "imap"))]
 #[path = "edge_mail_tests.rs"]
 mod tests;

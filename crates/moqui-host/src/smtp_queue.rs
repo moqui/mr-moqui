@@ -211,6 +211,29 @@ fn bare_account(key: &str) -> &str {
         .map_or(key, |(_, account)| account)
 }
 
+/// The paired node of a session's account tagged with [`NODE_ACCOUNT`]; empty for another.
+fn account_node(key: &str) -> &str {
+    key.strip_prefix(NODE_ACCOUNT)
+        .and_then(|rest| rest.rsplit_once(':'))
+        .map_or("", |(node, _)| node)
+}
+
+/// `answer` for a recipient of paired node `node`, or [`RcptAnswer::QueueFull`] when that node's queue is past its
+/// share for mail ([`queue::has_room`]): the sender keeps the message and tries again, rather than the queue's size cap
+/// failing mail answered 250 (SEC-MAIL-86).
+fn with_room(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    node: &str,
+    answer: RcptAnswer,
+) -> Result<RcptAnswer, CoreError> {
+    if queue::has_room(facade, &moqui_core::edge::settings(factory), node, 0)? {
+        return Ok(answer);
+    }
+    tracing::warn!("SMTP listener: the queue of paired node {node} is past its share for mail; new mail waits");
+    Ok(RcptAnswer::QueueFull)
+}
+
 /// Which side of an all-in-one node a session's account is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Side {
@@ -415,7 +438,28 @@ fn deliver_queued(
             }
         }
     }
+    let settings = moqui_core::edge::settings(factory);
     for (node, (recipients, keys)) in by_node {
+        // the message itself would pass the node's share for mail: 451, and the sender tries again (SEC-MAIL-86)
+        let incoming = u64::try_from(raw.len()).unwrap_or(u64::MAX);
+        match queue::has_room(facade, &settings, &node, incoming) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    "SMTP listener (edge mode): a message for local node {node} is not queued: its queue is past its \
+                     share for mail"
+                );
+                summary.push(format!("not queued for local node {node}: its queue is full for now"));
+                accounts.extend(keys.into_iter().map(|key| (key, AccountResult::Failed)));
+                continue;
+            }
+            Err(err) => {
+                tracing::error!("SMTP listener (edge mode): the queue of local node {node} was not read: {err}");
+                summary.push(format!("not queued for local node {node}: {err}"));
+                accounts.extend(keys.into_iter().map(|key| (key, AccountResult::Failed)));
+                continue;
+            }
+        }
         // ordered per recipient mailbox, by its account id on the local node: a message to several goes under the first
         let mut ids: Vec<&str> = keys.iter().map(|key| bare_account(key)).collect();
         ids.sort_unstable();
@@ -493,7 +537,16 @@ impl Backend for QueueBackend {
             if let Some(bounce) = bounce_recipient(&facade, &copies, &address)? {
                 return Ok(bounce.map_or(RcptAnswer::Unknown, RcptAnswer::Local));
             }
-            Ok(lookup_answer(copies.find(&address, &delimiters)))
+            let lookup = copies.find(&address, &delimiters);
+            let node = match &lookup {
+                Lookup::Found { node, .. } => Some(node.clone()),
+                _ => None,
+            };
+            let answer = lookup_answer(lookup);
+            match node {
+                Some(node) => with_room(factory, &facade, &node, answer),
+                None => Ok(answer),
+            }
         })
         .await;
         found.unwrap_or_else(|err| RcptAnswer::TempFail(err.message().to_string()))
@@ -568,14 +621,16 @@ impl Backend for SplitBackend {
                 return Ok(RcptAnswer::Local(account));
             }
             // the server's own account is held to its mailbox quota as on a normal node (SEC-MAIL-07)
-            Ok(
-                match choose(&address, own, leveled_lookup(&copies, &address, &delimiters)) {
-                    RcptAnswer::Local(account) if side(&account) == Side::Own => {
-                        super::own_account_answer(&facade, account)
-                    }
-                    answer => answer,
-                },
-            )
+            match choose(&address, own, leveled_lookup(&copies, &address, &delimiters)) {
+                RcptAnswer::Local(account) if side(&account) == Side::Own => {
+                    Ok(super::own_account_answer(&facade, account))
+                }
+                RcptAnswer::Local(account) if side(&account) == Side::Paired => {
+                    let node = account_node(&account).to_string();
+                    with_room(factory, &facade, &node, RcptAnswer::Local(account))
+                }
+                answer => Ok(answer),
+            }
         })
         .await;
         found.unwrap_or_else(|err| RcptAnswer::TempFail(err.message().to_string()))

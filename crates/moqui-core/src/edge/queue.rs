@@ -1230,7 +1230,75 @@ pub(super) fn node_cap(facade: &EntityFacade, settings: &EdgeSettings, node: &st
     }
 }
 
-/// Fail `node`'s oldest pending items while its waiting bytes (`total`) pass `cap`, each logged; how many failed.
+/// The queue kind of mail an edge node's listener took and answered 250 for (`moqui_mail::edge_mail`).
+const KIND_MAIL: &str = "mail";
+
+/// How long [`has_room`] keeps a pairing's waiting bytes before it reads them again.
+const ROOM_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether `node`'s waiting items leave room for `incoming` more bytes under `queue-mail-percent` of its size cap
+/// ([`node_cap`]): what an edge node's SMTP listener asks before it takes mail it would answer 250 for, so it refuses
+/// new mail for now (the sender keeps it and tries again) rather than the cap failing mail it accepted already
+/// (SEC-MAIL-86). The waiting bytes are read at most once every few seconds for a pairing.
+///
+/// # Errors
+///
+/// Returns the database's error; the listener answers 451 then.
+pub fn has_room(facade: &EntityFacade, settings: &EdgeSettings, node: &str, incoming: u64) -> Result<bool, Error> {
+    static WAITING: Mutex<BTreeMap<String, (std::time::Instant, u64)>> = Mutex::new(BTreeMap::new());
+    let kept = lock(&WAITING)
+        .get(node)
+        .filter(|(at, _)| at.elapsed() < ROOM_TTL)
+        .map(|(_, bytes)| *bytes);
+    let waiting = match kept {
+        Some(bytes) => bytes,
+        None => {
+            let bytes = waiting_bytes(facade, node)?;
+            let mut map = lock(&WAITING);
+            // the pairings of one edge node: few, but never without end
+            if map.len() >= 10_000 {
+                map.clear();
+            }
+            map.insert(node.to_string(), (std::time::Instant::now(), bytes));
+            bytes
+        }
+    };
+    Ok(room_under(
+        waiting,
+        incoming,
+        node_cap(facade, settings, node),
+        settings.mail_percent,
+    ))
+}
+
+/// Whether `waiting` bytes and `incoming` more stay within `percent` of `cap`.
+fn room_under(waiting: u64, incoming: u64, cap: u64, percent: u64) -> bool {
+    let share = u128::from(cap) * u128::from(percent.min(100)) / 100;
+    u128::from(waiting) + u128::from(incoming) <= share
+}
+
+/// The bytes of `node`'s pending items, from the grouped count.
+fn waiting_bytes(facade: &EntityFacade, node: &str) -> Result<u64, Error> {
+    let rows = transaction(facade, TransactionAttribute::UseOrBegin, || {
+        Ok(facade
+            .find(COUNT)?
+            .eq("statusEnumId", Value::string(PENDING))
+            .eq("pairedNodeId", Value::string(node))
+            .select_field("pairedNodeId")
+            .select_field("payloadBytes")
+            .disable_authz()
+            .list()?
+            .values()
+            .to_vec())
+    })?;
+    Ok(rows
+        .iter()
+        .map(|row| u64::try_from(number(row, "payloadBytes")).unwrap_or(0))
+        .sum())
+}
+
+/// Fail `node`'s pending items while its waiting bytes (`total`) pass `cap`, each logged; how many failed. Items of
+/// other kinds go first, oldest first, and mail the listener answered 250 for only after them (SEC-MAIL-86).
 fn fail_over_cap(
     facade: &EntityFacade,
     settings: &EdgeSettings,
@@ -1241,28 +1309,39 @@ fn fail_over_cap(
 ) -> Result<i64, Error> {
     let reason = format!("the waiting items of {node} passed its size cap of {cap} bytes");
     let mut expired = 0;
-    let mut after = i64::MIN;
-    loop {
-        let page = pending_page(
-            facade,
-            after,
-            Some(Condition::equals("pairedNodeId", Value::string(node))),
-        )?;
-        for row in &page {
-            if total <= cap {
-                return Ok(expired);
+    for mail in [false, true] {
+        let mut after = i64::MIN;
+        loop {
+            let kind = if mail {
+                Condition::equals("kind", Value::string(KIND_MAIL))
+            } else {
+                Condition::not_equals("kind", Value::string(KIND_MAIL))
+            };
+            let page = pending_page(
+                facade,
+                after,
+                Some(Condition::and(vec![
+                    Condition::equals("pairedNodeId", Value::string(node)),
+                    kind,
+                ])),
+            )?;
+            for row in &page {
+                if total <= cap {
+                    return Ok(expired);
+                }
+                after = after.max(number(row, "sequenceNum"));
+                if expire(facade, row, &reason, now) {
+                    expired += 1;
+                    notify_failed(facade, settings, &text(row, "queueItemId"), &reason);
+                    total = total.saturating_sub(u64::try_from(number(row, "payloadSize")).unwrap_or(0));
+                }
             }
-            after = after.max(number(row, "sequenceNum"));
-            if expire(facade, row, &reason, now) {
-                expired += 1;
-                notify_failed(facade, settings, &text(row, "queueItemId"), &reason);
-                total = total.saturating_sub(u64::try_from(number(row, "payloadSize")).unwrap_or(0));
+            if page.len() < usize::try_from(CLEAN_PAGE).unwrap_or(500) {
+                break;
             }
-        }
-        if page.len() < usize::try_from(CLEAN_PAGE).unwrap_or(500) {
-            return Ok(expired);
         }
     }
+    Ok(expired)
 }
 
 /// What a [`clean`] pass did.

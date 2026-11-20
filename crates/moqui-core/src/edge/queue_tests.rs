@@ -474,6 +474,59 @@ fn the_size_cap_holds_for_each_pairing_alone() {
     );
 }
 
+/// SEC-MAIL-86: past `queue-mail-percent` of a pairing's cap there is no room for more mail, so the listener refuses it
+/// for now; and the cap fails a pairing's items of other kinds before the mail its listener answered 250 for.
+#[test]
+fn the_cap_spares_accepted_mail_and_mail_waits_past_its_share() {
+    let ctx = ExecutionContextFactory::test_context();
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let mut kinds = settings().kinds;
+    kinds.insert(KIND_MAIL.to_string(), "test.Handlers.apply#Mail".to_string());
+    let settings = EdgeSettings {
+        role: super::super::NodeRole::FrontEdge,
+        max_bytes: 250,
+        kinds,
+        ..settings()
+    };
+    ctx.factory().extension(|_| settings.clone());
+    let hundred = |kind: &str, key: &str| NewItem {
+        kind: kind.to_string(),
+        payload: Some("x".repeat(100)),
+        ..item(key, key)
+    };
+    assert!(
+        has_room(&facade, &settings, "mail-node", 100).unwrap(),
+        "an empty queue"
+    );
+    enqueue(ctx.factory(), &facade, Some("mail-node"), &hundred(KIND_MAIL, "mail-1")).unwrap();
+    enqueue(ctx.factory(), &facade, Some("mail-node"), &hundred(KIND_MAIL, "mail-2")).unwrap();
+    enqueue(ctx.factory(), &facade, Some("mail-node"), &hundred(KIND, "other-1")).unwrap();
+    // 90% of 250 is 225 (the count read above is kept a few seconds, so the sums are tested alone), and a message
+    // larger than that share has no room even in an empty queue
+    assert!(!room_under(300, 0, 250, 90));
+    assert!(room_under(200, 25, 250, 90) && !room_under(200, 26, 250, 90));
+    assert!(!has_room(&facade, &settings, "mail-node-2", 300).unwrap());
+    let cleaned = clean(ctx.factory(), &facade, &settings, now_millis()).unwrap();
+    assert_eq!(cleaned.expired, 1);
+    let failed: Vec<String> = facade
+        .find(QUEUE_ITEM)
+        .unwrap()
+        .eq("statusEnumId", Value::string(FAILED))
+        .disable_authz()
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .map(|row| text(row, "conversationKey"))
+        .collect();
+    assert_eq!(
+        failed,
+        ["other-1"],
+        "the newer item of another kind, not the oldest mail"
+    );
+}
+
 /// The cap of a pairing's own row, in megabytes, holds in place of the conf's; it is read for the pairing alone.
 #[test]
 fn a_pairings_own_cap_holds_in_place_of_the_confs() {

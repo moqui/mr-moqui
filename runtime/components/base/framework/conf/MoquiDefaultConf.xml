@@ -1291,8 +1291,10 @@
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
-        items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
-        64 MiB, counted in the cap) is the item's content, sent over the link before it; the content a receiver keeps
+        items pass queue-max-megabytes the oldest fail the same way, items of other kinds before mail; past
+        queue-mail-percent of that cap an edge node's SMTP listener refuses new mail for the pairing for now (452 at
+        RCPT TO, 451 after the data), so mail it answered 250 for is not what the cap fails. A payload is at most 1 MiB;
+        a larger body (up to 64 MiB, counted in the cap) is the item's content, sent over the link before it; the content a receiver keeps
         for its deliveries counts against the same cap, and on a node that takes links so do a pairing's replicated
         records against replica-max-rows: at either the pairing pauses until an administrator resumes it (SEC-CLU-02).
         A receiver's refusal
@@ -1335,14 +1337,15 @@
         (System › Edge Clients › Ports). call-legs-per-pairing: on a node that takes links, the most call legs of one
         paired node on its media node at once (200; 0 for no cap). smtp-tunnel-host: on a front node, where an EdgePort
         row of kind smtp listens (empty for every address). -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-content-files="10000" queue-max-attempts="10"
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-mail-percent="90" queue-max-content-files="10000" queue-max-attempts="10"
             queue-retry-seconds="5" replica-max-rows="1000000" link-key="CHANGEME" link-url="" offline-page=""
             ssh-tunnel-port="" ssh-tunnel-host="" smtp-tunnel-host="" xmpp-port="" xmpp-tls-port="" xmpp-host=""
             call-legs-per-pairing=""
             public-addresses="">
         <node url="" key="" pin="" id="" pairing="" calls-enabled="" sip-enabled="" pass-client=""/>
         <front-node url="" key="" pin="" id=""/>
-        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
+        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"
+                failed-service="org.moqui.mail.EmailServices.fail#EdgeMail"/>
         <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
                 failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>
         <queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/>
