@@ -496,8 +496,10 @@ feature("a light page under white cards, and the record header with its status-b
             assert.equal(narrow[name], value, name)
         }
         assert.equal(wide.barDirection, "column")
-        assert.equal(wide.stagesJustify, "flex-end")
-        assert.equal(wide.actionsJustify, "flex-end")
+        // Chrome 158 gives the computed flex-end as flow-end
+        const end = value => (value === "flow-end" ? "flex-end" : value)
+        assert.equal(end(wide.stagesJustify), "flex-end")
+        assert.equal(end(wide.actionsJustify), "flex-end")
         assert.equal(narrow.barDirection, "row")
         assert.equal(narrow.stagesJustify, "normal")
         assert.equal(narrow.actionsJustify, "normal")
