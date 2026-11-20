@@ -322,6 +322,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let as_application = authz_disabled();
     let names_instances = as_application || moqui_core::user::has_permission("INSTANCE_ADMIN").unwrap_or(false);
     let gives_machine_access = as_application || moqui_core::user::has_permission("VAULT_ADMIN").unwrap_or(false);
+    let caller = current_user();
     let _rows = crate::rows_guard();
     let existing = match text(parameters, "environmentId") {
         Some(id) => {
@@ -442,15 +443,11 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     if parameters.contains_key("vaultId") {
         let given = text(parameters, "vaultId");
-        if let Some(id) = &given {
-            let operational = facade
-                .find("moqui.security.vault.Vault")?
-                .eq("vaultId", Value::string(id))
-                .one()?
-                .and_then(|vault| field(&vault, "vaultKindEnumId"))
-                .is_some_and(|kind| kind == "VkOperational");
-            if !operational {
-                add_error(format!("no operational vault {id}"));
+        if let Some(id) = given.as_ref().filter(|id| field(&row, "vaultId").as_ref() != Some(*id)) {
+            // naming a vault is its members' (any role) or a VAULT_ADMIN's: one that does not exist, is not
+            // operational, or the caller is not in is refused in the same words, so an id tells them nothing
+            if !names_vault(facade, id, caller.as_deref(), gives_machine_access)? {
+                add_error(format!("no operational vault {id} that you are a member of"));
                 return none();
             }
         }
@@ -515,6 +512,38 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
         ("environmentId", field_value(&row, "environmentId")),
         ("cleared", notice.map_or(Value::Null, Value::string)),
     ]))
+}
+
+/// Whether an environment may name the operational vault `vault_id` for its target's token: `vault_admin` (a
+/// VAULT_ADMIN, or the application), else `user_id` is a member, in any role, at the vault's current key version (the
+/// member list, as the vault services read it). False for a vault that does not exist or is not operational.
+fn names_vault(
+    facade: &EntityFacade,
+    vault_id: &str,
+    user_id: Option<&str>,
+    vault_admin: bool,
+) -> Result<bool, LibError> {
+    let Some(vault) = facade
+        .find("moqui.security.vault.Vault")?
+        .eq("vaultId", Value::string(vault_id))
+        .one()?
+        .filter(|vault| field(vault, "vaultKindEnumId").as_deref() == Some("VkOperational"))
+    else {
+        return Ok(false);
+    };
+    if vault_admin {
+        return Ok(true);
+    }
+    let (Some(user_id), Some(key_version)) = (user_id, vault.get("keyVersion").filter(|value| !is_empty(value))) else {
+        return Ok(false);
+    };
+    Ok(facade
+        .find("moqui.security.vault.VaultMember")?
+        .eq("vaultId", Value::string(vault_id))
+        .eq("userId", Value::string(user_id))
+        .eq("keyVersion", key_version.clone())
+        .count()?
+        > 0)
 }
 
 /// `delete#CiEnvironment`: refused while a secret is scoped to it. Out: `deleted`.

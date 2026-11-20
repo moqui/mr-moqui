@@ -446,7 +446,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="instanceEnvironmentId"><description>The managed instances' environment it deploys to, over the
                 manager link (plans/Vault-Instances.md §4.6); an INSTANCE_ADMIN's to name</description></parameter>
             <parameter name="vaultId"><description>A target not managed here: the operational vault holding its token
-                item</description></parameter>
+                item, named by a current member of it (any role) or a VAULT_ADMIN; one the caller is not in is refused as
+                one that does not exist</description></parameter>
             <parameter name="machineAccess" type="Boolean"><description>Sign under the vault's machine access for
                 git-ci-&lt;environmentId&gt;, with no approver of a lease; a VAULT_ADMIN's to turn on, and off again when
                 the target or the vault changes</description></parameter>

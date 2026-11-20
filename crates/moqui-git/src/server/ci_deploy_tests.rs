@@ -719,6 +719,72 @@ fn an_environment_refuses_a_clone_url_with_credentials_an_unknown_group_and_a_sh
     assert!(format!("{found:?}").contains("seed, seed-initial"), "{found:?}");
 }
 
+/// An environment names the vault of its target's token only for a current member of that operational vault (any
+/// role) or a VAULT_ADMIN; a vault the caller is not in is refused in the same words as one that does not exist.
+#[test]
+fn an_environment_names_only_a_vault_its_caller_is_a_member_of() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, _commit) = site("ci-deploy-env-vault");
+    let store = format!("{DEPLOYMENTS}.store#CiEnvironment");
+    // each a new environment, named `name`
+    let stored = |name: &str, vault_id: &str| {
+        call(
+            &fixture,
+            WRITER,
+            &store,
+            &[("repositoryId", s("site")), ("name", s(name)), ("vaultId", s(vault_id))],
+        )
+        .1
+    };
+    let (vault, other) = {
+        let _entered = fixture.context.enter();
+        (
+            OperationalVault::new(&fixture.entity, "envvault"),
+            OperationalVault::new(&fixture.entity, "envother"),
+        )
+    };
+    let missing = stored("staging", "no-such-vault");
+    assert!(missing.contains("no operational vault no-such-vault"), "{missing}");
+    let not_in = stored("staging", &vault.vault_id);
+    assert_eq!(not_in.replace(&vault.vault_id, "no-such-vault"), missing);
+    // a member of an earlier key version only is no current member
+    let member = |key_version: i64| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, "moqui.security.vault.VaultMember").unwrap();
+        row.set("vaultId", s(&vault.vault_id));
+        row.set("userId", s(WRITER));
+        row.set("keyVersion", Value::I64(key_version));
+        row.set("roleEnumId", s("VrReveal"));
+        row.create(&fixture.entity).unwrap();
+    };
+    member(0);
+    assert_eq!(stored("staging", &vault.vault_id), not_in);
+    member(1);
+    assert!(stored("staging", &vault.vault_id).is_empty());
+    let named = rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("name", "staging")]).remove(0);
+    assert_eq!(text(&named, "vaultId"), vault.vault_id);
+    // a VAULT_ADMIN names any operational vault, and still none that does not exist
+    assert!(stored("qa", &other.vault_id).contains("no operational vault"));
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, "moqui.security.UserGroupPermission").unwrap();
+        row.set("userGroupId", s("GIT_WRITERS"));
+        row.set("userPermissionId", s("VAULT_ADMIN"));
+        row.set(
+            "fromDate",
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+        );
+        row.create(&fixture.entity).unwrap();
+    }
+    assert!(stored("qa", &other.vault_id).is_empty());
+    assert!(stored("test", "no-such-vault").contains("no operational vault no-such-vault"));
+}
+
 #[test]
 fn a_failed_pipeline_refuses_and_an_approval_is_another_approvers() {
     if !git_available() {
