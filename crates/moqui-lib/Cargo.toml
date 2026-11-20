@@ -42,6 +42,8 @@ http = ["dep:reqwest", "dep:bytes"]
 age = ["dep:hmac", "dep:hkdf", "dep:chacha20poly1305", "dep:curve25519-dalek"]
 # An S3 client with SigV4 signing (src/s3.rs), for encrypted backups.
 s3 = ["http", "age"]
+# The Docker and Podman Engine API client (src/docker), which CI's runs and managed instances share.
+docker = ["http"]
 
 [lints]
 workspace = true

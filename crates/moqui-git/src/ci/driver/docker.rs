@@ -13,10 +13,10 @@
  */
 
 //! The container driver (plans/Dogfood.md D19, F8): the run services of the `docker` host type, over the Docker Engine
-//! API, which Podman serves on its socket too. An `InstanceHost` is reached over a Unix socket (`hostProtocol` `unix`,
-//! `hostAddress` the socket's path), HTTPS with a client certificate (`tlsCaCert`, `tlsClientCert`, `tlsClientKey`), or
-//! plain HTTP to this machine only (SEC-OUT-08). The hosted-instance services reach a host through this client too
-//! (`call#DockerApi`). A job's container, and each of its service containers, has no privilege, no capabilities, no host
+//! API, which Podman serves on its socket too, on the shared client [`moqui_lib::docker`]. An `InstanceHost` is reached
+//! over a Unix socket (`hostProtocol` `unix`, `hostAddress` the socket's path), HTTPS with a client certificate
+//! (`tlsCaCert`, `tlsClientCert`, `tlsClientKey`), or plain HTTP to this machine only (SEC-OUT-08). The hosted-instance
+//! services reach a host through this client too (`call#DockerApi`). A job's container, and each of its service containers, has no privilege, no capabilities, no host
 //! socket and no host path, a non-root user, an init that reaps orphans, a read-only root with a sized tmpfs at `/tmp`,
 //! its working directory on a sized tmpfs (or on the root filesystem the pool's `diskMb` sizes), and the pool's
 //! limits. Its names carry this server's id, and what it removes has this server's label
@@ -27,8 +27,10 @@ use std::time::Duration;
 
 use serde_json::json;
 
+pub use moqui_lib::docker::DockerHost;
+use moqui_lib::docker::{encode, Created, HostAddress, CALL_TIMEOUT};
 use moqui_lib::error::Error as LibError;
-use moqui_lib::http::{Method, RestClient, RestResponse};
+use moqui_lib::http::Method;
 use moqui_lib::object::{to_plain_string, Value};
 
 use moqui_core::context::{Error, ExecutionContext};
@@ -41,16 +43,6 @@ use super::network_name;
 type Parameters = BTreeMap<String, Value>;
 type Out = Result<BTreeMap<String, Value>, LibError>;
 
-/// The API version asked for: Docker 19.03 and later, and Podman's compatibility API.
-const API: &str = "/v1.40";
-const CALL_TIMEOUT: Duration = Duration::from_secs(60);
-/// An image pull may take this long; pulls of one host take turns, and those of other hosts go on.
-const PULL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-/// The pulls of each host (by its address), one at a time.
-static PULLS: std::sync::Mutex<BTreeMap<String, std::sync::Arc<std::sync::Mutex<()>>>> =
-    std::sync::Mutex::new(BTreeMap::new());
-
 pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::RustServiceFn>) -> Result<(), String> {
     rust_service!(map, start_run_docker)?;
     rust_service!(map, inspect_run_docker)?;
@@ -60,354 +52,130 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     Ok(())
 }
 
-/// A container of a listing.
-struct Listed {
-    id: String,
-    labels: BTreeMap<String, String>,
-    /// When it was made, epoch seconds.
-    created: i64,
+/// The plain values of an `InstanceHost` row that say where its host is and how it is reached.
+fn host_address(host: &EntityValue) -> HostAddress {
+    HostAddress {
+        protocol: field(host, "hostProtocol"),
+        address: field(host, "hostAddress"),
+        port: field(host, "adminPort"),
+        tls_ca_cert: field(host, "tlsCaCert"),
+        tls_client_cert: field(host, "tlsClientCert"),
+        tls_client_key: field(host, "tlsClientKey"),
+    }
 }
 
-/// A connection to a host's API.
-pub struct DockerHost {
-    client: RestClient,
-    base: String,
-    /// What tells this host from another: its socket path or address.
-    key: String,
+/// The client for an `InstanceHost` row.
+///
+/// # Errors
+///
+/// When the row names no address, or plain http to a host that is not this machine (SEC-OUT-08).
+pub fn host_of(host: &EntityValue) -> Result<DockerHost, Error> {
+    Ok(DockerHost::connect(&host_address(host), None)?)
 }
 
-impl DockerHost {
-    /// The client for an `InstanceHost` row.
-    ///
-    /// # Errors
-    ///
-    /// When the row names no address, or plain http to a host that is not this machine (SEC-OUT-08).
-    pub fn of(host: &EntityValue) -> Result<Self, Error> {
-        Self::connect(host, None)
-    }
-
-    /// The client for an `InstanceHost` row, on `default_port` when the row has no `adminPort` (the hosted-instance
-    /// services' 2375). Plain http goes only to this machine's loopback ([`moqui_lib::net::loopback_host`]): the
-    /// Docker Engine API has no authentication of its own, and a registry login rides on an image pull.
-    fn connect(host: &EntityValue, default_port: Option<u16>) -> Result<Self, Error> {
-        let address = field(host, "hostAddress")
-            .ok_or_else(|| Error::new("the instance host has no hostAddress (a socket path or a host name)"))?;
-        let protocol = field(host, "hostProtocol").map_or_else(|| "http".to_string(), |text| text.to_ascii_lowercase());
-        let key = format!("{protocol}:{address}");
-        let mut client = RestClient::new().timeout(CALL_TIMEOUT);
-        let base = match protocol.as_str() {
-            "unix" => {
-                client = client.unix_socket(address.trim_start_matches("unix://"));
-                "http://localhost".to_string()
+/// Run `command` in a container of `image` on `host` to its end, kept in as a job's container is, and remove it: the
+/// container's exit code. For the opt-in test on a real Docker or Podman socket.
+///
+/// # Errors
+///
+/// When the host refuses a call, or the container has not ended after `wait`.
+pub fn run_once(
+    host: &DockerHost,
+    name: &str,
+    image: &str,
+    command: &[&str],
+    wait: Duration,
+) -> Result<Option<i64>, Error> {
+    let parameters: Parameters = [
+        ("image".to_string(), Value::string(image)),
+        (
+            "command".to_string(),
+            Value::List(command.iter().map(|word| Value::string(*word)).collect()),
+        ),
+        ("memoryMb".to_string(), Value::I64(256)),
+        ("pidsLimit".to_string(), Value::I64(64)),
+        ("networkMode".to_string(), Value::string("none")),
+    ]
+    .into_iter()
+    .collect();
+    let id = create(host, name, &create_body(&parameters, &Hardening::default(), None), true)?;
+    let outcome = (|| -> Result<Option<i64>, Error> {
+        host.start(&id)?;
+        let started = std::time::Instant::now();
+        loop {
+            let response = host.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
+            if response.status() >= 300 {
+                return Err(DockerHost::problem(&format!("inspecting container {id}"), &response).into());
             }
-            "http" if !moqui_lib::net::loopback_host(&address) => {
-                return Err(Error::new(format!(
-                    "the Docker host {address} is not reached over plain http, which goes only to this machine \
-                     (localhost, 127.0.0.0/8 or ::1): use https, with the host's tlsCaCert, tlsClientCert and \
-                     tlsClientKey, or a unix socket"
-                )))
+            let body: serde_json::Value = serde_json::from_str(response.body()).unwrap_or(serde_json::Value::Null);
+            if body["State"]["Running"].as_bool() != Some(true) && body["State"]["Status"].as_str() != Some("created") {
+                return Ok(body["State"]["ExitCode"].as_i64());
             }
-            "http" | "https" => {
-                let port = field(host, "adminPort")
-                    .or_else(|| default_port.map(|port| port.to_string()))
-                    .map_or(String::new(), |port| format!(":{port}"));
-                // an IPv6 address is bracketed in a URL
-                let name = if address.parse::<std::net::Ipv6Addr>().is_ok() {
-                    format!("[{address}]")
-                } else {
-                    address.clone()
-                };
-                format!("{protocol}://{name}{port}")
+            if started.elapsed() > wait {
+                return Err(Error::new(format!("container {id} has not ended after {wait:?}")));
             }
-            other => return Err(Error::new(format!("hostProtocol {other} is not unix, http or https"))),
-        };
-        if let Some(ca) = field(host, "tlsCaCert") {
-            client = client.root_certificates_pem(ca.into_bytes());
+            std::thread::sleep(Duration::from_millis(200));
         }
-        if let (Some(cert), Some(key)) = (field(host, "tlsClientCert"), field(host, "tlsClientKey")) {
-            client = client.client_identity_pem(format!("{}\n{}\n", cert.trim(), key.trim()).into_bytes());
-        }
-        Ok(Self { client, base, key })
-    }
+    })();
+    let removed = host.remove(&id);
+    let exit = outcome?;
+    removed?;
+    Ok(exit)
+}
 
-    /// A host reached over a Unix socket, with no `InstanceHost` row.
-    pub fn unix(socket: impl Into<std::path::PathBuf>) -> Self {
-        let socket = socket.into();
-        Self {
-            key: format!("unix:{}", socket.display()),
-            client: RestClient::new().timeout(CALL_TIMEOUT).unix_socket(socket),
-            base: "http://localhost".to_string(),
-        }
+/// Create a job's container, with `pull` pulling its image when the host does not have it. Its id.
+fn create(host: &DockerHost, name: &str, body: &serde_json::Value, pull: bool) -> Result<String, Error> {
+    if pull {
+        return Ok(host.create(name, body, true)?);
     }
-
-    /// Run `command` in a container of `image` to its end, kept in as a job's container is, and remove it: the
-    /// container's exit code. For the opt-in test on a real Docker or Podman socket.
-    ///
-    /// # Errors
-    ///
-    /// When the host refuses a call, or the container has not ended after `wait`.
-    pub fn run_once(&self, name: &str, image: &str, command: &[&str], wait: Duration) -> Result<Option<i64>, Error> {
-        let parameters: Parameters = [
-            ("image".to_string(), Value::string(image)),
-            (
-                "command".to_string(),
-                Value::List(command.iter().map(|word| Value::string(*word)).collect()),
-            ),
-            ("memoryMb".to_string(), Value::I64(256)),
-            ("pidsLimit".to_string(), Value::I64(64)),
-            ("networkMode".to_string(), Value::string("none")),
-        ]
-        .into_iter()
-        .collect();
-        let id = self.create(name, &create_body(&parameters, &Hardening::default(), None), true)?;
-        let outcome = (|| -> Result<Option<i64>, Error> {
-            self.start(&id)?;
-            let started = std::time::Instant::now();
-            loop {
-                let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
-                if response.status() >= 300 {
-                    return Err(Self::problem(&format!("inspecting container {id}"), &response));
-                }
-                let body: serde_json::Value = serde_json::from_str(response.body()).unwrap_or(serde_json::Value::Null);
-                if body["State"]["Running"].as_bool() != Some(true)
-                    && body["State"]["Status"].as_str() != Some("created")
-                {
-                    return Ok(body["State"]["ExitCode"].as_i64());
-                }
-                if started.elapsed() > wait {
-                    return Err(Error::new(format!("container {id} has not ended after {wait:?}")));
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
-        })();
-        let removed = self.remove(&id);
-        let exit = outcome?;
-        removed?;
-        Ok(exit)
-    }
-
-    fn send(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&serde_json::Value>,
-        timeout: Duration,
-    ) -> Result<RestResponse, Error> {
-        let mut call = self
-            .client
-            .request(method, format!("{}{API}{path}", self.base))
-            .timeout(timeout)
-            .allow_in_sim(true);
-        if let Some(body) = body {
-            call = call.json(body);
-        }
-        call.send(false).map_err(Error::from)
-    }
-
-    /// The message of an API error response.
-    fn problem(what: &str, response: &RestResponse) -> Error {
-        let message = serde_json::from_str::<serde_json::Value>(response.body())
-            .ok()
-            .and_then(|body| body["message"].as_str().map(str::to_string))
-            .unwrap_or_else(|| response.body().chars().take(300).collect());
-        Error::new(format!("{what}: {} {message}", response.status()))
-    }
-
-    fn pull(&self, image: &str) -> Result<(), Error> {
-        let turn = std::sync::Arc::clone(moqui_lib::sync::lock(&PULLS).entry(self.key.clone()).or_default());
-        let _turn = moqui_lib::sync::lock(&turn);
-        let (name, tag) = match image.rsplit_once(':') {
-            Some((name, tag)) if !tag.contains('/') => (name, tag),
-            _ => (image, "latest"),
-        };
-        let response = self.send(
-            Method::Post,
-            &format!("/images/create?fromImage={}&tag={}", encode(name), encode(tag)),
-            None,
-            PULL_TIMEOUT,
-        )?;
-        if response.status() >= 300 {
-            return Err(Self::problem(&format!("pulling image {image}"), &response));
-        }
-        // the stream of the pull ends when it is done; its last lines say when it failed
-        if let Some(line) = response.body().lines().rev().find(|line| line.contains("\"error\"")) {
-            return Err(Error::new(format!("pulling image {image}: {line}")));
-        }
-        Ok(())
-    }
-
-    /// Create a container, with `pull` pulling its image when the host does not have it. Its id.
-    fn create(&self, name: &str, body: &serde_json::Value, pull: bool) -> Result<String, Error> {
-        let path = format!("/containers/create?name={}", encode(name));
-        let mut response = self.send(Method::Post, &path, Some(body), CALL_TIMEOUT)?;
-        if response.status() == 404 {
+    match host.create_container(name, body)? {
+        Created::Id(id) => Ok(id),
+        Created::NoSuchImage => {
             let image = body["Image"].as_str().unwrap_or_default();
-            if !pull {
-                return Err(Error::new(format!(
-                    "the image {image} is not on the host, and the pool takes untrusted runs, whose images are not \
-                     pulled on demand: pull it on the host first"
-                )));
-            }
-            self.pull(image)?;
-            response = self.send(Method::Post, &path, Some(body), CALL_TIMEOUT)?;
+            Err(Error::new(format!(
+                "the image {image} is not on the host, and the pool takes untrusted runs, whose images are not \
+                 pulled on demand: pull it on the host first"
+            )))
         }
-        if response.status() >= 300 {
-            return Err(Self::problem(&format!("creating container {name}"), &response));
-        }
-        serde_json::from_str::<serde_json::Value>(response.body())
-            .ok()
-            .and_then(|body| body["Id"].as_str().map(str::to_string))
-            .ok_or_else(|| Error::new(format!("creating container {name}: the answer has no Id")))
     }
+}
 
-    /// With `container-user="image"`, a container made from an image whose user is not a numeric uid other than 0 (its
-    /// `Config.User` empty, root, or a name) is refused before it starts: a job never runs as root, in any form, and a
-    /// name is whatever the image's own `/etc/passwd` says, which may be uid 0 under another name
-    /// ([`is_numeric_user`]).
-    fn refuse_root(&self, id: &str, name: &str) -> Result<(), Error> {
-        let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
-        if response.status() >= 300 {
-            return Err(Self::problem(&format!("inspecting container {name}"), &response));
-        }
-        let user = serde_json::from_str::<serde_json::Value>(response.body())
-            .ok()
-            .and_then(|body| body["Config"]["User"].as_str().map(str::to_string))
-            .unwrap_or_default();
-        if !is_numeric_user(&user) {
-            return Err(Error::new(format!(
-                "the image of container {name} may run as root (its user is {}), and git-ci container-user=\"image\" \
-                 takes only an image whose USER is a numeric uid other than 0 (a name may be uid 0 in the image): set \
-                 its USER to a uid, or set container-user to a uid",
-                if user.trim().is_empty() { "unset" } else { user.trim() }
-            )));
-        }
-        Ok(())
+/// With `container-user="image"`, a container made from an image whose user is not a numeric uid other than 0 (its
+/// `Config.User` empty, root, or a name) is refused before it starts: a job never runs as root, in any form, and a
+/// name is whatever the image's own `/etc/passwd` says, which may be uid 0 under another name
+/// ([`is_numeric_user`]).
+fn refuse_root(host: &DockerHost, id: &str, name: &str) -> Result<(), Error> {
+    let response = host.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
+    if response.status() >= 300 {
+        return Err(DockerHost::problem(&format!("inspecting container {name}"), &response).into());
     }
+    let user = serde_json::from_str::<serde_json::Value>(response.body())
+        .ok()
+        .and_then(|body| body["Config"]["User"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    if !is_numeric_user(&user) {
+        return Err(Error::new(format!(
+            "the image of container {name} may run as root (its user is {}), and git-ci container-user=\"image\" \
+             takes only an image whose USER is a numeric uid other than 0 (a name may be uid 0 in the image): set \
+             its USER to a uid, or set container-user to a uid",
+            if user.trim().is_empty() { "unset" } else { user.trim() }
+        )));
+    }
+    Ok(())
+}
 
-    fn start(&self, id: &str) -> Result<(), Error> {
-        let response = self.send(Method::Post, &format!("/containers/{id}/start"), None, CALL_TIMEOUT)?;
-        // 304: already started
-        if response.status() >= 300 && response.status() != 304 {
-            return Err(Self::problem(&format!("starting container {id}"), &response));
-        }
-        Ok(())
+/// Whether container `id` carries this server's label (`moqui.ci.server` of [`super::server_id`]): what this server
+/// made, and so may remove. One that is not there does not.
+fn ours(host: &DockerHost, id: &str) -> Result<bool, Error> {
+    let response = host.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
+    if response.status() == 404 {
+        return Ok(false);
     }
-
-    /// Whether container `id` carries this server's label (`moqui.ci.server` of [`super::server_id`]): what this
-    /// server made, and so may remove. One that is not there does not.
-    fn ours(&self, id: &str) -> Result<bool, Error> {
-        let response = self.send(Method::Get, &format!("/containers/{id}/json"), None, CALL_TIMEOUT)?;
-        if response.status() == 404 {
-            return Ok(false);
-        }
-        if response.status() >= 300 {
-            return Err(Self::problem(&format!("inspecting container {id}"), &response));
-        }
-        let body: serde_json::Value = serde_json::from_str(response.body()).unwrap_or(serde_json::Value::Null);
-        Ok(body["Config"]["Labels"][super::LABEL_SERVER].as_str() == Some(super::server_id().as_str()))
+    if response.status() >= 300 {
+        return Err(DockerHost::problem(&format!("inspecting container {id}"), &response).into());
     }
-
-    /// Remove a container with its volumes, running or not. One that is not there is removed.
-    fn remove(&self, id: &str) -> Result<(), Error> {
-        let response = self.send(
-            Method::Delete,
-            &format!("/containers/{id}?force=true&v=true"),
-            None,
-            CALL_TIMEOUT,
-        )?;
-        if response.status() >= 300 && response.status() != 404 {
-            return Err(Self::problem(&format!("removing container {id}"), &response));
-        }
-        Ok(())
-    }
-
-    /// The containers, running or not, with all of `labels` (`name=value`): each one's id and labels.
-    fn list(&self, labels: &[String]) -> Result<Vec<Listed>, Error> {
-        let filters = json!({ "label": labels }).to_string();
-        let response = self.send(
-            Method::Get,
-            &format!("/containers/json?all=true&filters={}", encode(&filters)),
-            None,
-            CALL_TIMEOUT,
-        )?;
-        if response.status() >= 300 {
-            return Err(Self::problem("listing containers", &response));
-        }
-        let listed: serde_json::Value = serde_json::from_str(response.body())
-            .map_err(|err| Error::new(format!("listing containers: the answer is not JSON: {err}")))?;
-        Ok(listed
-            .as_array()
-            .map(|containers| {
-                containers
-                    .iter()
-                    .filter_map(|container| {
-                        let labels = container["Labels"]
-                            .as_object()
-                            .map(|labels| {
-                                labels
-                                    .iter()
-                                    .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        Some(Listed {
-                            id: container["Id"].as_str()?.to_string(),
-                            labels,
-                            created: container["Created"].as_i64().unwrap_or(0),
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    /// Make a job's network; `internal` reaches nothing outside it. One there already (409) is an error: it is
-    /// another run's.
-    fn create_network(&self, name: &str, labels: &serde_json::Value, internal: bool) -> Result<(), Error> {
-        let response = self.send(
-            Method::Post,
-            "/networks/create",
-            Some(&json!({"Name": name, "Driver": "bridge", "Internal": internal, "Labels": labels})),
-            CALL_TIMEOUT,
-        )?;
-        if response.status() >= 300 {
-            return Err(Self::problem(&format!("creating network {name}"), &response));
-        }
-        Ok(())
-    }
-
-    /// Put container `id` on the network `name` too.
-    fn connect_network(&self, name: &str, id: &str) -> Result<(), Error> {
-        let response = self.send(
-            Method::Post,
-            &format!("/networks/{}/connect", encode(name)),
-            Some(&json!({"Container": id})),
-            CALL_TIMEOUT,
-        )?;
-        if response.status() >= 300 {
-            return Err(Self::problem(
-                &format!("connecting container {id} to network {name}"),
-                &response,
-            ));
-        }
-        Ok(())
-    }
-
-    fn remove_network(&self, name: &str) {
-        match self.send(
-            Method::Delete,
-            &format!("/networks/{}", encode(name)),
-            None,
-            CALL_TIMEOUT,
-        ) {
-            Ok(response) if response.status() < 300 || response.status() == 404 => {}
-            Ok(response) => tracing::warn!(
-                "network {name} was not removed: {}",
-                Self::problem("removing", &response)
-            ),
-            Err(err) => tracing::warn!("network {name} was not removed: {err}"),
-        }
-    }
+    let body: serde_json::Value = serde_json::from_str(response.body()).unwrap_or(serde_json::Value::Null);
+    Ok(body["Config"]["Labels"][super::LABEL_SERVER].as_str() == Some(super::server_id().as_str()))
 }
 
 /// `instanceRef` when it is a container id as Docker gives one (hex digits, a full id or a prefix): nothing else is
@@ -435,19 +203,6 @@ fn own_filters(parameters: &Parameters) -> Vec<String> {
         filters.push(own);
     }
     filters
-}
-
-/// Percent-encode a query value.
-fn encode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
 }
 
 fn text(parameters: &Parameters, key: &str) -> Option<String> {
@@ -697,7 +452,7 @@ fn connect(parameters: &Parameters, facade: &EntityFacade) -> Option<DockerHost>
         add_error("instanceHostId is required");
         return None;
     };
-    match super::host_row(facade, &host_id).and_then(|row| DockerHost::of(&row)) {
+    match super::host_row(facade, &host_id).and_then(|row| host_of(&row)) {
         Ok(host) => Some(host),
         Err(err) => {
             add_error(format!("instance host {host_id}: {}", err.message()));
@@ -745,22 +500,28 @@ fn start_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
             host.create_network(network, &labels, egress != "bridge")?;
             for service in &services {
                 let service_name = service.get("name").map(to_plain_string).unwrap_or_default();
-                let id = host.create(
+                let id = create(
+                    &host,
                     &format!("{name}-{service_name}"),
                     &service_body(service, &labels, network, parameters, &hardening),
                     pull,
                 )?;
                 made.push(id.clone());
                 if hardening.user.is_none() {
-                    host.refuse_root(&id, &format!("{name}-{service_name}"))?;
+                    refuse_root(&host, &id, &format!("{name}-{service_name}"))?;
                 }
                 host.start(&id)?;
             }
         }
-        let id = host.create(&name, &create_body(parameters, &hardening, network.as_deref()), pull)?;
+        let id = create(
+            &host,
+            &name,
+            &create_body(parameters, &hardening, network.as_deref()),
+            pull,
+        )?;
         made.push(id.clone());
         if hardening.user.is_none() {
-            host.refuse_root(&id, &name)?;
+            refuse_root(&host, &id, &name)?;
         }
         if network.is_some() && egress != "bridge" && egress != "none" {
             host.connect_network(&egress, &id)?;
@@ -841,7 +602,7 @@ fn remove_run_docker(parameters: &Parameters, facade: &EntityFacade) -> Out {
     // the container named goes only when this server made it (its label): an id names any container of the host
     let mut ids: Vec<String> = Vec::new();
     if let Some(id) = named {
-        match host.ours(&id) {
+        match ours(&host, &id) {
             Ok(true) => ids.push(id),
             Ok(false) => tracing::info!("container {id} is not this server's (or not there); not removed"),
             Err(err) => add_error(err.message()),
@@ -956,7 +717,9 @@ fn call_docker_api(parameters: &Parameters, facade: &EntityFacade) -> Out {
         add_error(format!("Docker API path {path} is not a path under the API version"));
         return Ok(BTreeMap::new());
     }
-    let host = match super::host_row(facade, &host_id).and_then(|row| DockerHost::connect(&row, Some(INSTANCE_PORT))) {
+    let host = match super::host_row(facade, &host_id)
+        .and_then(|row| DockerHost::connect(&host_address(&row), Some(INSTANCE_PORT)).map_err(Error::from))
+    {
         Ok(host) => host,
         Err(err) => {
             add_error(format!("Docker host {host_id}: {}", err.message()));
@@ -978,7 +741,7 @@ fn call_docker_api(parameters: &Parameters, facade: &EntityFacade) -> Out {
         .map_or(CALL_TIMEOUT, |seconds| {
             Duration::from_secs(seconds).min(MAX_CALL_TIMEOUT)
         });
-    let url = format!("{}{API}{target}", host.base);
+    let url = host.url(&target);
     if let Err(refused) = moqui_core::entity::fence::check_effect(
         moqui_core::entity::fence::Effect::RemoteCall,
         &format!("HTTP {method} {}", moqui_lib::http::redacted(&url)),
@@ -988,7 +751,7 @@ fn call_docker_api(parameters: &Parameters, facade: &EntityFacade) -> Out {
     }
     // sim mode sends nothing, as the script REST client
     let sim = facade.sim_active();
-    let mut call = host.client.request(method, url).timeout(timeout);
+    let mut call = host.client().request(method, url).timeout(timeout);
     if let Some(auth) = text(parameters, "registryAuth") {
         call = call.header("X-Registry-Auth", auth);
     }

@@ -25,7 +25,7 @@
 
 use std::time::Duration;
 
-use moqui_git::ci::driver::docker::DockerHost;
+use moqui_git::ci::driver::docker::{run_once, DockerHost};
 
 #[test]
 fn a_container_runs_to_its_end_on_a_real_socket_and_is_removed() {
@@ -45,13 +45,9 @@ fn a_container_runs_to_its_end_on_a_real_socket_and_is_removed() {
     // not root, a root it cannot write, a tmpfs it can, and its own exit code
     let script = "test \"$(id -u)\" = 1000 || exit 11; touch /probe 2>/dev/null && exit 12; \
                   touch /tmp/probe || exit 13; exit 7";
-    let exit = host
-        .run_once(&name, &image, &["sh", "-c", script], Duration::from_secs(120))
-        .unwrap();
+    let exit = run_once(&host, &name, &image, &["sh", "-c", script], Duration::from_secs(120)).unwrap();
     assert_eq!(exit, Some(7), "the container's exit code");
     // removed: the name is free again
-    let again = host
-        .run_once(&name, &image, &["sh", "-c", "exit 0"], Duration::from_secs(120))
-        .unwrap();
+    let again = run_once(&host, &name, &image, &["sh", "-c", "exit 0"], Duration::from_secs(120)).unwrap();
     assert_eq!(again, Some(0));
 }
