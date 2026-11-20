@@ -364,8 +364,6 @@
 
         <cache name="service.location" value-type="ServiceDefinition"/>
         <cache name="service.rest.api" value-type="ResourceNode"/>
-        <cache name="kie.component.releaseId" value-type="ReleaseId"/>
-        <cache name="kie.session.component" value-type="String"/>
 
         <cache name="screen.location" value-type="ScreenDefinition"/>
         <cache name="screen.location.perm" value-type="ScreenDefinition"/>
@@ -2022,16 +2020,6 @@
             <database-type type="binary-very-long" sql-type="BLOB"/>
         </database>
     </database-list>
-
-    <repository-list>
-        <!-- No JCR repo by default, but here are some examples: -->
-        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr-rmi' in the classpath:
-        <repository name="main" workspace="default" username="admin" password="admin">
-            <init-param name="org.apache.jackrabbit.repository.uri" value="http://localhost:8081/rmi"/></repository> -->
-        <!-- requires 'org.apache.jackrabbit:jackrabbit-jcr2dav' in the classpath:
-        <repository name="main" workspace="default" username="admin" password="admin">
-            <init-param name="org.apache.jackrabbit.spi2davex.uri" value="http://localhost:8081/server"/></repository> -->
-    </repository-list>
 
     <component-list>
         <!-- runtime/components: the sets of components that its components.xml lists, in load order: base, addon, dev

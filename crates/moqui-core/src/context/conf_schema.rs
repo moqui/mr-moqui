@@ -347,11 +347,6 @@ pub static CATALOG: &[Unit] = &[
         keyed("dictionary-type", &["type"], DATABASES),
         keyed("database", &["name"], DATABASES).children(&[keyed("database-type", &["type"], DATABASES)]),
     ]),
-    single("repository-list", Class::Live).children(&[keyed("repository", &["name"], Class::Live).children(&[keyed(
-        "init-param",
-        &["name"],
-        Class::Live,
-    )])]),
     single("edge", EDGE)
         .secrets(&[("link-key", Secret::Generated)])
         .children(&[

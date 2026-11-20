@@ -31,7 +31,6 @@ const SCREEN: &str = "screen-facade";
 const SERVICE: &str = "service-facade";
 const LLM: &str = "llm-facade";
 const DATABASES: &str = "database-list";
-const REPOSITORIES: &str = "repository-list";
 
 /// The runtime conf merged over the default, like Java's `moqui.conf`. A process property `MOQUI_CONF` names it,
 /// then the environment variable of the same name. Relative to the runtime directory or absolute, and a named file
@@ -355,7 +354,6 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
     merge_llm_facade(base, over);
     merge_entity_facade(base, over);
     merge_database_list(base, over);
-    merge_repository_list(base, over);
     merge_edge(base, over);
     // the mail client, with this deployment's OAuth client at each provider by its id
     base.merge_child_with_child_key(
@@ -922,24 +920,6 @@ fn merge_database_list(base: &MNode, over: &MNode) {
         "database",
         keys(&[DATABASES, "database"]),
         Some(&mut merge_database),
-    );
-}
-
-fn merge_repository_list(base: &MNode, over: &MNode) {
-    let mut merge_repository = |base_repo: &MNode, over_repo: &MNode| {
-        base_repo.merge_children_by_keys(
-            over_repo,
-            "init-param",
-            keys(&[REPOSITORIES, "repository", "init-param"]),
-            None,
-        );
-    };
-    base.merge_child_with_child_key(
-        over,
-        REPOSITORIES,
-        "repository",
-        keys(&[REPOSITORIES, "repository"]),
-        Some(&mut merge_repository),
     );
 }
 

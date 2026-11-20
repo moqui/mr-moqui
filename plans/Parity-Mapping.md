@@ -60,7 +60,7 @@ A reviewer classifies these as intentional. Each Java type is also in the revers
 - **LLM and A2A.** `impl/llm/**`, `org.moqui.llm/**`, `LlmFacade`, `A2AFacade`, `LlmServlet`, `A2AServlet`, `A2ACardServlet`, and `LlmServices.xml`, `LlmAdminServices.xml`, `A2AServices.xml`. Redesigned rather than ported; see [LLM-A2A-Assist](LLM-A2A-Assist.md) and [Remaining-Work](Remaining-Work.md).
 - **Databases not in this tree.** H2 (`H2ServerToolFactory`), SQL Server, Oracle, DB2, Derby, HSQLDB. The port's drivers are Postgres, MySQL, and the browser SQLite driver.
 - **Shiro.** `shiro.ini`, `MoquiShiroRealm`, `MoquiWebSecurityManager`. Login still verifies a stored Shiro `SimpleHash` and rehashes to argon2 (`user/password.rs`).
-- **Jackrabbit, JCS, SubEtha.** `JackrabbitRunToolFactory`, `JCSCacheToolFactory`, `cache.ccf`, `SubEthaSmtpToolFactory`. The embedded SMTP server stays disabled. Inbound mail is `poll#EmailServer`, the mail client's sync, and for hosted and shared accounts the SMTP listener behind an edge gateway (the moqui-host `inbound-smtp` feature, [Mail-Inbound](../docs/interfaces/Mail-Inbound.md)), which is not SubEtha's open receiver.
+- **JCS, SubEtha.** `JCSCacheToolFactory`, `cache.ccf`, `SubEthaSmtpToolFactory`. The embedded SMTP server stays disabled. Inbound mail is `poll#EmailServer`, the mail client's sync, and for hosted and shared accounts the SMTP listener behind an edge gateway (the moqui-host `inbound-smtp` feature, [Mail-Inbound](../docs/interfaces/Mail-Inbound.md)), which is not SubEtha's open receiver.
 - **FreeMarker, GString, and FOP as engines.** `FtlTemplateRenderer`, `GStringTemplateRenderer`, `FtlMarkdownTemplateRenderer`, and `moqui-fop` (`FopToolFactory`, `HtmlRenderer`, `HtmlRenderServlet`). Markdown files render through `moqui-lib/src/markdown.rs`. Print is `html-print` (README redesign 4); the `/fop/*` path of `MoquiFopServlet` is kept, on that renderer (`screen/mod.rs`).
 - **vuet, vue, js render modes and `/vapps`.** `DefaultScreenMacros.vuet.ftl` and the vuet/js screen companions.
 - **Other dropped pieces.** `SimpleSgmlReader` (no SGML reader). `content://` (`ContentResourceReference`) is a named error. OAuth 1.0 and SAML (the SSO section). `MClassLoader` and `LiteStringMap` (JVM class loading and a Java map optimization). `bitronix-default-config.properties` (Bitronix is a behavior reference only). `MoquiLog4jAppender` and `log4j2.xml` as a runtime (logging is `tracing` in the host).
@@ -599,7 +599,7 @@ Every file under `../moqui/framework/src/main`, `src/start/java/MoquiStart.java`
 | `service/runner/ServiceRunner.groovy` | `service/define.rs` | Port |
 | `service/runner/JavaServiceRunner.groovy`, `RemoteJsonRpcServiceRunner.groovy`, `ServiceJsonRpcDispatcher.groovy` | — | Excluded |
 | `tools/MCacheToolFactory.java` | `context/cache.rs` | Port |
-| `tools/H2ServerToolFactory.groovy`, `JackrabbitRunToolFactory.groovy`, `JCSCacheToolFactory.groovy`, `SubEthaSmtpToolFactory.groovy` | — | Excluded |
+| `tools/H2ServerToolFactory.groovy`, `JCSCacheToolFactory.groovy`, `SubEthaSmtpToolFactory.groovy` | — | Excluded |
 | `util/EdiHandler.groovy` | `edi.rs` | Port |
 | `util/ElasticSearchLogger.groovy` | `telemetry/`, `search/telemetry.rs`, `moqui-host/src/logging.rs` (log events as OpenTelemetry logs in `otel_logs`; [Monitoring](archive/Monitoring.md)) | Redesign |
 | `util/ElFinderConnector.groovy` | `moqui-dav/src/elfinder.rs` | Port |

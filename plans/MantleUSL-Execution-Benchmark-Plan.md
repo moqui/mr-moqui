@@ -103,7 +103,7 @@ Required cases drawn from the audit:
 - Negative/zero/fractional amounts, currency rounding ties, per-line versus final rounding, scales, division by zero, overflow and values outside `rust_decimal` capacity. Unsupported ranges must fail consistently, not silently narrow.
 - Dynamic context keys, nested scope shadowing, merge/replace outputs, result-map propagation and aliases mutated by scripts/nested calls. A native local must observe a later context change.
 - Entity/list aliasing, clone/refresh, related reads, dynamic views, caches, transaction-cache/sim behavior and `no-tx-cache` paths. Diagnostic sim runs are not durable-write results.
-- Literal service overrides, configured hook names, changed definition generations, external script bodies and missing integrations. Never permit a missing KIE/gateway implementation to silently turn the business workload into a no-op.
+- Literal service overrides, configured hook names, changed definition generations, external script bodies and missing integrations. Never permit a missing gateway implementation to silently turn the business workload into a no-op.
 - Default joins, ignore, `force-new`, rollback-only, savepoints where required, failed commit, partial success after later failure, `ignore-error`, messages versus thrown exceptions and early return.
 - ECA before/after timing, original values, set-results, reentrant guards, commit/rollback callbacks, pending feed durability and dependency ordering.
 - Recursion, break/continue, script try/catch/finally, iterator closing, context/transaction cleanup and injected host errors/panics. Native panic handling must not replace structured business errors.

@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="clearArtifactCaches" authz-action="update">
         <actions><script>
             ['entity.definition', 'entity.location', 'entity.data.feed.info', 'service.location',
-            'kie.component.releaseId', 'kie.session.component', 'screen.location', 'screen.location.perm', 'screen.url',
+            'screen.location', 'screen.location.perm', 'screen.url',
             'screen.find.path',
             'resource.xml-actions.location', 'resource.groovy.location',
             'resource.wiki.location', 'resource.markdown.location', 'resource.text.location', 'resource.text.location',
