@@ -342,8 +342,40 @@ fn small_runtime(root: &Path) -> (PathBuf, PathBuf) {
         put(&dir.join("data/old.xml~"), "backup");
     }
     put(&components.join("addon/README.md"), "# add-ons");
+    put(
+        &components.join("base/webroot").join(super::select::VAULT_MODULE),
+        "wasm",
+    );
     put(&runtime.join("conf/MoquiDevConf.xml"), "<moqui-conf/>");
     (runtime, crate_dir)
+}
+
+#[test]
+fn the_whole_webroot_is_packed_only_with_the_vault_module_built() {
+    let scratch = Scratch::new("vault-module");
+    let (runtime, crate_dir) = small_runtime(&scratch.0);
+    let module = format!("webroot/{}", super::select::VAULT_MODULE);
+    assert!(gathered(&runtime, &crate_dir, Level::Production).contains(&module));
+    assert!(!gathered(&runtime, &crate_dir, Level::Framework).contains(&module));
+
+    std::fs::remove_file(
+        runtime
+            .join("components/base/webroot")
+            .join(super::select::VAULT_MODULE),
+    )
+    .unwrap();
+    for level in [Level::Production, Level::All] {
+        let err = gather(&runtime, &crate_dir, level, &mut |_| {}).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("moqui_vault.wasm is not built: run scripts/vault-wasm.sh"),
+            "{err}"
+        );
+    }
+    assert!(
+        gather(&runtime, &crate_dir, Level::Framework, &mut |_| {}).is_ok(),
+        "the stub has no module"
+    );
 }
 
 /// The names `gather` takes from `runtime` at `level`.

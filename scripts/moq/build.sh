@@ -292,6 +292,8 @@ build_binary() {
     shift
     need_cargo
     [ "$package" = enterprise ] || ensure_pg_archive
+    # before cargo: an --embed production or all build packs the whole webroot, the module with it
+    ensure_vault_wasm
     prepare_embed
     local -a package_args
     package_args=(--profile "$(package_profile "$package")" --no-default-features
@@ -328,6 +330,23 @@ ensure_pg_archive() {
     [ ! -f "$archive" ] || return 0
     info "The embedded Postgres archive is not there yet; getting it ($(rel "$payload") strip)" >&2
     run_cmd "$payload" strip >&2 || die "could not get the embedded Postgres archive"
+}
+
+# The vault's browser module (js/vault/moqui_vault.wasm in the webroot), which is not kept in git: scripts/vault-wasm.sh
+# builds it when it is missing or stale and says nothing when it is up to date, which takes well under a second. It runs
+# once in a task and the moq tasks it starts (VAULT_WASM_ENSURED, exported). $1 soft: a failure is a warning (a task
+# that runs moqui with --nobuild; the vault screens and the VaultModule spec then say the module is not built), else it
+# ends the task. Nothing when the script is not there (a tree without the vault crate).
+ensure_vault_wasm() {
+    local script=$ROOT/scripts/vault-wasm.sh
+    [ -z "${VAULT_WASM_ENSURED:-}" ] && [ -f "$script" ] || return 0
+    if run_cmd bash "$script" --quiet >&2; then
+        VAULT_WASM_ENSURED=1
+        export VAULT_WASM_ENSURED
+        return 0
+    fi
+    [ "${1:-}" = soft ] || die "could not build the vault's browser module ($(rel "$script"))"
+    warn "could not build the vault's browser module ($(rel "$script")); the vault screens answer that it is not built"
 }
 
 # The component directories under each of $@ that have a Rust crate: a Cargo.toml beside the component.xml.
@@ -523,6 +542,8 @@ moqui_binary() {
     elif [ ! -x "$bin" ]; then
         info "$(rel "$bin") is not built, building it" >&2
         build_binary "$package"
+    else
+        ensure_vault_wasm soft
     fi
     if [ ! -x "$bin" ] && ! dry_run; then
         die "$(rel "$bin") is not there after the build"
@@ -619,6 +640,11 @@ dev tools by default, or Lite, Debug or Enterprise. Each has its own cargo profi
                                                                                  target/enterprise/moqui
 Other words go to cargo as they are. The tasks that run moqui (run, load, test, save-db, ...) build
 the binary they need first, so it is never stale; --nobuild skips that when the binary is there.
+
+Before cargo, every build makes the vault's browser module (webroot js/vault/moqui_vault.wasm, not
+kept in git) with scripts/vault-wasm.sh when it is missing or stale, adding the wasm32-unknown-unknown
+target with rustup when that is missing; it is quick when the module is up to date. archive, the test
+and accept tasks, and the tasks that run moqui with --nobuild do the same.
 
 A component in runtime/components/addon with a Cargo.toml beside its component.xml is a Rust crate: the
 build generates target/moqui-app, a crate that links those crates with the framework, and builds

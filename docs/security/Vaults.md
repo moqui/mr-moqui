@@ -378,20 +378,25 @@ The browser runs the same crate as a wasm module, `runtime/components/base/webro
   goes back to the page. An opened vault key version is never replaced. The request's strings are overwritten after
   each call, and the answer is written to a buffer of its exact size, which the worker's read frees and zeroes.
 
-The module is checked in with its stamp, `moqui_vault.wasm.json`: the SHA-256 over the crate's source files (not its
-tests), the root `[workspace.dependencies]` lines of its workspace dependencies, the `[profile.release]` settings of
-`.cargo/config.toml` and the Cargo.lock entries the module links; those entries; the rustc version; and the module's
-own SHA-256. `scripts/vault-wasm.sh` builds both, with paths remapped so the same rustc builds the same bytes on any
-machine. A change to any of those, or another `rustc -V`, fails `cargo test -p moqui-vault`
-(`the_checked_in_wasm_is_what_the_source_builds`) until the module is rebuilt: run the script, or
-`MOQUI_REGENERATE_WASM=1 cargo test -p moqui-vault the_checked_in_wasm`, and commit both files.
+The module is not kept in git: `scripts/vault-wasm.sh` builds it on demand, with paths remapped so the same rustc
+builds the same bytes on any machine, and writes beside it its stamp, `moqui_vault.wasm.json`, the build record: the
+SHA-256 over the crate's source files (not its tests), the root `[workspace.dependencies]` lines of its workspace
+dependencies, the `[profile.release]` settings of `.cargo/config.toml` and the Cargo.lock entries the module links;
+those entries; the rustc version; and the module's own SHA-256. The script rebuilds only when one of those changed
+(`--check` reports it without building), refuses a dependency tree with getrandom or wasm-bindgen, and adds the
+`wasm32-unknown-unknown` target with rustup when it is missing. `./moq build`, `./moq archive`, `podman/build.sh` and
+the moq test tasks run it first ([Build-Test, Build](../Build-Test.md#build)); a build with the production or all
+runtime built in refuses to build without the module. On a runtime without it, the lease dialog says the module is not
+built, and Commons › Vault gets no integrity hash for it and does not load it. The desktop and mobile shells
+carry their own copy (plans/Vault-Instances.md §3.6): a shell build that bundles it runs the script first.
 
 ## Tests and vectors
 
 `cargo test -p moqui-vault` runs the crate's tests, one for each refusal above, and compares the known-answer
 vectors in `crates/moqui-vault/testdata/vectors.json` with what the code makes; it includes the CFRG test vector for
 HPKE with KEM 0x20, KDF 1 and AEAD 2. After a deliberate format change, `MOQUI_REGENERATE_VECTORS=1 cargo test -p
-moqui-vault` rewrites the file; read its diff before committing (and rebuild the module, whose source changed).
+moqui-vault` rewrites the file; read its diff before committing. The module, whose source changed, rebuilds on the
+next `./moq build` or test task.
 
 `moqui test-client framework --offline --spec VaultModule` loads the module in its worker in the test browser and
 checks that it makes the same vectors, that an item seals, opens and is forgotten on lock there, and that a vault key

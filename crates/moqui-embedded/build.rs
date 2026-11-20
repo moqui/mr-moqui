@@ -13,7 +13,9 @@
  */
 
 //! Packs the runtime files src/lib.rs embeds into `OUT_DIR` (`embedded.bin` and `embedded.idx`), at the level the
-//! features `production` and `all` select; src/select.rs has what each level takes and the format.
+//! features `production` and `all` select; src/select.rs has what each level takes and the format. Those two pack the
+//! whole webroot, so they need the vault's browser module built first (`scripts/vault-wasm.sh`, which `./moq build`
+//! runs before cargo; it is not kept in git): without it the build fails naming it, rather than embed no module.
 //!
 //! Under the features `opensearch` and `chromium` it also names the program archives src/programs.rs embeds, from
 //! `MOQUI_OPENSEARCH_ARCHIVE` and `MOQUI_CHROMIUM_ARCHIVE` or the cache that `./moq opensearch-download` and `./moq

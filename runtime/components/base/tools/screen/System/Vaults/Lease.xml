@@ -47,6 +47,9 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const sri = (file) => 'sha256-' + base64(ec.resource.digest('component://webroot/screen/webroot/js/vault/' + file, 'sha256'))
             try {
+                // built on demand (scripts/vault-wasm.sh), not kept in git: a runtime may not have it yet
+                const module = ec.resource.getLocationReference('component://webroot/screen/webroot/js/vault/moqui_vault.wasm')
+                if (!module || !module.getExists()) throw new Error('The vault module is not built: ./moq build or scripts/vault-wasm.sh')
                 const lease = vault('get#VaultLease', {leaseId})
                 const got = vault('get#Vault', {vaultId: lease.lease.vault_id})
                 const personal = vault('get#PersonalKey')

@@ -102,6 +102,10 @@ impl Level {
 /// components set leaves out.
 pub const OWN_SETS: [&str; 3] = ["framework", "tools", "webroot"];
 
+/// The vault's browser module under the webroot: built on demand by `scripts/vault-wasm.sh` (which `./moq build` runs
+/// before cargo), not kept in git, so a level that packs the whole webroot refuses a runtime without it.
+pub const VAULT_MODULE: &str = "screen/webroot/js/vault/moqui_vault.wasm";
+
 /// The placeholder page at `/` of a runtime with no web client, in the skeleton; left out when the whole webroot,
 /// with the web client's own page, is packed.
 pub const PLACEHOLDER: &str = "skeleton/components/base/webroot/screen/webroot/qapps.xml";
@@ -140,8 +144,8 @@ pub fn is_excluded(name: &str, top: bool) -> bool {
 ///
 /// # Errors
 ///
-/// Returns an error naming the path when a directory or the webroot list cannot be read, or the list names a path that
-/// is not in the webroot.
+/// Returns an error naming the path when a directory or the webroot list cannot be read, the list names a path that
+/// is not in the webroot, or the whole webroot is packed without the vault's module ([`VAULT_MODULE`]).
 pub fn gather(
     runtime: &Path,
     crate_dir: &Path,
@@ -158,6 +162,18 @@ pub fn gather(
 
     let webroot = base.join("webroot");
     if level.whole_webroot() {
+        let module = webroot.join(VAULT_MODULE);
+        watch(&module);
+        if !module.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "{} is not built: run scripts/vault-wasm.sh (./moq build runs it) before a build with the \
+                     production or all runtime built in",
+                    module.display()
+                ),
+            ));
+        }
         pack_component(&webroot, "webroot", skip, watch, &mut files)?;
     } else {
         let list = crate_dir.join("webroot-files.txt");

@@ -122,7 +122,8 @@ task_autodoc() {
 }
 
 # The suites of test-framework, test-apps and test-all: each runs whatever the last did, then a summary lists them
-# and the task exits 1 when any failed. SUITE_RESULTS and SUITE_FAILED are the run's.
+# and the task exits 1 when any failed. SUITE_RESULTS and SUITE_FAILED are the run's. Those tasks and accept build the
+# vault's browser module first (ensure_vault_wasm), once for the moq runs they start.
 suite() {
     local name=$1 status
     shift
@@ -242,12 +243,14 @@ apps_suites() {
 
 task_test_framework() {
     parse_suite_opts test-framework "$@"
+    ensure_vault_wasm
     framework_suites
     suite_summary test-framework
 }
 
 task_test_apps() {
     parse_suite_opts test-apps "$@"
+    ensure_vault_wasm
     apps_suites
     suite_summary test-apps
 }
@@ -396,12 +399,14 @@ accept_suites() {
 
 task_accept() {
     parse_accept_opts accept "$@"
+    ensure_vault_wasm
     accept_suites
     suite_summary accept
 }
 
 task_accept_all() {
     parse_accept_opts accept-all "$@"
+    ensure_vault_wasm
     accept_suites
     need_cargo
     suite "opt-in host tests" cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
@@ -419,6 +424,7 @@ task_accept_all() {
 # Every regression suite: the framework's, then the applications'.
 task_test_all() {
     parse_suite_opts test-all "$@"
+    ensure_vault_wasm
     framework_suites
     apps_suites
     suite_summary test-all
