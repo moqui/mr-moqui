@@ -14,7 +14,8 @@ use moqui_report as report;
 use serde_json::{json, Value as Json};
 use std::sync::Arc;
 
-const TOPIC: &str = "M6AlertFixture";
+/// A notification contact posts under the alert topic, the only one it may name (SEC-TLS-106).
+const TOPIC: &str = "ReportAlert";
 fn document(value: Json) -> Document {
     match moqui_lib::json::from_json(&value) {
         Value::Map(map) => map,
@@ -153,8 +154,7 @@ fn alerts_persist_timers_serialize_workers_and_route_only_complete_observations(
     moqui_host::logging::install();
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" paused="Y"/>
-      <moqui.security.user.NotificationTopic topic="M6AlertFixture" description="Alert acceptance" isPrivate="Y" receiveNotifications="Y" persistOnSend="Y"/>
-      <moqui.security.user.NotificationTopicUser topic="M6AlertFixture" userId="EX_JOHN_DOE" receiveNotifications="Y"/>
+      <moqui.security.user.NotificationTopicUser topic="ReportAlert" userId="EX_JOHN_DOE" receiveNotifications="Y"/>
     </entity-facade-xml>"#;
     let mut gate = common::start_with_data("report-alerts", fixture);
     let at = "2026-10-26T12:00:00Z"
@@ -352,8 +352,7 @@ fn shared_alert_definitions_parallel_pass_and_relative_ranges() {
     let fixture = r#"<entity-facade-xml type="seed">
       <moqui.service.job.ServiceJob jobName="evaluate_ReportAlerts_minute" paused="Y"/>
       <moqui.security.UserGroupMember userGroupId="ADMIN" userId="EX_JOHN_DOE" fromDate="0"/>
-      <moqui.security.user.NotificationTopic topic="M6AlertFixture" description="Alert acceptance" isPrivate="Y" receiveNotifications="Y" persistOnSend="Y"/>
-      <moqui.security.user.NotificationTopicUser topic="M6AlertFixture" userId="EX_JOHN_DOE" receiveNotifications="Y"/>
+      <moqui.security.user.NotificationTopicUser topic="ReportAlert" userId="EX_JOHN_DOE" receiveNotifications="Y"/>
     </entity-facade-xml>"#;
     let gate = common::start_with_data("report-alerts-shared", fixture);
     let factory = gate.server.factory();

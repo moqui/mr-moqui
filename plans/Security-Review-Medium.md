@@ -325,8 +325,19 @@ Medium; likely (lead); fixed.
 
 #### SEC-ADM-89. A holder of Marble's Party or Customer screens changes another account's email and sign-in fields, and enables or disables any account
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-moqui 8c4177a9f, 33be080db).
+  - `update#UserAccount` asks `check#AccountAction` with `ADMIN_IDENTITY_MANAGE`, bounded, for another account's sign-in fields. `enable#UserAccount` and `disable#UserAccount` ask the same.
+  - `USER_ACCOUNT_IDENTITY_FIELDS` (`sensitive.rs`) and `patch#UserAccount`'s list now include terminateDate, displayAccount, passwordHint and resetPasswordSetDate, so a generic write can no longer reopen an ended account.
+  - **Tests:** the CredentialGuards feature "another account's sign-in fields, and enabling or disabling it, need ADMIN_IDENTITY_MANAGE, bounded", and `rest_tests.rs` `an_admins_entity_write_of_an_account_takes_no_identity_field`. Both fail without the fix.
+  - **Not done (component half):** the Marble UI, and Mantle's `update#PartyUserAccount` taking only `partyId`'s own account with an own-or-`ADMIN_IDENTITY_MANAGE` check.
+  - Mantle and Marble half: Fixed 2026-11-19 (mr-mantle `c9af499f`; mr-marble `28b306c`, `6a345c7`):
+    - `update#PartyUserAccount` takes only partyId's own account. Changing another user's account needs ADMIN_IDENTITY_MANAGE.
+    - Marble's Edit Party (which EditCustomer includes) shows enable/disable only to ADMIN_IDENTITY_MANAGE holders, and the sign-in form only to them or the account's own user.
+    - The `enableUserAccount` and `disableUserAccount` transitions have a condition on ADMIN_IDENTITY_MANAGE. EditCustomer now includes Edit Party's transitions instead of its own.
+    - Tests: `AccountOwner`; Marble `EditPartySecurity`, which POSTs `disableUserAccount` with authorization on, plus a render check.
+    - The framework half (`update#UserAccount`, `enable#`/`disable#UserAccount`) is FA's.
 - **Where:** `runtime/components/base/framework/service/org/moqui/impl/UserServices.xml:148-152` (`update#UserAccount` asks `check#AccountAction` with `permissionId: 'NONE'`), `:677` (`permissionId !== 'NONE' && !ec.user.hasPermission(permissionId)`: with NONE, no permission is asked), `:452-466` (`enable#UserAccount` and `disable#UserAccount`: no account rule at all); `runtime/components/addon/mr-mantle/service/mantle/party/PartyServices.xml:963-995` (`update#PartyUserAccount`: `userId` from the caller, not tied to `partyId`, no own-account or `ADMIN_IDENTITY_MANAGE` rule; compare `update#Account`, `:827-829`, which has one); `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:61-66`, `Customer/EditCustomer.xml:49-54`; `runtime/components/addon/mr-mantle/service/mantle.rest.xml:69` (`PATCH parties/{partyId}/user`, ADMIN only by seed).
 - **Reached by:** a member of a group given Marble's `SimpleScreensParty` or `SimpleScreensCustomer` artifact group (`mr-marble/data/SimpleScreensSetupData.xml:310-324`, made to be granted to staff), or of `MarbleErpAdmin` (`ZmeMarbleErpSetupData.xml:30`), who holds no `ADMIN_IDENTITY_MANAGE`. The routes are `POST .../Party/EditParty/updateUserAccount`, `enableUserAccount` and `disableUserAccount`, with any `userId`.
 - **What happens:** `update#UserAccount`'s only rule for another account is `check#AccountAction` bounded (`Identity.js:222-238` `heldBeyond`: the account is in a privileged group the caller is not in, or holds a sealed permission the caller lacks), plus a recent sign-in, the caller's own, for the email address. The caller's authority over accounts is not asked. So a Party screen user changes a coworker's or customer's `emailAddress`, `username`, `ipAllowed` or `requirePasswordChange`, provided that account holds no more than they do. They then ask a password reset at the new address and sign in as that user, and read that user's mail, chats and files. `enable#UserAccount` and `disable#UserAccount` ask nothing, not even `heldBeyond`. The same user therefore disables an ADMIN's account, or brings back one an administrator disabled for good (a departed employee's), by `userId` alone. A screen's `service-call` is not a generic call, so `account_write_refusal` (`service/call.rs:1632-1700`) does not apply.
@@ -334,8 +345,17 @@ Medium; reported (confirmed in code).
 
 #### SEC-ADM-91. A Marble Party screen user adds any account, their own included, to any group that is neither privileged nor sealed
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-marble `0f1e930`, `022bef0`; mr-mantle `00e79f32`):
+  - Edit Party's `createUserGroupMember` and `updateUserGroupMember` call `AccessServices.store#Membership` and `end#Membership` (the latter with the row's revision). A refusal is shown with its reason.
+  - `create#PartyUserAccount` gives a group through `store#Membership` for a caller with authorization on, so it also covers `create#PersonCustomer` and `create#PersonEmployee`. It refuses a group whose type `groupTypeEnumIdList` does not name, and rolls the new account back.
+  - MarbleErpAdmin is now a CapabilityBundle (delegablePermissionId ADMIN_ACCESS_MANAGE), so Add to Group works for an access administrator.
+  - Tests (`EditPartySecurity`):
+    - a Party screen user cannot make an account in MarbleErpAdmin;
+    - a Party screen user adds no account to a group, their own included;
+    - success case: john.doe adds a member to MarbleErpAdmin.
+  - Last round (mr-marble 649d056): MarbleErpAdmin is delegable by ADMIN_IDENTITY_GLOBAL, so only ADMIN gives it.
 - **Where:** `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:69-72` (the `createUserGroupMember` and `updateUserGroupMember` transitions call `create#` and `update#moqui.security.UserGroupMember` from a screen); `runtime/components/base/framework/entity/Security.eecas.xml:16-25` (only the privileged-group and sealed-permission checks apply); `crates/moqui-entity/src/entity/sensitive.rs` (the identity-admin refusal applies to generic calls only).
 - **Reached by:** a member of a group given Marble's `SimpleScreensParty` artifact group, or `MarbleErpAdmin`, with no access-administration permission.
 - **What happens:** a screen's `service-call` is not a generic call, so the refusal that keeps `UserGroupMember` writes to access administrators does not apply. Any group that is neither privileged nor grants a sealed permission can be joined, for example `BOSS_ACCOUNTING_ADMIN` or `MarbleErpAdmin`, by the user for their own account or another's. Found by the SEC-ADM-89/90 reviewer, from the code; not run.
@@ -581,8 +601,21 @@ Medium; reported (likely); fixed.
 
 #### SEC-TLS-92. A dataset steward rewrites the fields and conditions of any DataDocument that is in a data feed
 
-Medium; reported (likely); fixed in part (what is left: 2026-11-19).
+Medium; reported (likely); fixed (its remainder 2026-11-19).
 
+- **Fix (the remainder):** Fixed 2026-11-19 (mr-moqui `4868b05f2`, `7ca18f798`, `67dc097f0`). `store#BusinessDatasetFields` checks every new or changed path, the document's own fields included. Each reader group of the document (`document_groups`, the same query `reads_document` uses) must be one the steward may widen (`may_widen`):
+  - ADMIN passes, since it already reads every entity.
+  - ALL_USERS never passes.
+  - A group the steward is a member of passes.
+  - Any other group passes only by `org.moqui.report.widen.<userGroupId>` (update) in the steward's own grant. The share artifacts no longer count.
+  - New `REPORT_WIDEN_ADMIN` (`MonitoringSecurityData.xml`) gives ADMIN the `org.moqui.report.widen.*` pattern.
+  - **Test:** BusinessDatasets.spec.js:
+  - fields of the document's own entity and of a related one are refused;
+  - a field is allowed when the steward's group is the only reader;
+  - ALL_USERS is refused;
+  - with ADMIN and BDS_READER reading, the steward is refused without BDS_READER's widen grant (one group counted) and allowed with it.
+  - **Not done:** mr-boss's rows.
+  - mr-boss grants `BOSS_INSIGHTS_DATA` the widen artifacts for the Insights groups only, by the owner's decision: stewards add fields to the three Insights-only documents, and the documents app groups also read stay closed to them.
 - **Fix:** Fixed 2026-11-19 (F1, merged `2be698e23`): `create#BusinessDataset` and the field and condition stores need a `DataDocumentUserGroup` row for the document in one of the steward's groups, and a field or condition change needs the steward to steward every other dataset over the document (the refusal counts them and names none). A field or condition is changed or removed only by the dataset that added it (`BusinessDataset.fieldSeqIds`, `conditionSeqIds`, cleared when a dataset is created), never one shipped with the document or made in Tools: the owner's decision is that a shipped dataset's seeded fields stay as the component ships them. `index#BusinessDataset` needs only the dataset's steward, since a rebuild widens nothing (BOSS's People datasets). `get#BusinessDatasetOptions` offers only documents the caller's groups read (`check_document_steward`, `crates/moqui-report/src/business.rs`; `fedDocuments`, `ReportReads.js`). Left open: a field of a related entity a steward adds widens what the document's other reader groups read from the index. Tests: `framework/test/BusinessDatasets.spec.js`.
 - **Where:** `crates/moqui-report/src/business.rs:529-595`, `:679-719`, `:838-977`, `:981-1099`
 - **Reached by:** a holder of `org.moqui.report.dataset` (update) and of `org.moqui.report.dataset.<id>` (update) for some id: `ADMIN` in the seed (`REPORT_DATASETS_ADMIN`); in mr-boss the group `BOSS_INSIGHTS_DATA` ("Insights dataset steward"), which holds `org.moqui.report.dataset` and the pattern `org\.moqui\.report\.dataset\.insights-.*` (`BossSetupData.xml:2626-2629`, `:3385`). Routes: `Dashboards/Datasets.xml:24-31` `createDataset`, `DatasetFields.xml:17-31` `storeFields` and `storeConditions`, `DatasetDetail.xml:39-44` `rebuildIndex`, and the same transitions taken in by mr-boss `screen/Insights/ReportBuilder/Datasets.xml:29`, `DatasetFields.xml:25-26` and `DatasetDetail.xml:29`.
@@ -1037,8 +1070,9 @@ Medium; likely (lead); fixed.
 
 #### SEC-FIL-82. A calendar file of nested `BEGIN` lines overflows the stack when its parse tree is dropped, which ends the server process
 
-Medium; likely (lead); fixed in part (what is left: 2026-11-19).
+Medium; likely (lead); fixed (its remainder 2026-11-19).
 
+- **Fix (the remainder):** Fixed 2026-11-19 (mr-mantle 2184c120): `fetch#CalendarSubscription` refuses a feed over the new `mantle@calendar-feed-max-bytes` (default 2 MiB, 0 for none) before parsing, read through `Limits.js`. Test: `CalendarServices` (HttpFixtures, `withConf` 64).
 - **Fix:** Fixed 2026-11-19 (F3, merged `ef992e6e2`): the iCalendar reader leaves out a component nested deeper than `MAX_DEPTH` (8) with all it holds and reads at most `MAX_COMPONENTS` (100000) components a file, each logged; an END naming an open component closes those inside it, so the parse tree's drop stays shallow (`components`, `crates/moqui-dav/src/pim/ics.rs`). All iCalendar, the Mantle feed's included, goes through it. Tests: `pim::tests::nested_components_past_the_depth_limit_are_left_out_in_a_small_stack`, `a_calendar_file_holds_at_most_its_component_count`.
 - **Where:** `crates/moqui-dav/src/pim/ics.rs:31-36`, `:54-98`, `:516-584`
 - **Reached by:** (a) any signed-in user with a party, through the mr-boss `Commons/Settings/Calendars.xml:64` transition to `mantle.work.CalendarServices.subscribe#Calendar` with an `https` URL they serve, then the `fetch#CalendarSubscriptions` job (`MantleSetupData.xml:832`, every 15 minutes) or `fetchNow`; and whoever serves a feed a user subscribed to. (b) Any DAV user with a calendar: `PUT /dav/calendars/<user>/<calendar>/x.ics` (1 MiB). (c) `import#Calendar` with a file. (d) Anyone who can send mail to a user: a `.ics` part of up to 512 KiB is parsed when the message is shown (`basic-comms/.../InboxServices.xml:465-468`).
@@ -1101,8 +1135,12 @@ Medium; reported (likely); fixed.
 
 #### SEC-FIL-99. A bracketed paste is kept in memory with no cap and no deadline, over SSH before a login
 
-Medium; confirmed (lead); fixed in part (what is left: 2026-11-19).
+Medium; confirmed (lead); fixed (its remainder 2026-11-19).
 
+- **Fix (the remainder):** Fixed 2026-11-19 (mr-moqui 11d95c569):
+    - The apps pump counts the input bytes it has sent but the session has not yet taken. A new `moqui_tui::SessionOptions::input_queued` field carries the count, and the loop takes bytes off it as each Input is decoded.
+    - The pump stops reading while 1 MiB is queued, so SSH and socket flow control holds the sender back (`term/apps.rs` `INPUT_QUEUED`).
+  - **Test:** moqui-tui `session_loop::the_loop_counts_down_the_input_it_takes`.
 - **Fix:** Fixed 2026-11-19 (F3, merged `ef992e6e2`): a bracketed paste keeps at most `MAX_PASTE` (1 MiB), each read searching only its new bytes for the end marker; a longer one, a few bytes past included, is delivered cut back to a whole UTF-8 character and logged (`Decoder::push`, `Paste::keep_within`, `crates/moqui-tui/src/decode.rs`). The session's input channel stays unbounded; the decoder is now linear in its input. Test: `decode::tests::a_paste_keeps_at_most_its_limit_and_ends_at_its_marker`.
 - **Where:** `crates/moqui-tui/src/decode.rs:72-76`, `:91-104`, `:471-473`; `crates/moqui-host/src/term/apps.rs:304`, `:378`, `:389-393`. Report: round 3 `B15.md`.
 - **Reached by:** any SSH peer when `ssh-server@port` is set and `login-dialog` is on (its default): a keyboard-interactive connection gets an `apps` session with no user (`Who::Login`, `apps.rs:327-331`) for `LOGIN_WAIT` (120 seconds). Any signed-in user through `/termws` (an `apps` session is open to every signed-in user) or a signed-in SSH `apps` session, with no time limit but the 10-minute idle.
@@ -1360,8 +1398,25 @@ Medium; confirmed (lead); fixed.
 
 #### SEC-DAT-98. Marble's search and record screens show HR cases, hidden applicants, protected and confidential tasks and maintenance requests that BOSS hides inside an organization
 
-Medium; reported (likely).
+Medium; reported (likely); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-mantle `ca119eda`, `088ce2af`; mr-marble `1fda0db`, `83b7511`):
+  - `SearchScope.js` holds the per-hit rules both searches use:
+    - `hitHidden`: HR case, hidden applicant, protected People task, Smithy hidden task, Maintenance work and requests;
+    - `financeHidden`: invoice and payment side reads, payroll-origin AcctgTrans.
+  - `search#Universal` and `search#MantleFiltered` both ask them.
+  - `keepPage` makes Marble's count the page's unless the page holds the whole match, and sets `documentListPageMaxIndex`.
+  - `search#Party` leaves out hidden applicants (FindParty, FindCustomer, FindSupplier).
+  - In Marble, `template/party/RecordScope.js` applies `hitHidden`, and remembers each answer for the rest of the request:
+    - FindRequest leaves out RqtHrCase;
+    - FindRequest and FindTask show a hidden row's id without its name or link;
+    - Request.xml and Task.xml refuse a hidden record on every render and transition;
+    - PartyRequests, PartyTasks and PartyProjects transitions refuse putting a party on a hidden record, which closes the route into My Account;
+    - Edit Party, Customer and Supplier refuse a hidden applicant.
+  - Tests:
+    - `MantleSearch`: maintenance request, applicant, invoices and count;
+    - Marble `RecordScreenScope`: HR case in the list and on edit, self-assignment, and the hidden work order through Task.xml.
+  - Last round (mr-marble bc998f3): add the Party tabs, Add to Request, the project tree, milestone lists and the task autocomplete.
 - **Where:** `runtime/components/addon/mr-mantle/service/mantle/GeneralServices.xml:238-302` (`search#MantleFiltered`: the organization limit and, for parties, the private-contact clause, `:274`; then `search#DataDocuments` returns the hits as they are); `runtime/components/addon/mr-marble/screen/SimpleScreens/Search.xml:19-23`, `:52-75` (each hit's expanded title and links), `QuickSearch.xml:45`; `runtime/components/addon/mr-marble/screen/SimpleScreens/Request/EditRequest.xml:51` (a request by id, under the entity filters only); the rules they lack are `mr-mantle/service/mantle/search/UniversalSearchServices.xml:230-280` (HR case, `hiddenApplicants`, `hiddenTaskIds`, `check#TaskHidden`, `workHidden`, `requestHidden`). No mr-marble screen or template names any of them.
 - **Reached by:** a member of a group given `MarbleErpApp` (Search and QuickLookup, "for all non-admin user groups", `mr-marble/data/ZmeMarbleErpSetupData.xml:35-41`), and for the record screens a holder of `SimpleScreensRequest` or `SimpleScreensProject`, within their own organizations.
 - **What happens:** Inside an organization, BOSS hides some records hit by hit: a confidential HR case (`RqtHrCase`), an applicant only recruiters see, a protected People task, the task of a confidential Smithy issue, and a maintenance work order or request outside the user's maintenance reach. Marble's search applies only the trusted organization filter, so every such document of the user's organizations is a hit. Its title (the request's or task's name, the applicant's name) is shown with an Edit link. Marble's `EditRequest` and task screens then open the record by id. Scenario: a Marble user of the organization searches `harassment` and reads the titles of HR cases, then opens one in Request › Edit Request and reads its description and comments.
@@ -2089,8 +2144,14 @@ Medium; reported (confirmed in code); fixed.
 
 #### SEC-BAP-93. A warehouse receiver adds any order's line to a return, an already approved one included, where it is born authorized
 
-Medium; reported (likely); fixed in part (what is left: 2026-11-19).
+Medium; reported (likely); fixed (its remainder 2026-11-19).
 
+- **Fix (the remainder):** Fixed 2026-11-19 (mr-mantle `cff38b90`, `d96c28f1`):
+  - `add#OrderItemToReturn` caps a sale's shippable line at what was issued.
+  - `billingsOf` accepts invoices to the return's customer or to the order part's CustomerBillTo, and bills from the supplier or its VendorBillFrom.
+  - `update#ReturnItem` no longer takes orderId, orderItemSeqId, productId or itemTypeEnumId. A raised `returnQuantity` meets the open-return, billed and shipped ceilings again.
+  - REST `POST returns/{id}/items` now calls `add#OrderItemToReturn`.
+  - Tests: `WarehouseReturns`, `AccountingReturns` (including a bill-to case).
 - **Fix:** Fixed 2026-11-19 (mr-mantle `94a6c7ca`, `9629365e`; mr-marble `c1554e7`).
   - `add#OrderItemToReturn` refuses a line whose order part's customer or vendor is not the return's (ORDER_MISMATCH).
   - A return past Requested takes an item only from a RETURN_AUTHORIZE holder, and a caller-given `statusId` is taken only from such a holder (RETURN_NOT_OPEN otherwise). So neither a screen passing its context nor a REST call makes an item that is born approved.
@@ -2186,8 +2247,14 @@ Medium; confirmed (second check); fixed.
 
 #### SEC-BAP-140. Marble's party, customer and supplier screens show and edit every identification whole, an employee's SSN among them
 
-Medium; reported (confirmed in code).
+Medium; reported (confirmed in code); fixed.
 
+- **Fix:** Fixed 2026-11-19 (mr-marble `e77b14d`, `0139803`; mr-mantle `e8ca956f`):
+  - Marble reads identifications through `CustomerFinance.js` `identifications`: masked for every reader, never SSN, FEIN or FUID.
+  - It writes through `store#CustomerIdentification`. The organization and side come from `check#CustomerScope` over the user's organizations (RECEIVABLE_EDIT for a customer, PAYABLE_EDIT for a supplier). So an employee's and an internal organization's identifications are not changed here, and a global permission alone changes nothing.
+  - `find#PartyDuplicates` leaves out tax types and masks a match's value.
+  - Tests: `EditPartySecurity` (identifications and duplicates).
+  - Last round (mr-marble 9810e07): the list is shown only to the party's receivables or payables editor, and a change carries the stamp the form read.
 - **Where:** `runtime/components/addon/mr-marble/screen/SimpleScreens/Party/EditParty.xml:427-466` (`PartyIdentificationSection`: every `PartyIdentification` of the party, `idValue` decrypted in a `text-line`), `:52-57` (create, update and delete as entity-auto); `Customer/EditCustomer.xml:162`, `Supplier/EditSupplier.xml:90` (the same section); compare `mr-mantle/service/mantle/account/CustomerFinance.js:7-8`, `:40` and `humanres/Employees.js:31` (never `PtidSsn`, `PtidFein`, `PtidFuid`; the rest masked to four).
 - **Reached by:** a holder of `SimpleScreensParty`, `SimpleScreensCustomer` or `SimpleScreensSupplier`, or a member of `MarbleErpAdmin`, through `GET .../Party/EditParty?partyId=<any party of their organizations>`.
 - **What happens:** Payroll keeps an employee's SSN as a `PtidSsn` identification (`mantle/humanres/PayrollDocumentServices.xml:60`). People never shows it, even to HR, and since SEC-BOS-82 Accounting and Customer Service never answer it and mask the other types. Marble's party screens list every identification of the party in full and write any type. Scenario: a staff user with Marble's Party screens (granted to manage customers) opens Edit Party for a coworker and reads the coworker's SSN. They can also replace it, and the next payroll tax document carries the new value.

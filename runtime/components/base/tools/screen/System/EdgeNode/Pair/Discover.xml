@@ -226,6 +226,8 @@ along with this software (see the LICENSE.md file). If not, see
             ? Array.from(ec.entity.find('mantle.public.PublicSite').orderBy('name').limit(200).disableAuthz().list())
                 .map((site) => ({siteId: site.siteId, name: site.name || site.siteId})) : []
         const client = String(pass.clientId || 'edge')
+        // shown on the review step: Apply makes the edge node's link this PASS client (SEC-CLU-85)
+        passClientId = client
         const registeredSites = String(ec.factory.getConfValue('pass-authority/client[' + client + ']@sites') || '').split(',').map((site) => site.trim()).filter((site) => site)
         const firstHost = passthrough[0] || terminate[0] || ''
         // the system's mail goes through the edge node by default only when it has no server of its own yet
@@ -321,7 +323,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="chatBridgeIds"><conditional-field condition="chatAvailable &amp;&amp; bridgeOptions.length" title="Bridges">
                         <check><list-options list="bridgeOptions" key="${chatBridgeId}" text="${name}"/></check></conditional-field>
                         <default-field><ignored/></default-field></field>
-                    <field name="passOn"><conditional-field condition="passAvailable" title="PASS"><check><option key="Y" text="The edge node serves the public sites"/></check></conditional-field>
+                    <field name="passOn"><conditional-field condition="passAvailable" title="PASS"><check><option key="Y" text="The edge node serves the public sites as PASS client ${passClientId}"/></check></conditional-field>
                         <default-field title="PASS"><display text="The edge node has no mr-pass"/></default-field></field>
                     <field name="passSites"><conditional-field condition="passAvailable &amp;&amp; hasSites" title="Sites">
                         <check><list-options list="siteOptions" key="${siteId}" text="${name}"/></check></conditional-field>

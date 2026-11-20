@@ -617,6 +617,11 @@ fn extends_node(
         return db_form_node(form_name, AsOf::of_form(as_of_form)?);
     }
     let other = facade.screen_def(factory, location)?;
+    // a form that extends a preview's proposed form takes on its text: the extending screen is proposed too, so its
+    // frame takes the lock where the form's actions and expressions run (SEC-AI-102)
+    if other.proposed || super::overlay::is_proposed(&other.location) {
+        super::overlay::mark_proposed(&def.location);
+    }
     // The assembled form is kept with this definition, so a change to the other screen makes this one stale.
     def.generated.add_dependencies(&other.sources);
     assemble_node(facade, factory, &other, form_name, depth + 1, dynamic, as_of_form)

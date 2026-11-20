@@ -215,6 +215,14 @@ impl Records {
         Ok(())
     }
 
+    /// A TXT lookup of `name` that fails as a resolver error (a timeout, a server failure): a test's temporary error.
+    #[cfg(test)]
+    pub(crate) fn fail_txt(&self, name: &str) {
+        let error = mail_auth::Error::Dns(mail_auth::DnsError::Resolver("timed out".to_string()));
+        self.txt
+            .insert(fqdn(name), TxtRecord::Error(error), Instant::now() + FIXED);
+    }
+
     /// Fixed MX records of `name`: (preference, host); `.` alone is a null MX.
     pub fn fix_mx(&self, name: &str, hosts: &[(u16, &str)]) {
         let mut groups: Vec<Mx> = Vec::new();

@@ -244,6 +244,8 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
                 if let Some(actions) = &def.always_actions {
                     // an error they add is logged, not answered: it would make the menu data a 500
                     let mark = ExecutionContext::with_current(|ec| ec.message().error_mark());
+                    // a proposed screen's actions run with authorization required (SEC-AI-102)
+                    let _required = super::render::require_if_proposed(def);
                     let result = actions.run();
                     let added = mark
                         .and_then(|mark| ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark)))
@@ -272,6 +274,7 @@ pub fn menu_data(state: &RenderState, path_names: &[String]) -> Result<Option<Va
             frames.enter_screen(def, false)?;
             if index >= 2 {
                 if let Some(actions) = &def.pre_actions {
+                    let _required = super::render::require_if_proposed(def);
                     if let Err(err) = actions.run() {
                         tracing::warn!(
                             "Error running pre-actions in {} while getting menu data: {err}",

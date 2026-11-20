@@ -52,6 +52,23 @@ along with this software (see the LICENSE.md file). If not, see
             DatabaseAudit row.</description>
     </service>
 
+    <service verb="check" noun="Tables" type="rust" location="moqui_tools::service::check_tables"
+            transaction="ignore">
+        <description>The table check (ec.entity.checkTables): forget what is known of the tables and create or extend
+            the tables, indexes and keys of entityNames (every entity when empty) in the entity groups groupNames (all
+            when empty). It runs DDL, so it needs the DATABASE_ADMIN permission, and writes a DbaTableCheck
+            DatabaseAudit row with the statements that ran.</description>
+        <in-parameters>
+            <parameter name="entityNames" type="List"><parameter name="entityName"/></parameter>
+            <parameter name="groupNames" type="List"><parameter name="groupName"/></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ddl" type="List"><parameter name="statement"/></parameter>
+            <parameter name="errors" type="Long"/>
+            <parameter name="failed" type="List"><parameter name="failure" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+
     <!-- ========== Schema and jobs (plans/archive/Tools-Database.md §5, §6, §7.3, §7.4) ========== -->
     <!-- crates/moqui-tools/src/{schema,jobs,tables,activity}.rs. A refusal (not authorized, no DATABASE_ADMIN, an
         unknown group or job, bad input) is a message-facade error and no out parameters; a part that could not be read

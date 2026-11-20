@@ -620,3 +620,25 @@ fn a_calendar_file_holds_at_most_its_component_count() {
     );
     assert_eq!(events(&file(ics::MAX_COMPONENTS)), 0, "one past it is not");
 }
+
+/// An all-day event's DURATION past jiff's range of days, or past the seconds of an i64, gives no end date and is
+/// not a panic (SEC-FIL-93); a VTIMEZONE's rule with a malformed BYDAY is read as no rule.
+#[test]
+fn a_malformed_duration_or_zone_rule_is_not_a_panic() {
+    for duration in ["P99999999D", "P99999999999999999W"] {
+        let text = format!(
+            "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:long\r\nDTSTART;VALUE=DATE:20261019\r\nDURATION:{duration}\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        );
+        let parsed = ics::parse(&text, 2026);
+        let Value::List(events) = &parsed["events"] else {
+            panic!("{parsed:?}")
+        };
+        assert_eq!(events.len(), 1, "{duration}");
+    }
+    let zone = "BEGIN:VCALENDAR\r\nBEGIN:VTIMEZONE\r\nTZID:Odd\r\nBEGIN:STANDARD\r\nDTSTART:19701025T030000\r\nRRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=€\r\nTZOFFSETFROM:+0200\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:z\r\nDTSTART;TZID=Odd:20261019T100000\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    let parsed = ics::parse(zone, 2026);
+    let Value::List(events) = &parsed["events"] else {
+        panic!("{parsed:?}")
+    };
+    assert_eq!(events.len(), 1);
+}

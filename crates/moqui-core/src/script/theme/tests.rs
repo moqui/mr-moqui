@@ -398,6 +398,14 @@ fn a_theme_meta_is_a_charset_a_listed_name_or_a_card_property() {
         file,
         1,
     );
+    // a charset or itemprop beside an unlisted name does not carry it (SEC-PSF-83)
+    for meta in [
+        "<meta itemprop=\"x\" name=\"referrer\" content=\"unsafe-url\">",
+        "<meta charset=\"utf-8\" name=\"referrer\" content=\"unsafe-url\">",
+        "<meta name=\"description\" property=\"referrer\" content=\"x\">",
+    ] {
+        refused(&[(file, Some(meta))], "unsafe-markup", file, 1);
+    }
     for meta in [
         "<meta charset=\"utf-8\">",
         "<meta name=\"Viewport\" content=\"width=device-width\">",
@@ -701,6 +709,76 @@ fn svg_and_css_assets() {
         "{found:?}"
     );
     assert_eq!(sanitize_rich_text("<p onclick=x>a<script>b</script></p>"), "<p>a</p>");
+}
+
+/// A CSS comment cannot start inside a string or an unquoted `url()`, where the browser reads none, to hide a URL or
+/// an `@import` from the check; an escaped quote or parenthesis, which would end a URL early for the check, is refused
+/// (SEC-SCR-90).
+#[test]
+fn a_css_comment_in_a_string_hides_nothing() {
+    let css_errors = |css: &str| errors(&validate_stone(&[("assets/store.css", Some(css))]));
+    for css in [
+        ".a { background: url(\"/*\"), url(https://evil.example/x), url(\"*/\") }",
+        ".a { background: url('/*'), url(https://evil.example/x), url('*/') }",
+        ".a { background: url(/*), url(https://evil.example/x), url(*/) }",
+        ".a { content: \"/*\" }\n@import url(/x.css);\n.b { content: \"*/\" }",
+        // a lone CR or a form feed ends a string as a line break does, in the browser and in the check
+        ".a { content:\"a\r\" /* \" ; background: url(https://evil.example/x); \" */ }",
+        ".a { content:\"a\x0c\" /* \" ; background: url(https://evil.example/x); \" */ }",
+        ".a { content:\"a\r\n\" /* \" ; background: url(https://evil.example/x); \" */ }",
+    ] {
+        let found = css_errors(css);
+        assert!(
+            found
+                .iter()
+                .any(|error| error.starts_with("unsafe-css") && (error.contains("origin") || error.contains("@import"))),
+            "{css}: {found:?}"
+        );
+    }
+    for css in [
+        ".a { background: url(\"//cdn.example\\\"@evil.example/x\") }",
+        ".a { background: url(\"//cdn.example\\22@evil.example/x\") }",
+    ] {
+        let found = css_errors(css);
+        assert!(
+            found.iter().any(|error| error.contains("an escaped")),
+            "{css}: {found:?}"
+        );
+    }
+    // a comment outside strings is still a comment, and a string may hold `*/` or a URL-like text
+    let found = css_errors(".a { color: red /* url(https://evil.example/x) */ }\n.b { content: \"*/\" }");
+    assert_eq!(found, Vec::<String>::new());
+    // an escaped quote or parenthesis outside a url() is a character: a utility class's arbitrary value, a quote shown
+    let found =
+        css_errors(".w-\\[calc\\(100\\%-2rem\\)\\] { width: calc(100% - 2rem) }\n.q::before { content: \"\\\"\" }");
+    assert_eq!(found, Vec::<String>::new());
+    // inside an unquoted url() it is refused
+    let found = css_errors(".a { background: url(//cdn.example\\)@evil.example/x) }");
+    assert!(found.iter().any(|error| error.contains("an escaped")), "{found:?}");
+}
+
+/// A link's own `referrerpolicy` overrides the page's `Referrer-Policy`, so a theme cannot set it (SEC-PSF-83).
+#[test]
+fn a_theme_link_cannot_set_its_referrer_policy() {
+    refuses(
+        &[(
+            "blocks/text.html.fancy-locked",
+            Some("<a href=\"https://elsewhere.example/\" referrerpolicy=\"unsafe-url\">x</a>"),
+        )],
+        "attribute `referrerpolicy`",
+    );
+}
+
+/// Chromium's `attributionsrc` sends a request to the URL it names, which the URL check does not read (SEC-SCR-91).
+#[test]
+fn a_theme_cannot_have_attributionsrc() {
+    refuses(
+        &[(
+            "blocks/text.html.fancy-locked",
+            Some("<img src=\"/x.png\" alt=\"\" attributionsrc=\"https://evil.example/r\">"),
+        )],
+        "attribute `attributionsrc`",
+    );
 }
 
 /// IE's `behavior` property is refused only as a property of its own: `scroll-behavior` passes (Shop F131), and

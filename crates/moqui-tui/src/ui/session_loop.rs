@@ -20,6 +20,7 @@
 
 use std::io::{self, Write};
 use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -68,6 +69,10 @@ pub struct SessionOptions {
     pub log: bool,
     /// The username the login dialog starts with, for a session that starts with no user (the SSH login name).
     pub login_name: Option<String>,
+    /// The bytes of [`SessionEvent::Input`] the caller has sent and the loop has not yet taken: the caller adds each
+    /// event's length as it sends it, the loop takes it off once the bytes are decoded, so the caller can stop reading
+    /// its transport while too many wait (SEC-FIL-99) and the transport's flow control holds the sender back.
+    pub input_queued: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 /// OSC 11 with `?`: the terminal answers with its background color, which the decoder reads. It ends with ST, as the
@@ -151,6 +156,7 @@ fn run<L: ScreenLink + 'static, W: Write>(
     view.session_mut().set_pushed(subscription.is_some());
     view.session_mut().set_log_offered(options.log);
     view.session_mut().set_login_name(options.login_name.clone());
+    let input_queued = options.input_queued.clone();
     let mut minute = jiff::Zoned::now().minute();
     settle(&mut view, &link, &done, options.notes, out)?;
     screen.draw(&view, out)?;
@@ -176,6 +182,12 @@ fn run<L: ScreenLink + 'static, W: Write>(
         for event in batch {
             match event {
                 SessionEvent::Input(bytes) => {
+                    if let Some(queued) = &input_queued {
+                        let taken = bytes.len();
+                        let _ = queued.try_update(Ordering::AcqRel, Ordering::Acquire, |held| {
+                            Some(held.saturating_sub(taken))
+                        });
+                    }
                     for decoded in decoder.push(&bytes) {
                         if apply(&mut view, &mut screen, decoded, &mut notes) {
                             return Ok(());

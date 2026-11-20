@@ -231,9 +231,10 @@ fn json_text(value: &serde_json::Value, name: &str) -> String {
 
 /// The queue item of a message the edge node's listener took, for the local node: its envelope and recipient
 /// addresses with their DSN parameters as the payload (never account ids: the local node resolves them again), the
-/// message as content. The idempotency key is its Message-ID (or, with none, a hash of the message) with the
-/// recipients, so the gateway's retry of a message the listener had queued is the same item; the conversation key
-/// is `conversation`, the recipient's mailbox.
+/// message as content. The idempotency key is a hash of the message itself with the envelope sender and the
+/// recipients, so the gateway's retry of a message the listener had queued is the same item, and only that: a message
+/// that names a known Message-ID is another item, which the local node's own Message-ID check then judges as a normal
+/// node's listener does (SEC-MAIL-87). The conversation key is `conversation`, the recipient's mailbox.
 #[cfg(feature = "imap")]
 #[must_use]
 pub fn inbound_item(
@@ -283,26 +284,19 @@ pub fn inbound_item_trusting(
             }))
             .collect::<Vec<_>>(),
     });
-    let head_end = raw
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .or_else(|| raw.windows(2).position(|window| window == b"\n\n"))
-        .unwrap_or(raw.len());
-    let head = String::from_utf8_lossy(&raw[..head_end]);
-    let message_id = super::implementation::header_value(&head, "Message-ID");
-    let identity = if message_id.trim().is_empty() {
+    // the message's own hash, never its Message-ID alone: a known id must not stand for whatever comes with it
+    let identity = {
         use sha2::Digest as _;
         format!("sha256:{}", moqui_lib::codec::hex_encode(&sha2::Sha256::digest(&raw)))
-    } else {
-        message_id.trim().to_string()
     };
+    let sender = envelope.mail_from.trim().to_lowercase();
     let mut addresses: Vec<String> = recipients
         .iter()
         .map(|recipient| recipient.address.to_lowercase())
         .collect();
     addresses.sort_unstable();
     addresses.dedup();
-    let key = moqui_lib::json::canonical_sha256(&serde_json::json!([identity, addresses]));
+    let key = moqui_lib::json::canonical_sha256(&serde_json::json!([identity, sender, addresses]));
     NewItem {
         kind: KIND_IN.to_string(),
         conversation_key: conversation.to_string(),
@@ -630,24 +624,25 @@ pub(super) fn deliver_edge_outbound_mail(
     } else {
         format!("{BOUNCE_PREFIX}{item}@{domain}")
     };
+    // a paired node never sends as the server's or another pairing's addresses or domains, whichever MTA sends it: the
+    // MTA beside the node may sign for any domain it is set up for (SEC-MAIL-90)
+    #[cfg(feature = "imap")]
+    let paired = super::auth::paired_domains(facade, &node)?;
+    #[cfg(feature = "imap")]
+    if let Some(why) = refused_sender(&factory, facade, &original_from, &raw, &paired)? {
+        tracing::warn!("Edge outbound mail item {item} of paired node {node} refused: {why}");
+        refuse(&factory, facade, &node, &item, &why)?;
+        return Ok(BTreeMap::new());
+    }
     #[cfg(feature = "imap")]
     if super::mx::mta() == super::mx::Mta::Moqui {
         // the MTA in moqui (E5b): signed here, recorded per recipient domain in this item's transaction, delivered to
         // the MX by the delivery thread; the answers come back as mailStatus from there
         let all_in_one = moqui_core::edge::settings(&factory).all_in_one();
-        // signed only for this node's own domains: a paired node never sends signed as the server or another node
-        let paired = super::auth::paired_domains(facade, &node)?;
-        if all_in_one {
-            if let Some(why) = refused_sender(&factory, facade, &original_from, &raw, &paired)? {
-                tracing::warn!("Edge outbound mail item {item} of paired node {node} refused: {why}");
-                refuse(&factory, facade, &node, &item, &why)?;
-                return Ok(BTreeMap::new());
-            }
-        }
-        // internal mail: from the paired node's own domain (on a dedicated edge node, whatever it signs for)
+        // internal mail: from the paired node's own domain (on a dedicated edge node, whatever it sent)
         let internal = !all_in_one || super::auth::from_domain(&raw).is_some_and(|domain| paired.contains(&domain));
         let signed = if internal {
-            super::auth::sign_for(raw, |domain| paired.contains(domain))
+            super::auth::sign_for_paired(raw, &paired)
         } else {
             raw
         };
@@ -790,10 +785,11 @@ fn split_local(
     )
 }
 
-/// Why a paired node's `mailOut` item may not go out from an all-in-one node, or none: its envelope sender or `From`
-/// is an address the server holds (`own_claim` names its holder), or of a domain that only the server has (its
-/// accounts' domains not the paired node's, or its bounce domain, which it holds whole). Ownership is exclusive
-/// (plans/archive/Edge-Node.md §10): a paired node never sends as the server's users, so it never gets their signature.
+/// Why a paired node's `mailOut` item may not go out from this edge or all-in-one node, or none: its envelope sender or
+/// `From` is an address the server holds (`own_claim` names its holder), or of a domain that the paired node does not
+/// have and the server or another pairing does (`own_domains` not in `paired`), or the server's bounce domain, which it
+/// holds whole. Ownership is exclusive (plans/archive/Edge-Node.md §10): a paired node never sends as the server's users
+/// or another pairing's, so it never gets their signature.
 #[cfg(feature = "imap")]
 fn sender_refusal(
     senders: &[String],
@@ -817,7 +813,8 @@ fn sender_refusal(
         let bounce = !bounce_domain.is_empty() && domain.eq_ignore_ascii_case(bounce_domain.trim_end_matches('.'));
         if bounce || (own_domains.contains(&domain) && !paired.contains(&domain)) {
             return Ok(Some(format!(
-                "the sender {address} is of mail domain {domain}, which is the server's own, not the paired node's"
+                "the sender {address} is of mail domain {domain}, which is not the paired node's but the server's or \
+                 another paired node's"
             )));
         }
     }
@@ -842,7 +839,9 @@ fn refused_sender(
             senders.push(address);
         }
     }
-    let own_domains = super::auth::hosted_domains(facade, moqui_core::edge::NodeRole::Normal)?;
+    // the server's own accounts' domains (on an all-in-one node) and every pairing's (SEC-MAIL-90); the paired
+    // node's own are taken out by `sender_refusal`
+    let own_domains = super::auth::kept_hosted_domains(facade, moqui_core::edge::settings(factory).role)?;
     sender_refusal(&senders, paired, &own_domains, &bounce_domain(), |address| {
         moqui_core::edge::claims::own_claim(
             factory,
@@ -1184,6 +1183,38 @@ pub(super) fn fail_edge_outbound_mail(
         &format!("Not sent through the edge node: {}", param_text(parameters, "error")),
     )?;
     Ok(BTreeMap::new())
+}
+
+/// `fail#EdgeMail`, on the edge node, the failed-service of kind `mail`: mail its listener answered 250 for that never
+/// reached the local node (unpairing, the retention period, the size cap) is logged as an error with its sender and
+/// recipients, so whoever reads the log can tell them (SEC-MAIL-86).
+pub(super) fn fail_edge_mail(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let payload = payload(parameters)?;
+    tracing::error!(
+        "{}",
+        failed_mail_text(
+            &param_text(parameters, "queueItemId"),
+            &payload,
+            &param_text(parameters, "error")
+        )
+    );
+    Ok(BTreeMap::new())
+}
+
+/// The log line of a `mail` item that failed for good: its id, envelope sender, recipient addresses and why.
+fn failed_mail_text(item: &str, payload: &serde_json::Value, why: &str) -> String {
+    let recipients: Vec<&str> = payload["recipients"]
+        .as_array()
+        .map(|list| list.iter().filter_map(|entry| entry["address"].as_str()).collect())
+        .unwrap_or_default();
+    format!(
+        "Mail item {item} taken for the local node failed for good and was not delivered: from <{}> to {}: {why}",
+        json_text(payload, "mailFrom"),
+        recipients.join(", ")
+    )
 }
 
 #[cfg(all(test, feature = "imap"))]

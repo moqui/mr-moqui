@@ -28,6 +28,23 @@ along with this software (see the LICENSE.md file). If not, see
             on-create="true" on-update="true" on-delete="true" run-before="true">
         <actions><script>UserSecurityChecks.assertSealedPermissionGrant(userPermissionId)</script></actions>
     </eeca>
+    <!-- an account disabled for good (not a lockout after failed logins, which has a disabledDateTime and ends by itself) or
+        terminated gets no more pushes in its browsers: its subscriptions go (SEC-COM-92); one that cannot is logged -->
+    <eeca id="UserAccountWebPushEnds" entity="moqui.security.UserAccount" on-update="true">
+        <actions><script><![CDATA[
+            const value = entityValue
+            const disabled = value.disabled === 'Y' && !value.disabledDateTime
+            const terminated = value.terminateDate != null && Number(value.terminateDate) <= Date.now()
+            if (disabled || terminated) {
+                try {
+                    ec.service.sync().name('org.moqui.ui.NotificationServices.forget#UserWebPush')
+                        .parameter('userId', value.userId).disableAuthz().call()
+                } catch (err) {
+                    ec.logger.error(`The browser pushes of ${value.userId} were not ended: ${err && err.message ? err.message : err}`)
+                }
+            }
+        ]]></script></actions>
+    </eeca>
     <!-- a DataDocument field expression is script run as whoever reads the document: writing one needs DATABASE_ADMIN -->
     <eeca id="DataDocumentFieldExpression" entity="moqui.entity.document.DataDocumentField"
             on-create="true" on-update="true" run-before="true">
@@ -166,6 +183,14 @@ along with this software (see the LICENSE.md file). If not, see
         Tools). The rules are BackupDestination.js, on get#BackupDestination's list, which backup#EmbeddedDatabase refuses
         another destination named in a call by (service/backup.rs). A data load runs with authorization disabled and is not
         checked. They are checks, so they run when the call already has errors too. -->
+    <!-- Who made a job's user row, whatever wrote it: the user signed in, none for a data load (SEC-TLS-103). An update
+        keeps the value the row was made with, whatever the request passed (an entity-auto update takes its parameters). A
+        row with none is no consent of its user's: run#EtlMapping refuses to run as them by it. -->
+    <eeca id="ServiceJobUserAddedBy" entity="moqui.service.job.ServiceJobUser" on-create="true" on-update="true"
+            run-before="true" get-original-value="true" run-on-error="true">
+        <actions><script>entityValue.addedByUserId = eecaOperation == 'create' ? (ec.user.userId || null)
+            : (originalValue?.addedByUserId || null)</script></actions>
+    </eeca>
     <eeca id="BackupDestinationParameter" entity="moqui.service.job.ServiceJobParameter"
             on-create="true" on-update="true" on-delete="true" run-before="true" get-original-value="true" run-on-error="true">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
@@ -186,6 +211,42 @@ along with this software (see the LICENSE.md file). If not, see
             on-create="true" on-update="true" run-before="true" get-original-value="true" run-on-error="true">
         <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
             .messageType(eecaOperation, systemMessageTypeId, sendPath, originalValue)</script></actions>
+    </eeca>
+    <!-- The endpoint-change rule of ConfigurationConnections.js for every record that keeps a secret beside the address it
+        is sent to, on every write path (plans/Security-Review-Low.md SEC-TLS-116; admin/EndpointSecrets.js moved): a change
+        of an address field clears the stored secrets unless new ones are written with it, and says so; a model endpoint's
+        and an entity sync's is a member of ADMIN's only. Only a seed or install load answers for itself. An AgentMcpServer's
+        or AgentRemoteA2a's URL counts by its origin, as their store services decide; an EmailServer pointed at the edge
+        node, or back from it, keeps its secrets (edge/setup.rs). -->
+    <eeca id="LlmEndpointSecretMoves" entity="moqui.llm.LlmEndpoint" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['baseUrl', 'path', 'authHeader', 'authScheme', 'headersJson'], secrets: ['apiKey'], admin: true})</script></actions>
+    </eeca>
+    <eeca id="EntitySyncSecretMoves" entity="moqui.entity.sync.EntitySync" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['targetServerUrl', 'targetUsername'], secrets: ['targetPassword'], admin: true})</script></actions>
+    </eeca>
+    <eeca id="SystemMessageRemoteSecretMoves" entity="moqui.service.message.SystemMessageRemote" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['sendUrl', 'username', 'sendAuthEnumId', 'authHeaderName'],
+                secrets: ['password', 'sharedSecret', 'sendSharedSecret', 'privateKey']})</script></actions>
+    </eeca>
+    <eeca id="ScrapeTargetSecretMoves" entity="moqui.monitor.ScrapeTarget" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['url'], secrets: ['bearerToken']})</script></actions>
+    </eeca>
+    <eeca id="EmailServerSecretMoves" entity="moqui.basic.email.EmailServer" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['smtpHost', 'smtpPort', 'smtpSsl', 'smtpStartTls', 'storeHost', 'storePort', 'mailUsername',
+                'smtpUsername'], secrets: ['mailPassword', 'smtpPassword', 'oauthRefreshToken'], passThrough: ['edge:']})</script></actions>
+    </eeca>
+    <eeca id="AgentMcpServerSecretMoves" entity="moqui.agent.AgentMcpServer" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['url'], secrets: ['authJson'], origin: true})</script></actions>
+    </eeca>
+    <eeca id="AgentRemoteA2aSecretMoves" entity="moqui.agent.AgentRemoteA2a" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['cardUrl'], secrets: ['authJson'], origin: true})</script></actions>
     </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at

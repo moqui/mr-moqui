@@ -128,7 +128,8 @@ pub(crate) fn pair_node(
     node: &str,
     root: &CertificateDer<'static>,
 ) -> moqui_host::edge_link::Paired {
-    let code = to_plain_string(&call(edge, "create#PairingCode", &[]).unwrap()["code"]);
+    // made for the node, so it pairs it again under its id with a new key too (SEC-CLU-82)
+    let code = to_plain_string(&call(edge, "create#PairingCode", &[("pairedNodeId", node)]).unwrap()["code"]);
     let mut config = PairConfig::new(url, &code, node);
     config.trust_root = Some(root.clone());
     config.connect_timeout = Duration::from_secs(5);

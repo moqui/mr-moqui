@@ -85,6 +85,7 @@ const MEMBER_COLUMNS: &[&str] = &[
     "sshHostKeyFingerprint",
     "binaryVersion",
     "edgeLinkUrl",
+    "edgeMemberKey",
 ];
 const DEFAULT_PORT: u16 = 8444;
 const RETRIES: u32 = 3;
@@ -445,6 +446,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
         edge_link_url: crate::context::conf_env::setting(EDGE_LINK_URL_PROPERTY)
             .trim()
             .to_string(),
+        edge_member_key: env::get_prop_or_env(EDGE_MEMBER_KEY_PROPERTY),
     };
     write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
@@ -636,6 +638,10 @@ pub struct MemberReport {
     pub version: String,
     /// Where a local node dials it, on a member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6).
     pub edge_link_url: String,
+    /// The fingerprint of its own edge link key (`runtime/db/edge_member_key`), which a linked member tells its edge
+    /// node with its cluster's list, so the edge node admits that id only with that key (SEC-CLU-81). Empty before it
+    /// has one.
+    pub edge_member_key: String,
 }
 
 /// The members of this factory's cluster from their rows, live or not, in id order.
@@ -656,6 +662,7 @@ pub fn member_report(factory: &ExecutionContextFactory, facade: &EntityFacade) -
             instance_id: member.instance_id,
             version: member.version,
             edge_link_url: member.edge_link_url,
+            edge_member_key: member.edge_member_key,
         })
         .collect();
     members.sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
@@ -835,10 +842,43 @@ struct Member {
     /// Where a local node dials this member of an edge cluster (`edge@link-url`, plans/Edge-Node2.md §4.6), read at
     /// start as `cluster-member@base-url` is. Empty on any other node.
     edge_link_url: String,
+    /// The fingerprint of this member's own edge link key ([`EDGE_MEMBER_KEY_PROPERTY`]); empty before the host has it.
+    edge_member_key: String,
 }
 
 /// The property that names where a local node dials this member of an edge cluster (plans/Edge-Node2.md §4.6).
 pub const EDGE_LINK_URL_PROPERTY: &str = "edge@link-url";
+
+/// The process property the host sets to the fingerprint of this instance's own edge link key
+/// (`runtime/db/edge_member_key`), which its member row publishes (SEC-CLU-81).
+pub const EDGE_MEMBER_KEY_PROPERTY: &str = "cluster_edge_member_key_fingerprint";
+
+/// Publish `fingerprint`, this instance's own edge link key, on its member row: the host calls it when it has the key,
+/// before or after the member registered. A row that cannot be written is logged; the next registration writes it.
+pub fn set_edge_member_key(factory: &ExecutionContextFactory, fingerprint: &str) {
+    moqui_lib::env::set_property(EDGE_MEMBER_KEY_PROPERTY, fingerprint);
+    let state = ClusterState::of(factory);
+    let member = {
+        let mut kept = lock(&state.member);
+        let Some(member) = kept.as_mut() else {
+            return;
+        };
+        if member.edge_member_key == fingerprint {
+            return;
+        }
+        fingerprint.clone_into(&mut member.edge_member_key);
+        member.clone()
+    };
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    if let Err(err) = write_member(&facade, &member) {
+        tracing::error!(
+            "cluster member {}: its edge member key was not published: {err}",
+            member.instance_id
+        );
+    }
+}
 
 /// The conf's `instance` `id` when it is set, else the id in `runtime/db/instance_id`, else a new one written there. It is not
 /// written to `runtime/.env`, which `plans/archive/Cluster.md` says to copy between members: two members with one id would
@@ -1468,6 +1508,7 @@ struct LoadedMember {
     ssh_fp: String,
     version: String,
     edge_link_url: String,
+    edge_member_key: String,
 }
 
 fn load_members(facade: &EntityFacade) -> Result<Vec<LoadedMember>, Error> {
@@ -1492,6 +1533,7 @@ fn member_from_row(row: &DbRow) -> LoadedMember {
         ssh_fp: row_text(row, "sshHostKeyFingerprint"),
         version: row_text(row, "binaryVersion"),
         edge_link_url: row_text(row, "edgeLinkUrl"),
+        edge_member_key: row_text(row, "edgeMemberKey"),
     }
 }
 
@@ -1536,6 +1578,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
                     "sshHostKeyFingerprint",
                     "binaryVersion",
                     "edgeLinkUrl",
+                    "edgeMemberKey",
                 ],
                 Some(&by_id),
             )?
@@ -1553,6 +1596,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
         Value::string(&member.ssh_fp),
         Value::string(&member.version),
         Value::string(&member.edge_link_url),
+        Value::string(&member.edge_member_key),
     ];
     let update_params = vec![
         Value::string(&member.base_url),
@@ -1562,6 +1606,7 @@ fn write_member(facade: &EntityFacade, member: &Member) -> Result<(), Error> {
         Value::string(&member.ssh_fp),
         Value::string(&member.version),
         Value::string(&member.edge_link_url),
+        Value::string(&member.edge_member_key),
         instance.clone(),
     ];
     let tx = facade.transactions_for(MEMBER).map_err(Error::from)?;

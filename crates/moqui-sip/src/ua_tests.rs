@@ -870,6 +870,186 @@ async fn a_flood_from_one_source_is_dropped_while_another_source_is_answered() {
     ua.shutdown();
 }
 
+/// A request with a made-up To tag is in no dialog of this side, so it is counted by the rate as a new one is
+/// (SEC-COM-83): of twenty such INVITEs only the burst is answered.
+#[tokio::test]
+async fn a_made_up_to_tag_does_not_pass_the_rate() {
+    if !loopback_sources(&["127.0.0.7"]).await {
+        return;
+    }
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                rate: 1.0,
+                burst: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().udp.unwrap();
+    let trunk = FakeTrunk::on("127.0.0.1").await;
+    ua.set_trunks(vec![trunk_config(&trunk, false)]).await;
+    let flood = FakeTrunk::on("127.0.0.7").await;
+    for n in 0..20 {
+        let text = format!(
+            "OPTIONS sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-tag-{n}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-{n}\r\nTo: <sip:100@{addr}>;tag=made-up\r\nCall-ID: tagged-{n}\r\n\
+             CSeq: 1 OPTIONS\r\nContent-Length: 0\r\n\r\n",
+            flood.addr, flood.addr
+        );
+        flood.send(&text, addr).await;
+        let text = format!(
+            "INVITE sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-inv-{n}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-inv-{n}\r\nTo: <sip:100@{addr}>;tag=made-up\r\nCall-ID: tagged-inv-{n}\r\n\
+             CSeq: 1 INVITE\r\nContact: <sip:x@{}>\r\nContent-Length: 0\r\n\r\n",
+            flood.addr, flood.addr, flood.addr
+        );
+        flood.send(&text, addr).await;
+    }
+    let mut answered = std::collections::BTreeSet::new();
+    while let Some((message, _)) = flood.recv(Duration::from_millis(400)).await {
+        if let SipMessage::Response(response) = message {
+            answered.insert(response.call_id_header().unwrap().value().to_string());
+        }
+    }
+    assert!(answered.len() <= 3, "{answered:?}");
+    ua.shutdown();
+}
+
+/// A CANCEL or an ACK of no transaction or dialog this side has is counted by the rate as a new request is
+/// (SEC-COM-83): of twenty CANCELs only the burst is answered.
+#[tokio::test]
+async fn a_stray_cancel_or_ack_does_not_pass_the_rate() {
+    if !loopback_sources(&["127.0.0.8"]).await {
+        return;
+    }
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                rate: 1.0,
+                burst: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().udp.unwrap();
+    let flood = FakeTrunk::on("127.0.0.8").await;
+    for n in 0..20 {
+        let text = format!(
+            "CANCEL sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-cancel-{n}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-{n}\r\nTo: <sip:100@{addr}>\r\nCall-ID: cancel-{n}\r\n\
+             CSeq: 1 CANCEL\r\nContent-Length: 0\r\n\r\n",
+            flood.addr, flood.addr
+        );
+        flood.send(&text, addr).await;
+    }
+    let mut answered = std::collections::BTreeSet::new();
+    while let Some((message, _)) = flood.recv(Duration::from_millis(400)).await {
+        if let SipMessage::Response(response) = message {
+            answered.insert(response.call_id_header().unwrap().value().to_string());
+        }
+    }
+    assert!(answered.len() <= 3, "{answered:?}");
+    ua.shutdown();
+}
+
+/// The CANCEL of an INVITE the inspector let through is not charged to the rate, whatever its bucket holds, while a
+/// stray one is (SEC-COM-83).
+#[tokio::test]
+async fn the_cancel_of_an_admitted_invite_passes_a_spent_rate() {
+    if !loopback_sources(&["127.0.0.9"]).await {
+        return;
+    }
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                rate: 0.001,
+                burst: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().udp.unwrap();
+    let caller = FakeTrunk::on("127.0.0.9").await;
+    let message = |method: &str, branch: &str| {
+        format!(
+            "{method} sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch={branch}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-c\r\nTo: <sip:100@{addr}>\r\nCall-ID: admitted-cancel\r\n\
+             CSeq: 1 {method}\r\nContact: <sip:x@{}>\r\nContent-Length: 0\r\n\r\n",
+            caller.addr, caller.addr, caller.addr
+        )
+    };
+    // the INVITE spends the one token
+    caller.send(&message("INVITE", "z9hG4bK-admitted"), addr).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    caller.send(&message("CANCEL", "z9hG4bK-admitted"), addr).await;
+    caller.send(&message("CANCEL", "z9hG4bK-stray"), addr).await;
+    let mut cancels = Vec::new();
+    while let Some((message, _)) = caller.recv(Duration::from_millis(400)).await {
+        if let SipMessage::Response(response) = message {
+            if response.cseq_header().unwrap().method().unwrap() == Method::Cancel {
+                cancels.push(response.via_header().unwrap().value().to_string());
+            }
+        }
+    }
+    assert!(
+        cancels.iter().any(|via| via.contains("z9hG4bK-admitted")),
+        "{cancels:?}"
+    );
+    assert!(!cancels.iter().any(|via| via.contains("z9hG4bK-stray")), "{cancels:?}");
+    ua.shutdown();
+}
+
+/// An admitted INVITE's key is its Via's sent-by and branch, what its CANCEL repeats; it is kept a transaction's life
+/// and the set is bounded (SEC-COM-83).
+#[test]
+fn an_admitted_invite_is_named_by_its_via_for_a_while() {
+    let request = |method: &str, branch: &str| -> Request {
+        let text = format!(
+            "{method} sip:100@127.0.0.1 SIP/2.0\r\nVia: SIP/2.0/UDP 192.0.2.1:5060;branch={branch};rport\r\n\
+             From: <sip:x@192.0.2.1>;tag=f\r\nTo: <sip:100@127.0.0.1>\r\nCall-ID: c\r\nCSeq: 1 {method}\r\n\
+             Content-Length: 0\r\n\r\n"
+        );
+        match SipMessage::try_from(text.as_str()).unwrap() {
+            SipMessage::Request(request) => request,
+            SipMessage::Response(_) => unreachable!(),
+        }
+    };
+    let invite = invite_key(&request("INVITE", "z9hG4bK-one")).unwrap();
+    assert_eq!(invite_key(&request("CANCEL", "z9hG4bK-one")).unwrap(), invite);
+    assert_ne!(invite_key(&request("CANCEL", "z9hG4bK-two")).unwrap(), invite);
+    let mut kept = AdmittedInvites::default();
+    let now = Instant::now();
+    kept.admit(invite.clone(), now);
+    assert!(kept.holds(&invite, now + Duration::from_secs(1)));
+    assert!(!kept.holds(&invite, now + INVITE_KEPT));
+    for n in 0..MAX_INVITES_KEPT + 10 {
+        kept.admit(format!("k{n}"), now);
+    }
+    assert!(kept.keys.len() <= MAX_INVITES_KEPT);
+}
+
 #[test]
 fn an_inbound_range_wider_than_a_slash_8_or_a_slash_32_matches_nothing() {
     let ip = |s: &str| s.parse::<IpAddr>().unwrap();

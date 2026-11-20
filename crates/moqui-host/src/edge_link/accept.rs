@@ -507,6 +507,13 @@ pub(crate) struct EdgeServer {
     registry: Mutex<Registry>,
     /// Pair calls by source.
     pair_attempts: Mutex<PairAttempts>,
+    /// Up connections refused (a key not paired or revoked) by source, so an anonymous client with any certificate
+    /// stops costing a transaction and a log line past `up_refusals` in the window (SEC-CLU-84).
+    refused_up: Mutex<PairAttempts>,
+    /// The keys this process paired or took an up connection of: a source past `up_refusals` is refused before the
+    /// look-up only for a key not among them, so a busy address (a NAT, a shared host) never blocks a paired node's
+    /// links. At most [`MAX_KNOWN_KEYS`].
+    known_keys: Mutex<std::collections::HashSet<String>>,
     shutdown: watch::Receiver<bool>,
     /// The paired nodes' public host names (§5.3).
     pub(crate) hosts: Hosts,
@@ -537,6 +544,12 @@ pub(crate) struct EdgeServer {
 /// How long the edge cluster's list is answered before its member rows are read again: every link's Ping asks it.
 const EDGE_MEMBERS_FOR: Duration = Duration::from_secs(2);
 
+/// The paired keys an edge node keeps in memory to tell them from strangers' (SEC-CLU-84): far more than its pairings.
+const MAX_KNOWN_KEYS: usize = 10_000;
+
+/// The refused up connections of one source in a window that are logged at info; the rest at debug (SEC-CLU-84).
+const LOGGED_UP_REFUSALS: u32 = 3;
+
 /// The sources whose Pair calls are counted at once; a new source past it is refused until a sweep frees room.
 const MAX_PAIR_SOURCES: usize = 10_000;
 
@@ -553,6 +566,20 @@ impl PairAttempts {
     /// Count a call from `ip` at `now`: false when its source made more than `limit` in `window`, or when the table
     /// is full of sources still in their window.
     pub(super) fn allowed(&mut self, ip: IpAddr, now: Instant, window: Duration, limit: u32) -> bool {
+        self.charge(ip, now, window) <= limit
+    }
+
+    /// Whether `ip`'s source made `limit` or more in `window` by `now`, without counting this one.
+    pub(super) fn reached(&self, ip: IpAddr, now: Instant, window: Duration, limit: u32) -> bool {
+        let key = moqui_lib::source_guard::source_key(ip);
+        self.by_source
+            .get(&key)
+            .is_some_and(|(started, count)| now.duration_since(*started) < window && *count >= limit)
+    }
+
+    /// Count a call from `ip` at `now`: how many its source made in its window, this one with them; `u32::MAX` when
+    /// the table is full of sources still in their window.
+    pub(super) fn charge(&mut self, ip: IpAddr, now: Instant, window: Duration) -> u32 {
         let key = moqui_lib::source_guard::source_key(ip);
         if self.next_sweep.is_none_or(|at| now >= at) {
             self.by_source
@@ -560,14 +587,14 @@ impl PairAttempts {
             self.next_sweep = Some(now + window);
         }
         if self.by_source.len() >= MAX_PAIR_SOURCES && !self.by_source.contains_key(&key) {
-            return false;
+            return u32::MAX;
         }
         let (started, count) = self.by_source.entry(key).or_insert((now, 0));
         if now.duration_since(*started) >= window {
             (*started, *count) = (now, 0);
         }
-        *count += 1;
-        *count <= limit
+        *count = count.saturating_add(1);
+        *count
     }
 
     #[cfg(test)]
@@ -607,6 +634,8 @@ impl EdgeServer {
             link_fingerprint: link_fingerprint.to_string(),
             registry: Mutex::new(Registry::default()),
             pair_attempts: Mutex::new(PairAttempts::default()),
+            refused_up: Mutex::new(PairAttempts::default()),
+            known_keys: Mutex::new(std::collections::HashSet::new()),
             shutdown,
             hosts: Hosts::default(),
             telemetry: Arc::clone(&telemetry),
@@ -623,6 +652,12 @@ impl EdgeServer {
             admitting: Mutex::new(HashSet::new()),
             links_write: Mutex::new(()),
         });
+        // the active pairings' keys from the start, in one query, so a busy source never blocks a real node's links
+        // right after a restart (SEC-CLU-84); a read that fails is logged and the set fills as nodes pair and link
+        match store::active_keys(factory) {
+            Ok(keys) => keys.iter().for_each(|key| server.note_known_key(key)),
+            Err(err) => tracing::error!("Edge node: the paired keys were not read at start: {err}"),
+        }
         telemetry.observe_gauge("moqui.edgelink.tunnels.active", move || {
             Some(active.load(Ordering::Acquire) as f64)
         });
@@ -1503,6 +1538,20 @@ impl EdgeServer {
         Ok(MemberState::parse(&status.state).unwrap_or_default())
     }
 
+    /// Whether `fingerprint` is a key this process paired or linked (see `known_keys`).
+    fn known_key(&self, fingerprint: &str) -> bool {
+        lock(&self.known_keys).contains(fingerprint)
+    }
+
+    /// Keep `fingerprint` as a key this process paired or linked; past [`MAX_KNOWN_KEYS`] the set starts again.
+    pub(super) fn note_known_key(&self, fingerprint: &str) {
+        let mut keys = lock(&self.known_keys);
+        if keys.len() >= MAX_KNOWN_KEYS && !keys.contains(fingerprint) {
+            keys.clear();
+        }
+        keys.insert(fingerprint.to_string());
+    }
+
     /// Count a Pair call from `ip`; false when it is over the limit for the window.
     fn pair_allowed(&self, ip: IpAddr) -> bool {
         lock(&self.pair_attempts).allowed(ip, Instant::now(), self.config.pair_window, self.config.pair_attempts)
@@ -1571,14 +1620,30 @@ impl EdgeServer {
             let _ = write_answer(&mut stream, Answer::Refused, message).await;
             return;
         };
+        // a source refused often lately is refused before the lookup, unless the key is one paired here: no transaction,
+        // and no log line (SEC-CLU-84)
+        let (window, limit) = (self.config.pair_window, self.config.up_refusals);
+        if !self.known_key(&fingerprint) && lock(&self.refused_up).reached(remote.ip(), Instant::now(), window, limit) {
+            tracing::debug!("Edge link from {remote} refused before its key was looked up: refused too often lately");
+            let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
+            return;
+        }
         let lookup = fingerprint.clone();
         let linked = self
             .on_pool(move |factory| store::link_up(factory, &lookup, remote))
             .await;
         let (node, generation) = match linked {
-            Ok(Some(linked)) => linked,
+            Ok(Some(linked)) => {
+                self.note_known_key(&fingerprint);
+                linked
+            }
             Ok(None) => {
-                tracing::info!("Edge link from {remote} refused: key {fingerprint} is not paired or was revoked");
+                let refusals = lock(&self.refused_up).charge(remote.ip(), Instant::now(), window);
+                if refusals <= LOGGED_UP_REFUSALS {
+                    tracing::info!("Edge link from {remote} refused: key {fingerprint} is not paired or was revoked");
+                } else {
+                    tracing::debug!("Edge link from {remote} refused: key {fingerprint} is not paired or was revoked");
+                }
                 let _ = write_answer(&mut stream, Answer::Refused, NOT_PAIRED).await;
                 return;
             }
@@ -2257,6 +2322,24 @@ impl EdgeServer {
         store::create_code(&*self.factory()?, valid_minutes)
     }
 
+    /// Tell the administrators that member `member` of pairing `node` was pinned on a list naming no key for it
+    /// (SEC-CLU-81), within the takeover notices' limit; a failure is logged.
+    async fn tell_first_pin(&self, node: &str, member: &str, remote: &str) {
+        if !self.notice_allowed(node) {
+            tracing::warn!(
+                "Edge node: pairing {node} is past its notices for the hour; the first pin of {member} is only logged"
+            );
+            return;
+        }
+        let (node, member, remote) = (node.to_string(), member.to_string(), remote.to_string());
+        let told = self
+            .on_pool(move |_| pool::notify_first_pin(&node, &member, &remote))
+            .await;
+        if let Err(err) = told {
+            tracing::error!("Edge node: the administrators were not told of a first pin: {err}");
+        }
+    }
+
     /// Tell the administrators that `to` took pairing `node` over from `from`, or is held for their approval
     /// (plans/Edge-Node2.md §4.5); a failure is logged.
     async fn tell_takeover(&self, node: &str, from: &str, to: &str, remote: &str, held: bool) {
@@ -2497,6 +2580,7 @@ impl LinkService {
                 pinned,
                 displaced: &row.displaced,
                 forgotten: pool::forgotten(&row.pins, member),
+                member_key,
             })
         };
         // a live member of the edge cluster whose links are not known yet (it has written no row since another member
@@ -2638,6 +2722,19 @@ impl LinkService {
         };
         // named now, before anything else is awaited: a call dropped from here on still leaves no link behind
         let _ = named.set(member.to_string());
+        // a first pin with other members linked, on a list that names no key for the id: the administrators hear of it,
+        // since a node with only the pairing's key could have named it (SEC-CLU-81)
+        let unkeyed = pool::admitted_unkeyed(member, listed.as_deref(), linked_any.is_empty(), &known);
+        if pinned.is_none() && takeover.is_none() && unkeyed {
+            tracing::warn!(
+                "Edge link of {node}: member {member} from {remote} linked for the first time; its cluster names no key \
+                 for it, so its key was pinned on its own word"
+            );
+            let server = Arc::clone(&self.server);
+            let (key, to) = (node.to_string(), member.to_string());
+            let address = remote.clone();
+            tokio::spawn(async move { server.tell_first_pin(&key, &to, &address).await });
+        }
         // the serial writer keeps this edge member's row from now on (plans/Edge-Node2.md §4.6)
         self.server.member_links.notify_one();
         if let Some(from) = takeover {
@@ -2734,6 +2831,7 @@ impl Link for LinkService {
         match paired {
             Paired::Pinned { key_changed } => {
                 lock(&self.server.registry).revoked.remove(&node);
+                self.server.note_known_key(&fingerprint);
                 if key_changed {
                     // the links of the old key end now that its row has the new one
                     self.server.close(&node);

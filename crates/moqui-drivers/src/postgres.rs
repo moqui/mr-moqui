@@ -63,6 +63,8 @@ mod driver {
         target: Target,
         /// libpq `options`: server settings for each session, such as `-c statement_timeout=30000`.
         options: Option<String>,
+        /// The addresses a TCP host may resolve to, checked at each connection.
+        guard: moqui_core::driver::AddressGuard,
     }
 
     #[derive(Clone)]
@@ -79,7 +81,7 @@ mod driver {
     }
 
     impl Target {
-        fn endpoint(&self) -> Endpoint {
+        fn endpoint(&self, guard: moqui_core::driver::AddressGuard) -> Endpoint {
             match self {
                 #[cfg(unix)]
                 Target::Unix { socket_dir, port } => Endpoint::Unix(socket_dir.join(format!(".s.PGSQL.{port}"))),
@@ -87,11 +89,13 @@ mod driver {
                     host: host.clone(),
                     port: *port,
                     tls: None,
+                    guard,
                 },
                 Target::Tcp { host, port, tls } => Endpoint::Tcp {
                     host: host.clone(),
                     port: *port,
                     tls: Some(Arc::clone(tls)),
+                    guard,
                 },
             }
         }
@@ -227,6 +231,7 @@ mod driver {
                 database: database.into(),
                 password: None,
                 options: None,
+                guard: moqui_core::driver::AddressGuard::Off,
                 target: Target::Unix {
                     socket_dir: socket_dir.into(),
                     port: 5432,
@@ -259,6 +264,7 @@ mod driver {
                 database: database.into(),
                 password: None,
                 options: None,
+                guard: moqui_core::driver::AddressGuard::Off,
                 target: Target::TcpNoTls {
                     host: host.into(),
                     port,
@@ -298,12 +304,21 @@ mod driver {
                 database: database.into(),
                 password: None,
                 options: None,
+                guard: moqui_core::driver::AddressGuard::Off,
                 target: Target::Tcp {
                     host: host.into(),
                     port,
                     tls,
                 },
             })
+        }
+
+        /// Which addresses a TCP host may resolve to, checked at each connection, which connects to an address it
+        /// checked (SEC-TLS-101).
+        #[must_use]
+        pub fn address_guard(mut self, guard: moqui_core::driver::AddressGuard) -> Self {
+            self.guard = guard;
+            self
         }
 
         /// Server settings sent with each new session, the libpq `options` string
@@ -327,7 +342,7 @@ mod driver {
         ///
         /// Returns an error when the server rejects the connection or `SET TIME ZONE`.
         pub fn connect_postgres(&self) -> Result<PostgresConn, Error> {
-            let endpoint = self.target.endpoint();
+            let endpoint = self.target.endpoint(self.guard);
             let wire = Wire::connect(
                 &endpoint,
                 &self.user,

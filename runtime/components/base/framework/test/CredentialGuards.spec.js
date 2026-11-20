@@ -2,7 +2,8 @@
 // SEC-WEB-12; org.moqui.impl.UserServices check#AccountAction, org.moqui.sso.RecentAuthServices require#RecentAuth): a code
 // stands in for the old password only in a pre-authenticated session, never a signed-in one; issuing codes and adding or
 // ending a factor need a recent sign-in; another account's factors need ADMIN_IDENTITY_MANAGE and are refused when that
-// account holds access the caller lacks (heldBeyond), as is setting its password or changing its email, and an
+// account holds access the caller lacks (heldBeyond), as is setting its password, changing its email or other sign-in
+// fields, or enabling or disabling it (SEC-ADM-89), and an
 // administrator acting on another account (its codes, factors, password, email) needs a recent sign-in too; a verified
 // authenticator's secret is not given again; a code is sent at most once a half minute; an
 // identity operator gives no bundle to their own account; a session changes its own email address or provider link only
@@ -207,6 +208,55 @@ feature("another account's factors need ADMIN_IDENTITY_MANAGE and a recent sign-
         // an administrator's own password needs the old one, as anyone's
         r.ownByAdmin.updateSuccessful != true
         r.adminUnchanged
+    }
+})
+
+feature("another account's sign-in fields, and enabling or disabling it, need ADMIN_IDENTITY_MANAGE, bounded", {
+    when() {
+        const account = (userId) => one("moqui.security.UserAccount", {userId})
+        ec.user.logoutUser()
+        // OTHER holds the services and nothing more, as a holder of an app's Party screens
+        signIn(OTHER)
+        const fieldsRefused = call("update#UserAccount", {userId: OWNER, username: "credguard.taken", requirePasswordChange: "Y"})
+        const disableRefused = call("disable#UserAccount", {userId: OWNER})
+        const ownerAfter = account(OWNER)
+        sys(() => {
+            const row = ec.entity.find("moqui.security.UserAccount").condition("userId", SEALED).one()
+            row.setFields({disabled: "Y", disabledDateTime: null}, true, null, null)
+            row.update()
+        })
+        const enableRefused = call("enable#UserAccount", {userId: SEALED})
+        const sealedStill = account(SEALED).disabled
+        ec.user.logoutUser()
+        signIn(ADMIN)
+        // an administrator enables an account and disables one, but not one holding a sealed permission they lack
+        const heldEnable = call("enable#UserAccount", {userId: SEALED})
+        const heldStill = account(SEALED).disabled
+        const disabled = call("disable#UserAccount", {userId: OWNER})
+        const ownerDisabled = account(OWNER).disabled
+        const enabled = call("enable#UserAccount", {userId: OWNER})
+        sys(() => {
+            const row = ec.entity.find("moqui.security.UserAccount").condition("userId", SEALED).one()
+            row.setFields({disabled: "N", disabledDateTime: null}, true, null, null)
+            row.update()
+        })
+        return {fieldsRefused, disableRefused, ownerAfter, enableRefused, sealedStill, heldEnable, heldStill, disabled, ownerDisabled,
+            enabled, ownerEnabled: account(OWNER).disabled}
+    },
+    then(r) {
+        r.fieldsRefused.errors.includes("not yours")
+        r.disableRefused.errors.includes("not yours")
+        r.ownerAfter.username == "credguard.spec.owner"
+        r.ownerAfter.requirePasswordChange == "N"
+        r.ownerAfter.disabled == "N"
+        r.enableRefused.errors.includes("not yours")
+        r.sealedStill == "Y"
+        r.heldEnable.errors.includes("SQL_RUNNER_WEB")
+        r.heldStill == "Y"
+        r.disabled.errors == ""
+        r.ownerDisabled == "Y"
+        r.enabled.errors == ""
+        r.ownerEnabled == "N"
     }
 })
 

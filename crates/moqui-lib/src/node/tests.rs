@@ -34,6 +34,22 @@ fn deeply_nested_elements_are_an_error_not_a_stack_overflow() {
     MNode::parse_text("fine.xml", &fine).unwrap();
 }
 
+/// A start tag's attributes are bounded, as each is compared with every earlier one (SEC-SCR-87).
+#[test]
+fn a_tag_with_too_many_attributes_is_an_error() {
+    let tag = |count: usize| {
+        let attributes: String = (0..count).map(|n| format!(" a{n}=\"\"")).collect();
+        format!("<root{attributes}/>")
+    };
+    MNode::parse_text("fine.xml", &tag(1000)).unwrap();
+    let err = expect_parse_err(MNode::parse_text("wide.xml", &tag(1001)));
+    assert!(err.to_string().contains("more than 1000 attributes"), "{err}");
+    // a name repeated past the bound counts too
+    let repeated = format!("<root{}/>", " a=\"\"".repeat(1001));
+    let err = expect_parse_err(MNode::parse_text("repeated.xml", &repeated));
+    assert!(err.to_string().contains("more than 1000 attributes"), "{err}");
+}
+
 #[test]
 fn declaration_comment_cdata_entities_and_raw_names() {
     let xml = r#"<?xml version="1.0" encoding="UTF-8"?>

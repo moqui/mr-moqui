@@ -40,6 +40,16 @@
         <out-parameters><parameter name="refusal"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('checkScorer',context))</script></actions>
     </service>
+    <service verb="attach" noun="Scorer" allow-remote="false">
+        <description>Attach a scorer to an agent (live scoring of samplingRate of every user's finished runs of it: needs
+            AgentAudit, written to AgentAuditLog) or to a dataset (it scores each experiment result). A scorer of a service
+            other than the evals' own needs AgentAudit either way. Needs MONITOR_EVAL. The attach keeps who made it
+            (attachedByUserId): live scoring runs a scorer of another service as them (SEC-AI-95).</description>
+        <in-parameters><parameter name="scorerId" required="true"/><parameter name="agentId"/><parameter name="datasetId"/>
+            <parameter name="samplingRate" type="BigDecimal"/></in-parameters>
+        <out-parameters><parameter name="attachId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('attach',context))</script></actions>
+    </service>
     <service verb="save" noun="RunAsDatasetItem" allow-remote="false">
         <description>A dataset item from an agent run: the run's user message is the input; groundTruth is given, or the
             run's reply when useOutput is Y. Another user's run needs AgentAudit, and the read is logged
@@ -67,15 +77,20 @@
         <description>Runs the current version of a dataset through agentId (default the dataset's agent; each item and
             trial an AgentRun on the job surface as the current user, so the agent must serve job and the user needs
             AgentAdmin) or serviceName (called with input and metadata; its output parameter is the output). At most 200
-            items × trials. advance#Experiments reads and scores the results.</description>
+            items × trials. advance#Experiments reads and scores the results. An item's text may be another user's (a
+            saved run), so the agent's policy approves none of a run's writes, which are refused, unless policyWrites is Y.</description>
         <in-parameters><parameter name="datasetId" required="true"/><parameter name="agentId"/><parameter name="serviceName"/>
-            <parameter name="trials" type="Integer"/><parameter name="experimentName"/><parameter name="notes"/></in-parameters>
+            <parameter name="trials" type="Integer"/><parameter name="experimentName"/><parameter name="notes"/>
+            <parameter name="policyWrites" default-value="N"><description>Y lets the agent's tool policy approve the writes of
+                its runs, as for a job of its own; N (the default) refuses every write.</description></parameter></in-parameters>
         <out-parameters><parameter name="experimentId"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('start',context))</script></actions>
     </service>
     <service verb="advance" noun="Experiments" allow-remote="false" transaction="ignore">
         <description>For each running experiment (or experimentId): reads the runs that ended, calls service targets, scores
-            the outputs with the dataset's scorers, and ends the experiment when every result is done. A job each minute.</description>
+            the outputs with the dataset's scorers, and ends the experiment when every result is done. A job each minute,
+            which does each experiment as its starter; a user's call (Check now) needs MONITOR_EVAL_RUN. A target service runs
+            with authorization on as that user, never with it off (SEC-AI-95).</description>
         <in-parameters><parameter name="experimentId"/></in-parameters>
         <out-parameters><parameter name="experimentCount" type="Integer"/></out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/agent/AgentEval.js').execute('advance',context))</script></actions>

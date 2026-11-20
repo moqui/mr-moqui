@@ -46,7 +46,7 @@ mod widget;
 
 pub(crate) use engine::{
     engine_counters, engine_memory, eval_condition, heap_line, eval_map, eval_text, eval_value, is_lent, run_actions, run_script, stats,
-    heap_at_max, release_idle, thread_heap_peaks, Outcome,
+    heap_at_max, release_idle, thread_heap_peaks, Outcome, PreviewRuntime,
 };
 
 #[cfg(test)]

@@ -94,7 +94,7 @@ pub use pdf::{
     PdfLibrary, PdfPreview, PdfPreviewRequest, PdfRenderer, PDFJS_LOCATION, PDFJS_WORKER_LOCATION, PDF_UNAVAILABLE,
     PREVIEW_UNSUPPORTED,
 };
-pub(crate) use render::active_depth;
+pub(crate) use render::{active_depth, proposed_running};
 pub use render::{
     make_render, save_screen_last_info, send_redirect_and_stop_render, with_current_render, RenderOutput, RenderState,
     ScreenRender,

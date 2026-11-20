@@ -112,29 +112,178 @@ fn append_tree<W: Write>(builder: &mut tar::Builder<W>, path: &Path, name: &Path
     Ok(())
 }
 
-/// Unpack the tar.gz `archive` into `workspace`. The count of entries written. An entry whose path would leave the
-/// workspace is skipped, as `tar` refuses it.
+/// The most bytes an archive unpacks to when the job does not say (`git-ci` `max-unpack-bytes`, sent as the job's
+/// `limits.maxUnpackBytes`): 16 GiB, room for a build's `target` cache.
+pub const DEFAULT_MAX_UNPACK_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+/// The most entries an archive unpacks: what `ec.resource.extractArchive` takes by default.
+pub const MAX_UNPACK_ENTRIES: usize = 1_000_000;
+
+/// Unpack the tar.gz `archive` into `workspace`, at most [`DEFAULT_MAX_UNPACK_BYTES`] and [`MAX_UNPACK_ENTRIES`]
+/// ([`unpack_within`]). The count of entries written.
 ///
 /// # Errors
 ///
-/// When the archive does not read or an entry cannot be written.
+/// When the archive does not read, an entry cannot be written, or the archive passes a limit.
 pub fn unpack(archive: &Path, workspace: &Path) -> Result<usize, String> {
+    unpack_within(archive, workspace, DEFAULT_MAX_UNPACK_BYTES, MAX_UNPACK_ENTRIES)
+}
+
+/// Where `path` resolves on the file system now: its longest prefix that exists, canonicalized (through every link in
+/// it, the links earlier entries made included), with the rest put on by name, `..` going up from there. What does not
+/// exist yet holds no link. `None` for a path that is not plain (a prefix or root in the rest).
+fn resolve(path: &Path) -> Option<PathBuf> {
+    let mut existing = path.to_path_buf();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    let base = loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            break canonical;
+        }
+        let last = existing.components().next_back()?;
+        match last {
+            std::path::Component::Normal(name) => rest.push(name.to_os_string()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => rest.push("..".into()),
+            _ => return None,
+        }
+        if !existing.pop() {
+            return None;
+        }
+    };
+    let mut out = base;
+    for part in rest.into_iter().rev() {
+        if part == ".." {
+            out.pop();
+        } else {
+            out.push(part);
+        }
+    }
+    Some(out)
+}
+
+/// Whether a link's `target` stays inside `root` (the canonical workspace) once resolved from `from`, the directory it
+/// is read from: a symbolic link's own directory in the workspace, a hard link's the workspace itself. An absolute
+/// target never does. The resolution goes through the links already unpacked, so a chain (`deep -> .`, then
+/// `deep/esc -> ..`) is seen for where it leads.
+///
+/// The target's own components are followed one at a time: one that exists is canonicalized (through a link), and a
+/// `..` after one that does not exist yet is refused, since a later entry could make that component a link and move
+/// where the `..` lands (`sub/p -> ../q/..`, then `q -> .`).
+fn link_inside(root: &Path, from: &Path, target: &Path) -> bool {
+    if target.is_absolute() {
+        return false;
+    }
+    let Some(mut at) = resolve(from) else {
+        return false;
+    };
+    let mut missing = false;
+    for component in target.components() {
+        match component {
+            std::path::Component::Normal(name) => {
+                let next = at.join(name);
+                if !missing {
+                    if let Ok(real) = next.canonicalize() {
+                        at = real;
+                        continue;
+                    }
+                    missing = true;
+                }
+                at = next;
+            }
+            std::path::Component::ParentDir => {
+                if missing {
+                    return false;
+                }
+                at.pop();
+            }
+            std::path::Component::CurDir => {}
+            _ => return false,
+        }
+    }
+    at.starts_with(root)
+}
+
+/// After an unpack: remove each link it made that now resolves outside `root`, as later entries can move where an
+/// earlier link leads. The count removed.
+pub(crate) fn remove_links_out(root: &Path, made: &[PathBuf]) -> usize {
+    let mut removed = 0;
+    for link in made {
+        let out = link.canonicalize().is_ok_and(|real| !real.starts_with(root));
+        if out {
+            match std::fs::remove_file(link) {
+                Ok(()) => removed += 1,
+                Err(err) => tracing::error!(
+                    "a cache's link out of the workspace, {}, was not removed: {err}",
+                    link.display()
+                ),
+            }
+        }
+    }
+    removed
+}
+
+/// [`unpack`] with the limits: the entries' bytes (`entry.size()`, counted before each is written) and their count.
+/// An entry that is not a regular file, a directory or a link that stays inside the workspace (a device, a FIFO, a
+/// sparse file, a link out) is skipped, and one whose path would leave the workspace too, as `tar` refuses it.
+/// Past a limit the unpack stops with an error, which the runner logs as a cache not restored; what it wrote stays.
+///
+/// # Errors
+///
+/// When the archive does not read, an entry cannot be written, or the archive passes a limit (SEC-GIT-95).
+pub fn unpack_within(archive: &Path, workspace: &Path, max_bytes: u64, max_entries: usize) -> Result<usize, String> {
     let file = File::open(archive).map_err(|err| format!("{}: {err}", archive.display()))?;
     let mut tar = tar::Archive::new(GzDecoder::new(file));
     tar.set_overwrite(true);
-    let mut count = 0;
+    let root = workspace
+        .canonicalize()
+        .map_err(|err| format!("{}: {err}", workspace.display()))?;
+    let (mut count, mut seen, mut bytes) = (0, 0usize, 0u64);
+    let mut made_links: Vec<PathBuf> = Vec::new();
     for entry in tar
         .entries()
         .map_err(|err| format!("the archive does not read: {err}"))?
     {
         let mut entry = entry.map_err(|err| format!("the archive does not read: {err}"))?;
+        seen += 1;
+        if seen > max_entries {
+            return Err(format!("the archive has more than {max_entries} entries"));
+        }
+        let kind = entry.header().entry_type();
+        let wanted = match kind {
+            tar::EntryType::Regular | tar::EntryType::Continuous | tar::EntryType::Directory => true,
+            tar::EntryType::Symlink | tar::EntryType::Link => {
+                // a hard link names a path from the archive's root, a symbolic one a path from its own directory
+                let from = if kind == tar::EntryType::Link {
+                    Some(root.clone())
+                } else {
+                    entry
+                        .path()
+                        .ok()
+                        .map(|path| root.join(path.parent().unwrap_or(Path::new(""))))
+                };
+                let target = entry.link_name().ok().flatten().map(|target| target.into_owned());
+                from.zip(target)
+                    .is_some_and(|(from, target)| link_inside(&root, &from, &target))
+            }
+            _ => false,
+        };
+        if !wanted {
+            continue;
+        }
+        bytes = bytes.saturating_add(entry.size());
+        if bytes > max_bytes {
+            return Err(format!("the archive unpacks to more than {max_bytes} bytes"));
+        }
         // unpack_in answers false for a path that would leave the directory
+        let link = (kind == tar::EntryType::Symlink)
+            .then(|| entry.path().ok().map(|path| root.join(path)))
+            .flatten();
         if entry
             .unpack_in(workspace)
             .map_err(|err| format!("an entry was not written: {err}"))?
         {
             count += 1;
+            made_links.extend(link);
         }
     }
-    Ok(count)
+    Ok(count - remove_links_out(&root, &made_links))
 }

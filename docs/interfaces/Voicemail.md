@@ -172,6 +172,12 @@ local node routed whose voicemail starts after it went away takes a message the 
 queued at once is kept in the spool with its details and tried again, from 2 seconds doubling to 5 minutes, and the
 engine's next start queues what the spool still holds.
 
+An edge node keeps each pairing's greetings and prompts under that pairing's own `dbresource://moqui/edge-node/<node>/`,
+within the pairing's queue cap; past it, the files no fallback names any more go first (a prompt is fetched again when a
+call needs it). An edge node that kept greetings at their shared locations before this (SEC-CLU-90) no longer reads
+those: each greeting is queued to it again when its box's greeting next changes, and until then the fallback plays
+the default.
+
 ## Properties
 
 | Property | Default | |

@@ -504,9 +504,19 @@ fn main() {
     fi
 }
 
-# The binary for a package, built first so it is not stale; with --nobuild only when it is not there.
+# The binary for a package, built first so it is not stale; with --nobuild only when it is not there. With --nobuild
+# and no package option, the newer of the release and debug binaries. Which one is used goes to stderr, with a warning
+# when a Rust source, Cargo.toml or Cargo.lock under crates or runtime/components is newer than it.
 moqui_binary() {
-    local package=$1 bin
+    local package=$1 bin newer
+    if [ -n "$OPT_NOBUILD" ] && [ -z "$OPT_PACKAGE" ]; then
+        local release debug
+        release=$(binary_path release)
+        debug=$(binary_path debug)
+        if [ -x "$debug" ] && { [ ! -x "$release" ] || [ "$debug" -nt "$release" ]; }; then
+            package=debug
+        fi
+    fi
     bin=$(binary_path "$package")
     if [ -z "$OPT_NOBUILD" ]; then
         build_binary "$package"
@@ -516,6 +526,14 @@ moqui_binary() {
     fi
     if [ ! -x "$bin" ] && ! dry_run; then
         die "$(rel "$bin") is not there after the build"
+    fi
+    if [ -x "$bin" ]; then
+        info "using $(rel "$bin")" >&2
+        if [ -n "$OPT_NOBUILD" ]; then
+            newer=$(find "$ROOT/crates" "$ROOT/runtime/components" -path '*/target' -prune -o \
+                \( -name '*.rs' -o -name Cargo.toml -o -name Cargo.lock \) -newer "$bin" -print -quit 2>/dev/null)
+            [ -z "$newer" ] || warn "$(rel "$bin") is older than $(rel "$newer"); drop --nobuild to build it again"
+        fi
     fi
     printf '%s\n' "$bin"
 }

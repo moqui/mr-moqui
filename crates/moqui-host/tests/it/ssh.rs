@@ -355,6 +355,8 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
             ("sendUrl", Value::string(&host)),
             ("username", Value::string("john.doe")),
             ("password", Value::string("moqui")),
+            // the server is this machine: the private network is allowed by the row (SEC-TLS-96)
+            ("allowPrivateNetwork", Value::string("Y")),
         ],
     );
     assert_eq!(errors, "");
@@ -1217,6 +1219,27 @@ fn the_login_dialog_lets_in_a_client_with_no_key() {
             .await
             .unwrap_err()
             .contains("channel request refused"));
+        // A TERM past 256 bytes is refused, so no channel keeps one of the size a packet holds (SEC-FIL-88).
+        let mut channel = handle.channel_open_session().await.unwrap();
+        channel
+            .request_pty(true, &"x".repeat(300), 80, 24, 0, 0, &[])
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        assert!(read_until(&mut channel, &mut seen, "never", true)
+            .await
+            .unwrap_err()
+            .contains("channel request refused"));
+        channel.close().await.unwrap();
+        // and so is an env value past 256 bytes, a terminal variable's or GIT_PROTOCOL's
+        let mut channel = handle.channel_open_session().await.unwrap();
+        channel.set_env(true, "COLORTERM", "x".repeat(300)).await.unwrap();
+        let mut seen = Vec::new();
+        assert!(read_until(&mut channel, &mut seen, "never", true)
+            .await
+            .unwrap_err()
+            .contains("channel request refused"));
+        channel.close().await.unwrap();
 
         // The shell request is the apps with the login dialog, the name filled in and the password next.
         let mut channel = pty(&handle, 120, 40).await;

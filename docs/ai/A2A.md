@@ -50,7 +50,11 @@ The server is off by default; while it is off `/a2a` and `/.well-known/agent-car
 HTTP Basic with an app password made for `ai` (or before app passwords had a scope), or a login key as the password — never the account password, which is 401. Credentials are taken
 only over TLS, a believed proxy's https or from a client on this machine (behind a believed proxy, the client it names,
 not the proxy's loopback address). Without credentials the answer is 401 with
-`WWW-Authenticate: Bearer realm="a2a", Basic realm="a2a"`; a user without the permissions is 403. A refused login counts
+`WWW-Authenticate: Bearer realm="a2a", Basic realm="a2a"`; a user without the permissions is 403. When an `LlmApiClient` row
+with the `a2a` scope names the credential (System › LLM › Gateway), one such row of the user's must not be disabled (403
+otherwise), and their `allowedAgents`, when set, bound the agents of new tasks, of old contexts and tasks (a task
+of an agent they leave out is not found, nor listed), and of the extended card. A credential no row with the `a2a` scope names (none, or rows
+for the gateway or MCP only) is bounded by its user's permissions alone. A refused login counts
 for web protection as a refused screen login does. Each run counts once against the AT_LLM tarpit (`agent:<agentId>`);
 a caller over it gets 429 with `Retry-After`. OIDC JWTs come later (plan 11, answered question 10); until then the card
 lists no `openIdConnect` scheme, whatever `oidc-issuer` says.
@@ -249,5 +253,5 @@ on a second server over loopback.
 
 Long remote tasks: a delegation waits for its task within its timeout, and a `RemoteTask` pause resumed by the remote's
 push notifications is not built; OIDC JWT validation (and with it the `openIdConnect` scheme on
-the card); `LlmApiClient` client records with the `a2a` scope; tenants in the HTTP+JSON paths; the admin screen of A2A
+the card); tenants in the HTTP+JSON paths; the admin screen of A2A
 tasks; the cleanup of old tasks (`clean#AgentData`; the push rows are cleaned by the push thread).

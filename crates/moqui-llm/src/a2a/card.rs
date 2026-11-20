@@ -289,6 +289,7 @@ pub fn extended(
 ) -> Result<Json, moqui_lib::error::Error> {
     let mut skills: Vec<Json> = exposed_agents(facade)?
         .iter()
+        .filter(|(agent, _)| caller.allows(&agent.agent_id))
         .flat_map(|(agent, row)| agent_skills(agent, row))
         .take(MAX_SKILLS)
         .collect();

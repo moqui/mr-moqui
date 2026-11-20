@@ -149,12 +149,39 @@ pub(crate) fn run_hashed<T>(
     run: impl FnOnce(&str, u64, bool) -> Result<T, crate::script::oxide::Outcome>,
 ) -> Result<T, Error> {
     use crate::script::oxide::Outcome;
+    let _authz = keeps_authz(kind)
+        .then(|| crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz))
+        .flatten();
+    // a widget, condition or template expression runs on the preview's allow-list host while a preview holds the
+    // runtime, whoever's frame is on top: its text may be a proposed definition's (SEC-AI-102)
+    let _preview = if matches!(
+        kind,
+        EntryKind::Condition | EntryKind::Value | EntryKind::FieldValue | EntryKind::Expand | EntryKind::Map
+    ) {
+        Some(crate::script::preview::enter_entry()?)
+    } else {
+        None
+    };
     let ran = run(source, hash, true);
     count(kind);
     match ran {
         Ok(value) => Ok(value),
         Err(Outcome::Error(err)) => Err(err),
         Err(Outcome::Fallback(reason)) => Err(unsupported(kind, reason)),
+    }
+}
+
+/// Whether an entry of `kind` holds the scope a service call holds ([`crate::context::ExecutionContext::keep_authz`]), so
+/// a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()` it leaves on ends with it (SEC-RTE-92): a template, and
+/// in a screen render each widget expression, condition and template text. An expression outside a render is a
+/// service's or a rule's, which hold the scope themselves, or a test's, which reads what it set.
+fn keeps_authz(kind: EntryKind) -> bool {
+    match kind {
+        EntryKind::Template => true,
+        EntryKind::Condition | EntryKind::Value | EntryKind::FieldValue | EntryKind::Expand | EntryKind::Map => {
+            crate::screen::active_depth() > 0
+        }
+        EntryKind::Actions | EntryKind::Script | EntryKind::Spec | EntryKind::Host => false,
     }
 }
 

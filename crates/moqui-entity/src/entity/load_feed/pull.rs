@@ -18,8 +18,9 @@ use std::io::BufRead;
 
 use moqui_lib::error::Error;
 
-/// Largest single XML element or JSON value the streaming loader holds at once.
-const MAX_UNIT: usize = 64 * 1024 * 1024;
+/// Largest single XML element or JSON value the streaming loader holds at once, and the largest document, CSV record
+/// or nested zip it reads whole.
+pub(super) const MAX_UNIT: usize = 64 * 1024 * 1024;
 
 pub(super) struct Pull<R> {
     reader: R,
@@ -41,9 +42,16 @@ impl<R: BufRead> Pull<R> {
         }
     }
 
+    /// Read the rest of the input into the buffer, held to [`MAX_UNIT`]: a document whose root is not a data root is
+    /// parsed as one tree, and a zip entry inflates as it streams (SEC-DAT-91).
     pub(super) fn read_to_end(&mut self) -> Result<(), Error> {
         while !self.eof {
             self.fill()?;
+            if self.buf.len() > MAX_UNIT {
+                return Err(Error::new(format!(
+                    "the document is larger than {MAX_UNIT} bytes; only an entity-facade-xml file is read element by element"
+                )));
+            }
         }
         Ok(())
     }

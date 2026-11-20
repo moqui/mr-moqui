@@ -115,6 +115,97 @@ function purposes() {
 function isCustom(group, purposeIds = new Set(purposes().map(row => row.enumId))) {
     return !!group?.groupTypeEnumId && purposeIds.has(group.groupTypeEnumId)
 }
+// A privileged bundle is not the actor's to give their own account (SEC-ADM-90): a privileged group (ADMIN among them), a
+// group that grants a sealed permission, even one the actor holds, a bundle that registers a sensitive capability
+// (CpkSensitive: BOSS_ACCOUNTING_ADMIN, BOSS_PRODUCTS_ADMIN, BOSS_ADMIN_IDENTITY), or a group that grants now a sensitive
+// permission or binding the actor does not hold already ([`unheldSensitive`]: a custom group given a sensitive bundle's
+// grants first and joined second is the same widening as the other order, which OWN_GROUP refuses). It is given to them
+// by another access administrator, so holding ADMIN_ACCESS_MANAGE does not make a second seal or an administrator's
+// reach for oneself. Any other bundle they may delegate, a plain reader bundle such as BOSS_PEOPLE_READ among them, they
+// may also hold, as SEC-ADM-06 chose (an access administrator changes their own memberships; an identity operator does
+// not), with the reason in the audit log. The refusal, or null.
+//
+// A member of ADMIN, who holds every grant there is to give and is the only one who changes ADMIN itself, is exempt from
+// this and from OWN_GROUP; each such change of their own access is marked on the audit log's reason ([`ownAuditReason`]).
+function ownPrivilegedRefusal(account, groupId, privileged = privilegedIds(), sealed = sealedIds()) {
+    if (!account || account.userId !== ec.user.userId || adminMember()) return null
+    const sealedGrant = rows(GRANT, {userGroupId: groupId}).some(row => current(row) && sealed.has(row.userPermissionId))
+    const sensitive = sensitiveBundle(groupId)
+    const unheld = unheldSensitive(groupId, sealed)
+    if (!privileged.has(groupId) && !sealedGrant && !sensitive && !unheld) return null
+    const what = privileged.has(groupId)
+        ? " is a privileged group"
+        : sealedGrant
+          ? " grants a sealed permission"
+          : sensitive
+            ? " offers a sensitive capability"
+            : " grants " + unheld + ", which you do not hold"
+    return {reasonCode: "OWN_ACCOUNT", reason: groupId + what + ": another access administrator gives it to your own account"}
+}
+const adminMember = () => ec.user.isInGroup("ADMIN")
+// Whether groupId is a bundle that registers a sensitive capability (a CpkSensitive permission).
+const sensitiveBundle = groupId => rows(BUNDLE_PERMISSION, {userGroupId: groupId, capabilityKindEnumId: "CpkSensitive"}).length > 0
+// A current grant of groupId the actor does not hold already and that is sensitive, or null: a permission that is sealed
+// or that a bundle registers as CpkSensitive, or an allowing artifact binding that a CpkSensitive bundle registers and no
+// plain bundle registers as far (a reader bundle's view binding of the same artifact group makes a view binding plain,
+// not one of all actions). A registration or a binding reaches as far as another with the same type (or ALWAYS for
+// ALLOW), the same action (or ALL), and no row rule the other has not; a binding is held through a group of the actor's
+// with a binding of the same artifact group that reaches as far.
+function unheldSensitive(groupId, sealed = sealedIds()) {
+    const at = nowMs()
+    const sensitivePermission = permissionId =>
+        sealed.has(permissionId) ||
+        rows(BUNDLE_PERMISSION, {userPermissionId: permissionId, capabilityKindEnumId: "CpkSensitive"}).length > 0
+    const permission = rows(GRANT, {userGroupId: groupId}).find(
+        row => current(row, at) && sensitivePermission(row.userPermissionId) && !ec.user.hasPermission(row.userPermissionId)
+    )
+    if (permission) return permission.userPermissionId
+    const filtersOf = row => new Set(rows(AUTHZ_FILTER, {artifactAuthzId: row.artifactAuthzId}).map(filter => filter.entityFilterSetId))
+    const mine = new Set(Array.from(ec.user.getUserGroupIdSet() || []).map(String))
+    // whether a binding of type and action with the row rules filters reaches as far as row
+    const reachesAs = (type, action, filters, row) => {
+        if (type !== row.authzTypeEnumId && type !== "AUTHZT_ALWAYS") return false
+        if (action !== row.authzActionEnumId && action !== "AUTHZA_ALL") return false
+        const wanted = filtersOf(row)
+        return Array.from(filters).every(filterSetId => wanted.has(filterSetId))
+    }
+    const reaches = (held, row) => reachesAs(held.authzTypeEnumId, held.authzActionEnumId, filtersOf(held), row)
+    // a bundle's registration of the row's artifact group, as apply#Grants writes it: ALLOW and ALL when not set
+    const registrationReaches = (registration, row) =>
+        reachesAs(
+            registration.authzTypeEnumId || "AUTHZT_ALLOW",
+            registration.authzActionEnumId || "AUTHZA_ALL",
+            idList(registration.entityFilterSetIds),
+            row
+        )
+    const sensitiveBinding = row => {
+        const registered = rows(BUNDLE_ARTIFACT, {artifactGroupId: row.artifactGroupId})
+        return (
+            registered.some(registration => sensitiveBundle(registration.userGroupId)) &&
+            !registered.some(registration => !sensitiveBundle(registration.userGroupId) && registrationReaches(registration, row))
+        )
+    }
+    const binding = rows(AUTHZ, {userGroupId: groupId}).find(
+        row =>
+            row.authzTypeEnumId !== "AUTHZT_DENY" &&
+            sensitiveBinding(row) &&
+            !rows(AUTHZ, {artifactGroupId: row.artifactGroupId}).some(held => mine.has(String(held.userGroupId)) && reaches(held, row))
+    )
+    return binding ? "the artifact group " + binding.artifactGroupId : null
+}
+// Whether the actor is in groupId now or from a later date: a membership that starts tomorrow is theirs as much as one
+// today, for OWN_GROUP.
+function actorInGroup(groupId) {
+    if (ec.user.isInGroup(groupId)) return true
+    const at = nowMs()
+    return rows(MEMBER, {userGroupId: groupId, userId: ec.user.userId}).some(row => (ms(row.thruDate) ?? Infinity) > at)
+}
+// The audit reason of a change an ADMIN member makes to their own access, exempt from the own-access rules: marked so a
+// reviewer finds it.
+function ownAuditReason(reason) {
+    const mark = "[own access, ADMIN member]"
+    return reason ? (reason + " " + mark).slice(0, 255) : mark
+}
 // What the actor may change of a group: a registered bundle or a custom group, and for a privileged group only a member. The
 // reason code when not.
 function groupRefusal(group, registry = bundles(), privileged = privilegedIds()) {
@@ -554,10 +645,17 @@ function storeMembership(p) {
                 account.username + " is already a member of " + group.userGroupId + " for those dates"
             )
     }
+    // a new membership of one's own, or one's own kept longer, in a privileged bundle
+    const widensOwn =
+        account.userId === ec.user.userId && (!existing || (ms(existing.thruDate) ?? Infinity) < (thruDate ?? Infinity))
+    if (widensOwn) {
+        const own = ownPrivilegedRefusal(account, group.userGroupId)
+        if (own) return refused(own.reasonCode, own.reason)
+    }
     const row = {userGroupId: group.userGroupId, userId: account.userId, fromDate, thruDate}
     const path = identity.administrationPath({memberships: [row]})
     if (!path.allowed) return refused(path.reasonCode, path.reason)
-    auditReason(reason, ["fromDate", "thruDate"])
+    auditReason(widensOwn && adminMember() ? ownAuditReason(reason) : reason, ["fromDate", "thruDate"])
     const value = ec.entity.makeValue(MEMBER)
     value.setFields(
         {userGroupId: row.userGroupId, userId: row.userId, fromDate: iso(fromDate), thruDate: iso(thruDate)},
@@ -788,6 +886,17 @@ function grantPreview(p) {
     if (!group) throw new Error("Group " + p.userGroupId + " is not available")
     const refusal = groupRefusal(group)
     const changes = evaluate(group, requested(p))
+    // a group the actor is in now, or from a later date, gets no permission or binding added by them: that would widen their
+    // own access, which another access administrator does (SEC-ADM-90). Ending one, and a row rule (which narrows), stay
+    // theirs; a member of ADMIN is exempt, and the change is marked on the audit log (applyGrants).
+    if (!adminMember() && actorInGroup(group.userGroupId))
+        for (const change of changes)
+            if (change.allowed && !change.noChange && change.action === "add" && change.kind !== "scope")
+                Object.assign(change, {
+                    allowed: false,
+                    reasonCode: "OWN_GROUP",
+                    reason: group.userGroupId + " is a group you are in: another access administrator adds to its grants"
+                })
     const memberCount = memberCounts().get(group.userGroupId) || 0
     const refusedChanges = changes.filter(change => !change.allowed)
     return {
@@ -839,7 +948,8 @@ function applyGrants(p) {
     if (!path.allowed) return refused(path.reasonCode, path.reason)
     const groupId = preview.group.userGroupId
     const now = nowMs()
-    auditReason(reason, ["fromDate", "thruDate", "authzTypeEnumId"])
+    const ownGroup = adminMember() && actorInGroup(groupId) && preview.changes.some(change => change.action === "add" && !change.noChange)
+    auditReason(ownGroup ? ownAuditReason(reason) : reason, ["fromDate", "thruDate", "authzTypeEnumId"])
     let added = 0
     let ended = 0
     // row rules last, so one on a binding this request adds finds it
@@ -1104,11 +1214,16 @@ function applyGrantProposal(p) {
     const bundleList = proposalBundles(p)
     const first = bundleList.find(row => !row.allowed)
     if (first) return refused(first.reasonCode, first.reason, {bundleList})
+    // an access administrator's own account: not a privileged bundle (SEC-ADM-90)
+    for (const row of bundleList) {
+        const own = ownPrivilegedRefusal(account, row.bundleGroupId)
+        if (own) return refused(own.reasonCode, own.reason, {bundleList})
+    }
     const now = nowMs()
     const fromDate = p.fromDate != null && p.fromDate !== "" ? ms(p.fromDate) : now
     if (!Number.isFinite(fromDate) || fromDate < now - 60000) throw new Error("A proposal's memberships start now or later")
     const added = []
-    auditReason(reason, ["fromDate", "thruDate"])
+    auditReason(account.userId === ec.user.userId && adminMember() ? ownAuditReason(reason) : reason, ["fromDate", "thruDate"])
     for (const row of bundleList) {
         const existing = rows(MEMBER, {userGroupId: row.bundleGroupId, userId: account.userId}).some(
             member => (ms(member.thruDate) ?? Infinity) > fromDate
@@ -1157,6 +1272,8 @@ const lib = {
     delegable,
     privilegedIds,
     sealedIds,
+    sensitiveBundle,
+    adminMember,
     isCustom,
     purposes,
     groupRefusal,

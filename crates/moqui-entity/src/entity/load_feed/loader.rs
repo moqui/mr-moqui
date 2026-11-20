@@ -72,10 +72,41 @@ pub(super) struct RelInfo {
     pub(super) pairs: Vec<(String, String)>,
 }
 
+thread_local! {
+    /// How many seed or install loads run on this thread ([`seed_load_running`]).
+    static SEED_LOADS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts a seed or install load on this thread while it lives.
+struct SeedLoad;
+
+impl SeedLoad {
+    fn enter() -> Self {
+        SEED_LOADS.with(|count| count.set(count.get().saturating_add(1)));
+        Self
+    }
+}
+
+impl Drop for SeedLoad {
+    fn drop(&mut self) {
+        SEED_LOADS.with(|count| count.set(count.get().saturating_sub(1)));
+    }
+}
+
+/// Whether a seed or install load runs on this thread: [`load_entity_data`] of a location (a component's data files, the
+/// CLI's and a deploy's loads) that does not restrict sensitive entities. A load of a request's text, a Tools load and an
+/// entity sync's put (which restrict them) are none. The endpoint-change rule (`EndpointSecrets.js`, SEC-TLS-116) lets
+/// such a load write an address with its stored secret.
+#[must_use]
+pub fn seed_load_running() -> bool {
+    SEED_LOADS.with(|count| count.get() > 0)
+}
+
 /// Load one XML, CSV, JSON, or zip location, or a directory of those files. As Java, `options.components` does not
 /// filter a location given here; the callers that gather locations use [`location_in_components`].
 pub fn load_entity_data(facade: &EntityFacade, location: &str, options: &LoadOptions) -> Result<LoadResult, Error> {
     let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
+    let _seed = (!options.restrict_sensitive_entities).then(SeedLoad::enter);
     let path = resolve_location(facade, location)?;
     let mut failed_files = 0;
     let records = load_path(facade, location, &path, options, &mut failed_files)?;
@@ -99,17 +130,25 @@ pub fn load_entity_xml_text(
     })
 }
 
-/// CSV or JSON text written to the file `path`, as Java's `csvText` and `jsonText`: one transaction, named `label`,
-/// and in a check no `-- Checked data` message.
-pub fn load_entity_text_file(
+/// CSV (`json` false) or JSON text, as Java's `csvText` and `jsonText`: one transaction, named `label`, and in a
+/// check no `-- Checked data` message. Read from memory: the text, which may hold any data, is never written to a
+/// file another local user could read (SEC-OUT-89).
+pub fn load_entity_text(
     facade: &EntityFacade,
     label: &str,
-    path: &Path,
+    text: &str,
+    json: bool,
     options: &LoadOptions,
 ) -> Result<LoadResult, Error> {
     let _scope = fk_scope(options.dummy_fks, options.disable_fk_create);
     let records = super::check::at_location(label, || {
-        in_file_transaction(facade, options, || load_file(facade, label, path, options))
+        in_file_transaction(facade, options, || {
+            if json {
+                load_json_reader(facade, label, text.as_bytes(), options)
+            } else {
+                load_csv_reader(facade, label, text.as_bytes(), options)
+            }
+        })
     })?;
     Ok(LoadResult {
         records,

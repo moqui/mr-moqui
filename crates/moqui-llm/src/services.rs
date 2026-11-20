@@ -1261,6 +1261,14 @@ fn start_agent_run(parameters: &Parameters, _facade: &EntityFacade) -> Out {
         tail: text(parameters, "tail"),
         client_request_id: text(parameters, "clientRequestId"),
         client_message_id: text(parameters, "clientMessageId"),
+        // what the client can do only lowers the surface's capabilities
+        client_caps: text(parameters, "clientCaps").map(|caps| {
+            caps.split(',')
+                .map(str::trim)
+                .filter(|cap| !cap.is_empty())
+                .map(str::to_string)
+                .collect()
+        }),
         ..super::run::StartRequest::default()
     };
     match super::run::start_run(&factory, &request) {

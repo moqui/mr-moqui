@@ -52,7 +52,7 @@ BasicComms (`runtime/components/base/basic-comms`) is the framework's Comms app.
 - **Link previews.** After a message or its edit commits, `fetch#LinkPreviews` (`authenticate="anonymous-all"`, registered on commit by `queue#LinkPreviews`) makes the server fetch up to 3 links of the body, so any user who can post makes the server send requests. The request, its address guard and its limits are a row in [Attack-Surface-Outbound.md](Attack-Surface-Outbound.md#requests-the-server-makes). No picture is fetched. A preview is cached in `ChatLinkPreview` for 24 hours (1 hour when it failed), by the SHA-256 of the URL. Previews are off when `chat@link-previews` is `false`, when the sender's preference `CHAT_LINK_PREVIEWS` is `N`, in an encrypted room, and for a bridge's external actor. No limit other than the 3 links a message bounds how often a user makes the server fetch.
 - **Presence.** `get#UserStatuses` (`authenticate="false"`, reached from `/userStatuses` with authorization disabled) answers, for up to 500 user ids of the caller's choice, each user's presence, status text, emoji, clear-at time, `inCall` and `lastActiveDate`. It checks no shared room. An external caller (`EXTERNAL_USER`) gets only their own. An id with no `UserStatus` row is answered as offline, the same as an id that is no account. Another user who is offline, or invisible, is answered with no `lastActiveDate` and `inCall` false, and the `userStatus` push to co-members carries `inCall` false for them (SEC-COM-06). The status text and emoji are still answered.
 - **Pushes.** Chat pushes are notifications that are not persisted, on the topics `chatRoom:<chatRoomId>` (to the room's member users), `chatUser:<userId>` and `userStatus` (to the user's room co-members). A `/notws` topic is only a filter: a notification is queued on the sockets of the users its `ROUTE_USER_IDS` name, so following another user's `chatRoom:<id>`, `chatUser:<userId>` or `rtc:<callSessionId>` topic delivers nothing.
-- **Device pushes** (plans/Comms-Messaging.md §7; `service/chat_push.rs`, `ChatPushServices.xml`). A message pushes to the devices of the room's members, and of a user it mentions who may read the room, by the room's level; no service takes a recipient from the caller (`append#Event` writes the job, `run#ChatPush`, `queue#ReadClear` and `filter#RingUsers` are `allow-remote="false"`). Each push is encrypted to its device's keys (RFC 8291) for every provider; the push service sees the device's token or endpoint, the time, a collapse key or Topic (an HMAC, keyed by `push/web@vapid-key`, of the registration, the room and the kind: no room id, and no link between two users' pushes of a room) and, for FCM, the registration id. A device that moves to another user drops what waits for it, and a send checks the device's user. An encrypted room's push has the room's name and the sender's name, never text; a user whose `CHAT_NOTIFY_PREVIEW` is N gets no snippet. An FCM device that gave no keys gets `{kind, pushId}` only for a chat push; a notification to it keeps its kind, topic and tag only, and a call's ring goes to Google as it was, with `callSessionId`, `chatRoomId` and `caller` readable (`fcm.rs`). By default a plain room's push carries a snippet of the body (140 characters), the room name and the sender, which a locked device may show; only `CHAT_NOTIFY_PREVIEW` `N` removes the snippet. The payload is written to `PushOutbox.payloadJson` (not an encrypted field) when the job is worked and kept until 7 days after the push is done. A deleted message is left out only when the payload is written: at the send the worker checks the time to live (4 weeks), the read marker, that the device is enabled and still the user's, and a native device's key, not that the event is not redacted, that the user is still a member or that the account may sign in, so a push held by do not disturb or waiting on its push service goes out as written. Redaction, retention and member removal do not name `PushOutbox`. One thread a node (`moqui-chat-push`) sends all chat pushes one after another, up to 500 a round, each a blocking POST with a 3 second timeout for the whole request (a Web Push or UnifiedPush one), internal addresses refused and no redirects; a 2xx answer is delivered, and an endpoint that never answers is tried 12 times. A Web Push or UnifiedPush answer taken after 2 seconds counts as a failure of its endpoint though delivered, so one that answers late is disabled after 5 in a row as one that fails is (`PushTransport::slow_after`); storing the endpoint again keeps its failures, and one disabled for them stays disabled (`keep_failures`), so the browser ends its subscription and subscribes again for a new endpoint (`WebrootPush.js` `subscribeAgain`); and each recipient's pushes take at most 6 seconds of a round: the rest of that user's are put off to the next round and the pushes due are read again, up to 4 times a round, so a user with many old pushes does not hold everyone else's (`PushTransport::user_round_budget`, `UserBudget`, `put_off`) (plans/Security-Review-Medium.md SEC-COM-81). `store#WebPushSubscription` (`POST /WebPush/store`, any signed-in user) makes a row for each new endpoint (https with a host and no user part) and keeps at most `push/web@max-subscriptions` (10) of a user's active, disabling the longest unregistered past it (`cap_subscriptions`, SEC-COM-81), so a user's stored endpoints still decide where the server posts for each message of their rooms, at most ten times a message; a browser subscription is removed at logout and by nothing else that was found. `register#PushDevice` (`/qapps/registerClientPush`, a signed-in app holding a live device key of the user) holds a device key to one row; with provider `unifiedpush` its `token` is an https endpoint the server posts to in the same way. A VAPID token goes to whatever host an endpoint names, for UnifiedPush too when the key is set. `send#TestPush` (`/qapps/testClientPush`) queues a push for the caller's own device or the endpoint the caller names, one a user every 10 seconds whichever device asks (SEC-COM-81). `ack#Push` (`/qapps/ackClientPush`) counts only the caller's own push or device. `find#PushHealth` (System, Push Health) needs `PushHealthAdmin` (ADMIN) and returns no endpoint or key. A user's do not disturb allowed list (`store#DndAllowed`) is the user's own preference; it lets the people on it ring the user's phones through do not disturb.
+- **Device pushes** (plans/Comms-Messaging.md §7; `service/chat_push.rs`, `ChatPushServices.xml`). A message pushes to the devices of the room's members, and of a user it mentions who may read the room, by the room's level; no service takes a recipient from the caller (`append#Event` writes the job, `run#ChatPush`, `queue#ReadClear` and `filter#RingUsers` are `allow-remote="false"`). Each push is encrypted to its device's keys (RFC 8291) for every provider; the push service sees the device's token or endpoint, the time, a collapse key or Topic (an HMAC, keyed by `push/web@vapid-key`, of the registration, the room and the kind: no room id, and no link between two users' pushes of a room) and, for FCM, the registration id. A device that moves to another user drops what waits for it, and a send checks the device's user. An encrypted room's push has the room's name and the sender's name, never text; a user whose `CHAT_NOTIFY_PREVIEW` is N gets no snippet. An FCM device that gave no keys gets `{kind, pushId}` only for a chat push; a notification to it keeps its kind, topic and tag only, and a call's ring goes to Google as it was, with `callSessionId`, `chatRoomId` and `caller` readable (`fcm.rs`). By default a plain room's push carries a snippet of the body (140 characters), the room name and the sender, which a locked device may show; only `CHAT_NOTIFY_PREVIEW` `N` removes the snippet. The payload is written to `PushOutbox.payloadJson` (not an encrypted field) when the job is worked and kept until 7 days after the push is done. A deleted message is left out only when the payload is written: `fan_out_job` keeps, of a message's recipients, only users whose account may still sign in (`signing_in`: not disabled for good, not past its `terminateDate`). At the send the worker checks the time to live (4 weeks), the read marker, that the device is enabled and still the user's, and a native device's key, and drops a push written 30 seconds or more before when its event is redacted, its user left a room that is not direct, or its account may not sign in (`gone_since_queued`), so a push held by do not disturb or waiting on its push service does not outlive those. Retention does not name `PushOutbox`. One thread a node (`moqui-chat-push`) sends all chat pushes one after another, up to 500 a round, each a blocking POST with a 3 second timeout for the whole request (a Web Push or UnifiedPush one), internal addresses refused and no redirects; a 2xx answer is delivered, and an endpoint that never answers is tried 12 times. A Web Push or UnifiedPush answer taken after 2 seconds counts as a failure of its endpoint though delivered, so one that answers late is disabled after 5 in a row as one that fails is (`PushTransport::slow_after`); storing the endpoint again keeps its failures, and one disabled for them stays disabled (`keep_failures`), so the browser ends its subscription and subscribes again for a new endpoint (`WebrootPush.js` `subscribeAgain`); and each recipient's pushes take at most 6 seconds of a round: the rest of that user's are put off to the next round and the pushes due are read again, up to 4 times a round, so a user with many old pushes does not hold everyone else's (`PushTransport::user_round_budget`, `UserBudget`, `put_off`) (plans/Security-Review-Medium.md SEC-COM-81). `store#WebPushSubscription` (`POST /WebPush/store`, any signed-in user) makes a row for each new endpoint (https with a host and no user part) and keeps at most `push/web@max-subscriptions` (10) of a user's active, disabling the longest unregistered past it (`cap_subscriptions`, SEC-COM-81), so a user's stored endpoints still decide where the server posts for each message of their rooms, at most ten times a message; a user's browser subscriptions are removed at logout, and by `forget#UserWebPush` when the account is disabled for good or terminated (the entity ECA `UserAccountWebPushEnds`; a lockout is left alone) and when `revoke#AccountAccess` or `revoke#OwnAccess` ends the sessions. `register#PushDevice` (`/qapps/registerClientPush`, a signed-in app holding a live device key of the user) holds a device key to one row; with provider `unifiedpush` its `token` is an https endpoint the server posts to in the same way. A VAPID token goes to whatever host an endpoint names, for UnifiedPush too when the key is set. `send#TestPush` (`/qapps/testClientPush`) queues a push for the caller's own device or the endpoint the caller names, one a user every 10 seconds whichever device asks (SEC-COM-81). `ack#Push` (`/qapps/ackClientPush`) counts only the caller's own push or device. `find#PushHealth` (System, Push Health) needs `PushHealthAdmin` (ADMIN) and returns no endpoint or key. A user's do not disturb allowed list (`store#DndAllowed`) is the user's own preference; it lets the people on it ring the user's phones through do not disturb.
 
 ## Call services
 
@@ -117,8 +117,10 @@ as `{rtc: 'caption', leg, participant, name, seq, text}`; the text is the provid
 (`crates/moqui-host/src/rtc/captions.rs`). Caption jobs run on the service pool, at most half its workers for all calls
 of the node. The captions thread decodes every browser's Opus and has no `catch_unwind`. A stored caption is a
 `CallTranscript` row with `callSessionId` and `callLegId` and no `callRecordingId` (`store#CallTranscript`, which takes
-only a leg of that call). No service, screen or job reads those rows, and none deletes them: `CallTranscript` rows are
-deleted only by `callRecordingId` (a recording's) and by `voicemailId`. A reader of the entity (the database, entity
+only a leg of that call). No service or screen reads those rows. `expire#Recordings` deletes a live caption (no recording, no voicemail) older
+than `calls/captions@retention-days` (30; 0 keeps them); other `CallTranscript` rows are deleted by `callRecordingId`
+(a recording's) and by `voicemailId`. The call's participants have no reader of them, and the notice does not say the
+text is kept. A reader of the entity (the database, entity
 REST for `ADMIN`) reaches them. `stop#Captions` is refused with `captionsOff` once `calls/captions@enabled` is turned
 off, so captions already on then stop only with the call.
 
@@ -305,7 +307,9 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   dropped before a transaction is made, no SIP answer is sent (a STUN Binding request on the UDP port is still
   answered, and its TCP and TLS connections stay open within the connection caps), and the block is kept in
   `VoiceAuthFailure` across
-  restarts (the engine counts failures in memory and writes only the block). An IPv6 source counts as its /64. The
+  restarts (the engine counts failures in memory and writes only the block). The blocks an edge node's engine reports
+  are kept as `edge:<address>` rows apart from the local engines', never handed to them, removed once ended and
+  capped an hour ([Attack-Surface-Cluster-Edge.md](Attack-Surface-Cluster-Edge.md)). An IPv6 source counts as its /64. The
   engine tracks at most 50,000 sources; when full, the ones not blocked go first, so rotating addresses does not lift
   the blocks. No account is locked or counted.
   A nonce's MAC covers the address the challenge was sent to (`NonceBook::nonce`, `verify`; an IPv4-mapped IPv6
@@ -372,6 +376,8 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   `receive#PhoneCall`, `note#PhoneLeg`, `record#AuthFailure`, `register#SipNode`,
   `SipDeviceServices.store#SipRegistration`, `receive#DeviceCall`, `VoicemailServices.check#VoicemailPin`,
   `act#PhoneVoicemail`, `store#Voicemail` and `CallTransferServices.refer#Call` are declared and called the same way.
+  As the edge node's delegate user `_edge_`, `record#AuthFailure` and `note#TrunkStatus` take a report only from the
+  edge node's own engine (`edgeAllowed`).
   `receive#DeviceCall` and `refer#Call` sign in as the device's user by name (`internalLoginUser`) before they place or
   transfer a call.
 - **Media.** SRTP (AES_CM_128_HMAC_SHA1_80, SDES keys over TLS) unless the trunk's profile is a private-network PBX;
@@ -396,9 +402,10 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   mixed recording, captions or a phone leg (each decodes every browser's Opus). The recorder catches a panic and fails
   the recording; the captions thread and the phone leg's worker (`crates/moqui-host/src/sip/leg.rs`) do not. A jitter
   buffer holds 10 frames a stream, and a stream idle 5 seconds is dropped.
-- **DTMF.** A telephone-event packet with a timestamp other than the last one is a new digit (`dtmf.rs`). The leg's
-  worker sends each digit to the engine over an unbounded channel, and the engine spawns a task and calls
-  `note#PhoneLeg` for each; there is no minimum gap between digits and no count a leg. The engine logs each digit of a
+- **DTMF.** `DtmfReceiver` takes a new digit only after the previous digit's end bit or 40 ms of RTP time, and
+  `DigitRate` allows 20 digits a second (`dtmf.rs`). The leg's worker reads at most 64 datagrams a tick
+  (`read_datagrams`) and sends each digit to the engine over an unbounded channel, and the engine spawns a task and
+  calls `note#PhoneLeg` for each. The engine logs each digit of a
   call at debug (`crates/moqui-host/src/sip/mod.rs`); the default level is info (`logging@level`), and digits of a
   voicemail or IVR session return before that line, so a voicemail PIN typed on a phone is not logged even at debug.
 - **Floods.** rsipstack has no caps of its own, so the engine's transport inspector holds new requests to
@@ -406,9 +413,11 @@ The SIP engine (`crates/moqui-sip` on rsipstack, host `src/sip/`) runs beside a 
   source as its /64), drops them while `sip-server/limits@max-transactions` (2,000) run, and closes TCP and TLS connections past
   `sip-server/limits@max-connections` (500), or past `sip-server/limits@max-connections-per-source` (100) from one source, so one source cannot
   hold the connections the registrar's phones keep open. What is over is dropped unanswered; requests in a dialog and responses pass, so calls
-  going on are not cut. The inspector does not ask whether a dialog exists: a request is new when its To header does
-  not hold the text `;tag=` (`ua.rs` `is_new_request`), so any request whose To carries a tag passes the rate and the
-  transaction cap. rsipstack makes a server transaction of it, and `incoming` treats an INVITE or REGISTER with no
+  going on are not cut. A request is in a dialog only when
+  `DialogLayer::get_dialog` finds its Call-ID and both tags (`ua.rs` `is_new_request` with `Known`); a CANCEL, or the ACK
+  of a non-2xx answer, passes only when it names an INVITE the inspector let through (`AdmittedInvites`: the top Via's
+  sent-by and branch, kept 40 seconds, at most 10,000), and an ACK whose dialog exists passes. Every other request,
+  a made-up To tag included, is held to the rate and the transaction cap. `incoming` treats an INVITE or REGISTER with no
   matching dialog as a new one (challenged, or taken as a trunk's call from a trunk's address). A blocked source is
   still dropped first. Answers sent before an incoming call's decision expire after 30 seconds (1,000 at most).
   A TLS client has 10 seconds to finish its handshake; at most 128 handshakes run at once and 8 from one source (an IPv6
@@ -634,9 +643,11 @@ it (`crates/moqui-host/src/channels.rs`): `POST /channels/{bridge}/webhook` and 
   keeps the HTTP client's error as the delivery's `lastErrorText`, and `get#EventDeliveries` answers it as `error` to
   any reader of the room (`get#Timeline` gives each message's `delivery`): the text is `HTTP POST <scheme://host/path>
   failed`, and the path of a Twilio or Sinch send holds the account SID or project id. The delivery worker calls an
-  adapter's `start` once a round and, when it fails, only sets the bridge's status to not connected; `deliver_head`
-  holds a row only for a disabled bridge or a missing adapter, and `send#BridgeDirect` (the system's texts) calls
-  `adapter.deliver` without `start`. A sent text carries the bridge's status callback URL to the provider, and a file
+  adapter's `start` once a round, and `deliver_head` holds a bridge's rows while the bridge is not started this round,
+  as for a disabled bridge or a missing adapter. Every request of the SMS adapters goes through a client that refuses a
+  URL that is not https before anything is sent (`RestClient::https_only`, set unless the bridge allows internal
+  addresses, a test's fake), so `send#BridgeDirect` (the system's texts), which calls `adapter.deliver` without `start`,
+  the inbound file fetches and Twilio's `roster_of` send no provider key in clear text. A sent text carries the bridge's status callback URL to the provider, and a file
   goes out as `/channels/{id}/media/{attachment}.{expiry}.{signature}`: the token (an HMAC-SHA-256 over bridge,
   attachment and expiry) is the only control of that route, and the file must belong to a message with a delivery to
   that bridge; it is served as an attachment with `nosniff`.
@@ -645,21 +656,29 @@ it (`crates/moqui-host/src/channels.rs`): `POST /channels/{bridge}/webhook` and 
   Twilio HMAC-SHA1 over the configured public URL and the sorted form (never from a `Host` header), Sinch HMAC-SHA256
   over `body.nonce.timestamp`. The replay window is the smaller of the adapter's tolerance and half the replay cache's
   life (`chat_bridge_web.rs`; the cache lives 300 seconds by default, so 150 seconds either side for Telnyx and Sinch),
-  and the cache is shared with the system-message HMAC check. Twilio's signature has no time in it: a copy is caught
+  and the keys are rows of `moqui.security.SignatureReplay`, which the system-message HMAC check shares and every
+  cluster member sees (`service/replay_store.rs`); the cache's live time bounds only the window and how long a key is held. Twilio's signature has no time in it: a copy is caught
   by the replay cache while it holds it, and after that by the ids. A text is deduped for good by its
-  `ChatEventExternal` row; a STOP or START keyword is applied before that, and its once-only mark is a
-  `ChatBridgeInbound` row with status done, which the worker deletes after 30 days. On an edge node (or an all-in-one
+  `ChatEventExternal` row; a STOP or START keyword is applied before that, by the provider's message time:
+  `SmsOptOut.keywordDate` holds the time of the last one applied, and an older STOP or START is stale (a HELP, or a STOP
+  noted from a provider's refusal, sets no `keywordDate`). Its once-only mark is a `ChatBridgeInbound` row with status
+  done; the batch clean-up deletes other done rows after 30 days and keeps the `signal:` marks. On an edge node (or an all-in-one
   node for a paired node's bridge) the Twilio and Sinch adapters' signatures cannot be checked, so
   `chat_bridge_edge.rs` queues any POST that has the signature header, whatever its value, within 120 a minute a
-  client address and 600 a minute a bridge (at most 10,000 live buckets, the client's taken first); there a bridge
-  that exists answers 200, 400 or 429, a disabled one 503 and an unknown one 401, and none of these counts for web
-  protection. The local node verifies the signature again (`apply#EdgeWebhook`, only for the queue's delegate user with
+  client address and 600 a minute a bridge (at most 10,000 live buckets; `EdgeRates::take` takes both tokens or
+  neither, the bridge's first); there a bridge that exists answers 200, 400 or 429, and a disabled one and an unknown
+  one 401, before any rate is spent, and none of these counts for web protection. The webhook path has no secret of
+  its own, so an anonymous caller still spends a bridge's allowance. The local node verifies the signature again (`apply#EdgeWebhook`, only for the queue's delegate user with
   the item's receipt), with the time the edge node wrote as the time checked.
 - **Texts that come in.** A text is taken only for a number whose `messagingBridgeId` is the webhook's bridge. A text
   from a number not seen before makes a pair room, a member row for each user the number reaches and a joined push
-  unless the spam filter hid it; only new group rooms are counted (below). Its files (each up to
+  unless the spam filter hid it. Past `channels@new-pair-rooms-per-day` such a text is kept in its pair room out of every
+  user's sight with no push (each member's filter `CmfSpam`, a note on the message; Not spam brings it back), and the
+  voice administrators (`VoicePolicy.alertUserGroupId`, topic `VoiceAlert`) are told once a day; `search#ChatEvents`
+  leaves out a room the user has out of sight unless the Spam view's `includeFiltered` asks. Its files (each up to
   `maxInboundMediaBytes`, 5 MiB by default) are written under `chat@attachment-root` with no uploader, so no user's
-  daily upload quota counts them. An inbound text runs app providers as a staff user: `file#ExternalConversation`
+  daily upload quota counts them; a bridge's inbound file bytes are counted a day in `ChatBridgeMediaDay.byteCount`,
+  and a file past `channels@inbound-media-bytes-per-day` is named as not received. An inbound text runs app providers as a staff user: `file#ExternalConversation`
   signs in the room's first enabled local member (`internalLoginUser`) and calls `call#Providers` with the hook
   `external-conversation` (`mutation: true`), and the spam filter calls the `call-context` hook the same way for a
   first contact. With `VoicePolicy.smsSpamLookup` Y a first contact also causes a paid Twilio Lookup, at most
@@ -689,8 +708,10 @@ it (`crates/moqui-host/src/channels.rs`): `POST /channels/{bridge}/webhook` and 
   `webhookToleranceSeconds`, `maxInboundMediaBytes` (at most the adapter's 20 MiB cap) and `allowInternalAddresses`.
   The other adapters' secrets are in `configJson` too: Twilio `authToken` and `apiKeySecret`, Sinch `keySecret` and
   `webhookSecret`. `start` refuses an `apiBaseUrl` that is not `https://` (`http://` only with
-  `allowInternalAddresses`); `deliver` and `send` have no scheme check of their own, and a bridge whose `start` failed
-  still sends.
+  `allowInternalAddresses`), and every request of the adapter goes through `SmsAdapter::client`, which refuses a URL that
+  is not https before anything is sent (`RestClient::https_only`, unless the bridge allows internal addresses), so
+  `deliver`, `send` and a bridge whose `start` failed send no key in clear text, and a bridge not started this round
+  sends nothing.
   Files a text names are fetched from public addresses only (3 redirects, each checked, 30 seconds, 20 MiB) unless
   `allowInternalAddresses` is set off a production instance (`sms.rs`: a production instance ignores it), which lifts
   the address guard for the API calls and the media fetch of that bridge ([the internal-address
@@ -756,5 +777,5 @@ These are gaps in this pass. A line that was read is stated above and is not rep
 - Voicemail: whether the phone-access answers tell an existing box from a number with none after a block was not settled.
 - Recording and captions: whether an account gets a personal drive with a quota by default, which decides how much the recording quota does, was not read. Captions keep running, on the starter's quota, after the starter leaves the call; whether `Calls.js` stops them when that user's last leg leaves was not read. A captions thread that panics leaves its room in `calls_running`, so a later start only sends the notice again until someone stops captions.
 - Bridges and texts: whether room retention deletes `ChatEventExternal` rows (an old signed Twilio text sent again would then appear as a new message) was not read. Whether web protection's request limits apply to `/channels/` answers that are not counted as failed sign-ins was not read. `Voice.js` `grants`, `classify` and `toE164`, on which every send check rests, `CallHandling.js` `blockNumber` and `blockedUsers`, and `ChatBlocks.js` were not read. In `SmsSpam.js` a `call-context` provider that fails, or a first user who cannot be signed in, counts the sender as known, so the text is not judged; whether that can be caused from outside was not traced. `send#AuthcCodeSms` spends the system's daily budget (`smsSystemMaxPerDay`, 500); whether an anonymous caller can drive it is the login flow's question.
-- Device pushes: on which thread a call's ring push (`send#WebPush`, which loops the callee's subscriptions) runs was not read. Whether a disabled or revoked account's browser subscriptions are ever removed short of logout (whether `revoke#AccountAccess` reaches `forget_visit`) was not settled, nor what the service worker and the app show for a push of a deleted message.
+- Device pushes: on which thread a call's ring push (`send#WebPush`, which loops the callee's subscriptions) runs was not read. What the service worker and the app show for a push of a deleted message sent within 30 seconds of the message was not read.
 - XMPP: a `parse` call of rxml that answers `NeedMoreData` consumes its input (`framing::tests::a_start_tag_cut_inside_its_attributes_counts_toward_the_limit` fails without the start tag's count). Whether two usernames that differ only by case can exist (`create#UserAccount`) was not read. Whether `send#Message` refuses a plain body in a room that became end-to-end encrypted after the session cached it was not read (`session/chat.rs` reads the cache; `store#EncryptedMessage` checks the room itself). Whether a pool worker's login from `internal_login_user` ends with each call was not read past the comment that says it ends with its context.

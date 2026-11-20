@@ -24,7 +24,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             // the entities of the chosen database's groups (Schema.xml's always-actions)
             const groupNames = selectedDatabase?.groupNames || []
-            const check = ec.entity.checkTables(ec.entity.getAllEntityNames(), groupNames)
+            // DDL: the service asks DATABASE_ADMIN and writes the audit row
+            const check = ec.service.sync().name('org.moqui.dev.DatabaseServices.check#Tables')
+                .parameters({groupNames}).call()
+            if (ec.message.hasError()) return
             ec.message.addMessage(`Checked the tables of ${groupNames.join(', ')}: ${check.ddl.length} statements ran, ${check.errors} failed`,
                 check.errors || check.failed.length ? 'warning' : 'info')
             for (const failure of check.failed) ec.message.addMessage(`${failure.entityName} not checked: ${failure.error}`, 'warning')

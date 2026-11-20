@@ -211,8 +211,17 @@ check "cargo saw the default build" 0 'cargo: build --profile release --no-defau
 rm -f "$R/cargo.log"
 check "run --nobuild with the binary there does not build" 0 '' -- "$M" run --nobuild
 check "no cargo call" 1 '' -- test -f "$R/cargo.log"
+check "--nobuild says which binary it uses" 0 'using target/release/moqui' -- "$M" run --nobuild
+touch "$R/target/debug/moqui"
+check "--nobuild with no package takes the newer debug binary" 0 'using target/debug/moqui' -- "$M" run --nobuild
+check "--release takes the release binary whatever is newer" 0 'using target/release/moqui' -- "$M" run --nobuild --release
+mkdir -p "$R/crates/stale-check/src"
+touch "$R/crates/stale-check/src/lib.rs"
+check "--nobuild warns of a source newer than the binary" 0 'older than crates/stale-check/src/lib.rs' -- "$M" run --nobuild
+rm -rf "$R/crates/stale-check"
+touch "$R/target/release/moqui"
 check "run --build is gone" 1 'unknown option --build' -- "$M" run --build
-rm -f "$R/target/release/moqui" "$R/cargo.log"
+rm -f "$R/target/release/moqui" "$R/target/debug/moqui" "$R/cargo.log"
 check "--nobuild still builds a missing binary" 0 'is not built, building it' -- "$M" run --nobuild
 check "cargo saw the missing build" 0 'cargo: build --profile release --no-default-features --features maximal,devtools -p moqui$' -- cat "$R/cargo.log"
 rm -f "$R/target/release/moqui" "$R/cargo.log"
@@ -857,6 +866,35 @@ EOF
             dry "$M" component-get comp-f
         cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
         "$M" component-get comp-c >/dev/null
+        # addons.xml is searched before a served file, so a served file adds components and repositories and never
+        # replaces addons.xml's; and a served component's name is a name, never a path (SEC-OUT-87)
+        cat >"$R/addons.xml" <<EOF
+<addons>
+    <repository name="official">
+        <location type="git" url="file://$FIX/repos/\${name}.git"/>
+    </repository>
+    <component name="comp-g" group="g" branch="master" repository="official"/>
+</addons>
+EOF
+        cat >"$FIX/served/addons.xml" <<EOF
+<addons>
+    <repository name="official">
+        <location type="git" url="file://$FIX/served-repos/\${name}.git"/>
+    </repository>
+    <repository name="served.example">
+        <location type="git" url="file://$FIX/served-repos/\${name}.git"/>
+    </repository>
+    <component name="comp-g" group="g" branch="master" repository="served.example"/>
+    <component name="../escape" group="g" branch="master" repository="served.example"/>
+</addons>
+EOF
+        served_entry team "file://$FIX/served/addons.xml"
+        check "a served addons.xml does not replace a component of addons.xml" 0 "file://$FIX/repos/comp-g.git" -- \
+            dry "$M" component-get comp-g
+        check "a served component's name is never a path" 1 'is not a component name' -- \
+            dry "$M" component-get ../escape
+        rm -f "$R/addons.xml"
+        cp "$FIX/myaddons.xml.bak" "$R/myaddons.xml"
     fi
 
     check "git in each repo" 0 '== runtime/components/addon/comp-a \(master\)' -- "$M" git rev-parse --abbrev-ref HEAD

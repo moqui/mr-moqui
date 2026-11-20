@@ -1698,10 +1698,10 @@
             const statusId = xn(at(n, "status-id"));
             if (!statusId || statusId === "null") return;
             const readOnly = xn(at(n, "read-only")) === "true";
-            const bar = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({
+            const bar = ((b) => ec.artifactExecution.authzLocked() ? b : b.disableAuthz())(ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({
                 statusId, statusTypeId: xn(at(n, "status-type-id")) || null, statusFlowId: xn(at(n, "status-flow-id")) || null,
                 stageStatusIds: idList(at(n, "stages")), allowedToStatusIds: readOnly ? [] : idList(at(n, "allowed-status-ids"))
-            }).disableAuthz().call() || {};
+            })).call() || {};
             let out = "<div" + A({ id: nodeId(n) || null, class: cls("status-bar", xn(at(n, "style")) || null), "data-status": statusId }) + '><span class="status-stages">';
             Array.from(bar.stages || []).forEach((stage, index) => {
                 out += (index ? '<span class="status-sep" aria-hidden="true">&rsaquo;</span>' : "") + "<span" + A({

@@ -47,7 +47,58 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
     let define = |name: &'static str, length: u32, body: fn(&mut Scope<'_>) -> Result<Value, Conv>| {
         let function = context.new_function(
             FunctionOptions::new(name).length(length),
-            move |scope: &mut Scope<'_>| -> JsResult<Value> { super::bind::host_body(scope, body) },
+            move |scope: &mut Scope<'_>| -> JsResult<Value> {
+                // in a preview, a script file runs only at a component's location, the proposed text's and the render
+                // units' alike; in a region it runs inside it, on the region's list (SEC-AI-102)
+                if name == "script" {
+                    let component = matches!(scope.arg(0), Value::String(text)
+                        if text.to_utf8_lossy().trim_start().starts_with("component://"));
+                    if (crate::script::preview::restricted() || crate::script::preview::unit_restricted()) && !component
+                    {
+                        let refusal = crate::script::preview::refusal("ec.resource.script");
+                        return Err(
+                            scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, &refusal)
+                        );
+                    }
+                }
+                // each run holds the scope a service call holds: what it disables ends with it (SEC-RTE-92)
+                let _authz =
+                    crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
+                // an expand, expression or condition runs as text that may be a proposed definition's: while a preview
+                // holds the runtime, in a region of its allow-list, its value copied out as data (SEC-AI-102)
+                // in a preview asked for inside a running script, the text runs not: a template's text with a
+                // placeholder for each expression, an expression's null, a condition's false
+                if name != "script" && crate::script::preview::skipped() {
+                    return Ok(match name {
+                        "expression" => Value::Null,
+                        "condition" => Value::Bool(false),
+                        _ => match scope.arg(0) {
+                            Value::String(text) => {
+                                text_value(&crate::script::preview::placeholder(&text.to_utf8_lossy()))
+                            }
+                            _ => text_value(""),
+                        },
+                    });
+                }
+                let region = if name == "script" {
+                    None
+                } else {
+                    match crate::script::preview::enter_entry() {
+                        Ok(region) => Some(region),
+                        Err(err) => {
+                            let message = err.message().to_string();
+                            return Err(
+                                scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, &message)
+                            );
+                        }
+                    }
+                };
+                let value = super::bind::host_body(scope, body)?;
+                match region {
+                    Some(region) if region.opened() => copy_out(scope, value),
+                    _ => Ok(value),
+                }
+            },
         )?;
         let name = key(name).map_err(|_| RuntimeError::Invariant("a key"))?;
         context.set_property(&resource, &name, Value::from(function))
@@ -58,6 +109,19 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
     define("expression", 3, expression)?;
     define("condition", 3, condition)?;
     Ok(())
+}
+
+/// A value a preview region gives back to the code that asked for it, as data: through the host's values, so no getter,
+/// `toString` or function the proposed text made runs later outside the region (SEC-AI-102).
+fn copy_out(scope: &mut Scope<'_>, value: Value) -> JsResult<Value> {
+    if !matches!(value, Value::Object(_)) {
+        return Ok(value);
+    }
+    let engine = current().ok_or(RuntimeError::Invariant("no oxide engine"))?;
+    let host =
+        to_host(scope, &engine, &value).map_err(|_| RuntimeError::Invariant("a preview value that is not data"))?;
+    super::convert::to_js(scope, &engine, &host)
+        .map_err(|_| RuntimeError::Invariant("a preview value that is not data"))
 }
 
 /// The thread's runtime, which is running this call.
@@ -103,6 +167,10 @@ fn thrown_on(scope: &mut Scope<'_>, err: RuntimeError) -> Conv {
 /// Java's other forms: `script(location, method)` calls the function of that name on the file's value, with no
 /// arguments, and gives what it returns (the file's value itself when it has no such function);
 /// `script(location, method, additionalContext)` runs both with the map's entries in a context frame of their own.
+///
+/// The run holds the scope a service call holds ([`crate::context::ExecutionContext::keep_authz`], taken for every
+/// `ec.resource` script, expression and template run): a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()` the
+/// file leaves on ends with the run, and the caller's state comes back however it ends (SEC-RTE-92).
 fn script(scope: &mut Scope<'_>) -> Result<Value, Conv> {
     let method = match scope.arg(1) {
         Value::String(text) => Some(text.to_utf8_lossy()).filter(|name| !name.is_empty()),
@@ -139,6 +207,7 @@ fn script_value(scope: &mut Scope<'_>) -> Result<Value, Conv> {
             None,
         ))
     };
+
     let (text, inert) = match crate::script::runtime::read_module(&location) {
         Ok(read) => read,
         Err(err) => return Err(marked(scope, err)),

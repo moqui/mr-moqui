@@ -14,8 +14,8 @@
 
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 use crate::entity::load_feed::{
-    data_file_services, eca_rules, error_chain, load_entity_data, load_entity_xml_text, location_in_components,
-    LoadOptions,
+    data_file_services, eca_rules, error_chain, load_entity_data, load_entity_text, load_entity_xml_text,
+    location_in_components, LoadOptions,
 };
 use crate::entity::{EntityFacade, EntityGroup};
 use crate::transaction::{PoolConfig, TransactionManager};
@@ -502,6 +502,43 @@ fn csv_rows_check_their_own_key_and_create_or_update() {
     .unwrap_err();
     assert!(error_chain(&number).contains("[abc] is not valid"), "{number}");
     assert_eq!(test_medium(&facade, "C4"), None);
+}
+
+/// The data load's CSV and JSON text is loaded from memory, never written to a file another local user could read
+/// (plans/Security-Review-Low.md SEC-OUT-89); an error names the text.
+#[test]
+fn csv_and_json_text_load_from_memory() {
+    let facade = crate::testing::open();
+    let context = crate::context::ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let plain = LoadOptions::default();
+    let csv = "moqui.test.TestEntity\ntestId,testMedium\nT1,from csv\n";
+    assert_eq!(
+        load_entity_text(&facade, "csvText", csv, false, &plain)
+            .unwrap()
+            .records,
+        1
+    );
+    assert_eq!(test_medium(&facade, "T1").as_deref(), Some("from csv"));
+    let json = r#"[{"_entity": "moqui.test.TestEntity", "testId": "T2", "testMedium": "from json"}]"#;
+    assert_eq!(
+        load_entity_text(&facade, "jsonText", json, true, &plain)
+            .unwrap()
+            .records,
+        1
+    );
+    assert_eq!(test_medium(&facade, "T2").as_deref(), Some("from json"));
+    let bad = load_entity_text(
+        &facade,
+        "csvText",
+        "moqui.test.TestEntity\ntestId,noSuchField\nT3,x\n",
+        false,
+        &plain,
+    )
+    .unwrap_err();
+    assert!(error_chain(&bad).contains("noSuchField is not a field"), "{bad}");
 }
 
 /// An empty XML attribute, a JSON null and the text `null` are null, as Java puts them, so a store clears the

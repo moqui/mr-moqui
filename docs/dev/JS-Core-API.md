@@ -148,6 +148,7 @@ the user services call.
 | `context` | A map for the user of this execution context, read by the entity filters. `get`, `put`, `putAll`, `remove`, `containsKey`, and names as properties. A list read from it is a copy |
 | `hasPermission(permissionId)` | Whether the user has the permission |
 | `isInGroup(userGroupId)` | Whether the user is in the group |
+| `heldBeyond(userId)` | Why the user may not act as or on that account (bounded delegation: the account is in a privileged group the user is not in, or holds through a current group a sealed permission the user lacks), or null when they may |
 | `getUserGroupIdSet(userId)` | The group ids of the current user, or of the user given, as a list (so it works as the value of an `in` condition) |
 | `visitId`, `visit` | The `moqui.server.Visit` of the session, its id and the record as a map; null outside one |
 | `getVisitUserId()` | The user of the visit, which a later login in the same visit does not change |
@@ -473,6 +474,7 @@ context.
 | `disableAuthz()` | Authorization is not checked in this execution context until `enableAuthz()`. Returns whether it was already disabled |
 | `enableAuthz()` | Checks authorization again |
 | `authzDisabled()` | Whether authorization is disabled, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing |
+| `authzLocked()` | Whether a preview's proposed screen text runs here, on its allow-list host ([JS-Screen-Scripts, In a preview of proposed text](JS-Screen-Scripts.md#in-a-preview-of-proposed-text)): `disableAuthz()`, a find's or a service call's, and a change of user are refused then. Framework template code asks it before a read it would otherwise make with authorization off; it, `isPermitted` and `isPermittedOwn` are the `ec.artifactExecution` members the proposed text may call |
 | `disableEntityEca()` | Entity ECA rules do not run for this execution context's writes. Returns whether they were already disabled |
 | `enableEntityEca()`, `entityEcaDisabled()` | Runs them again; whether they are disabled |
 | `disableTarpit()` | No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled |
@@ -611,6 +613,7 @@ is identity; `equals` compares them.
 | `isField(name)` | Whether the entity has a field of the name |
 | `isFieldSet(name)` | Whether the value holds the field, null or not |
 | `isFieldModified(name)`, `isModified()` | Whether the field, or any field, changed since the value was read or last written |
+| `isFieldGiven(name)` | Whether the code holding the value set the field, to what it held or not: each field held on a value not read, each one set since on one read. In an entity ECA rule, whether the write's caller gave it, not the update filling it in from the stored row |
 | `getOriginalDbValue(name)` | What the field held when the value was read or last written |
 | `getPrimaryKeys()` | The primary key fields as a map |
 | `getPrimaryKeysString()` | The primary key values joined by `::` |
@@ -831,7 +834,7 @@ These serve the Tools screens and generic services.
 | `getEecaRuleCount()`, `eecaRulesByEntityName.get(entityName)` | How many entity ECA rules there are; the rules of an entity |
 | `getQueryStatsList(orderByField, entityFilter, sqlFilter)` | The statement statistics of this server, when `entity-facade@query-stats` is on |
 | `clearQueryStats()` | Clears them |
-| `runSqlStatement(groupName, sql, limit)` | Runs one statement on a group's database: `{columns, records, limitReached, rowsAffected}`, values as text (500 rows) |
+| `runSqlStatement(groupName, sql, limit)` | Runs one statement on a group's database: `{columns, records, limitReached, rowsAffected}`, values as text (500 rows). It and the three below run only in a service's own code, with authorization disabled outside a screen render (a job, a load, a test), or for a holder of `SQL_RUNNER_WEB`; never in a preview's proposed screen text |
 | `testConfConnection(conf)` | Whether a connection opens to another database, named by a map of `entity_ds_db_conf`, `entity_ds_host`, `entity_ds_port`, `entity_ds_database`, `entity_ds_user` and `entity_ds_password` |
 | `runSqlCountConf(table, where, conf)` | `SELECT COUNT(*)` on that database |
 | `runSqlUpdateConf(sql, conf)` | One statement outside a transaction on that database; the rows it changed |

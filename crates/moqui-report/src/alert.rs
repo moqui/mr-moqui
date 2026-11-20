@@ -336,6 +336,125 @@ fn property_name(name: &str) -> bool {
         && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
 }
 
+/// The topic an alert's notification posts under when it names none: the alert topic.
+pub(crate) const CONTACT_TOPIC: &str = "ReportAlert";
+
+/// Whether an alert's notification may post under `topic` (a rule's contact and a business rule's audience, at save and
+/// at each send): a `NotificationTopic` registered for alerts by `reportAlertTopic` Y, as the framework's `ReportAlert`
+/// is and an app's data marks its own alert topic. Another topic's subscribers would take the rule's message for that
+/// topic's own (a phone alert, an agent run). Read in the current context, without its authorization.
+pub(crate) fn is_alert_topic(topic: &str) -> Result<bool, Error> {
+    let found = ExecutionContext::with_current(|ec| -> Result<bool, Error> {
+        let entity = ec
+            .factory()
+            .entity()
+            .ok_or_else(|| fail("entity facade is unavailable"))?;
+        let _authz = ec.disable_authz();
+        let row = entity
+            .find("moqui.security.user.NotificationTopic")?
+            .eq("topic", Value::string(topic))
+            .one()?;
+        Ok(row.and_then(|row| {
+            row.get("reportAlertTopic")
+                .and_then(Value::as_str)
+                .map(|flag| flag == "Y")
+        }) == Some(true))
+    });
+    found.unwrap_or_else(|| Err(fail("no execution context to read the notification topic in")))
+}
+
+/// The refusal of a topic [`is_alert_topic`] does not take.
+pub(crate) fn alert_topic_refusal(what: &str, topic: &str) -> String {
+    format!(
+        "ALERT_TOPIC_UNAVAILABLE: {what} posts under a notification topic registered for alerts (reportAlertTopic Y), \
+         as {CONTACT_TOPIC} is; {topic} is not one"
+    )
+}
+
+/// Why the current user may not have `contact` post where it says, or None (SEC-TLS-106): a `topic` not one of
+/// [`is_alert_topic`], a `userId` other than `owner` without the group delivery grant (`delivery::GROUP_ARTIFACT`), a
+/// `userGroupId` the user may not share with (`definitions::may_share_with`).
+fn contact_refusal(contact: &Json, owner: &str) -> Result<Option<String>, Error> {
+    if text(contact, "type", "notification") != "notification" {
+        return Ok(None);
+    }
+    if let Some(topic) = contact.get("topic").filter(|topic| !topic.is_null()) {
+        let name = topic.as_str().unwrap_or_default();
+        if name.is_empty() || !is_alert_topic(name)? {
+            return Ok(Some(alert_topic_refusal("a notification contact", name)));
+        }
+    }
+    if let Some(user) = contact["userId"]
+        .as_str()
+        .filter(|user| !user.is_empty() && *user != owner)
+    {
+        if moqui_core::user::authorize_own("AT_SERVICE", super::delivery::GROUP_ARTIFACT, "create").is_err() {
+            return Ok(Some(format!(
+                "GROUP_DELIVERY_DENIED: notifying {user} needs the group delivery grant"
+            )));
+        }
+    }
+    if let Some(group) = contact["userGroupId"].as_str().filter(|group| !group.is_empty()) {
+        if !super::definitions::may_share_with(group)? {
+            return Ok(Some(
+                "SHARE_GROUP_UNAVAILABLE: notify only a group you belong to or may share with".to_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+/// [`contact_refusal`] asked of the rule's owner `owner_id` at a send, in a context of its own: a grant or a group the
+/// owner has lost since the rule was saved stops its notifications (SEC-TLS-106).
+fn contact_refusal_as(ec: &ExecutionContext, owner_id: &str, contact: &Json) -> Option<String> {
+    if text(contact, "type", "notification") != "notification" {
+        return None;
+    }
+    let username = ec.factory().entity().and_then(|entity| {
+        let _authz = ec.disable_authz();
+        entity
+            .find("moqui.security.UserAccount")
+            .ok()?
+            .eq("userId", Value::string(owner_id))
+            .one()
+            .ok()
+            .flatten()
+            .and_then(|row| row.get("username").and_then(Value::as_str).map(str::to_owned))
+    });
+    let Some(username) = username else {
+        return Some(format!("the rule's owner {owner_id} is not a user"));
+    };
+    let context = ec.factory().new_context();
+    let _entered = context.enter();
+    if let Err(error) = moqui_core::user::internal_login_user(&username) {
+        return Some(format!("the rule's owner may not sign in: {error}"));
+    }
+    contact_refusal(contact, owner_id).unwrap_or_else(|error| Some(error.to_string()))
+}
+
+/// The notification contacts of a rule (`kind` `alert`) or a shared contact point (`contactPoint`) as the saver
+/// `saver` may name them ([`contact_refusal`]). A contact kept as `previous` stored it is not asked again, so an owner
+/// who left a group still saves their rule; each send asks again ([`contact_refusal_as`]).
+pub(super) fn authorize_contacts(kind: &str, body: &Json, previous: Option<&Json>, saver: &str) -> Result<(), Error> {
+    let contacts = |body: &Json| -> Vec<Json> {
+        match kind {
+            "alert" => body["contactPoints"].as_array().cloned().unwrap_or_default(),
+            "contactPoint" => vec![body.clone()],
+            _ => Vec::new(),
+        }
+    };
+    let kept = previous.map(contacts).unwrap_or_default();
+    for contact in contacts(body) {
+        if kept.contains(&contact) {
+            continue;
+        }
+        if let Some(refusal) = contact_refusal(&contact, saver)? {
+            return Err(fail(refusal));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_contacts(body: &Json) -> Result<(), Error> {
     for contact in body["contactPoints"]
         .as_array()
@@ -580,7 +699,7 @@ pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> 
                 (None, None) => "/apps/dashboards/Alerts".to_string(),
             };
             let mut note = moqui_core::notify::NotificationMessage::new();
-            note.topic(text(contact, "topic", "ReportAlert"))
+            note.topic(text(contact, "topic", CONTACT_TOPIC))
                 .title(title)
                 .link(link)
                 .notification_type(tone)
@@ -806,7 +925,10 @@ fn notify(
                     // (alert_delivery.rs); one who was told this state is not told again when a failed one is retried
                     let sent = match audience {
                         Some(audience) => audience.send(contact, &payload, &group, &hash, now, repeat),
-                        None => send_contact(contact, &payload),
+                        None => match contact_refusal_as(ec, text(definition, "ownerId", ""), contact) {
+                            Some(refusal) => Err(fail(refusal)),
+                            None => send_contact(contact, &payload),
+                        },
                     };
                     if let Err(error) = sent {
                         tracing::error!(rule=id,contact=%contact_id,%error,"alert delivery failed; will retry");
@@ -1393,7 +1515,18 @@ fn evaluate_claimed(
             // (plans/archive/Monitoring.md, Later: Regressions and incidents).
             let wants_incident = labels["incident"] == "true" || body["labels"]["incident"] == "true";
             if wants_incident && instance.state == State::Firing {
-                super::incident::open_from_alert(ec, id, text(definition, "title", id), &key, &labels, now);
+                // an incident is a Monitor record and starts recovery: the rule's owner opens one only while they
+                // hold MONITOR_INCIDENT themselves (SEC-TLS-107)
+                let owner = text(definition, "ownerId", "");
+                if super::incident::may_open_incident(ec, owner, now) {
+                    super::incident::open_from_alert(ec, id, text(definition, "title", id), &key, &labels, now);
+                } else {
+                    tracing::info!(
+                        rule = id,
+                        owner,
+                        "an alert labelled incident opens no incident: its owner does not hold MONITOR_INCIDENT"
+                    );
+                }
             }
         }
         if matches!(

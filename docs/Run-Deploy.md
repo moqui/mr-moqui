@@ -471,7 +471,7 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `mail-delivery@bounce-domain` | empty | On an edge node, the domain of the envelope sender of mail it sends out, `bounce+<item>@` it, whose bounces the listener takes back to the message; empty sends from the message's own sender |
 | `smtp-server@internet`, `smtp-server@rspamd-url` | empty | `true` runs the SMTP listener in internet mode (port 25; `true` in `conf/edge/MoquiEdgeConf.xml`), with Rspamd's HTTP API for its spam verdict when the URL is set; its hourly limits per client address and per sender are `smtp-server` `internet-messages-per-hour` and `internet-bytes-per-hour` (1000, 1 GiB) ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-in)) |
 | `mail-delivery/dkim@key`, `mail-delivery/dkim@selector`, `mail-delivery/dkim@domains` | generated, `moqui`, empty | The node's DKIM key (base64 PKCS#8, or PEM; RSA-2048 made into `runtime/.env` the first time a server needs it), its selector, and the domains signed for (empty: the hosted accounts' domains). `get#DkimRecord` gives the TXT record. A send by SMTP is signed only when the key is set or the send goes to this node's own listener |
-| `smtp-server@arc-trusted-sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25; empty for no ARC exception |
+| `smtp-server@arc-trusted-sealers` | empty | Domains whose passing ARC seal overrides a DMARC reject or quarantine on port 25, when the sealer recorded `dmarc=pass` for the From domain; empty for no ARC exception |
 | `mail-delivery@retry-seconds`, `mail-delivery@days` | `300`, `5` | On an edge node with the MTA in moqui, the first wait before a delivery is tried again (doubled each time, to 4 hours), and when a message not delivered goes back as a bounce |
 | `mail-delivery@mx-require-tls` | empty | On an edge node with the MTA in moqui, the recipient domains (comma-separated, `*` for every one) whose MX gets mail only over STARTTLS with a certificate valid for the host, as under an MTA-STS `enforce` policy whatever the domain publishes: an MX with no STARTTLS or a failed handshake or certificate is tried again later and the message bounces after `mail-delivery@days`, never sent in clear text. Empty: STARTTLS when offered, with any certificate, else clear text ([Mail-Inbound](interfaces/Mail-Inbound.md#mail-out)) |
 | `mail-delivery@mx-override`, `mail-delivery@dns-offline` | empty | Testing and staging only: `domain=host:port` pairs (`*` for any) used in place of the MX, and `true` for no DNS query |
@@ -675,7 +675,7 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `database` | `moqui` | |
 | `schema-name` | | Empty for the default schema |
 | `user`, `password` | `moqui`, ... | |
-| `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
+| `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only and needs `sslrootcert` (it trusts that file alone, as libpq does; without it the connection is refused), `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
 `entity-facade@crypt-pass` (`moqui_conf__entity_facade__crypt_pass`), generated at the first start, is the key of
@@ -775,14 +775,20 @@ in `runtime/db/backup`, or the directory in `database-backup@dir`.
   mirror seals such a dump again, to its own recipient, so its copy needs both identities; with this set, leave
   `mirrorEncrypt` off.
 - **Mirror**: set `systemMessageRemoteId` (the seed job's is `EmbeddedDbBackup`) and on that remote `sendUrl`, the
-  user, and a password or key. The remote directory or key prefix is its message type's `sendPath`. Only the archives
+  user, and a password or key. A remote marked `disabled` receives nothing. A mirror host on this machine or the
+  private network (a LAN backup server) needs the remote's `allowPrivateNetwork` set to `Y`; empty is `N` on a
+  production instance, and a link-local or metadata address is refused always. The seed `EmbeddedDbBackup` remote is
+  not changed from System › Integrations, so set it with a data file of your runtime component, loaded with
+  `moqui load` (`<moqui.service.message.SystemMessageRemote systemMessageRemoteId="EmbeddedDbBackup"
+  sendUrl="backup.lan" username="backup" allowPrivateNetwork="Y"/>`), or in Tools › Data as an administrator. The remote directory or key prefix is its message type's `sendPath`. Only the archives
   the remote lacks are sent; a promotion is a rename there, and an archive the ladder drops is deleted there. An
   incremental whose parent a promotion renamed is sent again (over plain SFTP only its `moqui-backup.txt`), so every
   copy names its parent as it is now called. With `incremental` and `chainIncrementals`, a night sends one
   incremental. Two job parameters shape it:
   - `mirrorTransport`: `sftp` or `s3`. Empty picks `s3` for a `sendUrl` of `s3://<bucket>`, else `sftp`. For S3 add
     `?region=<region>` (default `us-east-1`) and, for a store other than AWS (MinIO, R2, B2),
-    `&endpoint=https://<host>`; the username is the access key, the password the secret key.
+    `&endpoint=https://<host>`; the username is the access key, the password the secret key. An `http://` endpoint is
+    taken only on an instance that is not production, for this machine or a store on the private network.
   - `mirrorEncrypt`: `true` seals each archive to `mirrorRecipient`, an [age](https://age-encryption.org) recipient
     (`age1...`, from `age-keygen`), before it leaves the server, which holds no key that reads it; keep the identity
     (`AGE-SECRET-KEY-1...`) off the server. Off by default.
@@ -1951,8 +1957,9 @@ A `myaddons.xml` repository can name a server's `addons.xml`, such as the one a 
 public components with their clone addresses (`B/<group>/-/addons.xml` on an MR PASS server):
 `<repository name="team"><location type="addons" url="https://team.example.com/B/acme/-/addons.xml"/></repository>`.
 The get tasks fetch it once per run (https; http only to a loopback address; or a `file:` URL) and look components and
-repositories up in it after `myaddons.xml` and before `addons.xml`, so `./moq component-get acme-site` clones from the
-server's own git location. Its root's `default` and `default-repository` are not used. One that cannot be read, or is
+repositories up in it after `myaddons.xml` and `addons.xml`, so `./moq component-get acme-site` clones from the
+server's own git location, and a name `addons.xml` defines (`mr-mantle`, `apps`, `github`) stays the official one. A
+component name is letters, digits, `-` and `_`, never a path. Its root's `default` and `default-repository` are not used. One that cannot be read, or is
 not https, is skipped with a warning. A repository entry with only the `addons` location leaves the others to the
 served file's repository of the same name; one with a `git` location of its own uses that.
 

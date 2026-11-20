@@ -53,7 +53,7 @@ fn message(message_id: &str) -> Vec<u8> {
 }
 
 #[test]
-fn a_received_message_is_one_item_by_message_id_and_recipients_with_addresses_only() {
+fn a_received_message_is_one_item_by_its_content_sender_and_recipients_with_addresses_only() {
     let both = [recipient("sales@example.com"), recipient("Help@Example.com")];
     let item = inbound_item(message("<m1@example.org>"), &envelope(), &both, "acct-1");
     assert_eq!(item.kind, KIND_IN);
@@ -75,6 +75,25 @@ fn a_received_message_is_one_item_by_message_id_and_recipients_with_addresses_on
     assert_ne!(other.idempotency_key, item.idempotency_key, "other recipients");
     let other = inbound_item(message("<m2@example.org>"), &envelope(), &both, "acct-1");
     assert_ne!(other.idempotency_key, item.idempotency_key, "another message");
+    // SEC-MAIL-87: a known Message-ID with other content, or from another sender, is another item, which the local
+    // node's own Message-ID check judges; never answered 250 and dropped here
+    let forged = String::from_utf8(message("<m1@example.org>"))
+        .unwrap()
+        .replace("Hello", "Pay me");
+    let other = inbound_item(forged.into_bytes(), &envelope(), &both, "acct-1");
+    assert_ne!(
+        other.idempotency_key, item.idempotency_key,
+        "the same Message-ID, other content"
+    );
+    let elsewhere = Envelope {
+        mail_from: "mallory@evil.example".to_string(),
+        ..envelope()
+    };
+    let other = inbound_item(message("<m1@example.org>"), &elsewhere, &both, "acct-1");
+    assert_ne!(
+        other.idempotency_key, item.idempotency_key,
+        "the same message, another sender"
+    );
     // no Message-ID: the message's own hash
     let bare = b"From: dan@example.org\r\nSubject: x\r\n\r\nbody\r\n".to_vec();
     let first = inbound_item(bare.clone(), &envelope(), &both, "acct-1");
@@ -386,6 +405,71 @@ fn an_all_in_one_nodes_mail_out_goes_back_to_the_paired_node_to_the_servers_own_
     assert_eq!(split.external, ["sales@server.example", "bob@far.example"]);
     // the server's accounts not read: the item is applied again later
     assert!(split_recipients(&to, paired, |_| Err(LibError::new("database down"))).is_err());
+}
+
+/// SEC-MAIL-90: on a dedicated edge node (role `edge`, behind a front node) a paired node may not send as another
+/// pairing's domain: `refused_sender` reads every pairing's copied domains by the node's role.
+#[cfg(feature = "imap")]
+#[test]
+fn a_dedicated_edge_node_refuses_a_sender_of_another_pairings_domain() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    let settings = moqui_core::edge::EdgeSettings {
+        role: moqui_core::edge::NodeRole::Edge,
+        ..moqui_core::edge::EdgeSettings::default()
+    };
+    ctx.factory().extension(|_| settings.clone());
+    for (node, id, address) in [
+        ("node-a", "1", "ann@desk.example"),
+        ("node-b", "2", "bob@other.example"),
+    ] {
+        let mut copy = facade.make_value(moqui_core::edge::replica::VALUE).unwrap();
+        copy.set("pairedNodeId", Value::string(node));
+        copy.set("setName", Value::string(RECIPIENT_SET));
+        copy.set("entityName", Value::string(crate::sync::ACCOUNT));
+        copy.set("pkHash", Value::string(format!("pk-{id}")));
+        copy.set("pkJson", Value::string(format!(r#"{{"emailAccountId":"{id}"}}"#)));
+        copy.set(
+            "fieldsJson",
+            Value::string(format!(
+                r#"{{"emailAddress":"{address}","accountKindEnumId":"EakHosted"}}"#
+            )),
+        );
+        copy.create(&facade).unwrap();
+    }
+    let paired = crate::auth::paired_domains(&facade, "node-a").unwrap();
+    let from = |address: &str| format!("From: <{address}>\r\nSubject: x\r\n\r\nbody\r\n").into_bytes();
+    let refused = refused_sender(
+        ctx.factory(),
+        &facade,
+        "x@other.example",
+        &from("x@other.example"),
+        &paired,
+    )
+    .unwrap();
+    assert!(
+        refused.is_some_and(|why| why.contains("other.example")),
+        "another pairing's domain"
+    );
+    let own = refused_sender(
+        ctx.factory(),
+        &facade,
+        "ann@desk.example",
+        &from("ann@desk.example"),
+        &paired,
+    )
+    .unwrap();
+    assert_eq!(own, None, "its own domain");
+    let neither = refused_sender(
+        ctx.factory(),
+        &facade,
+        "me@gmail.example",
+        &from("me@gmail.example"),
+        &paired,
+    )
+    .unwrap();
+    assert_eq!(neither, None, "a domain of no pairing");
 }
 
 #[cfg(feature = "imap")]

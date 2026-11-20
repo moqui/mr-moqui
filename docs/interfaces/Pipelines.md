@@ -119,7 +119,10 @@ not.
   `${matrix.NAME}` is expanded in the image, env values, step commands, cache keys, artifact names and service
   images, and the job has `MATRIX_NAME`. A job that needs a matrix job waits for all of them.
 - **`cache`**: a directory kept between runs by key. `${hash:FILE}` in the key is the SHA-256 of a file of the
-  checkout. It is restored before the first step, and saved after the last when the job succeeded and nothing is
+  checkout. It is restored before the first step (at most `git-ci` `max-unpack-bytes`, 16 GiB, and a million entries;
+  regular files, directories and
+  links that stay in the workspace, resolved through the links already restored; past a limit it stops and the log says
+  it was not restored), and saved after the last when the job succeeded and nothing is
   stored under the key. Caches are per repository and apart for protected refs: a run for a protected ref reads only
   caches such a run wrote, an untrusted run never reads them (a build with secrets may have filled one), and another
   trusted run reads both. A cache of a job that was given secrets (an environment whose `allowedRefs` names a branch
@@ -184,7 +187,10 @@ while its job ran); the job's own state stands.
 ## Trust and approval
 
 A run is **trusted** only when it is for a ref of the repository itself, pushed or asked for by an account with the
-update right. A schedule's run is trusted: it is the repository's own branch by its own file. A run is **untrusted**
+update right. A schedule's run of the default branch or a protected one is trusted: it is the repository's own branch by
+its own file; one of another branch, which an account without the update right may make, is trusted only as a push of
+its head would be: by the account of the latest change that set the branch to its head (`GitUpdate`), and only while the
+account that first brought the head (`GitCommitPush`) has the update right too; untrusted when no setter is known. A run is **untrusted**
 when it is for a merge request from a fork (`GitMergeRequest.sourceRepositoryId`), one pushed for review
 (`pushedForReview`) or one that stopped following its source (`sourceDetachedDate`), whoever opened it and whatever
 their rights (the commits are not a branch's of the repository), or was caused by an account without the update
@@ -235,7 +241,11 @@ A `GitCiSecret` is a repository's, or an owner's that the application names (a g
 and environments of a repository are managed (`find#CiSecrets`, `store#`, `delete#CiSecret`, `store#`,
 `delete#CiEnvironment`) by a user with the **delete** right on it (a maintainer), not the update right a developer
 who pushes has, or with authorization disabled; an owner's with authorization disabled only. A secret moved to another
-scope or environment takes a new value: its old one was given for the old scope. A job is given a secret it asks for
+scope or environment takes a new value: its old one was given for the old scope. In the same way an environment whose
+`allowedRefs` gains a pattern, whose `approvalRequired` is turned off, or whose `approverGroupId` changes while approval is
+required, has the values of its secrets cleared (they are
+given again for the environment as it is now), and one whose `targetUrl` changes without a new `token` loses its
+token; what was cleared is the result's `cleared`, for the page to show. A job is given a secret it asks for
 only when its run is trusted and the secret's scope is met:
 
 | Scope | Given when |
@@ -261,8 +271,8 @@ A runner is never the server, nor on its machine or its network. A pool (`GitRun
 | `trusted` | Y: trusted runs only. N: untrusted runs only. |
 | `allowedImages` | Image patterns (`*`). A job whose image none matches is an error; an empty list allows none. |
 | `maxConcurrent`, `maxMinutes` | Jobs at once, and the longest a job runs. |
-| `cpuLimit`, `memoryMb`, `diskMb`, `pidsLimit` | The container's limits. `diskMb` needs a storage driver that takes it. |
-| `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. Never `host` or `container:...` (refused when the pool is stored, and `none` if a row has one). |
+| `cpuLimit`, `memoryMb`, `diskMb`, `pidsLimit` | The container's limits. `diskMb` needs a storage driver that takes it. A database service's data is on a tmpfs, so it counts toward `memoryMb`, which an image with a `VOLUME` needs. |
+| `egressRule` | The container's network mode: `bridge` (the default), `none`, or a network of the host whose rules limit what a job reaches. A network is named by letters, digits, dot, dash and underscore only, and is no engine keyword, so never `host`, `container:...`, Podman's `ns:<path>`, `slirp4netns`, `pasta` or `private`, with options or without (refused when the pool is stored, and `none` if a row has one). |
 | `serverUrl` | The URL the pool's runners reach the server by, when it is not `git-ci` `server-url`. |
 
 The pools are an operator's: `find#RunnerPools`, `store#`, `delete#RunnerPool`, `create#RunnerPoolToken` and
@@ -312,7 +322,13 @@ with a sized tmpfs at `/tmp`, an init, the pool's CPU, memory and swap, pids and
 that user and writes under `/tmp` (Postgres with `PGDATA` there). They are on a network of the job's own, named after
 its container, which reaches out only when the pool's `egressRule` is `bridge`: for `none` or a network of the host
 it is internal, and the job's container is put on the pool's network too, so the job's egress is the pool's and a
-service has none. A network of that name already there is an error (another run's), never shared.
+service has none. A network of that name already there is an error (another run's), never shared. A job's or a
+service's image (the image is inspected before its container is made) gets a tmpfs of `container-tmp-mb`, owned by
+the container's user, at each path its image declares a `VOLUME` (a database service keeps its data there, in memory:
+its data counts toward the pool's `memoryMb`), where the engine would otherwise make an anonymous
+volume on the host's disk, outside the pool's limits. A path no tmpfs covers (not absolute), and a container the
+engine gave a volume anyway, are refused before it starts, and so is an image with a `VOLUME` on a pool with no
+`memoryMb`, where nothing would bound the tmpfs.
 
 The names carry this server's id (`git-ci` `server-id`, else the public URL's host), and a removal or a cleanup
 touches only containers with this server's label, so two servers can share a host. The cleanup leaves a container
@@ -456,8 +472,13 @@ token in `Authorization: Bearer`, taken only over HTTPS, from loopback, or with 
 Every job endpoint checks that the token's job run is the one in the path (403 otherwise) and still running (410
 after it ended or passed its time; 401 for a token that is not a job token of this server), and counts the job's requests (`runner-max-requests-per-minute`, 429 over it). A JSON body is at most
 `max-log-batch-bytes`; an upload is limited by its kind (`max-artifact-bytes`, `max-report-bytes`,
-`max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches. What a repository and a
-run's owner keep is capped (`max-repository-upload-bytes`, `max-owner-upload-bytes`; 0, no cap): an upload past it is
+`max-cache-bytes`), and a job uploads at most `max-artifacts` artifacts, reports and caches (counted again once one is
+stored, so uploads sent at once do not each pass it). What a repository, a run's owner and an untrusted run keep is
+capped (`max-repository-upload-bytes`, 10 GiB; `max-owner-upload-bytes`, none; `max-untrusted-run-upload-bytes`, 1 GiB
+over all its jobs; 0, no cap). Caches count toward a cap, so to make room for a trusted run's upload (its `Content-Length`,
+before it is stored; else the bytes it stored, after) the least recently used caches under the cap are evicted; an
+artifact or a report never is, and an untrusted run's upload evicts none. An
+upload still past a cap is
 refused (`GitCiStorageQuota`), one that would pass it is cut there and refused the same way, and an upload is
 counted again once stored, so of two at once the one that went past the cap is taken back. Artifacts stored before
 they carried their run's owner are given it before an owner's cap is counted. A cache from an untrusted run is
@@ -748,7 +769,8 @@ the client's address arrives).
 | `max-timeout-minutes`, `default-timeout-minutes`, `max-fetch-depth` | 360, 60, 50 | |
 | `max-log-bytes`, `max-log-batch-bytes` | 16 MB, 1 MB | A job's log; one runner request |
 | `max-artifact-bytes`, `max-report-bytes`, `max-cache-bytes`, `max-artifacts` | 1 GB, 16 MB, 2 GB, 100 | Uploads (`max-artifacts` counts caches too) |
-| `max-repository-upload-bytes`, `max-owner-upload-bytes` | 0, 0 | What a repository and an owner keep of uploads; 0: no cap |
+| `max-unpack-bytes` | 16 GiB | What a cache unpacks to on a runner, sent with each job |
+| `max-repository-upload-bytes`, `max-owner-upload-bytes`, `max-untrusted-run-upload-bytes` | 10737418240, 0, 1073741824 | What a repository, an owner and an untrusted run keep of uploads; 0: no cap |
 | `max-services`, `schedule-min-minutes`, `pool-token-days` | 4, 15, 7 | Services of a job; the least time between a schedule's runs; how long a pool token registers |
 | `runner-token-days` | 90 | How long a registered runner's token is good for; rotated halfway; 0 is no expiry |
 | `artifact-retention-days`, `max-artifact-retention-days`, `log-retention-days`, `cache-retention-days` | 30, 365, 90, 30 | |

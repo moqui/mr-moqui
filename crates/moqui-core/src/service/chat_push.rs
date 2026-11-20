@@ -124,6 +124,8 @@ const DELIVERY_PASSES: usize = 4;
 const SWEEP: Duration = Duration::from_secs(60);
 /// The rows done (sent, failed, dropped) are kept this long.
 const KEEP_MILLIS: i64 = 7 * 86_400_000;
+/// A push this long after it was written is checked again before it goes ([`gone_since_queued`], SEC-COM-92).
+const WAITED_CHECK: i64 = 30_000;
 const MAX_SNIPPET: usize = 140;
 const MAX_NAME: usize = 100;
 
@@ -910,7 +912,9 @@ fn fan_out_job(
         return Ok(0);
     };
     let recipients = recipients(facade, &room, &event)?;
-    let users: Vec<String> = recipients.keys().cloned().collect();
+    // only users who may still sign in: an account disabled for good, or whose terminateDate passed (which no entity
+    // ECA sees), gets nothing, sent at once or later (SEC-COM-92)
+    let users = signing_in(facade, recipients.keys().cloned().collect(), now)?;
     let devices = if users.is_empty() {
         Vec::new()
     } else {
@@ -1244,6 +1248,73 @@ pub fn fcm_body(
     }})
 }
 
+/// Why a message push written when its job was worked is no longer sent (SEC-COM-92), or None: its event was deleted
+/// (`redacted`), the user left the room, not a direct one (`left`), or the account may no longer sign in, disabled for
+/// good (not a lockout after failed logins, which ends by itself) or terminated (`accountDisabled`).
+fn gone_since_queued(
+    facade: &EntityFacade,
+    user: &str,
+    room_id: &str,
+    seq: i64,
+    now: i64,
+) -> Result<Option<&'static str>, LibError> {
+    let event = facade
+        .find(EVENT)?
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("eventSeq", Value::I64(seq))
+        .disable_authz()
+        .one()?;
+    if event.is_none_or(|event| text_of(&event, "redactedDate").is_some()) {
+        return Ok(Some("redacted"));
+    }
+    let direct = facade
+        .find(ROOM)?
+        .eq("chatRoomId", Value::string(room_id))
+        .disable_authz()
+        .one()?
+        .is_some_and(|room| text_of(&room, "roomTypeEnumId").as_deref() == Some("CrtDirect"));
+    let member = facade
+        .find(MEMBER)?
+        .eq("chatRoomId", Value::string(room_id))
+        .eq("userId", Value::string(user))
+        .disable_authz()
+        .list()?;
+    let in_room = member
+        .values()
+        .iter()
+        .any(|member| direct || text_of(member, "leftDate").is_none());
+    if !in_room {
+        return Ok(Some("left"));
+    }
+    let signs_in = !signing_in(facade, vec![user.to_string()], now)?.is_empty();
+    Ok((!signs_in).then_some("accountDisabled"))
+}
+
+/// Of `users`, those whose account may sign in at `now`, in one query: not disabled for good (a lockout after failed
+/// logins, which has a disabledDateTime, ends by itself) and not past its terminateDate.
+fn signing_in(facade: &EntityFacade, users: Vec<String>, now: i64) -> Result<Vec<String>, LibError> {
+    if users.is_empty() {
+        return Ok(users);
+    }
+    let accounts = facade
+        .find("moqui.security.UserAccount")?
+        .condition(Condition::is_in("userId", users.iter().map(Value::string).collect()))
+        .disable_authz()
+        .list()?;
+    let may: std::collections::HashSet<String> = accounts
+        .values()
+        .iter()
+        .filter(|account| {
+            let disabled =
+                text_of(account, "disabled").as_deref() == Some("Y") && text_of(account, "disabledDateTime").is_none();
+            let terminated = millis_of(account, "terminateDate").is_some_and(|end| end <= now);
+            !disabled && !terminated
+        })
+        .filter_map(|account| text_of(account, "userId"))
+        .collect();
+    Ok(users.into_iter().filter(|user| may.contains(user)).collect())
+}
+
 /// Whether the device has a newer push of the room than `seq` that the user has not read: one waiting, or one shown
 /// and not cleared. A clear up to `seq` would remove its notification, so none is sent.
 fn newer_unread(facade: &EntityFacade, subscription: &str, room_id: &str, seq: i64) -> Result<bool, LibError> {
@@ -1316,6 +1387,15 @@ fn deliver_one(
     if clear && newer_unread(facade, &subscription, &room_id, count_of(row, "eventSeq"))? {
         finish(facade, &id, attempts, DROPPED, Some("newer"), None, now)?;
         return Ok(Step::Dropped);
+    }
+    // a push that waited (do not disturb, its push service; written WAITED_CHECK or more ago) is of what may have
+    // changed since it was written; one sent at once is not read again, and a test push is of no room
+    let waited = millis_of(row, "createdDate").is_some_and(|created| now - created >= WAITED_CHECK);
+    if !clear && waited && room_id != TEST_ROOM {
+        if let Some(reason) = gone_since_queued(facade, &user, &room_id, count_of(row, "eventSeq"), now)? {
+            finish(facade, &id, attempts, DROPPED, Some(reason), None, now)?;
+            return Ok(Step::Dropped);
+        }
     }
     let provider = Provider::of(&device);
     // a native app's registration ends with its device key

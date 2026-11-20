@@ -261,6 +261,27 @@ impl ArtifactStack {
         })
     }
 
+    /// Whether the top frame is a screen's or a screen transition's: the code running now is a screen's own, not an
+    /// entity find's or a service call's it called into.
+    pub(super) fn top_is_screen(&self) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| matches!(&*frame.artifact_type, "AT_XML_SCREEN" | "AT_XML_SCREEN_TRANS"))
+    }
+
+    /// The location of the nearest screen frame above the last service frame: the screen whose code runs now, or none
+    /// when a service's own code runs (a service frame comes first) or no screen is on the stack.
+    pub(super) fn screen_above_service(&self) -> Option<Arc<str>> {
+        for frame in self.frames.iter().rev() {
+            match &*frame.artifact_type {
+                "AT_SERVICE" => return None,
+                "AT_XML_SCREEN" => return Some(Arc::clone(&frame.name)),
+                _ => {}
+            }
+        }
+        None
+    }
+
     pub(super) fn top_info_mut(&mut self) -> Option<&mut AuthInfo> {
         self.frames.last_mut().map(|frame| &mut frame.info)
     }

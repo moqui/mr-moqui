@@ -1079,3 +1079,96 @@ fn the_tarpit_counts_every_request_before_anything_is_built() {
     let (status, _) = rpc(&bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
     assert_eq!(status, 429, "tools/list counts too");
 }
+
+/// SEC-AI-86: an `LlmApiClient` with the `mcp` scope bounds the MCP server as one with `gateway` bounds the gateway: a
+/// disabled one, or one whose `allowedAgents` leave out the MCP agent, is refused; a key no row with the `mcp` scope
+/// names (none at all, or rows for the gateway or A2A only) is bounded by its account's permissions alone.
+#[test]
+fn an_api_client_of_the_key_must_have_the_mcp_scope_and_allow_the_agent() {
+    let bed = bed("");
+    let _entered = bed.ctx.enter();
+    let (key, _) = ready(&bed);
+    let list = |bed: &Bed| rpc(bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
+    assert_eq!(list(&bed).0, 200, "no client names the key");
+    let hash = moqui_core::user::hash_login_key(&key).unwrap();
+    row(
+        &bed.facade,
+        "moqui.llm.LlmApiClient",
+        &[
+            ("clientId", "MCP_CLIENT"),
+            ("userId", USER),
+            ("loginKey", &hash),
+            ("scopes", "a2a"),
+        ],
+    );
+    let set = |fields: &[(&str, &str)]| {
+        let mut client = bed
+            .facade
+            .find("moqui.llm.LlmApiClient")
+            .unwrap()
+            .eq("clientId", Value::string("MCP_CLIENT"))
+            .disable_authz()
+            .one()
+            .unwrap()
+            .unwrap();
+        for (field, text) in fields {
+            client.set(*field, Value::string(*text));
+        }
+        client.update(&bed.facade).unwrap();
+    };
+    for (fields, allowed) in [
+        // a key whose rows are for the gateway or A2A only: MCP is bounded by the account's permissions alone
+        (&[("scopes", "a2a,gateway")][..], true),
+        (&[("scopes", "a2a,mcp"), ("disabled", "Y")][..], false),
+        (&[("disabled", "N"), ("allowedAgents", "assist")][..], false),
+        (&[("allowedAgents", "assist,mcp")][..], true),
+    ] {
+        set(fields);
+        let (status, answer) = list(&bed);
+        if allowed {
+            assert_eq!(status, 200, "{fields:?}: {answer}");
+        } else {
+            assert_eq!(
+                (status, answer["error"]["code"].as_i64()),
+                (403, Some(super::code::FORBIDDEN)),
+                "{fields:?}: {answer}"
+            );
+        }
+    }
+}
+
+/// SEC-AI-87: the MCP agent's tool policy is the server's allowlist, so a policy that cannot be read refuses the
+/// request rather than offer every tool but the destructive ones.
+#[test]
+fn a_tool_policy_that_cannot_be_read_refuses_the_request() {
+    let bed = bed("");
+    let _entered = bed.ctx.enter();
+    let (key, _) = ready(&bed);
+    row(
+        &bed.facade,
+        "moqui.agent.AgentToolPolicy",
+        &[
+            ("agentId", "mcp"),
+            ("sequenceNum", "1"),
+            ("toolPattern", "enum_*"),
+            ("approvalModeEnumId", "AgamNever"),
+        ],
+    );
+    let failing = moqui_core::testing::FailTable::new("agent_tool_policy");
+    let (status, refused) = rpc(&bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
+    assert_eq!(
+        (status, refused["error"]["code"].as_i64()),
+        (200, Some(super::code::INTERNAL)),
+        "{refused}"
+    );
+    drop(failing);
+    let (status, listed) = rpc(&bed, &key, "tools/list", json!({"_meta": meta(json!({}))}));
+    assert_eq!(status, 200, "{listed}");
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"enum_find"), "the never rule holds: {names:?}");
+}

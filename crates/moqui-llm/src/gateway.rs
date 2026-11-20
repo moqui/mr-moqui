@@ -70,7 +70,7 @@ use moqui_core::llm_hooks::RustServiceFn;
 use moqui_core::rust_service;
 
 const LLM_MODEL_ALIAS: &str = "moqui.llm.LlmModelAlias";
-const LLM_API_CLIENT: &str = "moqui.llm.LlmApiClient";
+pub(crate) const LLM_API_CLIENT: &str = "moqui.llm.LlmApiClient";
 
 /// The content log keeps at most this much of a stream.
 const MAX_LOGGED_STREAM: usize = 1024 * 1024;
@@ -648,14 +648,15 @@ impl Caller {
 }
 
 /// The credential a request logged in with, as an `LlmApiClient` names it.
-enum Credential {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Credential {
     /// The hash of a login key, as `UserLoginKey.loginKey` stores it.
     LoginKey(String),
     AppPassword(String),
 }
 
 /// The id and the username of the owner of an app password, by its hash.
-fn app_password_owner(facade: &EntityFacade, password: &str) -> Option<(String, String)> {
+pub(crate) fn app_password_owner(facade: &EntityFacade, password: &str) -> Option<(String, String)> {
     let hashed = moqui_core::user::hash_login_key(&moqui_core::user::app_password_key(password)).ok()?;
     let row = facade
         .find("moqui.security.UserAppPassword")
@@ -802,7 +803,7 @@ pub fn authenticate(
 }
 
 /// The comma list of a field.
-fn list_of(row: &moqui_core::entity::EntityValue, field: &str) -> Vec<String> {
+pub(crate) fn list_of(row: &moqui_core::entity::EntityValue, field: &str) -> Vec<String> {
     text_of(row, field)
         .map(|text| {
             text.split(',')
@@ -860,25 +861,7 @@ fn client_of(facade: &EntityFacade, credential: &Credential, user_id: &str) -> R
     if text_of(&row, "userId").is_some_and(|owner| owner != user_id) {
         return Err(format!("client {client_id} is another user's"));
     }
-    let now = jiff::Timestamp::now().as_millisecond();
-    let used = row
-        .get("lastUsedDate")
-        .and_then(super::millis_of)
-        .is_some_and(|used| now - used < 60_000);
-    if !used {
-        let noted = facade.make_value(LLM_API_CLIENT).and_then(|mut update| {
-            update.set("clientId", Value::string(&client_id));
-            update.set("lastUsedDate", moqui_core::user::stamp_value(now));
-            facade.transactions_for(LLM_API_CLIENT)?.run(
-                moqui_core::transaction::TransactionAttribute::ForceNew,
-                None,
-                || update.update(facade),
-            )
-        });
-        if let Err(error) = noted {
-            tracing::warn!("client {client_id}: last use not written: {error}");
-        }
-    }
+    note_use(facade, &row);
     Ok(Some(Client {
         aliases: list_of(&row, "allowedAliases"),
         daily_tokens: int_of(&row, "dailyTokens")
@@ -890,6 +873,31 @@ fn client_of(facade: &EntityFacade, credential: &Credential, user_id: &str) -> R
             .filter(|n| *n > 0),
         client_id,
     }))
+}
+
+/// Note a client's use, at most once a minute; a write that fails is logged and the call goes on.
+pub(crate) fn note_use(facade: &EntityFacade, row: &moqui_core::entity::EntityValue) {
+    let client_id = text_of(row, "clientId").unwrap_or_default();
+    let now = jiff::Timestamp::now().as_millisecond();
+    let used = row
+        .get("lastUsedDate")
+        .and_then(super::millis_of)
+        .is_some_and(|used| now - used < 60_000);
+    if used {
+        return;
+    }
+    let noted = facade.make_value(LLM_API_CLIENT).and_then(|mut update| {
+        update.set("clientId", Value::string(&client_id));
+        update.set("lastUsedDate", moqui_core::user::stamp_value(now));
+        facade.transactions_for(LLM_API_CLIENT)?.run(
+            moqui_core::transaction::TransactionAttribute::ForceNew,
+            None,
+            || update.update(facade),
+        )
+    });
+    if let Err(error) = noted {
+        tracing::warn!("client {client_id}: last use not written: {error}");
+    }
 }
 
 /// The routes under `/llm/v1`.

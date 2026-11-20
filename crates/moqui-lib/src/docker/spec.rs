@@ -239,6 +239,22 @@ pub fn valid_name(name: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
 }
 
+/// The network modes an engine reads as a keyword, not a network's name: the host's network, another container's,
+/// and Podman's user-mode networks and namespace options, which a network named so would be taken as.
+pub const NETWORK_KEYWORDS: [&str; 6] = ["host", "pasta", "slirp4netns", "private", "container", "ns"];
+
+/// Whether `network` may name the network a container is on: `bridge`, `none`, or a network's name ([`valid_name`])
+/// that is no engine keyword ([`NETWORK_KEYWORDS`]). A list of what is refused would miss a mode: on Podman
+/// `ns:<path>` joins the network namespace at a path, the host's included (`ns:/proc/1/ns/net`), `slirp4netns` and
+/// `pasta` (with or without options) and `private` are modes of their own, and `host` and `container:<id>` are the
+/// host's network and another container's (SEC-GIT-93).
+pub fn valid_network(network: &str) -> bool {
+    valid_name(network)
+        && !NETWORK_KEYWORDS
+            .iter()
+            .any(|keyword| network.eq_ignore_ascii_case(keyword))
+}
+
 /// Whether `secret` is in `value`: anywhere in it when the secret is [`SUBSTRING_MIN`] bytes or longer, else as the
 /// whole value. Not constant time: both sides are this process's own, and nothing outside it times the check.
 fn holds(value: &[u8], secret: &[u8]) -> bool {
@@ -260,7 +276,8 @@ impl ContainerSpec {
     /// name that is not a valid name, two secrets of one name, a secret with no value or a mode that is not a file
     /// mode, and a label of the driver's own ([`SECRETS_LABEL`]). A mount at, inside or holding `/run/secrets` is
     /// refused, so a secret file cannot land in a volume or a host path. Unless [`Self::allow_host_access`], a bind
-    /// that reaches an engine's API socket and the host's network are refused too.
+    /// that reaches an engine's API socket, and a network that is not `bridge`, `none` or a network's name (the
+    /// host's, another container's, a namespace path, a Podman user-mode network: [`valid_network`]), are refused too.
     ///
     /// # Errors
     ///
@@ -282,13 +299,11 @@ impl ContainerSpec {
             )));
         }
         self.check_mounts()?;
-        let network = self.network.as_deref().unwrap_or_default();
-        if !self.allow_host_access
-            && (network.eq_ignore_ascii_case("host") || network.to_ascii_lowercase().starts_with("container:"))
-        {
+        let network = self.network.as_deref().unwrap_or_default().trim();
+        if !self.allow_host_access && !network.is_empty() && !valid_network(network) {
             return Err(Error::new(format!(
-                "container {}: the network {network} is the host's or another container's, which a container that \
-                 stays does not use",
+                "container {}: the network {network} is not bridge, none or a network's name but the host's or another \
+                 container's, a namespace or an engine's own mode, which a container that stays does not use",
                 self.name
             )));
         }

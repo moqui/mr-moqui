@@ -2628,12 +2628,54 @@ pub(super) fn test_failure(step: &str, place: &str, text: &str, own: &[String]) 
     if let Some(own) = own.iter().find(|own| text.contains(own.as_str())) {
         return own.clone();
     }
-    test_failure_kind(text).to_string()
+    let kind = test_failure_kind(text);
+    // the server's response code, one of a fixed list, is a word the user can act on; its free text is not shown
+    match response_code(text) {
+        Some(code) => format!("{kind} ({code})"),
+        None => kind.to_string(),
+    }
+}
+
+/// The IMAP response codes (RFC 3501, RFC 5530) a failure may name to its user: each a fixed word, so the server's own
+/// text never reaches them (SEC-MAIL-94).
+const RESPONSE_CODES: [&str; 14] = [
+    "ALERT",
+    "AUTHENTICATIONFAILED",
+    "AUTHORIZATIONFAILED",
+    "EXPIRED",
+    "PRIVACYREQUIRED",
+    "CONTACTADMIN",
+    "NOPERM",
+    "INUSE",
+    "LIMIT",
+    "OVERQUOTA",
+    "UNAVAILABLE",
+    "SERVERBUG",
+    "CLIENTBUG",
+    "CANNOT",
+];
+
+/// The first bracketed response code of `text` that is one of [`RESPONSE_CODES`], or none.
+pub(super) fn response_code(text: &str) -> Option<&'static str> {
+    text.split('[').skip(1).find_map(|rest| {
+        let word = rest.split([']', ' ']).next().unwrap_or_default();
+        RESPONSE_CODES
+            .iter()
+            .copied()
+            .find(|code| code.eq_ignore_ascii_case(word))
+    })
 }
 
 pub(super) fn test_failure_kind(text: &str) -> &'static str {
     let lower = text.to_ascii_lowercase();
     let has = |words: &[&str]| words.iter().any(|word| lower.contains(word));
+    let code = response_code(text);
+    if matches!(code, Some("UNAVAILABLE" | "SERVERBUG")) {
+        return "the mail server is not available now";
+    }
+    if matches!(code, Some("AUTHENTICATIONFAILED" | "AUTHORIZATIONFAILED" | "EXPIRED")) {
+        return "the sign-in was refused";
+    }
     if has(&["allowed-hosts"]) {
         "the host is not in email-client allowed-hosts"
     } else if lower.contains(INTERNAL_SERVER) || has(&["link-local address", "internal address"]) {
@@ -2646,7 +2688,17 @@ pub(super) fn test_failure_kind(text: &str) -> &'static str {
         "the connection was refused"
     } else if has(&["timed out", "timeout", "would block"]) {
         "the connection timed out"
-    } else if has(&["auth", "login", "credential", "password", "535", "534", "530", "454", "no [", "invalid"]) {
+    } else if has(&[
+        "auth",
+        "login",
+        "credential",
+        "password",
+        "535",
+        "534",
+        "530",
+        "454",
+        "invalid",
+    ]) {
         "the sign-in was refused"
     } else {
         "the server did not answer as a mail server"

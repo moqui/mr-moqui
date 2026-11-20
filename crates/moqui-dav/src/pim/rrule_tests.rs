@@ -468,3 +468,27 @@ fn one_period_holds_at_most_its_limit() {
     assert_eq!(repeated.by_hour, [9]);
     assert_eq!(repeated.by_day, [(0, Weekday::Monday)]);
 }
+
+/// Three malformed values are errors or end the expansion, never a panic (SEC-FIL-93): a BYDAY item whose last two
+/// bytes are not whole characters, an INTERVAL past the bound, and periods past jiff's span range.
+#[test]
+fn malformed_rules_are_refused_or_cut_not_a_panic() {
+    assert!(Rule::parse("FREQ=WEEKLY;BYDAY=€").is_err());
+    assert!(Rule::parse("FREQ=WEEKLY;BYDAY=1€").is_err());
+    assert!(Rule::parse("FREQ=DAILY;INTERVAL=99999999").is_err());
+    assert!(Rule::parse("FREQ=DAILY;INTERVAL=1000000").is_ok());
+    for rule in [
+        "FREQ=DAILY;INTERVAL=1000000",
+        "FREQ=WEEKLY;INTERVAL=1000000",
+        "FREQ=MONTHLY;INTERVAL=1000000",
+        "FREQ=HOURLY;INTERVAL=1000000",
+        "FREQ=MINUTELY;INTERVAL=1000000",
+    ] {
+        let out = run(rule, "20261025T100000", "UTC", None);
+        assert_eq!(
+            out.first().map(String::as_str),
+            Some("2026-10-25 10:00 +00:00 Sun"),
+            "{rule}"
+        );
+    }
+}
