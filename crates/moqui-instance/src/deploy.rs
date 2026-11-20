@@ -256,7 +256,7 @@ pub fn gate(facade: &EntityFacade, environment: &EntityValue, request: &Request)
             let (repository, revision) = (field(&image, "sourceRepositoryId"), field(&image, "sourceRevision"));
             if repository.is_empty() || revision.is_empty() {
                 return Err(fail(format!(
-                    "InstanceImage {image_id} records no source repository and revision (written by the pipeline that                      built it): its passed run cannot be checked (reasonCode noRevision)"
+                    "InstanceImage {image_id} records no source repository and revision (written by the pipeline that built it): its passed run cannot be checked (reasonCode noRevision)"
                 )));
             }
             (repository, revision)
@@ -264,7 +264,7 @@ pub fn gate(facade: &EntityFacade, environment: &EntityValue, request: &Request)
         Change::Component(component) => {
             if request.repository_id.is_empty() {
                 return Err(fail(format!(
-                    "A component deploy to {environment_id} names its repository (repositoryId), whose pipeline must                      have passed for the commit (reasonCode noRepository)"
+                    "A component deploy to {environment_id} names its repository (repositoryId), whose pipeline must have passed for the commit (reasonCode noRepository)"
                 )));
             }
             let linked = find(facade, CI_ENVIRONMENT)?
@@ -274,7 +274,7 @@ pub fn gate(facade: &EntityFacade, environment: &EntityValue, request: &Request)
                 .into_values();
             let Some(ci) = linked.first() else {
                 return Err(fail(format!(
-                    "No CI environment of repository {} deploys to InstanceEnvironment {environment_id} (reasonCode                      notLinked)",
+                    "No CI environment of repository {} deploys to InstanceEnvironment {environment_id} (reasonCode notLinked)",
                     request.repository_id
                 )));
             };
@@ -287,7 +287,7 @@ pub fn gate(facade: &EntityFacade, environment: &EntityValue, request: &Request)
             }
             if !clone_url.is_empty() && clone_url != component.repository_url {
                 return Err(fail(format!(
-                    "The component's repository URL is not its CI environment's cloneUrl {clone_url} (reasonCode                      urlMismatch)"
+                    "The component's repository URL is not its CI environment's cloneUrl {clone_url} (reasonCode urlMismatch)"
                 )));
             }
             (request.repository_id.clone(), component.commit_id.clone())
