@@ -670,7 +670,16 @@ fn build_template() -> Template {
         std::fs::create_dir_all(&cluster_dir).unwrap();
         let runtime = building.join("runtime");
         std::fs::create_dir_all(&runtime).unwrap();
+        // the template is the gates' production runtime whichever test builds it: a test that set another purpose (a
+        // dev instance's) would make a seal whose cluster password goes away with this runtime (plans/Sealed-Secrets.md
+        // S4), where a production boot with no seal leaves the cluster its own pgpass, which every gate's copy reads
+        const PURPOSE: &str = "moqui_conf__instance__purpose";
+        let purpose = moqui_lib::env::get_property(PURPOSE);
+        moqui_lib::env::clear_property(PURPOSE);
         seed(&runtime, &cluster_dir, &template, "");
+        if let Some(purpose) = purpose {
+            moqui_lib::env::set_property(PURPOSE, purpose);
+        }
         std::fs::remove_dir_all(&runtime).unwrap();
         std::fs::create_dir_all(building.join("cluster")).unwrap();
         copy_dir(&cluster_dir, &building.join("cluster"));

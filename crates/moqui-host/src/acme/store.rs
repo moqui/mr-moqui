@@ -478,13 +478,17 @@ pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str
     let same = |file: &str, text: &str| std::fs::read_to_string(sub.join(file)).is_ok_and(|old| old == text);
     // the key first, so a renewed chain is never served with the old key
     crate::tls::hold_key(dir, host, Some(key_pem));
-    let left = sub.join("privkey.pem");
-    if left.is_file() {
-        std::fs::remove_file(&left).map_err(fail)?;
-        tracing::warn!(
-            "Removed {}: an ACME key is served from its encrypted row now (plans/Sealed-Secrets.md S4)",
-            left.display()
-        );
+    // a key file an earlier build wrote, and its staging name (a part, or a link another local user planted), go:
+    // removed as entries, never followed or written into (SEC-OUT-85)
+    for name in ["privkey.pem", ".privkey.pem.new"] {
+        let left = sub.join(name);
+        if std::fs::symlink_metadata(&left).is_ok() {
+            std::fs::remove_file(&left).map_err(fail)?;
+            tracing::warn!(
+                "Removed {}: an ACME key is served from its encrypted row now (plans/Sealed-Secrets.md S4)",
+                left.display()
+            );
+        }
     }
     if !same("fullchain.pem", chain_pem) {
         let staged = sub.join(".fullchain.pem.new");

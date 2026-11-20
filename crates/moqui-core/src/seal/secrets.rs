@@ -608,6 +608,18 @@ pub fn random_secret() -> Result<Zeroizing<String>, Error> {
     Ok(Zeroizing::new(encode(bytes.as_ref())))
 }
 
+/// 32 random bytes in hex: a password that goes into a URL as it is (the embedded cluster's superuser's, which its
+/// tools put in a connection URL unencoded), where base64's `/` and `+` would not.
+///
+/// # Errors
+///
+/// The system has no random bytes.
+pub fn random_password() -> Result<Zeroizing<String>, Error> {
+    let mut bytes = Zeroizing::new([0_u8; 32]);
+    getrandom::fill(bytes.as_mut()).map_err(|err| Error::new(format!("no random bytes for a password: {err}")))?;
+    Ok(Zeroizing::new(bytes.iter().map(|byte| format!("{byte:02x}")).collect()))
+}
+
 /// A generated secret of a boot with no seal: in this process's memory only, made once and logged.
 fn ephemeral(name: &str, how: Made) -> Result<Option<Zeroizing<String>>, Error> {
     let mut held = lock(&EPHEMERAL);

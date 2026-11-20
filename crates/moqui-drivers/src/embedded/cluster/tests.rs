@@ -474,6 +474,9 @@ fn a_cluster_with_its_password_given_keeps_no_password_file_and_a_cold_start_ope
         password: Some(SuperuserPassword(password.to_string())),
         ..StartOptions::new(20)
     };
+    // its tools put the password into a URL as it is: base64's / and + are refused before anything starts
+    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c=")).map(|_| ()).unwrap_err();
+    assert!(err.to_string().contains("letters, digits"), "{err}");
     let password = "the-sealed-superuser-password-7f3a";
     {
         let (mut cluster, driver) = EmbeddedCluster::start_with(&dir, &with(password)).unwrap();

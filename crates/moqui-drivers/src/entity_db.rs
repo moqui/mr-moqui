@@ -326,7 +326,7 @@ pub fn sealed_cluster_password(
             }
             kept
         }
-        None => secrets::bootstrap_or_make(keeper, name, secrets::random_secret)?,
+        None => secrets::bootstrap_or_make(keeper, name, secrets::random_password)?,
     };
     Ok(Some(password.to_string()))
 }

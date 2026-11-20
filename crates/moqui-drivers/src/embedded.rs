@@ -771,6 +771,19 @@ mod cluster {
         options: &StartOptions,
         adopt_port: Option<u16>,
     ) -> Result<(EmbeddedCluster, PostgresDriver), Error> {
+        // the cluster's tools put the password into a connection URL as it is (postgresql_embedded's `Settings::url`)
+        if let Some(given) = &options.password {
+            if !given
+                .0
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
+            {
+                return Err(Error::new(
+                    "the embedded cluster's password may hold only letters, digits and - . _ ~ (its tools put it in a \
+                     URL); give another, or let the seal make one",
+                ));
+            }
+        }
         let settings = settings(dir, data_dir, options, adopt_port);
         // with the password given, initdb's file is written new (0600) only for a cluster not made yet, and removed
         // when this start is done with it, by a guard, on every path out; one an earlier process left goes first
