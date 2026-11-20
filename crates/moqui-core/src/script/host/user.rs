@@ -216,6 +216,8 @@ const USER_JS: &str = r#"(function (proto, hidden) {
 /// Java's `loginUserKey`: whether the login key logged its user in. A key that does not is an error message, as a
 /// failed `loginUser` is.
 fn login_user_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     let key = call.text_or_empty(0);
     match crate::user::login_user_key(&key) {
         Ok(()) => Ok(true.into()),
@@ -228,6 +230,8 @@ fn login_user_key(call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// Java's `loginAnonymousIfNoUser`: with nobody logged in the session becomes anonymous; whether this call did that.
 fn login_anonymous_if_no_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     crate::user::login_anonymous()
         .map(Ret::from)
         .map_err(|err| user_error(&err))
@@ -261,6 +265,8 @@ fn password_rules(_: &mut Call<'_>) -> Result<Ret, HostError> {
 /// False with no error when the password was right and a second factor is still needed. A null or missing username
 /// or password is an empty one, a failed login as Java's: false and the message.
 fn login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     let username = call.text(0).unwrap_or_default().to_string();
     let password = call.text(1).unwrap_or_default().to_string();
     match crate::user::login_user(&username, &password) {
@@ -273,6 +279,8 @@ fn login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn logout_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     match crate::user::logout() {
         Ok(()) => Ok(true.into()),
         Err(err) => {
@@ -284,6 +292,8 @@ fn logout_user(_: &mut Call<'_>) -> Result<Ret, HostError> {
 
 /// `ec.user.logoutLocal()`: end this context's login only, writing nothing to the account (a job's borrowed sign-in).
 fn logout_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     match crate::user::logout_local() {
         Ok(()) => Ok(true.into()),
         Err(err) => {
@@ -294,6 +304,8 @@ fn logout_local(_: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 fn internal_login_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // a preview's proposed text does not change who it runs as (SEC-AI-102)
+    super::refuse_locked_authz()?;
     match crate::user::internal_login_user(call.text(0).unwrap_or_default()) {
         Ok(()) => Ok(true.into()),
         Err(err) => {

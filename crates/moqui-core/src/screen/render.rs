@@ -542,6 +542,45 @@ pub(super) fn with_qvt_render<R>(
     body(&state)
 }
 
+/// Whether the code running now is a preview's proposed text (plans/Security-Review-Low.md SEC-AI-102): an overlay is
+/// held and the screen whose code runs is one built from its text. That screen is the nearest screen frame above the
+/// last service frame, so a service the text calls runs its own code as ever, and any path that runs the screen's
+/// actions under its frame (a render, a transition, the menu data, a form or tree's data) is covered; or, with no
+/// service running its own code, the screen the render is at ([`super::definition::ScreenDef::proposed`]). Its
+/// actions, widget and condition expressions, forms, trees and transitions alike run on the preview's allow-list host
+/// then ([`crate::script::preview`]); a script's `disableAuthz()`, of a find or a service call too, and a change of user
+/// are refused (`script::host::refuse_locked_authz`), and authorization is required while it renders.
+pub(crate) fn proposed_running() -> bool {
+    if !super::overlay::active() {
+        return false;
+    }
+    let on_stack = ExecutionContext::with_current(ExecutionContext::screen_above_service)
+        .flatten()
+        .is_some_and(|location| super::overlay::is_proposed(&location));
+    if on_stack {
+        return true;
+    }
+    let proposed = with_current_render(|state| {
+        let defs = &state.url_info.path_defs;
+        match state.override_def.borrow().as_ref() {
+            Some(def) => def.proposed,
+            None => defs.get(state.screen_path_index.get()).is_some_and(|def| def.proposed),
+        }
+    })
+    .unwrap_or(false);
+    proposed && !ExecutionContext::with_current(ExecutionContext::in_service_body).unwrap_or(false)
+}
+
+/// Authorization required until the guard drops, for the work of a definition that stands at a preview's proposed
+/// text; nothing for another (SEC-AI-102).
+pub(super) fn require_if_proposed(def: &ScreenDef) -> Option<crate::context::AuthzScope> {
+    if def.proposed {
+        ExecutionContext::with_current(ExecutionContext::require_authz)
+    } else {
+        None
+    }
+}
+
 /// Run `body` with the render in progress on this thread, if there is one.
 pub fn with_current_render<R>(body: impl FnOnce(&RenderState) -> R) -> Option<R> {
     let state = ACTIVE.with(|stack| stack.borrow().last().cloned())?;
@@ -757,6 +796,13 @@ impl Drop for SampleFlush<'_> {
 ///
 /// A job with a `moquiPreview` token on a dev instance renders from the proposed text the token names (F14,
 /// plans/design-dev-aide.md 13.3): under the read fence, so nothing it runs writes, and framed by the page that asked.
+/// The `Content-Security-Policy` of a preview of proposed screen text, which replaces the conf's: framed by the app
+/// only, and nothing it loads (an image, a style's `url()`, a font, a fetch or a socket) goes to another site, so what
+/// a proposed screen shows does not leave with no click (plans/Security-Review-Low.md SEC-AI-102). Scripts and styles
+/// of the page's own origin and inline ones run as on any page.
+pub(crate) const PREVIEW_POLICY: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; frame-ancestors 'self'; form-action 'self';";
+
 pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
     let _profile = crate::telemetry::profile::request(job.path);
     let _samples = SampleFlush(job.path);
@@ -787,14 +833,32 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
         }
     };
     if let Some(overlay) = super::overlay::for_token(factory, &token) {
-        web::set_header(
-            "Content-Security-Policy",
-            Some("frame-ancestors 'self'; form-action 'self';"),
-        );
+        web::set_header("Content-Security-Policy", Some(PREVIEW_POLICY));
         let _fence = crate::entity::fence::enter("a preview of proposed screen text");
-        return super::overlay::with(overlay, run);
+        let result = super::overlay::with(overlay, run);
+        preview_response();
+        return result;
     }
     run()
+}
+
+/// A preview's response, whatever its render set (plans/Security-Review-Low.md SEC-AI-102): the preview's policy again,
+/// no `Refresh` header (a timed redirect the Location rule would not see), and a redirect only to this site (a relative
+/// path, or this host), else a 403 with no Location. It backs up the allow-list host, which gives the proposed text no
+/// `ec.web` member to set either. A `<meta http-equiv="refresh">` in the body would need raw output of the proposed
+/// text, which a preview never writes (its `encode="false"` text is encoded, SEC-AI-82, and its code has no response
+/// write), so the header is the one place left.
+pub(super) fn preview_response() {
+    web::set_header("Content-Security-Policy", Some(PREVIEW_POLICY));
+    web::set_header("Refresh", None);
+    for location in web::response_header_values("Location") {
+        let local = location.starts_with('/') && !location.starts_with("//") && !location.starts_with("/\\");
+        if !local && !same_origin(&location) {
+            web::set_header("Location", None);
+            web::set_status(403);
+            break;
+        }
+    }
 }
 
 fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<(), Error> {
@@ -1144,6 +1208,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
             frames.enter_screen(def, index == last)?;
             state.screen_path_index.set(index);
             if let Some(actions) = &def.always_actions {
+                let _required = require_if_proposed(def);
                 actions.run()?;
             }
         }
@@ -1189,6 +1254,7 @@ fn render_screens(state: &RenderState, facade: &ScreenFacade) -> Result<(), Erro
             if index >= first_pre {
                 state.screen_path_index.set(index);
                 if let Some(actions) = &def.pre_actions {
+                    let _required = require_if_proposed(def);
                     actions.run()?;
                 }
             }
@@ -2102,10 +2168,13 @@ fn run_transition_steps(
         frames.apply_anonymous(def)?;
         state.screen_path_index.set(index);
         if let Some(actions) = &def.always_actions {
+            let _required = require_if_proposed(def);
             actions.run()?;
         }
     }
     let screen = Arc::clone(&info.target_screen);
+    // a proposed screen's transition runs with authorization required (SEC-AI-102)
+    let _required = require_if_proposed(&screen);
     crate::web::set_attribute(
         "moqui.telemetry.artifact.type",
         Some(Value::string("AT_XML_SCREEN_TRANS")),

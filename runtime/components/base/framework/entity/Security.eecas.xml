@@ -195,6 +195,42 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.resource.script('component://framework/service/org/moqui/impl/BackupDestination.js')
             .messageType(eecaOperation, systemMessageTypeId, sendPath, originalValue)</script></actions>
     </eeca>
+    <!-- The endpoint-change rule of ConfigurationConnections.js for every record that keeps a secret beside the address it
+        is sent to, on every write path (plans/Security-Review-Low.md SEC-TLS-116; admin/EndpointSecrets.js moved): a change
+        of an address field clears the stored secrets unless new ones are written with it, and says so; a model endpoint's
+        and an entity sync's is a member of ADMIN's only. Only a seed or install load answers for itself. An AgentMcpServer's
+        or AgentRemoteA2a's URL counts by its origin, as their store services decide; an EmailServer pointed at the edge
+        node, or back from it, keeps its secrets (edge/setup.rs). -->
+    <eeca id="LlmEndpointSecretMoves" entity="moqui.llm.LlmEndpoint" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['baseUrl', 'path', 'authHeader', 'authScheme', 'headersJson'], secrets: ['apiKey'], admin: true})</script></actions>
+    </eeca>
+    <eeca id="EntitySyncSecretMoves" entity="moqui.entity.sync.EntitySync" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['targetServerUrl', 'targetUsername'], secrets: ['targetPassword'], admin: true})</script></actions>
+    </eeca>
+    <eeca id="SystemMessageRemoteSecretMoves" entity="moqui.service.message.SystemMessageRemote" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['sendUrl', 'username', 'sendAuthEnumId', 'authHeaderName'],
+                secrets: ['password', 'sharedSecret', 'sendSharedSecret', 'privateKey']})</script></actions>
+    </eeca>
+    <eeca id="ScrapeTargetSecretMoves" entity="moqui.monitor.ScrapeTarget" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['url'], secrets: ['bearerToken']})</script></actions>
+    </eeca>
+    <eeca id="EmailServerSecretMoves" entity="moqui.basic.email.EmailServer" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['smtpHost', 'smtpPort', 'smtpSsl', 'smtpStartTls', 'storeHost', 'storePort', 'mailUsername',
+                'smtpUsername'], secrets: ['mailPassword', 'smtpPassword', 'oauthRefreshToken'], passThrough: ['edge:']})</script></actions>
+    </eeca>
+    <eeca id="AgentMcpServerSecretMoves" entity="moqui.agent.AgentMcpServer" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['url'], secrets: ['authJson'], origin: true})</script></actions>
+    </eeca>
+    <eeca id="AgentRemoteA2aSecretMoves" entity="moqui.agent.AgentRemoteA2a" on-update="true" run-before="true" get-original-value="true">
+        <actions><script>ec.resource.script('component://framework/service/org/moqui/admin/EndpointSecrets.js')
+            .moved(entityValue, originalValue, {endpoints: ['cardUrl'], secrets: ['authJson'], origin: true})</script></actions>
+    </eeca>
     <!-- The new-device sign-in notice (mr-boss plan/impl-admin.md P10, design-admin §4 Sessions): a successful sign-in's
         history row is written by a worker after the sign-in itself (crates/moqui-core/src/user/login.rs save_history, at
         most one row a minute for a user), with its visit; the notice is decided and sent then, in a transaction of its own

@@ -543,6 +543,8 @@ impl WebappScripts {
             return Ok(());
         };
         let _frame = crate::script::ContextFrame::push();
+        // what the actions disable (authorization, entity ECA rules, the tarpit) ends with them (SEC-RTE-92)
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
         for (name, value) in values {
             crate::script::set_context_name(name, value.clone())?;
         }

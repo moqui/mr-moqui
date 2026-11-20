@@ -777,6 +777,58 @@ fn splits_wizards_and_stacks_hold_no_request_data_in_a_static_template() {
 }
 
 #[test]
+fn a_previewed_form_lists_count_find_runs_as_a_region() {
+    use crate::entity::EntityFacade;
+    let world = super::World::open("");
+    world.enumeration_type();
+    let make = |facade: &EntityFacade, id: &str, sequence: i64| {
+        let mut row = facade.make_value("moqui.basic.Enumeration").unwrap();
+        row.set("enumId", Value::string(id));
+        row.set("enumTypeId", Value::string("TestType"));
+        row.set("description", Value::string(format!("Desc {id}")));
+        row.set("sequenceNum", Value::I64(sequence));
+        row.create(facade).unwrap();
+    };
+    for (index, id) in ["E1", "E2", "E3"].iter().enumerate() {
+        make(&world.facade, id, i64::try_from(index).unwrap());
+    }
+    // SEC-AI-102: the count of a full page (pageSize 1) runs the list's find again as an actions snippet: in a preview its
+    // econdition, proposed text, may not write raw markup (it writes only on its second run, the count's)
+    let location = format!(
+        "{}/src/screen/testdata/Static/Static/Enums.xml",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let text = std::fs::read_to_string(&location).unwrap().replace(
+        r#"<search-form-inputs default-order-by="sequenceNum,enumId" paginate="true"/>"#,
+        r#"<search-form-inputs default-order-by="sequenceNum,enumId" paginate="true"/>
+                <econdition field-name="enumTypeId" from="counted ? (sri.write('&lt;i&gt;PWNEDCOUNT&lt;/i&gt;') || 'TestType') : ((counted = 'once') &amp;&amp; 'TestType')"/>"#,
+    );
+    assert!(text.contains("PWNEDCOUNT"));
+    let path = "/Enums/actions/EnumList";
+    let parameters = [("enumTypeId", "TestType"), ("pageSize", "1"), ("pageIndex", "0")];
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&location, None, &text);
+    let previewed = crate::screen::overlay::with(overlay, || {
+        let map: BTreeMap<String, Value> = parameters
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+            .collect();
+        make_render(&world.factory)
+            .root_screen(root())
+            .screen_path(path)
+            .parameters(map)
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    });
+    assert!(
+        previewed.contains("sri.write is not available in a preview"),
+        "{previewed}"
+    );
+    assert!(!previewed.starts_with("<i>PWNEDCOUNT"), "{previewed}");
+}
+
+#[test]
 fn entity_screens_look_up_display_options_and_sets_on_the_server_and_page_by_the_request() {
     use crate::entity::EntityFacade;
     let world = super::World::open("");

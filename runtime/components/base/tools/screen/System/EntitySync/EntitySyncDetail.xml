@@ -17,7 +17,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="entitySyncId" required="true"/>
 
-    <transition name="updateEntitySync"><service-call name="update#moqui.entity.sync.EntitySync"/>
+    <!-- an empty password keeps the stored one; a new target address or username clears it unless one is entered in the
+        same save (Security.eecas.xml EntitySyncSecretMoves, SEC-TLS-116) -->
+    <transition name="updateEntitySync"><actions>
+            <script>if (!targetPassword) context.remove('targetPassword')</script>
+            <service-call name="update#moqui.entity.sync.EntitySync"/></actions>
         <default-response url="."/></transition>
     <transition name="resetNotStarted">
         <service-call name="update#moqui.entity.sync.EntitySync" in-map="{entitySyncId:entitySyncId, statusId:'EsNotStarted'}"/>
@@ -33,6 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <entity-find-one entity-name="moqui.entity.sync.EntitySync" value-field="entitySync"/>
+        <set field="targetPasswordSet" from="!!entitySync?.targetPassword"/>
 
         <entity-find entity-name="moqui.entity.sync.EntitySyncArtifact" list="artifactList">
             <econdition field-name="entitySyncId"/><order-by field-name="artifactGroupId"/></entity-find>
@@ -64,7 +69,10 @@ along with this software (see the LICENSE.md file). If not, see
 
                     <field name="targetServerUrl"><default-field><text-line size="50"/></default-field></field>
                     <field name="targetUsername"><default-field title="Username"><text-line size="30"/></default-field></field>
-                    <field name="targetPassword"><default-field title="Password"><text-line size="20"/></default-field></field>
+                    <field name="targetPassword" from="''"><default-field title="Password"
+                            tooltip="Stored encrypted and never shown; empty keeps it. A new Target Server URL or Username clears it unless it is entered in the same save, and the same password is entered again in a save of its own.">
+                        <password size="20"/>
+                        <label text="${targetPasswordSet ? 'A password is set' : 'No password is set'}" type="span"/></default-field></field>
                     <field name="targetPath"><default-field><text-line size="50"/></default-field></field>
 
                     <field name="forPull"><default-field tooltip="Y for pull from remote, N for push to remote">

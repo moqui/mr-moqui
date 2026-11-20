@@ -2130,6 +2130,1031 @@ fn a_previewed_screen_writes_a_placeholder_for_its_client_text() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: the actions of a screen that stands at a preview's proposed text run with authorization required, and a
+/// script's `disableAuthz()` there is refused, of `ec.artifactExecution`, a find and a service call alike, and in a file
+/// they run; the same text from the file disables it as written.
+#[test]
+fn a_previewed_screens_actions_may_not_disable_authorization() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-authz-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Authz.xml");
+    let screen = r#"<screen require-authentication="false"><actions>
+        <script><![CDATA[
+            const refused = []
+            const tries = [
+                ['artifact', () => { const was = ec.artifactExecution.disableAuthz(); if (!was) ec.artifactExecution.enableAuthz() }],
+                ['find', () => ec.entity.find('moqui.basic.Enumeration').disableAuthz()],
+                ['service', () => ec.service.sync().name('org.moqui.impl.BasicServices.noop#Service').disableAuthz()],
+            ]
+            for (const [name, run] of tries) { try { run() } catch (e) { refused.push(name) } }
+            refusedText = refused.join(',') || 'none'
+        ]]></script>
+        <script>try { ec.resource.script(libraryAt) ; libraryText = 'ran' } catch (e) { libraryText = 'refused' }</script>
+        </actions><widgets>
+            <label text="REFUSED[${refusedText}] LIBRARY[${libraryText}]"/>
+        </widgets></screen>"#;
+    // a file of a component the proposed actions run: it may disable authorization only where they may
+    let library = dir.join("Library.js");
+    std::fs::write(
+        &library,
+        "ec.artifactExecution.disableAuthz(); ec.artifactExecution.enableAuthz(); 1",
+    )
+    .unwrap();
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("text")
+            .parameters(BTreeMap::from([(
+                "libraryAt".to_string(),
+                Value::string(library.to_string_lossy()),
+            )]))
+            .render()
+            .unwrap()
+            .body_text()
+    };
+    let plain = render();
+    assert!(plain.contains("REFUSED[none] LIBRARY[ran]"), "{plain}");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(
+        previewed.contains("REFUSED[artifact,find,service] LIBRARY[refused]"),
+        "{previewed}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: the whole of a proposed screen runs under the lock, not only its `<actions>`: a form-list's row-actions and
+/// its `entity-find`, a drop-down's `entity-options`, a tree node, a label's `${}` and a section's `condition` may not
+/// disable authorization, and its actions may not sign in as another user; the same text from the file may.
+#[test]
+fn a_previewed_screens_widgets_forms_trees_and_expressions_may_not_disable_authorization_or_switch_user() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-widgets-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    // `PROBE` disables authorization on a find and answers whether that was refused
+    let probe = "(() => { try { ec.entity.find('moqui.basic.Enumeration').disableAuthz(); return 'ALLOWED' } \
+        catch (e) { return String(e.message).includes('not available in a preview') ? 'REFUSED' : 'OTHER ' + e.message } })()";
+    let refused = "not available in a preview";
+    let enums = r#"<entity-find entity-name="moqui.basic.Enumeration" list="enumList" disable-authz="true"><econdition field-name="enumId" value="NONE_SUCH"/></entity-find>"#;
+    let cases: Vec<(&str, String)> = vec![
+        (
+            "actions",
+            format!(
+                r#"<actions><script>out = {probe}</script></actions><widgets><label text="MARK ${{out}}"/></widgets>"#
+            ),
+        ),
+        (
+            "login",
+            r#"<actions><script>try { ec.user.internalLoginUser('nobody.here'); out = 'ALLOWED' }
+                catch (e) { out = String(e.message).includes('not available in a preview') ? 'REFUSED' : 'ALLOWED' }
+                ec.message.clearErrors()</script></actions>
+                <widgets><label text="MARK ${out}"/></widgets>"#
+                .to_string(),
+        ),
+        (
+            "label",
+            format!(r#"<widgets><label text="MARK ${{{probe}}}"/></widgets>"#),
+        ),
+        (
+            "condition",
+            format!(
+                r#"<widgets><section name="S" condition="{probe} == 'ALLOWED'"><widgets><label text="MARK ALLOWED"/></widgets>
+                <fail-widgets><label text="MARK REFUSED"/></fail-widgets></section></widgets>"#
+            ),
+        ),
+        (
+            "row-actions",
+            format!(
+                r#"<actions><script>rows = [{{v: 1}}]</script></actions><widgets><form-list name="F" list="rows" skip-form="true">
+                <row-actions><script>out = 'MARK ' + {probe}</script></row-actions>
+                <field name="out"><default-field><display/></default-field></field></form-list></widgets>"#
+            ),
+        ),
+        (
+            "form-find",
+            format!(
+                r#"<widgets><label text="MARK ALLOWED"/><form-list name="F" list="enumList" skip-form="true">{enums}
+                <field name="enumId"><default-field><display/></default-field></field></form-list></widgets>"#
+            ),
+        ),
+        (
+            "options",
+            format!(
+                r#"<widgets><label text="MARK ALLOWED"/><form-single name="F"><field name="enumId"><default-field><drop-down>
+                <entity-options key="${{enumId}}" text="${{description}}">{}</entity-options></drop-down></default-field></field>
+                </form-single></widgets>"#,
+                enums.replace(r#" list="enumList""#, "")
+            ),
+        ),
+    ];
+    for (name, body) in &cases {
+        let location = dir.join(format!("Probe{}.xml", name.replace('-', "")));
+        let screen = format!(r#"<screen require-authentication="false">{body}</screen>"#);
+        std::fs::write(&location, &screen).unwrap();
+        let root = location.to_string_lossy().into_owned();
+        let render = || {
+            make_render(&world.factory)
+                .root_screen(root.clone())
+                .screen_path("")
+                .render_mode("html")
+                .render()
+                .map(|output| output.body_text())
+                .unwrap_or_else(|err| err.message().to_string())
+        };
+        let plain = render();
+        assert!(
+            plain.contains("MARK ALLOWED") && !plain.contains(refused),
+            "{name} from the file: {plain}"
+        );
+        let mut overlay = crate::screen::overlay::Overlay::new();
+        overlay.insert(&root, None, &screen);
+        let previewed = crate::screen::overlay::with(overlay, render);
+        assert!(
+            previewed.contains("MARK REFUSED") || previewed.contains(refused),
+            "{name} in a preview: {previewed}"
+        );
+        assert!(
+            !previewed.contains("MARK ALLOWED") || previewed.contains(refused),
+            "{name} in a preview: {previewed}"
+        );
+    }
+    // a tree's node data, asked by its own request
+    let location = dir.join("ProbeTree.xml");
+    let screen = format!(
+        r#"<screen require-authentication="false"><widgets><tree name="T">
+        <tree-node name="N"><label text="${{nodeList_entry.name}}"/></tree-node>
+        <tree-sub-node node-name="N" list="nodes"><actions><script>nodes = [{{name: 'MARK ' + {probe}}}]</script></actions></tree-sub-node>
+        </tree></widgets></screen>"#
+    );
+    std::fs::write(&location, &screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let fetch = || {
+        let mut get = request("GET", "/actions/T");
+        get.query = vec![("treeNodeId".to_string(), "#".to_string())];
+        serve_at(&world.factory, get, &root).body_text()
+    };
+    let plain = fetch();
+    assert!(plain.contains("MARK ALLOWED"), "tree from the file: {plain}");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, &screen);
+    let previewed = crate::screen::overlay::with(overlay, fetch);
+    assert!(previewed.contains("MARK REFUSED"), "tree in a preview: {previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a proposed screen's code runs on an allow-list host. Raw SQL, a resource read, the caches, the factory,
+/// the effective time, an artifact frame, `runAsUser`, and every `ec.web` member (a redirect, a header such as the
+/// response's policy, a cookie, raw output) are not available to it; the same text from the file reaches them (raw SQL
+/// then meets its own gate).
+#[test]
+fn a_previewed_screen_reaches_no_sql_file_cache_clock_or_response() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-reach-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let secret = dir.join("secret.txt");
+    std::fs::write(&secret, "the file").unwrap();
+    // `probe(text)` runs the text and answers REFUSED when the preview's host refused it, ALLOWED for anything else
+    let probe = |text: &str| {
+        format!(
+            "(() => {{ try {{ {text}; return 'ALLOWED' }} catch (e) {{ \
+             return String(e.message).includes('not available in a preview') ? 'REFUSED' : 'ALLOWED' }} }})()"
+        )
+    };
+    let file = format!("ec.resource.getLocationText('file://{}')", secret.to_string_lossy());
+    let cases = [
+        (
+            "sql",
+            probe("ec.entity.runSqlStatement('transactional', 'select user_id from user_account', 5)"),
+        ),
+        ("file", probe(&file)),
+        (
+            "component",
+            probe("ec.resource.getLocationText('component://webroot/screen/webroot.xml')"),
+        ),
+        ("cache", probe("ec.cache.getCache('test.preview').get('x')")),
+        ("factory", probe("ec.factory.isConfValueSet('webapp@name')")),
+        ("disabled", probe("ec.artifactExecution.authzDisabled()")),
+        ("clock", probe("ec.user.setEffectiveTime(1)")),
+        (
+            "frame",
+            probe(
+                "ec.artifactExecution.push('component://webroot/screen/webroot.xml', 'AT_XML_SCREEN', 'view', false)",
+            ),
+        ),
+        (
+            "runas",
+            probe("ec.artifactExecution.runAsUser('component://webroot/screen/webroot.xml', () => 1)"),
+        ),
+        (
+            "redirect",
+            probe("ec.web.response.sendRedirect('https://collector.example.net/')"),
+        ),
+        (
+            "policy",
+            probe("ec.web.response.setHeader('Content-Security-Policy', 'default-src *')"),
+        ),
+        ("cookie", probe("ec.web.response.addHeader('Set-Cookie', 'taken=1')")),
+        ("write", probe("ec.web.response.write('<script>steal()</script>')")),
+        ("params", probe("ec.web.parameters")),
+    ];
+    let refused = "not available in a preview";
+    for (name, expression) in &cases {
+        let location = dir.join(format!("Reach{name}.xml"));
+        let screen = format!(
+            r#"<screen require-authentication="false"><actions><script>out = {expression}; ec.message.clearErrors()</script></actions>
+            <widgets><label text="MARK ${{out}}"/></widgets></screen>"#
+        );
+        std::fs::write(&location, &screen).unwrap();
+        let root = location.to_string_lossy().into_owned();
+        let render = || {
+            make_render(&world.factory)
+                .root_screen(root.clone())
+                .screen_path("")
+                .render_mode("text")
+                .render()
+                .map(|output| output.body_text())
+                .unwrap_or_else(|err| err.message().to_string())
+        };
+        let plain = render();
+        assert!(
+            plain.contains("MARK ALLOWED") && !plain.contains(refused),
+            "{name} from the file: {plain}"
+        );
+        let mut overlay = crate::screen::overlay::Overlay::new();
+        overlay.insert(&root, None, &screen);
+        let previewed = crate::screen::overlay::with(overlay, render);
+        assert!(previewed.contains("MARK REFUSED"), "{name} in a preview: {previewed}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: the allow-list host still renders a preview's data: one call of each allowed group (an entity find, a
+/// service call, the messages, the localizations, the logger, the context, the user's reads, the helper objects, a
+/// decimal, `sri`'s reads and URLs, an expand, the lock's own question) gives its value.
+#[test]
+fn a_previewed_screen_still_renders_with_the_allowed_members() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-allowed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Allowed.xml");
+    let screen = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            const parts = []
+            const tries = {
+                find: () => ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'NONE_SUCH').list().size() === 0,
+                service: () => { ec.service.sync().name('org.moqui.impl.BasicServices.noop#Service').call(); return true },
+                message: () => { ec.message.addMessage('a preview message'); return ec.message.messages.length > 0 },
+                l10n: () => ec.l10n.localize('Hello') === 'Hello',
+                logger: () => { ec.logger.info('a preview log'); return true },
+                context: () => { ec.context.put('previewValue', 7); return ec.context.get('previewValue') == 7 },
+                user: () => ec.user.nowTimestamp != null && ec.user.hasPermission('NONE_SUCH') === false,
+                helpers: () => StringUtilities.encodeForXmlAttribute('<a>') !== '<a>',
+                decimal: () => String(toDecimal('1.5').add(toDecimal('1'))) === '2.5',
+                sri: () => typeof sri.getRenderMode() === 'string' && sri.buildUrl('.').url != null,
+                expand: () => ec.resource.expand('${1 + 1}', '') === '2',
+                locked: () => ec.artifactExecution.authzLocked() === true,
+            }
+            for (const [name, run] of Object.entries(tries)) {
+                let ok
+                try { ok = run() } catch (e) { ok = 'error ' + e.message }
+                parts.push(name + '=' + ok)
+            }
+            out = parts.join(' ')
+            ec.message.clearErrors()
+        ]]></script></actions><widgets><label text="MARK ${out}"/></widgets></screen>"#;
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    for name in [
+        "find", "service", "message", "l10n", "logger", "context", "user", "helpers", "decimal", "sri", "expand",
+        "locked",
+    ] {
+        assert!(previewed.contains(&format!("{name}=true")), "{name}: {previewed}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview renders on a script runtime of its own whose built-in objects are frozen, so the proposed text
+/// changes no prototype the framework's render code or a later request calls; the thread's own runtime is untouched.
+#[test]
+fn a_previewed_screen_changes_no_built_in_object() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-frozen-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Frozen.xml");
+    let screen = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            // a sloppy assignment to a frozen property does nothing; each is read back
+            const kept = []
+            for (const [name, change, holds] of [
+                ['join', () => { Array.prototype.join = function () { return 'taken' } }, () => [1, 2].join('-') === '1-2'],
+                ['toString', () => { Object.prototype.toString = function () { return 'taken' } },
+                    () => ({}).toString() === '[object Object]'],
+                ['string', () => { String.prototype.trim = function () { return 'taken' } }, () => ' a '.trim() === 'a'],
+                ['iterator', () => { Object.getPrototypeOf([][Symbol.iterator]()).next = null }, () => [...[1]].length === 1],
+            ]) {
+                try { change() } catch (e) {}
+                kept.push(name + '=' + (holds() ? 'frozen' : 'changed'))
+            }
+            out = kept.join(' ')
+        ]]></script></actions><widgets><label text="MARK ${out} ${[1, 2].join('-')}"/></widgets></screen>"#;
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("text")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(
+        previewed.contains("MARK join=frozen toString=frozen string=frozen iterator=frozen 1-2"),
+        "{previewed}"
+    );
+    // the thread's own runtime after it
+    let context = world.factory.new_context();
+    let _entered = context.enter();
+    assert_eq!(
+        crate::script::eval_value("[1, 2].join('-')")
+            .map(|value| moqui_lib::object::to_plain_string(&value))
+            .unwrap(),
+        "1-2"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: in a preview `ec`, each facade under it, `sri` and the host classes' prototypes are frozen once the
+/// preview's runtime has made them, so the proposed text replaces no function the framework's render code calls after it
+/// (`ec.resource.expand`, `ec.l10n.localize`, an entity value's `get`), nor `ec` itself.
+#[test]
+fn a_previewed_screen_poisons_no_host_object() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-poison-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Poison.xml");
+    let screen = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            const taken = function () { return 'POISONED' }
+            const value = ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'NONE_SUCH').one()
+                ?? ec.entity.makeValue('moqui.basic.Enumeration')
+            value.set ? value.set('enumId', 'E1') : (value.enumId = 'E1')
+            const kept = []
+            for (const [name, change, holds] of [
+                ['expand', () => { ec.resource.expand = taken }, () => ec.resource.expand('a${1 + 1}', '') === 'a2'],
+                ['define', () => { Object.defineProperty(ec.resource, 'expand', {value: taken}) },
+                    () => ec.resource.expand('b', '') === 'b'],
+                ['localize', () => { ec.l10n.localize = taken }, () => ec.l10n.localize('Name') !== 'POISONED'],
+                ['entity', () => { Object.getPrototypeOf(value).get = taken }, () => value.get('enumId') === 'E1'],
+                ['facade', () => { ec.resource = {expand: taken} }, () => ec.resource.expand('c', '') === 'c'],
+                ['ec', () => { globalThis.ec = {resource: {expand: taken}} }, () => ec.resource.expand('d', '') === 'd'],
+                ['sri', () => { sri.renderSection = taken }, () => sri.renderSection !== taken],
+            ]) {
+                try { change() } catch (e) {}
+                kept.push(name + '=' + (holds() ? 'kept' : 'changed'))
+            }
+            out = kept.join(' ')
+        ]]></script></actions><widgets><label text="MARK ${out} ${ec.l10n.localize('Name')}"/></widgets></screen>"#;
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(
+        previewed.contains("MARK expand=kept define=kept localize=kept entity=kept facade=kept ec=kept sri=kept"),
+        "{previewed}"
+    );
+    assert!(!previewed.contains("POISONED"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: the expressions a render unit writes into its own code (a field's `hide`, a `conditional-field`'s
+/// condition, a form-single's `map`, a `text-map`, a `currency-unit-field`, a report-embed's `variables`) run in a
+/// preview as a region of the allow-list host, so the proposed text in them may not write to the response; the same text
+/// from the file runs as it is.
+#[test]
+fn a_previewed_screens_inline_expressions_run_on_the_allow_list_host() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-inline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let refused = "not available in a preview";
+    // a response write, refused anywhere in a preview's code; a JSON response in place of the page, which a render unit
+    // may send but the proposed text's own code may not
+    for write in [
+        "ec.web.response.write('PWNED')",
+        "ec.web.sendJsonResponse({x: 'PWNED'})",
+    ] {
+        let rows = r#"<actions><script>rows = [{v: 1}]; v = 1</script></actions>"#;
+        let cases: Vec<(&str, String)> = vec![
+            (
+                "hide",
+                format!(
+                    r#"{rows}<widgets><form-list name="F" list="rows" skip-form="true"><field name="v" hide="({write}, false)">
+                <default-field><display/></default-field></field></form-list></widgets>"#
+                ),
+            ),
+            (
+                "conditional-field",
+                format!(
+                    r#"{rows}<widgets><form-single name="F"><field name="v"><conditional-field condition="({write}, true)">
+                <display text="x"/></conditional-field><default-field><display text="y"/></default-field></field>
+                </form-single></widgets>"#
+                ),
+            ),
+            (
+                "map",
+                format!(
+                    r#"<widgets><form-single name="F" map="({write}, {{v: 1}})"><field name="v"><default-field><display/>
+                </default-field></field></form-single></widgets>"#
+                ),
+            ),
+            (
+                "text-map",
+                format!(r#"<widgets><label text="L${{a}}" text-map="({write}, {{a: 1}})"/></widgets>"#),
+            ),
+            (
+                "currency",
+                format!(
+                    r#"{rows}<widgets><form-single name="F"><field name="v"><default-field>
+                <display currency-unit-field="({write}, 'USD')"/></default-field></field></form-single></widgets>"#
+                ),
+            ),
+            (
+                "report-embed",
+                format!(r#"<widgets><report-embed definition-id="NONE_SUCH" variables="({write}, {{}})"/></widgets>"#),
+            ),
+        ];
+        for (name, body) in &cases {
+            let location = dir.join(format!("Inline{}.xml", name.replace('-', "")));
+            let screen = format!(r#"<screen require-authentication="false">{body}</screen>"#);
+            std::fs::write(&location, &screen).unwrap();
+            let root = location.to_string_lossy().into_owned();
+            let render = || {
+                make_render(&world.factory)
+                    .root_screen(root.clone())
+                    .screen_path("")
+                    .render_mode("html")
+                    .as_request(true)
+                    .render()
+                    .map(|output| output.body_text())
+                    .unwrap_or_else(|err| err.message().to_string())
+            };
+            let plain = render();
+            assert!(!plain.contains(refused), "{name} from the file: {plain}");
+            let mut overlay = crate::screen::overlay::Overlay::new();
+            overlay.insert(&root, None, &screen);
+            let previewed = crate::screen::overlay::with(overlay, render);
+            assert!(previewed.contains(refused), "{name} in a preview: {previewed}");
+            assert!(!previewed.contains("PWNED"), "{name} in a preview: {previewed}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: an inline expression of proposed text is never spliced into a render unit's code. Text that would close
+/// the code around it (`0)) : 0) || EVIL || ((`, with or without a backtick) is refused when the screen loads, as it is
+/// not one expression; text that is one expression and calls past the allow-list runs as a region and is refused there.
+/// Each for a field's `hide`, a widget's `condition` and a form-single's `map`; nothing is written.
+#[test]
+fn a_previewed_screens_inline_text_is_not_spliced_into_code() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-splice-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let evil = "sri.write('&lt;img src=x class=PWNED&gt;')";
+    let rows = r#"<actions><script>rows = [{v: 1}]</script></actions>"#;
+    let site = |name: &str, text: &str| -> String {
+        match name {
+            "hide" => format!(
+                r#"{rows}<widgets><form-list name="F" list="rows" skip-form="true"><field name="v" hide="{text}">
+                <default-field><display/></default-field></field></form-list><label text="MARK"/></widgets>"#
+            ),
+            "condition" => {
+                format!(r#"<widgets><label text="MARK"/><label text="shown" condition="{text}"/></widgets>"#)
+            }
+            _ => format!(
+                r#"<widgets><label text="MARK"/><form-single name="F" map="{text}"><field name="v"><default-field>
+                <display/></default-field></field></form-single></widgets>"#
+            ),
+        }
+    };
+    for name in ["hide", "condition", "map"] {
+        for (kind, text) in [
+            ("breakout", format!("0)) : 0) || {evil} || ((")),
+            ("backtick", format!("0)) : 0) || {evil} || ((`")),
+            ("statements", format!("0); {evil}; (0")),
+            ("unbalanced", format!("0), ({evil}, 0")),
+            ("one-expression", format!("0 || {evil}")),
+        ] {
+            let location = dir.join(format!("Splice{name}{}.xml", kind.replace('-', "")));
+            let screen = format!(
+                r#"<screen require-authentication="false">{}</screen>"#,
+                site(name, &text)
+            );
+            std::fs::write(&location, &screen).unwrap();
+            let root = location.to_string_lossy().into_owned();
+            let render = || {
+                make_render(&world.factory)
+                    .root_screen(root.clone())
+                    .screen_path("")
+                    .render_mode("html")
+                    .render()
+                    .map(|output| output.body_text())
+                    .unwrap_or_else(|err| err.message().to_string())
+            };
+            let mut overlay = crate::screen::overlay::Overlay::new();
+            overlay.insert(&root, None, &screen);
+            let previewed = crate::screen::overlay::with(overlay, render);
+            assert!(!previewed.contains("PWNED"), "{name} {kind} in a preview: {previewed}");
+            if kind == "one-expression" {
+                assert!(
+                    previewed.contains("is not available in a preview"),
+                    "{name} {kind} in a preview: {previewed}"
+                );
+            } else {
+                assert!(
+                    previewed.contains("is not one JavaScript expression"),
+                    "{name} {kind} in a preview: {previewed}"
+                );
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: while a preview holds the runtime, a definition's actions snippet (a drop-down's `entity-options` find)
+/// and every expansion, the trusted root screen's own among them, run on the region's allow-list, whoever's frame is
+/// on top: a `sri.write` of raw markup from either is refused, and from the files alone it writes.
+#[test]
+fn a_previewed_render_runs_definition_finds_and_expansions_as_regions() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-entries-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let root_text = r#"<screen require-authentication="false"><widgets>
+        <label text="R${sri.write('&lt;i&gt;PWNEDROOT&lt;/i&gt;') || ''}"/><subscreens-active/></widgets></screen>"#;
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    let child = dir.join("Root/Child.xml");
+    let child_text = r#"<screen require-authentication="false"><widgets><form-single name="F"><field name="pick">
+        <default-field><drop-down><entity-options key="${enumId}" text="${description}">
+            <entity-find entity-name="moqui.basic.Enumeration">
+                <econdition field-name="enumId" from="sri.write('&lt;i&gt;PWNEDOPT&lt;/i&gt;') || 'X'"/></entity-find>
+        </entity-options></drop-down></default-field></field></form-single><label text="CHILD"/></widgets></screen>"#;
+    std::fs::write(&child, child_text).unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("Child")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let plain = render();
+    assert!(
+        plain.contains("<i>PWNEDROOT</i>") && plain.contains("<i>PWNEDOPT</i>"),
+        "from the files: {plain}"
+    );
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&child.to_string_lossy(), None, child_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(!previewed.contains("<i>PWNEDROOT"), "{previewed}");
+    assert!(!previewed.contains("<i>PWNEDOPT"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview renders under trusted parents that read through members of the region's list: a
+/// subscreens-item `menu-include` running a component's script, a subscreen's `default-menu-include` reading a conf
+/// value, a section `condition` asking `isPermittedOwn` and a `conditional-default` asking `isPermitted` (as mr-boss's
+/// Prices and Development, and tools' EdgeClients and Data, do). The proposed text runs a component's script inside its
+/// region, where the script's own `sri.write` is refused; a script of a file location is refused.
+#[test]
+fn a_preview_renders_under_parents_that_read_and_runs_a_component_script_in_its_region() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-parents-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let library = dir.join("pvlib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(library.join("Reader.js"), "({ value: 'LIBOK' })").unwrap();
+    std::fs::write(
+        library.join("Writer.js"),
+        "sri.write('<i>PWNEDLIB</i>'); ({ value: 'WROTE' })",
+    )
+    .unwrap();
+    let mut components = world.factory.components().as_ref().clone();
+    components.push(crate::context::ComponentInfo {
+        name: "pvlib".to_string(),
+        version: String::new(),
+        location: library.clone(),
+        depends_on: Vec::new(),
+        purposes: Vec::new(),
+    });
+    world.factory.replace_components(components);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let child = dir.join("Root/Child.xml");
+    let root_text = format!(
+        r#"<screen require-authentication="false">
+        <subscreens default-item="Edge">
+            <subscreens-item name="Child" location="{child}"
+                menu-include="ec.resource.script('component://pvlib/Reader.js').value == 'LIBOK'"/>
+            <conditional-default condition="!ec.artifactExecution.isPermitted('{root}', 'AT_XML_SCREEN', 'view')" item="Edge"/>
+        </subscreens>
+        <widgets>
+            <section name="Links" condition="ec.artifactExecution.isPermittedOwn('{root}') || true">
+                <widgets><label text="SECTIONSHOWN"/></widgets></section>
+            <subscreens-menu/><subscreens-active/>
+        </widgets></screen>"#,
+        child = child.to_string_lossy()
+    );
+    std::fs::write(&root, &root_text).unwrap();
+    std::fs::write(
+        dir.join("Root/Edge.xml"),
+        r#"<screen require-authentication="false" default-menu-title="EdgeTab"
+            default-menu-include="String(ec.factory.getConfValue('instance@node-role') ?? '') !== 'none-such'">
+            <widgets><label text="EDGE"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let child_text = r#"<screen require-authentication="false" default-menu-title="ChildTab"><actions><script><![CDATA[
+            const tried = []
+            for (const [name, at] of [['reader', 'component://pvlib/Reader.js'], ['writer', 'component://pvlib/Writer.js'],
+                    ['file', 'file://' + libraryDir + '/Reader.js']]) {
+                try { tried.push(name + '=' + ec.resource.script(at).value) }
+                catch (e) { tried.push(name + '=' + (String(e.message).includes('not available in a preview') ? 'REFUSED' : 'OTHER ' + e.message)) }
+            }
+            out = tried.join(' ')
+        ]]></script></actions><widgets><label text="CHILD ${out}"/></widgets></screen>"#;
+    std::fs::write(&child, child_text).unwrap();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("Child")
+            .render_mode("html")
+            .parameters(BTreeMap::from([(
+                "libraryDir".to_string(),
+                Value::string(library.to_string_lossy()),
+            )]))
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&child.to_string_lossy(), None, child_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(previewed.contains("SECTIONSHOWN"), "{previewed}");
+    assert!(
+        previewed.contains("EdgeTab") && previewed.contains("ChildTab"),
+        "the menu: {previewed}"
+    );
+    assert!(
+        previewed.contains("CHILD reader=LIBOK writer=REFUSED file=REFUSED"),
+        "{previewed}"
+    );
+    assert!(!previewed.contains("<i>PWNEDLIB"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview's proposed text adds nothing to the page's script and stylesheet lists the shell writes as
+/// `<script src>` and `<link>` (`footer_scripts`, `html_scripts`): by name, through `context` or `ec.context`, nor
+/// sets one; the trusted root screen's own entries stay.
+#[test]
+fn a_previewed_screen_adds_no_script_to_the_page() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-scripts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let root_text = r#"<screen require-authentication="false">
+        <always-actions><script>footer_scripts = new Set(['/js/Own.js']); html_scripts = new Set()</script></always-actions>
+        <widgets><subscreens-active/>
+            <label text="SCRIPTS ${Array.from(footer_scripts).join(',')}|${Array.from(html_scripts).join(',')}"/></widgets>
+    </screen>"#;
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    let child = dir.join("Root/Child.xml");
+    let child_text = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            const tried = []
+            for (const [name, change] of [
+                ['bare', () => footer_scripts.add('/evil/bare.js')],
+                ['context', () => context.footer_scripts.add('/evil/context.js')],
+                ['get', () => ec.context.get('footer_scripts').add('/evil/get.js')],
+                ['html', () => html_scripts.add('/evil/html.js')],
+                ['set', () => { footer_scripts = new Set(['/evil/set.js']) }],
+                ['put', () => ec.context.put('html_scripts', new Set(['/evil/put.js']))],
+            ]) {
+                try { change(); tried.push(name) } catch (e) { tried.push(name + '!') }
+            }
+            out = tried.join(' ')
+        ]]></script></actions><widgets><label text="CHILD ${out}"/></widgets></screen>"#;
+    std::fs::write(&child, child_text).unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("Child")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&child.to_string_lossy(), None, child_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(previewed.contains("CHILD "), "{previewed}");
+    assert!(previewed.contains("SCRIPTS /js/Own.js|"), "{previewed}");
+    assert!(!previewed.contains("/evil/"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a name or a size a render unit writes into the page as it is (a `field-ref`'s name in its error note, a
+/// panel's width) holds no markup of the proposed text in a preview, so the page gains no tag of its own (a
+/// `<meta http-equiv="refresh">` that would take the viewer to another site).
+#[test]
+fn a_previewed_screen_writes_no_markup_of_a_name_or_size() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-asis-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = "&lt;meta http-equiv=&quot;refresh&quot; content=&quot;0;url=https://evil.example/&quot;&gt;";
+    let cases = [
+        (
+            "field-ref",
+            format!(
+                r#"<widgets><form-single name="F"><field name="v"><default-field><display text="x"/></default-field></field>
+                <field-layout><field-ref name="{meta}"/></field-layout></form-single></widgets>"#
+            ),
+        ),
+        (
+            "panel",
+            format!(
+                r#"<widgets><container-panel id="P"><panel-left size="1&quot;&gt;{meta}"><label text="left"/></panel-left>
+                <panel-center><label text="center"/></panel-center></container-panel></widgets>"#
+            ),
+        ),
+    ];
+    for (name, body) in &cases {
+        let location = dir.join(format!("AsIs{}.xml", name.replace('-', "")));
+        let screen = format!(r#"<screen require-authentication="false">{body}</screen>"#);
+        std::fs::write(&location, &screen).unwrap();
+        let root = location.to_string_lossy().into_owned();
+        let render = || {
+            make_render(&world.factory)
+                .root_screen(root.clone())
+                .screen_path("")
+                .render_mode("html")
+                .render()
+                .map(|output| output.body_text())
+                .unwrap_or_else(|err| err.message().to_string())
+        };
+        let mut overlay = crate::screen::overlay::Overlay::new();
+        overlay.insert(&root, None, &screen);
+        let previewed = crate::screen::overlay::with(overlay, render);
+        assert!(!previewed.contains("<meta"), "{name} in a preview: {previewed}");
+        assert!(
+            previewed.contains("meta http-equiv"),
+            "{name} in a preview renders: {previewed}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a trusted screen whose form extends a proposed screen's form takes on its text: the form's row-actions
+/// run on the preview's host there too.
+#[test]
+fn a_form_that_extends_a_proposed_form_runs_its_actions_locked() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-extends-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = dir.join("Base.xml");
+    let base_text = r#"<screen require-authentication="false"><widgets><form-list name="F" list="rows" skip-form="true">
+        <row-actions><script>try { ec.cache.getCache('test.preview'); out = 'MARK ALLOWED' }
+            catch (e) { out = String(e.message).includes('not available in a preview') ? 'MARK REFUSED' : 'MARK ALLOWED' }</script></row-actions>
+        <field name="out"><default-field><display/></default-field></field></form-list></widgets></screen>"#;
+    std::fs::write(&base, base_text).unwrap();
+    let user = dir.join("User.xml");
+    std::fs::write(
+        &user,
+        format!(
+            r#"<screen require-authentication="false"><actions><script>rows = [{{v: 1}}]</script></actions>
+            <widgets><form-list name="Mine" extends="{}#F" list="rows" skip-form="true"/></widgets></screen>"#,
+            base.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let root = user.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("text")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let plain = render();
+    assert!(plain.contains("MARK ALLOWED"), "from the files: {plain}");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&base.to_string_lossy(), None, base_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(
+        previewed.contains("MARK REFUSED"),
+        "the extended form proposed: {previewed}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: the menu data of a proposed path runs its screens' pre-actions under the lock, as a render does: the
+/// screen is told by its frame on the artifact stack, not by the render's path index.
+#[test]
+fn the_menu_data_of_a_proposed_path_runs_its_actions_locked() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-menu-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root/App")).unwrap();
+    let base = dir.to_string_lossy().into_owned();
+    let write = |path: &str, text: &str| std::fs::write(dir.join(path), text.replace("{dir}", &base)).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false">
+    <transition name="menuData" read-only="true"><actions><script><![CDATA[
+        const menuDataList = sri.getMenuData(sri.getScreenUrlInfo().extraPathNameList)
+        if (menuDataList != null) ec.web.sendJsonResponse(menuDataList)
+    ]]></script></actions><default-response type="none"/></transition>
+    <subscreens default-item="App"/>
+    <widgets><subscreens-active/></widgets>
+</screen>"#,
+    );
+    write(
+        "Root/App.xml",
+        r#"<screen require-authentication="false" default-menu-title="App">
+            <subscreens default-item="Prop"><subscreens-item name="Prop" location="{dir}/Root/App/Prop.xml"/></subscreens>
+            <widgets><subscreens-active/></widgets>
+        </screen>"#,
+    );
+    // the pre-actions' outcome comes back as the menu title they set
+    let proposed = r#"<screen require-authentication="false" default-menu-title="M ${probeOut}"><pre-actions><script>
+        probeOut = 'ALLOWED'
+        try { ec.user.internalLoginUser('nobody.here') } catch (e) { if (String(e.message).includes('not available in a preview')) probeOut = 'REFUSED' }
+        ec.message.clearErrors()
+        </script></pre-actions><widgets><label text="prop"/></widgets></screen>"#;
+    write("Root/App/Prop.xml", proposed);
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+    world.user("ada", None);
+    let probe = || {
+        let mut get = request("GET", "/menuData/App/Prop");
+        get.set_header("authorization", super::basic("ada"));
+        let body = serve_at(&world.factory, get, &root).body_text();
+        let menu: serde_json::Value = serde_json::from_str(&body).unwrap_or_else(|err| panic!("{err}: {body}"));
+        menu[0]["subscreens"][0]["title"]
+            .as_str()
+            .unwrap_or(&body)
+            .trim_start_matches("M ")
+            .to_string()
+    };
+    assert_eq!(probe(), "ALLOWED", "from the file");
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&dir.join("Root/App/Prop.xml").to_string_lossy(), None, proposed);
+    assert_eq!(crate::screen::overlay::with(overlay, probe), "REFUSED", "in a preview");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: raw SQL runs only in a service's own code, for a holder of SQL_RUNNER_WEB, or with authorization disabled
+/// outside a render: a screen's actions and widgets reach no row past entity authorization by it.
+#[test]
+fn raw_sql_in_a_screen_needs_the_sql_runners_permission() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-raw-sql-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Sql.xml");
+    std::fs::write(
+        &location,
+        r#"<screen require-authentication="false"><actions><script>
+            try { ec.entity.runSqlStatement('transactional', 'select 1', 1); out = 'RAN' } catch (e) { out = 'REFUSED ' + e.message }
+            ec.message.clearErrors()
+        </script></actions><widgets><label text="MARK ${out}"/></widgets></screen>"#,
+    )
+    .unwrap();
+    let out = make_render(&world.factory)
+        .root_screen(location.to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("text")
+        .render()
+        .unwrap()
+        .body_text();
+    assert!(out.contains("MARK REFUSED Raw SQL runs only"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-RTE-92: in an ordinary render a widget expression's `disableAuthz()` ends with the expression, so the widgets
+/// after it are checked.
+#[test]
+fn a_widget_expressions_disable_ends_with_it() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-widget-authz-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Widgets.xml");
+    std::fs::write(
+        &location,
+        r#"<screen require-authentication="false"><widgets>
+            <label text="FIRST ${ec.artifactExecution.disableAuthz()}"/>
+            <section name="After" condition="!ec.artifactExecution.authzDisabled()"><widgets><label text="CHECKED"/></widgets>
+                <fail-widgets><label text="UNCHECKED"/></fail-widgets></section>
+        </widgets></screen>"#,
+    )
+    .unwrap();
+    let out = make_render(&world.factory)
+        .root_screen(location.to_string_lossy().into_owned())
+        .screen_path("")
+        .render_mode("text")
+        .render()
+        .unwrap()
+        .body_text();
+    assert!(
+        out.contains("FIRST false") && out.contains("CHECKED") && !out.contains("UNCHECKED"),
+        "{out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview's response carries no `Refresh` header (a timed redirect to anywhere) and no Location to another
+/// site, whatever its render set.
+#[test]
+fn a_preview_response_drops_a_refresh_and_a_redirect_to_another_site() {
+    let _web = crate::web::install_with(Default::default(), "http://localhost:8080".to_string());
+    crate::web::set_header("Refresh", Some("0; url=https://evil.example/phish"));
+    crate::web::set_header("Location", Some("https://evil.example/steal"));
+    crate::screen::render::preview_response();
+    assert!(crate::web::response_header_values("Refresh").is_empty());
+    assert!(crate::web::response_header_values("Location").is_empty());
+    assert!(crate::web::response_header_values("Content-Security-Policy")
+        .iter()
+        .any(|policy| policy == crate::screen::render::PREVIEW_POLICY));
+}
+
+/// SEC-AI-102: a preview's response policy loads nothing from another site: images, styles' `url()`, fonts, fetches and
+/// sockets are its own origin's (or a `data:` image or font), and only the app frames it.
+#[test]
+fn the_preview_policy_loads_nothing_from_another_site() {
+    let policy = crate::screen::render::PREVIEW_POLICY;
+    let directives: Vec<&str> = policy
+        .split(';')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    for wanted in [
+        "default-src 'self'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "frame-ancestors 'self'",
+        "form-action 'self'",
+    ] {
+        assert!(directives.contains(&wanted), "{wanted}: {policy}");
+    }
+    for directive in &directives {
+        for source in directive.split_whitespace().skip(1) {
+            assert!(
+                source.starts_with('\'') || source == "data:",
+                "{directive} names a source of another site: {policy}"
+            );
+        }
+    }
+}
+
 /// SEC-AI-82: while a screen stands at a preview's proposed text, its `encode="false"` labels, displays, links,
 /// editables and button-menus are encoded in html and qvt (a qvt `{{ }}` as well), and a label's `type` is one of the
 /// XSD's tags, overlay or not, so it is never markup of its own.

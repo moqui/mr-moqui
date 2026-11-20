@@ -593,16 +593,21 @@ fn repositories_are_cloned_and_pushed_over_http_and_ssh() {
             "sendUrl",
             Value::string(format!("ssh://john.doe@127.0.0.1:{ssh_port}/{path}")),
         );
-        remote.set(
-            "privateKey",
-            Value::string(user_key.to_openssh(LineEnding::LF).unwrap().as_str()),
-        );
         remote.set("publicKey", Value::string(user_key.public_key().to_openssh().unwrap()));
         remote.set(
             "sshHostKeyFingerprint",
             Value::string(host_key.public_key().fingerprint(HashAlg::Sha256).to_string()),
         );
         remote.create_or_update(&facade).unwrap();
+        // the key in a write of its own: a new address clears the stored one, the same key again included (SEC-TLS-116)
+        let mut key =
+            moqui_core::entity::EntityValue::make(&facade, "moqui.service.message.SystemMessageRemote").unwrap();
+        key.set("systemMessageRemoteId", Value::string("GIT_MIRROR"));
+        key.set(
+            "privateKey",
+            Value::string(user_key.to_openssh(LineEnding::LF).unwrap().as_str()),
+        );
+        key.update(&facade).unwrap();
         let mut repository = moqui_core::entity::EntityValue::make(&facade, "moqui.resource.GitRepository").unwrap();
         repository.set("repositoryId", Value::string("hosted"));
         repository.set("pushMirrorRemoteId", Value::string("GIT_MIRROR"));

@@ -92,11 +92,13 @@ fn apply_filters(target: &Target<'_>, condition: Option<Condition>) -> Option<Co
     }
 }
 
-/// Run `body` with the `ec.user.context` values on top of the context, as Java pushes the user context to evaluate
-/// apply conditions and filter maps.
+/// Run `body` with the `ec.user.context` values as its whole context, as Java pushes the user context to evaluate apply
+/// conditions and filter maps. The context below is hidden: a name the user context lacks is not found, rather than
+/// read from the screen or service that runs the find, where a preview's proposed text may have set it
+/// (plans/Security-Review-Low.md SEC-AI-102).
 fn with_user_context<T>(body: impl FnOnce() -> T) -> T {
     let entries = ExecutionContext::with_current(|ec| ec.user_context().clone()).unwrap_or_default();
-    let _frame = crate::script::ContextFrame::push();
+    let _frame = crate::script::IsolatedContext::push();
     for (name, value) in entries {
         if let Err(err) = crate::script::set_context_name(&name, value) {
             tracing::warn!(error = %err, name = %name, "could not add a user context value for the entity filters");

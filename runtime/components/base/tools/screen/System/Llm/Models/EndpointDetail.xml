@@ -86,7 +86,8 @@ along with this software (see the LICENSE.md file). If not, see
             </box-body></container-box>
         </row-col><row-col md="6">
             <container-box><box-header title="Key"/><box-body>
-                <label text="Stored encrypted and never shown. A key here replaces the conf's; a row that changes the host needs one." type="p"/>
+                <label text="Stored encrypted and never shown. A key here replaces the conf's. Saving the row with a new base URL, path, auth header, auth scheme or headers clears the row's key (Security.eecas.xml LlmEndpointSecretMoves): enter it again here." type="p"/>
+                <label text="${endpointRow?.apiKey ? 'The row has a key' : 'The row has no key'}" type="p"/>
                 <form-single name="ApiKey" transition="setApiKey">
                     <field name="endpointId" from="endpointId"><default-field><hidden/></default-field></field>
                     <field name="apiKey"><default-field title="API Key"><password size="40"/></default-field></field>

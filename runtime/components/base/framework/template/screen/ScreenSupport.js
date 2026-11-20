@@ -74,7 +74,8 @@
     // The description of the current status of a status-bar for the text and print modes, as an expression: the StatusItem's
     // description, else the id; empty without a status.
     const statusTextExpr = (node) => `((id) => { const v = String(id === null || id === undefined ? "" : id).trim(); if (!v || v === "null") return ""; ` +
-        `const item = ec.entity.find("moqui.basic.StatusItem").condition("statusId", v).useCache(true).disableAuthz().one(); ` +
+        `const find = ec.entity.find("moqui.basic.StatusItem").condition("statusId", v).useCache(true); ` +
+        `const item = (ec.artifactExecution.authzLocked() ? find : find.disableAuthz()).one(); ` +
         `return item && item.description ? String(item.description) : v; })(ec.resource.expandNoL10n(${jsString(attr(node, "status-id") || "")}))`;
 
     const expandExpr = (text) => `ec.resource.expand(${jsString(text)})`;

@@ -424,13 +424,13 @@ $closeChildren();
     if ($statusId && $statusId !== "null") {
         try {
             const $readOnly = String("") === "true";
-            const $out = ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:"" || null,statusFlowId:"" || null,stageStatusIds:$ids(ec.resource.expression("stageIds", "")),allowedToStatusIds:$readOnly ? [] : $ids("A,B")}).disableAuthz().call() || {};
+            const $out = ((b) => ec.artifactExecution.authzLocked() ? b : b.disableAuthz())(ec.service.sync().name("org.moqui.ui.StatusServices.get#StatusBar").parameters({statusId:$statusId,statusTypeId:"" || null,statusFlowId:"" || null,stageStatusIds:$ids(ec.resource.expression("stageIds", "")),allowedToStatusIds:$readOnly ? [] : $ids("A,B")})).call() || {};
             $bar = {readOnly:$readOnly,current:$out.current || null,stages:Array.from($out.stages || []),transitions:$readOnly ? [] : Array.from($out.transitions || [])};
         } catch ($err) {
             ec.logger.error("Leaving the stages of status-bar Bar out for status " + $statusId + ": " + $err);
         }
     }
-    const $text = $bar && $bar.current && $bar.current.label != null && $bar.current.label !== "" ? String($bar.current.label) : String(((id) => { const v = String(id === null || id === undefined ? "" : id).trim(); if (!v || v === "null") return ""; const item = ec.entity.find("moqui.basic.StatusItem").condition("statusId", v).useCache(true).disableAuthz().one(); return item && item.description ? String(item.description) : v; })(ec.resource.expandNoL10n("${statusId}")) || "");
+    const $text = $bar && $bar.current && $bar.current.label != null && $bar.current.label !== "" ? String($bar.current.label) : String(((id) => { const v = String(id === null || id === undefined ? "" : id).trim(); if (!v || v === "null") return ""; const find = ec.entity.find("moqui.basic.StatusItem").condition("statusId", v).useCache(true); const item = (ec.artifactExecution.authzLocked() ? find : find.disableAuthz()).one(); return item && item.description ? String(item.description) : v; })(ec.resource.expandNoL10n("${statusId}")) || "");
     const $stages = $bar ? $bar.stages.map(($stage) => ({statusId:$stage.statusId == null ? "" : String($stage.statusId),label:$stage.label == null ? "" : String($stage.label),state:$stage.state == null ? "" : String($stage.state)})) : [];
     $openChildren({t:"statusBar",id:$barId,text:$text,stages:$stages});
     if ($bar && !$bar.readOnly && $bar.transitions.length) {

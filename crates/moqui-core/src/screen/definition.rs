@@ -108,8 +108,15 @@ impl Actions {
         }
     }
 
-    /// Run the actions in the thread's context.
+    /// Run the actions in the thread's context, under the scope a service call holds
+    /// ([`crate::context::ExecutionContext::keep_authz`]): a `disableAuthz()`, `disableEntityEca()` or `disableTarpit()`
+    /// the block leaves on, by a throw or an early return, ends with it, and the rest of the render (later actions,
+    /// subscreens, widget finds) runs with the state it had before (SEC-RTE-92).
+    ///
+    /// A proposed screen's actions run on the preview's allow-list host ([`crate::script::preview`], SEC-AI-102).
     pub fn run(&self) -> Result<(), Error> {
+        let _authz = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
+        let _preview = crate::script::preview::enter()?;
         self.prepared.run(&self.xml, None)
     }
 }
@@ -1142,6 +1149,11 @@ pub struct ScreenDef {
     /// The merged screen XML, after `screen-extend`.
     pub source: XmlFragment,
     pub sources: Vec<Source>,
+    /// The screen, or a screen-extend of it, stands at a preview's proposed text ([`super::overlay`]): while it renders
+    /// (its actions, widgets, forms, trees and transitions) authorization is required and no script disables it
+    /// ([`super::proposed_running`], plans/Security-Review-Low.md SEC-AI-102). A definition built under an overlay is
+    /// never cached, so it reaches no other render.
+    pub proposed: bool,
     /// When the sources were last found current, in epoch milliseconds.
     pub(super) checked_at: std::sync::atomic::AtomicI64,
     /// The screen configuration data generation the `SubscreensItem` rows were read at.
@@ -1291,6 +1303,19 @@ impl ScreenDef {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
+        // a screen at a preview's proposed text: each expression the render units inline is evaluated from a string as
+        // a region of the preview's allow-list host, and a name or size they write into the page as it is holds no
+        // markup (SEC-AI-102)
+        if super::overlay::active()
+            && sources
+                .iter()
+                .any(|source| super::overlay::text_of(&source.location).is_some())
+        {
+            guard_proposed_attributes(&node, location)?;
+            for item in extended.forms.iter().chain(extended.sections.iter()) {
+                guard_proposed_attributes(item, location)?;
+            }
+        }
         if crate::devtools::is_dev_instance() {
             // F10: each widget element keeps the file that wrote it, merged ones their screen-extend's
             for root in node
@@ -1371,7 +1396,10 @@ impl ScreenDef {
 
         // Read before the rows, so a write while they load makes this definition stale.
         let config_generation = screen_config_generation(factory);
+        let menu_from = sources.len();
         let (subscreens, rows_read) = load_subscreens(facade, factory, node, location, &mut sources)?;
+        // the subscreens' files, read for their menu titles: a proposed one does not make this screen's text proposed
+        let menu_sources = menu_from..sources.len();
         // Built without rows that could not be read, the definition is stale at once and is built again next time.
         let config_generation = if rows_read { config_generation } else { STALE_GENERATION };
         let mut macro_templates = BTreeMap::new();
@@ -1592,12 +1620,135 @@ impl ScreenDef {
             shell_providers: super::shell::ShellProviders::of(node, location),
             ext_items: super::ext::of(node, location),
             source: XmlFragment::of(node),
+            proposed: proposed_build(location, &sources, menu_sources),
             sources,
             checked_at: std::sync::atomic::AtomicI64::new(super::cache::now_millis()),
             config_generation,
             generated: super::generate::Generated::default(),
         })
     }
+}
+
+/// The attributes whose text the render units write into a unit's code as a JavaScript expression of their own (not
+/// through `ec.resource.expand`, `expression` or `condition`, nor an engine entry, which run as a region already), or
+/// may: a
+/// widget's or a field's `condition`, a field's `hide`, a form-single's `map`, a `text-map`, a `currency-unit-field`, a
+/// `disable-condition`, a `move-condition`, and a report's `variables`, `dashboard`, `frames`, `frame` and `panel`.
+const INLINE_EXPRESSIONS: &[&str] = &[
+    "condition",
+    "hide",
+    "map",
+    "text-map",
+    "currency-unit-field",
+    "disable-condition",
+    "move-condition",
+    "variables",
+    "dashboard",
+    "frames",
+    "frame",
+    "panel",
+];
+
+/// The attributes whose text a render unit writes into the page as it is, not encoded, as the XSD gives them a name or
+/// a number: a `field-ref`'s or a form's `name` (an error note, a boundary comment), a container's `id` and `type`, a
+/// panel's `size`, a box body's `height`, a `width`.
+const WRITTEN_AS_IS: &[&str] = &["name", "id", "type", "size", "height", "width"];
+
+/// The menu titles of a proposed definition, which the trusted shell expands (`Header.html.fancy`, the path titles, the
+/// menu data): made literal at load, with no markup and no `$`, so nothing of them runs as `${}` (SEC-AI-102).
+const MENU_TITLES: &[&str] = &["default-menu-title", "menu-title"];
+
+/// `text` with no character that would end the attribute, the comment or the tag it is written into, nor start one.
+fn markup_free(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '<' | '>' | '"' | '\'' | '&' | '`'))
+        .collect::<String>()
+        .replace("--", "-")
+}
+
+/// The elements whose content is actions, compiled and run whole as a region of the preview's allow-list host: their
+/// attributes are left as they are.
+const ACTION_ELEMENTS: &[&str] = &[
+    "actions",
+    "always-actions",
+    "pre-actions",
+    "row-actions",
+    "condition",
+    "entity-find",
+    "entity-find-one",
+    "entity-find-count",
+];
+
+/// `text` as a JavaScript string literal with every character but a letter, a digit and a space as a `\u` escape, so
+/// no quote, backtick, `${`, backslash, line end or `</script` of it is code wherever the literal is written.
+fn escaped_literal(text: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for unit in text.encode_utf16() {
+        match char::from_u32(u32::from(unit)) {
+            Some(c) if c.is_ascii_alphanumeric() || c == ' ' => out.push(c),
+            _ => {
+                let _ = write!(out, "\\u{unit:04x}");
+            }
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// For a screen at proposed text, outside its [`ACTION_ELEMENTS`]: replace each [`INLINE_EXPRESSIONS`] attribute of
+/// `node` and its descendants with `ec.resource.expression("…", "")`, its text an escaped string literal evaluated as
+/// an engine expression entry, a region of the preview's allow-list host whose value comes back as data, so no text of
+/// it is spliced into a render unit's code; refuse one that is not a single JavaScript expression alone; and take the
+/// markup out of each [`WRITTEN_AS_IS`] attribute (SEC-AI-102).
+fn guard_proposed_attributes(node: &MNode, location: &str) -> Result<(), Error> {
+    if ACTION_ELEMENTS.contains(&node.name().as_str()) {
+        return Ok(());
+    }
+    for (name, value) in node.attributes() {
+        if WRITTEN_AS_IS.contains(&name.as_str()) || MENU_TITLES.contains(&name.as_str()) {
+            let mut free = markup_free(&value);
+            if MENU_TITLES.contains(&name.as_str()) {
+                free = free.replace('$', "");
+            }
+            if free != value {
+                node.set_attribute(name, free);
+            }
+            continue;
+        }
+        let text = value.trim();
+        if text.is_empty() || !INLINE_EXPRESSIONS.contains(&name.as_str()) {
+            continue;
+        }
+        // the text is not echoed: the message may be shown on the page
+        if !crate::script::parse::is_single_expression(text) {
+            return Err(Error::new(format!(
+                "{location}: the {name} of a {} is not one JavaScript expression",
+                node.name()
+            )));
+        }
+        node.set_attribute(name, format!("ec.resource.expression({}, \"\")", escaped_literal(text)));
+    }
+    for child in node.child_iter() {
+        guard_proposed_attributes(&child, location)?;
+    }
+    Ok(())
+}
+
+/// Whether the screen being built stands at a preview's proposed text (its own, a screen-extend's, or that of a screen
+/// it includes a form, section or transition from; not a subscreen's whose menu title it reads); marks its location
+/// on the overlay when it does, so its frame is known for one ([`super::overlay::is_proposed`], SEC-AI-102).
+fn proposed_build(location: &str, sources: &[Source], menu_sources: std::ops::Range<usize>) -> bool {
+    let proposed = super::overlay::active()
+        && sources
+            .iter()
+            .enumerate()
+            .any(|(at, source)| !menu_sources.contains(&at) && super::overlay::text_of(&source.location).is_some());
+    if proposed {
+        super::overlay::mark_proposed(location);
+    }
+    proposed
 }
 
 /// Elements of a `screen-extend` file that the base screen load needs after the merge.
@@ -1635,6 +1786,11 @@ fn apply_screen_extends(
             }
         }
         if let Some(text) = overlaid(&found) {
+            // a source, as a file is: what stands at an overlay's text is known by it (sri::active_overlaid)
+            sources.push(Source {
+                location: found.to_string_lossy().into_owned(),
+                modified: None,
+            });
             match MNode::parse_text(&found.to_string_lossy(), &text) {
                 Ok(extend) => merge_extend(screen, &extend, location, &mut extended),
                 Err(err) => tracing::error!("screen-extend {} of {location} left out: {err}", found.display()),
