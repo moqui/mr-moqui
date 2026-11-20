@@ -60,7 +60,7 @@ use moqui_core::edge::{
 use moqui_core::telemetry::Telemetry;
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::io::AsyncReadExt as _;
 use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio_rustls::server::TlsStream;
@@ -161,10 +161,6 @@ pub(crate) fn offers_link(accepted: &rustls::server::Accepted) -> bool {
         .is_some_and(|mut offered| offered.any(|protocol| protocol == ALPN || protocol == ALPN_PAIR))
 }
 
-/// The most a ClientHello may take. It is read whole before any TLS settings are picked, and a passthrough tunnel
-/// replays it whole.
-const MAX_HELLO: usize = 64 * 1024;
-
 /// The bytes under a link connection's TLS: a TCP connection to this node's listener, or a passthrough tunnel a front
 /// node sent down this node's own front link (plans/Edge-Node2.md §4.7).
 pub(crate) trait LinkStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {}
@@ -195,46 +191,7 @@ pub(crate) enum Secured {
     Link(Handoff),
 }
 
-/// Read the ClientHello from `stream`: rustls's view of it, and every byte read, which a passthrough tunnel replays.
-pub(crate) async fn read_hello<S>(stream: &mut S) -> std::io::Result<(rustls::server::Accepted, Vec<u8>)>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let mut acceptor = rustls::server::Acceptor::default();
-    let mut seen = Vec::with_capacity(2048);
-    let mut chunk = [0_u8; 4096];
-    loop {
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Err(std::io::ErrorKind::UnexpectedEof.into());
-        }
-        let fresh = &chunk[..read];
-        seen.extend_from_slice(fresh);
-        if seen.len() > MAX_HELLO {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "the ClientHello is too long",
-            ));
-        }
-        let mut rest = fresh;
-        while !rest.is_empty() {
-            if acceptor.read_tls(&mut rest)? == 0 {
-                break;
-            }
-        }
-        match acceptor.accept() {
-            Ok(Some(accepted)) => return Ok((accepted, seen)),
-            Ok(None) => {}
-            Err((err, mut alert)) => {
-                let mut out = Vec::new();
-                if alert.write_all(&mut out).is_ok() {
-                    let _ = stream.write_all(&out).await;
-                }
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
-            }
-        }
-    }
-}
+pub(crate) use crate::link::read_hello;
 
 impl Acceptor {
     /// The start of a connection to the HTTPS listener: the link's settings when the client offers one of the link's

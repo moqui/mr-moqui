@@ -80,6 +80,9 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+// What the edge link and the manager link share: the role answer, the backoff, the link key's certificate.
+#[cfg(any(feature = "edge", feature = "manage"))]
+mod link;
 mod embedded_checksum;
 mod embedded_files;
 mod embedded_programs;

@@ -56,8 +56,9 @@ use std::time::Duration;
 
 use moqui_core::edge::{ClusterMemberInfo, EdgeInfo, MemberState};
 
-pub(crate) use crate::grpc_client::H2Channel;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+pub use crate::link::Backoff;
+pub(crate) use crate::link::H2Channel;
+pub(crate) use crate::link::{jitter, read_answer, write_answer, Answer};
 
 pub(crate) mod accept;
 pub(crate) mod balance;
@@ -136,64 +137,6 @@ pub(crate) const TUNNEL_SMTP: &str = moqui_core::edge::ports::SMTP;
 /// The `:authority` of the link's gRPC requests. The connection is already the right one, so it only has to be a
 /// valid URI.
 const ORIGIN: &str = "https://moqui-edge.link";
-
-/// The edge node's answer to the role byte: a code, then the length (2 bytes, big-endian) and text of a message.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Answer {
-    Ok = 0,
-    /// The key is not paired with this edge node, or was revoked.
-    Refused = 1,
-    /// No up connection of that generation (a down connection).
-    Stale = 2,
-    /// Anything else: a bad role, an error on the edge node.
-    Failed = 3,
-}
-
-impl Answer {
-    fn from_code(code: u8) -> Self {
-        match code {
-            0 => Self::Ok,
-            1 => Self::Refused,
-            2 => Self::Stale,
-            _ => Self::Failed,
-        }
-    }
-}
-
-/// The longest message an [`Answer`] carries.
-const MAX_ANSWER_TEXT: usize = 1024;
-
-pub(crate) async fn write_answer<S: AsyncWrite + Unpin>(
-    stream: &mut S,
-    answer: Answer,
-    message: &str,
-) -> std::io::Result<()> {
-    let text = message.as_bytes();
-    let text = text.get(..MAX_ANSWER_TEXT).unwrap_or(text);
-    let length = u16::try_from(text.len()).unwrap_or(u16::MAX);
-    let mut frame = Vec::with_capacity(3 + text.len());
-    frame.push(answer as u8);
-    frame.extend_from_slice(&length.to_be_bytes());
-    frame.extend_from_slice(text);
-    stream.write_all(&frame).await?;
-    stream.flush().await
-}
-
-pub(crate) async fn read_answer<S: AsyncRead + Unpin>(stream: &mut S) -> std::io::Result<(Answer, String)> {
-    let mut head = [0_u8; 3];
-    stream.read_exact(&mut head).await?;
-    let length = usize::from(u16::from_be_bytes([head[1], head[2]]));
-    if length > MAX_ANSWER_TEXT {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "the edge node's answer is too long",
-        ));
-    }
-    let mut text = vec![0_u8; length];
-    stream.read_exact(&mut text).await?;
-    Ok((Answer::from_code(head[0]), String::from_utf8_lossy(&text).into_owned()))
-}
 
 /// Ok when the edge member's Hello names an id this node can take: a node id, not this node's own (`own`), and, on a
 /// link dialed for a member of its edge cluster's list (`expected`), that member's (plans/Edge-Node2.md §4.6), else
@@ -346,32 +289,6 @@ pub(crate) fn edge_info(hello: &proto::Hello, fingerprint: &str) -> EdgeInfo {
     }
 }
 
-/// The delays between attempts to dial a lost link: `first`, doubling up to `max`, each with jitter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Backoff {
-    pub first: Duration,
-    pub max: Duration,
-}
-
-impl Default for Backoff {
-    fn default() -> Self {
-        Self {
-            first: Duration::from_secs(1),
-            max: Duration::from_secs(30),
-        }
-    }
-}
-
-impl Backoff {
-    /// The waits of a node the edge node refused: dialing again helps only once its operator acts.
-    pub fn refused() -> Self {
-        Self {
-            first: Duration::from_secs(30),
-            max: Duration::from_secs(600),
-        }
-    }
-}
-
 /// The longest node id: the `id` type of `moqui.edge.EdgeClient.pairedNodeId`.
 const MAX_NODE_ID: usize = 40;
 
@@ -381,29 +298,6 @@ pub(crate) fn valid_node_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= MAX_NODE_ID
         && !id.chars().any(|ch| ch.is_whitespace() || ch.is_control() || ch == '@')
-}
-
-impl Backoff {
-    /// The wait before attempt `attempt` (0 is the first after a loss): half the doubled delay plus a random part of
-    /// the other half (`jitter` in 0 to 1), so nodes that lost their links together do not dial together.
-    pub fn delay(&self, attempt: u32, jitter: f64) -> Duration {
-        let doubled = self.first.saturating_mul(1_u32 << attempt.min(16));
-        let base = doubled.min(self.max).max(Duration::from_millis(1));
-        let half = base / 2;
-        half + half.mul_f64(jitter.clamp(0.0, 1.0))
-    }
-}
-
-/// A number from 0 to 1 that differs from call to call, for [`Backoff::delay`].
-pub(crate) fn jitter() -> f64 {
-    use std::hash::{BuildHasher as _, Hasher as _};
-    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_nanos()),
-    );
-    (hasher.finish() % 10_000) as f64 / 10_000.0
 }
 
 /// The `:authority` of the link's gRPC calls, the PASS authority's on a down connection too.

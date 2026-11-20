@@ -13,6 +13,7 @@
  */
 
 use super::*;
+use tokio::io::AsyncWriteExt as _;
 
 /// A client's ClientHello to `name` offering `alpn`, read by the edge node's reader on the other end.
 async fn hello_from_client(name: &'static str, alpn: &[u8]) -> std::io::Result<(rustls::server::Accepted, Vec<u8>)> {
