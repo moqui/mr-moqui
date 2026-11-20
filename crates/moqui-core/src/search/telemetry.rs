@@ -189,6 +189,8 @@ pub fn telemetry_mapping(name: &str) -> Option<DocumentMapping> {
             ("url", Keyword),
             ("trace_ids", Keyword),
             ("bytes", Long),
+            // when the server received the chunk: which session's chunk was first (moqui-report browser.rs)
+            ("received", Long),
             ("events", Binary),
         ],
         _ => return None,

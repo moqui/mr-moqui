@@ -34,8 +34,8 @@ pub use archive::secrets_tar;
 pub use container::{demux_logs, ContainerInfo, VolumeInfo, MAX_LOG_LINES};
 pub use podman::{is_podman, LIBPOD};
 pub use spec::{
-    valid_name, ContainerSpec, HealthCheck, Mount, MountKind, PortBinding, RestartPolicy, SecretFile, SECRETS_DIR,
-    SECRETS_LABEL,
+    valid_name, valid_network, ContainerSpec, HealthCheck, Mount, MountKind, PortBinding, RestartPolicy, SecretFile,
+    NETWORK_KEYWORDS, SECRETS_DIR, SECRETS_LABEL,
 };
 
 use std::collections::BTreeMap;
@@ -288,6 +288,36 @@ impl DockerHost {
             return Err(Error::new(format!("pulling image {image}: {line}")));
         }
         Ok(())
+    }
+
+    /// The paths image `image` declares as a `VOLUME` (`GET /images/{name}/json`, its `Config.Volumes`), where the
+    /// engine makes an anonymous volume on the host's disk unless the container mounts something there. `None` when
+    /// the host does not have the image.
+    ///
+    /// # Errors
+    ///
+    /// When the host refuses the inspection for another reason.
+    pub fn image_volumes(&self, image: &str) -> Result<Option<Vec<String>>, Error> {
+        let response = self.send(
+            Method::Get,
+            &format!("/images/{}/json", encode(image)),
+            None,
+            CALL_TIMEOUT,
+        )?;
+        if response.status() == 404 {
+            return Ok(None);
+        }
+        if response.status() >= 300 {
+            return Err(Self::problem(&format!("inspecting image {image}"), &response));
+        }
+        let inspected = serde_json::from_str::<serde_json::Value>(response.body())
+            .map_err(|err| Error::new(format!("inspecting image {image}: the answer is not JSON: {err}")))?;
+        Ok(Some(
+            inspected["Config"]["Volumes"]
+                .as_object()
+                .map(|volumes| volumes.keys().cloned().collect())
+                .unwrap_or_default(),
+        ))
     }
 
     /// One `POST /containers/create` of `body` as the container `name`.

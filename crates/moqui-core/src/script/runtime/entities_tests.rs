@@ -666,7 +666,7 @@ fn the_entity_members_keep_their_names_and_lengths() {
          deleteWithRelated/0 entrySet/0 equals/1 findRelated/1 findRelatedCount/3 findRelatedFk/0 findRelatedOne/1 \
          get/1 getBigDecimal/1 getBoolean/1 getBytes/1 getDate/1 getDouble/1 getEntityName/0 getEntityNamePretty/0 \
          getLong/1 getMap/0 getMasterValueMap/0 getNoCheckSimple/1 getOriginalDbValue/1 getPlainValueMap/1 \
-         getPrimaryKeys/0 getPrimaryKeysString/0 getString/1 getTime/1 getTimestamp/1 isField/1 isFieldModified/1 \
+         getPrimaryKeys/0 getPrimaryKeysString/0 getString/1 getTime/1 getTimestamp/1 isField/1 isFieldGiven/1 isFieldModified/1 \
          isFieldSet/1 isModified/0 isMutable/0 mapMatches/1 refresh/0 resolveEntityName/0 resolveEntityNamePretty/0 \
          set/2 setAll/1 setBytes/2 setFields/3 setSequencedIdPrimary/0 setSequencedIdSecondary/0 setString/2 store/0 \
          update/0",

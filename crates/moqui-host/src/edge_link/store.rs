@@ -75,6 +75,25 @@ fn run<T>(
     tx.run(attribute, Some(Duration::from_secs(30)), body)
 }
 
+/// The key fingerprints of the active pairings, in one query: what an edge member knows of its paired nodes from its
+/// start, so a source refused often lately never blocks a real node's links after a restart (SEC-CLU-84).
+pub(crate) fn active_keys(factory: &ExecutionContextFactory) -> Result<Vec<String>, Error> {
+    let facade = facade(factory)?;
+    transaction(&facade, CLIENT, || {
+        Ok(facade
+            .find(CLIENT)?
+            .eq("statusId", Value::string(ACTIVE))
+            .select_field("keyFingerprint")
+            .disable_authz()
+            .list()?
+            .values()
+            .iter()
+            .map(|row| text(row.get("keyFingerprint")))
+            .filter(|key| !key.is_empty())
+            .collect())
+    })
+}
+
 /// The paired node of an active key, with its next generation saved: the up connection's identity.
 pub(crate) fn link_up(
     factory: &ExecutionContextFactory,
@@ -124,8 +143,30 @@ pub(crate) enum Paired {
     Refused(String),
 }
 
+/// Why `node` may not pair now, or none: active with another key (its operator revokes it first), or revoked (with any
+/// key, its own too) or paired before with another key, with a code not made for it (`for_node`). Such an id keeps its
+/// hosts, ports, copies and queued items for a re-pair: only a code the operator made for that id gives them back
+/// (SEC-CLU-82). `status` is the id's row's, none for a new id.
+pub(crate) fn re_pair_refusal(node: &str, status: Option<&str>, key_changed: bool, for_node: &str) -> Option<String> {
+    let active = status == Some(ACTIVE);
+    if active && key_changed {
+        return Some(format!(
+            "local node {node} is already paired with another key; revoke it on the edge node first"
+        ));
+    }
+    let revoked = status.is_some() && !active;
+    if (revoked || key_changed) && for_node != node {
+        return Some(format!(
+            "local node {node} was paired before; the edge node's operator makes a pairing code for {node} to pair it \
+             again"
+        ));
+    }
+    None
+}
+
 /// Use the pairing code and pin `fingerprint` for `node`. A node that is active with another key is refused: its
-/// operator revokes it first, so a code cannot take over a linked node.
+/// operator revokes it first, so a code cannot take over a linked node. A code made for a node (`forNodeId`) pairs that
+/// node only, and a node paired before with another key pairs again only with a code made for it (SEC-CLU-82).
 pub(crate) fn pair_client(
     factory: &ExecutionContextFactory,
     code: &str,
@@ -153,18 +194,21 @@ pub(crate) fn pair_client(
         if !text(row.get("usedDate")).is_empty() || expired {
             return Ok(Paired::Refused(BAD_CODE.to_string()));
         }
+        // a code made for one node pairs that node only (SEC-CLU-82)
+        let for_node = text(row.get("forNodeId"));
+        if !for_node.is_empty() && for_node != node {
+            return Ok(Paired::Refused(BAD_CODE.to_string()));
+        }
         let existing = facade
             .find(CLIENT)?
             .eq("pairedNodeId", Value::string(node))
             .for_update(true)
             .one()?;
         let old_key = existing.as_ref().map(|row| text(row.get("keyFingerprint")));
-        let active = existing.as_ref().is_some_and(|row| text(row.get("statusId")) == ACTIVE);
+        let status = existing.as_ref().map(|row| text(row.get("statusId")));
         let key_changed = old_key.as_deref().is_some_and(|old| old != fingerprint);
-        if active && key_changed {
-            return Ok(Paired::Refused(format!(
-                "local node {node} is already paired with another key; revoke it on the edge node first"
-            )));
+        if let Some(why) = re_pair_refusal(node, status.as_deref(), key_changed, &for_node) {
+            return Ok(Paired::Refused(why));
         }
         let mut used = facade.make_value(PAIRING_CODE)?;
         used.set(
@@ -190,6 +234,11 @@ pub(crate) fn pair_client(
         // a pairing starts with no member keys, takeover or hold of before
         client.set("memberKeys", Value::Null);
         client.set("takeoverFromId", Value::Null);
+        // a new key's node configures itself again: the setup of the key before (its PASS sites, chat bridges, XMPP
+        // and SIP domain) is not its own
+        if key_changed {
+            client.set("setupJson", Value::Null);
+        }
         client.create_or_update(&facade)?;
         Ok(Paired::Pinned { key_changed })
     })

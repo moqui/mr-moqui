@@ -233,8 +233,45 @@ fn the_certificate_is_written_where_the_listener_reads_it() {
     assert_eq!(served.pair, "www.example.com");
     assert!(served.problem.is_none(), "{:?}", served.problem);
     assert!(served.cert.ends_with("www.example.com/fullchain.pem"));
+    // S4: the key is served from memory, and no file of the directory holds it
+    assert!(!dir.join("www.example.com/privkey.pem").exists());
+    for entry in std::fs::read_dir(dir.join("www.example.com")).unwrap().flatten() {
+        let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        assert!(
+            !text.contains("PRIVATE KEY"),
+            "{} holds the key",
+            entry.path().display()
+        );
+    }
     // written again unchanged: nothing to do
     store::write_files(&dir, "www.example.com", &chain, &key_pem).unwrap();
+    #[cfg(unix)]
+    {
+        // a staging file left readable (or a link planted) is removed, never written into (SEC-OUT-85), and the
+        // name's directory is this user's alone; under S4 no key file is written, and one an earlier build left goes
+        use std::os::unix::fs::PermissionsExt as _;
+        let sub = dir.join("www.example.com");
+        let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&sub), 0o700);
+        let elsewhere = dir.parent().unwrap().join("elsewhere.pem");
+        std::fs::write(&elsewhere, "").unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, sub.join(".privkey.pem.new")).unwrap();
+        std::fs::write(sub.join("privkey.pem"), "old").unwrap();
+        store::write_files(&dir, "www.example.com", &chain, &key_pem).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&elsewhere).unwrap(),
+            "",
+            "the link's target is not written"
+        );
+        assert_eq!(mode(&elsewhere), 0o644, "the link's target is not changed");
+        assert!(!sub.join("privkey.pem").exists(), "the old key file is gone");
+        assert!(
+            std::fs::symlink_metadata(sub.join(".privkey.pem.new")).is_err(),
+            "the planted link is gone"
+        );
+        assert!(crate::tls::served_for(&dir, "www.example.com").is_some_and(|served| served.problem.is_none()));
+    }
 
     std::fs::create_dir_all(dir.join("certbot.example.com")).unwrap();
     assert!(store::foreign_dir(&dir, "certbot.example.com"));

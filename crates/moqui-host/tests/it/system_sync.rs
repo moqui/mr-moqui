@@ -40,16 +40,16 @@ const DATA: &str = r#"<entity-facade-xml type="seed">
         sendServiceName="org.moqui.impl.SystemMessageServices.send#SystemMessageRest"
         consumeServiceName="org.moqui.impl.SystemMessageServices.reset#SystemMessageInError" contentType="application/json"/>
     <moqui.service.message.SystemMessageRemote systemMessageRemoteId="GateSelf" description="This server"
-        messageAuthEnumId="SmatLogin" receiveUserId="EX_JOHN_DOE" username="john.doe" password="moqui" allowPrivateNetwork="Y"/>
+        messageAuthEnumId="SmatLogin" receiveUserId="EX_JOHN_DOE" username="john.doe" allowPrivateNetwork="Y"/>
 
     <moqui.security.ArtifactGroup artifactGroupId="GATE_SYNC_DATA" description="Gate sync data"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="GATE_SYNC_DATA" artifactName="moqui.basic.Enumeration"
         artifactTypeEnumId="AT_ENTITY" nameIsPattern="N" filterMap="{enumTypeId: 'EntitySyncArtifactAppl'}"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PUSH" description="Gate push" statusId="EsNotStarted" forPull="N"
-        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui" allowPrivateNetwork="Y"/>
+        delayBufferMillis="1" targetUsername="john.doe" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PUSH" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
     <moqui.entity.sync.EntitySync entitySyncId="GATE_PULL" description="Gate pull" statusId="EsNotStarted" forPull="Y"
-        delayBufferMillis="1" targetUsername="john.doe" targetPassword="moqui" allowPrivateNetwork="Y"/>
+        delayBufferMillis="1" targetUsername="john.doe" allowPrivateNetwork="Y"/>
     <moqui.entity.sync.EntitySyncArtifact entitySyncId="GATE_PULL" artifactGroupId="GATE_SYNC_DATA" applEnumId="EsaaInclude"/>
 </entity-facade-xml>"#;
 
@@ -184,7 +184,8 @@ fn a_system_message_goes_out_over_rest_comes_back_at_rest_sm_and_is_consumed(gat
         "PATCH",
         "/rest/e1/moqui.service.message.SystemMessageRemote/GateSelf",
         Some(&john),
-        &serde_json::json!({ "sendUrl": send_url }).to_string(),
+        // the password with the address it is sent to: a new address alone would clear a stored one (SEC-TLS-116)
+        &serde_json::json!({ "sendUrl": send_url, "password": "moqui" }).to_string(),
     );
     assert_eq!(status, 200, "{json}");
 
@@ -355,7 +356,10 @@ fn the_instance_administrators_message_transitions_send_consume_and_receive(gate
 fn an_entity_sync_push_and_a_pull_complete_with_a_history_row(gate: &crate::common::Gate) {
     let address = gate.server.address();
     let john = basic("john.doe", "moqui");
-    let target = serde_json::json!({ "targetServerUrl": format!("http://{address}") }).to_string();
+    // the address and the password it is sent to, in one write: a new address alone would clear a stored password
+    // (SEC-TLS-116)
+    let target =
+        serde_json::json!({ "targetServerUrl": format!("http://{address}"), "targetPassword": "moqui" }).to_string();
 
     for sync_id in ["GATE_PUSH", "GATE_PULL"] {
         let row_path = format!("/rest/e1/moqui.entity.sync.EntitySync/{sync_id}");

@@ -184,6 +184,10 @@ const DENIED_ATTRIBUTES: &[&str] = &[
     "ping",
     "http-equiv",
     "is",
+    // a link's own referrer policy overrides the page's `Referrer-Policy` (SEC-PSF-83), and Chromium's attribution
+    // reporting sends a request to the URL it names (SEC-SCR-91)
+    "referrerpolicy",
+    "attributionsrc",
 ];
 
 /// `<meta name>` values a theme may use. Others are refused, `referrer` above all: it could loosen the server's
@@ -203,7 +207,9 @@ const META_NAMES: &[&str] = &[
 ];
 
 /// Whether a theme may have this `<meta>`: a `charset`, a listed `name` or a card's `twitter:` one, an Open Graph
-/// `property`, or microdata's `itemprop`. `http-equiv` is a denied attribute wherever it stands.
+/// `property`, or microdata's `itemprop`. A `name` or `property` must be one of those whatever else the tag has, so a
+/// `charset` or `itemprop` beside `name="referrer"` does not carry it (SEC-PSF-83). `http-equiv` is a denied
+/// attribute wherever it stands.
 fn meta_allowed(tag: &Tag) -> bool {
     let value = |name: &str| {
         tag.attrs
@@ -211,17 +217,22 @@ fn meta_allowed(tag: &Tag) -> bool {
             .find(|attribute| &*attribute.name.local == name)
             .map(|attribute| attribute.value.trim().to_ascii_lowercase())
     };
-    if value("charset").is_some() || value("itemprop").is_some() {
-        return true;
+    let name = value("name");
+    if name
+        .as_deref()
+        .is_some_and(|name| !META_NAMES.contains(&name) && !name.starts_with("twitter:"))
+    {
+        return false;
     }
-    if let Some(name) = value("name") {
-        return META_NAMES.contains(&name.as_str()) || name.starts_with("twitter:");
-    }
-    value("property").is_some_and(|property| {
-        ["og:", "article:", "product:", "profile:", "book:", "music:", "video:"]
+    let property = value("property");
+    if property.as_deref().is_some_and(|property| {
+        !["og:", "article:", "product:", "profile:", "book:", "music:", "video:"]
             .iter()
             .any(|prefix| property.starts_with(prefix))
-    })
+    }) {
+        return false;
+    }
+    name.is_some() || property.is_some() || value("charset").is_some() || value("itemprop").is_some()
 }
 
 /// `<link rel>` values a theme may use: the stylesheet and icon loads, preload, and navigation relations.
@@ -828,11 +839,30 @@ pub(crate) fn check_css(css: &str, policy: &Policy<'_>, resolve: Option<&dyn Fn(
     found
 }
 
-/// CSS with its comments removed and its escapes decoded, with the line of each byte of the result.
+/// CSS with its comments removed and its escapes decoded, with the line of each byte of the result. As the CSS
+/// tokenizer reads it: CR LF, a lone CR and a form feed are each a line break first, and a comment starts only
+/// outside a string and outside an unquoted `url(...)`, so `/*` in a string cannot hide what follows it (SEC-SCR-90).
+/// An escape that stands for a quote or a parenthesis is refused inside a `url()`, quoted or not: decoded, it would end
+/// the URL early for the check, where the browser keeps it as a character of the URL. Elsewhere it is a character
+/// (a utility class's `\(`, `content: "\""`) and passes.
 fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
+    /// Where the tokenizer is: a string ends at its quote or a line break (and is a `url(` argument or not), an
+    /// unquoted `url(` at its `)`.
+    #[derive(Clone, Copy, PartialEq)]
+    enum In {
+        Rules,
+        Text(char, bool),
+        Url,
+    }
+    // the CSS preprocessing: CR LF, CR and FF are LF (a lone CR or FF ends a string as LF does)
+    let css = css.replace("\r\n", "\n").replace(['\r', '\x0c'], "\n");
+    let css = css.as_str();
+    // a quote that comes next opens the argument of a `url(`
+    let mut url_string_next = false;
     let mut out = String::with_capacity(css.len());
     let mut lines = Vec::with_capacity(css.len());
     let mut line = 1;
+    let mut state = In::Rules;
     let mut chars = css.char_indices().peekable();
     let push = |out: &mut String, lines: &mut Vec<usize>, ch: char, line: usize| {
         out.push(ch);
@@ -840,7 +870,7 @@ fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
     };
     while let Some((at, ch)) = chars.next() {
         match ch {
-            '/' if css[at..].starts_with("/*") => {
+            '/' if state == In::Rules && css[at..].starts_with("/*") => {
                 let Some(end) = css[at + 2..].find("*/") else {
                     return Err("a CSS comment is not closed".to_string());
                 };
@@ -862,11 +892,14 @@ fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
                         _ => break,
                     }
                 }
-                if hex.is_empty() {
+                let decoded = if hex.is_empty() {
                     match chars.next() {
-                        Some((_, '\n')) => line += 1,
-                        Some((_, escaped)) => push(&mut out, &mut lines, escaped, line),
-                        None => {}
+                        Some((_, '\n')) => {
+                            line += 1;
+                            continue;
+                        }
+                        Some((_, escaped)) => escaped,
+                        None => continue,
                     }
                 } else {
                     if chars.peek().is_some_and(|(_, space)| space.is_whitespace()) {
@@ -874,16 +907,49 @@ fn decode_css(css: &str) -> Result<(String, Vec<usize>), String> {
                             line += 1;
                         }
                     }
-                    let decoded = u32::from_str_radix(&hex, 16)
+                    u32::from_str_radix(&hex, 16)
                         .ok()
                         .and_then(char::from_u32)
-                        .unwrap_or('\u{FFFD}');
-                    push(&mut out, &mut lines, decoded, line);
+                        .unwrap_or('\u{FFFD}')
+                };
+                if matches!(decoded, '"' | '\'' | '(' | ')') && matches!(state, In::Url | In::Text(_, true)) {
+                    return Err(format!("an escaped `{decoded}` is not allowed in a theme CSS url()"));
                 }
+                push(&mut out, &mut lines, decoded, line);
             }
             '\n' => {
+                if matches!(state, In::Text(..)) {
+                    state = In::Rules;
+                }
                 push(&mut out, &mut lines, ch, line);
                 line += 1;
+            }
+            '"' | '\'' if state == In::Rules => {
+                state = In::Text(ch, std::mem::take(&mut url_string_next));
+                push(&mut out, &mut lines, ch, line);
+            }
+            '"' | '\'' if matches!(state, In::Text(quote, _) if quote == ch) => {
+                state = In::Rules;
+                push(&mut out, &mut lines, ch, line);
+            }
+            '(' if state == In::Rules => {
+                // `url(` (its name escaped or not) not followed by a quote is one token up to its `)`
+                let tail = out.len().checked_sub(3).and_then(|from| out.get(from..));
+                let named = tail.is_some_and(|tail| tail.eq_ignore_ascii_case("url"))
+                    && !out[..out.len() - 3]
+                        .chars()
+                        .next_back()
+                        .is_some_and(|before| before.is_alphanumeric() || matches!(before, '-' | '_'));
+                let quoted = css[at + 1..].trim_start().starts_with(['"', '\'']);
+                if named && !quoted {
+                    state = In::Url;
+                }
+                url_string_next = named && quoted;
+                push(&mut out, &mut lines, ch, line);
+            }
+            ')' if state == In::Url => {
+                state = In::Rules;
+                push(&mut out, &mut lines, ch, line);
             }
             _ => push(&mut out, &mut lines, ch, line),
         }

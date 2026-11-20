@@ -26,6 +26,7 @@ pub mod edi;
 pub mod entity;
 pub mod entity_hooks;
 pub mod extension;
+pub mod google_auth;
 pub mod l10n;
 pub mod live_settings;
 pub mod llm_hooks;

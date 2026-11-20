@@ -215,9 +215,13 @@ pub struct RestClient {
     truncate_body: bool,
     max_redirects: usize,
     redirect_any_host: bool,
+    /// Every request goes over https ([`https_only`](Self::https_only)).
+    https_only: bool,
     connect_timeout: Duration,
     unix_socket: Option<std::path::PathBuf>,
     root_certificates: Option<Vec<u8>>,
+    /// The root certificates are the only ones trusted, not added to the system's.
+    only_root_certificates: bool,
     client_identity: Option<ClientIdentity>,
     transport: OnceLock<reqwest::blocking::Client>,
 }
@@ -246,9 +250,11 @@ impl RestClient {
             truncate_body: false,
             max_redirects: MAX_REDIRECTS,
             redirect_any_host: false,
+            https_only: false,
             connect_timeout: CONNECT_TIMEOUT,
             unix_socket: None,
             root_certificates: None,
+            only_root_certificates: false,
             client_identity: None,
             transport: OnceLock::new(),
         }
@@ -267,6 +273,15 @@ impl RestClient {
     #[must_use]
     pub fn root_certificates_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
         self.root_certificates = Some(pem.into());
+        self
+    }
+
+    /// Trust only these certificates (PEM, one or more), in place of the system's: a private authority a setting names
+    /// as the one to check a server against.
+    #[must_use]
+    pub fn only_root_certificates_pem(mut self, pem: impl Into<Vec<u8>>) -> Self {
+        self.root_certificates = Some(pem.into());
+        self.only_root_certificates = true;
         self
     }
 
@@ -305,6 +320,15 @@ impl RestClient {
         }
         // The resolver is part of the transport, so one built before this is not kept.
         self.transport = OnceLock::new();
+        self
+    }
+
+    /// Refuse every request whose URL is not https, before anything is sent: a client that carries a credential with
+    /// each request (a provider's API key) never sends it in clear text, whatever URL a caller builds. A redirect never
+    /// goes from https to http on any client.
+    #[must_use]
+    pub fn https_only(mut self, on: bool) -> Self {
+        self.https_only = on;
         self
     }
 
@@ -592,8 +616,10 @@ impl RestClient {
         if let Some(pem) = &self.root_certificates {
             let certificates = reqwest::Certificate::from_pem_bundle(pem)
                 .map_err(|err| Error::new("the root certificates are not PEM").with_source(err))?;
-            for certificate in certificates {
-                builder = builder.add_root_certificate(certificate);
+            if self.only_root_certificates {
+                builder = builder.tls_certs_only(certificates);
+            } else {
+                builder = builder.tls_certs_merge(certificates);
             }
         }
         if let Some(identity) = &self.client_identity {
@@ -701,6 +727,12 @@ impl Call<'_> {
             .map_err(|err| Error::new(format!("invalid URL {}", redacted(&self.url))).with_source(err))?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(Error::new(format!("URL {} must be http or https", redacted(&self.url))));
+        }
+        if self.client.https_only && parsed.scheme() != "https" {
+            return Err(Error::new(format!(
+                "URL {} is not https, and this client sends over https only",
+                redacted(&self.url)
+            )));
         }
         for (name, value) in &self.headers {
             check_header(name, value)?;

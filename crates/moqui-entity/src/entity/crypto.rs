@@ -37,6 +37,10 @@ const AES_KEY_LEN: usize = 16;
 const AES_BLOCK: usize = 16;
 const DES_BLOCK: usize = 8;
 const MISSING_PASS: &str = "No entity-facade.@crypt-pass setting found, NOT doing encryption";
+/// A crypt pass that starts so refuses every encrypt and decrypt with the rest as the error: what the framework installs
+/// when no pass may be used yet (a production boot before its seal is made, plans/Sealed-Secrets.md S4), so a field is
+/// neither written under a throwaway key nor in the clear.
+pub const REFUSED_PASS_PREFIX: &str = "\u{0}refused:";
 
 #[derive(Clone)]
 pub struct CryptConfig {
@@ -101,6 +105,9 @@ struct Loaded<'a> {
 }
 
 fn load(config: &CryptConfig) -> Result<Loaded<'_>, Error> {
+    if let Some(why) = config.pass.strip_prefix(REFUSED_PASS_PREFIX) {
+        return Err(Error::new(why.to_string()));
+    }
     if config.pass.is_empty() {
         return Err(Error::new(MISSING_PASS));
     }

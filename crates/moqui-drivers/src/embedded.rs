@@ -85,6 +85,20 @@ mod cluster {
         /// datasource's conf (plans/archive/Tools-Database.md §4.4); `None` keeps the default from code.
         /// Postmaster-level, as the others here: they apply when this process starts the cluster.
         pub settings: moqui_core::entity::datasource::EmbeddedSettings,
+        /// The superuser's password, from the server's `seal.json` (plans/Sealed-Secrets.md S4): no `pgpass` file is
+        /// written or read, and initdb gets it from a file of its own that is removed once it ran. `None` keeps the
+        /// password in `pgpass` beside the data, for a test or a tool that opens a cluster with no seal.
+        pub password: Option<SuperuserPassword>,
+    }
+
+    /// The embedded cluster's superuser password. Its `Debug` shows nothing of it.
+    #[derive(Clone)]
+    pub struct SuperuserPassword(pub String);
+
+    impl std::fmt::Debug for SuperuserPassword {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("SuperuserPassword(..)")
+        }
     }
 
     impl StartOptions {
@@ -96,6 +110,7 @@ mod cluster {
                 install_dir: None,
                 pg_stat_statements: false,
                 settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
+                password: None,
             }
         }
     }
@@ -112,7 +127,8 @@ mod cluster {
         /// unless the process that owned it is gone: then it is taken over and stopped as one
         /// started here. A dead pid is not live. A stopped data directory whose
         /// major differs is an error: this build ships theseus 18.6.0 and does not run `pg_upgrade`.
-        /// A second start reloads `pgpass` and skips `CREATE DATABASE` when `moqui` already exists.
+        /// A second start reloads `pgpass` (with no password given in the options) and skips `CREATE DATABASE` when
+        /// `moqui` already exists.
         ///
         /// # Errors
         ///
@@ -170,6 +186,9 @@ mod cluster {
             args.push("--format=custom".to_string());
             args.push("--file".to_string());
             args.push(dump.display().to_string());
+            // pg_dump opens the file it is given as it is, so it takes the process umask unless made first
+            // (SEC-TLS-97)
+            private_dump(dump)?;
             run_tool(self, "pg_dump", &args)
         }
 
@@ -182,13 +201,7 @@ mod cluster {
         pub fn save_database_sealed(&self, database: &str, dump: &Path, recipient: &Recipient) -> Result<(), Error> {
             let mut args = connect_args(self, database);
             args.push("--format=custom".to_string());
-            moqui_lib::private_fs::file_options()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(dump)
-                .and_then(|_| moqui_lib::private_fs::restrict(dump))
-                .map_err(|err| Error::new(format!("create {}", dump.display())).with_source(err))?;
+            private_dump(dump)?;
             let bin = tool_bin(&self.server.settings().binary_dir(), "pg_dump");
             let password = self.server.settings().password.clone();
             crate::backup::run_bounded_to(&bin, &args, &password, Duration::MAX, Some((dump, recipient)))
@@ -578,7 +591,42 @@ mod cluster {
         );
         let mut options = StartOptions::new(CLI_MAX_CONNECTIONS);
         options.install_dir = Some(shared_install_dir(runtime_dir, &dir));
+        options.password = sealed_password(runtime_dir);
         Ok(options)
+    }
+
+    /// The cluster's superuser password from the runtime's `seal.json` (plans/Sealed-Secrets.md S4), for `save-db`,
+    /// `load-save` and a test snapshot: the seal this process opened already, else the runtime's own opened with no
+    /// operator (an automatic method). `None` with no seal, one that needs an operator, or no password in it: the
+    /// cluster's own `pgpass` then, as a cluster made before S4 has it.
+    fn sealed_password(runtime_dir: &Path) -> Option<SuperuserPassword> {
+        use moqui_core::seal::{file, keeper_for, keeper_of, secrets, Mode, SealConf};
+        let keeper = match keeper_of(runtime_dir) {
+            Some(keeper) => keeper,
+            None => {
+                if !file::path_in(runtime_dir).exists() {
+                    return None;
+                }
+                let purpose = moqui_core::context::conf_env::instance_purpose();
+                let keeper = keeper_for(runtime_dir, SealConf::with_purpose(&purpose))
+                    .map_err(|err| tracing::error!("The seal of {}: {err}", runtime_dir.display()))
+                    .ok()?;
+                if let Err(err) = keeper.start(Mode::Unattended) {
+                    tracing::error!(
+                        "The seal of {} did not open with no operator ({err}): the cluster's password is not read \
+                         from it",
+                        runtime_dir.display()
+                    );
+                    return None;
+                }
+                keeper
+            }
+        };
+        if !keeper.is_unsealed() || keeper.is_ephemeral() {
+            return None;
+        }
+        let value = keeper.bootstrap_secret(secrets::DATASOURCE_PASSWORD).ok()??;
+        String::from_utf8(value.to_vec()).ok().map(SuperuserPassword)
     }
 
     /// The one theseus install of a runtime ([`super::install_dir`]), shared by the entity, search and sim clusters.
@@ -723,8 +771,37 @@ mod cluster {
         options: &StartOptions,
         adopt_port: Option<u16>,
     ) -> Result<(EmbeddedCluster, PostgresDriver), Error> {
+        // the cluster's tools put the password into a connection URL as it is (postgresql_embedded's `Settings::url`)
+        if let Some(given) = &options.password {
+            if !given
+                .0
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
+            {
+                return Err(Error::new(
+                    "the embedded cluster's password may hold only letters, digits and - . _ ~ (its tools put it in a \
+                     URL); give another, or let the seal make one",
+                ));
+            }
+        }
         let settings = settings(dir, data_dir, options, adopt_port);
-        private_password_file(&settings.password_file, &settings.password)?;
+        // with the password given, initdb's file is written new (0600) only for a cluster not made yet, and removed
+        // when this start is done with it, by a guard, on every path out; one an earlier process left goes first
+        let mut initdb_guard = None;
+        if options.password.is_some() {
+            remove_stale_initdb_files(dir);
+            if !data_dir.join("postgresql.conf").exists() {
+                new_private_file(&settings.password_file, &settings.password)?;
+                initdb_guard = Some(InitdbFile(settings.password_file.clone()));
+            }
+        } else {
+            private_password_file(&settings.password_file, &settings.password)?;
+        }
+        let owned = if options.password.is_some() {
+            dir.to_path_buf()
+        } else {
+            settings.password_file.clone()
+        };
         // A socket directory under temp (socket_dir_for) is this user's alone; the data directory already is.
         #[cfg(unix)]
         if let Some(socket_dir) = settings
@@ -740,14 +817,16 @@ mod cluster {
                 .map_err(|err| {
                     Error::new(format!("create embedded postgres socket dir {}", socket_dir.display())).with_source(err)
                 })?;
-            socket_dir_private(socket_dir, &settings.password_file)?;
+            socket_dir_private(socket_dir, &owned)?;
         }
+        #[cfg(not(unix))]
+        let _ = &owned;
         install(&settings.installation_dir)?;
         let mut server = PostgreSQL::new(settings);
         provide_libxml2(server.settings())?;
-        server
-            .setup()
-            .map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
+        let set_up = server.setup();
+        drop(initdb_guard);
+        set_up.map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
         if adopt_port.is_none() {
             // The postmaster outlives a host that is killed, and keeps what it inherited: a program that hosts the node
             // opens descriptors without close-on-exec (the desktop app's CEF, its DevTools listening socket among them),
@@ -915,6 +994,7 @@ mod cluster {
             ref install_dir,
             pg_stat_statements,
             settings: ref conf_settings,
+            ref password,
         } = *options;
         let mut settings = Settings::new();
         // The unpacked install of this build's version (`install`), trusted as it is: nothing is looked up or
@@ -926,7 +1006,11 @@ mod cluster {
                 .join(SHIPPED_VERSION),
         );
         settings.trust_installation_dir = true;
-        settings.password_file = super::plain_path(dir.join("pgpass"));
+        settings.password_file = match password {
+            // initdb's own, removed once it ran
+            Some(_) => super::plain_path(dir.join(format!(".initdb-password-{}", std::process::id()))),
+            None => super::plain_path(dir.join("pgpass")),
+        };
         settings.data_dir = super::plain_path(data_dir.to_path_buf());
         settings.temporary = false;
         settings.timeout = None;
@@ -996,8 +1080,48 @@ mod cluster {
                 .configuration
                 .insert("listen_addresses".to_string(), "127.0.0.1".to_string());
         }
-        reuse_password(&mut settings);
+        match password {
+            Some(given) => settings.password.clone_from(&given.0),
+            None => reuse_password(&mut settings),
+        }
         settings
+    }
+
+    /// initdb's password file, removed when dropped, whether setup ran or failed: no password stays on disk.
+    struct InitdbFile(PathBuf);
+
+    impl Drop for InitdbFile {
+        fn drop(&mut self) {
+            match std::fs::remove_file(&self.0) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => tracing::error!("could not remove {}: {err}", self.0.display()),
+            }
+        }
+    }
+
+    /// Remove the initdb password files an earlier start left beside the cluster (a crash, or a process killed during
+    /// initdb), so none is read again by a later process of the same pid.
+    fn remove_stale_initdb_files(dir: &Path) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            if entry.file_name().to_string_lossy().starts_with(".initdb-password-") {
+                match std::fs::remove_file(entry.path()) {
+                    Ok(()) => tracing::warn!("Removed {}, which an earlier start left", entry.path().display()),
+                    Err(err) => tracing::error!("could not remove {}: {err}", entry.path().display()),
+                }
+            }
+        }
+    }
+
+    /// Write `text` to a new file only this user may read (`0600`), refusing one that is there already.
+    fn new_private_file(path: &Path, text: &str) -> Result<(), Error> {
+        use std::io::Write as _;
+        moqui_lib::private_fs::file_options()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(text.as_bytes()))
+            .map_err(|err| Error::new(format!("embedded postgres password file {}", path.display())).with_source(err))
     }
 
     /// The superuser's password file, only this user's (`0600`): written here with `password` when it is missing (the
@@ -1277,6 +1401,17 @@ mod cluster {
         }
     }
 
+    /// Make `dump` empty and this user's alone (`0600`), one that is there already too, before a dump is written to it.
+    fn private_dump(dump: &Path) -> Result<(), Error> {
+        moqui_lib::private_fs::file_options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dump)
+            .and_then(|_| moqui_lib::private_fs::restrict(dump))
+            .map_err(|err| Error::new(format!("create {}", dump.display())).with_source(err))
+    }
+
     fn run_tool(cluster: &EmbeddedCluster, name: &str, args: &[String]) -> Result<(), Error> {
         let bin = tool_bin(&cluster.server.settings().binary_dir(), name);
         let output = std::process::Command::new(&bin)
@@ -1326,7 +1461,7 @@ pub use cluster::{archive, process_live, stop_postmaster, unpack_install};
 #[cfg(feature = "embedded-postgres")]
 pub use cluster::{
     database_dump_path, load_save, load_save_with, save_db, save_db_to, shared_install_dir, sibling_dumps, ClusterRole,
-    EmbeddedCluster, StartOptions, ToolTarget,
+    EmbeddedCluster, StartOptions, SuperuserPassword, ToolTarget,
 };
 
 /// Without embedded Postgres there is no archive.

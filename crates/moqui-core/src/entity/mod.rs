@@ -17,7 +17,6 @@
 pub use moqui_entity::entity::*;
 
 use moqui_lib::error::Error;
-use moqui_lib::node::MNode;
 
 use crate::context::ExecutionContextFactory;
 
@@ -29,7 +28,8 @@ pub fn open_for_factory(
     default_group: &str,
     groups: Vec<EntityGroup>,
 ) -> Result<EntityFacade, Error> {
-    let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
+    // the crypt pass from seal.json when the conf leaves it at CHANGEME (plans/Sealed-Secrets.md S4)
+    let conf = crate::seal::secrets::conf_with_secrets(factory)?;
     // the framework component's entities: a Java Moqui checkout's own when the artifact tools boot on one
     let facade = EntityFacade::open_components_with_conf(
         factory.framework_component_dir(),

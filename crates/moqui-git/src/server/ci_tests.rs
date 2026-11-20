@@ -1181,6 +1181,8 @@ fn an_untrusted_run_waits_for_approval_and_gets_no_secrets_no_cache_writes_and_o
     let got = json_of(&transport.request("GET", "job", &[]));
     assert_eq!(got["trusted"], false);
     assert_eq!(got["secrets"], serde_json::json!({}));
+    // what a cache may unpack to on the runner: git-ci max-unpack-bytes (SEC-GIT-95)
+    assert_eq!(got["limits"]["maxUnpackBytes"], 16_u64 * 1024 * 1024 * 1024);
     // it reads no cache of the protected target branch (a build with secrets may have filled it) and writes none
     let scratch = fixture.dir.join("cache-probe.tar.gz");
     let key = runner::expand_key("deps-${hash:lock.txt}", &work.dir);
@@ -2310,6 +2312,72 @@ fn a_file_that_is_not_valid_is_an_error_status_and_a_component_gets_the_built_in
         (text(&scheduled[0], "trusted"), text(&scheduled[0], "triggeredByUserId")),
         ("Y".into(), String::new())
     );
+
+    // SEC-GIT-88: a schedule of another branch, one an account without the update right may make, is trusted only as
+    // a push that set the branch to its head would be, and while the account that first brought the head has update
+    // too; a protected branch is the repository's own whoever pushed it
+    plain.push(
+        &fixture,
+        &[("ci.xml", r#"<ci><pipeline name="side" on="schedule" cron="0 0 4 * * ?" branches="side"><job name="j" image="moqui-build"><step run="x"/></job></pipeline></ci>"#)],
+        "main",
+    );
+    let side_head = plain.push(&fixture, &[("side.txt", "a branch of its own")], "side");
+    let with_user = |entity: &str, key: &[(&str, &str)], user: &str| {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut find = fixture.entity.find(entity).unwrap();
+        for (field, value) in key {
+            find = find.eq(field, s(value));
+        }
+        find.update_all([("userId".to_string(), s(user))]).unwrap();
+    };
+    let setter = |user: &str| {
+        for update in rows(
+            &fixture,
+            "moqui.resource.GitUpdateRef",
+            &[("refName", "refs/heads/side"), ("newObjectId", &side_head)],
+        ) {
+            with_user("moqui.resource.GitUpdate", &[("updateId", &text(&update, "updateId"))], user);
+        }
+    };
+    let bringer = |user: &str| {
+        with_user(
+            "moqui.resource.GitCommitPush",
+            &[("repositoryId", "plain"), ("commitId", &side_head)],
+            user,
+        );
+    };
+    let mut day = 1;
+    let mut trusted = || {
+        day += 1;
+        assert_eq!(due(now + day * 25 * 60 * 60 * 1000), 1);
+        let mut side: Vec<EntityValue> = rows(&fixture, "moqui.resource.GitPipelineRun", &[("repositoryId", "plain")])
+            .into_iter()
+            .filter(|run| text(run, "pipelineName") == "side")
+            .collect();
+        side.sort_by_key(|run| super::super::ci::long(run, "runNum").unwrap_or(0));
+        let last = side.pop().unwrap();
+        assert_eq!(text(&last, "refName"), "refs/heads/side");
+        text(&last, "trusted")
+    };
+    assert_eq!(trusted(), "Y", "set and brought by an account with update");
+    setter(READER);
+    assert_eq!(trusted(), "N", "set by an account without update");
+    setter(WRITER);
+    bringer(READER);
+    assert_eq!(trusted(), "N", "brought by an account without update");
+    ok(
+        &fixture,
+        WRITER,
+        "org.moqui.git.GitServices.store#GitBranchRule",
+        &[
+            ("repositoryId", s("plain")),
+            ("refPattern", s("side")),
+            ("pushUserGroupId", s("GIT_WRITERS")),
+        ],
+    );
+    setter(READER);
+    assert_eq!(trusted(), "Y", "a protected branch is the repository's own");
 }
 
 #[test]
@@ -2612,6 +2680,24 @@ fn retention_removes_what_expired_and_secrets_are_scoped_and_never_read_back() {
             ("repositoryId", s("app")),
             ("environmentId", s(&environment_id)),
             ("allowedRefs", s("feature release/*")),
+        ],
+    );
+    // widening it cleared the value (SEC-GIT-91): a maintainer gives it again for the environment as it is now
+    assert!(given(true, true, "refs/heads/main", Some("staging"))
+        .iter()
+        .all(|(_, value)| value != "staging-value"));
+    let staging_secret = text(
+        &rows(&fixture, crate::ci::CI_SECRET, &[("environmentId", &environment_id)])[0],
+        "secretId",
+    );
+    ok(
+        &fixture,
+        WRITER,
+        &store,
+        &[
+            ("repositoryId", s("app")),
+            ("secretId", s(&staging_secret)),
+            ("value", s("staging-value")),
         ],
     );
     assert_eq!(

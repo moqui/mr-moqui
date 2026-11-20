@@ -363,6 +363,7 @@ throws, so the write fails.
 | `privilegedGroups()` | The effective privileged group ids, sorted |
 | `sealedPermissions()` | The effective sealed permission ids, sorted |
 | `endUserSessions(userId, visitIds)` | Ends the web sessions of the user for the visits named, or all of them with none; the number ended. It checks no authority: the caller does |
+| `seedLoadRunning()` | Whether a seed or install load runs here (an entity data load of a location that does not restrict sensitive entities: the CLI's, a deploy's, a component's data files), not a Tools load, an entity sync or a load of a request's text. The endpoint-change rule (`admin/EndpointSecrets.js`) lets only such a load keep a stored secret beside a new address |
 
 ## MNode
 

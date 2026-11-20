@@ -170,6 +170,7 @@ fn an_edge_member_lists_itself_and_its_live_peers_with_their_addresses() {
         live,
         version: String::new(),
         edge_link_url: url.to_string(),
+        edge_member_key: String::new(),
     };
     let rows = [
         row("edge-1", true, "https://stale.test"),
@@ -218,6 +219,7 @@ fn a_member_whose_own_row_is_stale_does_not_list_itself() {
         live,
         version: String::new(),
         edge_link_url: format!("https://{id}.test"),
+        edge_member_key: String::new(),
     };
     let rows = [row("edge-1", true), row("edge-2", false)];
     // the stale member answers as its live peer does, so their lists never flap the local node's links

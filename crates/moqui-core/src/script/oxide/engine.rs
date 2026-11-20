@@ -690,6 +690,151 @@ pub(super) fn active_depth() -> usize {
     ACTIVE.with(|active| active.borrow().len())
 }
 
+thread_local! {
+    /// Set while a preview of proposed screen text holds the thread ([`PreviewRuntime`]): the runtime that starts then
+    /// freezes the language's own objects ([`FREEZE_INTRINSICS_JS`]).
+    static PREVIEW_START: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The thread's main runtime set aside while a preview of proposed screen text renders, and a fresh runtime in its place
+/// whose built-in objects and prototypes are frozen; dropped, the fresh one is let go and the main one put back
+/// (plans/Security-Review-Low.md SEC-AI-102). So nothing the proposed text changes of the language (a prototype's
+/// method, a constructor) is there for the framework code that renders around it, or for a later request.
+pub(crate) struct PreviewRuntime {
+    saved: Option<Option<Rc<OxideEngine>>>,
+}
+
+impl PreviewRuntime {
+    /// Set the main runtime aside; `None` when a script runs on the thread now, so its runtime cannot be.
+    pub(crate) fn enter() -> Option<Self> {
+        if run::is_running(EngineTag::Oxide) || ACTIVE.with(|active| !active.borrow().is_empty()) {
+            return None;
+        }
+        let saved = ENGINE.with(|engine| engine.borrow_mut().take());
+        PREVIEW_START.with(|start| start.set(true));
+        Some(Self { saved: Some(saved) })
+    }
+}
+
+impl Drop for PreviewRuntime {
+    fn drop(&mut self) {
+        PREVIEW_START.with(|start| start.set(false));
+        let preview = ENGINE.with(|engine| engine.borrow_mut().take());
+        if let Some(preview) = &preview {
+            preview.restarting.set(true);
+        }
+        drop(preview);
+        if let Some(saved) = self.saved.take() {
+            ENGINE.with(|engine| *engine.borrow_mut() = saved);
+        }
+    }
+}
+
+/// Freezes the language's own globals (the names `builtins` lists, which the runtime had before the host added any) and
+/// their prototypes, and the prototypes reached only through instances (iterators, generators, async functions), for
+/// a preview's runtime ([`PreviewRuntime`]).
+const FREEZE_INTRINSICS_JS: &str = r#"(function (builtins) {
+    const seen = new Set();
+    const freeze = (value) => {
+        if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return;
+        seen.add(value);
+        Object.freeze(value);
+    };
+    for (const name of builtins) {
+        if (name === "globalThis") continue;
+        let value;
+        try { value = globalThis[name]; } catch (e) { continue; }
+        freeze(value);
+        if (typeof value === "function") freeze(value.prototype);
+    }
+    const proto = Object.getPrototypeOf;
+    for (const value of [
+        proto([][Symbol.iterator]()), proto(proto([][Symbol.iterator]())), proto(new Map().entries()),
+        proto(new Set().values()), proto(""[Symbol.iterator]()), proto(/x/[Symbol.matchAll]("x")),
+        proto(function* () {}), proto(function* () {}).prototype, proto(async function () {}),
+        proto(async function* () {}), proto(async function* () {}).prototype, proto(proto(async function* () {}).prototype)
+    ]) freeze(value);
+})"#;
+
+/// Freezes, deeply, every global's value but the language's own (frozen by [`FREEZE_INTRINSICS_JS`]): `ec` and every
+/// facade object under it, `sri`, the helper objects and a mode's render runtime (`$mqHtml`, `$mqQvt`), each object's
+/// data properties followed down, for a preview's runtime ([`PreviewRuntime`], SEC-AI-102). So a statement of the
+/// proposed text replaces no function the framework's render code calls (`ec.resource.expand`, `ec.l10n.localize`).
+const FREEZE_HOST_DEEP_JS: &str = r#"(function () {
+    const seen = new Set([globalThis]);
+    const deep = (value) => {
+        if (value === null || (typeof value !== "object" && typeof value !== "function") || seen.has(value)) return;
+        seen.add(value);
+        let descriptors;
+        try { descriptors = Object.getOwnPropertyDescriptors(value); } catch (e) { return; }
+        try { Object.freeze(value); } catch (e) {}
+        for (const key of Reflect.ownKeys(descriptors)) {
+            const descriptor = descriptors[key];
+            if ("value" in descriptor) deep(descriptor.value);
+        }
+    };
+    for (const name of Object.getOwnPropertyNames(globalThis)) {
+        try {
+            const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+            if (!descriptor) continue;
+            if ("value" in descriptor) deep(descriptor.value);
+            else if (descriptor.get) deep(descriptor.get.call(globalThis));
+            // the binding itself, so no global is replaced or redefined
+            if (descriptor.configurable)
+                Object.defineProperty(globalThis, name, "value" in descriptor
+                    ? { writable: false, configurable: false } : { configurable: false });
+        } catch (e) {}
+    }
+})"#;
+
+/// For a mode's render runtime defined in a preview's runtime (`$mqHtml`, `$mqQvt`): its global binding fixed and its
+/// object of functions frozen, so no function the units call is replaced; the render state it holds (`st`) stays its
+/// own to change (SEC-AI-102).
+const FREEZE_MODE_RUNTIME_JS: &str = r#"(function () {
+    for (const name of Object.getOwnPropertyNames(globalThis)) {
+        if (!name.startsWith("$mq")) continue;
+        try {
+            const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+            if (!descriptor || !("value" in descriptor)) continue;
+            const value = descriptor.value;
+            if (value !== null && (typeof value === "object" || typeof value === "function")) {
+                for (const member of Object.values(value)) if (typeof member === "function") Object.freeze(member);
+                Object.freeze(value);
+            }
+            if (descriptor.configurable) Object.defineProperty(globalThis, name, { writable: false, configurable: false });
+        } catch (e) {}
+    }
+})"#;
+
+/// Run [`FREEZE_MODE_RUNTIME_JS`] in `context`, in a preview's runtime, after a mode's render runtime defines its
+/// global.
+pub(super) fn freeze_mode_runtime(context: &mut Context) -> Result<(), RuntimeError> {
+    let freeze = match super::compiled::eval_start(context, FREEZE_MODE_RUNTIME_JS)? {
+        Value::Object(object) => context.as_callable(&object)?,
+        _ => None,
+    }
+    .ok_or(RuntimeError::Invariant("the mode runtime's freeze"))?;
+    context.call(&freeze, Value::Undefined, &[])?;
+    Ok(())
+}
+
+/// Whether this thread's script runtime is a preview's ([`PreviewRuntime`]): what it makes of the host (a class's
+/// prototype, a mode's render runtime) is frozen once made.
+pub(super) fn preview_start() -> bool {
+    PREVIEW_START.with(Cell::get)
+}
+
+/// Run [`FREEZE_HOST_DEEP_JS`] in `context`, in a preview's runtime, after its start's shims.
+pub(super) fn freeze_host_deep(context: &mut Context) -> Result<(), RuntimeError> {
+    let freeze = match super::compiled::eval_start(context, FREEZE_HOST_DEEP_JS)? {
+        Value::Object(object) => context.as_callable(&object)?,
+        _ => None,
+    }
+    .ok_or(RuntimeError::Invariant("the host objects' freeze"))?;
+    context.call(&freeze, Value::Undefined, &[])?;
+    Ok(())
+}
+
 /// Let this thread's runtime go, when no script runs on it: for a worker that has waited for work a while, so the heap
 /// a pool's idle threads hold goes back. Its next script starts a runtime again, from the process's code images.
 /// Whether one was let go.
@@ -1012,7 +1157,20 @@ impl OxideEngine {
         }
         .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
         context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
-        super::names::install_names(&context)
+        if PREVIEW_START.with(Cell::get) {
+            let intrinsics = match super::compiled::eval_start(&mut context, FREEZE_INTRINSICS_JS)? {
+                Value::Object(object) => context.as_callable(&object)?,
+                _ => None,
+            }
+            .ok_or(RuntimeError::Invariant("the intrinsics' freeze"))?;
+            context.call(&intrinsics, Value::Undefined, &[Value::Object(builtins.clone())])?;
+        }
+        let named = super::names::install_names(&context);
+        if PREVIEW_START.with(Cell::get) {
+            freeze_host_deep(&mut context)?;
+            super::bind::freeze_pending_prototypes(&mut context)?;
+        }
+        named
     }
 
     /// The runtime's realm, for a host function that lent the engine and a runner outside this file

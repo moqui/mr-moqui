@@ -141,6 +141,31 @@ feature("the owner deletes a subscription", {
     }
 })
 
+feature("an account disabled for good keeps no browser subscription, a lockout does, and forget#UserWebPush ends them", {
+    when() {
+        ec.user.internalLoginUser("webpush.spec.other")
+        store(ENDPOINT)
+        // a lockout after failed logins ends by itself: the subscription stays
+        sys(() => call("update#moqui.security.UserAccount", {userId: OTHER_USER, disabled: "Y", disabledDateTime: new Date()}))
+        const afterLockout = row(ENDPOINT)
+        sys(() => call("update#moqui.security.UserAccount", {userId: OTHER_USER, disabled: "Y", disabledDateTime: null}))
+        const afterDisable = row(ENDPOINT)
+        sys(() => call("update#moqui.security.UserAccount", {userId: OTHER_USER, disabled: "N"}))
+        store(ENDPOINT)
+        const restored = row(ENDPOINT)
+        sys(() => call("org.moqui.ui.NotificationServices.forget#UserWebPush", {userId: OTHER_USER}))
+        const afterForget = row(ENDPOINT)
+        login("john.doe")
+        return {afterLockout, afterDisable, restored, afterForget}
+    },
+    then({afterLockout, afterDisable, restored, afterForget}) {
+        afterLockout != null
+        afterDisable == null
+        restored != null
+        afterForget == null
+    }
+})
+
 feature("nobody signed in cannot store a subscription", {
     when() {
         ec.user.logoutUser()

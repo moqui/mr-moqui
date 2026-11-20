@@ -375,7 +375,7 @@ fn unpair_edge_node(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade
 }
 
 /// `create#PairingCode`: on an edge node, a one-use code good for `validMinutes` (60 by default, at most a day).
-fn create_pairing_code(parameters: &BTreeMap<String, Value>, _facade: &EntityFacade) -> Out {
+fn create_pairing_code(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let minutes = match text(parameters, "validMinutes") {
         Some(raw) => raw
             .parse::<u32>()
@@ -384,7 +384,18 @@ fn create_pairing_code(parameters: &BTreeMap<String, Value>, _facade: &EntityFac
             .ok_or_else(|| LibError::new("validMinutes must be a whole number from 1 to 1440"))?,
         None => 60,
     };
+    // the one node the code pairs, when named (SEC-CLU-82)
+    let for_node = text(parameters, "pairedNodeId").unwrap_or_default();
+    if !for_node.is_empty() && !crate::edge::pool::valid_member_id(&for_node) {
+        return Err(LibError::new(format!("{for_node} is not a local node's id")));
+    }
     let code = crate::edge::link()?.create_pairing_code(minutes)?;
+    if !for_node.is_empty() {
+        let mut row = facade.make_value("moqui.edge.EdgePairingCode")?;
+        row.set("pairingCodeId", Value::string(&code.pairing_code_id));
+        row.set("forNodeId", Value::string(&for_node));
+        row.update(facade)?;
+    }
     Ok(BTreeMap::from([
         ("pairingCodeId".to_string(), Value::string(&code.pairing_code_id)),
         ("code".to_string(), Value::string(&code.code)),

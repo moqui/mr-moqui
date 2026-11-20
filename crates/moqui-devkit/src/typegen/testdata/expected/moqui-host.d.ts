@@ -157,6 +157,8 @@ interface EntityValueMethods<N extends string = string> {
     isFieldSet(field: string): boolean;
     /** Whether the entity has a field of the name. */
     isField(field: string): boolean;
+    /** Whether the code holding the value set the field, to what it held or not; in an entity ECA rule, whether the write's caller gave it. */
+    isFieldGiven(field: string): boolean;
     /** Whether the field changed since the value was read or last written, so an update writes it. */
     isFieldModified(field: string): boolean;
     isModified(): boolean;
@@ -926,6 +928,8 @@ interface MoquiUserFacade {
     loginUser(username: string | null, password: string | null): boolean;
     /** A job's login: leaves the account's hasLoggedOut as it is. secondFactorVerified: the caller verified this sign-in's second factor code, which finishes a strong sign-in. */
     internalLoginUser(username: string, secondFactorVerified?: boolean): boolean;
+    /** Bounded delegation (SEC-ADM-05): why the current user may not act as or on the account `userId` (a privileged group they are not in, a sealed permission they lack, held by a current group of the account), or null when they may. */
+    heldBeyond(userId: string): string | null;
     /** Logs out and marks the account hasLoggedOut, which ends its sessions in every browser. */
     logoutUser(): boolean;
     /** Ends this context's login only, writing nothing to the account: the end of a job's internalLoginUser. */
@@ -1485,6 +1489,8 @@ interface MoquiServerEc {
         enableAuthz(): void;
         /** Whether authorization is disabled now, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing. */
         authzDisabled(): boolean;
+        /** Whether `disableAuthz()` (and a find's or a service call's) is refused here: a preview's proposed screen text runs. */
+        authzLocked(): boolean;
         /**
          * `body()` with no user and authorization off, in a fresh execution context sharing the transaction; the caller's
          * user and authorization come back after. Only a service's own code may call it (docs/security/Attack-Surface.md).

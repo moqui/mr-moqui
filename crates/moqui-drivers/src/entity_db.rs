@@ -22,7 +22,6 @@ use moqui_core::context::ExecutionContextFactory;
 use moqui_core::driver::DbDriver;
 use moqui_core::entity::datasource::{datasource_conf, DatasourceConf, DatasourceKind};
 use moqui_lib::error::Error;
-use moqui_lib::node::MNode;
 
 /// Postgres keeps three connection slots for superusers. The embedded role is a superuser, so they
 /// are room for `pg_dump` beside a full pool rather than for the pool.
@@ -133,7 +132,8 @@ impl DbDriver for Closed {
 ///
 /// Returns an error when the conf does not parse or the datasource cannot be read.
 pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<DatasourceConf, Error> {
-    let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
+    // the passwords from seal.json where the conf leaves them empty (plans/Sealed-Secrets.md S4)
+    let conf = moqui_core::seal::secrets::conf_with_secrets(factory)?;
     let mut transactional = datasource_conf(&conf, "transactional")?;
     if transactional.kind == DatasourceKind::Embedded {
         // the cluster is one postmaster: its settings are the transactional datasource's; another embedded
@@ -246,6 +246,91 @@ fn postgres_dyn_driver(_conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Erro
     Err(Error::new("the postgres driver is not in this build"))
 }
 
+/// The embedded cluster's superuser password into `conf` (plans/Sealed-Secrets.md §3.1, S4), which is the
+/// transactional datasource's password: the one the conf, the environment or `seal.json` gives; else a `pgpass` file an
+/// earlier build left beside the cluster's data, moved into `seal.json` (and removed) once this runtime has a seal;
+/// else one made into `seal.json`. A boot with no seal (a tool or test on a production runtime before `moqui operator
+/// init`) leaves it to the cluster's own `pgpass`, as a tool's cluster has it, logged as an error. A datasource of
+/// another kind is left as it is.
+///
+/// # Errors
+///
+/// The server is sealed, or `seal.json` cannot be written.
+pub fn embedded_password(
+    factory: &ExecutionContextFactory,
+    conf: &mut DatasourceConf,
+    cluster_dir: &Path,
+) -> Result<(), Error> {
+    if conf.kind != DatasourceKind::Embedded || !conf.password.is_empty() {
+        return Ok(());
+    }
+    let keeper = factory.seal_keeper();
+    let sealed = sealed_cluster_password(
+        keeper.as_deref(),
+        cluster_dir,
+        moqui_core::seal::secrets::DATASOURCE_PASSWORD,
+    )?;
+    if let Some(password) = sealed {
+        conf.password = password;
+    }
+    Ok(())
+}
+
+/// An embedded cluster's superuser password, the bootstrap secret `name` of `keeper`'s seal: made there when it has
+/// none, or taken from a `pgpass` an earlier build left in `cluster_dir` (which is then removed). `None` with no seal, or
+/// a boot that keeps none (logged): the cluster keeps its own `pgpass` then.
+///
+/// # Errors
+///
+/// The server is sealed, or `seal.json` cannot be written.
+pub fn sealed_cluster_password(
+    keeper: Option<&moqui_core::seal::Keeper>,
+    cluster_dir: &Path,
+    name: &str,
+) -> Result<Option<String>, Error> {
+    use moqui_core::seal::secrets;
+    let Some(keeper) = keeper else {
+        return Ok(None);
+    };
+    let legacy = cluster_dir.join("pgpass");
+    let left = std::fs::read_to_string(&legacy)
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty());
+    if keeper.is_ephemeral() {
+        tracing::error!(
+            "This boot has no seal (a production instance before `moqui operator init`): the embedded cluster's \
+             password stays in {} until the server's seal takes it",
+            legacy.display()
+        );
+        return Ok(None);
+    }
+    let password = match left {
+        Some(left) => {
+            let kept = secrets::bootstrap_or_make(keeper, name, || Ok(left.clone().into()))?;
+            if kept.as_str() != left {
+                // the seal holds another cluster's password: this cluster's file stays, and serves this start
+                tracing::error!(
+                    "{} holds another password than seal.json's {name}: the file is kept and used; put the right one \
+                     with `moqui operator secret put {name}` and remove the file (plans/Sealed-Secrets.md S4)",
+                    legacy.display()
+                );
+                return Ok(Some(left));
+            }
+            match std::fs::remove_file(&legacy) {
+                Ok(()) => tracing::warn!(
+                    "Moved the embedded cluster's password from {} into seal.json (plans/Sealed-Secrets.md S4)",
+                    legacy.display()
+                ),
+                Err(err) => tracing::error!("Could not remove {}: {err}", legacy.display()),
+            }
+            kept
+        }
+        None => secrets::bootstrap_or_make(keeper, name, secrets::random_password)?,
+    };
+    Ok(Some(password.to_string()))
+}
+
 /// Open the database `conf` names. Embedded starts (or adopts) the cluster at `cluster_dir`, on the
 /// theseus install at `install_dir`, with `max_connections` of `pool_max` plus [`LISTEN_SLOTS`] and
 /// [`SUPERUSER_SLOTS`].
@@ -288,6 +373,8 @@ fn open_embedded(
         install_dir: Some(install_dir.to_path_buf()),
         pg_stat_statements: conf.preload_pg_stat_statements,
         settings: conf.embedded_settings.clone(),
+        // the superuser's password from seal.json ([`embedded_password`]); with none, the cluster's own `pgpass`
+        password: (!conf.password.is_empty()).then(|| super::embedded::SuperuserPassword(conf.password.clone())),
     };
     let (cluster, driver) = EmbeddedCluster::start_with(cluster_dir, &options)?;
     create_pg_stat_statements(&conf, &driver);

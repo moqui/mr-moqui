@@ -21,7 +21,8 @@ const groups = {
     access: "SPEC_IDP_ACCESSES",
     staff: "SPEC_IDP_STAFF",
     sealed: "SPEC_IDP_SEALED",
-    plain: "SPEC_IDP_PLAIN"
+    plain: "SPEC_IDP_PLAIN",
+    sensitive: "SPEC_IDP_SENSITIVE"
 }
 const secret = "spec-idp-secret-9f3k"
 // the administrators' password, for the recent sign-in a change of who signs in asks (SEC-ADM-87)
@@ -98,8 +99,11 @@ spec({
         make("moqui.security.UserGroupMember", {userGroupId: groups.access, userId: users.access, fromDate: 0})
         // an instance administrator who signs in through a provider only: no password
         make("moqui.security.UserGroupMember", {userGroupId: "ADMIN", userId: users.linked, fromDate: 0})
-        for (const userGroupId of [groups.staff, groups.sealed])
+        for (const userGroupId of [groups.staff, groups.sealed, groups.sensitive])
             make("moqui.security.CapabilityBundle", {userGroupId, appName: "Spec", description: "Spec provider bundle"})
+        // a bundle with a sensitive capability (SEC-ADM-90): only a member of ADMIN maps a sign-in role to it
+        make("moqui.security.CapabilityBundlePermission", {userGroupId: groups.sensitive, userPermissionId: "SPEC_IDP_PAYROLL",
+            capabilityKindEnumId: "CpkSensitive"})
         // a provider that is live, as if tested and enabled: its secret set and its test mark of another configuration
         make(FLOW, {authFlowId: liveFlowId, authFlowTypeEnumId: "AftOauth", description: "Spec live provider", disabled: "N"})
         make(OAUTH, {
@@ -121,6 +125,7 @@ spec({
             ec.entity.find(entityName).condition("authFlowId", "in", flowIds).deleteAll()
         const groupIds = Object.values(groups)
         const userIds = Object.values(users)
+        ec.entity.find("moqui.security.CapabilityBundlePermission").condition("userGroupId", "in", groupIds).deleteAll()
         ec.entity.find("moqui.security.CapabilityBundle").condition("userGroupId", "in", groupIds).deleteAll()
         ec.entity.find("moqui.security.UserGroupPermission").condition("userGroupId", "in", groupIds).deleteAll()
         ec.entity.find("moqui.security.UserGroupMember").condition("userId", "in", userIds).deleteAll()
@@ -182,6 +187,7 @@ feature("a role mapping gives only a registered bundle the actor may assign, nev
                 }
             })(),
             sealed: mapAs(users.access, [{roleName: "resetters", userGroupId: groups.sealed}]),
+            sensitive: mapAs(users.access, [{roleName: "payroll", userGroupId: groups.sensitive}]),
             unregistered: mapAs(users.access, [{roleName: "plain", userGroupId: groups.plain}]),
             defaultGroup: mapAs(users.access, undefined, {defaultUserGroupId: "ADMIN"}),
             byConfigure: mapAs(users.config, [{roleName: "staff", userGroupId: groups.staff}]),
@@ -205,6 +211,7 @@ feature("a role mapping gives only a registered bundle the actor may assign, nev
         out.privileged.reasonCode == "PRIVILEGED_GROUP"
         out.privilegedByMember.reasonCode == "PRIVILEGED_GROUP"
         out.sealed.reasonCode == "SEALED_PERMISSION"
+        out.sensitive.reasonCode == "SENSITIVE_BUNDLE"
         out.unregistered.reasonCode == "UNREGISTERED_BUNDLE"
         out.defaultGroup.reasonCode == "PRIVILEGED_GROUP"
         out.byConfigure.error.includes("ADMIN_ACCESS_MANAGE is required")

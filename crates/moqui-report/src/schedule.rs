@@ -82,6 +82,13 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         text(p, "renderMode")
     };
     validate_definition_mode(&definition, mode)?;
+    // another user or a group receives the owner's result: the group delivery grant, as store#Schedule asks
+    // (SEC-TLS-105)
+    if delivers_to_others(&owner, text(p, "userId"), text(p, "userGroupId")) {
+        moqui_core::user::authorize_own("AT_SERVICE", crate::delivery::GROUP_ARTIFACT, "create").map_err(|_| {
+            fail("GROUP_DELIVERY_DENIED: delivering a report to other users needs the group delivery grant")
+        })?;
+    }
     let facade = entity(ec)?;
     let _metadata = ec.disable_authz();
     let mut row = facade.make_value(SCHEDULE)?;
@@ -116,6 +123,11 @@ fn create_schedule(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -
         row.get("screenScheduledId").cloned().unwrap_or(Value::Null),
     )]))
 }
+/// Whether a schedule of `owner` with the recipient `user_id` and the group `group_id` sends to anyone but its owner.
+fn delivers_to_others(owner: &str, user_id: &str, group_id: &str) -> bool {
+    !group_id.trim().is_empty() || !user_id.trim().is_empty() && user_id.trim() != owner
+}
+
 fn list_schedules(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let owner = viewer()?;
     let facade = entity(ec)?;
@@ -579,8 +591,9 @@ fn csv_cell(v: &Json) -> String {
     } else {
         v.to_string()
     };
-    let text = if v.is_string() && text.trim_start().starts_with(['=', '+', '-', '@', '\t', '\r']) {
-        format!("'{text}")
+    // a text cell by the one rule of CSV made for a person (SEC-SCR-89); a number is a number
+    let text = if v.is_string() {
+        moqui_lib::string::csv_formula_guarded(&text).into_owned()
     } else {
         text
     };
@@ -1360,6 +1373,21 @@ pub(crate) fn deliver(
             .get("reportDefinitionId")
             .and_then(Value::as_str)
             .ok_or_else(|| fail("report definition missing"))?;
+        // an owner-mode schedule reaches anyone but its owner only while the owner holds the group delivery grant, as
+        // send_each asks; refused before anything is rendered or sent (SEC-TLS-105)
+        let owner_name = account.get("username").and_then(Value::as_str).unwrap_or("");
+        if !business
+            && delivers_to_others(
+                owner,
+                schedule.get("userId").and_then(Value::as_str).unwrap_or(""),
+                schedule.get("userGroupId").and_then(Value::as_str).unwrap_or(""),
+            )
+            && !crate::delivery::holds_as(ec, owner_name, crate::delivery::GROUP_ARTIFACT, "create")
+        {
+            return Err(fail(
+                "GROUP_DELIVERY_DENIED: the schedule's owner may not deliver a report to other users",
+            ));
+        }
         let rendered = render(
             &context,
             definition_id,
@@ -1619,7 +1647,8 @@ mod tests {
         assert!(csv.contains("\"<name>\",\"\""));
         assert_eq!(escape("<script>"), "&lt;script&gt;");
         assert_eq!(csv_cell(&json!(-3)), "\"-3\"");
-        assert_eq!(csv_cell(&json!("-3")), "\"'-3\"");
+        assert_eq!(csv_cell(&json!("-3x")), "\"'-3x\"");
+        assert_eq!(csv_cell(&json!(" =1")), "\"' =1\"");
         assert!(frames_empty(&[json!({"fields":[{"name":"value","values":[null]}]})]));
         assert!(!frames_empty(&[json!({"fields":[{"name":"value","values":[0]}]})]));
     }

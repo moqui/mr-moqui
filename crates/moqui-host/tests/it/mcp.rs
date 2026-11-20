@@ -859,7 +859,7 @@ fn the_dev_tools_over_mcp() {
     assert!(rules.contains(&"reference.entity"), "{checked}");
     assert!(rules.contains(&"upstream.edit"), "the framework is upstream: {checked}");
 
-    another_project(&ann, address);
+    another_project(&ann, &factory, address);
 
     // moqui check, refs and lsp with --server: a local file checked by the server, by its component location
     #[cfg(all(feature = "devtools", feature = "tui"))]
@@ -958,7 +958,7 @@ fn batch_screen(service: &str) -> String {
 /// read on first use, answers refs, describe (an entity's fields, a service's parameters) and check, and a file
 /// changed on disk changes the next answer with no restart; a relative or `..` path is refused.
 #[cfg(feature = "devtools")]
-fn another_project(ann: &Caller, address: SocketAddr) {
+fn another_project(ann: &Caller, factory: &Arc<ExecutionContextFactory>, address: SocketAddr) {
     let dir =
         std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("mcp-java-checkout-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -987,6 +987,24 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     let refs = || {
         answer(json!({"action": "refs", "direction": "out", "file": screen.display().to_string(), "project": project}))
     };
+    // a Dev AIDE user who is no admin is refused another project on the host (SEC-DEV-82); ann is made one
+    let refused = ann.call(
+        "artifact",
+        json!({"action": "refs", "direction": "out", "file": screen.display().to_string(), "project": project}),
+        json!({}),
+    );
+    assert!(text(&refused).contains("read for an admin"), "{refused}");
+    {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        let facade = factory.entity().unwrap();
+        let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+        member.set("userGroupId", moqui_lib::object::Value::string("ADMIN"));
+        member.set("userId", moqui_lib::object::Value::string("MCP_ANN"));
+        member.set("fromDate", moqui_core::user::stamp_value(1_265_184_000_000));
+        member.create(&facade).unwrap();
+    }
     let first = refs();
     assert_eq!(first["project"]["layout"], "java", "{first}");
     assert!(

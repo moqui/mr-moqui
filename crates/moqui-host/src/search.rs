@@ -241,12 +241,19 @@ fn embedded_tx(runtime_dir: &Path, store: &mut SearchStore) -> Result<Transactio
     use crate::db::embedded::{shared_install_dir, ClusterRole, EmbeddedCluster, StartOptions};
 
     let dir = runtime_dir.join("db/search");
+    // its superuser's password in seal.json, as the entity cluster's (plans/Sealed-Secrets.md S4)
+    let password = crate::db::entity_db::sealed_cluster_password(
+        moqui_core::seal::keeper_of(runtime_dir).as_deref(),
+        &dir,
+        moqui_core::seal::secrets::SEARCH_CLUSTER_PASSWORD,
+    )?;
     let options = StartOptions {
         max_connections: search_pool().max + crate::db::entity_db::SUPERUSER_SLOTS,
         role: ClusterRole::Entity,
         install_dir: Some(shared_install_dir(runtime_dir, &dir)),
         pg_stat_statements: false,
         settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
+        password: password.map(crate::db::embedded::SuperuserPassword),
     };
     let (cluster, driver) = EmbeddedCluster::start_with(&dir, &options)?;
     store.cluster = Some(cluster);

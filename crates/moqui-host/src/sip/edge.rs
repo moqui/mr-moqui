@@ -26,9 +26,10 @@
 //!   stamped, never written again), and a saved message played by phone is fetched for the call that opened its box
 //!   ([`fetch_audio`]); the boxes' greetings also come ahead on the queue (`callAudio`), for the fallback.
 //!
-//! On an all-in-one node (plans/archive/Edge-Node.md §10, E12) all of this is for the paired node's items only (`owners.rs`),
-//! and what it keeps of the paired node's audio is under a location of that node's
-//! (`moqui_core::edge::media::kept_audio_location`), apart from the server's own greetings at the same paths.
+//! What a node that takes links keeps of a paired node's audio is under a location of that node's
+//! (`moqui_core::edge::media::kept_audio_location`), apart from every other pairing's and, on an all-in-one node
+//! (plans/archive/Edge-Node.md §10, E12, where all of this is for the paired node's items only, `owners.rs`), the
+//! server's own greetings at the same paths; within the pairing's queue cap (SEC-CLU-90).
 //!
 //! With several pairings (plans/Edge-Node2.md §4.1, E16) each of these is by pairing: the trunks of every pairing's
 //! copy, a number's fallback from its owner's copy, and a message queued (and requeued after a restart) to the
@@ -497,7 +498,12 @@ fn fetch_paired_audio(
         let parameters = BTreeMap::from([("location".to_string(), Value::string(location))]);
         let bytes = decoded(&delegated(CALL_AUDIO_SERVICE, &parameters)?, location)?;
         let size = bytes.len() as u64;
-        let kept = moqui_core::edge::media::kept_audio_location(factory, node, location);
+        // kept within the pairing's cap, else only played (SEC-CLU-90)
+        if let Err(why) = moqui_core::edge::media::check_kept_audio(factory, node, size) {
+            tracing::warn!("SIP: {location} from the local node was not kept: {why}");
+            return Ok(bytes);
+        }
+        let kept = moqui_core::edge::media::kept_audio_location(node, location);
         if let Err(err) = factory
             .resource()
             .write_from(&kept, &mut std::io::Cursor::new(bytes.clone()), Some(size))

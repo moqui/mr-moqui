@@ -101,7 +101,8 @@ fn open_facade(
     dialect: &str,
     db: Option<&super::entity_db::EntityDb>,
 ) -> Result<EntityFacade, Error> {
-    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())?;
+    // the other datasources' passwords from seal.json where the conf leaves them empty (plans/Sealed-Secrets.md S4)
+    let conf = moqui_core::seal::secrets::conf_with_secrets(factory)?;
     let tx = moqui_core::transaction::TransactionManager::new(Arc::clone(&driver), pool)?;
     tx.configure_from_conf(&conf)?;
     let snapshot_reads = match db {

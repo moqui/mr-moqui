@@ -135,6 +135,15 @@ pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
         return Err(Conv::Unsupported("a run that fell back"));
     }
     let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+    // a page's script or stylesheet list read by a preview's proposed text: a copy of the stack's, never the run's own
+    // object nor tracked, so what the text adds is not written back (SEC-AI-102)
+    if crate::script::preview::page_list_guarded(name) {
+        let copied = STACK.with(|stack| stack.borrow().with_value(name, Clone::clone));
+        return match copied {
+            Some(value) => to_js(js, &engine, &value),
+            None => super::names::missing(name),
+        };
+    }
     // a bound name read through `context`: the binding is the current value
     let bound = values(&engine)
         .borrow()
@@ -236,6 +245,10 @@ pub(super) fn write_name<J: Js>(js: &mut J, name: &str, value: &Value) -> Result
         return Err(Conv::Unsupported("a run that fell back"));
     }
     let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+    // a page's script or stylesheet list is not a preview's proposed text's to set (SEC-AI-102)
+    if crate::script::preview::page_list_guarded(name) {
+        return Err(Conv::Error(crate::script::preview::refusal(name)));
+    }
     {
         let mut values = values(&engine).borrow_mut();
         values.tracked.remove(name);
@@ -280,6 +293,11 @@ pub(super) fn note_access<J: Js>(js: &mut J, name: &str, value: &Value) -> Resul
     let Some(engine) = current() else {
         return Ok(());
     };
+    // a page's script or stylesheet list is never bound: a preview's proposed text would read the binding, the run's
+    // own object, instead of its copy ([`read_name`], SEC-AI-102)
+    if crate::script::preview::PAGE_LISTS.contains(&name) {
+        return Ok(());
+    }
     {
         let mut values = values(&engine).borrow_mut();
         if !values.binds || values.bindings.len() >= MAX_BINDINGS || values.flushing {

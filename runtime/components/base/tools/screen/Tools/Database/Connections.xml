@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             dbTypeOptions = [{key: 'postgres', text: 'PostgreSQL'}, {key: 'mysql8', text: 'MySQL 8'}, {key: 'mysql', text: 'MySQL or MariaDB'}]
             sslModeOptions = [{key: '', text: 'Default (verify-full for a remote host)'}, {key: 'verify-full', text: 'Verify the certificate and host'},
-                {key: 'verify-ca', text: 'Verify the certificate'}, {key: 'require', text: 'Require TLS, no verification'}, {key: 'disable', text: 'No TLS'}]
+                {key: 'verify-ca', text: 'Verify the certificate (needs the root certificate file)'}, {key: 'require', text: 'Require TLS, no verification'}, {key: 'disable', text: 'No TLS'}]
         ]]></script>
     </actions>
     <widgets>

@@ -206,7 +206,9 @@ function listContext() {
 
 // ===== the groups a sign-in may give =====
 // Each group a role mapping or the default group names, as the actor may map it: the grant proposal's rules for the actor,
-// and never a privileged group or one that grants a sealed permission now, whoever asks.
+// and never a privileged group or one that grants a sealed permission now, whoever asks; a bundle that registers a
+// sensitive capability (CpkSensitive) only a member of ADMIN maps, so an access administrator does not gain it by signing
+// in through a role they mapped (plans/Security-Review-Low.md SEC-ADM-90).
 function groupChecks(groupIds) {
     const ids = Array.from(new Set(groupIds.map(text).filter(Boolean)))
     const found = new Map()
@@ -240,6 +242,12 @@ function groupChecks(groupIds) {
                     " grants " +
                     Array.from(new Set(sealedGrants)).join(", ") +
                     ", sealed: a sign-in never gives it, a holder does"
+            })
+        else if (check.allowed && access.sensitiveBundle(row.bundleGroupId) && !access.adminMember())
+            Object.assign(check, {
+                allowed: false,
+                reasonCode: "SENSITIVE_BUNDLE",
+                reason: row.bundleGroupId + " offers a sensitive capability: only a member of ADMIN maps a sign-in role to it"
             })
         found.set(row.bundleGroupId, check)
     }

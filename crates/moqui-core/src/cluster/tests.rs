@@ -290,6 +290,7 @@ fn put_member(
             ssh_fp: String::new(),
             version: String::new(),
             edge_link_url: String::new(),
+            edge_member_key: String::new(),
         },
     )
     .unwrap();
@@ -308,6 +309,30 @@ fn write_row(facade: &EntityFacade, id: &str, commit: bool) {
     } else {
         facade.rollback(ROW).unwrap();
     }
+}
+
+/// SEC-CLU-81: a member key the host set before the start is on the row from its first write, and one set after it is
+/// written to the row at once; the member report carries it.
+#[test]
+fn a_member_publishes_its_edge_key_from_the_rows_first_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-keyed");
+    let (ctx, facade) = open_facade();
+    let _recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    let first = "ab".repeat(32);
+    super::set_edge_member_key(ctx.factory(), &first);
+    super::start(ctx.factory()).unwrap();
+    let members = super::load_members(&facade).unwrap();
+    assert_eq!(members[0].edge_member_key, first, "on the row from the start");
+    let second = "cd".repeat(32);
+    super::set_edge_member_key(ctx.factory(), &second);
+    let members = super::load_members(&facade).unwrap();
+    assert_eq!(members[0].edge_member_key, second, "written at once after the start");
+    let report = super::member_report(ctx.factory(), &facade).unwrap();
+    assert_eq!(report[0].edge_member_key, second);
+    moqui_lib::env::set_property(super::EDGE_MEMBER_KEY_PROPERTY, "");
 }
 
 #[test]
@@ -863,15 +888,30 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     let temp = TempRuntime::new("cluster-cert");
     crate::context::layout::link_base_set(&root.join("runtime/components/base"), temp.path()).unwrap();
     let framework = root.join("runtime/components/base/framework");
+    // a dev instance makes its dev seal, and the pair is a SecretValue every member reads from the shared database
+    // (plans/Sealed-Secrets.md §3.4, S4), never a line of .env
+    let _purpose = PurposeGuard::dev();
+    let database = crate::testing::open();
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    let cert = env::get_prop_or_env("moqui_conf__cluster_member__tls_cert");
-    let key = env::get_prop_or_env("moqui_conf__cluster_member__tls_key");
+    factory.set_entity(database.clone());
+    let cert = factory
+        .secret(crate::seal::secrets::CLUSTER_CERT)
+        .unwrap()
+        .unwrap()
+        .to_string();
+    let key = factory
+        .secret(crate::seal::secrets::CLUSTER_KEY)
+        .unwrap()
+        .unwrap()
+        .to_string();
     assert_one_line_der(&cert);
     assert_one_line_der(&key);
     assert_ne!(cert, key);
-    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    assert_consecutive_pair(&env_text);
-    factory.set_entity(crate::testing::open());
+    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap_or_default();
+    assert!(
+        !env_text.contains("tls_cert") && !env_text.contains("tls_key"),
+        "{env_text}"
+    );
     super::start(&factory).unwrap();
     let instance = super::instance_id(&factory).unwrap();
     assert!(env::get_prop_or_env("moqui_conf__instance__id").is_empty());
@@ -880,11 +920,26 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
     drop(factory);
     env::clear_dotenv();
     let again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    assert_eq!(env::get_prop_or_env("moqui_conf__cluster_member__tls_cert"), cert);
-    assert_eq!(env::get_prop_or_env("moqui_conf__cluster_member__tls_key"), key);
+    again.set_entity(database.clone());
+    assert_eq!(
+        again
+            .secret(crate::seal::secrets::CLUSTER_CERT)
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        cert
+    );
+    assert_eq!(
+        again
+            .secret(crate::seal::secrets::CLUSTER_KEY)
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        key
+    );
     // The instance id is the instance's own, in runtime/db, not in the .env the members share.
     assert!(!std::fs::read_to_string(temp.path().join(".env"))
-        .unwrap()
+        .unwrap_or_default()
         .contains("moqui_conf__instance__id"));
     assert_eq!(
         std::fs::read_to_string(temp.path().join("db/instance_id"))
@@ -892,32 +947,9 @@ fn cluster_tls_pair_is_stable_and_a_cert_without_a_key_fails() {
             .trim(),
         instance
     );
-    again.set_entity(crate::testing::open());
     super::start(&again).unwrap();
     assert_eq!(super::instance_id(&again).unwrap(), instance);
-    let env_again = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    assert_eq!(
-        env_again
-            .lines()
-            .filter(|line| line.starts_with("moqui_conf__cluster_member__tls_cert="))
-            .count(),
-        1
-    );
-    assert_eq!(
-        env_again
-            .lines()
-            .filter(|line| line.starts_with("moqui_conf__cluster_member__tls_key="))
-            .count(),
-        1
-    );
-    assert_eq!(
-        env_again
-            .lines()
-            .filter(|line| line.starts_with("instance_id="))
-            .count(),
-        0
-    );
-    assert_consecutive_pair(&env_again);
+    drop(again);
     env::clear_dotenv();
 
     let blocked = TempRuntime::new("cluster-half");
@@ -946,13 +978,20 @@ fn assert_one_line_der(text: &str) {
     assert_eq!(der[0], 0x30);
 }
 
-fn assert_consecutive_pair(text: &str) {
-    let lines: Vec<&str> = text.lines().collect();
-    let cert_at = lines
-        .iter()
-        .position(|line| line.starts_with("moqui_conf__cluster_member__tls_cert="))
-        .unwrap();
-    assert!(lines[cert_at + 1].starts_with("moqui_conf__cluster_member__tls_key="));
+/// The instance purpose `dev` as a process property until dropped.
+struct PurposeGuard;
+
+impl PurposeGuard {
+    fn dev() -> Self {
+        env::set_property("moqui_conf__instance__purpose", "dev".to_string());
+        PurposeGuard
+    }
+}
+
+impl Drop for PurposeGuard {
+    fn drop(&mut self) {
+        env::clear_property("moqui_conf__instance__purpose");
+    }
 }
 
 /// Clears the `.env` table a boot test loaded.
@@ -1643,6 +1682,7 @@ fn a_live_member_with_another_ssh_host_key_is_named() {
         ssh_fp: ssh_fp.to_string(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     let members = [
         member("self", Some(1_000), "SHA256:a"),
@@ -1670,6 +1710,7 @@ fn messages_go_only_to_a_row_of_this_members_material() {
         ssh_fp: String::new(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     let own = super::Member {
         instance_id: "self".to_string(),
@@ -1680,6 +1721,7 @@ fn messages_go_only_to_a_row_of_this_members_material() {
         ssh_fp: String::new(),
         version: String::new(),
         edge_link_url: String::new(),
+        edge_member_key: String::new(),
     };
     assert!(super::same_material(&row("S", "C"), Some(&own)));
     assert!(!super::same_material(&row("S", "other"), Some(&own)));

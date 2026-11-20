@@ -20,7 +20,7 @@
             const object=(text,label)=>{const value=JSON.parse(text || '{}');if (!value || typeof value!=='object' || Array.isArray(value)) throw new Error(label+' must be a JSON object');return value}
             let body
             if (sharedType==='contactPoint') {
-                body={type:contactType || 'notification',topic:contactType==='notification'?(topic || 'ReportAlert'):undefined,userId:contactUserId || undefined,userGroupId:contactGroupId || undefined,
+                body={type:contactType || 'notification',topic:contactType==='notification'?'ReportAlert':undefined,userId:contactUserId || undefined,userGroupId:contactGroupId || undefined,
                     emailTemplateId:emailTemplateId || undefined,toAddresses:toAddresses || undefined,url:webhookUrl || undefined,urlProperty:urlProperty || undefined,
                     headerProperties:headerPropertiesJson?object(headerPropertiesJson,'Header properties'):undefined,groupBy:list(groupBy),
                     groupWaitSeconds:Math.max(0,Number(groupWaitSeconds || 30)),repeatSeconds:Math.max(60,Number(repeatSeconds || 14400)),matchers:object(matchersJson,'Label matchers')}
@@ -102,7 +102,7 @@
                     <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
                     <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
                     <field name="contactType"><default-field title="Type"><drop-down><option key="notification" text="Notification"/><option key="email" text="Email"/><option key="webhook" text="Webhook"/></drop-down></default-field></field>
-                    <field name="topic"><default-field title="Notification topic"><text-line/></default-field></field>
+                    <field name="topic"><default-field title="Notification topic"><display text="ReportAlert" also-hidden="false"/></default-field></field>
                     <field name="contactUserId"><default-field title="Notification user"><text-line/></default-field></field>
                     <field name="contactGroupId"><default-field title="Notification group"><text-line/></default-field></field>
                     <field name="emailTemplateId"><default-field title="Email template"><text-line/></default-field></field>

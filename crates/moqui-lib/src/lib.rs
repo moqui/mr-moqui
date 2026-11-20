@@ -48,6 +48,8 @@ pub mod resource;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod safe_html;
+#[cfg(feature = "sigv4")]
+pub mod sigv4;
 pub mod signer;
 pub mod string;
 pub mod source_guard;

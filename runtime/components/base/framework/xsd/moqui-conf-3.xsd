@@ -104,6 +104,10 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:attribute>
             <xs:attribute name="database-audit-days" type="xs:string" default="90"><xs:annotation><xs:documentation>The
                 days the DatabaseAudit rows of the Tools database screens are kept, at least 1.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="external-database-private-network" type="xs:string" default="false"><xs:annotation><xs:documentation>
+                True lets a Tools external database connection (DatabaseConnection, DATABASE_EXTERNAL) reach a
+                loopback or private address, such as a database beside this server; false, the default, takes only a
+                public address. A link-local or cloud metadata address is refused either way.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-queue" type="xs:integer"><xs:annotation><xs:documentation>
                 The maximum size of the worker queue.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
@@ -346,6 +350,9 @@ along with this software (see the LICENSE.md file). If not, see
                 </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="replay-max-bytes" type="xs:positiveInteger"><xs:annotation><xs:documentation>Event
                 bytes one replay may hold. Default 5242880.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-user-bytes-per-hour" type="xs:positiveInteger" default="52428800"><xs:annotation><xs:documentation>
+                Event bytes one user's replays may send in an hour, on each server, whatever replay ids the page picks.
+                Default 52428800.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="replay-block-selector" type="xs:string"><xs:annotation><xs:documentation>A CSS
                 selector of elements recorded only as an empty box, besides [data-moqui-block], canvas, video and
                 iframe.</xs:documentation></xs:annotation></xs:attribute>
@@ -770,6 +777,18 @@ along with this software (see the LICENSE.md file). If not, see
                 window. Fewer run when that pool cannot hold this many beside the request and service workers (a
                 warning at startup says so). No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-room-clients" type="xs:positiveInteger" default="4"><xs:annotation><xs:documentation>
+                The clients one notification socket may keep in one CalcGrid room or one co-edited page; a join past it
+                is refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-awareness-bytes" type="xs:positiveInteger" default="4096"><xs:annotation><xs:documentation>
+                The largest co-editing awareness (a join's and an awareness frame's, as JSON) a notification socket may
+                send; a larger one is refused (413). Read on each frame (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-joins-per-minute" type="xs:positiveInteger" default="60"><xs:annotation><xs:documentation>
+                The CalcGrid room and co-edited page joins one notification socket may make a minute, given back
+                evenly over the minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-user-joins-per-minute" type="xs:positiveInteger" default="240"><xs:annotation><xs:documentation>
+                The joins one user's notification sockets may make a minute together, given back evenly over the
+                minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -1196,7 +1215,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="blob-gc-prune-days" type="non-neg-int-expandable" default="14"><xs:annotation><xs:documentation>How many days a content blob nothing refers to is kept (gc#ContentBlobs). No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="dbresource-blob-threshold" type="non-neg-int-expandable" default="65536"><xs:annotation><xs:documentation>A dbresource file over this many bytes is a content blob (stored once, streamed), not fileData. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="image-max-concurrent" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Image conversions (convert#Image) and rich-text image uploads (upload#RichTextImage) that may run at once; a decoded image may take hundreds of MB. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="sftp-max-read" type="non-neg-int-expandable" default="67108864"><xs:annotation><xs:documentation>The largest file, in bytes, the SFTP client (SftpClient getText and getBinary, poll#SystemMessageSftp) reads from a remote server; a larger one is refused. 0 is the default, 64 MiB: there is no setting for no limit. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-module-cache" type="boolean" default="true"><xs:annotation><xs:documentation>A module ec.resource.script loads whose top level only declares gives the same value for the rest of the outermost script run, made once; false makes it again at each load. Read once.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="collab-max-state-bytes" type="xs:positiveInteger" default="8388608"><xs:annotation><xs:documentation>The most bytes a co-edited page's state may take; an update past it is refused (413). The whole state is held in memory and written again at each flush. Read on each update.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="drive-root" type="xs:string" default="dbresource://drive"><xs:annotation><xs:documentation>The location under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made (FileServices ensure#PersonalDrive, create#Drive). A setting, not a user preference, so a user does not choose where their drive is. No Java counterpart.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="script-timeout" type="xs:string"><xs:annotation><xs:documentation>Seconds a script may run when no transaction limits it (a widget condition, a
                 transaction="ignore" service), on every thread; a transaction's own timeout replaces it, and 0 is no
@@ -1523,6 +1544,12 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:sequence>
         <xs:attribute name="backend" type="xs:string" default="postgres"><xs:annotation><xs:documentation>
             postgres or opensearch.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="query-timeout-seconds" type="xs:positiveInteger" default="10"><xs:annotation><xs:documentation>
+            How long one search statement (postgres) or request (opensearch) may run when no report's own limit is
+            in force; a search past it fails.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="query-max-clauses" type="xs:positiveInteger" default="64"><xs:annotation><xs:documentation>
+            The most terms (words, phrases and ranges) a query string may hold; a longer one is refused before it
+            runs.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
 
     <!-- ===================== LLM Facade Conf Root ===================== -->
@@ -1914,7 +1941,9 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="sftp-max-file" type="non-neg-int-expandable" default="268435456"><xs:annotation><xs:documentation>The largest file SFTP takes, in bytes.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-sessions" type="non-neg-int-expandable" default="8"><xs:annotation><xs:documentation>The most connections at once.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-sessions-per-user" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most connections at once of one user logged in by key or password; 0 for no share. A cluster peer and a connection in its login dialog are not counted by it.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="max-sessions-per-source" type="non-neg-int-expandable" default="8"><xs:annotation><xs:documentation>The most connections at once from one address (an IPv6 /64); 0 for no share. A cluster peer is not counted by it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-sessions-per-source" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>The most connections at once from one address (an IPv6 /64); 0 for no share. A cluster peer is not counted by it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-dialog-sessions" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>Of max-sessions, the most connections at once let in with no user for the login dialog, so they never fill the sessions a key or password login needs; 0 for no share.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-dialog-sessions-per-source" type="non-neg-int-expandable" default="2"><xs:annotation><xs:documentation>Of max-dialog-sessions, the most from one address (an IPv6 /64); 0 for no share.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="git-password-auth" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Git over SSH on a connection that logged in by password; by key only when false.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="git-any-account" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Git over SSH for any account that logs in by key, without the SSH_GIT permission
                 (a public site's accounts); each repository's own check still decides. A password login still needs SSH_GIT and git-password-auth. SFTP and the shell are not opened by it.</xs:documentation></xs:annotation></xs:attribute>
@@ -1991,6 +2020,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="max-delta-depth" type="non-neg-int-expandable" default="4095"><xs:annotation><xs:documentation>The most deltas from a pushed or fetched object to a whole one (4095 is the deepest git writes); a deeper chain is refused (GitDeltaTooDeep).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allow-http" type="boolean-expandable" default="false"><xs:annotation><xs:documentation>Take credentials over plain HTTP.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="lfs-max-object-size" type="non-neg-int-expandable" default="5368709120"><xs:annotation><xs:documentation>The largest Git LFS object, in bytes.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="lfs-max-locks" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>The most Git LFS locks a repository has; one more is refused (SEC-GIT-85). 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="lfs-locks-max-page" type="non-neg-int-expandable" default="100"><xs:annotation><xs:documentation>The most Git LFS locks one locks or locks/verify request answers, whatever limit it asks for; 0 (or not a number) is the default, 100, since a page with no ceiling is what the limit is for.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="outbound-check-service" type="xs:string"><xs:annotation><xs:documentation>A service asked before a repository's webhook deliveries are queued and before its push mirror pushes (org.moqui.git.GitServices.check#GitOutbound): allowed false holds them, so an application that hides or suspends a repository stops what it would tell or copy elsewhere. None when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="rest-write-check-service" type="xs:string"><xs:annotation><xs:documentation>A service asked before each write on a repository through the framework's REST (/rest/s1/moqui/git; org.moqui.git.GitServices.check#GitRestWrite): allowed false refuses the write with its message and names the application's own REST (restUrl), so a repository an application keeps is changed only by its rules. None when empty.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="offer-service" type="xs:string"><xs:annotation><xs:documentation>A service that adds to what the server offers its clients (/rest/s1/moqui/hosting/offer; org.moqui.git.GitServices.add#GitHostingOffer): an application's REST, its task source, its forks, its agreement check. None when empty.</xs:documentation></xs:annotation></xs:attribute>
@@ -2079,8 +2110,10 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="max-artifact-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>Bytes of one artifact.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-report-bytes" type="non-neg-int-expandable" default="16777216"><xs:annotation><xs:documentation>Bytes of one report.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-cache-bytes" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>Bytes of one cache archive.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-unpack-bytes" type="non-neg-int-expandable" default="17179869184"><xs:annotation><xs:documentation>Bytes a cache archive unpacks to on a runner (16 GiB; at most a million entries): sent with each job, and a cache past it is not restored (SEC-GIT-95).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-artifacts" type="non-neg-int-expandable" default="100"><xs:annotation><xs:documentation>Uploads of one job: artifacts, reports and caches.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="max-repository-upload-bytes" type="non-neg-int-expandable" default="0"><xs:annotation><xs:documentation>Bytes of artifacts, reports and caches a repository keeps; an upload past it is refused (GitCiStorageQuota), and one that would pass it cut. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-repository-upload-bytes" type="non-neg-int-expandable" default="10737418240"><xs:annotation><xs:documentation>Bytes of artifacts, reports and caches a repository keeps (10 GiB); an upload past it is refused (GitCiStorageQuota), and one that would pass it cut. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="max-untrusted-run-upload-bytes" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>Bytes of artifacts and reports one untrusted run (a fork's, a review push's, an approved run of an account without update) keeps over all its jobs (1 GiB), refused and cut as the repository's cap. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-owner-upload-bytes" type="non-neg-int-expandable" default="0"><xs:annotation><xs:documentation>The same for the runs' owner (GitPipelineRun.ownerId) over all its repositories. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="artifact-retention-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>How long an artifact is kept when its element names no retention-days.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-artifact-retention-days" type="non-neg-int-expandable" default="365"><xs:annotation><xs:documentation>The longest retention an artifact may ask for.</xs:documentation></xs:annotation></xs:attribute>
@@ -2142,8 +2175,8 @@ along with this software (see the LICENSE.md file). If not, see
             only once unsealed, and while sealed answers only on the operator socket.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="method" type="xs:string"><xs:annotation><xs:documentation>The unseal method init uses when
-                none is named: tpm, passphrase, shamir or dev (kms and transit later). On a production instance's first
-                start an automatic method (tpm) makes the seal by itself. Empty for none. Once runtime/db/seal.json exists
+                none is named: tpm, kms, transit, passphrase, shamir or dev. On a production instance's first start an
+                automatic method (tpm, kms, transit) makes the seal by itself. Empty for none. Once runtime/db/seal.json exists
                 its method wins and this is ignored.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="socket" type="xs:string"><xs:annotation><xs:documentation>Where a server binds its own
                 operator socket when root hands it none (systemd/moqui-operator.socket, moqui operator bind), relative to
@@ -2159,6 +2192,37 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="unseal-max-delay-seconds" type="non-neg-int-expandable" default="300"><xs:annotation><xs:documentation>The
                 longest wait after wrong passphrases or shares; it doubles from one second. Read from the conf files
                 only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-provider" type="xs:string"><xs:annotation><xs:documentation>The kms method's cloud:
+                aws, gcp or azure. The kms and transit settings say where the root key is sent and whose credential goes
+                with it, so they are read from the conf files only.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-key" type="xs:string"><xs:annotation><xs:documentation>The KMS key: an AWS key id,
+                ARN or alias; a GCP projects/.../cryptoKeys/... name; an Azure key URL
+                (https://VAULT.vault.azure.net/keys/NAME).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-region" type="xs:string"><xs:annotation><xs:documentation>The AWS region of the
+                key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-endpoint" type="xs:string"><xs:annotation><xs:documentation>The KMS API's base URL in
+                place of the provider's (a private endpoint); empty for the provider's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-token-endpoint" type="xs:string"><xs:annotation><xs:documentation>Where tokens come
+                from in place of the provider's: the instance metadata (AWS IMDSv2, Azure IMDS), the metadata server
+                (GCP), or Azure's sign-in endpoint for client credentials.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="kms-credentials" type="xs:string"><xs:annotation><xs:documentation>Empty or metadata for
+                the host's own identity (the instance role, the metadata server, the managed identity); else a file of
+                root's (an absolute path, writable by its owner only) or systemd:NAME for the unit's credential NAME: AWS
+                {"access_key_id", "secret_access_key", "session_token"}, a GCP service account's key file, Azure
+                {"tenant_id", "client_id", "client_secret"}. Never the credential itself.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-url" type="xs:string"><xs:annotation><xs:documentation>The transit method's
+                OpenBao or Vault address (https://bao.example:8200).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-mount" type="xs:string" default="transit"><xs:annotation><xs:documentation>Its
+                Transit secrets engine's mount.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-key" type="xs:string"><xs:annotation><xs:documentation>The Transit key that wraps
+                the root key.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-namespace" type="xs:string"><xs:annotation><xs:documentation>The namespace
+                (X-Vault-Namespace), if any.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-ca-file" type="xs:string"><xs:annotation><xs:documentation>A PEM of the
+                authorities the Vault's HTTPS is checked against in place of the system's.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="transit-token" type="xs:string"><xs:annotation><xs:documentation>The file holding the
+                Vault token sent as X-Vault-Token: an absolute path of root's, writable by its owner only, or systemd:NAME
+                for the unit's credential NAME. Never the token itself.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="acme">
@@ -2241,6 +2305,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="public-url" type="xs:string"/>
             <xs:attribute name="media-key" type="xs:string"><xs:annotation><xs:documentation>A secret, generated into runtime/.env.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="media-minutes" type="non-neg-int-expandable" default="60"/>
+            <xs:attribute name="new-pair-rooms-per-day" type="non-neg-int-expandable" default="200"><xs:annotation><xs:documentation>The new conversations (pair rooms) a day opened to the users of one of our numbers; a text from another new number past it is kept in a room held out of their sight, as spam, and the voice admins hear of it once a day. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="inbound-media-bytes-per-day" type="non-neg-int-expandable" default="2147483648"><xs:annotation><xs:documentation>The bytes of files a bridge fetches from its network a day (MMS pictures); a file past it is named as not received. 0: no cap.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
     <xs:element name="push">
@@ -2323,6 +2389,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="max-transactions" type="xs:string" default="2000"/>
                     <xs:attribute name="max-connections" type="xs:string" default="500"/>
                     <xs:attribute name="max-connections-per-source" type="xs:string" default="100"/>
+                    <xs:attribute name="edge-blocks-per-hour" type="xs:string" default="200"><xs:annotation><xs:documentation>On a local node, the most new sources its edge node's SIP engine reports blocked in an hour; kept apart from this node's engines' blocks.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="edge-alerts-per-hour" type="xs:string" default="10"><xs:annotation><xs:documentation>On a local node, the most voice alerts (a blocked source, a failed trunk) its edge node's SIP engine raises in an hour; past it they are logged only.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="registrar"><xs:complexType>
                     <xs:attribute name="enabled" type="xs:string" default="false"/>
@@ -2382,6 +2450,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="timeout-seconds" type="xs:string" default="20"/>
                     <xs:attribute name="language" type="xs:string"/>
                     <xs:attribute name="store" type="xs:string" default="false"/>
+                    <xs:attribute name="retention-days" type="non-neg-int-expandable" default="30"><xs:annotation><xs:documentation>The days a caption kept by store is kept: expire#Recordings removes older ones; 0 keeps them.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="prompt-audio" type="xs:string"/>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="queue"><xs:complexType>
@@ -2500,7 +2569,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="internet-messages-per-hour" type="non-neg-int-expandable" default="1000"><xs:annotation><xs:documentation>In internet mode, the most messages stored in an hour from one client address (IPv6 by its /64) and from one envelope sender, whichever is reached first; a MAIL past it is answered 451 4.7.1. A message counts once, whatever its recipients.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="internet-bytes-per-hour" type="non-neg-int-expandable" default="1073741824"><xs:annotation><xs:documentation>In internet mode, the most bytes of messages stored in an hour from one client address and from one envelope sender, with a MAIL's SIZE counted; past it a MAIL is answered 451 4.7.1.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="rspamd-url" type="xs:string"><xs:annotation><xs:documentation>In internet mode, Rspamd's HTTP API (http://127.0.0.1:11333); no spam check when empty. Rspamd not reached fails open: the mail is taken as not spam, logged.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="arc-trusted-sealers" type="xs:string"><xs:annotation><xs:documentation>In internet mode, the domains whose passing ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), comma separated; empty for no ARC exception.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="arc-trusted-sealers" type="xs:string"><xs:annotation><xs:documentation>In internet mode, the domains whose passing ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), comma separated, only when that sealer's ARC-Authentication-Results records dmarc=pass for the From domain; empty for no ARC exception.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2526,7 +2595,7 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="key" type="xs:string"><xs:annotation><xs:documentation>A secret: the private key (base64 PKCS#8 DER, or PEM), made (RSA-2048) into runtime/.env the first time a server needs it.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="selector" type="xs:string" default="moqui"/>
-            <xs:attribute name="domains" type="xs:string"><xs:annotation><xs:documentation>The domains signed for, comma separated; empty for the hosted and shared accounts' domains.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="domains" type="xs:string"><xs:annotation><xs:documentation>The domains signed for, comma separated; empty for the hosted and shared accounts' domains. A paired node's mail on an edge node is signed only for that node's own domains, among these when set.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2627,11 +2696,34 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="queue-max-megabytes" type="non-neg-int-expandable" default="1024">
                 <xs:annotation><xs:documentation>The waiting items' payloads and content at most, for each paired
                     node alone (on a node that takes links, a pairing's EdgeClient.queueMaxMegabytes above 0 in place of
-                    it); past it that node's oldest fail. The content a paired node's link sends before its
+                    it); past it that node's oldest fail, items of other kinds before mail, and mail newest first. The content a paired node's link sends before its
                     deliveries, kept until each is answered, counts against it too: at it the pairing pauses on an
                     edge node (as at replica-max-rows), and a local node refuses more content from its edge node for
                     now, and tells its administrators (EdgeContentRefused) once until it takes content again.
                 </xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="up-refusals" type="non-neg-int-expandable" default="30">
+                <xs:annotation><xs:documentation>On a node that takes links, the up connections with a key that is not
+                    paired (or was revoked) one address may make in ten minutes; past them the next is refused before
+                    its key is looked up, so a client with any certificate does not cost a transaction each. Past the
+                    first three of a window a refusal is logged at debug.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="content-calls" type="non-neg-int-expandable" default="4">
+                <xs:annotation><xs:documentation>The content sends (PutContent) of one pairing open at once at most (0
+                    is taken as 1, the least): each holds up to an item's content (64 MiB) in memory, so past them a
+                    send is refused for now and tried again, not counted against its item. A send is asked of the
+                    pairing's caps before it is read, and ends when its next part does not come within
+                    forward-idle-seconds or it takes over content-call-seconds in all.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="content-call-seconds" type="non-neg-int-expandable" default="900">
+                <xs:annotation><xs:documentation>The longest one content send (PutContent) may take in all, at least 1
+                    (0 is taken as 1); one past it ends and is tried again.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="queue-mail-percent" type="non-neg-int-expandable" default="90">
+                <xs:annotation><xs:documentation>The share of a paired node's queue-max-megabytes, in percent (at most
+                    100), past which an edge or all-in-one node's SMTP listener refuses new mail for that node for now
+                    (452 4.3.1 at RCPT TO, 451 after the data), so the sender keeps it and tries again rather than the
+                    cap failing mail already answered 250.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="queue-max-content-files" type="non-neg-int-expandable" default="10000">
                 <xs:annotation><xs:documentation>The content files a paired node's link sends before its deliveries,

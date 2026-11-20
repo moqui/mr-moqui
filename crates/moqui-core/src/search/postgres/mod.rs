@@ -669,7 +669,35 @@ impl PostgresBackend {
 
 fn bounded_query(tx: &TransactionManager, sql: &Sql) -> Result<Vec<DbRow>, Error> {
     match super::limits::remaining()? {
-        None => tx.with_connection(|connection| connection.query(&sql.text, &sql.params)),
+        // no report's budget: the search's own time limit, or the transaction's when that is shorter, set for this
+        // statement in the transaction it runs in, and the earlier value put back after it (SEC-DAT-84); a contains or
+        // wildcard word on all fields is served by no index
+        None => {
+            let timeout = super::limits::search_timeout();
+            tx.run(TransactionAttribute::UseOrBegin, Some(timeout), || {
+                tx.with_connection(|connection| {
+                    let earlier = connection
+                        .query("SELECT setting FROM pg_settings WHERE name = 'statement_timeout'", &[])?
+                        .first()
+                        .and_then(|row| row.columns.first())
+                        .map(|(_, value)| to_plain_string(value))
+                        .and_then(|value| value.trim().parse::<u128>().ok());
+                    let ours = timeout.as_millis().max(1);
+                    let armed = earlier
+                        .filter(|earlier| *earlier > 0)
+                        .map_or(ours, |earlier| earlier.min(ours));
+                    connection.execute(&format!("SET LOCAL statement_timeout = '{armed}'"), &[])?;
+                    let rows = connection.query(&sql.text, &sql.params)?;
+                    match earlier {
+                        Some(earlier) => {
+                            connection.execute(&format!("SET LOCAL statement_timeout = '{earlier}'"), &[])?
+                        }
+                        None => connection.execute("SET LOCAL statement_timeout TO DEFAULT", &[])?,
+                    };
+                    Ok(rows)
+                })
+            })
+        }
         Some(timeout) => tx.run(TransactionAttribute::ForceNew, Some(timeout), || {
             tx.with_connection(|connection| {
                 connection.execute(

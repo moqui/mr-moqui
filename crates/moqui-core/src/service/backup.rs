@@ -324,6 +324,19 @@ fn mirror(
         tracing::info!("embedded database backup mirror is off, SystemMessageRemote {remote_id} has no sendUrl");
         return Ok("N".to_string());
     }
+    // as the message senders do: a remote an administrator disabled receives nothing (SEC-TLS-96)
+    if field(&remote, "disabled") == "Y" {
+        return Err(LibError::new(format!(
+            "SystemMessageRemote {remote_id} is disabled, so the backup is not mirrored; set its disabled to N to \
+             mirror to it again"
+        )));
+    }
+    if options.recipient.is_none() && !backup::sealed_locally(&outcome.keep) {
+        tracing::warn!(
+            "the backup mirror to SystemMessageRemote {remote_id} is not encrypted: the whole database is stored there \
+             as it is (set mirrorEncrypt and mirrorRecipient, or database-backup@recipient)"
+        );
+    }
     let transport = options.transport.unwrap_or(if send_url.starts_with("s3://") {
         Transport::S3
     } else {
@@ -336,6 +349,8 @@ fn mirror(
             access_key: &field(&remote, "username"),
             secret_key: &field(&remote, "password"),
             prefix: &send_path,
+            // a remote that may not use the private network: N, or not Y on a production instance
+            deny_internal: crate::outbound::deny_private_network(&field(&remote, "allowPrivateNetwork")),
         };
         return super::backup_store::mirror_s3(&s3, options.recipient.as_deref(), outcome);
     }

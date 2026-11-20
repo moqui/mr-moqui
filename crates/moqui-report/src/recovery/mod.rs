@@ -280,6 +280,7 @@ fn facts(
         stopped: stopped(entity)?,
         allow_automatic: settings.allow_automatic,
         confidence,
+        regressed: !regressions.values().is_empty(),
         degraded: open.iter().any(|row| field(row, "dataQuality") == "degraded"),
         instances: affected.len() + healthy.len(),
         locality,
@@ -1020,7 +1021,10 @@ fn store_adapter(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> 
             }
         }
     }
-    if let Some(text) = options["headerPropertiesJson"].as_str().filter(|text| !text.trim().is_empty()) {
+    if let Some(text) = options["headerPropertiesJson"]
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+    {
         let headers = serde_json::from_str::<serde_json::Map<String, Json>>(text)
             .map_err(|_| fail("headerPropertiesJson is a JSON object of header names to property names"))?;
         for property in headers.values() {

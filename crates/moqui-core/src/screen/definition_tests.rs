@@ -658,3 +658,50 @@ fn a_shortcut_is_a_multi_call_only_when_written_or_a_multi_form_posts_to_it() {
         "the included screen's own transition keeps its default"
     );
 }
+
+/// A screen's action block holds the scope a service call holds (SEC-RTE-92): one that disables authorization, entity
+/// ECA rules and tarpit counting and throws, or never enables authorization, leaves the render's state as it was, and a
+/// caller's own disable is still in force after a block that enables it.
+#[test]
+fn an_action_blocks_authorization_toggles_end_with_it() {
+    crate::script::clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let block = |script: &str| super::Actions::of(format!("<actions><script>{script}</script></actions>"));
+    let failed = block(
+        "ec.artifactExecution.disableAuthz(); ec.artifactExecution.disableEntityEca(); \
+         ec.artifactExecution.disableTarpit(); throw new Error('down')",
+    )
+    .run();
+    assert!(failed.is_err(), "the block threw");
+    assert!(
+        !context.authz_disabled(),
+        "a block that threw left authorization disabled"
+    );
+    assert!(
+        !context.entity_eca_disabled(),
+        "a block that threw left entity ECA rules disabled"
+    );
+    assert!(
+        !context.tarpit_disabled(),
+        "a block that threw left tarpit counting disabled"
+    );
+    block("ec.artifactExecution.disableAuthz()").run().unwrap();
+    assert!(
+        !context.authz_disabled(),
+        "a block that never enabled authorization left it disabled"
+    );
+    let _held = context.disable_authz();
+    let eca = context.disable_entity_eca();
+    block("ec.artifactExecution.enableAuthz(); ec.artifactExecution.enableEntityEca()")
+        .run()
+        .unwrap();
+    assert!(context.authz_disabled(), "a block ended the render's own disable");
+    assert!(
+        context.entity_eca_disabled(),
+        "a block ended the render's own disableEntityEca"
+    );
+    if !eca {
+        context.enable_entity_eca();
+    }
+}

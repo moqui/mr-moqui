@@ -25,7 +25,6 @@
 //! no user yet counts toward the first only. Files are not downloaded.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -218,13 +217,29 @@ impl Drop for SessionSlot {
 pub(crate) enum Who {
     /// A user the transport logged in.
     User(String),
-    /// No user yet: the client's dialog logs in, starting with `name` (the SSH login name). `done` is set when it has.
-    /// Only SSH starts one.
+    /// No user yet: the client's dialog logs in, starting with `name` (the SSH login name). `done` is the transport's
+    /// part in that login ([`DialogLogin`]). Only SSH starts one.
     #[cfg_attr(not(feature = "ssh"), allow(dead_code))]
     Login {
         name: Option<String>,
-        done: Option<Arc<AtomicBool>>,
+        done: Option<Arc<dyn DialogLogin>>,
     },
+}
+
+/// The transport's part in a dialog login: the user's share of its sessions taken before the password is checked
+/// (refused, the login is), given back when the login fails, and the connection's place among the sessions with no
+/// user given back when it succeeds.
+pub(crate) trait DialogLogin: Send + Sync + std::fmt::Debug {
+    /// Take `username`'s share; the reason the login is refused.
+    ///
+    /// # Errors
+    ///
+    /// Why the user may not log in here now (the user's sessions are all open).
+    fn take(&self, username: &str) -> Result<(), String>;
+    /// The login failed: give back what [`Self::take`] took.
+    fn give_back(&self);
+    /// The login succeeded.
+    fn done(&self);
 }
 
 /// How an apps session takes its place in the `terminal` limits.

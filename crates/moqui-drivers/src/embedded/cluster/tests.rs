@@ -464,6 +464,65 @@ fn same_version_restart_keeps_the_row() {
     assert_eq!(rows[0].get("n"), Some(&Value::I32(7)));
 }
 
+/// S4 (plans/Sealed-Secrets.md §3.1): with the superuser password given (from `seal.json`), no file under the cluster
+/// holds it, a cold start with it serves the data, and one with another password is refused.
+#[test]
+fn a_cluster_with_its_password_given_keeps_no_password_file_and_a_cold_start_opens_with_it() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let with = |password: &str| StartOptions {
+        password: Some(SuperuserPassword(password.to_string())),
+        ..StartOptions::new(20)
+    };
+    // its tools put the password into a URL as it is: base64's / and + are refused before anything starts
+    let err = EmbeddedCluster::start_with(&dir, &with("a/b+c=")).map(|_| ()).unwrap_err();
+    assert!(err.to_string().contains("letters, digits"), "{err}");
+    let password = "the-sealed-superuser-password-7f3a";
+    {
+        let (mut cluster, driver) = EmbeddedCluster::start_with(&dir, &with(password)).unwrap();
+        let mut conn = driver.connect_postgres().unwrap();
+        conn.execute("CREATE TABLE kept (n int)", &[]).unwrap();
+        conn.execute("INSERT INTO kept (n) VALUES (?)", &[Value::I32(7)])
+            .unwrap();
+        drop(conn);
+        cluster.stop().unwrap();
+    }
+    let mut files = Vec::new();
+    let mut stack = vec![dir.clone()];
+    while let Some(next) = stack.pop() {
+        for entry in std::fs::read_dir(&next).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() && entry.file_name() != "install" {
+                stack.push(path);
+            } else if path.is_file() {
+                files.push(path);
+            }
+        }
+    }
+    assert!(!dir.join("pgpass").exists());
+    for file in &files {
+        let bytes = std::fs::read(file).unwrap();
+        assert!(
+            !bytes
+                .windows(password.len())
+                .any(|window| window == password.as_bytes()),
+            "{} holds the password",
+            file.display()
+        );
+    }
+    // a cold start: another password is refused, the given one serves the row
+    let refused = EmbeddedCluster::start_with(&dir, &with("not-the-password"))
+        .and_then(|(cluster, driver)| driver.connect_postgres().map(|conn| (cluster, conn)));
+    if let Ok((mut cluster, _)) = refused {
+        let _ = cluster.stop();
+        panic!("another password connected");
+    }
+    let (_cluster, driver) = EmbeddedCluster::start_with(&dir, &with(password)).unwrap();
+    let mut conn = driver.connect_postgres().unwrap();
+    let rows = conn.query("SELECT n FROM kept", &[]).unwrap();
+    assert_eq!(rows[0].get("n"), Some(&Value::I32(7)));
+}
+
 static RELATIVE_CLUSTER_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 /// Regression: `moqui load` passed the relative `runtime/db/embedded` straight into
@@ -754,7 +813,19 @@ fn save_db_round_trips_the_search_schema() {
     conn.execute("INSERT INTO search.kept (body) VALUES (?)", &[Value::string("kept")])
         .unwrap();
     let dump = dir.join("moqui.dump");
+    // SEC-TLS-97: a plain dump is this user's alone, one written over a readable file too
+    std::fs::write(&dump, b"").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&dump, std::fs::Permissions::from_mode(0o644)).unwrap();
+    }
     cluster.save_db(&dump).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(std::fs::metadata(&dump).unwrap().permissions().mode() & 0o777, 0o600);
+    }
     let header = std::fs::read(&dump).unwrap();
     assert!(header.starts_with(b"PGDMP"), "dump is not custom format");
     let list = std::process::Command::new(dir.join("install").join(SHIPPED_VERSION).join("bin/pg_restore"))

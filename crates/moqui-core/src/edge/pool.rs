@@ -98,7 +98,13 @@ pub struct ClusterMemberInfo {
     /// Its heartbeat is within its cluster's liveness window.
     pub live: bool,
     pub version: String,
+    /// The fingerprint of the member's own edge link key, as its cluster's row publishes it (SEC-CLU-81): a listed id
+    /// is admitted only with that key. Empty for a member that has published none (an older one, or one not started).
+    pub key_fingerprint: String,
 }
+
+/// The longest member key fingerprint a list may name: SHA-256 in hex.
+const MAX_KEY_FINGERPRINT: usize = 64;
 
 /// Whether `id` can be a member's instance id: not empty, at most 40 bytes, no whitespace, control characters or `@`
 /// (as the host's paired node ids).
@@ -107,8 +113,8 @@ pub fn valid_member_id(id: &str) -> bool {
 }
 
 /// Check a member list a linked node sent, as input from any client (plans/Edge-Node2.md §4.11): at most
-/// [`MAX_CLUSTER_MEMBERS`], each id a member id and named once, each version short and printable. A list that fails is
-/// not taken whole; the reason names what failed.
+/// [`MAX_CLUSTER_MEMBERS`], each id a member id and named once, each version short and printable, each key fingerprint
+/// hex of at most 64. A list that fails is not taken whole; the reason names what failed.
 pub fn check_member_list(members: &[ClusterMemberInfo]) -> Result<(), String> {
     if members.len() > MAX_CLUSTER_MEMBERS {
         return Err(format!(
@@ -136,6 +142,14 @@ pub fn check_member_list(members: &[ClusterMemberInfo]) -> Result<(), String> {
         if member.version.len() > MAX_VERSION || member.version.chars().any(char::is_control) {
             return Err(format!(
                 "the version of member {} is too long or not text",
+                member.instance_id
+            ));
+        }
+        if member.key_fingerprint.len() > MAX_KEY_FINGERPRINT
+            || !member.key_fingerprint.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(format!(
+                "the key fingerprint of member {} is not one",
                 member.instance_id
             ));
         }
@@ -184,6 +198,9 @@ pub struct AdmissionFacts<'a> {
     /// The operator forgot the key pinned for this id ([`forget_key`]): its next link is a new node's, never the last
     /// member or a member of the kept list coming back.
     pub forgotten: bool,
+    /// The fingerprint of the key the member linked with (its Hello's): a list's row that names a key for the id
+    /// admits it only with that key (SEC-CLU-81).
+    pub member_key: &'a str,
 }
 
 /// Admission (plans/Edge-Node2.md §4.4, §4.11). A member id is its own only with the key pinned for it: one named
@@ -206,10 +223,14 @@ pub fn admission(facts: &AdmissionFacts<'_>) -> Admission {
     if !facts.displaced.is_empty() && facts.displaced == member {
         return Admission::Refuse(DISPLACED.to_string());
     }
+    // a list's row is the member's only with the key it publishes, when it publishes one (SEC-CLU-81)
+    let is_member = |row: &ClusterMemberInfo| {
+        row.instance_id == member
+            && row.live
+            && (row.key_fingerprint.is_empty() || row.key_fingerprint.eq_ignore_ascii_case(facts.member_key))
+    };
     if !facts.linked.is_empty() {
-        let listed = facts
-            .listed
-            .is_some_and(|list| list.iter().any(|row| row.instance_id == member && row.live));
+        let listed = facts.listed.is_some_and(|list| list.iter().any(is_member));
         return if listed && !other_key {
             Admission::Admit
         } else {
@@ -220,9 +241,7 @@ pub fn admission(facts: &AdmissionFacts<'_>) -> Admission {
         Some(same) => same,
         None => {
             !facts.forgotten
-                && (facts.last_member.is_empty()
-                    || facts.last_member == member
-                    || facts.known.iter().any(|row| row.instance_id == member && row.live))
+                && (facts.last_member.is_empty() || facts.last_member == member || facts.known.iter().any(is_member))
         }
     };
     if returning {
@@ -604,6 +623,7 @@ pub fn cluster_members(factory: &ExecutionContextFactory) -> Vec<ClusterMemberIn
             heartbeat_age_ms: row.heartbeat_age_ms,
             live: row.live,
             version: row.version.chars().take(MAX_VERSION).collect(),
+            key_fingerprint: row.edge_member_key,
         })
         .collect();
     if !own.is_empty() && !members.iter().any(|member| member.instance_id == own) {
@@ -612,6 +632,7 @@ pub fn cluster_members(factory: &ExecutionContextFactory) -> Vec<ClusterMemberIn
             heartbeat_age_ms: 0,
             live: true,
             version: env!("CARGO_PKG_VERSION").to_string(),
+            key_fingerprint: moqui_lib::env::get_prop_or_env(crate::cluster::EDGE_MEMBER_KEY_PROPERTY),
         });
     }
     members.truncate(MAX_CLUSTER_MEMBERS);
@@ -691,6 +712,54 @@ pub fn notify_takeover(paired: &str, from: &str, to: &str, remote: &str, held: b
         .notification_type("warning")
         .message_map(message)
         .title(title)
+        .send()
+        .map_err(|err| Error::new(err.message().to_string()))
+}
+
+/// Whether `member` was admitted on a row that names no key for it: of `listed`, the list a linked member gave, or with
+/// none linked (`none_linked`) of `known`, the kept list. Its first pin is then told to the administrators
+/// ([`notify_first_pin`], SEC-CLU-81).
+pub fn admitted_unkeyed(
+    member: &str,
+    listed: Option<&[ClusterMemberInfo]>,
+    none_linked: bool,
+    known: &[ClusterMemberInfo],
+) -> bool {
+    let unkeyed_in = |list: &[ClusterMemberInfo]| {
+        list.iter()
+            .any(|row| row.instance_id == member && row.key_fingerprint.is_empty())
+    };
+    listed.is_some_and(unkeyed_in) || (none_linked && unkeyed_in(known))
+}
+
+/// Tell the edge node's administrators that member `member` of pairing `paired` linked for the first time, from
+/// `remote`, while other members were linked, and its key was pinned on the word of a list that names no key for it
+/// (a member that publishes none): a node with only the pairing's key could be the one that named it (SEC-CLU-81).
+///
+/// # Errors
+///
+/// When the notification cannot be sent.
+pub fn notify_first_pin(paired: &str, member: &str, remote: &str) -> Result<(), Error> {
+    let mut message = moqui_lib::object::ValueMap::default();
+    for (name, value) in [
+        ("pairedNodeId", paired),
+        ("toInstanceId", member),
+        ("remoteAddress", remote),
+    ] {
+        message.insert(name.to_string(), moqui_lib::object::Value::string(value));
+    }
+    message.insert("firstPin".to_string(), moqui_lib::object::Value::Bool(true));
+    let clean = |text: &str| text.replace(['$', '{', '}'], "");
+    crate::notify::NotificationMessage::new()
+        .topic(TAKEOVER_TOPIC)
+        .user_group_id(ADMINISTRATORS)
+        .notification_type("warning")
+        .message_map(message)
+        .title(format!(
+            "Edge pairing {}: member {} linked for the first time, its key not named by its cluster",
+            clean(paired),
+            clean(member)
+        ))
         .send()
         .map_err(|err| Error::new(err.message().to_string()))
 }

@@ -14,7 +14,35 @@
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use super::{interactive, with_newlines, MAX_LINE};
+use super::{interactive, kept_history, with_newlines, MAX_LINE};
+
+/// The kept history holds a call's name and no parameters, and nothing of `js` or a `js` block (SEC-FIL-90).
+#[test]
+fn the_kept_history_holds_no_parameters_or_code() {
+    let typed: Vec<String> = [
+        r#"service org.moqui.impl.UserServices.update#Password {"newPassword": "s3cret"}"#,
+        "js ec.factory.getConfValue('x')",
+        "js",
+        "const key = 'sk-live-123';",
+        "",
+        "entity moqui.security.UserAccount {\"username\": \"ann\"}",
+        "status",
+        "status",
+        "cache clear entity.definition",
+    ]
+    .iter()
+    .map(ToString::to_string)
+    .collect();
+    assert_eq!(
+        kept_history(&typed),
+        [
+            "service org.moqui.impl.UserServices.update#Password",
+            "entity moqui.security.UserAccount",
+            "status",
+            "cache clear entity.definition",
+        ]
+    );
+}
 
 #[tokio::test]
 async fn an_overlong_shell_line_or_js_block_is_refused() {

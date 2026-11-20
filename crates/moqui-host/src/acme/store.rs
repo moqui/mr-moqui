@@ -447,9 +447,11 @@ pub(crate) fn foreign_dir(dir: &Path, host: &str) -> bool {
     sub.is_dir() && !sub.join(MARKER).is_file()
 }
 
-/// Write `host`'s files when they differ: the key, then the chain, each by a rename so the listener never reads half
-/// a file. A directory that is another tool's is refused, and so is a host that is not a DNS name an authority issues
-/// for (`default`, `localhost`, a wildcard's file name, a path): the name is a directory of `runtime/cert`.
+/// Write `host`'s chain when it differs, by a rename so the listener never reads half a file, and hold its key in
+/// memory for the listener ([`crate::tls::hold_key`]): the key is served from its encrypted row, never written to the
+/// directory, and a `privkey.pem` an earlier build wrote there is removed (plans/Sealed-Secrets.md S4). A directory
+/// that is another tool's is refused, and so is a host that is not a DNS name an authority issues for (`default`,
+/// `localhost`, a wildcard's file name, a path): the name is a directory of `runtime/cert`.
 pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str) -> Result<(), Error> {
     if !super::services::valid_host(host) {
         return Err(Error::new(format!(
@@ -464,7 +466,7 @@ pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str
     }
     let sub = dir.join(host);
     let fail = |err: std::io::Error| Error::new(format!("could not write {}: {err}", sub.display()));
-    std::fs::create_dir_all(&sub).map_err(fail)?;
+    moqui_lib::private_fs::create_dir_all(&sub).map_err(fail)?;
     let marker = sub.join(MARKER);
     if !marker.is_file() {
         std::fs::write(
@@ -474,10 +476,19 @@ pub(crate) fn write_files(dir: &Path, host: &str, chain_pem: &str, key_pem: &str
         .map_err(fail)?;
     }
     let same = |file: &str, text: &str| std::fs::read_to_string(sub.join(file)).is_ok_and(|old| old == text);
-    if !same("privkey.pem", key_pem) {
-        let staged = sub.join(".privkey.pem.new");
-        crate::tls::write_private(&staged, key_pem)?;
-        std::fs::rename(&staged, sub.join("privkey.pem")).map_err(fail)?;
+    // the key first, so a renewed chain is never served with the old key
+    crate::tls::hold_key(dir, host, Some(key_pem));
+    // a key file an earlier build wrote, and its staging name (a part, or a link another local user planted), go:
+    // removed as entries, never followed or written into (SEC-OUT-85)
+    for name in ["privkey.pem", ".privkey.pem.new"] {
+        let left = sub.join(name);
+        if std::fs::symlink_metadata(&left).is_ok() {
+            std::fs::remove_file(&left).map_err(fail)?;
+            tracing::warn!(
+                "Removed {}: an ACME key is served from its encrypted row now (plans/Sealed-Secrets.md S4)",
+                left.display()
+            );
+        }
     }
     if !same("fullchain.pem", chain_pem) {
         let staged = sub.join(".fullchain.pem.new");
@@ -496,6 +507,7 @@ pub(crate) fn remove_files(dir: &Path, host: &str) -> Result<(), Error> {
     if !sub.join(MARKER).is_file() {
         return Ok(());
     }
+    crate::tls::hold_key(dir, host, None);
     std::fs::remove_dir_all(&sub).map_err(|err| Error::new(format!("could not remove {}: {err}", sub.display())))
 }
 

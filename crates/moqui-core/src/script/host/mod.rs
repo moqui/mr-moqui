@@ -665,6 +665,19 @@ pub fn with_ec<T>(body: impl FnOnce(&crate::context::ExecutionContext) -> T) -> 
         .ok_or_else(|| HostError::message("no execution context is entered"))
 }
 
+/// What a script's `disableAuthz()` (of `ec.artifactExecution`, a find or a service call) answers where it is refused.
+pub const LOCKED_AUTHZ: &str =
+    "Authorization stays on: disableAuthz() and a change of user are not available in a preview of proposed screen text";
+
+/// Refuse a script's disabling of authorization, or a change of the user, while a preview's proposed screen text runs
+/// ([`crate::screen::proposed_running`], plans/Security-Review-Low.md SEC-AI-102).
+pub fn refuse_locked_authz() -> Result<(), HostError> {
+    if crate::screen::proposed_running() {
+        return Err(HostError::message(LOCKED_AUTHZ));
+    }
+    Ok(())
+}
+
 /// The factory of the entered execution context.
 pub fn factory() -> Result<Arc<crate::context::ExecutionContextFactory>, HostError> {
     with_ec(|ec| Arc::clone(ec.factory()))

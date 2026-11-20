@@ -246,10 +246,11 @@ fn a_write_stopped_before_its_rename_leaves_the_old_file() {
 }
 
 #[test]
-fn kms_and_transit_are_not_built_yet_and_an_unknown_method_is_refused() {
+fn kms_and_transit_are_automatic_methods_and_an_unknown_method_is_refused() {
+    // S11: both are built in (methods/cloud_tests.rs unseals by each against a stub)
     for kind in [MethodKind::Kms, MethodKind::Transit] {
-        let err = methods::automatic(kind).err().unwrap();
-        assert!(err.to_string().contains("not built yet"), "{err}");
+        assert!(kind.automatic());
+        assert_eq!(methods::automatic(kind).unwrap().kind(), kind);
     }
     assert!(MethodKind::parse("rot13").is_err());
     let conf =

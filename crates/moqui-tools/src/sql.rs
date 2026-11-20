@@ -186,7 +186,8 @@ fn plain_read(sql: &str, syntax: SqlSyntax) -> bool {
     match first.as_str() {
         "select" => !words.iter().any(|word| word == "into") || syntax == SqlSyntax::Mysql && !writes(&words),
         "values" | "table" | "show" | "describe" | "desc" => true,
-        "explain" => !words.iter().take(4).any(|word| word == "analyze" || word == "analyse"),
+        // `EXPLAIN (COSTS, VERBOSE, BUFFERS, TIMING, ANALYZE) DELETE ...` runs the statement: any word (SEC-TLS-102)
+        "explain" => !words.iter().any(|word| word == "analyze" || word == "analyse"),
         "with" => !writes(&words),
         _ => false,
     }
@@ -893,9 +894,16 @@ pub fn run(
             return Err(refusal);
         }
     }
+    // a refusal after the confirmation was taken is audited as the confirmation's was (SEC-TLS-102)
+    let refused = |refusal: Refusal| {
+        if request.allow_changes {
+            audit_refusal(facade, actor, &db, &request.run_id, &request.sql_text, &refusal);
+        }
+        refusal
+    };
     let mut bound = Vec::with_capacity(statements.len());
     for statement in &statements {
-        bound.push(bind_parameters(&statement.sql, syntax, &request.params, false)?);
+        bound.push(bind_parameters(&statement.sql, syntax, &request.params, false).map_err(refused)?);
     }
     let read_only = !request.allow_changes;
     let limit = match request.limit {
@@ -904,18 +912,20 @@ pub fn run(
     };
     let offset = request.offset;
     if offset > MAX_LIMIT {
-        return Err(Refusal::new(format!("Fetching more skips at most {MAX_LIMIT} rows")));
+        return Err(refused(Refusal::new(format!(
+            "Fetching more skips at most {MAX_LIMIT} rows"
+        ))));
     }
     if offset > 0 && !(read_only && statements.len() == 1 && !statements[0].changes) {
-        return Err(Refusal::new(
+        return Err(refused(Refusal::new(
             "Fetching more runs a single plain query again, read only; page over the rows already fetched instead",
-        ));
+        )));
     }
     let timeout = match request.timeout {
         Duration::ZERO => DEFAULT_TIMEOUT,
         timeout => timeout.min(MAX_TIMEOUT),
     };
-    let registered = start_run(facade, &request.run_id, actor, group, timeout)?;
+    let registered = start_run(facade, &request.run_id, actor, group, timeout).map_err(refused)?;
     let runner = Runner {
         facade,
         db: &db,
@@ -1109,7 +1119,9 @@ impl Runner<'_> {
                 run_id: Some(self.run_id.to_string()),
                 statement_seq: Some(i64::try_from(statement.seq).unwrap_or(i64::MAX)),
                 statement_text: Some(statement.sql.clone()),
-                is_change: !self.read_only && statement.changes,
+                // the classifier's guess is not the audit's: a SELECT of a function that writes changes too, so every
+                // statement of a run with changes allowed is a change (SEC-TLS-102)
+                is_change: !self.read_only,
                 start_time: Some(start_time),
                 ..AuditEntry::default()
             };
@@ -1181,7 +1193,7 @@ impl Runner<'_> {
                 run_id: Some(self.run_id.to_string()),
                 statement_seq: Some(i64::try_from(statement.seq).unwrap_or(i64::MAX)),
                 statement_text: Some(statement.sql.clone()),
-                is_change: !self.read_only && statement.changes,
+                is_change: !self.read_only,
                 rows_returned: out.gives_rows.then(|| i64::try_from(out.records.len()).unwrap_or(i64::MAX)),
                 rows_affected: out.rows_affected.map(|rows| i64::try_from(rows).unwrap_or(i64::MAX)),
                 duration_ms: Some(duration_ms),

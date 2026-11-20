@@ -113,6 +113,9 @@ message ClusterMember {
   bool live = 3;
   // The moqui binary version it runs.
   string version = 4;
+  // The SHA-256 (hex) of its own edge link key, as its member row publishes it: the edge node admits this id only
+  // with that key (SEC-CLU-81). Empty for a member that publishes none.
+  string key_fingerprint = 5;
 }
 
 // A linked member's state and its cluster's members: with its Hello, with every Ping on its up connection, and when

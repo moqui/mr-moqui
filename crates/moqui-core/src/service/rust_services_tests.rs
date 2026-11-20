@@ -185,6 +185,7 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::web_protection::get_web_protection",
         "moqui_core::service::web_protection::lift_web_ban",
         "moqui_core::service::web_push::delete_subscription",
+        "moqui_core::service::web_push::forget_user_subscriptions",
         "moqui_core::service::web_push::get_device_status",
         "moqui_core::service::web_push::get_status",
         "moqui_core::service::web_push::register_device",

@@ -106,6 +106,96 @@ fn an_archive_round_trips_by_workspace_paths() {
     std::fs::remove_file(&archive_file).unwrap();
 }
 
+/// SEC-GIT-95: a cache unpacks to at most a byte and an entry limit, and only regular files, directories and links
+/// that stay in the workspace: a FIFO or a link out is skipped.
+#[test]
+fn an_archive_unpacks_within_its_limits_and_only_files_directories_and_inner_links() {
+    let to = scratch("unpack-limits");
+    let archive_file = to
+        .parent()
+        .unwrap()
+        .join(format!("moqui-ci-runner-limits-{}.tar.gz", std::process::id()));
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+        std::fs::File::create(&archive_file).unwrap(),
+        flate2::Compression::fast(),
+    ));
+    let entry = |kind: tar::EntryType, size: u64| {
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(kind);
+        header.set_size(size);
+        header.set_mode(0o644);
+        header
+    };
+    for name in ["a.txt", "b.txt"] {
+        builder
+            .append_data(&mut entry(tar::EntryType::Regular, 100), name, &[b'x'; 100][..])
+            .unwrap();
+    }
+    builder
+        .append_data(&mut entry(tar::EntryType::Fifo, 0), "pipe", std::io::empty())
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "out", "../../etc/passwd")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "dir/in", "../a.txt")
+        .unwrap();
+    // an absolute link, and a chain: a link to its own directory, then a link through it that climbs out
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "abs", "/etc/passwd")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "deep", ".")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "deep/esc", "..")
+        .unwrap();
+    // a hard link names a path from the archive's root: one inside is kept, one outside is not
+    builder
+        .append_link(&mut entry(tar::EntryType::Link, 0), "hard", "a.txt")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Link, 0), "hard-out", "../outside.txt")
+        .unwrap();
+    // a .. after a component that does not exist yet, which a later entry makes a link: sub/p would climb out
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "sub/p", "../q/..")
+        .unwrap();
+    builder
+        .append_link(&mut entry(tar::EntryType::Symlink, 0), "q", ".")
+        .unwrap();
+    builder.into_inner().unwrap().finish().unwrap();
+
+    assert_eq!(
+        archive::unpack(&archive_file, &to).unwrap(),
+        6,
+        "a.txt, b.txt, dir/in, deep, hard and q"
+    );
+    assert!(
+        to.join("sub/p").symlink_metadata().is_err(),
+        "no link out through a later link"
+    );
+    assert!(to.join("a.txt").is_file() && to.join("b.txt").is_file());
+    assert!(to.join("pipe").symlink_metadata().is_err(), "no FIFO");
+    assert!(to.join("out").symlink_metadata().is_err(), "no link out");
+    assert!(to.join("dir/in").symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(to.join("abs").symlink_metadata().is_err(), "no absolute link");
+    assert!(
+        to.join("esc").symlink_metadata().is_err(),
+        "no link out through a chain"
+    );
+    assert!(to.join("hard").is_file());
+    assert!(to.join("hard-out").symlink_metadata().is_err(), "no hard link out");
+    std::fs::remove_dir_all(&to).unwrap();
+    std::fs::create_dir_all(&to).unwrap();
+    let bytes = archive::unpack_within(&archive_file, &to, 150, 100).unwrap_err();
+    assert!(bytes.contains("more than 150 bytes"), "{bytes}");
+    let entries = archive::unpack_within(&archive_file, &to, 1000, 1).unwrap_err();
+    assert!(entries.contains("more than 1 entries"), "{entries}");
+    std::fs::remove_dir_all(&to).unwrap();
+    std::fs::remove_file(&archive_file).unwrap();
+}
+
 /// Between a registered runner's jobs only what started since the job began is killed: never the runner, what it runs
 /// under, or a process started before the job (the `tee` its output goes through). `ps`'s elapsed time reads in its
 /// forms (`mm:ss`, `hh:mm:ss`, `dd-hh:mm:ss`).
@@ -158,7 +248,14 @@ fn a_step_gets_no_runner_token_and_on_a_registered_runner_only_the_base_environm
     let container = Options::default();
     assert_eq!(
         names(&container),
-        ["PATH", "HOME", "LC_ALL", "CARGO_HOME", "AWS_SECRET_ACCESS_KEY", "MOQUI_CI_SERVER_URL"]
+        [
+            "PATH",
+            "HOME",
+            "LC_ALL",
+            "CARGO_HOME",
+            "AWS_SECRET_ACCESS_KEY",
+            "MOQUI_CI_SERVER_URL"
+        ]
     );
 }
 
@@ -698,5 +795,19 @@ fn a_scratch_file_is_made_new_and_never_through_a_link() {
     let fresh = root.join("fresh");
     std::io::Write::write_all(&mut super::create_new(&fresh).unwrap(), b"ours").unwrap();
     assert_eq!(std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777, 0o600);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// SEC-GIT-95: after an unpack, a link it made that now resolves outside the workspace is removed.
+#[test]
+fn a_link_an_unpack_made_that_leads_out_is_removed() {
+    let root = scratch("unpack-links-out").canonicalize().unwrap();
+    let inside = root.join("inside");
+    let out = root.join("out");
+    std::os::unix::fs::symlink(".", &inside).unwrap();
+    std::os::unix::fs::symlink("..", &out).unwrap();
+    assert_eq!(archive::remove_links_out(&root, &[inside.clone(), out.clone()]), 1);
+    assert!(inside.symlink_metadata().is_ok());
+    assert!(out.symlink_metadata().is_err());
     std::fs::remove_dir_all(&root).unwrap();
 }

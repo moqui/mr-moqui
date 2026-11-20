@@ -499,7 +499,21 @@ fn names_mounts_sockets_and_the_hosts_network_are_held_to_the_rules() {
     let mut spec = database();
     spec.mounts.push(bind("/srv/app/config", "/config"));
     assert!(spec.check().is_ok());
-    for network in ["host", "HOST", "container:abc"] {
+    // only bridge, none or a network's name: never the host's, another container's, a namespace by path or Podman's
+    // user-mode networks, with or without options (SEC-GIT-93)
+    for network in [
+        "host",
+        "HOST",
+        "container:abc",
+        "ns:/proc/1/ns/net",
+        "slirp4netns",
+        "slirp4netns:allow_host_loopback=true",
+        "pasta",
+        "pasta:-T,22",
+        "private",
+        "Container",
+        "ns",
+    ] {
         let mut spec = database();
         spec.network = Some(network.to_string());
         assert!(
@@ -509,6 +523,12 @@ fn names_mounts_sockets_and_the_hosts_network_are_held_to_the_rules() {
                 .contains("host's or another container's"),
             "{network}"
         );
+        assert!(!super::valid_network(network), "{network}");
+    }
+    for network in ["bridge", "none", "moqui-prod", "podman"] {
+        let mut spec = database();
+        spec.network = Some(network.to_string());
+        assert!(spec.check().is_ok(), "{network}");
     }
     let mut spec = database();
     spec.network = Some("host".to_string());
@@ -524,6 +544,29 @@ fn names_mounts_sockets_and_the_hosts_network_are_held_to_the_rules() {
     assert!(err.message().contains("404 network absent-net not found"), "{err}");
     assert!(
         !engine.calls().iter().any(|call| call.contains("/images/create")),
+        "{:?}",
+        engine.calls()
+    );
+}
+
+/// An image's `VOLUME` paths, read before a container of it is made; an image the host does not have is `None`.
+#[test]
+fn an_images_volumes_are_read() {
+    let engine = FakeEngine::docker();
+    let host = engine.host();
+    assert_eq!(
+        host.image_volumes("with-volume:1").unwrap(),
+        Some(vec!["/data".to_string()])
+    );
+    assert_eq!(host.image_volumes("postgres:16").unwrap(), Some(Vec::new()));
+    assert_eq!(host.image_volumes("missing/app:1").unwrap(), None);
+    host.pull("missing/app:1").unwrap();
+    assert_eq!(host.image_volumes("missing/app:1").unwrap(), Some(Vec::new()));
+    assert!(
+        engine
+            .calls()
+            .iter()
+            .any(|call| call.contains("/images/with-volume%3A1/json")),
         "{:?}",
         engine.calls()
     );

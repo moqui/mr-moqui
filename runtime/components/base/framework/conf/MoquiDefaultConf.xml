@@ -15,8 +15,8 @@
 
     <!-- The sealed start (plans/Sealed-Secrets.md §3.3, docs/Run-Deploy.md "Sealed start"): the server opens its
         listeners only once unsealed; while sealed it answers only on the operator socket (moqui operator). method: the
-        unseal method init uses when none is named (tpm, passphrase, shamir, dev; kms and transit come later), and on a
-        production instance's first start an automatic one (tpm) makes the seal by itself; empty for none. Once
+        unseal method init uses when none is named (tpm, kms, transit, passphrase, shamir, dev), and on a production
+        instance's first start an automatic one (tpm, kms, transit) makes the seal by itself; empty for none. Once
         runtime/db/seal.json exists its method wins and this is ignored. socket: where a server binds its own operator
         socket when root hands it none (systemd/moqui-operator.socket, moqui operator bind), relative to the runtime,
         empty for db/operator.sock: a development setup, not a protection boundary. Who may use the socket is root's to
@@ -25,8 +25,18 @@
         empty for /usr/bin/systemd-creds or /bin/systemd-creds. unseal-max-delay-seconds: the longest wait after wrong
         passphrases or shares, which doubles from one second. socket, systemd-creds-command and
         unseal-max-delay-seconds are read from the conf files only: an environment name or runtime/.env that sets one
-        is ignored. -->
-    <seal method="" socket="" shares="5" threshold="3" systemd-creds-command="" unseal-max-delay-seconds="300"/>
+        is ignored. kms-*: the kms method (plans/Sealed-Secrets.md S11): kms-provider aws, gcp or azure; kms-key the key
+        (an AWS key id, ARN or alias, a GCP projects/.../cryptoKeys/... name, an Azure key URL); kms-region AWS's;
+        kms-endpoint and kms-token-endpoint the API's and the tokens' addresses in place of the provider's;
+        kms-credentials empty for the host's own identity (instance role, metadata server, managed identity), else a
+        file of root's (an absolute path, writable by its owner only) or systemd:NAME, never the credential itself.
+        transit-*: the transit method's OpenBao or Vault address, Transit mount, key, namespace, a PEM of the
+        authorities its HTTPS is checked against, and transit-token, the file (or systemd:NAME) holding its token. The
+        kms and transit settings are read from the conf files only, as socket is. -->
+    <seal method="" socket="" shares="5" threshold="3" systemd-creds-command="" unseal-max-delay-seconds="300"
+            kms-provider="" kms-key="" kms-region="" kms-endpoint="" kms-token-endpoint="" kms-credentials=""
+            transit-url="" transit-mount="transit" transit-key="" transit-namespace="" transit-ca-file=""
+            transit-token=""/>
 
     <!-- Certificates by ACME, from System › Certificates only (plans/Edge-Node2.md §4.8): nothing is requested for a name
         nobody set up there. directory-url fills in the authority's directory on that screen, Let's Encrypt's; the screen
@@ -101,8 +111,13 @@
         them; the local node does): webhooks-per-minute and webhooks-per-client-minute cap the webhooks a minute it queues
         for the bridge and from one client address, unverified-max-bytes their body, and unverified-waiting how many of
         the bridge's wait in its queue; media-max-bytes is the largest file it keeps for an MMS, and media-node-megabytes
-        the files of one local node it keeps at most. -->
-    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60">
+        the files of one local node it keeps at most. Texts and files from outside senders, which no user's quota counts:
+        new-pair-rooms-per-day caps the new conversations (pair rooms) a day opened to the users of one of our numbers, a
+        text from another new number past it is kept in a room held out of their sight (as spam, Not spam brings it
+        back) and the voice admins (VoicePolicy alertUserGroupId) hear of it once a day; inbound-media-bytes-per-day caps the files a bridge fetches from its network a
+        day, a file past it is named as not received (0 for either: no cap). -->
+    <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60"
+            new-pair-rooms-per-day="200" inbound-media-bytes-per-day="2147483648">
         <edge-limits webhooks-per-minute="600" webhooks-per-client-minute="120" unverified-max-bytes="32768"
                 unverified-waiting="500" media-max-bytes="5242880" media-node-megabytes="256"/>
     </channels>
@@ -182,7 +197,9 @@
         Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
         (0 turns one off): sip-server/limits@request-rate new requests a second from one source, sip-server/limits@request-burst of them at once;
         sip-server/limits@max-transactions, past which new requests are dropped; sip-server/limits@max-connections, TCP and TLS connections at once,
-        and sip-server/limits@max-connections-per-source of them from one source. -->
+        and sip-server/limits@max-connections-per-source of them from one source. On a local node, an edge node's engine
+        reports its own blocks (kept apart from this node's engines'): sip-server/limits@edge-blocks-per-hour new blocked
+        sources an hour at most, and sip-server/limits@edge-alerts-per-hour alerts of its blocks and trunks. -->
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip-server/registrar@enabled is
         true, even with the SIP listeners on. sip-server@domain is the realm of the digest challenges and the domain phones register
         to (sip-server@public-address, else moqui, when empty; changing it needs each phone's password made again). A binding's
@@ -191,7 +208,7 @@
     <sip-server port="" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
             public-address="" domain="">
         <limits request-rate="20" request-burst="100" max-transactions="2000" max-connections="500"
-                max-connections-per-source="100"/>
+                max-connections-per-source="100" edge-blocks-per-hour="200" edge-alerts-per-hour="10"/>
         <registrar enabled="false" min-expires="60" max-expires="3600" default-expires="600" nat-expires="60"/>
     </sip-server>
 
@@ -206,7 +223,8 @@
         speech provider (the model bound to the transcribe feature; calls/captions@provider local is speech-local, not built
         yet), at most calls/captions@workers at once, each within calls/captions@timeout-seconds; past calls/captions@queue
         waiting chunks the oldest is dropped. calls/captions@language: an ISO 639-1 code, empty to let the model tell.
-        calls/captions@store true keeps each caption as a CallTranscript (by default nothing is kept).
+        calls/captions@store true keeps each caption as a CallTranscript (by default nothing is kept), for
+        calls/captions@retention-days (the recording job removes older ones; 0 keeps them).
         calls/captions@prompt-audio: a WAV file a phone leg hears after the captions tones (docs/interfaces/SIP.md, Notices). -->
     <!-- ICE-TCP (W4): a TCP port on media-server@host for browsers that cannot reach the UDP one; off while empty. -->
     <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
@@ -247,7 +265,7 @@
     <calls ring-seconds="45" guest-joins-per-minute="20" transfer-ring-seconds="30" hold-music-location=""
             direct-path="true" forward-ring-seconds="30" forward-max-hops="5">
         <captions enabled="false" provider="llm" chunk-seconds="5" queue="6" workers="2" timeout-seconds="20"
-                language="" store="false" prompt-audio=""/>
+                language="" store="false" retention-days="30" prompt-audio=""/>
         <queue tick-seconds="5" prompt-location=""/>
         <recording enabled="false" ack-required="false" policy-revision="1" retention-days="90" queue-frames="4096"
                 segment-mb="64" segment-minutes="30" max-mb="2048" prompt-audio=""/>
@@ -296,7 +314,7 @@
             request-pool-max="16" request-queue="64"
             empty-db-load="seed,seed-initial,install"
             on-start-load-types="none" on-start-load-components=""
-            database-audit-days="90">
+            database-audit-days="90" external-database-private-network="false">
         <!-- Native components select linked ToolFactory implementations here.
              The cache facade is built in; Java H2/JCR/SMTP factories do not run in MR. -->
         <!-- The framework's own: vCard parse and write, iCalendar parse, write and RRULE expansion (moqui_core::pim) -->
@@ -373,7 +391,8 @@
 
         <!-- this is a count of all artifact hits, expire once idle for over 15 minutes -->
         <cache name="artifact.tarpit.hits" expire-time-idle="900" max-elements="10000" value-type="ArrayList"/>
-        <!-- type=distributed shares replay keys when a real distributed factory is configured; default factory is local MCache. -->
+        <!-- Its live time bounds a chat bridge webhook's replay window and how long its key is held; the replay keys of
+            signed requests are kept in moqui.security.SignatureReplay, which every cluster member sees (SEC-DAT-90). -->
         <cache name="moqui.security.hmac.replay" type="distributed" expire-time-live="300" max-elements="10000" value-type="Boolean"/>
         <!-- TURN credentials handed to XMPP apps (XmppServices.get#IceServers), counted by user and hour -->
         <cache name="moqui.xmpp.turn.issued" type="distributed" expire-time-live="3600" max-elements="10000" value-type="Long"/>
@@ -407,6 +426,9 @@
         <operations record="default" max-names="500">
             <operation service="org\.moqui\..*" record="false"/>
         </operations>
+        <!-- Browser telemetry (off unless enabled): replay-user-bytes-per-hour holds the replay bytes one user sends an
+             hour, whatever replay ids the page picks. -->
+        <browser replay-user-bytes-per-hour="52428800"/>
     </telemetry>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
          spans are written inside a trace, so a scheduler poll or a data load writes none; so are transaction spans
@@ -469,6 +491,8 @@
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
+                socket-room-clients="4" socket-awareness-bytes="4096" socket-joins-per-minute="60"
+                socket-user-joins-per-minute="240"
             app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
@@ -718,10 +742,13 @@
         for the rest of the outermost script run, made once; false makes it again at each load. drive-root: the location
         under which a new personal drive (personal/userId) and a new shared folder drive (shared/driveId) are made
         (FileServices ensure#PersonalDrive, create#Drive); a setting, not a user's preference, so a user does not choose
-        where their drive is. -->
+        where their drive is. sftp-max-read: the largest file the SFTP client (SftpClient getText and getBinary, the
+        SystemMessage poll) reads from a remote server, in bytes; a larger one is refused, not read whole (0 or empty is
+        the default, 64 MiB; there is no setting for no limit). -->
     <resource-facade xml-actions-template-location="component://framework/template/XmlActions.groovy.ftl"
             blob-chunk-size="1048576" blob-gc-prune-days="14" dbresource-blob-threshold="65536"
-            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive">
+            image-max-concurrent="2" script-timeout="" script-module-cache="true" drive-root="dbresource://drive"
+            collab-max-state-bytes="8388608" sftp-max-read="67108864">
         <!-- A drive's share links (FileServices download#PublicShare and upload#PublicShare; SEC-BOS-83, SEC-FIL-06), per
             link and per requester, the counts in a window (ten minutes for a folder's zip, an hour for uploads):
             folder-zip-max-bytes and folder-zip-max-files: the most a folder's zip holds; a larger folder is refused, not
@@ -881,7 +908,9 @@
         embedded cluster when the entity database is not Postgres) or opensearch (the cluster below). With no postgres
         element the postgres backend uses the search schema of the entity Postgres; a postgres element with a url points
         it at another Postgres. -->
-    <search-facade backend="postgres">
+    <!-- query-timeout-seconds: how long one search statement may run outside a report's own budget; query-max-clauses:
+        the most terms a query string may hold. -->
+    <search-facade backend="postgres" query-timeout-seconds="10" query-max-clauses="64">
         <!-- The OpenSearch (or ElasticSearch 7+) cluster of the opensearch backend, and of the SearchProxy servlet.
             run: on the opensearch backend, when the url is this host and nothing answers there, start the install in
             runtime/opensearch (unless it has a pid file, a node run outside the server) and stop it on shutdown; false
@@ -1093,7 +1122,9 @@
         git clone URLs show; the webroot webapp's http-host and port when empty. sftp-root: the resource location SFTP serves
         (runtime, file, component or dbresource); sftp-max-file: the largest file it takes, in bytes. max-sessions: the
         most connections at once, max-sessions-per-user of them for one user logged in by key or password and
-        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. A server that takes git from
+        max-sessions-per-source for one address (an IPv6 /64); 0 is no share of either. Of them, connections let in for
+        the login dialog with no user hold at most max-dialog-sessions, max-dialog-sessions-per-source from one address
+        (0 is no share), so they never fill the sessions a key or password login needs. A server that takes git from
         the public (git-any-account) raises max-sessions, and max-sessions-per-source where many users share an
         address. git-password-auth: git over SSH (SSH_GIT) on a connection that logged in by
         password; by key only when false. git-any-account: git over SSH for any account that logs in by key, without
@@ -1104,8 +1135,8 @@
     -->
     <ssh-server enabled="true" port="" host="127.0.0.1" host-key="CHANGEME" public-host=""
             public-port="" sftp-root="runtime://sftp" sftp-max-file="268435456" max-sessions="8"
-            max-sessions-per-user="4" max-sessions-per-source="8"
-            git-password-auth="false" git-any-account="false" login-dialog="true"/>
+            max-sessions-per-user="4" max-sessions-per-source="4" max-dialog-sessions="4"
+            max-dialog-sessions-per-source="2" git-password-auth="false" git-any-account="false" login-dialog="true"/>
     <!-- The terminal's sessions, over SSH and in the browser together (plans/Terminal-Fancy.md §5.8): max-sessions apps and
         command sessions at once, and max-sessions-per-user of them for one user; a session in its login dialog counts toward
         the first only. A kept apps session with no window ends after detach-seconds, a command or host session after
@@ -1136,7 +1167,8 @@
         fetch-max-request-bytes of an upload-pack request, max-object-size bytes of one pushed object;
         idle-timeout seconds of silence in a request body end it. pack-threads (2 when empty) compress and index one
         pack; a pushed or fetched delta chain is at most max-delta-depth deep. Credentials over plain HTTP are refused unless allow-http. lfs-max-object-size: the largest Git LFS
-        object, at /git/<repositoryId>.git/info/lfs. eca-max-commits: the most commits one change raises gitECA commit
+        object, at /git/<repositoryId>.git/info/lfs; a repository has at most lfs-max-locks LFS locks (0: no cap), and one
+        locks or locks/verify request answers at most lfs-locks-max-page (0: 100). eca-max-commits: the most commits one change raises gitECA commit
         events for. Repository webhooks are not delivered to loopback, private or link-local addresses unless
         webhook-private-network="true". A repository has at most max-webhooks webhooks and max-mirrors push mirrors
         (0: no cap); one pass of the webhook retries or of the mirror queue starts sends for queue-pass-seconds (0: no
@@ -1197,7 +1229,8 @@
             max-concurrent="4" anonymous-max-concurrent="" max-queued="16" max-request="67108864" max-push-size="2147483648"
             fetch-max-lines="1000000" fetch-max-request-bytes="67108864"
             max-object-size="536870912" max-delta-depth="4095" idle-timeout="120" pack-threads="" allow-http="false"
-            lfs-max-object-size="5368709120" lfs-upload-check-service="" outbound-check-service="" eca-max-commits="10000"
+            lfs-max-object-size="5368709120" lfs-max-locks="1000" lfs-locks-max-page="100" lfs-upload-check-service=""
+            outbound-check-service="" eca-max-commits="10000"
             webhook-private-network="false" max-webhooks="20" max-mirrors="10" queue-pass-seconds="300" queue-pass-gap-seconds="300"
             merge-requests-max-page="100" merge-requests-max-repositories="500" blame-max-bytes="1048576" blame-max-lines="50000"
             blame-max-commits="10000" blame-max-diffs="2000" blame-max-seconds="10"
@@ -1231,13 +1264,14 @@
             max-file-bytes="262144" max-pipelines="20" max-jobs="50" max-matrix="20" max-steps="50"
             max-timeout-minutes="360" default-timeout-minutes="60" max-fetch-depth="50"
             max-log-bytes="16777216" max-log-batch-bytes="1048576" max-artifact-bytes="1073741824"
-            max-report-bytes="16777216" max-cache-bytes="2147483648" max-artifacts="100"
+            max-report-bytes="16777216" max-cache-bytes="2147483648" max-unpack-bytes="17179869184" max-artifacts="100"
             artifact-retention-days="30" max-artifact-retention-days="365" log-retention-days="90"
             cache-retention-days="30" lost-seconds="180" queue-timeout-minutes="1440"
             runner-max-requests-per-minute="1200" runner-command="moqui ci-run" start-inline="true"
             container-user="1000:1000" container-read-only-root="true" container-workdir="/workspace"
             container-tmp-mb="1024" container-workspace-mb="4096" max-services="4" schedule-min-minutes="15"
-            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="0" max-owner-upload-bytes="0"
+            pool-token-days="7" runner-token-days="90" max-repository-upload-bytes="10737418240" max-owner-upload-bytes="0"
+            max-untrusted-run-upload-bytes="1073741824"
             deploy-timeout-seconds="600" deploy-private-network="false"/>
 
     <!--
@@ -1251,9 +1285,13 @@
         internet: true takes mail from the internet (port 25 on an edge node; plans/archive/Edge-Node.md §5.4, E5b): any
         address, STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own
         (DMARC is RFC 9989's: t=y lowers the policy, and there is no pct). arc-trusted-sealers: the domains whose passing
-        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts); empty for no ARC
-        exception. rspamd-url: Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for
-        none. Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.
+        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), only when that sealer's
+        ARC-Authentication-Results records dmarc=pass for the From domain; empty for no ARC exception. rspamd-url:
+        Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached
+        fails open (logged, not spam); checks that do not finish in 45 seconds, no
+        resolver, or a DMARC DNS error where it matters (the domain's record not read, or its policy reject or
+        quarantine), answer 451, so an instance in internet mode with no DNS defers all mail unless
+        mail-delivery@dns-offline is true.
         proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
         the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
         of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none
@@ -1305,8 +1343,13 @@
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
-        items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
-        64 MiB, counted in the cap) is the item's content, sent over the link before it; the content a receiver keeps
+        items pass queue-max-megabytes the oldest fail the same way, items of other kinds before mail (newest first); past
+        queue-mail-percent of that cap an edge node's SMTP listener refuses new mail for the pairing for now (452 at
+        RCPT TO, 451 after the data), so mail it answered 250 for is not what the cap fails. A payload is at most 1 MiB;
+        a larger body (up to 64 MiB, counted in the cap) is the item's content, sent over the link before it (at most
+        content-calls such sends of one pairing at once, past which one waits uncounted, each asked of the cap before it
+        is read, and ended when its next part does not come within forward-idle-seconds or it takes over
+        content-call-seconds in all); the content a receiver keeps
         for its deliveries counts against the same cap, and on a node that takes links so do a pairing's replicated
         records against replica-max-rows: at either the pairing pauses until an administrator resumes it (SEC-CLU-02).
         A receiver's refusal
@@ -1349,14 +1392,16 @@
         (System › Edge Clients › Ports). call-legs-per-pairing: on a node that takes links, the most call legs of one
         paired node on its media node at once (200; 0 for no cap). smtp-tunnel-host: on a front node, where an EdgePort
         row of kind smtp listens (empty for every address). -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-content-files="10000" queue-max-attempts="10"
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-mail-percent="90" queue-max-content-files="10000"
+            content-calls="4" content-call-seconds="900" up-refusals="30" queue-max-attempts="10"
             queue-retry-seconds="5" replica-max-rows="1000000" link-key="CHANGEME" link-url="" offline-page=""
             ssh-tunnel-port="" ssh-tunnel-host="" smtp-tunnel-host="" xmpp-port="" xmpp-tls-port="" xmpp-host=""
             call-legs-per-pairing=""
             public-addresses="">
         <node url="" key="" pin="" id="" pairing="" calls-enabled="" sip-enabled="" pass-client=""/>
         <front-node url="" key="" pin="" id=""/>
-        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
+        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"
+                failed-service="org.moqui.mail.EmailServices.fail#EdgeMail"/>
         <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
                 failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>
         <queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/>

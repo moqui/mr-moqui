@@ -148,7 +148,22 @@ pub fn set_value(
             "{selector}: a key with no letter or digit has no environment name"
         )));
     };
+    // a secret kept goes to the seal's store, never runtime/.env (plans/Sealed-Secrets.md S4); the store answers it
+    // while the conf leaves it empty or at CHANGEME. A test's factory keeps it in .env as before.
     let env_path = factory.runtime_dir().join(".env");
+    if persist && crate::context::conf_env::attribute_secret(&target.path) && !factory.keeps_secrets_in_env() {
+        match value {
+            Some(value) => crate::seal::secrets::put(factory, &target.path.selector(), value)?,
+            None => {
+                crate::seal::secrets::remove(factory, &target.path.selector())?;
+            }
+        }
+        // a line an earlier build kept for it in .env goes
+        if env_path.is_file() {
+            env::update_dotenv_file(&env_path, &[], &[name.as_str()])?;
+        }
+        return Ok(None);
+    }
     let before = if persist {
         env::dotenv_entries()
             .into_iter()

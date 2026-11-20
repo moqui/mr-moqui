@@ -161,6 +161,7 @@ fn a_dev_instance_makes_its_seal_and_seal_closes_the_listeners_until_unseal() {
     let seal = std::fs::read_to_string(seeded.runtime.join("db/seal.json")).unwrap();
     assert!(seal.contains("\"kind\": \"dev\""), "{seal}");
     assert_eq!(status(&socket)["state"], "unsealed");
+    secrets_out_of_the_runtime(&seeded, &socket);
 
     // seal: the key leaves memory and the listener closes
     let answer = call(&socket, json!({"command": "seal"})).unwrap();
@@ -184,6 +185,75 @@ fn a_dev_instance_makes_its_seal_and_seal_closes_the_listeners_until_unseal() {
     let server = starting.join().unwrap().unwrap();
     assert!(serves(http));
     drop(server);
+}
+
+/// S4 (plans/Sealed-Secrets.md §4): a new runtime's `.env` and runtime directory hold no secret, the cluster's password
+/// is in `seal.json` (the template's `pgpass` moved there), and `moqui operator secret put|list|rm` keeps a secret it
+/// never prints.
+fn secrets_out_of_the_runtime(seeded: &Seeded, socket: &Path) {
+    use moqui_core::seal::secrets;
+    let env = std::fs::read_to_string(seeded.runtime.join(".env")).unwrap_or_default();
+    for (name, _) in moqui_lib::env::parse_dotenv(&env) {
+        assert!(
+            !moqui_core::context::conf_env::env_name_secret(&name),
+            "{name} is in .env"
+        );
+    }
+    assert!(
+        !seeded.cluster_dir.join("pgpass").exists(),
+        "the cluster's password left pgpass"
+    );
+    assert!(!seeded.runtime.join("db/edge_member_key").exists());
+    let keeper = moqui_core::seal::keeper_of(&seeded.runtime).unwrap();
+    let mut values: Vec<String> = [secrets::CRYPT_PASS, secrets::DATASOURCE_PASSWORD]
+        .iter()
+        .map(|name| {
+            let value = keeper.bootstrap_secret(name).unwrap().expect(name);
+            String::from_utf8(value.to_vec()).unwrap()
+        })
+        .collect();
+    // the session cookie key, made into SecretValue by the first request
+    let cookie_key = secrets::named(moqui_core::user::session::COOKIE_KEY).expect("the cookie key is kept");
+    values.push(cookie_key.to_string());
+    let mut stack = vec![seeded.runtime.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let kind = entry.file_type().unwrap();
+            if kind.is_dir() {
+                stack.push(entry.path());
+            } else if kind.is_file() {
+                let bytes = std::fs::read(entry.path()).unwrap_or_default();
+                for value in &values {
+                    assert!(
+                        !bytes.windows(value.len()).any(|window| window == value.as_bytes()),
+                        "{} holds a secret",
+                        entry.path().display()
+                    );
+                }
+            }
+        }
+    }
+
+    let put = call(
+        socket,
+        json!({"command": "secret-put", "name": "ops-relay-token", "value": "the-relay-token-value"}),
+    )
+    .unwrap();
+    assert_eq!(put["name"], "ops-relay-token");
+    let listed = call(socket, json!({"command": "secret-list"})).unwrap();
+    let text = listed.to_string();
+    assert!(
+        text.contains("\"ops-relay-token\"") && text.contains("\"bootstrap\""),
+        "{text}"
+    );
+    assert!(!text.contains("the-relay-token-value"));
+    assert_eq!(
+        secrets::named("ops-relay-token").unwrap().as_str(),
+        "the-relay-token-value"
+    );
+    let removed = call(socket, json!({"command": "secret-rm", "name": "ops-relay-token"})).unwrap();
+    assert_eq!(removed["removed"], true);
+    assert!(secrets::named("ops-relay-token").is_none());
 }
 
 /// The texts of an answer's shares.

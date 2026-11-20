@@ -218,6 +218,23 @@ feature("a known number, a trusted number and a room we replied in are not judge
     }
 })
 
+feature("chat search leaves out a room the user has in Spam unless the Spam view asks", {
+    when() {
+        const found = (userId, extra) => Array.from(as(userId, "org.moqui.chat.ChatServices.search#ChatEvents",
+            Object.assign({searchText: "Look"}, extra || {})).eventList || []).map((item) => item.chatRoomId)
+        return {
+            known: roomOf(N(2)), trusted: roomOf(N(3)),
+            owner: found(OWNER), ownerSpam: found(OWNER, {includeFiltered: true}), mate: found(MATE)
+        }
+    },
+    then({known, trusted, owner, ownerSpam, mate}) {
+        owner.includes(known)
+        !owner.includes(trusted)
+        ownerSpam.includes(trusted)
+        mate.includes(trusted)
+    }
+})
+
 feature("Not spam brings the room back for everyone and the number is trusted; Report spam blocks it for the reporter", {
     when() {
         const room = roomOf(N(1))

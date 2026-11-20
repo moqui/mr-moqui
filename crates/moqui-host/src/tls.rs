@@ -32,6 +32,11 @@
 //!
 //! In dev (`moqui_conf__instance__purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
 //!
+//! A key need not be a file (plans/Sealed-Secrets.md §3.1, S4): a certificate whose key file is not there is served
+//! with a key held in memory, an ACME certificate's from its encrypted row ([`hold_key`]) or one an operator put with
+//! `moqui operator secret put tls-key/<name>`; the development certificate's key is put there too. A key file that is
+//! there still serves, and is named once in a warning: it is a usable key on disk.
+//!
 //! The SMTP listener looks up the name the gateway asks for, then its own `smtp-server` `hostname` (a gateway that
 //! connects by address sends no name), then `default`; or it serves the files `tls-cert-file` and `tls-key-file` name,
 //! read again when they change.
@@ -39,10 +44,10 @@
 // A host built with inbound-smtp but not axum has STARTTLS and no HTTPS listener.
 #![cfg_attr(not(feature = "axum"), allow(dead_code))]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, RwLock, TryLockError};
+use std::sync::{Arc, LazyLock, Mutex, RwLock, TryLockError};
 use std::time::{Duration, Instant, SystemTime};
 
 use base64::engine::general_purpose::STANDARD;
@@ -54,6 +59,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
+use sha2::Digest as _;
 
 const DEFAULT_PORT: u16 = 8443;
 /// What sets the port this process listens on, for its messages: the webroot webapp's `https-listen-port`. Its
@@ -185,8 +191,11 @@ struct Index {
 
 struct Pair {
     cert: PathBuf,
+    /// The key file; empty for a key held in memory.
     key: PathBuf,
     stamp: Stamp,
+    /// SHA-256 of a key held in memory, to notice a new one.
+    held: Option<[u8; 32]>,
     /// `None` when the files have never loaded.
     loaded: Option<Arc<CertifiedKey>>,
 }
@@ -389,7 +398,7 @@ struct Loaded {
 impl FilePair {
     fn new(cert: PathBuf, key: PathBuf) -> Result<Self, Error> {
         let stamp = [stamp(&cert), stamp(&key)];
-        let loaded = read_certified_key(&cert, &key)?;
+        let loaded = read_certified_key(&cert, &KeyFrom::File(key.clone()))?;
         Ok(Self {
             cert,
             key,
@@ -414,7 +423,7 @@ impl FilePair {
             let stamp = [stamp(&self.cert), stamp(&self.key)];
             if stamp != loaded.stamp {
                 loaded.stamp = stamp;
-                match read_certified_key(&self.cert, &self.key) {
+                match read_certified_key(&self.cert, &KeyFrom::File(self.key.clone())) {
                     Ok(key) => {
                         tracing::info!(
                             "The SMTP listener serves the changed certificate {}",
@@ -466,15 +475,26 @@ fn candidates(server_name: Option<&str>) -> Vec<String> {
 fn scan(dir: &Path, previous: Option<&Index>) -> Index {
     let mut pairs = HashMap::new();
     for name in pair_names(dir) {
-        let Some((cert, key)) = find_files(dir, &name) else {
+        let Some((cert, from)) = find_pair(dir, &name) else {
             continue;
+        };
+        let (key, held) = match &from {
+            KeyFrom::File(key) => {
+                warn_key_file(key, &name);
+                (key.clone(), None)
+            }
+            KeyFrom::Held(pem) => (PathBuf::new(), Some(sha2::Sha256::digest(pem.as_bytes()).into())),
         };
         let stamp = [stamp(&cert), stamp(&key)];
         let name = name.to_ascii_lowercase();
         let before = previous.and_then(|index| index.pairs.get(&name));
         let loaded = match before {
-            Some(before) if before.stamp == stamp && before.cert == cert && before.key == key => before.loaded.clone(),
-            _ => match read_certified_key(&cert, &key) {
+            Some(before)
+                if before.stamp == stamp && before.cert == cert && before.key == key && before.held == held =>
+            {
+                before.loaded.clone()
+            }
+            _ => match read_certified_key(&cert, &from) {
                 Ok(loaded) => Some(Arc::new(loaded)),
                 Err(err) => {
                     let kept = before.and_then(|before| before.loaded.clone());
@@ -494,6 +514,7 @@ fn scan(dir: &Path, previous: Option<&Index>) -> Index {
                 cert,
                 key,
                 stamp,
+                held,
                 loaded,
             },
         );
@@ -509,7 +530,7 @@ fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
     Some((metadata.modified().ok()?, metadata.len()))
 }
 
-/// The names in `dir` that may have a pair: each `<name>.key`, `<name>-key.pem` and subdirectory.
+/// The names in `dir` that may have a pair: each `<name>.key`, `<name>-key.pem`, certificate file and subdirectory.
 fn pair_names(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -523,9 +544,110 @@ fn pair_names(dir: &Path) -> Vec<String> {
             }
             file.strip_suffix(".key")
                 .or_else(|| file.strip_suffix("-key.pem"))
+                .or_else(|| {
+                    CERT_EXTENSIONS
+                        .iter()
+                        .find_map(|extension| file.strip_suffix(&format!(".{extension}")))
+                })
                 .map(str::to_string)
         })
+        .collect::<HashSet<String>>()
+        .into_iter()
         .collect()
+}
+
+/// The private keys held in memory by certificate directory and lower-case name: an ACME certificate's, from its
+/// encrypted row, which is never written to the directory.
+static HELD: LazyLock<RwLock<HeldKeys>> = LazyLock::new(RwLock::default);
+
+/// The held keys' PEMs by directory and name.
+type HeldKeys = HashMap<(PathBuf, String), zeroize::Zeroizing<String>>;
+
+/// The slot of `dir`'s pair `name` in [`HELD`]: the directory as the file system resolves it (one spelling may go through
+/// a link, as `/var` does on macOS), the name in lower case.
+fn held_slot(dir: &Path, name: &str) -> (PathBuf, String) {
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    (dir, name.to_ascii_lowercase())
+}
+
+/// Drop every key held in memory: the seal drops the keys (plans/Sealed-Secrets.md §3.5); the next unsealed start's
+/// ACME sync holds them again from their rows.
+pub(crate) fn drop_held_keys() {
+    sync::write(&HELD).clear();
+}
+
+/// Hold `key_pem` as the key of `dir`'s pair `name` (whose certificate is a file there), or with `None` drop it.
+pub(crate) fn hold_key(dir: &Path, name: &str, key_pem: Option<&str>) {
+    let slot = held_slot(dir, name);
+    match key_pem {
+        Some(pem) => {
+            sync::write(&HELD).insert(slot, zeroize::Zeroizing::new(pem.to_string()));
+        }
+        None => {
+            sync::write(&HELD).remove(&slot);
+        }
+    }
+}
+
+/// The key of `dir`'s pair `name` that is not a file: held ([`hold_key`]), else the secret `tls-key/<name>` an operator
+/// put.
+fn held_key(dir: &Path, name: &str) -> Option<zeroize::Zeroizing<String>> {
+    let slot = held_slot(dir, name);
+    if let Some(held) = sync::read(&HELD).get(&slot) {
+        return Some(held.clone());
+    }
+    moqui_core::seal::secrets::named(&format!("{}{name}", moqui_core::seal::secrets::TLS_KEY_PREFIX))
+}
+
+/// Where a pair's key is.
+pub(crate) enum KeyFrom {
+    File(PathBuf),
+    Held(zeroize::Zeroizing<String>),
+}
+
+impl KeyFrom {
+    /// The key's PEM.
+    pub(crate) fn read(&self) -> Result<zeroize::Zeroizing<Vec<u8>>, Error> {
+        match self {
+            Self::File(key) => std::fs::read(key)
+                .map(zeroize::Zeroizing::new)
+                .map_err(|err| Error::new(format!("could not read {}: {err}", key.display()))),
+            Self::Held(pem) => Ok(zeroize::Zeroizing::new(pem.as_bytes().to_vec())),
+        }
+    }
+}
+
+/// The certificate and key of `name` in `dir`: a pair of files in any layout ([`find_files`]), else a certificate file
+/// whose key is held in memory ([`held_key`]).
+pub(crate) fn find_pair(dir: &Path, name: &str) -> Option<(PathBuf, KeyFrom)> {
+    if let Some((cert, key)) = find_files(dir, name) {
+        return Some((cert, KeyFrom::File(key)));
+    }
+    let sub = dir.join(name);
+    let cert = ["fullchain.pem", "cert.pem"]
+        .iter()
+        .map(|file| sub.join(file))
+        .chain(
+            CERT_EXTENSIONS
+                .iter()
+                .map(|extension| dir.join(format!("{name}.{extension}"))),
+        )
+        .find(|path| path.is_file())?;
+    Some((cert, KeyFrom::Held(held_key(dir, name)?)))
+}
+
+/// Name a key file once in a warning: a usable key on disk, which `operator secret put` takes in its place.
+fn warn_key_file(key: &Path, name: &str) {
+    static WARNED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Mutex::default);
+    if sync::lock(&WARNED).insert(key.to_path_buf()) {
+        tracing::warn!(
+            "TLS key file {} is a usable key on disk: put it with `moqui operator secret put {}{name} --file {}` and \
+             remove the file (plans/Sealed-Secrets.md S4)",
+            key.display(),
+            moqui_core::seal::secrets::TLS_KEY_PREFIX,
+            key.display()
+        );
+    }
 }
 
 /// The certificate and key files for `name`, in any of the layouts.
@@ -558,7 +680,7 @@ pub(crate) fn find_files(dir: &Path, name: &str) -> Option<(PathBuf, PathBuf)> {
     None
 }
 
-fn read_certified_key(cert: &Path, key: &Path) -> Result<CertifiedKey, Error> {
+fn read_certified_key(cert: &Path, key: &KeyFrom) -> Result<CertifiedKey, Error> {
     let cert_bytes =
         std::fs::read(cert).map_err(|err| Error::new(format!("could not read {}: {err}", cert.display())))?;
     let chain = CertificateDer::pem_slice_iter(&cert_bytes)
@@ -567,9 +689,13 @@ fn read_certified_key(cert: &Path, key: &Path) -> Result<CertifiedKey, Error> {
     if chain.is_empty() {
         return Err(Error::new(format!("{} has no PEM certificate", cert.display())));
     }
-    let key_bytes = std::fs::read(key).map_err(|err| Error::new(format!("could not read {}: {err}", key.display())))?;
-    let der = PrivateKeyDer::from_pem_slice(&key_bytes)
-        .map_err(|err| Error::new(format!("{} has no usable PEM private key: {err}", key.display())))?;
+    let key_bytes = key.read()?;
+    let der = PrivateKeyDer::from_pem_slice(&key_bytes).map_err(|err| {
+        Error::new(format!(
+            "the key of {} has no usable PEM private key: {err}",
+            cert.display()
+        ))
+    })?;
     CertifiedKey::from_der(chain, der, &aws_lc_rs::default_provider())
         .map_err(|err| Error::new(format!("{} does not match its key: {err}", cert.display())))
 }
@@ -579,7 +705,7 @@ fn read_certified_key(cert: &Path, key: &Path) -> Result<CertifiedKey, Error> {
 pub(crate) fn certificate_expiries(dir: &Path) -> Vec<moqui_core::context::resources::Certificate> {
     let mut found = Vec::new();
     for name in pair_names(dir) {
-        let Some((cert, _)) = find_files(dir, &name) else {
+        let Some((cert, _)) = find_pair(dir, &name) else {
             continue;
         };
         let Ok(bytes) = std::fs::read(&cert) else {
@@ -610,10 +736,14 @@ pub(crate) struct Served {
 #[cfg(feature = "axum")]
 pub(crate) fn served_for(dir: &Path, name: &str) -> Option<Served> {
     candidates(Some(name)).into_iter().find_map(|pair| {
-        let (cert, key) = find_files(dir, &pair)?;
-        let (leaf, problem) = match read_certified_key(&cert, &key) {
+        let (cert, from) = find_pair(dir, &pair)?;
+        let (leaf, problem) = match read_certified_key(&cert, &from) {
             Ok(loaded) => (loaded.cert.first().cloned(), None),
             Err(err) => (None, Some(err.to_string())),
+        };
+        let key = match from {
+            KeyFrom::File(key) => key,
+            KeyFrom::Held(_) => PathBuf::new(),
         };
         Some(Served {
             pair,
@@ -630,7 +760,7 @@ pub(crate) fn served_for(dir: &Path, name: &str) -> Option<Served> {
 pub(crate) fn pairs_in(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = pair_names(dir)
         .into_iter()
-        .filter(|name| find_files(dir, name).is_some())
+        .filter(|name| find_pair(dir, name).is_some())
         .collect();
     names.sort();
     names.dedup();
@@ -639,7 +769,7 @@ pub(crate) fn pairs_in(dir: &Path) -> Vec<String> {
 
 /// Whether the directory holds a certificate and key pair in any layout.
 fn has_any_pair(dir: &Path) -> bool {
-    pair_names(dir).iter().any(|name| find_files(dir, name).is_some())
+    pair_names(dir).iter().any(|name| find_pair(dir, name).is_some())
 }
 
 /// The leaf certificate a handshake asking `dir`'s certificates for `name` is served, as the edge link's XMPP probe
@@ -659,7 +789,7 @@ pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
         return Ok(());
     }
     let fail = |what: &str, err: &dyn std::fmt::Display| Error::new(format!("{what}: {err}"));
-    std::fs::create_dir_all(dir).map_err(|err| fail("could not create the cert directory", &err))?;
+    moqui_lib::private_fs::create_dir_all(dir).map_err(|err| fail("could not create the cert directory", &err))?;
     let key = rcgen::KeyPair::generate().map_err(|err| fail("could not generate a key", &err))?;
     let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
         .map_err(|err| fail("could not set up the certificate", &err))?;
@@ -674,11 +804,16 @@ pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
         .self_signed(&key)
         .map_err(|err| fail("could not sign the certificate", &err))?;
     let cert_pem = pem("CERTIFICATE", cert.der());
-    let key_pem = pem("PRIVATE KEY", &key.serialize_der());
+    let key_pem = zeroize::Zeroizing::new(pem("PRIVATE KEY", &key.serialize_der()));
     for stem in ["localhost", "default"] {
+        // the key in the seal's store when the server has one (plans/Sealed-Secrets.md S4), else a file beside it
+        let name = format!("{}{stem}", moqui_core::seal::secrets::TLS_KEY_PREFIX);
+        if let Err(err) = moqui_core::seal::secrets::put_named(&name, &key_pem) {
+            tracing::debug!("The development key is written as a file: {err}");
+            write_private(&dir.join(format!("{stem}.key")), &key_pem)?;
+        }
         std::fs::write(dir.join(format!("{stem}.crt")), &cert_pem)
             .map_err(|err| fail("could not write the certificate", &err))?;
-        write_private(&dir.join(format!("{stem}.key")), &key_pem)?;
     }
     tracing::info!(
         "Generated a self-signed development certificate for localhost in {}",
@@ -687,25 +822,22 @@ pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Write a private key to `path` as a new file of mode `0600` (`moqui_lib::private_fs`). A file or a symbolic link
+/// already there (a staging file a stopped write left, or one planted) is removed first, never written into: the
+/// mode applies only to a file the open creates, and `create_new` does not follow a link (SEC-OUT-85).
 pub(crate) fn write_private(path: &Path, text: &str) -> Result<(), Error> {
-    #[cfg(unix)]
-    {
-        use std::io::Write as _;
-        use std::os::unix::fs::OpenOptionsExt as _;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|err| Error::new(format!("could not write {}: {err}", path.display())))?;
-        file.write_all(text.as_bytes())
-            .map_err(|err| Error::new(format!("could not write {}: {err}", path.display())))
+    use std::io::Write as _;
+    let fail = |err: std::io::Error| Error::new(format!("could not write {}: {err}", path.display()));
+    match std::fs::remove_file(path) {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(fail(err)),
+        _ => {}
     }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, text).map_err(|err| Error::new(format!("could not write {}: {err}", path.display())))
-    }
+    let mut file = moqui_lib::private_fs::file_options()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(fail)?;
+    file.write_all(text.as_bytes()).map_err(fail)
 }
 
 pub(crate) fn pem(label: &str, der: &[u8]) -> String {

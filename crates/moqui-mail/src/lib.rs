@@ -118,6 +118,7 @@ fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), Strin
     rust_service!(map, deliver_edge_outbound_mail)?;
     rust_service!(map, note_edge_mail_status)?;
     rust_service!(map, fail_edge_outbound_mail)?;
+    rust_service!(map, fail_edge_mail)?;
     rust_service!(map, check_edge_dns)?;
     #[cfg(feature = "imap")]
     {
@@ -208,6 +209,7 @@ mail_service!(test_server, implementation::test_server);
 mail_service!(deliver_edge_outbound_mail, edge_mail::deliver_edge_outbound_mail);
 mail_service!(note_edge_mail_status, edge_mail::note_edge_mail_status);
 mail_service!(fail_edge_outbound_mail, edge_mail::fail_edge_outbound_mail);
+mail_service!(fail_edge_mail, edge_mail::fail_edge_mail);
 #[cfg(feature = "imap")]
 mail_service!(deliver_edge_mail, edge_mail::deliver_edge_mail);
 #[cfg(feature = "imap")]

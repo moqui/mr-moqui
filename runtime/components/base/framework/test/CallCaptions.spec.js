@@ -204,6 +204,34 @@ feature("someone in the call turns captions on and someone else turns them off",
     }
 })
 
+feature("a kept caption goes after calls/captions@retention-days, and a recording's transcript stays", {
+    when() {
+        const transcript = (fields) => sys(() => {
+            const row = ec.entity.makeValue("moqui.call.CallTranscript")
+            row.setFields(Object.assign({callSessionId: theCall.callSessionId, statusId: "CtsDone"}, fields), true, null, null)
+            row.setSequencedIdPrimary()
+            row.create()
+            return row.callTranscriptId
+        })
+        const old = new Date(Date.now() - 31 * 86400000)
+        const ids = {
+            oldCaption: transcript({text: "old caption", createdDate: old}),
+            newCaption: transcript({text: "new caption", createdDate: new Date()}),
+            recording: transcript({text: "a recording's", callRecordingId: "CAPTIONS_SPEC_REC", createdDate: old}),
+        }
+        sys(() => ec.service.sync().name("org.moqui.call.CallRecordingServices.expire#Recordings").call())
+        const kept = sys(() => Array.from(ec.entity.find("moqui.call.CallTranscript")
+            .condition("callTranscriptId", "in", Object.values(ids)).list()).map(r => r.callTranscriptId))
+        sys(() => ec.entity.find("moqui.call.CallTranscript").condition("callTranscriptId", "in", Object.values(ids)).deleteAll())
+        return {ids, kept}
+    },
+    then({ids, kept}) {
+        !kept.includes(ids.oldCaption)
+        kept.includes(ids.newCaption)
+        kept.includes(ids.recording)
+    }
+})
+
 feature("transcribe#Audio answers a reason, not a failure, when there is no audio", {
     when() {
         return sys(() => ec.service.sync().name("org.moqui.call.SpeechServices.transcribe#Audio")

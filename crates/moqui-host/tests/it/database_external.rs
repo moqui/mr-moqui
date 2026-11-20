@@ -132,6 +132,22 @@ fn field(item: &Value, key: &str) -> Value {
     }
 }
 
+/// Sets a process property and clears it when dropped, a panic included.
+struct Cleared(String);
+
+impl Cleared {
+    fn set(name: &str, value: &str) -> Self {
+        moqui_lib::env::set_property(name, value);
+        Self(name.to_string())
+    }
+}
+
+impl Drop for Cleared {
+    fn drop(&mut self) {
+        moqui_lib::env::clear_property(&self.0);
+    }
+}
+
 /// Sets `instance@purpose` and puts the old one back when dropped, a panic included.
 struct Purpose(String);
 
@@ -228,6 +244,21 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     login("john.doe");
     // the gate's server is production-purpose; external databases are a dev or test instance's
     let purpose = Purpose::set("test");
+    // SEC-TLS-101: a loopback or private address is refused unless the conf allows the private network
+    store("EXTLOOP", "127.0.0.1", 5432, Some("x"), true).unwrap();
+    let probed = call("test#DatabaseConnection", &[("connectionId", Value::string("EXTLOOP"))]).unwrap();
+    assert_eq!(probed.get("connected"), Some(&Value::Bool(false)), "{probed:?}");
+    let refused = moqui_tools::ext::open(&facade, "EXTLOOP")
+        .err()
+        .expect("a loopback address is refused");
+    assert!(
+        refused.message().contains("external-database-private-network"),
+        "{refused}"
+    );
+    let _private_network = Cleared::set(
+        &moqui_core::context::conf_env::env_name_of("tools@external-database-private-network"),
+        "true",
+    );
 
     // a second database of the embedded cluster with a row, reached over TCP through a relay to its socket
     let data = std::fs::canonicalize(gate.cluster_dir.join("data")).unwrap();
@@ -306,6 +337,28 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     assert_eq!(reset, "This connection is read only");
     let schema = call("compare#Schema", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
     assert!(schema.contains("not offered on an external database"), "{schema}");
+    // SEC-TLS-101: a row stored with no forget here (a store on another cluster member) is not served from the old
+    // pool: its new readOnly holds at the next use, two stores within one millisecond included (the revision)
+    {
+        let store_on_another_member = |read_only: &str| {
+            let _authz = context.disable_authz();
+            let mut row = facade
+                .find("moqui.database.DatabaseConnection")
+                .unwrap()
+                .eq("connectionId", Value::string("EXTSPEC"))
+                .one()
+                .unwrap()
+                .unwrap();
+            let revision = row.get("revision").map(to_plain_string).unwrap_or_default();
+            row.set("readOnly", Value::string(read_only));
+            row.set("revision", Value::I64(revision.parse::<i64>().unwrap_or(0) + 1));
+            row.update(&facade).unwrap();
+        };
+        store_on_another_member("N");
+        assert!(!moqui_tools::ext::open(&facade, "EXTSPEC").unwrap().read_only);
+        store_on_another_member("Y");
+        assert!(moqui_tools::ext::open(&facade, "EXTSPEC").unwrap().read_only);
+    }
 
     // a read-write connection lets a confirmed change through
     store("EXTRW", "127.0.0.1", port, Some(&password), false).unwrap();
@@ -335,6 +388,14 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
         .unwrap();
     drop(authz_off);
     assert!(audited.len() >= 2, "{}", audited.len());
+    // SEC-TLS-102: the stores and the test of the connection are audited too
+    assert!(audited.iter().any(
+        |row| row.get("actionEnumId").map(to_plain_string).as_deref() == Some("DbaConnection")
+            && row
+                .get("detailJson")
+                .map(to_plain_string)
+                .is_some_and(|detail| detail.contains("\"op\":\"test\""))
+    ));
     let list = call("get#DatabaseList", &[]).unwrap();
     assert!(rows(&list, "databases")
         .iter()
@@ -446,6 +507,49 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     assert!(used.is_ok(), "{used:?}");
     assert!(updated.unwrap_err().contains("another user's"));
     assert!(deleted.unwrap_err().contains("another user's"));
+    // SEC-TLS-102: the refusals are audited, and an entity source's page read too
+    let entity_read = call(
+        "get#DataGridRows",
+        &[
+            (
+                "source",
+                Value::Map(
+                    [
+                        ("type".to_string(), Value::string("entity")),
+                        ("entityName".to_string(), Value::string("moqui.basic.Enumeration")),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+            ),
+            ("page", Value::I64(1)),
+            ("size", Value::I64(5)),
+        ],
+    );
+    assert!(entity_read.is_ok(), "{entity_read:?}");
+    {
+        let _authz = context.disable_authz();
+        let audited = |user: &str, action: &str| {
+            facade
+                .find("moqui.database.DatabaseAudit")
+                .unwrap()
+                .eq("userId", Value::string(user))
+                .eq("actionEnumId", Value::string(action))
+                .list()
+                .unwrap()
+                .iter()
+                .map(|row| row.get("detailJson").map(to_plain_string).unwrap_or_default())
+                .collect::<Vec<_>>()
+        };
+        let refused = audited("EXT_OTHER", "DbaConnection");
+        assert!(
+            refused.iter().filter(|detail| detail.contains("not the owner")).count() >= 2,
+            "{refused:?}"
+        );
+        assert!(audited("EX_JOHN_DOE", "DbaGridRead")
+            .iter()
+            .any(|detail| detail.contains("moqui.basic.Enumeration")));
+    }
     assert_eq!(plain, "Not available");
     assert_eq!(plain_list, "Not available");
 

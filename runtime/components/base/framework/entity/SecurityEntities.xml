@@ -419,6 +419,17 @@ along with this software (see the LICENSE.md file). If not, see
         <alias name="permissionThruDate" entity-alias="UGP" field="thruDate"/>
     </view-entity>
 
+    <entity entity-name="SignatureReplay" package="moqui.security" use="transactional" cache="never">
+        <description>The replay keys of signed requests (a system message's HMAC, a chat bridge webhook's signature),
+            seen by every cluster member: a key is taken by the insert of its hash (service/replay_store.rs,
+            SEC-DAT-90). Only that code writes the rows.</description>
+        <field name="replayHash" type="id" is-pk="true"><description>The SHA-256 of the key, its first 40 hex
+            digits.</description></field>
+        <field name="expireStamp" type="number-integer"><description>When the key may be taken again, in
+            milliseconds since the epoch.</description></field>
+        <field name="worked" type="text-indicator"><description>Y once its request was worked.</description></field>
+    </entity>
+
     <entity entity-name="UserLoginKey" package="moqui.security" use="transactional" cache="never">
         <description>A login key is an alternate way to authenticate a user, generally issued for temporary use sort of
             like a session.</description>
@@ -722,6 +733,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="alertNoAutoHide" type="text-indicator"/>
         <field name="persistOnSend" type="text-indicator"/>
         <field name="isPrivate" type="text-indicator"><description>If Y user must be associated to see it or receive notifications.</description></field>
+        <field name="reportAlertTopic" type="text-indicator"><description>Y for a topic an alert rule's notification contact
+            and a business rule's audience may post under (moqui-report alert.rs is_alert_topic, asked at save and at each
+            send): the framework's ReportAlert, and an app's own alert topic by its data. Another topic's subscribers would
+            take an alert for that topic's own message.</description></field>
         <field name="receiveNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.receiveNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailNotifications" type="text-indicator"><description>For each User if there is no NotificationTopicUser.emailNotifications value then use this as the default, this defaults to N.</description></field>
         <field name="emailTemplateId" type="id"><description>If is specified use this template to send a notification email to each user with emailNotifications=Y</description></field>
@@ -1099,6 +1114,18 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.security.sso.AuthFlow" short-alias="authFlow">
             <key-map field-name="authFlowId"/>
         </relationship>
+    </entity>
+
+    <entity entity-name="SecretValue" package="moqui.security" use="configuration" cache="never">
+        <description>A secret of this server that is not needed before the database opens (plans/Sealed-Secrets.md §3.1,
+            S4): a generated conf secret (the session cookie key, the VAPID key, the cluster TLS pair) or one an
+            operator put with `moqui operator secret put`, by name. The value is sealed with AES-256-GCM under the
+            SecretValue data key, which seal.json keeps wrapped by the root key, with "SecretValue", the name and the
+            generation as associated data: a row copied to another name or generation does not open. Opened only by the
+            server's own code (moqui_core::seal::secrets); a find gives ciphertext.</description>
+        <field name="secretName" type="text-medium" is-pk="true"/>
+        <field name="generation" type="number-integer"/>
+        <field name="sealedValue" type="text-very-long"/>
     </entity>
 
 </entities>

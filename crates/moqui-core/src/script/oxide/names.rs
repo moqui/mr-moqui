@@ -78,6 +78,7 @@ pub(super) const ENTITY_METHODS: &[&str] = &[
     "getTime",
     "getTimestamp",
     "isField",
+    "isFieldGiven",
     "isFieldModified",
     "isFieldSet",
     "isModified",

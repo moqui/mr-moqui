@@ -27,7 +27,7 @@
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use fallible_iterator::FallibleIterator;
-use moqui_core::driver::{ColumnOrigin, DbRow};
+use moqui_core::driver::{AddressGuard, ColumnOrigin, DbRow};
 use moqui_lib::error::Error;
 use postgres_protocol::authentication::sasl::{ChannelBinding, ScramSha256, SCRAM_SHA_256};
 use postgres_protocol::message::backend::{
@@ -74,6 +74,8 @@ pub(super) enum Endpoint {
         host: String,
         port: u16,
         tls: Option<Arc<rustls::ClientConfig>>,
+        /// The addresses `host` may resolve to; TLS still checks the certificate for `host`.
+        guard: AddressGuard,
     },
 }
 
@@ -253,8 +255,8 @@ impl Stream {
             Endpoint::Unix(path) => UnixStream::connect(path)
                 .map(Stream::Unix)
                 .map_err(|err| io_error(&format!("connect {}", path.display()), err)),
-            Endpoint::Tcp { host, port, tls } => {
-                let tcp = connect_tcp(host, *port, deadline)?;
+            Endpoint::Tcp { host, port, tls, guard } => {
+                let tcp = connect_tcp(host, *port, *guard, deadline)?;
                 match tls {
                     None => Ok(Stream::Tcp(tcp)),
                     Some(config) => {
@@ -394,10 +396,9 @@ fn remaining(deadline: Instant, what: &str) -> Result<Duration, Error> {
 
 /// A TCP connection to `host:port` by `deadline`, trying each address the name resolves to, with no delay and with
 /// keepalive on.
-fn connect_tcp(host: &str, port: u16, deadline: Instant) -> Result<TcpStream, Error> {
-    let addresses = (host, port)
-        .to_socket_addrs()
-        .map_err(|err| io_error(&format!("connect {host}:{port}"), err))?;
+fn connect_tcp(host: &str, port: u16, guard: AddressGuard, deadline: Instant) -> Result<TcpStream, Error> {
+    // the addresses the guard checked are the ones connected to: the name is not looked up again (SEC-TLS-101)
+    let addresses = guard.resolve(host, port)?;
     let mut last = None;
     for address in addresses {
         let left = remaining(deadline, &format!("connect {host}:{port}"))?;

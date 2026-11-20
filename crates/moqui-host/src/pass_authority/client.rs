@@ -99,6 +99,13 @@ fn request<T>(message: T, endpoint: &Endpoint) -> Result<tonic::Request<T>, Erro
     let mut request = tonic::Request::new(message);
     request.set_timeout(CALL_TIMEOUT);
     if matches!(endpoint, Endpoint::Direct { .. }) {
+        let get = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
+        secret_may_go_to(
+            endpoint,
+            &get("pass@backend-grpc-url"),
+            &get("pass@backend-url"),
+            get("pass@backend-insecure").trim() == "true",
+        )?;
         let (id, secret) = direct_client();
         if id.is_empty() || secret.is_empty() {
             return Err(Error::new(
@@ -114,6 +121,50 @@ fn request<T>(message: T, endpoint: &Endpoint) -> Result<tonic::Request<T>, Erro
         }
     }
     Ok(request)
+}
+
+/// Whether the client's secret may be sent to `endpoint` (SEC-OUT-83): only to the authority the settings name,
+/// `pass@backend-grpc-url` (`grpc_url`), or with none the host of `pass@backend-url` (`backend_url`) on the gRPC
+/// listener's default port, as mr-pass's Transport derives it; and in clear text (`grpc://`) only to this machine's
+/// loopback unless `pass@backend-insecure` is true. The endpoint is the script's, so the check is here, in the sender,
+/// not only in the script that chose it.
+pub(crate) fn secret_may_go_to(
+    endpoint: &Endpoint,
+    grpc_url: &str,
+    backend_url: &str,
+    insecure: bool,
+) -> Result<(), Error> {
+    let Endpoint::Direct { host, port, tls } = endpoint else {
+        return Ok(());
+    };
+    let configured = if grpc_url.trim().is_empty() {
+        backend_url.trim().parse::<http::Uri>().ok().and_then(|uri| {
+            let tls = match uri.scheme_str()? {
+                "https" => true,
+                "http" => false,
+                _ => return None,
+            };
+            let host = uri.host()?.trim_start_matches('[').trim_end_matches(']').to_string();
+            Some(Endpoint::Direct { host, port: 4317, tls })
+        })
+    } else {
+        parse_endpoint(grpc_url).ok()
+    };
+    let named = matches!(&configured, Some(Endpoint::Direct { host: to, port: at, tls: secure })
+        if to.eq_ignore_ascii_case(host) && at == port && secure == tls);
+    if !named {
+        return Err(Error::new(format!(
+            "the PASS client secret goes only to the authority pass@backend-grpc-url (or pass@backend-url) names, \
+             not to {host}:{port}"
+        )));
+    }
+    if !tls && !insecure && !moqui_lib::net::loopback_host(host) {
+        return Err(Error::new(format!(
+            "grpc://{host}:{port} would send the PASS client secret in clear text to another host: use grpcs://, or \
+             set pass@backend-insecure to true"
+        )));
+    }
+    Ok(())
 }
 
 /// `pass@client-id` and `pass@client-secret`.

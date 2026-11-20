@@ -347,6 +347,7 @@ impl Ssh {
                 .into_iter()
                 .collect(),
             host_key_fingerprint: fingerprint,
+            deny_internal: false,
         };
         let target = format!("{user}@{host}:{port}");
         let timeout = Self::timeout(args, env);

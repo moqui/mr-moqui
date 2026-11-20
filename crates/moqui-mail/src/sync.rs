@@ -1162,6 +1162,40 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
     report
 }
 
+/// The account's store as a failure names it: `IMAP host:port`, or `the mail server` with none.
+fn failure_place(account: &AccountInfo) -> String {
+    match &account.server {
+        Some(server) => format!(
+            "{} {}:{}",
+            server.protocol.to_ascii_uppercase(),
+            server.host,
+            server.port
+        ),
+        None => "the mail server".to_string(),
+    }
+}
+
+/// What a failed sync tells its caller and keeps in `lastSyncError`, which every member of the account reads: this
+/// server's own refusals as they are (a store with no TLS it will not sign in to, an account with no Inbox), anything
+/// the mail server answered or the network did as the kind the server test answers (`implementation::test_failure`),
+/// so a sync does not show another service's banner or map the network either (SEC-MAIL-94). The whole text is
+/// logged.
+fn shown_failure(account: &AccountInfo, text: &str) -> String {
+    let place = failure_place(account);
+    let host = account
+        .server
+        .as_ref()
+        .map(|server| server.host.as_str())
+        .unwrap_or_default();
+    let own = [
+        super::inbound::plain_refused("POP3", host, "STLS"),
+        super::inbound::plain_refused("IMAP", host, "STARTTLS"),
+        format!("Email account {} has no Inbox folder", account.id),
+    ];
+    let kind = super::implementation::test_failure("sync", &place, text, &own);
+    format!("{place}: {kind}")
+}
+
 fn record_outcome(
     facade: &EntityFacade,
     account: &AccountInfo,
@@ -1198,10 +1232,15 @@ fn record_outcome(
         }
         Err(SyncFailure::Auth(text)) => {
             tracing::error!(account = %account.id, "Email account {} sign-in failed: {text}", account.id);
+            // the server's response code, a fixed word, is kept; its text is logged only (SEC-MAIL-94)
+            let shown = match super::implementation::response_code(text) {
+                Some(code) => format!("{} refused the sign-in ({code})", failure_place(account)),
+                None => format!("{} refused the sign-in", failure_place(account)),
+            };
             report.outcome = "authFailed";
-            report.message = text.clone();
             fields.push(("statusId", Value::string("EasAuthFailed")));
-            fields.push(("lastSyncError", Value::string(clip(text, 4000))));
+            fields.push(("lastSyncError", Value::string(clip(&shown, 4000))));
+            report.message = shown;
         }
         // the token store marked the account and logged it
         Err(SyncFailure::SignIn(text)) => {
@@ -1212,12 +1251,13 @@ fn record_outcome(
         }
         Err(SyncFailure::Connect(text)) => {
             tracing::error!(account = %account.id, "Email account {} sync failed: {text}", account.id);
+            let shown = shown_failure(account, text);
             report.outcome = "failed";
-            report.message = text.clone();
             if !options.push_only {
                 fields.push(("statusId", Value::string("EasError")));
-                fields.push(("lastSyncError", Value::string(clip(text, 4000))));
+                fields.push(("lastSyncError", Value::string(clip(&shown, 4000))));
             }
+            report.message = shown;
         }
         // the account is the other session's now: nothing recorded on it
         Err(SyncFailure::Lapsed(text)) => {

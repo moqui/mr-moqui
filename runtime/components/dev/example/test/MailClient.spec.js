@@ -316,7 +316,8 @@ feature("an import, rules, the remote change queue and a sync whose server is no
         queued.length == 1
         queued[0].changeType == "flags"
         synced.outcome == "failed"
-        synced.message.includes("could not connect")
+        // the kind of failure, not the server's own text (SEC-MAIL-94)
+        synced.message.includes("the connection was refused")
         account.statusId == "EasError"
         account.syncLockedUntil == null
         due.failedCount >= 0

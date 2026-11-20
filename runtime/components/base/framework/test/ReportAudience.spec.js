@@ -1008,3 +1008,65 @@ feature("a definition is shared with a group of the saver's own, or one their ow
         afterPrivate == null
     }
 })
+
+feature("an owner-mode schedule to another user or a group needs the group delivery grant (SEC-TLS-105)", {
+    when() {
+        const grouped = as("rda.other", "create#Schedule", schedule({userGroupId: "RDA_TEAM"}))
+        const named = as("rda.other", "create#Schedule", schedule({userId: "RDA_EQUAL"}))
+        const own = as("rda.other", "create#Schedule", schedule({userId: "RDA_OTHER"}))
+        const ownId = own.out?.screenScheduledId
+        if (ownId) sys(() => {
+            for (const name of ["moqui.screen.ScreenScheduledLock", "moqui.screen.ScreenScheduled"])
+                ec.entity.find(name).condition("screenScheduledId", ownId).deleteAll()
+        })
+        return {grouped: grouped.error || "", named: named.error || "", own: own.error || "", ownId}
+    },
+    then({grouped, named, own, ownId}) {
+        grouped.includes("GROUP_DELIVERY_DENIED")
+        named.includes("GROUP_DELIVERY_DENIED")
+        own == ""
+        !!ownId
+    }
+})
+
+feature("a notification contact reaches another user, a group or another topic only as its saver may name them (SEC-TLS-106)", {
+    when() {
+        const contact = (id, body) =>
+            as("rda.other", "save#Definition", {definition: {id, type: "contactPoint", title: "Spec contact", body}})
+        const out = {
+            group: contact("rda-contact-group", {type: "notification", userGroupId: "RDA_TEAM"}).error || "",
+            user: contact("rda-contact-user", {type: "notification", userId: "RDA_EQUAL"}).error || "",
+            topic: contact("rda-contact-topic", {type: "notification", topic: "VoiceAlert"}).error || "",
+            own: contact("rda-contact-own", {type: "notification", userId: "RDA_OTHER", topic: "ReportAlert"}).error || ""
+        }
+        return out
+    },
+    then({group, user, topic, own}) {
+        group.includes("SHARE_GROUP_UNAVAILABLE")
+        user.includes("GROUP_DELIVERY_DENIED")
+        topic.includes("ALERT_TOPIC_UNAVAILABLE")
+        own == ""
+    }
+})
+
+feature("an owner-mode schedule whose owner lacks the group delivery grant sends nothing at its run (SEC-TLS-105)", {
+    when() {
+        const saved = as("rda.other", "save#Definition", {definition: {id: "rda-other-board", type: "dashboard",
+            title: "Other board", body: {panels: {}}}})
+        // a row made with the grant since taken away: written as the framework, the grant asked at its run
+        sys(() => {
+            make("moqui.screen.ScreenScheduled", {screenScheduledId: "RDA_OWNER_MODE", screenPath: "/apps/dashboards/Reports",
+                reportDefinitionId: "rda-other-board", reportOwnerId: "RDA_OTHER", paused: "N", noResultsAbort: "Y",
+                renderMode: "csv", cronExpression: "0 0 6 ? * MON", emailTemplateId: "RDA_REPORT", userId: "RDA_EQUAL"})
+            make("moqui.screen.ScreenScheduledLock", {screenScheduledId: "RDA_OWNER_MODE"})
+        })
+        capture.clear()
+        const sent = as("rda.other", "send#Report", {screenScheduledId: "RDA_OWNER_MODE"})
+        return {saved: saved.error || "", sent: sent.error || JSON.stringify(sent.out || {}), messages: capture.count()}
+    },
+    then({saved, sent, messages}) {
+        saved == ""
+        sent.includes("GROUP_DELIVERY_DENIED")
+        messages == 0
+    }
+})

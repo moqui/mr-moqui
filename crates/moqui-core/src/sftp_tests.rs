@@ -25,6 +25,8 @@ pub(crate) struct Disk {
     pub chmods: Vec<String>,
     /// The name of the thread each session closed on.
     pub closed_on: Vec<String>,
+    /// Sizes `stat` tells in place of a file's own, as a server that says a file is smaller than it is.
+    pub told_sizes: BTreeMap<String, u64>,
 }
 
 pub(crate) struct MemorySession {
@@ -86,7 +88,7 @@ impl SftpSession for MemorySession {
         } else {
             disk.files.get(path).map(|bytes| SftpAttributes {
                 kind: SftpKind::File,
-                size: Some(bytes.len() as u64),
+                size: Some(disk.told_sizes.get(path).copied().unwrap_or(bytes.len() as u64)),
                 access_time: None,
                 modified_time: None,
             })
@@ -309,6 +311,29 @@ fn the_client_keeps_the_java_behavior() {
     client.put_bytes("/in", "d.bin", &[0, 1]).unwrap();
     assert_eq!(connector.disk.lock().unwrap().chmods.len(), 3);
     assert!(client.get_text("/in/d.bin", "no-such-charset").is_err());
+    // A file larger than resource-facade sftp-max-read is refused, not read whole into memory (SEC-FIL-96).
+    connector
+        .disk
+        .lock()
+        .unwrap()
+        .files
+        .insert("/in/big.txt".to_string(), vec![b'x'; 1000]);
+    client.set_max_read(999);
+    let refused = client.get_text("/in/big.txt", "").unwrap_err();
+    assert!(
+        refused.message().contains("larger than 999 bytes"),
+        "{}",
+        refused.message()
+    );
+    assert!(client.get_binary("/in/big.txt").is_err());
+    client.set_max_read(1000);
+    assert_eq!(client.get_binary("/in/big.txt").unwrap().len(), 1000);
+    // a server that says the file is small is cut off as the file is read, chunk by chunk
+    connector.disk.lock().unwrap().files.insert("/in/grows.txt".to_string(), vec![b'x'; 600 * 1024]);
+    connector.disk.lock().unwrap().told_sizes.insert("/in/grows.txt".to_string(), 10);
+    client.set_max_read(300 * 1024);
+    let cut = client.get_binary("/in/grows.txt").unwrap_err();
+    assert!(cut.message().contains("larger than"), "{}", cut.message());
     client.close();
     assert_eq!(
         client.ls_files("/in").unwrap_err().message(),

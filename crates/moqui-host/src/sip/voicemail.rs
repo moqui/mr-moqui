@@ -581,7 +581,7 @@ pub(super) fn call_audio_job(
             let Some(node) = node.filter(|_| node_audio(&location)) else {
                 return factory.resource().location_bytes(&location);
             };
-            let kept = moqui_core::edge::media::kept_audio_location(&factory, &node, &location);
+            let kept = moqui_core::edge::media::kept_audio_location(&node, &location);
             match factory.resource().location_bytes(&kept) {
                 Ok(None) => {
                     let call = message.then_some(room.as_str());

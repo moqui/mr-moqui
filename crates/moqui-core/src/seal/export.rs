@@ -47,8 +47,11 @@ impl Keeper {
             }
             tracing::warn!("The recovery bundle of a dev seal holds the root key in the clear");
         }
+        // a member's own edge key stays with that member: a member restored from this bundle makes its own (S4)
+        let mut seal = seal.clone();
+        seal.bootstrap.remove(super::secrets::EDGE_MEMBER_KEY);
         let seal: Value =
-            serde_json::to_value(seal).map_err(|err| Error::new(format!("seal.json does not serialize: {err}")))?;
+            serde_json::to_value(&seal).map_err(|err| Error::new(format!("seal.json does not serialize: {err}")))?;
         let bundle = json!({
             "format": BUNDLE_FORMAT,
             "version": 1,
@@ -75,7 +78,9 @@ impl Keeper {
                 "not a recovery bundle (its format is not moqui-seal-bundle)",
             ));
         }
-        let seal = SealFile::parse(&bundle["seal"].to_string())?;
+        let mut seal = SealFile::parse(&bundle["seal"].to_string())?;
+        // another member's edge key, from a bundle made before it was left out: this member makes its own
+        seal.bootstrap.remove(super::secrets::EDGE_MEMBER_KEY);
         let kind = MethodKind::parse(seal.method_kind())?;
         if kind == MethodKind::Dev && self.conf().production() {
             return Err(super::dev_refused());
