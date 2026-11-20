@@ -189,6 +189,45 @@ feature("the edge node's delegate user takes calls only on its own node, and not
     }
 })
 
+// SEC-CLU-91: the delegate user reports a block or a trunk only as its own engine; its blocks are kept apart and never
+// handed to this node's own engines
+feature("the edge node's engine blocks a source for itself only, and notes a trunk only as itself", {
+    when() {
+        const AUTH = "moqui.call.VoiceAuthFailure"
+        const SOURCE = "198.51.100.91"
+        const forget = () => sys(() => ec.entity.find(AUTH).condition("sourceAddress", "in", [SOURCE, "edge:" + SOURCE]).deleteAll())
+        forget()
+        const elsewhere = as("_edge_", "org.moqui.call.VoiceServices.record#AuthFailure", {sourceAddress: SOURCE, blocked: true,
+            instanceId: OTHER_NODE})
+        const blocked = as("_edge_", "org.moqui.call.VoiceServices.record#AuthFailure", {sourceAddress: SOURCE, blocked: true,
+            instanceId: EDGE_NODE})
+        const kept = sys(() => Array.from(ec.entity.find(AUTH).condition("sourceAddress", "in", [SOURCE, "edge:" + SOURCE]).list())
+            .map((row) => row.sourceAddress))
+        const config = as(ADMIN, "org.moqui.call.VoiceServices.get#EngineConfig", {})
+        const handed = (config.blockedSourceList || []).filter((row) => String(row.sourceAddress).includes(SOURCE)).length
+        forget()
+        const status = () => sys(() => ec.entity.find("moqui.call.VoiceTrunk").condition("voiceTrunkId", trunkId).one()).statusId
+        const before = status()
+        as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "failed", errorText: "x",
+            instanceId: OTHER_NODE})
+        const afterElsewhere = status()
+        as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "failed", errorText: "x",
+            instanceId: EDGE_NODE})
+        const afterOwn = status()
+        as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "ok", instanceId: EDGE_NODE})
+        return {elsewhere, blocked, kept, handed, before, afterElsewhere, afterOwn}
+    },
+    then({elsewhere, blocked, kept, handed, before, afterElsewhere, afterOwn}) {
+        elsewhere.blocked == false
+        blocked.blocked == true
+        kept.length == 1
+        kept[0] == "edge:198.51.100.91"
+        handed == 0
+        afterElsewhere == before
+        afterOwn == "VtsFailed"
+    }
+})
+
 feature("each number's fallback: a user's mobile then a message, a ring group's outside number, nothing for a menu", {
     when() {
         // A rings their mobile with their calls and may forward to it

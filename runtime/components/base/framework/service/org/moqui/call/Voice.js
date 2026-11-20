@@ -21,6 +21,11 @@ const LOCATION = 'moqui.call.EmergencyLocation'
 const SETTING = 'moqui.call.VoiceUserSetting'
 const POLICY = 'moqui.call.VoicePolicy'
 const AUTH_FAILURE = 'moqui.call.VoiceAuthFailure'
+/**
+ * The edge node's engine's blocks are kept under this prefix, apart from the local engines' (SEC-CLU-91): they are shown
+ * to the voice admins, and never handed to this node's own SIP engines.
+ */
+const EDGE_SOURCE = 'edge:'
 const SIP_NODE = 'moqui.call.SipNode'
 const CALL_HANDLING = 'component://framework/service/org/moqui/call/CallHandling.js'
 const IVR = 'component://framework/service/org/moqui/call/Ivr.js'
@@ -899,7 +904,9 @@ function engineConfig() {
   }
   const pol = policy()
   const now = nowMs()
-  const blockedSourceList = Array.from(find(AUTH_FAILURE).condition('blockedUntilDate', '>', new Date(now)).list())
+  // this node's engines' blocks only: the edge node's engine keeps its own (SEC-CLU-91)
+  const blockedSourceList = Array.from(find(AUTH_FAILURE).condition('blockedUntilDate', '>', new Date(now))
+    .condition('sourceAddress', 'not-like', EDGE_SOURCE + '%').list())
     .map((row) => ({ sourceAddress: row.sourceAddress, blockedUntil: ms(row.blockedUntilDate) }))
   return {
     trunkList,
@@ -923,7 +930,37 @@ function alertAdmins(title, message) {
   }
 }
 
+/** The edge link's delegate user: its engine's reports are its own, never this node's engines' (SEC-CLU-91). */
+function asEdge() {
+  return ec.user.username === '_edge_'
+}
+
+/** A `sip-server/limits` number: the conf's, else `fallback`. */
+function sipLimit(name, fallback) {
+  const raw = String(ec.factory.getConfValue('sip-server/limits@' + name) || '').trim()
+  const value = Number(raw)
+  return raw !== '' && Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+/** Whether the edge node's engine may alert the voice admins now: fewer than edge-alerts-per-hour in the last hour. */
+function edgeMayAlert(now) {
+  const hourAgo = new Date(now - 3600000)
+  const alerted = find(AUTH_FAILURE).condition('sourceAddress', 'like', EDGE_SOURCE + '%')
+    .condition('alertedDate', '>', hourAgo).count() +
+    find(TRUNK).condition('alertedDate', '>', hourAgo).count()
+  if (alerted < sipLimit('edge-alerts-per-hour', 10)) return true
+  ec.logger.warn('Voice: the edge node\'s engine passed sip-server/limits@edge-alerts-per-hour; its alert is logged only')
+  return false
+}
+
 function trunkStatus(p) {
+  // as the edge node's engine: only as that engine, and only for a trunk it holds (an enabled one, as get#EngineConfig
+  // hands it), never one this node's engines hold alone (SEC-CLU-91)
+  if (asEdge() && (!edgeAllowed({ instanceId: p.instanceId }) ||
+      !enabledTrunks().some((t) => t.voiceTrunkId === p.voiceTrunkId))) {
+    ec.logger.warn(`Voice: a trunk status from the edge node for ${p.voiceTrunkId} not taken: not its engine's trunk`)
+    return {}
+  }
   const trunk = find(TRUNK).condition('voiceTrunkId', p.voiceTrunkId).forUpdate(true).one()
   if (!trunk) return {}
   const statusId = STATUS_BY_REPORT[p.status] || 'VtsUnknown'
@@ -931,7 +968,9 @@ function trunkStatus(p) {
   trunk.setFields({ statusId, lastErrorText: statusId === 'VtsFailed' ? String(p.errorText || '').slice(0, 4000) : null,
     lastStatusDate: ec.user.nowTimestamp }, true, null, null)
   trunk.update()
-  if (statusId === 'VtsFailed' && was !== 'VtsFailed') {
+  if (statusId === 'VtsFailed' && was !== 'VtsFailed' && (!asEdge() || edgeMayAlert(nowMs()))) {
+    trunk.set('alertedDate', ec.user.nowTimestamp)
+    trunk.update()
     alertAdmins('Phone trunk ${name} failed',
       { kind: 'trunkFailed', voiceTrunkId: trunk.voiceTrunkId, errorText: trunk.lastErrorText, name: trunk.name || trunk.voiceTrunkId })
   }
@@ -942,13 +981,27 @@ function trunkStatus(p) {
  * A failed digest attempt from a source: counted in the window, blocked at the limit. The SIP engine counts them itself
  * and reports a source only when it blocks it (blocked), so a flood of failures from many addresses is not a write each;
  * that block is kept here as it is. Never touches a UserAccount.
+ *
+ * The edge node's engine (as the delegate user, and only as that engine) reports its own blocks: kept under EDGE_SOURCE,
+ * so they are shown but never block a source on this node's engines, at most sip-server/limits@edge-blocks-per-hour new
+ * sources an hour, and alerting at most edge-alerts-per-hour times (SEC-CLU-91).
  */
 function authFailure(p) {
   const pol = policy()
-  const source = String(p.sourceAddress || '').trim().slice(0, 200)
-  if (!source) return { blocked: false }
+  const edge = asEdge()
+  if (edge && !edgeAllowed({ instanceId: p.instanceId })) {
+    ec.logger.warn('Voice: an auth failure from the edge node not taken: not as its own SIP engine')
+    return { blocked: false }
+  }
+  const source = (edge ? EDGE_SOURCE : '') + String(p.sourceAddress || '').trim().slice(0, 200)
+  if (source === EDGE_SOURCE || !source) return { blocked: false }
   const now = nowMs()
   let row = find(AUTH_FAILURE).condition('sourceAddress', source).forUpdate(true).one()
+  if (!row && edge && find(AUTH_FAILURE).condition('sourceAddress', 'like', EDGE_SOURCE + '%')
+    .condition('firstFailureDate', '>', new Date(now - 3600000)).count() >= sipLimit('edge-blocks-per-hour', 200)) {
+    ec.logger.warn(`Voice: the edge node's block of ${source} not kept: past sip-server/limits@edge-blocks-per-hour`)
+    return { blocked: false }
+  }
   if (!row) {
     row = ec.entity.makeValue(AUTH_FAILURE)
     row.setFields({ sourceAddress: source, failureCount: 0, firstFailureDate: new Date(now) }, true, null, null)
@@ -968,9 +1021,11 @@ function authFailure(p) {
   if (!until && count >= pol.authFailureLimit) {
     until = now + pol.authBlockSeconds * 1000
     fields.blockedUntilDate = new Date(until)
-    fields.alertedDate = new Date(now)
-    alertAdmins('SIP source ${sourceAddress} blocked after ${failureCount} failed sign-ins',
-      { kind: 'sourceBlocked', sourceAddress: source, failureCount: count, lastUsername: fields.lastUsername, blockedUntil: until })
+    if (!edge || edgeMayAlert(now)) {
+      fields.alertedDate = new Date(now)
+      alertAdmins('SIP source ${sourceAddress} blocked after ${failureCount} failed sign-ins',
+        { kind: 'sourceBlocked', sourceAddress: source, failureCount: count, lastUsername: fields.lastUsername, blockedUntil: until })
+    }
   }
   row.setFields(fields, true, null, null)
   row.update()

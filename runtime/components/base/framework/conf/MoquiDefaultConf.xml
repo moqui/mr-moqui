@@ -167,7 +167,9 @@
         Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
         (0 turns one off): sip-server/limits@request-rate new requests a second from one source, sip-server/limits@request-burst of them at once;
         sip-server/limits@max-transactions, past which new requests are dropped; sip-server/limits@max-connections, TCP and TLS connections at once,
-        and sip-server/limits@max-connections-per-source of them from one source. -->
+        and sip-server/limits@max-connections-per-source of them from one source. On a local node, an edge node's engine
+        reports its own blocks (kept apart from this node's engines'): sip-server/limits@edge-blocks-per-hour new blocked
+        sources an hour at most, and sip-server/limits@edge-alerts-per-hour alerts of its blocks and trunks. -->
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip-server/registrar@enabled is
         true, even with the SIP listeners on. sip-server@domain is the realm of the digest challenges and the domain phones register
         to (sip-server@public-address, else moqui, when empty; changing it needs each phone's password made again). A binding's
@@ -176,7 +178,7 @@
     <sip-server port="" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
             public-address="" domain="">
         <limits request-rate="20" request-burst="100" max-transactions="2000" max-connections="500"
-                max-connections-per-source="100"/>
+                max-connections-per-source="100" edge-blocks-per-hour="200" edge-alerts-per-hour="10"/>
         <registrar enabled="false" min-expires="60" max-expires="3600" default-expires="600" nat-expires="60"/>
     </sip-server>
 

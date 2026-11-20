@@ -207,6 +207,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="voiceTrunkId" required="true"/>
             <parameter name="status" required="true"/>
             <parameter name="errorText"/>
+            <parameter name="instanceId"><description>The reporting engine's own id: the edge node's engine is taken only
+                as itself, and only for a trunk it holds.</description></parameter>
         </in-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Voice.js').execute('trunkStatus', context))</script></actions>
     </service>
@@ -290,6 +292,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sourceAddress" required="true"/>
             <parameter name="username"/>
             <parameter name="blocked" type="Boolean"/>
+            <parameter name="instanceId"><description>The reporting engine's own id. The edge node's engine is taken only as
+                itself; its blocks are kept apart (edge:address), never handed to this node's own engines, at most
+                sip-server/limits@edge-blocks-per-hour new ones an hour and edge-alerts-per-hour alerts.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="blocked" type="Boolean"/>
