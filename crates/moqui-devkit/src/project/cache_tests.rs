@@ -96,6 +96,12 @@ fn another_project_is_read_only_for_an_admin() {
     assert!(requested(&own_runtime.display().to_string(), false, &own, false)
         .unwrap()
         .is_none());
+    // nor does a full rebuild of it (forget_requested) drop an index an admin had read
+    let project = super::super::detect(&root).unwrap();
+    let dirs = project.model_dirs(|| None).unwrap();
+    open(project, dirs, false).unwrap();
+    forget_requested(&root.display().to_string(), false);
+    assert!(kept().contains(&root), "the index stays");
     clean(&root);
 }
 

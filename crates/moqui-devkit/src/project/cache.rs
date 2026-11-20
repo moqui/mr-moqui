@@ -589,10 +589,11 @@ pub fn allowed(
     open(found, dirs, model)
 }
 
-/// Drop the kept index of the project a request names, as [`requested`] takes it (nothing in production), so its next
-/// request boots it again.
+/// Drop the kept index of the project a request names, as [`requested`] takes it, so its next request boots it again:
+/// nothing in production, and nothing for a user [`requested`] refuses another project, not in `ADMIN` (SEC-DEV-82),
+/// before anything of the path is looked at.
 pub fn forget_requested(project: &str, java: bool) {
-    if moqui_core::web::is_production() {
+    if moqui_core::web::is_production() || !moqui_core::user::is_in_group("ADMIN").unwrap_or(false) {
         return;
     }
     let found = super::requested_dir(project).and_then(|dir| {
