@@ -411,6 +411,26 @@ fn a_trusted_arc_sealer_overrides_dmarc_only_for_a_pass_it_recorded() {
         None
     );
     assert_eq!(arc_overrides(None, "example.com", &trusted), None);
+    // a quoted MAIL FROM the sealer copied as it came, holding a `;` entry of its own (with a `\"` inside it), and a
+    // quoted header.from that is the domain
+    let quoted =
+        " i=1; lists.example; spf=pass smtp.mailfrom=\"x\\\";dmarc=pass header.from=example.com z\"@evil.example; \
+                  dmarc=fail header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", quoted), "example.com", &trusted),
+        None
+    );
+    let helo = " i=1; lists.example; spf=none smtp.helo=\"a;dmarc=pass header.from=example.com\"; dmarc=fail \
+                header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", helo), "example.com", &trusted),
+        None
+    );
+    let quoted_from = " i=1; lists.example; dmarc=pass header.from=\"example.com\"\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", quoted_from), "example.com", &trusted).as_deref(),
+        Some("lists.example")
+    );
 
     let field = "Authentication-Results: mx;\r\n\tspf=fail smtp.mailfrom=lists.example;\r\n\tdmarc=fail \
                  header.from=example.com policy.dmarc=reject\r\n"

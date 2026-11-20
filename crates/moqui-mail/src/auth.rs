@@ -706,14 +706,28 @@ fn arc_overrides(newest: Option<(String, &[u8])>, domain: &str, trusted: &[Strin
 /// Whether an `ARC-Authentication-Results` value records `dmarc=pass` with a `header.from` of `domain`.
 fn recorded_dmarc_pass(results: &[u8], domain: &str) -> bool {
     let text = String::from_utf8_lossy(results);
-    // comments out (they may hold anything, `;` too), then the entries split on `;`
+    // RFC 8601's lexical rules: comments out (they may hold anything, `;` too), and a quoted string kept as one word
+    // whose `;`, `=`, parentheses and spaces split nothing, so a quoted `smtp.mailfrom` or `smtp.helo` the sealer
+    // copied cannot write an entry of its own; then the entries split on `;`
     let mut plain = String::with_capacity(text.len());
     let mut depth = 0usize;
+    let mut quoted = false;
     let mut escaped = false;
     for ch in text.chars() {
+        if escaped {
+            escaped = false;
+            if depth == 0 {
+                plain.push(inert(ch));
+            }
+            continue;
+        }
         match ch {
-            _ if escaped => escaped = false,
-            '\\' if depth > 0 => escaped = true,
+            '\\' if depth > 0 || quoted => escaped = true,
+            '"' if depth == 0 => {
+                quoted = !quoted;
+                plain.push('"');
+            }
+            ch if quoted => plain.push(inert(ch)),
             '(' => depth += 1,
             ')' if depth > 0 => depth -= 1,
             _ if depth > 0 => {}
@@ -735,6 +749,16 @@ fn recorded_dmarc_pass(results: &[u8], domain: &str) -> bool {
                 })
             })
     })
+}
+
+/// A character of a quoted string as [`recorded_dmarc_pass`] keeps it: one that would end a word or an entry, start a
+/// comment or name a value outside quotes stands as `_`.
+fn inert(ch: char) -> char {
+    if ch.is_whitespace() || matches!(ch, ';' | '(' | ')' | '=') {
+        '_'
+    } else {
+        ch
+    }
 }
 
 /// `field` with its `dmarc=fail` result marked, in a comment, as overridden by `sealer`, so a reader of the stored field
