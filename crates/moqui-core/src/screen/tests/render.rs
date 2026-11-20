@@ -2715,6 +2715,48 @@ fn a_previewed_screens_inline_text_is_not_spliced_into_code() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: while a preview holds the runtime, a definition's actions snippet (a drop-down's `entity-options` find)
+/// and every expansion, the trusted root screen's own among them, run on the region's allow-list, whoever's frame is
+/// on top: a `sri.write` of raw markup from either is refused, and from the files alone it writes.
+#[test]
+fn a_previewed_render_runs_definition_finds_and_expansions_as_regions() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-entries-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let root_text = r#"<screen require-authentication="false"><widgets>
+        <label text="R${sri.write('&lt;i&gt;PWNEDROOT&lt;/i&gt;') || ''}"/><subscreens-active/></widgets></screen>"#;
+    std::fs::write(dir.join("Root.xml"), root_text).unwrap();
+    let child = dir.join("Root/Child.xml");
+    let child_text = r#"<screen require-authentication="false"><widgets><form-single name="F"><field name="pick">
+        <default-field><drop-down><entity-options key="${enumId}" text="${description}">
+            <entity-find entity-name="moqui.basic.Enumeration">
+                <econdition field-name="enumId" from="sri.write('&lt;i&gt;PWNEDOPT&lt;/i&gt;') || 'X'"/></entity-find>
+        </entity-options></drop-down></default-field></field></form-single><label text="CHILD"/></widgets></screen>"#;
+    std::fs::write(&child, child_text).unwrap();
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("Child")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let plain = render();
+    assert!(
+        plain.contains("<i>PWNEDROOT</i>") && plain.contains("<i>PWNEDOPT</i>"),
+        "from the files: {plain}"
+    );
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&child.to_string_lossy(), None, child_text);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(!previewed.contains("<i>PWNEDROOT"), "{previewed}");
+    assert!(!previewed.contains("<i>PWNEDOPT"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-AI-102: a preview's proposed text adds nothing to the page's script and stylesheet lists the shell writes as
 /// `<script src>` and `<link>` (`footer_scripts`, `html_scripts`): by name, through `context` or `ec.context`, nor
 /// sets one; the trusted root screen's own entries stay.

@@ -1654,6 +1654,10 @@ const INLINE_EXPRESSIONS: &[&str] = &[
 /// panel's `size`, a box body's `height`, a `width`.
 const WRITTEN_AS_IS: &[&str] = &["name", "id", "type", "size", "height", "width"];
 
+/// The menu titles of a proposed definition, which the trusted shell expands (`Header.html.fancy`, the path titles, the
+/// menu data): made literal at load, with no markup and no `$`, so nothing of them runs as `${}` (SEC-AI-102).
+const MENU_TITLES: &[&str] = &["default-menu-title", "menu-title"];
+
 /// `text` with no character that would end the attribute, the comment or the tag it is written into, nor start one.
 fn markup_free(text: &str) -> String {
     text.chars()
@@ -1703,8 +1707,11 @@ fn guard_proposed_attributes(node: &MNode, location: &str) -> Result<(), Error> 
         return Ok(());
     }
     for (name, value) in node.attributes() {
-        if WRITTEN_AS_IS.contains(&name.as_str()) {
-            let free = markup_free(&value);
+        if WRITTEN_AS_IS.contains(&name.as_str()) || MENU_TITLES.contains(&name.as_str()) {
+            let mut free = markup_free(&value);
+            if MENU_TITLES.contains(&name.as_str()) {
+                free = free.replace('$', "");
+            }
             if free != value {
                 node.set_attribute(name, free);
             }

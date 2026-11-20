@@ -94,6 +94,23 @@ pub(crate) fn enter() -> Result<PreviewCode, crate::context::Error> {
     Ok(PreviewCode(Some(DEPTH.with(|depth| depth.replace(depth.get() + 1)))))
 }
 
+/// Open a region for an entry that evaluates text, an expression, a template's `${}`, a condition, a map or an actions
+/// snippet of a definition (a drop-down's `entity-options`, a form-list's count find): as [`enter`] does, and also
+/// whenever a preview holds this thread's runtime ([`PreviewHeld`]), whatever the artifact stack says. Trusted code that
+/// expands a proposed definition's text (the shell's menu titles, under the webroot's frame) then runs it on the
+/// region's list too; only the render units' own code, which evaluates no definition's text, keeps the units' list
+/// (SEC-AI-102).
+///
+/// # Errors
+///
+/// As [`enter`].
+pub(crate) fn enter_entry() -> Result<PreviewCode, crate::context::Error> {
+    if HELD.with(Cell::get) && !crate::screen::proposed_running() {
+        return Ok(PreviewCode(Some(DEPTH.with(|depth| depth.replace(depth.get() + 1)))));
+    }
+    enter()
+}
+
 /// Lift the regions open on this thread while the guard lives: trusted code the text called (a service's own code, an
 /// ECA rule's actions) has the whole host.
 pub(crate) fn lift() -> PreviewCode {

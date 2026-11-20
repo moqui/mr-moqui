@@ -63,12 +63,12 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
                 // each run holds the scope a service call holds: what it disables ends with it (SEC-RTE-92)
                 let _authz =
                     crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz);
-                // an expand, expression or condition a proposed screen's code asks runs as its text: in a region of
-                // the preview's allow-list, its value copied out as data (SEC-AI-102)
+                // an expand, expression or condition runs as text that may be a proposed definition's: while a preview
+                // holds the runtime, in a region of its allow-list, its value copied out as data (SEC-AI-102)
                 let region = if name == "script" {
                     None
                 } else {
-                    match crate::script::preview::enter() {
+                    match crate::script::preview::enter_entry() {
                         Ok(region) => Some(region),
                         Err(err) => {
                             let message = err.message().to_string();

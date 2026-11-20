@@ -152,12 +152,13 @@ pub(crate) fn run_hashed<T>(
     let _authz = keeps_authz(kind)
         .then(|| crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::keep_authz))
         .flatten();
-    // a proposed screen's widget and condition expression runs on the preview's allow-list host (SEC-AI-102)
+    // a widget, condition or template expression runs on the preview's allow-list host while a preview holds the
+    // runtime, whoever's frame is on top: its text may be a proposed definition's (SEC-AI-102)
     let _preview = if matches!(
         kind,
         EntryKind::Condition | EntryKind::Value | EntryKind::FieldValue | EntryKind::Expand | EntryKind::Map
     ) {
-        Some(crate::script::preview::enter()?)
+        Some(crate::script::preview::enter_entry()?)
     } else {
         None
     };

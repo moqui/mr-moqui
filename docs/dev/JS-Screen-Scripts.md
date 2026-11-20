@@ -261,7 +261,10 @@ ECA rules its finds and writes reach, run their own code on the whole host, and 
 
 The preview renders on a script runtime of its own, let go after it, and the allow-list holds for all of it. Its built-in
 objects are frozen, and so are `ec`, each facade under it, `sri`, the helpers, the host classes' prototypes and a mode's
-render functions, each once made, so the proposed text replaces no function the framework's code calls after it. The
+render functions, each once made, so the proposed text replaces no function the framework's code calls after it. Every
+expansion, expression, condition, value and map, and every actions snippet of a definition (a drop-down's
+`entity-options` find, a form-list's count find), runs on the allow-list above while a preview holds the runtime,
+whoever's frame is on top: the trusted shell's expansion of a proposed screen's menu title among them. The
 framework's render units and the screens' code around the proposed text run on a list of their own, the members a render
 needs (`sri`, its writes to the page, the reads of the request, the settings, `component://` files and
 `ec.llm.isEnabled()` for the shell's client config), and no response write of `ec.web`. An expression a render unit
@@ -269,7 +272,8 @@ would write into its code (a `condition`, a field's `hide`, a form-single's `map
 `currency-unit-field`, a `disable-condition`, a report's `variables`, `frame` or `panel`) is never spliced in: it must be
 one JavaScript expression alone, or the screen does not load, and it is evaluated from a string literal by
 `ec.resource.expression`, as the proposed text's own, its value copied out as data. A name, id, type or size the units
-write into the page as it is loses any markup character. The proposed text reads a copy of the page's script and
+write into the page as it is loses any markup character, and a `default-menu-title` or `menu-title` is made literal (no
+markup, no `$`). The proposed text reads a copy of the page's script and
 stylesheet lists (`footer_scripts`, `html_scripts`, `footer_stylesheets`, `html_stylesheets`), so it adds no
 `<script src>` or `<link>` to the shell's page, and may not set one. A parent screen whose subscreen is proposed is not
 proposed for that alone. The response keeps the preview's `Content-Security-Policy`, drops a `Refresh` header and
