@@ -21,7 +21,10 @@
 //!   root-key`; a token from a service account's key file (the JWT bearer grant, [`crate::google_auth`]) or the host's
 //!   metadata server.
 //! - **Azure Key Vault**: `wrapkey` and `unwrapkey` with RSA-OAEP-256; a token by the client credentials grant from a
-//!   root-owned file, or the host's managed identity (IMDS).
+//!   root-owned file, or the host's managed identity (IMDS). RSA-OAEP is a public-key wrap, so anyone can make a
+//!   blob that unwraps to a root key of their choosing: the wrapped key is signed with the vault key (`sign`, RS256 over
+//!   its SHA-256) and the signature checked (`verify`) before the unwrap, so a blob a writer of `seal.json` put there
+//!   is refused.
 //!
 //! What decides where the root key goes (the provider, the key, the region, the endpoints) is read from the conf files
 //! only ([`super::CloudConf`]); `seal.json` keeps only the wrapped key, so a writer of it cannot send the server's
@@ -36,7 +39,7 @@ use moqui_lib::sigv4;
 use serde_json::{json, Map, Value};
 use zeroize::Zeroizing;
 
-use super::{CloudConf, Credentials, KmsProvider, Method, MethodKind};
+use super::{require_https, CloudConf, KmsProvider, Method, MethodKind};
 use crate::context::Error;
 use crate::seal::{RootKey, SealConf};
 
@@ -70,7 +73,7 @@ impl Method for Kms {
                     "TrentService.Encrypt",
                     &json!({
                         "KeyId": key,
-                        "Plaintext": standard(root.expose()),
+                        "Plaintext": standard(root.expose()).as_str(),
                         "EncryptionContext": {"moqui-seal": "root-key"},
                     }),
                 )?;
@@ -80,7 +83,10 @@ impl Method for Kms {
                 let answer = gcp(
                     cloud,
                     "encrypt",
-                    &json!({"plaintext": standard(root.expose()), "additionalAuthenticatedData": standard(CONTEXT.as_bytes())}),
+                    &json!({
+                        "plaintext": standard(root.expose()).as_str(),
+                        "additionalAuthenticatedData": standard(CONTEXT.as_bytes()).as_str(),
+                    }),
                 )?;
                 text_field(&answer, "ciphertext")?
             }
@@ -89,7 +95,9 @@ impl Method for Kms {
                 if let Some(kid) = answer["kid"].as_str() {
                     metadata.insert("kid".to_string(), json!(kid));
                 }
-                text_field(&answer, "value")?
+                let wrapped = text_field(&answer, "value")?;
+                metadata.insert("signature".to_string(), json!(azure_sign(cloud, key, &wrapped)?));
+                wrapped
             }
         };
         metadata.insert("wrapped".to_string(), json!(wrapped));
@@ -128,18 +136,23 @@ impl Method for Kms {
                 let answer = gcp(
                     cloud,
                     "decrypt",
-                    &json!({"ciphertext": wrapped, "additionalAuthenticatedData": standard(CONTEXT.as_bytes())}),
+                    &json!({
+                        "ciphertext": wrapped,
+                        "additionalAuthenticatedData": standard(CONTEXT.as_bytes()).as_str(),
+                    }),
                 )?;
                 decode_standard(&text_field(&answer, "plaintext")?)?
             }
             KmsProvider::Azure => {
                 // the version the key was wrapped under, only when it is a version of the conf's own key
                 let kid = metadata.get("kid").and_then(Value::as_str).unwrap_or_default();
-                let url = if kid.starts_with(&format!("{}/", key.trim_end_matches('/'))) {
-                    kid
-                } else {
-                    key
-                };
+                let url = if version_of(key, kid) { kid } else { key };
+                // the vault's signature of this blob first: a blob it did not wrap is refused before it is opened
+                let signature = metadata
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| Error::new("seal.json's Azure wrapped key has no signature"))?;
+                azure_verify(cloud, url, wrapped, signature)?;
                 let blob = base64::engine::general_purpose::URL_SAFE_NO_PAD
                     .decode(wrapped.trim_end_matches('='))
                     .map_err(|err| Error::new(format!("seal.json's wrapped key is not base64url: {err}")))?;
@@ -155,8 +168,42 @@ impl Method for Kms {
     }
 }
 
-fn standard(bytes: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(bytes)
+/// [`version_of`], for the tests of the method.
+#[cfg(test)]
+pub(super) fn version_of_for_tests(key: &str, kid: &str) -> bool {
+    version_of(key, kid)
+}
+
+fn standard(bytes: &[u8]) -> Zeroizing<String> {
+    Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+/// Whether `kid` is a version of the Azure key `key`: the same scheme, host (in any case) and port, the key's path
+/// with one version segment after it, and no `.` or `..` segment.
+fn version_of(key: &str, kid: &str) -> bool {
+    fn parts(url: &str) -> Option<(String, String, Vec<&str>)> {
+        let (scheme, rest) = url.split_once("://")?;
+        let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let segments: Vec<&str> = path.split('/').filter(|segment| !segment.is_empty()).collect();
+        if segments
+            .iter()
+            .any(|segment| *segment == "." || *segment == ".." || segment.contains(['?', '#', '%']))
+        {
+            return None;
+        }
+        Some((scheme.to_ascii_lowercase(), authority.to_ascii_lowercase(), segments))
+    }
+    let (Some((key_scheme, key_host, key_path)), Some((kid_scheme, kid_host, kid_path))) = (parts(key), parts(kid))
+    else {
+        return false;
+    };
+    key_scheme == kid_scheme
+        && key_host == kid_host
+        && kid_path.len() == key_path.len() + 1
+        && kid_path.starts_with(&key_path)
+        && kid_path
+            .last()
+            .is_some_and(|version| version.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
 fn decode_standard(text: &str) -> Result<Zeroizing<Vec<u8>>, Error> {
@@ -202,8 +249,8 @@ struct AwsKeys {
 }
 
 fn aws_keys(cloud: &CloudConf) -> Result<AwsKeys, Error> {
-    let value = match &cloud.kms_credentials {
-        Credentials::File(_) => {
+    let value = if cloud.kms_credentials.is_file() {
+        {
             let text = cloud.kms_credentials.read("seal@kms-credentials")?;
             let value: Value = serde_json::from_str(&text)
                 .map_err(|_| Error::new("seal@kms-credentials: the AWS credentials file is not JSON"))?;
@@ -220,7 +267,8 @@ fn aws_keys(cloud: &CloudConf) -> Result<AwsKeys, Error> {
                 "Token": field(&["session_token", "SessionToken", "Token"]),
             })
         }
-        Credentials::Metadata => {
+    } else {
+        {
             // IMDSv2: a session token first, then the instance role's credentials
             let base = cloud.token_base("http://169.254.169.254");
             let http = client();
@@ -276,15 +324,23 @@ fn aws(cloud: &CloudConf, target: &str, body: &Value) -> Result<Value, Error> {
     let endpoint = if cloud.kms_endpoint.is_empty() {
         format!("https://kms.{}.amazonaws.com", cloud.kms_region)
     } else {
+        require_https("seal@kms-endpoint", &cloud.kms_endpoint)?;
         cloud.kms_endpoint.trim_end_matches('/').to_string()
     };
-    let host = endpoint
-        .split_once("://")
-        .map_or(endpoint.as_str(), |(_, rest)| rest)
-        .split('/')
-        .next()
-        .unwrap_or_default()
-        .to_string();
+    // the host as the request carries it (no port when it is the scheme's), and the endpoint's own path, both signed
+    let (scheme, rest) = endpoint.split_once("://").unwrap_or(("https", endpoint.as_str()));
+    let (authority, base_path) = rest.split_once('/').unwrap_or((rest, ""));
+    let default_port = if scheme.eq_ignore_ascii_case("https") {
+        ":443"
+    } else {
+        ":80"
+    };
+    let host = authority
+        .strip_suffix(default_port)
+        .unwrap_or(authority)
+        .to_ascii_lowercase();
+    let path = format!("/{}", base_path.trim_matches('/'));
+    let path = if path.ends_with('/') { path } else { format!("{path}/") };
     let keys = aws_keys(cloud)?;
     let body = Zeroizing::new(body.to_string());
     let amz_date = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ").to_string();
@@ -301,7 +357,7 @@ fn aws(cloud: &CloudConf, target: &str, body: &Value) -> Result<Value, Error> {
     let authorization = sigv4::authorization(
         &sigv4::Request {
             method: "POST",
-            path: "/",
+            path: &sigv4::uri_encode(&path, false),
             query: "",
             headers: &headers,
             payload_hash: &payload_hash,
@@ -317,7 +373,7 @@ fn aws(cloud: &CloudConf, target: &str, body: &Value) -> Result<Value, Error> {
         &amz_date,
     );
     let http = client();
-    let mut call = http.post(format!("{endpoint}/"));
+    let mut call = http.post(format!("{scheme}://{authority}{path}"));
     for (name, value) in headers
         .iter()
         .filter(|(name, _)| name != "host" && name != "content-type")
@@ -333,8 +389,8 @@ fn aws(cloud: &CloudConf, target: &str, body: &Value) -> Result<Value, Error> {
 /// A Google access token for Cloud KMS: from the service account's key file, else the host's metadata server.
 fn gcp_token(cloud: &CloudConf) -> Result<Zeroizing<String>, Error> {
     let http = client();
-    let answer = match &cloud.kms_credentials {
-        Credentials::File(_) => {
+    let answer = if cloud.kms_credentials.is_file() {
+        {
             let text = cloud.kms_credentials.read("seal@kms-credentials")?;
             let account = crate::google_auth::ServiceAccount::parse(&text)
                 .map_err(|err| Error::new(format!("seal@kms-credentials: {err}")))?;
@@ -347,14 +403,14 @@ fn gcp_token(cloud: &CloudConf) -> Result<Zeroizing<String>, Error> {
                 )
                 .send(false)
         }
-        Credentials::Metadata => http
-            .get(format!(
-                "{}{}",
-                cloud.token_base(crate::google_auth::METADATA_BASE),
-                crate::google_auth::METADATA_TOKEN_PATH
-            ))
-            .header("Metadata-Flavor", "Google")
-            .send(false),
+    } else {
+        http.get(format!(
+            "{}{}",
+            cloud.token_base(crate::google_auth::METADATA_BASE),
+            crate::google_auth::METADATA_TOKEN_PATH
+        ))
+        .header("Metadata-Flavor", "Google")
+        .send(false)
     }
     .map_err(|err| Error::new(format!("the Google token: {err}")))?;
     if answer.status() != 200 {
@@ -371,6 +427,7 @@ fn gcp(cloud: &CloudConf, verb: &str, body: &Value) -> Result<Value, Error> {
     let endpoint = if cloud.kms_endpoint.is_empty() {
         "https://cloudkms.googleapis.com"
     } else {
+        require_https("seal@kms-endpoint", &cloud.kms_endpoint)?;
         cloud.kms_endpoint.trim_end_matches('/')
     };
     let key = cloud.kms_key()?;
@@ -387,8 +444,8 @@ fn gcp(cloud: &CloudConf, verb: &str, body: &Value) -> Result<Value, Error> {
 /// `client_secret`), else the host's managed identity.
 fn azure_token(cloud: &CloudConf) -> Result<Zeroizing<String>, Error> {
     let http = client();
-    let answer = match &cloud.kms_credentials {
-        Credentials::File(_) => {
+    let answer = if cloud.kms_credentials.is_file() {
+        {
             let text = cloud.kms_credentials.read("seal@kms-credentials")?;
             let value: Value = serde_json::from_str(&text)
                 .map_err(|_| Error::new("seal@kms-credentials: the Azure credentials file is not JSON"))?;
@@ -406,22 +463,21 @@ fn azure_token(cloud: &CloudConf) -> Result<Zeroizing<String>, Error> {
                 sigv4::uri_encode(&secret, true),
                 sigv4::uri_encode("https://vault.azure.net/.default", true)
             ));
-            http.post(format!(
-                "{}/{}/oauth2/v2.0/token",
-                cloud.token_base("https://login.microsoftonline.com"),
-                sigv4::uri_encode(&tenant, true)
-            ))
-            .text("application/x-www-form-urlencoded", form.as_str())
-            .send(false)
+            // the client secret goes there: https, but on the loopback
+            let base = cloud.token_base("https://login.microsoftonline.com");
+            require_https("seal@kms-token-endpoint", &base)?;
+            http.post(format!("{base}/{}/oauth2/v2.0/token", sigv4::uri_encode(&tenant, true)))
+                .text("application/x-www-form-urlencoded", form.as_str())
+                .send(false)
         }
-        Credentials::Metadata => http
-            .get(format!(
-                "{}/metadata/identity/oauth2/token?api-version=2018-02-01&resource={}",
-                cloud.token_base("http://169.254.169.254"),
-                sigv4::uri_encode("https://vault.azure.net", true)
-            ))
-            .header("Metadata", "true")
-            .send(false),
+    } else {
+        http.get(format!(
+            "{}/metadata/identity/oauth2/token?api-version=2018-02-01&resource={}",
+            cloud.token_base("http://169.254.169.254"),
+            sigv4::uri_encode("https://vault.azure.net", true)
+        ))
+        .header("Metadata", "true")
+        .send(false)
     }
     .map_err(|err| Error::new(format!("the Azure token: {err}")))?;
     if answer.status() != 200 {
@@ -432,18 +488,59 @@ fn azure_token(cloud: &CloudConf) -> Result<Zeroizing<String>, Error> {
         .map_err(Error::new)
 }
 
+/// The SHA-256 of a wrapped key's base64url text, base64url: what the vault signs.
+fn azure_digest(wrapped: &str) -> String {
+    use sha2::Digest as _;
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(wrapped.as_bytes()))
+}
+
+/// The vault key's RS256 signature of a wrapped key (`sign`), base64url.
+fn azure_sign(cloud: &CloudConf, key: &str, wrapped: &str) -> Result<String, Error> {
+    let answer = azure_call(
+        cloud,
+        key,
+        "sign",
+        &json!({"alg": "RS256", "value": azure_digest(wrapped)}),
+    )?;
+    text_field(&answer, "value")
+}
+
+/// Check the vault's signature of a wrapped key (`verify`) before it is unwrapped.
+fn azure_verify(cloud: &CloudConf, url: &str, wrapped: &str, signature: &str) -> Result<(), Error> {
+    let answer = azure_call(
+        cloud,
+        url,
+        "verify",
+        &json!({"alg": "RS256", "digest": azure_digest(wrapped), "value": signature}),
+    )?;
+    if answer["value"] == Value::Bool(true) {
+        Ok(())
+    } else {
+        Err(Error::new(
+            "seal.json's Azure wrapped key is not signed by the vault key: it is refused (a blob put there by a writer of \
+             seal.json)",
+        ))
+    }
+}
+
 /// `wrapkey` or `unwrapkey` of `value` on the key at `url` (the conf's key, or a version of it).
 fn azure(cloud: &CloudConf, url: &str, verb: &str, value: &[u8]) -> Result<Value, Error> {
-    let token = azure_token(cloud)?;
-    let http = client();
     let body = json!({
         "alg": "RSA-OAEP-256",
-        "value": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value),
+        "value": Zeroizing::new(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value)).as_str(),
     });
+    azure_call(cloud, url, verb, &body)
+}
+
+/// One Key Vault call on the key at `url`.
+fn azure_call(cloud: &CloudConf, url: &str, verb: &str, body: &Value) -> Result<Value, Error> {
+    require_https("seal@kms-key", url)?;
+    let token = azure_token(cloud)?;
+    let http = client();
     send(
         &format!("Azure Key Vault {verb}"),
         http.post(format!("{}/{verb}?api-version={AZURE_API}", url.trim_end_matches('/')))
             .header("authorization", format!("Bearer {}", token.as_str()))
-            .json(&body),
+            .json(body),
     )
 }

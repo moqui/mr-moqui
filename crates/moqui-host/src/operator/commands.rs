@@ -34,6 +34,8 @@ struct Request {
     share: Option<Zeroizing<String>>,
     recovery: bool,
     take_shares: bool,
+    /// `secret put --force`: replace the crypt pass.
+    force: bool,
     /// The recovery shares of `rekey` and `rotate-root`.
     shares: Vec<Zeroizing<String>>,
     /// A recovery bundle to restore (`init --from`).
@@ -74,6 +76,7 @@ impl Request {
             share,
             recovery: value["recovery"] == Value::Bool(true),
             take_shares: value["take_shares"] == Value::Bool(true),
+            force: value["force"] == Value::Bool(true),
             shares,
             bundle,
             name,
@@ -171,14 +174,26 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
             })?;
             Ok(json!({"ok": true, "method_shares": texts(&issued.method_shares), "status": status(keeper)}))
         }
-        "export-seal" => Ok(json!({"ok": true, "bundle": keeper.export_bundle()?})),
+        "export-seal" => {
+            let bundle = keeper.export_bundle()?;
+            // the embedded cluster's password is made at the database's first open, after init: a bundle made before it
+            // has none, and restores a seal that cannot reach that cluster
+            let has_password = keeper
+                .seal_file()
+                .is_some_and(|seal| seal.bootstrap.contains_key(secrets::DATASOURCE_PASSWORD));
+            let warning = (!has_password).then_some(
+                "the bundle holds no datasource password: on the embedded cluster, export it again once the server \
+                 serves (its password is made at the database's first open)",
+            );
+            Ok(json!({"ok": true, "bundle": bundle, "warning": warning}))
+        }
         "secret-put" => {
             let name = secret_name(request.name)?;
             let value = request
                 .value
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| Error::new("secret put needs a value"))?;
-            secrets::write_to(keeper, database(keeper).as_ref(), &name, &value)?;
+            secrets::operator_put(keeper, database(keeper).as_ref(), &name, &value, request.force)?;
             tracing::info!("Operator: the secret {name} was put");
             Ok(json!({"ok": true, "name": secrets::canonical(&name)}))
         }
@@ -188,7 +203,7 @@ fn command(keeper: &Keeper, request: Request) -> Result<Value, Error> {
         }
         "secret-rm" => {
             let name = secret_name(request.name)?;
-            let removed = secrets::remove_from(keeper, database(keeper).as_ref(), &name)?;
+            let removed = secrets::operator_remove(keeper, database(keeper).as_ref(), &name)?;
             if removed {
                 tracing::info!("Operator: the secret {name} was removed");
             }

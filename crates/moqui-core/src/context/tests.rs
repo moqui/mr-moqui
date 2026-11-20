@@ -276,72 +276,37 @@ fn boot_registers_components_and_named_resource_errors() {
     assert_eq!(repo_env_stamp(&root), before);
 }
 
+/// S4: a boot writes no secret into `runtime/.env` (the seal's store keeps them, plans/Sealed-Secrets.md S4) and leaves
+/// the host settings there as they were written, the last line with no newline too; a `.env` that is a directory still
+/// fails the boot, naming it.
 #[test]
-fn generated_secret_is_stable_and_unwritable_env_fails() {
+fn a_boot_writes_no_secret_to_env_and_an_unreadable_env_fails() {
     let _lock = crate::user::session::cookie_property_lock();
     let root = workspace_root();
     let _env = EnvGuard::new();
     let before = repo_env_stamp(&root);
     let temp = TempRuntime::new("secret");
+    // Host settings written before the first start (docs/Run-Deploy.md), the last line with no newline
+    std::fs::write(temp.path().join(".env"), "phase2_probe_host=erp.example.com").unwrap();
     let framework = root.join("runtime/components/base/framework");
     let _factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    // the default conf's chat@store-key-secret is at CHANGEME, so the first boot makes it
-    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    let first = probe_secret(&env_text);
-    assert_eq!(first.len(), 44, "{env_text}");
-    assert!(!first.ends_with("CHANGEME"));
-    assert!(!env_text.contains("CHANGEME"));
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(temp.path().join(".env"))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
-    assert_eq!(
-        env_text.lines().filter(|line| line.starts_with(PROBE_SECRET)).count(),
-        1
-    );
     let _again = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    let env_again = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    assert_eq!(probe_secret(&env_again), first, "a second boot keeps the secret");
-    assert_eq!(
-        env_again.lines().filter(|line| line.starts_with(PROBE_SECRET)).count(),
-        1
-    );
+    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
+    assert_eq!(env_text, "phase2_probe_host=erp.example.com", "no secret is added");
+    assert!(!env_text.contains(PROBE_SECRET));
+    assert_eq!(env::get_prop_or_env("phase2_probe_host"), "erp.example.com");
+    env::clear_dotenv();
 
     let blocked = TempRuntime::new("blocked");
     std::fs::create_dir(blocked.path().join(".env")).unwrap();
     let err = match ExecutionContextFactory::boot_with_framework(blocked.path(), &framework) {
-        Ok(_) => panic!("boot succeeded with an unwritable runtime environment file"),
+        Ok(_) => panic!("boot succeeded with an unreadable runtime environment file"),
         Err(err) => err,
     };
     let shown = format!("{err} {err:?}");
     assert!(!shown.contains("MoquiDefaultPassword"));
     assert!(!shown.contains("CHANGEME"));
     assert!(shown.contains("directory"));
-    assert_eq!(repo_env_stamp(&root), before);
-}
-
-#[test]
-fn generated_secret_starts_its_own_line_in_env_without_final_newline() {
-    let _lock = crate::user::session::cookie_property_lock();
-    let root = workspace_root();
-    let _env = EnvGuard::new();
-    let before = repo_env_stamp(&root);
-    let temp = TempRuntime::new("secret-newline");
-    // Host settings written before the first start (docs/Run-Deploy.md), the last line with no newline
-    std::fs::write(temp.path().join(".env"), "phase2_probe_host=erp.example.com").unwrap();
-    let framework = root.join("runtime/components/base/framework");
-    let _factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
-    let lines: Vec<&str> = env_text.lines().collect();
-    assert_eq!(lines.first(), Some(&"phase2_probe_host=erp.example.com"), "{env_text}");
-    assert!(lines.iter().any(|line| line.starts_with(PROBE_SECRET)), "{env_text}");
-    assert_eq!(env::get_prop_or_env("phase2_probe_host"), "erp.example.com");
-    env::clear_dotenv();
     assert_eq!(repo_env_stamp(&root), before);
 }
 
@@ -414,18 +379,8 @@ fn a_weak_session_cookie_key_stops_the_boot() {
     ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
 }
 
-/// The `.env` line of the generated secret these tests look at: the default conf leaves `chat@store-key-secret` at
-/// `CHANGEME`.
+/// The `.env` line a generated secret had before S4: the default conf leaves `chat@store-key-secret` at `CHANGEME`.
 const PROBE_SECRET: &str = "moqui_conf__chat__store_key_secret=";
-
-/// The value of [`PROBE_SECRET`] in `.env` text, empty when it has none.
-fn probe_secret(env_text: &str) -> String {
-    env_text
-        .lines()
-        .find_map(|line| line.strip_prefix(PROBE_SECRET))
-        .unwrap_or_default()
-        .to_string()
-}
 
 #[test]
 fn artifact_stack_allows_and_authz_depth_follows_the_guard() {

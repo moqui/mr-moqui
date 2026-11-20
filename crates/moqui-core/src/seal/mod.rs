@@ -930,7 +930,8 @@ impl Keeper {
             root_id: root.id(),
             method,
             recovery,
-            bootstrap: std::collections::BTreeMap::new(),
+            // the crypt pass with the seal, so the bundle exported at init carries the key of the fields (S4)
+            bootstrap: bootstrap::initial(&root)?,
             // made with the seal, so the bundle exported at init carries it to every member (S4)
             secret_value_key: Some(bootstrap::seal_secret_value_key(
                 &root,
@@ -1205,14 +1206,15 @@ impl Keeper {
     /// Drop the root key and every share entered from memory now (§3.3, §3.5), and tell the watchers, which close the
     /// listeners. A start then waits for `unseal`, whatever the method.
     pub fn seal(&self) {
+        let was_ephemeral;
         {
             let mut inner = self.inner();
             inner.root = None;
             inner.entered.clear();
             inner.entering = None;
             inner.operator_sealed = true;
+            was_ephemeral = inner.ephemeral;
             inner.ephemeral = false;
-            lock(&self.secret_values).clear();
             if inner.held_shares.take().is_some() {
                 tracing::error!(
                     "Sealed with the recovery shares of this server's first start still unread: they are dropped with \
@@ -1230,6 +1232,11 @@ impl Keeper {
                 }
             }
             self.changed.notify_all();
+        }
+        // the opened secrets after the state lock is let go: a reader takes the state (the data key) before the cache
+        lock(&self.secret_values).clear();
+        if was_ephemeral {
+            secrets::clear_ephemeral();
         }
         tracing::warn!("Sealed by an operator: the root key is dropped from memory and the listeners close");
         let watchers: Vec<_> = lock(&self.watchers)

@@ -176,25 +176,12 @@ fn a_boot_with_no_seal_keeps_nothing_and_names_operator_init() {
     let facade = crate::testing::open();
     let err = write_to(&keeper, Some(&facade), "ops-token", "value").unwrap_err();
     assert!(err.to_string().contains("moqui operator init"), "{err}");
-    // a bootstrap secret it makes lives in memory only, the same for the rest of the process
-    let made = bootstrap_or_make(
-        &keeper,
-        "entity-facade/datasource[secrets-test]@password",
-        random_secret,
-    )
-    .unwrap();
-    assert_eq!(
-        bootstrap_or_make(
-            &keeper,
-            "entity-facade/datasource[secrets-test]@password",
-            random_secret
-        )
-        .unwrap(),
-        made
-    );
-    // a generated secret lives in this process's memory only: no row, no seal.json, no .env
+    // nothing is made under a memory-only root
+    let err = bootstrap_or_make(&keeper, DATASOURCE_PASSWORD, random_secret).unwrap_err();
+    assert!(err.to_string().contains("moqui operator init"), "{err}");
+    // a generated session or signing key lives in this process's memory only: no row, no seal.json, no .env
     let ctx = ExecutionContextFactory::test_context_with_conf(
-        r#"<moqui-conf><git-server lfs-token-key="CHANGEME"/></moqui-conf>"#,
+        r#"<moqui-conf><git-server lfs-token-key="CHANGEME"/><entity-facade crypt-pass="MoquiDefaultPassword:CHANGEME"/></moqui-conf>"#,
     );
     ctx.factory().set_entity(facade.clone());
     ctx.factory().set_seal_keeper(Arc::clone(&keeper));
@@ -202,6 +189,98 @@ fn a_boot_with_no_seal_keeps_nothing_and_names_operator_init() {
     assert_eq!(ctx.factory().secret("git-server@lfs-token-key").unwrap().unwrap(), held);
     assert!(row(&facade, "git-server@lfs-token-key").is_none());
     assert!(!file::path_in(&scratch.0).exists() && !scratch.0.join(".env").exists());
+
+    // the crypt pass is left unset: the first encrypt fails naming the remedy, and `moqui load` refuses the boot
+    assert!(ctx.factory().secret(CRYPT_PASS).unwrap().is_none());
+    assert!(unsealed_without_crypt_pass(ctx.factory()));
+    let conf = conf_with_secrets(ctx.factory()).unwrap();
+    let pass = conf
+        .first_named("entity-facade")
+        .unwrap()
+        .attribute("crypt-pass")
+        .unwrap();
+    assert!(pass.starts_with(crate::entity::crypto::REFUSED_PASS_PREFIX));
+    let config = crate::entity::crypto::CryptConfig {
+        pass,
+        salt: String::new(),
+        iterations: 10,
+        algorithm: String::new(),
+    };
+    let err = crate::entity::crypto::encrypt("a card number", &config).unwrap_err();
+    assert!(err.to_string().contains("moqui operator init"), "{err}");
+    // a crypt pass the conf or the environment gives is used as given
+    let given = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><entity-facade crypt-pass="an-operator-given-pass"/></moqui-conf>"#,
+    );
+    given.factory().set_seal_keeper(Arc::clone(&keeper));
+    assert!(!unsealed_without_crypt_pass(given.factory()));
+    let conf = conf_with_secrets(given.factory()).unwrap();
+    assert_eq!(
+        conf.first_named("entity-facade")
+            .unwrap()
+            .attribute("crypt-pass")
+            .unwrap(),
+        "an-operator-given-pass"
+    );
+}
+
+/// Two members that make the cluster TLS pair at once keep one pair: the second finds the first's rows and takes both,
+/// never one half of each.
+#[cfg(feature = "cluster-tls")]
+#[test]
+fn a_generated_pair_is_made_in_one_transaction_and_a_lost_race_takes_the_winners_pair() {
+    let scratch = Scratch::new();
+    let keeper = opened(&scratch, "dev");
+    let facade = crate::testing::open();
+    let key = keeper.secret_value_key().unwrap();
+    let first = make(CLUSTER_CERT, Made::ClusterPair).unwrap();
+    assert!(create_rows(&key, &facade, &first).unwrap());
+    // the second member's pair finds the rows there and writes neither half
+    let second = make(CLUSTER_KEY, Made::ClusterPair).unwrap();
+    assert!(!create_rows(&key, &facade, &second).unwrap());
+    let ctx = ExecutionContextFactory::test_context_with_conf(
+        r#"<moqui-conf><cluster-member tls-cert="CHANGEME" tls-key="CHANGEME"/></moqui-conf>"#,
+    );
+    ctx.factory().set_entity(facade.clone());
+    ctx.factory().set_seal_keeper(Arc::clone(&keeper));
+    assert_eq!(ctx.factory().secret(CLUSTER_CERT).unwrap().unwrap(), first[0].1);
+    assert_eq!(ctx.factory().secret(CLUSTER_KEY).unwrap().unwrap(), first[1].1);
+}
+
+/// `moqui operator secret rm` keeps the passes the fields and the connection depend on, and a new crypt pass needs
+/// `--force` and keeps the old one as `crypt-pass-old`.
+#[test]
+fn the_crypt_pass_is_replaced_only_by_force_and_the_guarded_passes_are_not_removed() {
+    let scratch = Scratch::new();
+    let keeper = opened(&scratch, "dev");
+    let facade = crate::testing::open();
+    let old = keeper.bootstrap_secret(CRYPT_PASS).unwrap().expect("made at init");
+    assert!(operator_put(&keeper, Some(&facade), CRYPT_PASS, "a-new-pass", false).is_err());
+    operator_put(&keeper, Some(&facade), CRYPT_PASS, "a-new-pass", true).unwrap();
+    assert_eq!(
+        keeper.bootstrap_secret(CRYPT_PASS).unwrap().unwrap().as_slice(),
+        b"a-new-pass"
+    );
+    assert_eq!(keeper.bootstrap_secret(CRYPT_PASS_OLD).unwrap().unwrap(), old);
+    for name in [CRYPT_PASS, CRYPT_PASS_OLD, DATASOURCE_PASSWORD] {
+        assert!(operator_remove(&keeper, Some(&facade), name).is_err(), "{name}");
+    }
+    write_to(&keeper, Some(&facade), "ops-token", "x").unwrap();
+    assert!(operator_remove(&keeper, Some(&facade), "ops-token").unwrap());
+}
+
+/// A member whose seal is not the cluster's (it made its own against a shared database) is refused when it reads the
+/// store, rather than making secrets of its own beside the cluster's.
+#[test]
+fn a_seal_under_which_no_stored_secret_opens_is_refused_with_an_alert() {
+    let first_dir = Scratch::new();
+    let second_dir = Scratch::new();
+    let facade = crate::testing::open();
+    let first = opened(&first_dir, "dev");
+    write_to(&first, Some(&facade), "ops-token", "x").unwrap();
+    let second = opened(&second_dir, "dev");
+    let err = read_from(&second, &facade, "ops-token").unwrap_err();
+    assert!(err.to_string().contains("not the one"), "{err}");
 }
 
 /// A script's `System.getProperty` answers no name the store keeps (SEC-SCR-03 extended to SecretValue names).

@@ -265,6 +265,7 @@ fn aws_stub() -> Stub {
 #[test]
 fn aws_kms_wraps_and_unwraps_with_a_sigv4_signed_request() {
     let scratch = Scratch::new();
+    super::allow_own_credential_files(true);
     let stub = aws_stub();
     let conf = conf(CloudConf {
         kms_provider: "aws".into(),
@@ -384,6 +385,7 @@ fn gcp_cloud_kms_wraps_and_unwraps_with_the_metadata_servers_token_or_a_service_
         .all(|call| call.header("authorization") == "Bearer gcp-metadata-token"));
 
     let scratch = Scratch::new();
+    super::allow_own_credential_files(true);
     let account = json!({
         "type": "service_account",
         "client_email": "seal@p.iam.gserviceaccount.com",
@@ -439,6 +441,20 @@ fn azure_stub() -> Stub {
                     json!({"kid": "VAULT/keys/seal/v7", "value": url(sealed.as_bytes())}).to_string(),
                 )
             }
+            // a stand-in signature: the digest behind a tag, which only the vault (this stub) makes
+            ("POST", "/keys/seal/sign?api-version=7.4") if seen.json()["alg"] == "RS256" => {
+                let digest = seen.json()["value"].as_str().unwrap().to_string();
+                (
+                    200,
+                    json!({"kid": "VAULT/keys/seal/v7", "value": format!("vault-signed:{digest}")}).to_string(),
+                )
+            }
+            ("POST", "/keys/seal/v7/verify?api-version=7.4") if seen.json()["alg"] == "RS256" => {
+                let body = seen.json();
+                let good =
+                    body["value"].as_str() == Some(&format!("vault-signed:{}", body["digest"].as_str().unwrap()));
+                (200, json!({"value": good}).to_string())
+            }
             ("POST", "/keys/seal/v7/unwrapkey?api-version=7.4") if seen.json()["alg"] == "RSA-OAEP-256" => {
                 let sealed = String::from_utf8(unurl(seen.json()["value"].as_str().unwrap())).unwrap();
                 (200, json!({"value": url(&fake_open(&sealed))}).to_string())
@@ -451,6 +467,7 @@ fn azure_stub() -> Stub {
 #[test]
 fn azure_key_vault_wraps_and_unwraps_by_client_credentials_or_the_managed_identity() {
     let scratch = Scratch::new();
+    super::allow_own_credential_files(true);
     let stub = azure_stub();
     let key = format!("{}/keys/seal", stub.base);
     let by_app = conf(CloudConf {
@@ -485,6 +502,38 @@ fn azure_key_vault_wraps_and_unwraps_by_client_credentials_or_the_managed_identi
     assert_eq!(Kms.unwrap(&metadata, &by_identity).unwrap().expose(), root.expose());
     let last = stub.seen().into_iter().last().unwrap();
     assert_eq!(last.header("authorization"), "Bearer azure-identity-token");
+
+    // RSA-OAEP is a public-key wrap: a blob a writer of seal.json made for a root key of their own is refused, since
+    // the vault did not sign it, and it is never unwrapped
+    let chosen = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(fake_seal(&[7_u8; 32]).as_bytes());
+    let mut forged = metadata.clone();
+    forged.insert("wrapped".into(), json!(chosen));
+    let unwraps_before = stub
+        .seen()
+        .iter()
+        .filter(|seen| seen.path.contains("unwrapkey"))
+        .count();
+    let err = Kms.unwrap(&forged, &by_identity).unwrap_err();
+    assert!(err.to_string().contains("not signed by the vault key"), "{err}");
+    assert_eq!(
+        stub.seen()
+            .iter()
+            .filter(|seen| seen.path.contains("unwrapkey"))
+            .count(),
+        unwraps_before
+    );
+    // a kid that is not a version of the conf's key (another vault, a .. segment) is not followed
+    for kid in [
+        "https://evil.example/keys/seal/v7".to_string(),
+        format!("{key}/../other/v7"),
+        format!("{key}/v7/extra"),
+    ] {
+        assert!(!super::kms::version_of_for_tests(&key, &kid), "{kid}");
+    }
+    assert!(super::kms::version_of_for_tests(
+        "https://v.vault.azure.net/keys/seal",
+        "https://V.Vault.Azure.NET/keys/seal/0a1b2c"
+    ));
 }
 
 fn transit_stub(refuse: Arc<std::sync::atomic::AtomicBool>) -> Stub {
@@ -519,6 +568,7 @@ fn transit_stub(refuse: Arc<std::sync::atomic::AtomicBool>) -> Stub {
 #[test]
 fn transit_wraps_and_unwraps_with_the_vault_token_and_a_refused_unseal_stays_sealed() {
     let scratch = Scratch::new();
+    super::allow_own_credential_files(true);
     let refuse = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stub = transit_stub(Arc::clone(&refuse));
     let cloud = CloudConf {
@@ -558,6 +608,7 @@ fn transit_wraps_and_unwraps_with_the_vault_token_and_a_refused_unseal_stays_sea
 #[test]
 fn a_credential_is_a_file_or_a_systemd_credential_never_a_conf_literal() {
     let scratch = Scratch::new();
+    super::allow_own_credential_files(true);
     assert_eq!(
         Credentials::parse("seal@kms-credentials", "").unwrap(),
         Credentials::Metadata
@@ -565,16 +616,41 @@ fn a_credential_is_a_file_or_a_systemd_credential_never_a_conf_literal() {
     assert!(Credentials::parse("seal@transit-token", "hvs.the-token-itself").is_err());
     assert!(Credentials::parse("seal@transit-token", "relative/path").is_err());
     assert!(Credentials::parse("seal@transit-token", "systemd:../x").is_err());
+    // a systemd credential is looked up only when read, so a conf that names one parses with no credentials directory
+    assert_eq!(
+        Credentials::parse("seal@transit-token", "systemd:bao-token").unwrap(),
+        Credentials::Systemd("bao-token".into())
+    );
     let open = scratch.file("open-token", "x");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         let Credentials::File(path) = &open else { unreachable!() };
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666)).unwrap();
-        assert!(
-            open.read("seal@transit-token").is_err(),
-            "a file others may write is refused"
-        );
+        assert!(open.read("seal@transit-token").is_ok());
+        for mode in [0o666, 0o604, 0o620] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+            assert!(
+                open.read("seal@transit-token").is_err(),
+                "a file its group may write or others may read or write is refused ({mode:o})"
+            );
+        }
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // the server's own user's file, in a directory it may write, is refused: the docs ask for root's
+        super::allow_own_credential_files(false);
+        let err = open.read("seal@transit-token").unwrap_err();
+        assert!(err.to_string().contains("root's"), "{err}");
+        super::allow_own_credential_files(true);
+    }
+    // the root key and a credential go only over https, but to the loopback
+    assert!(super::require_https("seal@transit-url", "http://bao.example:8200").is_err());
+    assert!(super::require_https("seal@transit-url", "bao.example").is_err());
+    for url in [
+        "https://bao.example",
+        "http://127.0.0.1:8200",
+        "http://localhost:1",
+        "http://[::1]:2",
+    ] {
+        assert!(super::require_https("seal@transit-url", url).is_ok(), "{url}");
     }
     // a seal.json made with another provider than the conf's names it, and no call goes out
     let cloud = CloudConf {

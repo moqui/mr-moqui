@@ -189,9 +189,23 @@ pub enum Credentials {
     /// (Azure). `transit` has none.
     #[default]
     Metadata,
-    /// A file, an absolute path or `$CREDENTIALS_DIRECTORY/<name>` for `systemd:<name>` (a systemd credential), whose
-    /// owner alone may write it.
+    /// A file of root's (an absolute path) that the server's user may read and nobody but its owner may write.
     File(PathBuf),
+    /// The unit's systemd credential of that name (`$CREDENTIALS_DIRECTORY/<name>`), looked up when it is read, so a
+    /// method that does not use it needs no credentials directory.
+    Systemd(String),
+}
+
+thread_local! {
+    /// A test's credential files are its own user's ([`allow_own_credential_files`]).
+    static OWN_FILES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Let this thread read credential files its own user owns, in a directory it may write: a test's, which cannot make a
+/// file of root's.
+#[doc(hidden)]
+pub fn allow_own_credential_files(allow: bool) {
+    OWN_FILES.with(|own| own.set(allow));
 }
 
 impl Credentials {
@@ -200,7 +214,7 @@ impl Credentials {
     ///
     /// # Errors
     ///
-    /// Anything else, or `systemd:` with no `$CREDENTIALS_DIRECTORY` or a name that is a path.
+    /// Anything else, or `systemd:` with a name that is a path.
     pub fn parse(selector: &str, given: &str) -> Result<Self, Error> {
         let given = given.trim();
         if given.is_empty() || given == "metadata" {
@@ -212,13 +226,7 @@ impl Credentials {
                     "{selector}: {given:?} is not a systemd credential's name"
                 )));
             }
-            let dir = std::env::var_os("CREDENTIALS_DIRECTORY").ok_or_else(|| {
-                Error::new(format!(
-                    "{selector} names the systemd credential {name}, and the service has no CREDENTIALS_DIRECTORY \
-                     (LoadCredential= or LoadCredentialEncrypted= in the unit)"
-                ))
-            })?;
-            return Ok(Self::File(Path::new(&dir).join(name)));
+            return Ok(Self::Systemd(name.to_string()));
         }
         if Path::new(given).is_absolute() {
             return Ok(Self::File(PathBuf::from(given)));
@@ -229,35 +237,116 @@ impl Credentials {
         )))
     }
 
-    /// The credential's text, trimmed.
+    /// Whether a file holds the credential (the host's own identity otherwise).
+    #[must_use]
+    pub fn is_file(&self) -> bool {
+        !matches!(self, Self::Metadata)
+    }
+
+    /// The credential's text, trimmed. A file must be root's, as the docs say: not the server's own user's, in no
+    /// directory that user may write, and neither written nor read by others; a systemd credential is systemd's
+    /// read-only one.
     ///
     /// # Errors
     ///
-    /// No file named, or a file that cannot be read, or that its group or others may write.
+    /// No file named, a systemd credential with no `$CREDENTIALS_DIRECTORY`, or a file that cannot be read or that
+    /// fails the checks.
     pub fn read(&self, selector: &str) -> Result<Zeroizing<String>, Error> {
-        let Self::File(path) = self else {
-            return Err(Error::new(format!("{selector} names no file")));
-        };
-        let meta =
-            std::fs::metadata(path).map_err(|err| Error::new(format!("{selector} {}: {err}", path.display())))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::MetadataExt as _;
-            if meta.mode() & 0o022 != 0 {
-                return Err(Error::new(format!(
-                    "{selector} {} may be written by its group or others: make it its owner's alone (root's)",
-                    path.display()
-                )));
+        let path = match self {
+            Self::Metadata => return Err(Error::new(format!("{selector} names no file"))),
+            Self::File(path) => {
+                check_root_file(selector, path)?;
+                path.clone()
             }
-        }
-        if !meta.is_file() {
-            return Err(Error::new(format!("{selector} {} is not a file", path.display())));
-        }
+            Self::Systemd(name) => {
+                let dir = std::env::var_os("CREDENTIALS_DIRECTORY").ok_or_else(|| {
+                    Error::new(format!(
+                        "{selector} names the systemd credential {name}, and the service has no CREDENTIALS_DIRECTORY \
+                         (LoadCredential= or LoadCredentialEncrypted= in the unit)"
+                    ))
+                })?;
+                Path::new(&dir).join(name)
+            }
+        };
         let text = Zeroizing::new(
-            std::fs::read_to_string(path).map_err(|err| Error::new(format!("{selector} {}: {err}", path.display())))?,
+            std::fs::read_to_string(&path)
+                .map_err(|err| Error::new(format!("{selector} {}: {err}", path.display())))?,
         );
         Ok(Zeroizing::new(text.trim().to_string()))
     }
+}
+
+/// The checks of a credential file of root's ([`Credentials::read`]).
+fn check_root_file(selector: &str, path: &Path) -> Result<(), Error> {
+    let meta = std::fs::metadata(path).map_err(|err| Error::new(format!("{selector} {}: {err}", path.display())))?;
+    if !meta.is_file() {
+        return Err(Error::new(format!("{selector} {} is not a file", path.display())));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if meta.mode() & 0o026 != 0 {
+            return Err(Error::new(format!(
+                "{selector} {} may be written by its group, or read or written by others: make it 0400 or 0440 \
+                 (root's, the server's group)",
+                path.display()
+            )));
+        }
+        if OWN_FILES.with(std::cell::Cell::get) {
+            return Ok(());
+        }
+        let me = rustix::process::geteuid().as_raw();
+        if meta.uid() == me && me != 0 {
+            return Err(Error::new(format!(
+                "{selector} {} belongs to the server's own user, which could replace it: make it root's",
+                path.display()
+            )));
+        }
+        if let Some(dir) = path.parent() {
+            let dir_meta =
+                std::fs::metadata(dir).map_err(|err| Error::new(format!("{selector} {}: {err}", dir.display())))?;
+            if (dir_meta.uid() == me && me != 0) || dir_meta.mode() & 0o022 != 0 {
+                return Err(Error::new(format!(
+                    "{selector} {} is in a directory the server's own user or others may write ({}): put it in one of \
+                     root's",
+                    path.display(),
+                    dir.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a URL that is not https, but on the loopback (a test's stub, a local proxy): the root key and a credential go
+/// to it.
+///
+/// # Errors
+///
+/// An `http://` URL to any other host, or no scheme.
+#[cfg(feature = "http")]
+pub(crate) fn require_https(selector: &str, url: &str) -> Result<(), Error> {
+    let url = url.trim();
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let host = rest.split(['/', '?']).next().unwrap_or_default();
+        let host = match host.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or_default(),
+            None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+        };
+        if host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback())
+        {
+            return Ok(());
+        }
+    }
+    Err(Error::new(format!(
+        "{selector} {url:?} is not https: the root key and a credential go to it"
+    )))
 }
 
 /// The settings of the `kms` and `transit` methods (`seal@kms-*`, `seal@transit-*`), read from the conf files only:

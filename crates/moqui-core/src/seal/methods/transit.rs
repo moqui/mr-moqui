@@ -89,12 +89,14 @@ fn call(cloud: &CloudConf, verb: &str, body: &Value) -> Result<Value, Error> {
             "seal@transit-url and seal@transit-key name the Vault and its Transit key",
         ));
     }
+    super::require_https("seal@transit-url", &cloud.transit_url)?;
     let token = cloud.transit_token.read("seal@transit-token")?;
     let mut http: RestClient = super::kms::client();
     if !cloud.transit_ca_file.is_empty() {
         let pem = std::fs::read(&cloud.transit_ca_file)
             .map_err(|err| Error::new(format!("seal@transit-ca-file {}: {err}", cloud.transit_ca_file)))?;
-        http = http.root_certificates_pem(pem);
+        // the authorities the Vault's HTTPS is checked against, in place of the system's
+        http = http.only_root_certificates_pem(pem);
     }
     let url = format!(
         "{}/v1/{}/{verb}/{}",

@@ -71,8 +71,9 @@ hkdf = { workspace = true, optional = true }
 aes-gcm = { workspace = true, optional = true }
 
 [target.'cfg(unix)'.dependencies]
-# fs: statvfs, for the filesystems of the resource readings (context/resources.rs).
-rustix = { workspace = true, features = ["fs"] }
+# fs: statvfs, for the filesystems of the resource readings (context/resources.rs). process: the effective uid, which a
+# seal credential file must not belong to (seal/methods/mod.rs).
+rustix = { workspace = true, features = ["fs", "process"] }
 
 # Default on. The browser build (crates/moqui-browser, plans/archive/Wasm.md) turns them all off so no
 # socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Build-Test.md) pick them through moqui-host.

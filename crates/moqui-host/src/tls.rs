@@ -570,6 +570,12 @@ fn held_slot(dir: &Path, name: &str) -> (PathBuf, String) {
     (dir, name.to_ascii_lowercase())
 }
 
+/// Drop every key held in memory: the seal drops the keys (plans/Sealed-Secrets.md §3.5); the next unsealed start's
+/// ACME sync holds them again from their rows.
+pub(crate) fn drop_held_keys() {
+    sync::write(&HELD).clear();
+}
+
 /// Hold `key_pem` as the key of `dir`'s pair `name` (whose certificate is a file there), or with `None` drop it.
 pub(crate) fn hold_key(dir: &Path, name: &str, key_pem: Option<&str>) {
     let slot = held_slot(dir, name);

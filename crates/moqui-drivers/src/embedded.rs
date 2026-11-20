@@ -594,7 +594,42 @@ mod cluster {
         );
         let mut options = StartOptions::new(CLI_MAX_CONNECTIONS);
         options.install_dir = Some(shared_install_dir(runtime_dir, &dir));
+        options.password = sealed_password(runtime_dir);
         Ok(options)
+    }
+
+    /// The cluster's superuser password from the runtime's `seal.json` (plans/Sealed-Secrets.md S4), for `save-db`,
+    /// `load-save` and a test snapshot: the seal this process opened already, else the runtime's own opened with no
+    /// operator (an automatic method). `None` with no seal, one that needs an operator, or no password in it: the
+    /// cluster's own `pgpass` then, as a cluster made before S4 has it.
+    fn sealed_password(runtime_dir: &Path) -> Option<SuperuserPassword> {
+        use moqui_core::seal::{file, keeper_for, keeper_of, secrets, Mode, SealConf};
+        let keeper = match keeper_of(runtime_dir) {
+            Some(keeper) => keeper,
+            None => {
+                if !file::path_in(runtime_dir).exists() {
+                    return None;
+                }
+                let purpose = moqui_core::context::conf_env::instance_purpose();
+                let keeper = keeper_for(runtime_dir, SealConf::with_purpose(&purpose))
+                    .map_err(|err| tracing::error!("The seal of {}: {err}", runtime_dir.display()))
+                    .ok()?;
+                if let Err(err) = keeper.start(Mode::Unattended) {
+                    tracing::error!(
+                        "The seal of {} did not open with no operator ({err}): the cluster's password is not read \
+                         from it",
+                        runtime_dir.display()
+                    );
+                    return None;
+                }
+                keeper
+            }
+        };
+        if !keeper.is_unsealed() || keeper.is_ephemeral() {
+            return None;
+        }
+        let value = keeper.bootstrap_secret(secrets::DATASOURCE_PASSWORD).ok()??;
+        String::from_utf8(value.to_vec()).ok().map(SuperuserPassword)
     }
 
     /// The one theseus install of a runtime ([`super::install_dir`]), shared by the entity, search and sim clusters.
@@ -740,9 +775,16 @@ mod cluster {
         adopt_port: Option<u16>,
     ) -> Result<(EmbeddedCluster, PostgresDriver), Error> {
         let settings = settings(dir, data_dir, options, adopt_port);
-        // with the password given, initdb's file is written only for a cluster not made yet, and removed once setup ran
-        let initdb_file = options.password.is_some() && !data_dir.join("postgresql.conf").exists();
-        if options.password.is_none() || initdb_file {
+        // with the password given, initdb's file is written new (0600) only for a cluster not made yet, and removed
+        // when this start is done with it, by a guard, on every path out; one an earlier process left goes first
+        let mut initdb_guard = None;
+        if options.password.is_some() {
+            remove_stale_initdb_files(dir);
+            if !data_dir.join("postgresql.conf").exists() {
+                new_private_file(&settings.password_file, &settings.password)?;
+                initdb_guard = Some(InitdbFile(settings.password_file.clone()));
+            }
+        } else {
             private_password_file(&settings.password_file, &settings.password)?;
         }
         let owned = if options.password.is_some() {
@@ -773,9 +815,7 @@ mod cluster {
         let mut server = PostgreSQL::new(settings);
         provide_libxml2(server.settings())?;
         let set_up = server.setup();
-        if options.password.is_some() {
-            remove_initdb_file(&server.settings().password_file);
-        }
+        drop(initdb_guard);
         set_up.map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
         if adopt_port.is_none() {
             // The postmaster outlives a host that is killed, and keeps what it inherited: a program that hosts the node
@@ -1037,13 +1077,41 @@ mod cluster {
         settings
     }
 
-    /// Remove initdb's password file, whether setup ran or failed: no password stays on disk.
-    fn remove_initdb_file(path: &Path) {
-        match std::fs::remove_file(path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => tracing::error!("could not remove {}: {err}", path.display()),
+    /// initdb's password file, removed when dropped, whether setup ran or failed: no password stays on disk.
+    struct InitdbFile(PathBuf);
+
+    impl Drop for InitdbFile {
+        fn drop(&mut self) {
+            match std::fs::remove_file(&self.0) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => tracing::error!("could not remove {}: {err}", self.0.display()),
+            }
         }
+    }
+
+    /// Remove the initdb password files an earlier start left beside the cluster (a crash, or a process killed during
+    /// initdb), so none is read again by a later process of the same pid.
+    fn remove_stale_initdb_files(dir: &Path) {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            if entry.file_name().to_string_lossy().starts_with(".initdb-password-") {
+                match std::fs::remove_file(entry.path()) {
+                    Ok(()) => tracing::warn!("Removed {}, which an earlier start left", entry.path().display()),
+                    Err(err) => tracing::error!("could not remove {}: {err}", entry.path().display()),
+                }
+            }
+        }
+    }
+
+    /// Write `text` to a new file only this user may read (`0600`), refusing one that is there already.
+    fn new_private_file(path: &Path, text: &str) -> Result<(), Error> {
+        use std::io::Write as _;
+        moqui_lib::private_fs::file_options()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(text.as_bytes()))
+            .map_err(|err| Error::new(format!("embedded postgres password file {}", path.display())).with_source(err))
     }
 
     /// The superuser's password file, only this user's (`0600`): written here with `password` when it is missing (the

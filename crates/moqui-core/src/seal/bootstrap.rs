@@ -76,6 +76,17 @@ fn open_secret_value_key(root: &RootKey, sealed: &SealedValue) -> Result<Key32, 
     Key32::from_slice(&opened).map_err(|err| Error::new(format!("the SecretValue data key: {err}")))
 }
 
+/// The bootstrap secrets a new seal starts with: a random crypt pass (32 bytes, base64), so a bundle exported right after
+/// `init` carries the key of the encrypted fields. A conf that gives its own crypt pass leaves this one unused.
+pub(super) fn initial(root: &RootKey) -> Result<std::collections::BTreeMap<String, SealedValue>, Error> {
+    let pass = super::secrets::random_secret()?;
+    let name = super::secrets::CRYPT_PASS;
+    Ok(std::collections::BTreeMap::from([(
+        name.to_string(),
+        seal_bootstrap(&bootstrap_key(root), name, 1, pass.as_bytes()),
+    )]))
+}
+
 pub(super) fn seal_secret_value_key(root: &RootKey, generation: u64, key: &Key32) -> SealedValue {
     let ad = secret_value_ad(generation);
     let parts: Vec<&[u8]> = ad.iter().map(Vec::as_slice).collect();

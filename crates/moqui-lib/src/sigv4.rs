@@ -132,9 +132,11 @@ pub fn authorization(request: &Request<'_>, credentials: &Credentials<'_>, scope
         "AWS4-HMAC-SHA256\n{amz_date}\n{credential_scope}\n{}",
         sha256_hex(canonical.as_bytes())
     );
-    let mut key = hmac(format!("AWS4{}", credentials.secret_key).as_bytes(), date);
+    // the secret and the keys derived from it are cleared when dropped
+    let seed = zeroize::Zeroizing::new(format!("AWS4{}", credentials.secret_key));
+    let mut key = zeroize::Zeroizing::new(hmac(seed.as_bytes(), date));
     for part in [scope.region, scope.service, "aws4_request"] {
-        key = hmac(&key, part);
+        key = zeroize::Zeroizing::new(hmac(&key, part));
     }
     let signature = hex(&hmac(&key, &to_sign));
     format!(

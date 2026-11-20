@@ -145,7 +145,18 @@ static SERIAL: std::sync::RwLock<()> = std::sync::RwLock::new(());
 /// test, which runs in a process of its own ([`own_process`]).
 pub fn serial() -> std::sync::RwLockWriteGuard<'static, ()> {
     assert_own_process();
+    test_crypt_pass();
     SERIAL.write().unwrap_or_else(|err| err.into_inner())
+}
+
+/// The tests' runtimes run on a production purpose with no seal, where the crypt pass is unset unless the environment
+/// gives it (plans/Sealed-Secrets.md S4): one fixed pass, as a process property, for every load and server of this test
+/// process. A test that sets its own keeps it.
+pub fn test_crypt_pass() {
+    const CRYPT_PASS: &str = "moqui_conf__entity_facade__crypt_pass";
+    if moqui_lib::env::get_property(CRYPT_PASS).is_none_or(|pass| pass.is_empty()) {
+        moqui_lib::env::set_property(CRYPT_PASS, "gate-test-crypt-pass-not-a-secret".to_string());
+    }
 }
 
 /// The variable that names the test a child process of [`own_process`] runs.
@@ -165,6 +176,7 @@ const OWN_PROCESS: &str = "MOQUI_TEST_OWN_PROCESS";
 /// run in parallel instead of one at a time. At most half the CPUs' worth of children run at once
 /// (`MOQUI_TEST_PROCESSES` sets another number).
 pub fn own_process() -> bool {
+    test_crypt_pass();
     let test = std::thread::current()
         .name()
         .expect("libtest names a test's thread for the test")
@@ -248,6 +260,7 @@ impl Drop for ProcessSlot {
 /// The lock of a test that loads data or runs a cluster without a server or a process property. It runs beside the others of its
 /// kind, and not beside a test that holds [`serial`]. Hold it for the whole test.
 pub fn shared() -> std::sync::RwLockReadGuard<'static, ()> {
+    test_crypt_pass();
     SERIAL.read().unwrap_or_else(|err| err.into_inner())
 }
 
@@ -611,6 +624,7 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 fn template() -> &'static Template {
+    test_crypt_pass();
     static TEMPLATE: std::sync::OnceLock<Template> = std::sync::OnceLock::new();
     TEMPLATE.get_or_init(build_template)
 }

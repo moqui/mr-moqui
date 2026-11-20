@@ -307,7 +307,16 @@ pub fn sealed_cluster_password(
     }
     let password = match left {
         Some(left) => {
-            let kept = secrets::bootstrap_or_make(keeper, name, || Ok(left.into()))?;
+            let kept = secrets::bootstrap_or_make(keeper, name, || Ok(left.clone().into()))?;
+            if kept.as_str() != left {
+                // the seal holds another cluster's password: this cluster's file stays, and serves this start
+                tracing::error!(
+                    "{} holds another password than seal.json's {name}: the file is kept and used; put the right one \
+                     with `moqui operator secret put {name}` and remove the file (plans/Sealed-Secrets.md S4)",
+                    legacy.display()
+                );
+                return Ok(Some(left));
+            }
             match std::fs::remove_file(&legacy) {
                 Ok(()) => tracing::warn!(
                     "Moved the embedded cluster's password from {} into seal.json (plans/Sealed-Secrets.md S4)",

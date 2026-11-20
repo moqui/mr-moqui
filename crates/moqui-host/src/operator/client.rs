@@ -122,7 +122,9 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
             Ok(())
         }
         ["secret", "put", name, options @ ..] => {
-            let value = match options {
+            let force = options.contains(&"--force");
+            let options: Vec<&str> = options.iter().copied().filter(|option| *option != "--force").collect();
+            let value = match options.as_slice() {
                 ["--file", path] => Zeroizing::new(
                     std::fs::read_to_string(path)
                         .map_err(|err| Error::new(format!("could not read {path}")).with_source(err))?,
@@ -130,7 +132,7 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
                 [] => secret_value()?,
                 _ => return Err(crate::usage::command_usage("operator")),
             };
-            let request = json!({"command": "secret-put", "name": name, "value": value.as_str()});
+            let request = json!({"command": "secret-put", "name": name, "value": value.as_str(), "force": force});
             let answer = call(&socket, request)?;
             println!(
                 "Kept the secret {} (its value is never shown).",
@@ -163,6 +165,9 @@ pub fn dispatch(args: &[String]) -> Result<(), Error> {
             let answer = call(&socket, json!({"command": "export-seal"}))?;
             write_private(Path::new(path), answer["bundle"].as_str().unwrap_or_default())?;
             println!("Wrote the recovery bundle to {path}: keep it with the offline backups, apart from the shares.");
+            if let Some(warning) = answer["warning"].as_str() {
+                eprintln!("Warning: {warning}");
+            }
             Ok(())
         }
         _ => Err(crate::usage::command_usage("operator")),

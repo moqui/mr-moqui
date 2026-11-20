@@ -385,8 +385,9 @@ start, and on first use `webapp-list/webapp[webroot]/session-config@cookie-key`,
 `git-server@lfs-token-key`, the pair `cluster-member@tls-cert` and `cluster-member@tls-key` (made together),
 `edge@link-key`, `acme@account-key`, `push/web@vapid-key` and the other keys the default conf leaves at `CHANGEME` into
 the `SecretValue` table. `mail-delivery/dkim@key` (empty by default) is made there too, the first time a server needs
-it. A value the conf files, the environment or `runtime/.env` give wins over the store; one in `runtime/.env` is still
-read, and named in a warning. A secret is never logged, is masked wherever the conf is shown, and is null to a script's
+it. A value the conf files or the process environment give wins over the store. One in `runtime/.env`, which the
+server's own user can write, is ignored once the runtime has its seal, with an error logged (before the seal it is
+still read, with a warning). A secret is never logged, is masked wherever the conf is shown, and is null to a script's
 `ec.factory.getConfValue` and `System.getProperty`.
 
 A conf attribute holds its value as written: `${...}` is not expanded, and a conf that still has a `${` in an
@@ -684,10 +685,12 @@ moqui_conf__entity_facade__datasource__TRANSACTIONAL__password=...
 | `sslmode` | | Empty is verified TLS. `verify-full` checks the authority and the name, `verify-ca` the authority only, `require` encrypts without checking, and `disable` turns TLS off (for a local dev server only) |
 | `sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 
-`entity-facade@crypt-pass`, generated into `seal.json` at the first start, is the key of encrypted fields; it moves
-with the database in the recovery bundle. The datasource's `password` is a bootstrap secret too: give it with
-`moqui operator secret put entity-facade/datasource[transactional]@password` (it is read before the database opens,
-so put it while the server waits sealed, then restart it), or in the environment. A datasource's own `inline-jdbc` with `xa-properties` or a `jdbc-uri`,
+`entity-facade@crypt-pass`, made into `seal.json` by `moqui operator init`, is the key of encrypted fields; it moves
+with the database in the recovery bundle. The datasource's `password` is a bootstrap secret too, read before the
+database opens: give it in the process environment (`moqui_conf__entity_facade__datasource__transactional__password`,
+the unit's `Environment=` or a systemd credential) for the first start, then, once unsealed, keep it with `moqui
+operator secret put entity-facade/datasource[transactional]@password` (read at the next start) and drop it from the
+environment. A datasource's own `inline-jdbc` with `xa-properties` or a `jdbc-uri`,
 as a conf from Moqui Java has it, replaces these attributes.
 
 The content datasource has the same attributes ([Content database](#content-database)).
@@ -1050,14 +1053,19 @@ moqui operator secret rm NAME
 where it is sent and whose credential goes with it are `seal` attributes read from the conf files only (an environment
 name or `runtime/.env` that sets one is ignored, with an error logged), so a writer of `seal.json` or `.env` cannot send
 the server's credential elsewhere. A credential is never written in the conf: `seal@kms-credentials` and
-`seal@transit-token` name a file of root's, writable by its owner only (an absolute path), or `systemd:NAME`, the unit's
-`LoadCredential=`/`LoadCredentialEncrypted=` credential `NAME`; `kms-credentials` empty uses the host's own identity.
+`seal@transit-token` name a file of root's (an absolute path; mode 0400 or 0440 with the server's group, in a directory
+of root's: one the server's own user owns, or that its group may write or others may read, is refused), or
+`systemd:NAME`, the unit's `LoadCredential=`/`LoadCredentialEncrypted=` credential `NAME`, looked up only when the
+method reads it; `kms-credentials` empty uses the host's own identity. `kms-endpoint`, an Azure key URL and
+`transit-url` must be https (a loopback address excepted); the metadata addresses stay http, and Azure's sign-in
+endpoint is https as its client secret goes there. `transit-ca-file` replaces the system's authorities for the Vault's
+HTTPS.
 
 | Provider | Settings | Calls | Credentials |
 |---|---|---|---|
 | AWS KMS (`kms-provider="aws"`) | `kms-key` (key id, ARN or alias), `kms-region` | `TrentService.Encrypt` and `Decrypt`, signed with SigV4, encryption context `moqui-seal=root-key` | The instance role by IMDSv2; or a file `{"access_key_id", "secret_access_key", "session_token"}`. The role needs `kms:Encrypt` and `kms:Decrypt` on the key |
 | GCP Cloud KMS (`kms-provider="gcp"`) | `kms-key` (`projects/P/locations/L/keyRings/R/cryptoKeys/K`) | `:encrypt` and `:decrypt`, additional authenticated data `moqui-seal root-key` | The metadata server's token of the VM's service account; or a service account's JSON key file. It needs `roles/cloudkms.cryptoKeyEncrypterDecrypter` |
-| Azure Key Vault (`kms-provider="azure"`) | `kms-key` (`https://VAULT.vault.azure.net/keys/NAME`) | `wrapkey` and `unwrapkey`, RSA-OAEP-256 (an RSA key); the key version the wrap used is kept, and taken only under the conf's key | The managed identity by IMDS; or a file `{"tenant_id", "client_id", "client_secret"}` for the client credentials grant. It needs the key's wrap and unwrap permissions |
+| Azure Key Vault (`kms-provider="azure"`) | `kms-key` (`https://VAULT.vault.azure.net/keys/NAME`) | `wrapkey` and `unwrapkey`, RSA-OAEP-256 (an RSA key); the key version the wrap used is kept, and taken only when it is a version of the conf's key. RSA-OAEP is a public-key wrap, so anyone could make a blob that unwraps to a root key of their choosing: the wrapped key is signed with the key (`sign`, RS256) and the signature checked (`verify`) before each unwrap | The managed identity by IMDS; or a file `{"tenant_id", "client_id", "client_secret"}` for the client credentials grant. It needs the key's wrap, unwrap, sign and verify permissions |
 | OpenBao or Vault Transit (`method="transit"`) | `transit-url`, `transit-key`, `transit-mount` (`transit`), `transit-namespace`, `transit-ca-file` | `POST /v1/<mount>/encrypt/<key>` and `/decrypt/<key>` with `X-Vault-Token` | `transit-token`: a token whose policy allows `update` on those two paths |
 
 `kms-endpoint` and `kms-token-endpoint` replace the provider's API and token addresses (a private endpoint). A failed
@@ -1113,34 +1121,43 @@ No secret is in `runtime/.env` or the runtime directory ([Sealed-Secrets](../pla
 
 | What | Where | Kept by |
 |---|---|---|
-| Bootstrap secrets, needed before the database opens: `entity-facade@crypt-pass` and `@crypt-pass-old`, each datasource's `password` (the embedded Postgres superuser's is the transactional datasource's), a cluster member's own edge key (`edge-member-key`) | `seal.json`, sealed under a key derived from the root key | The first start makes the crypt pass, the embedded password and the edge key; an operator puts the others |
+| Bootstrap secrets, needed before the database opens: `entity-facade@crypt-pass` and `@crypt-pass-old`, each datasource's `password` (the embedded Postgres superuser's is the transactional datasource's), a cluster member's own edge key (`edge-member-key`) | `seal.json`, sealed under a key derived from the root key | `init` makes the crypt pass, the first start the embedded password and the edge key; an operator puts the others |
 | Every other secret: the generated keys (`session-config@cookie-key`, `ssh-server@host-key`, `git-server@lfs-token-key`, the cluster TLS pair, `edge@link-key`, `acme@account-key`, `push/web@vapid-key`, the DKIM key, ...), what pairing and the edge setup write, and what an operator puts | the `moqui.security.SecretValue` table, AES-256-GCM under the SecretValue data key with the name and generation as associated data | Made on first use; shared by every member of a cluster through the database |
 | ACME certificates' keys | their `AcmeCertificate` row, encrypted | Served from memory; only `fullchain.pem` is written |
 | An operator's own TLS key | the secret `tls-key/<name>` beside `runtime/cert/<name>.crt` | `moqui operator secret put tls-key/<name> --file <key>`; a key file still serves, and is named in a warning |
 
-`moqui operator secret put NAME` keeps a secret by name: a conf selector the conf leaves empty or at `CHANGEME` (a
-value the conf, the environment or `runtime/.env` gives wins over it), or a name of its own such as `tls-key/<name>`.
-A bootstrap secret goes to `seal.json`, so export the recovery bundle again after it, and is read at the next start;
-another goes to `SecretValue` once the database is open, and is read at once. The value is read with the terminal's
+`moqui operator secret put NAME` keeps a secret by name, once unsealed: a conf selector the conf leaves empty or at
+`CHANGEME` (a value the conf files or the process environment give wins over it), or a name of its own such as
+`tls-key/<name>`. A bootstrap secret goes to `seal.json`, so export the recovery bundle again after it, and is read at
+the next start; another goes to `SecretValue` once the database is open, and is read by this server at once and by the
+other members of a cluster within 30 seconds (each reads the rows again then). A new `entity-facade@crypt-pass` needs
+`--force`, and the pass it replaces becomes `entity-facade@crypt-pass-old`; `secret rm` refuses a crypt pass or a
+datasource password. Putting a secret removes a line an earlier build kept for it in `runtime/.env`. The value is read with the terminal's
 echo off, from standard input (a whole PEM piped in), or with `--file`, and is never printed: `secret list` gives names,
 kinds and generations only. A script's `System.getProperty` answers no name the store keeps. Admin's write-only fields
 (connections, OAuth providers) keep their own encrypted rows. Code reads a secret by its handle
 (`ExecutionContextFactory::secret`, `conf_env::secret`), a value cleared when dropped.
 
-The embedded Postgres password is handed to the cluster's tools in their environment (`PGPASSWORD`) only while they run,
-and initdb reads it from a file of its own that is removed once it ran; no `pgpass` is kept. A `pgpass` or
-`db/edge_member_key` an earlier build left is moved into `seal.json` at the next start. A runtime from before has its
+The embedded Postgres password is handed to the cluster's tools in their environment (`PGPASSWORD`) only while they run
+(`moqui save-db` and `load-save` read it from the runtime's seal too), and initdb reads it from a new owner-only file
+that is removed once it ran, or failed; no `pgpass` is kept. A `pgpass` or `db/edge_member_key` an earlier build left
+is moved into `seal.json` at the next start; one that holds another value than the seal's is kept, and named in an
+error. A member's own edge key is not in the recovery bundle: a member restored from a bundle makes its own. A runtime from before has its
 other secrets in `runtime/.env`: they are still read, each named in a warning, and no migration moves them; put each
 with `moqui operator secret put` and remove its line, or start a new runtime.
 
 The members of a cluster share the `SecretValue` rows through their database, and each needs the same bootstrap
 secrets and SecretValue data key in its own `seal.json`: start a new member from the first one's recovery bundle
-(`moqui operator init --from`, then `rekey` to its own method), never with a seal of its own, and export the bundle
-once the first member serves, when its crypt pass is made. Copying `.env` between members carries no secret now.
+(`moqui operator init --from`, then `rekey` to its own method), never with a seal of its own: a member whose seal opens
+none of the database's `SecretValue` rows refuses to read them, with an alert. `init` makes the crypt pass and the
+SecretValue data key, so the bundle exported right after it carries them; export it again once the first member serves,
+for the embedded cluster's password. Copying `.env` between members carries no secret now.
 
-A boot with no seal (`moqui load`, `moqui tui` or the desktop app on a production runtime before `moqui operator init`)
-holds its root key in memory only and keeps nothing: a secret it makes lives in that process only, logged as an error,
-and `secret put` is refused, naming `moqui operator init`. Run the server and make the seal first.
+A boot with no seal (`moqui tui`, the desktop app or a tool on a production runtime before `moqui operator init`) holds
+its root key in memory only and keeps nothing: the crypt pass is unset unless the conf files or the environment give
+one, so the first encrypted field written or read fails with an error naming `moqui operator init`; a session or
+signing key it makes lives in that process only, logged as an error; and `secret put` is refused. `moqui load` refuses
+such a runtime outright, unless the environment gives the crypt pass. Run the server and make the seal first.
 
 **Backup and restore.** A database backup is useless without the matching `seal.json`. Write the recovery bundle at
 init and after each `rekey`, `rotate-root` and bootstrap-secret change, and keep it with the offline backups, apart

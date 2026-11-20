@@ -120,7 +120,16 @@ pub fn candidates(env_file: Option<&Path>) -> Vec<(String, String, Source)> {
             .unwrap_or_default(),
         None => env::dotenv_entries(),
     };
-    let mut dotenv: Vec<(String, String)> = entries.into_iter().filter(|(name, value)| ours(name, value)).collect();
+    // once the runtime has its seal, a secret is not taken from .env, which the server's own user can write
+    // (plans/Sealed-Secrets.md S4; the boot's first merge, before the gate, is put right by seal::secrets::prepare_boot)
+    let sealed = env_file
+        .and_then(Path::parent)
+        .and_then(crate::seal::keeper_of)
+        .is_some_and(|keeper| keeper.is_unsealed() && !keeper.is_ephemeral());
+    let mut dotenv: Vec<(String, String)> = entries
+        .into_iter()
+        .filter(|(name, value)| ours(name, value) && !(sealed && env_name_secret(name)))
+        .collect();
     dotenv.sort();
     found.extend(dotenv.into_iter().map(|(name, value)| (name, value, Source::DotEnv)));
     found
@@ -281,9 +290,8 @@ pub fn setting(selector: &str) -> String {
 /// When the file cannot be written, or a secret cannot be kept (no running server of that runtime, or no seal).
 pub fn keep_in_env(env_path: &Path, set: &[(String, String)], remove: &[&str]) -> Result<(), Error> {
     // a test's factory has no seal: its secrets stay where they were kept before (the file and a process property)
-    let unsealed_factory =
-        super::ExecutionContext::with_current(|ec| ec.factory().seal_keeper().is_none()).unwrap_or(false);
-    let secret = |given: &str| given.contains('@') && selector_secret(given) && !unsealed_factory;
+    let test_factory = super::ExecutionContext::with_current(|ec| ec.factory().keeps_secrets_in_env()).unwrap_or(false);
+    let secret = |given: &str| given.contains('@') && selector_secret(given) && !test_factory;
     let name = |given: &str| {
         if given.contains('@') {
             env_name_of(given)
@@ -307,6 +315,18 @@ pub fn keep_in_env(env_path: &Path, set: &[(String, String)], remove: &[&str]) -
         }
         for given in &removed_secrets {
             crate::seal::secrets::remove(&factory, given)?;
+        }
+        // a line an earlier build kept for one of them in .env would win over the store at a seal-less boot: it goes
+        let stale: Vec<String> = secrets
+            .iter()
+            .map(|(given, _)| given.as_str())
+            .chain(removed_secrets.iter().copied())
+            .map(env_name_of)
+            .filter(|name| !name.is_empty())
+            .collect();
+        if !stale.is_empty() && env_path.is_file() {
+            let stale: Vec<&str> = stale.iter().map(String::as_str).collect();
+            env::update_dotenv_file(env_path, &[], &stale)?;
         }
     }
     let pairs: Vec<(String, String)> = set

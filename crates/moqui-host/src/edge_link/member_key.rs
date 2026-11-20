@@ -128,7 +128,16 @@ impl MemberKey {
             })
             .map_err(|err| format!("this member's edge key: {err}"))?;
         let key = Self::read(file, &kept)?;
-        if left.is_some() {
+        if let Some(left) = left.as_deref() {
+            if left.trim() != kept.as_str() {
+                // seal.json holds another key: the file stays for an operator to look at, the seal's key is used
+                tracing::error!(
+                    "Edge link: {} holds another key than seal.json's edge-member-key: the seal's is used and the file \
+                     is kept (plans/Sealed-Secrets.md S4)",
+                    file.display()
+                );
+                return Ok(key);
+            }
             match std::fs::remove_file(file) {
                 Ok(()) => tracing::warn!(
                     "Edge link: moved this member's key from {} into seal.json (plans/Sealed-Secrets.md S4)",

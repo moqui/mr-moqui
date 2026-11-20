@@ -28,12 +28,18 @@
 //! through a transitional shim in `conf_value` until each moves to the handle.
 //!
 //! A boot with no seal (an unattended boot of a production instance before `moqui operator init`: a tool, a test, the
-//! desktop app) holds its root key in memory only and keeps nothing under it: a put is refused, naming `moqui operator
-//! init`, and a secret it makes (the crypt pass, a session key) lives in this process's memory only, logged as an error
-//! once, never in `.env`. A production server never boots so: its gate makes the seal first.
+//! desktop app) holds its root key in memory only and keeps nothing under it: an operator's put is refused, naming
+//! `moqui operator init`; the crypt pass is left unset unless the conf files or the environment give one, so the first
+//! encrypt or decrypt of a field fails with that error; and a session or signing key it makes lives in this process's
+//! memory only, logged as an error once, never in `.env`. `moqui load` refuses such a boot. A production server never
+//! boots so: its gate makes the seal first.
+//!
+//! The SecretValue rows are read once into memory and read again after [`REFRESH`], so a secret another member put is
+//! seen within it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 use moqui_lib::node::path::{self, AttrPath};
 use moqui_lib::node::MNode;
@@ -67,23 +73,39 @@ pub const TLS_KEY_PREFIX: &str = "tls-key/";
 pub const CLUSTER_CERT: &str = "cluster-member@tls-cert";
 pub const CLUSTER_KEY: &str = "cluster-member@tls-key";
 
+/// How long the opened SecretValue rows are used before they are read again: a secret another member of the cluster
+/// put or removed is seen within it.
+pub const REFRESH: Duration = Duration::from_secs(30);
+
 /// The opened SecretValue rows of one keeper, cleared when it seals.
 #[derive(Default)]
 pub(crate) struct Cache {
     values: HashMap<String, Zeroizing<String>>,
-    loaded: bool,
+    loaded_at: Option<Instant>,
 }
 
 impl Cache {
     pub(crate) fn clear(&mut self) {
         self.values.clear();
-        self.loaded = false;
+        self.loaded_at = None;
+    }
+
+    fn fresh(&self) -> bool {
+        self.loaded_at.is_some_and(|at| at.elapsed() < REFRESH)
     }
 }
+
+/// One generation of a stored secret at a time in this process: the database decides between members.
+static GENERATING: Mutex<()> = Mutex::new(());
 
 /// The generated secrets of the boots with no seal, in this process's memory only, by name. A process: two runtimes
 /// in one process (a test's gate and its member) share them, as a cluster's members share their store.
 static EPHEMERAL: LazyLock<Mutex<HashMap<String, Zeroizing<String>>>> = LazyLock::new(Mutex::default);
+
+/// Drop the secrets a boot with no seal held in memory: `seal` drops every key.
+pub(crate) fn clear_ephemeral() {
+    lock(&EPHEMERAL).clear();
+}
 
 /// Every secret name this process has seen in a store, lower case, for the scripts' `System.getProperty`, which
 /// answers none of them ([`is_secret_name`]).
@@ -229,13 +251,16 @@ fn unchecked<T>(body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
 
 /// Every row of the store, opened, by name. A row that does not open is logged and left out (failure tolerance): the
 /// others still serve.
-fn load_all(keeper: &Keeper, facade: &EntityFacade) -> Result<HashMap<String, Zeroizing<String>>, Error> {
-    let key = keeper.secret_value_key()?;
+///
+/// When there are rows and none opens, this member's seal is not the cluster's (a member that made a seal of its own
+/// against a shared database): that is refused, with an alert, so it neither makes secrets of its own beside the
+/// cluster's nor writes fields under another crypt pass.
+fn load_all(key: &Key32, facade: &EntityFacade) -> Result<HashMap<String, Zeroizing<String>>, Error> {
     let rows = unchecked(|| Ok(facade.find(ENTITY)?.list()?))?;
     let mut out = HashMap::new();
     for row in rows.iter() {
         let name = field(row, "secretName");
-        match open_value(&key, &name, generation_of(row), &field(row, "sealedValue")) {
+        match open_value(key, &name, generation_of(row), &field(row, "sealedValue")) {
             Ok(value) => {
                 note_name(&name);
                 out.insert(name, value);
@@ -243,24 +268,31 @@ fn load_all(keeper: &Keeper, facade: &EntityFacade) -> Result<HashMap<String, Ze
             Err(err) => tracing::error!("{err}; it is left out"),
         }
     }
+    if out.is_empty() && !rows.is_empty() {
+        let message = format!(
+            "none of the {} {ENTITY} rows opens under this server's seal: its seal is not the one this database's \
+             secrets were kept under (a cluster member that made a seal of its own). Start it from the first member's \
+             recovery bundle (moqui operator init --from) and rekey (plans/Sealed-Secrets.md S4)",
+            rows.len()
+        );
+        tracing::error!("Alert: {message}");
+        return Err(Error::new(message));
+    }
     Ok(out)
 }
 
 /// The row `name` from the database itself, opened.
-fn read_row(keeper: &Keeper, facade: &EntityFacade, name: &str) -> Result<Option<Zeroizing<String>>, Error> {
+fn read_row(key: &Key32, facade: &EntityFacade, name: &str) -> Result<Option<Zeroizing<String>>, Error> {
     let row = unchecked(|| Ok(facade.find(ENTITY)?.eq("secretName", Value::string(name)).one()?))?;
     let Some(row) = row else {
         return Ok(None);
     };
-    let key = keeper.secret_value_key()?;
-    open_value(&key, name, generation_of(&row), &field(&row, "sealedValue")).map(Some)
+    open_value(key, name, generation_of(&row), &field(&row, "sealedValue")).map(Some)
 }
 
-/// Write `value` as the row `name`, its generation one more than the row's, in a transaction of its own. With
-/// `only_new`, a row already there is kept and false answered (another member made it first).
-fn write_row(keeper: &Keeper, facade: &EntityFacade, name: &str, value: &str, only_new: bool) -> Result<bool, Error> {
-    let key = keeper.secret_value_key()?;
-    let written = facade
+/// Write `value` as the row `name`, its generation one more than the row's, in a transaction of its own.
+fn write_row(key: &Key32, facade: &EntityFacade, name: &str, value: &str) -> Result<(), Error> {
+    facade
         .transactions_for(ENTITY)?
         .run(TransactionAttribute::ForceNew, None, || {
             let _authz = (moqui_entity::hooks::get().disable_authz)();
@@ -269,26 +301,56 @@ fn write_row(keeper: &Keeper, facade: &EntityFacade, name: &str, value: &str, on
                 .eq("secretName", Value::string(name))
                 .for_update(true)
                 .one()?;
-            if held.is_some() && only_new {
-                return Ok(false);
-            }
             let generation = held.as_ref().map_or(1, |row| generation_of(row) + 1);
             let mut row = facade.make_value(ENTITY)?;
             row.set("secretName", Value::string(name));
             row.set("generation", Value::I64(i64::try_from(generation).unwrap_or(i64::MAX)));
             row.set(
                 "sealedValue",
-                Value::string(seal_value(&key, name, generation, value.as_bytes())),
+                Value::string(seal_value(key, name, generation, value.as_bytes())),
             );
             if held.is_some() {
                 row.update(facade)?;
             } else {
                 row.create(facade)?;
             }
-            Ok(true)
+            Ok(())
         })?;
     note_name(name);
-    Ok(written)
+    Ok(())
+}
+
+/// Create the rows of one generated secret (both halves of the cluster pair together) in one transaction: none of
+/// them, and false, when any is there already. A row another member creates at the same time fails the whole
+/// transaction (a duplicate key), which the caller reads as a lost race.
+fn create_rows(key: &Key32, facade: &EntityFacade, rows: &[(String, Zeroizing<String>)]) -> Result<bool, Error> {
+    let created = facade
+        .transactions_for(ENTITY)?
+        .run(TransactionAttribute::ForceNew, None, || {
+            let _authz = (moqui_entity::hooks::get().disable_authz)();
+            for (name, _) in rows {
+                if facade
+                    .find(ENTITY)?
+                    .eq("secretName", Value::string(name))
+                    .one()?
+                    .is_some()
+                {
+                    return Ok(false);
+                }
+            }
+            for (name, value) in rows {
+                let mut row = facade.make_value(ENTITY)?;
+                row.set("secretName", Value::string(name));
+                row.set("generation", Value::I64(1));
+                row.set("sealedValue", Value::string(seal_value(key, name, 1, value.as_bytes())));
+                row.create(facade)?;
+            }
+            Ok(true)
+        })?;
+    for (name, _) in rows {
+        note_name(name);
+    }
+    Ok(created)
 }
 
 /// The secret `name` of a store: a bootstrap secret from `seal.json`, else a SecretValue row (all rows are read once
@@ -308,12 +370,16 @@ pub fn read_from(keeper: &Keeper, facade: &EntityFacade, name: &str) -> Result<O
     if !keeper.is_unsealed() {
         return Err(Error::new("sealed: the stored secrets open only once unsealed"));
     }
-    let mut cache = lock(&keeper.secret_values);
-    if !cache.loaded {
-        cache.values = load_all(keeper, facade)?;
-        cache.loaded = true;
+    if !lock(&keeper.secret_values).fresh() {
+        // the data key first (it takes the keeper's state, which `seal` holds before the cache), and the rows read with
+        // no lock held
+        let key = keeper.secret_value_key()?;
+        let values = load_all(&key, facade)?;
+        let mut cache = lock(&keeper.secret_values);
+        cache.values = values;
+        cache.loaded_at = Some(Instant::now());
     }
-    Ok(cache.values.get(&name).cloned())
+    Ok(lock(&keeper.secret_values).values.get(&name).cloned())
 }
 
 /// Keep `value` as the secret `name`: a bootstrap secret in `seal.json`, else a SecretValue row.
@@ -335,12 +401,66 @@ pub fn write_to(keeper: &Keeper, facade: Option<&EntityFacade>, name: &str, valu
         return Ok(());
     }
     let facade = facade.ok_or_else(|| Error::new(format!("the secret {name} is kept once the database is open")))?;
-    write_row(keeper, facade, &name, value, false)?;
+    let key = keeper.secret_value_key()?;
+    write_row(&key, facade, &name, value)?;
     let mut cache = lock(&keeper.secret_values);
-    if cache.loaded {
+    if cache.loaded_at.is_some() {
         cache.values.insert(name, Zeroizing::new(value.to_string()));
     }
     Ok(())
+}
+
+/// Whether `name` is a pass the database's encrypted fields or its connection depend on: the crypt passes and the
+/// datasource passwords, which an operator neither removes nor replaces unknowingly.
+fn guarded(name: &str) -> bool {
+    is_bootstrap(name) && name != EDGE_MEMBER_KEY && name != SEARCH_CLUSTER_PASSWORD
+}
+
+/// `moqui operator secret put`: [`write_to`], refusing to replace the crypt pass unless `force`, and then keeping the
+/// pass it replaces as `entity-facade@crypt-pass-old`, so the fields written under it still read.
+///
+/// # Errors
+///
+/// As [`write_to`], or the crypt pass with no `force`.
+pub fn operator_put(
+    keeper: &Keeper,
+    facade: Option<&EntityFacade>,
+    name: &str,
+    value: &str,
+    force: bool,
+) -> Result<(), Error> {
+    let name = canonical(name);
+    if name == CRYPT_PASS {
+        if let Some(old) = keeper.bootstrap_secret(CRYPT_PASS)?.map(text).transpose()? {
+            if old.as_str() != value {
+                if !force {
+                    return Err(Error::new(
+                        "entity-facade@crypt-pass is the key of every encrypted field: a new one needs --force, and \
+                         the one it replaces becomes entity-facade@crypt-pass-old (run the rewrap after)",
+                    ));
+                }
+                write_to(keeper, facade, CRYPT_PASS_OLD, &old)?;
+            }
+        }
+    }
+    write_to(keeper, facade, &name, value)
+}
+
+/// `moqui operator secret rm`: [`remove_from`], refused for a crypt pass or a datasource password, which the encrypted
+/// fields and the database connection depend on.
+///
+/// # Errors
+///
+/// As [`remove_from`], or a guarded name.
+pub fn operator_remove(keeper: &Keeper, facade: Option<&EntityFacade>, name: &str) -> Result<bool, Error> {
+    let name = canonical(name);
+    if guarded(&name) {
+        return Err(Error::new(format!(
+            "{name} is not removed: the encrypted fields or the database connection depend on it (put another with \
+             `moqui operator secret put`)"
+        )));
+    }
+    remove_from(keeper, facade, &name)
 }
 
 /// Remove the secret `name`: false when there was none.
@@ -420,20 +540,36 @@ pub fn list_from(keeper: &Keeper, facade: Option<&EntityFacade>) -> Result<Vec<L
 /// ([`made`]). Under the keeper's cache lock, and checked against the database itself, so two members starting at once
 /// keep one value: the second's write finds the first's row and takes it.
 fn generate(keeper: &Keeper, facade: &EntityFacade, name: &str, how: Made) -> Result<Option<Zeroizing<String>>, Error> {
-    let mut cache = lock(&keeper.secret_values);
-    if let Some(found) = read_row(keeper, facade, name)? {
-        cache.values.insert(name.to_string(), found.clone());
+    let _one = lock(&GENERATING);
+    let key = keeper.secret_value_key()?;
+    if let Some(found) = read_row(&key, facade, name)? {
+        lock(&keeper.secret_values)
+            .values
+            .insert(name.to_string(), found.clone());
         return Ok(Some(found));
     }
     let made = make(name, how)?;
-    for (made_name, value) in &made {
-        if write_row(keeper, facade, made_name, value, true)? {
-            tracing::info!("Generated secret {made_name}, kept in {ENTITY} (plans/Sealed-Secrets.md S4)");
+    let created = create_rows(&key, facade, &made);
+    // what is there now: these, or another member's made first (its transaction won, and this one's left nothing)
+    let mut kept = Vec::with_capacity(made.len());
+    for (made_name, _) in &made {
+        if let Some(value) = read_row(&key, facade, made_name)? {
+            kept.push((made_name.clone(), value));
         }
-        // what is there now: this one, or another member's made first
-        if let Some(kept) = read_row(keeper, facade, made_name)? {
-            cache.values.insert(made_name.clone(), kept);
+    }
+    match created {
+        Ok(true) => {
+            for (made_name, _) in &made {
+                tracing::info!("Generated secret {made_name}, kept in {ENTITY} (plans/Sealed-Secrets.md S4)");
+            }
         }
+        Ok(false) => {}
+        Err(err) if kept.len() < made.len() => return Err(err),
+        Err(_) => {}
+    }
+    let mut cache = lock(&keeper.secret_values);
+    for (made_name, value) in kept {
+        cache.values.insert(made_name, value);
     }
     Ok(cache.values.get(name).cloned())
 }
@@ -514,6 +650,10 @@ pub fn get(factory: &ExecutionContextFactory, name: &str) -> Result<Option<Zeroi
         })
     };
     if keeper.is_ephemeral() {
+        if is_bootstrap(&name) {
+            // nothing is made under a memory-only root: the conf files or the environment give it, or it is unset
+            return Ok(None);
+        }
         return match generated() {
             Some(how) => ephemeral(&name, how),
             None => Ok(lock(&EPHEMERAL).get(&name).cloned()),
@@ -567,12 +707,12 @@ pub fn remove(factory: &ExecutionContextFactory, name: &str) -> Result<bool, Err
 }
 
 /// The bootstrap secret `name`, made by `make` and kept in `seal.json` when there is none (the crypt pass at the first
-/// start, the embedded cluster's password at its first start, a member's edge key). A boot with no seal holds it in this
-/// process's memory only (logged as an error).
+/// start, the embedded cluster's password at its first start, a member's edge key).
 ///
 /// # Errors
 ///
-/// The server is sealed, or `seal.json` cannot be written.
+/// A boot with no seal (naming `moqui operator init`: nothing is made under a memory-only root), the server is sealed,
+/// or `seal.json` cannot be written.
 pub fn bootstrap_or_make(
     keeper: &Keeper,
     name: &str,
@@ -580,17 +720,7 @@ pub fn bootstrap_or_make(
 ) -> Result<Zeroizing<String>, Error> {
     let name = canonical(name);
     if keeper.is_ephemeral() {
-        let mut held = lock(&EPHEMERAL);
-        if let Some(found) = held.get(&name) {
-            return Ok(found.clone());
-        }
-        let made = make()?;
-        tracing::error!(
-            "Made the bootstrap secret {name} in this process's memory only: this boot has no seal to keep it (a \
-             production instance before `moqui operator init`), so what is written under it is lost with the process"
-        );
-        held.insert(name, made.clone());
-        return Ok(made);
+        return Err(no_seal(&format!("the bootstrap secret {name} is not made")));
     }
     let made = keeper.bootstrap_or_init(&name, || make().map(|value| value.as_bytes().to_vec()))?;
     note_name(&name);
@@ -622,27 +752,48 @@ pub fn put_named(name: &str, value: &str) -> Result<(), Error> {
     put(&factory, name, value)
 }
 
-/// The boot's part (in place of writing `.env`): a conf secret that `runtime/.env` sets is still read and named in a
-/// warning; the cluster pair is set together or not at all; and the crypt pass, left at `CHANGEME` by the conf and the
-/// environment, is made into `seal.json` at the first start. Nothing is written to `.env` or set in `conf`.
+/// The boot's part (in place of writing `.env`): the cluster pair is set together or not at all, and the crypt pass,
+/// left at `CHANGEME` by the conf and the environment, is made into `seal.json` at the first start. A conf secret that
+/// `runtime/.env` sets is ignored once this runtime has a seal, as the seal's own settings are: the server's user can
+/// write `.env`, so it would choose a key; it is put back to `CHANGEME` in `conf`, so the store answers it, and named
+/// in an error. Before the seal (a boot with no seal) it is still read, and named in a warning; that boot makes no
+/// crypt pass. Nothing is written to `.env`.
 ///
 /// # Errors
 ///
-/// Half a cluster pair, or a crypt pass that cannot be kept (a boot with no seal: naming `moqui operator init`).
+/// Half a cluster pair, or a crypt pass that cannot be kept.
 pub fn prepare_boot(
     conf: &MNode,
     overrides: &[crate::context::conf_env::Override],
     keeper: Option<&Keeper>,
 ) -> Result<(), Error> {
     use crate::context::conf_env::{conf_attribute, Source};
+    let sealed = keeper.is_some_and(|keeper| !keeper.is_ephemeral());
     for item in overrides {
-        if item.secret && item.applied() && item.source == Source::DotEnv {
+        if !(item.secret && item.applied() && item.source == Source::DotEnv) {
+            continue;
+        }
+        let selector = item.selector.as_deref().unwrap_or_default();
+        if sealed {
+            tracing::error!(
+                "Conf secret {selector} is set in runtime/.env ({}), which the server's own user can write: it is \
+                 ignored, and the seal's store answers it; put it with `moqui operator secret put {selector}`, or in \
+                 the environment, and remove it from runtime/.env (plans/Sealed-Secrets.md S4)",
+                item.name
+            );
+            if let Ok(parsed) = AttrPath::parse(selector) {
+                if let Ok(target) = path::resolve(conf, &parsed, &conf_schema::keying, false) {
+                    target
+                        .node
+                        .set_attribute(target.attribute.clone(), "CHANGEME".to_string());
+                }
+            }
+        } else {
             tracing::warn!(
-                "Conf secret {} is read from runtime/.env ({}): secrets are kept in seal.json and {ENTITY} now; put it \
-                 with `moqui operator secret put {}` and remove it from runtime/.env",
-                item.selector.as_deref().unwrap_or_default(),
-                item.name,
-                item.selector.as_deref().unwrap_or_default()
+                "Conf secret {selector} is read from runtime/.env ({}): secrets are kept in seal.json and {ENTITY} \
+                 now; once this runtime has its seal, put it with `moqui operator secret put {selector}` and remove it \
+                 from runtime/.env",
+                item.name
             );
         }
     }
@@ -653,11 +804,21 @@ pub fn prepare_boot(
         )));
     }
     if conf_attribute(conf, CRYPT_PASS).ends_with("CHANGEME") {
-        if let Some(keeper) = keeper {
+        if let Some(keeper) = keeper.filter(|keeper| !keeper.is_ephemeral()) {
             bootstrap_or_make(keeper, CRYPT_PASS, random_secret)?;
         }
     }
     Ok(())
+}
+
+/// Whether `factory`'s boot has a memory-only root (a production instance before `moqui operator init`) and no crypt
+/// pass the conf files or the environment give: what `moqui load` refuses.
+#[must_use]
+pub fn unsealed_without_crypt_pass(factory: &ExecutionContextFactory) -> bool {
+    keeper_of(factory).is_some_and(|keeper| keeper.is_ephemeral())
+        && factory
+            .conf_value_files(CRYPT_PASS)
+            .is_none_or(|found| left_to_store(&found.value))
 }
 
 /// The running conf of `factory` with its bootstrap secrets in place, for the readers that open the database with the
@@ -673,11 +834,13 @@ pub fn conf_with_secrets(factory: &ExecutionContextFactory) -> Result<MNode, Err
         return Ok(conf);
     };
     let entries: Vec<(String, Option<Zeroizing<String>>)> = if keeper.is_ephemeral() {
-        lock(&EPHEMERAL)
-            .iter()
-            .filter(|(name, _)| is_bootstrap(name))
-            .map(|(name, value)| (name.clone(), Some(value.clone())))
-            .collect()
+        // no crypt pass under a memory-only root: the first encrypt or decrypt fails, naming the remedy
+        let refused = format!(
+            "{}{}",
+            crate::entity::crypto::REFUSED_PASS_PREFIX,
+            no_seal("entity-facade@crypt-pass is not set").message()
+        );
+        vec![(CRYPT_PASS.to_string(), Some(Zeroizing::new(refused)))]
     } else {
         keeper
             .bootstrap_entries()?

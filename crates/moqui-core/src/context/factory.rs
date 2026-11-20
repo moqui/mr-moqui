@@ -186,6 +186,9 @@ pub struct ExecutionContextFactory {
     pub(crate) native_tools: crate::native::ToolSet,
     /// The seal of this runtime (plans/Sealed-Secrets.md S4): where its secrets are kept. Unset for a test's factory.
     seal_keeper: std::sync::OnceLock<Arc<crate::seal::Keeper>>,
+    /// A test's factory, which has no seal: the secrets run-time code keeps (`conf_env::keep_in_env`, a persisted
+    /// `set_conf_value`) go to `.env` and a process property, as before S4. False on every booted factory.
+    secrets_in_env: bool,
 }
 
 impl Drop for ExecutionContextFactory {
@@ -429,6 +432,7 @@ impl ExecutionContextFactory {
             native,
             native_tools: crate::native::ToolSet::default(),
             seal_keeper: std::sync::OnceLock::new(),
+            secrets_in_env: false,
         });
         if artifacts_only {
             factory.pools.attach(&factory);
@@ -965,6 +969,13 @@ impl ExecutionContextFactory {
     /// The seal of this factory's runtime, when its boot opened one (a test's factory has none).
     pub fn seal_keeper(&self) -> Option<Arc<crate::seal::Keeper>> {
         self.seal_keeper.get().cloned()
+    }
+
+    /// Whether this is a test's factory, whose run-time secrets go to `.env` and a process property as before S4 (a
+    /// booted factory keeps them in its seal's store).
+    #[must_use]
+    pub fn keeps_secrets_in_env(&self) -> bool {
+        self.secrets_in_env
     }
 
     /// Give a test's factory a seal, for a test of the secret store.
@@ -2024,6 +2035,7 @@ impl ExecutionContextFactory {
             native: crate::native::NativeRegistry::default(),
             native_tools: crate::native::ToolSet::default(),
             seal_keeper: std::sync::OnceLock::new(),
+            secrets_in_env: true,
         });
         factory.pools.attach(&factory);
         crate::user::session::install_session_end(&factory);

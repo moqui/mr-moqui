@@ -176,11 +176,32 @@ fn a_secret_at_changeme_is_made_into_the_seal_never_dotenv_unless_an_override_se
             Source::Environment,
         )],
     );
-    let other = dir.join("other");
-    let fresh = Keeper::open(&crate::seal::file::path_in(&other), SealConf::with_purpose("dev")).unwrap();
-    fresh.start(Mode::Unattended).unwrap();
-    secrets::prepare_boot(&second, &overrides, Some(&fresh)).unwrap();
-    assert!(fresh.bootstrap_secret(secrets::CRYPT_PASS).unwrap().is_none());
+    secrets::prepare_boot(&second, &overrides, Some(&keeper)).unwrap();
+    let given = second
+        .first_named("entity-facade")
+        .unwrap()
+        .attribute("crypt-pass")
+        .unwrap();
+    assert_eq!(given, "given-by-the-operator", "the environment's value stands");
+    assert_eq!(keeper.bootstrap_secret(secrets::CRYPT_PASS).unwrap().unwrap(), kept);
+
+    // runtime/.env, which the server's own user writes, sets no secret once there is a seal: the store answers it
+    let third = conf();
+    let overrides = apply_from(
+        &third,
+        vec![name(
+            "moqui_conf__entity_facade__crypt_pass",
+            "written-into-dotenv",
+            Source::DotEnv,
+        )],
+    );
+    secrets::prepare_boot(&third, &overrides, Some(&keeper)).unwrap();
+    let pass = third
+        .first_named("entity-facade")
+        .unwrap()
+        .attribute("crypt-pass")
+        .unwrap();
+    assert_eq!(pass, "CHANGEME");
 
     let unsealed = dir.join("production");
     let ephemeral = Keeper::open(
