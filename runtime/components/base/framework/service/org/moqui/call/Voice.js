@@ -961,6 +961,12 @@ function trunkStatus(p) {
     ec.logger.warn(`Voice: a trunk status from the edge node for ${p.voiceTrunkId} not taken: not its engine's trunk`)
     return {}
   }
+  // this node's own engines hold the trunks while one is up: the edge node's engine never overrides their status (a
+  // failed trunk turns emergency readiness off), only reports it while it is the only engine
+  if (asEdge() && liveSipNodes().some((n) => n.edgeLinked !== 'Y')) {
+    ec.logger.info(`Voice: a trunk status from the edge node for ${p.voiceTrunkId} not taken: this node's own engines hold it`)
+    return {}
+  }
   const trunk = find(TRUNK).condition('voiceTrunkId', p.voiceTrunkId).forUpdate(true).one()
   if (!trunk) return {}
   const statusId = STATUS_BY_REPORT[p.status] || 'VtsUnknown'
@@ -996,6 +1002,10 @@ function authFailure(p) {
   const source = (edge ? EDGE_SOURCE : '') + String(p.sourceAddress || '').trim().slice(0, 200)
   if (source === EDGE_SOURCE || !source) return { blocked: false }
   const now = nowMs()
+  // the edge node's blocks that have ended go, so its rows do not pile up
+  if (edge) {
+    find(AUTH_FAILURE).condition('sourceAddress', 'like', EDGE_SOURCE + '%').condition('blockedUntilDate', '<', new Date(now)).deleteAll()
+  }
   let row = find(AUTH_FAILURE).condition('sourceAddress', source).forUpdate(true).one()
   if (!row && edge && find(AUTH_FAILURE).condition('sourceAddress', 'like', EDGE_SOURCE + '%')
     .condition('firstFailureDate', '>', new Date(now - 3600000)).count() >= sipLimit('edge-blocks-per-hour', 200)) {
@@ -1485,7 +1495,12 @@ function findAuthBlocks() {
   if (denied) return denied
   const now = nowMs()
   return {
-    blockList: Array.from(find(AUTH_FAILURE).orderBy('-lastFailureDate').limit(200).list()).map((row) => ({
+    // this node's own engines' rows first, then the edge node's, each its own share, so edge rows never push local
+    // ones out of the list
+    blockList: Array.from(find(AUTH_FAILURE).condition('sourceAddress', 'not-like', EDGE_SOURCE + '%')
+      .orderBy('-lastFailureDate').limit(200).list())
+      .concat(Array.from(find(AUTH_FAILURE).condition('sourceAddress', 'like', EDGE_SOURCE + '%')
+        .orderBy('-lastFailureDate').limit(100).list())).map((row) => ({
       sourceAddress: row.sourceAddress, failureCount: Number(row.failureCount || 0), lastUsername: row.lastUsername || null,
       lastFailureDate: ms(row.lastFailureDate), blockedUntil: ms(row.blockedUntilDate), blocked: ms(row.blockedUntilDate) > now,
     })),

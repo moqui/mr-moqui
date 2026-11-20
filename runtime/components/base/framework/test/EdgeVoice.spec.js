@@ -211,20 +211,39 @@ feature("the edge node's engine blocks a source for itself only, and notes a tru
         as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "failed", errorText: "x",
             instanceId: OTHER_NODE})
         const afterElsewhere = status()
+        // this node's own engine (OTHER_NODE) is up: the edge node's report does not override its trunk status
+        as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "failed", errorText: "x",
+            instanceId: EDGE_NODE})
+        const besideOwnEngine = status()
+        // with the edge node's engine the only one, its report stands
+        sys(() => ec.entity.find("moqui.call.SipNode").condition("instanceId", OTHER_NODE).deleteAll())
         as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "failed", errorText: "x",
             instanceId: EDGE_NODE})
         const afterOwn = status()
         as("_edge_", "org.moqui.call.VoiceServices.note#TrunkStatus", {voiceTrunkId: trunkId, status: "ok", instanceId: EDGE_NODE})
-        return {elsewhere, blocked, kept, handed, before, afterElsewhere, afterOwn}
+        nodesUp()
+        // an edge block that has ended goes at the next report; a local row stays in the admin list beside the edge's
+        make(AUTH, {sourceAddress: "edge:198.51.100.92", failureCount: 5, blockedUntilDate: new Date(Date.now() - 1000),
+            lastFailureDate: new Date()})
+        make(AUTH, {sourceAddress: "198.51.100.93", failureCount: 1, lastFailureDate: new Date(Date.now() - 3600000)})
+        as("_edge_", "org.moqui.call.VoiceServices.record#AuthFailure", {sourceAddress: SOURCE, blocked: true, instanceId: EDGE_NODE})
+        const ended = sys(() => ec.entity.find(AUTH).condition("sourceAddress", "edge:198.51.100.92").count())
+        const listed = (as(ADMIN, "org.moqui.call.VoiceServices.find#AuthBlocks", {}).blockList || []).map((row) => row.sourceAddress)
+        sys(() => ec.entity.find(AUTH).condition("sourceAddress", "in", ["198.51.100.93", "edge:" + SOURCE]).deleteAll())
+        return {elsewhere, blocked, kept, handed, before, afterElsewhere, besideOwnEngine, afterOwn, ended, listed}
     },
-    then({elsewhere, blocked, kept, handed, before, afterElsewhere, afterOwn}) {
+    then({elsewhere, blocked, kept, handed, before, afterElsewhere, besideOwnEngine, afterOwn, ended, listed}) {
         elsewhere.blocked == false
         blocked.blocked == true
         kept.length == 1
         kept[0] == "edge:198.51.100.91"
         handed == 0
         afterElsewhere == before
+        besideOwnEngine == before
         afterOwn == "VtsFailed"
+        ended == 0
+        listed.includes("198.51.100.93")
+        listed.includes("edge:198.51.100.91")
     }
 })
 
