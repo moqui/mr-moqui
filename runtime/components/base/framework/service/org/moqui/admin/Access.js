@@ -146,10 +146,11 @@ const adminMember = () => ec.user.isInGroup("ADMIN")
 // Whether groupId is a bundle that registers a sensitive capability (a CpkSensitive permission).
 const sensitiveBundle = groupId => rows(BUNDLE_PERMISSION, {userGroupId: groupId, capabilityKindEnumId: "CpkSensitive"}).length > 0
 // A current grant of groupId the actor does not hold already and that is sensitive, or null: a permission that is sealed
-// or that a bundle registers as CpkSensitive, or an allowing artifact binding that only CpkSensitive bundles register
-// (a binding a plain bundle registers too, a reader's, is not). A binding is held through a group of the actor's with a
-// binding of the same artifact group that reaches as far: the same type (or ALWAYS for ALLOW), the same action (or
-// ALL), and no row rule the target's has not.
+// or that a bundle registers as CpkSensitive, or an allowing artifact binding that a CpkSensitive bundle registers and no
+// plain bundle registers as far (a reader bundle's view binding of the same artifact group makes a view binding plain,
+// not one of all actions). A registration or a binding reaches as far as another with the same type (or ALWAYS for
+// ALLOW), the same action (or ALL), and no row rule the other has not; a binding is held through a group of the actor's
+// with a binding of the same artifact group that reaches as far.
 function unheldSensitive(groupId, sealed = sealedIds()) {
     const at = nowMs()
     const sensitivePermission = permissionId =>
@@ -159,23 +160,35 @@ function unheldSensitive(groupId, sealed = sealedIds()) {
         row => current(row, at) && sensitivePermission(row.userPermissionId) && !ec.user.hasPermission(row.userPermissionId)
     )
     if (permission) return permission.userPermissionId
-    const sensitiveBinding = artifactGroupId => {
-        const registered = rows(BUNDLE_ARTIFACT, {artifactGroupId})
-        return registered.length > 0 && registered.every(row => sensitiveBundle(row.userGroupId))
-    }
     const filtersOf = row => new Set(rows(AUTHZ_FILTER, {artifactAuthzId: row.artifactAuthzId}).map(filter => filter.entityFilterSetId))
     const mine = new Set(Array.from(ec.user.getUserGroupIdSet() || []).map(String))
-    const reaches = (held, row) => {
-        const type = held.authzTypeEnumId === row.authzTypeEnumId || held.authzTypeEnumId === "AUTHZT_ALWAYS"
-        const action = held.authzActionEnumId === row.authzActionEnumId || held.authzActionEnumId === "AUTHZA_ALL"
-        if (!type || !action) return false
+    // whether a binding of type and action with the row rules filters reaches as far as row
+    const reachesAs = (type, action, filters, row) => {
+        if (type !== row.authzTypeEnumId && type !== "AUTHZT_ALWAYS") return false
+        if (action !== row.authzActionEnumId && action !== "AUTHZA_ALL") return false
         const wanted = filtersOf(row)
-        return Array.from(filtersOf(held)).every(filterSetId => wanted.has(filterSetId))
+        return Array.from(filters).every(filterSetId => wanted.has(filterSetId))
+    }
+    const reaches = (held, row) => reachesAs(held.authzTypeEnumId, held.authzActionEnumId, filtersOf(held), row)
+    // a bundle's registration of the row's artifact group, as apply#Grants writes it: ALLOW and ALL when not set
+    const registrationReaches = (registration, row) =>
+        reachesAs(
+            registration.authzTypeEnumId || "AUTHZT_ALLOW",
+            registration.authzActionEnumId || "AUTHZA_ALL",
+            idList(registration.entityFilterSetIds),
+            row
+        )
+    const sensitiveBinding = row => {
+        const registered = rows(BUNDLE_ARTIFACT, {artifactGroupId: row.artifactGroupId})
+        return (
+            registered.some(registration => sensitiveBundle(registration.userGroupId)) &&
+            !registered.some(registration => !sensitiveBundle(registration.userGroupId) && registrationReaches(registration, row))
+        )
     }
     const binding = rows(AUTHZ, {userGroupId: groupId}).find(
         row =>
             row.authzTypeEnumId !== "AUTHZT_DENY" &&
-            sensitiveBinding(row.artifactGroupId) &&
+            sensitiveBinding(row) &&
             !rows(AUTHZ, {artifactGroupId: row.artifactGroupId}).some(held => mine.has(String(held.userGroupId)) && reaches(held, row))
     )
     return binding ? "the artifact group " + binding.artifactGroupId : null

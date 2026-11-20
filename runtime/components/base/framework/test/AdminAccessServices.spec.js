@@ -26,6 +26,10 @@ const readersId = "SPEC_ACC_READERS"
 const appGroupId = "SPEC_ACC_APP"
 const preferenceKey = "SPEC_ACC_PAGE_SIZE"
 const viewPermission = "SPEC_ACC_VIEW"
+// a reader bundle that registers the app's view binding, and two custom groups bound to the app: all actions and view
+const readBundleId = "SPEC_ACC_READ_BUNDLE"
+const appAllId = "SPEC_ACC_APP_ALL"
+const appViewId = "SPEC_ACC_APP_VIEW"
 
 const make = (entityName, fields) => {
     const row = ec.entity.makeValue(entityName)
@@ -122,7 +126,8 @@ spec({
     cleanupSpec() {
         ec.message.clearErrors()
         ec.artifactExecution.disableAuthz()
-        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, sealedBundleId, "SPEC_ACC_ADMINS", admins2Id, payBundleId, readersId]
+        const groups = [teamId, bundleId, unregisteredId, sealedGroupId, sealedBundleId, "SPEC_ACC_ADMINS", admins2Id, payBundleId, readersId,
+            readBundleId, appAllId, appViewId]
         for (const authz of rows("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}))
             find("moqui.security.ArtifactAuthzFilter", {artifactAuthzId: authz.artifactAuthzId}).deleteAll()
         find("moqui.security.ArtifactAuthz", {artifactGroupId: appGroupId}).deleteAll()
@@ -418,6 +423,37 @@ feature("an access administrator gives their own account no privileged or sensit
         r.admin.team.applied == true
         r.admin.preview.allowed == true
         r.marked
+    }
+})
+
+// SEC-ADM-90: a binding a sensitive bundle registers is plain only as far as a plain bundle registers it too: a reader
+// bundle's view binding of the app makes a group's view binding one's own to join, not its binding of all actions
+feature("an own membership of a group bound past what a plain bundle registers is refused, one bound as far is not", {
+    when() {
+        ec.artifactExecution.disableAuthz()
+        make("moqui.security.UserGroup", {userGroupId: readBundleId, description: "Spec app readers bundle"})
+        make("moqui.security.CapabilityBundle", {userGroupId: readBundleId, appName: "Spec", description: "Spec app readers bundle"})
+        make("moqui.security.CapabilityBundleArtifact", {userGroupId: readBundleId, artifactGroupId: appGroupId,
+            authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: "AUTHZA_VIEW"})
+        for (const [groupId, action] of [[appAllId, "AUTHZA_ALL"], [appViewId, "AUTHZA_VIEW"]]) {
+            make("moqui.security.UserGroup", {userGroupId: groupId, description: "Spec app " + action, groupTypeEnumId: "UgtCustomTeam"})
+            make("moqui.security.ArtifactAuthz", {artifactAuthzId: groupId, userGroupId: groupId, artifactGroupId: appGroupId,
+                authzTypeEnumId: "AUTHZT_ALLOW", authzActionEnumId: action})
+        }
+        ec.artifactExecution.enableAuthz()
+        return as(adminUser, () => {
+            const all = invoke(S + "store#Membership", {userGroupId: appAllId, userId: adminId, reason: "Spec own app all"})
+            const view = invoke(S + "store#Membership", {userGroupId: appViewId, userId: adminId, reason: "Spec own app view"})
+            const viewEnded = view.applied
+                ? invoke(S + "end#Membership", {userGroupId: appViewId, userId: adminId, fromDate: view.fromDate,
+                    expectedRevision: view.revision})
+                : null
+            return {all, view, viewEnded}
+        })
+    },
+    then({all, view, viewEnded}) {
+        all.applied == false && all.reasonCode == "OWN_ACCOUNT" && all.reason.includes(appGroupId)
+        view.applied == true && viewEnded.applied == true
     }
 })
 
