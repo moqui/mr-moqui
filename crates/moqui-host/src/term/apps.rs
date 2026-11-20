@@ -38,6 +38,11 @@ use crate::tui::HostLink;
 const START_PATH: &str = "/apps";
 /// Frames the session may have waiting for the stream; past it the session's thread waits for the client.
 const FRAMES_WAITING: usize = 64;
+/// Input bytes sent to the session thread and not yet taken past which the transport is not read (SEC-FIL-99): the
+/// prompt's line limit and a bracketed paste's (`moqui_tui::MAX_PASTE`), 1 MiB.
+const INPUT_QUEUED: usize = 1024 * 1024;
+/// How soon a transport not read for [`INPUT_QUEUED`] looks again.
+const INPUT_WAIT: Duration = Duration::from_millis(10);
 /// A write to the client that takes nothing for this long ends the session (`plans/archive/High-Level-Review.md` HL-027).
 const WRITE_STALL: Duration = Duration::from_secs(60);
 /// Log lines a session's pane holds while it is closed.
@@ -336,6 +341,9 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         gate: Arc::clone(&gate),
     };
     let (out, mut frames) = tokio_mpsc::channel::<Vec<u8>>(FRAMES_WAITING);
+    // the input sent to the session thread and not yet taken: past INPUT_QUEUED the transport is not read, so a
+    // client that sends faster than the session takes (a paste with no end) waits on its flow control (SEC-FIL-99)
+    let queued = Arc::new(AtomicUsize::new(0));
     let (finished, ended) = oneshot::channel();
     let options = SessionOptions {
         path: START_PATH.to_string(),
@@ -345,6 +353,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         notes: Some(|note| tracing::warn!("terminal session: {note}")),
         log,
         login_name,
+        input_queued: Some(Arc::clone(&queued)),
     };
     let replies = events.clone();
     let spawned = std::thread::Builder::new()
@@ -382,16 +391,19 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
     let redraw = start.redraw.clone();
     loop {
         tokio::select! {
-            read = stream.read(&mut buffer), if reading => match read {
+            read = stream.read(&mut buffer), if reading && queued.load(Ordering::Acquire) < INPUT_QUEUED => match read {
                 Ok(0) | Err(_) => {
                     reading = false;
                     let _ = events.send(SessionEvent::Close);
                 }
                 Ok(read) => {
                     idle_until = tokio::time::Instant::now() + IDLE;
+                    queued.fetch_add(read, Ordering::AcqRel);
                     let _ = events.send(SessionEvent::Input(buffer[..read].to_vec()));
                 }
             },
+            // the session thread takes the queued input off the count; look again shortly
+            () = tokio::time::sleep(INPUT_WAIT), if reading && queued.load(Ordering::Acquire) >= INPUT_QUEUED => {}
             () = tokio::time::sleep_until(idle_until), if reading => {
                 reading = false;
                 tracing::info!("{label} ended after {IDLE:?} without input");
