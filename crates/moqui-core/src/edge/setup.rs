@@ -517,10 +517,11 @@ pub fn check_pass(pass: &PassChoice, offer: &EdgeOffer) -> Result<(String, Vec<S
     Ok((client.to_string(), sites, callback.to_string()))
 }
 
-/// Whether the PASS client id `client` an edge node offers is another client of this node: it has a secret or sites
-/// (`secret`, `sites`) and is not the edge node's client already (`current`, `edge/node@pass-client` or `edge`).
+/// Whether the PASS client id `client` an edge node offers is another client of this node: it has a secret, which the
+/// edge node's link never has, whatever id it is (so a direct client named `edge` with `edge/node@pass-client` unset
+/// too), or it has sites and is not the edge node's client already (`current`, `edge/node@pass-client` or `edge`).
 fn client_taken(client: &str, current: &str, secret: &str, sites: &str) -> bool {
-    client != current && !(secret.trim().is_empty() && sites.trim().is_empty())
+    !secret.trim().is_empty() || (client != current && !sites.trim().is_empty())
 }
 
 fn apply_pass(env_file: &std::path::Path, pass: &PassChoice, offer: &EdgeOffer) -> SetupLine {

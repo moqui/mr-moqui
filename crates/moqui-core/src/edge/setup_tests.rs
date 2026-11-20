@@ -234,6 +234,10 @@ fn an_offered_pass_client_id_of_another_client_is_refused() {
         "the edge node's client again"
     );
     assert!(!client_taken("edge2", "edge", " ", ""), "a free id");
+    assert!(
+        client_taken("edge", "edge", "s3cret", ""),
+        "a direct client named edge, with edge/node@pass-client unset: the link has no secret"
+    );
     let offer = EdgeOffer {
         pass: PassOffer {
             available: true,
