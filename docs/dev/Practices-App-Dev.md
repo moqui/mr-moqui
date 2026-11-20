@@ -632,8 +632,8 @@ application work, and the Rust checks as well when the change reaches a crate.
   - Prettier with the repository's config shows no change.
 - The design and implementation records updated: what was built, the commits, the findings, and what is left for later.
 - What the phase made reachable is recorded in the attack surface map, in the application's file:
-  [Attack-Surface-Apps-BOSS](../security/Attack-Surface-Apps-BOSS.md) for mr-boss and the Mantle services staff reach,
-  [Attack-Surface-Apps-PASS](../security/Attack-Surface-Apps-PASS.md) and its two companion files (Commerce, and
+  [Attack-Surface-Apps-BOSS](../../runtime/components/addon/mr-boss/docs/security/Attack-Surface-Apps-BOSS.md) for mr-boss and the Mantle services staff reach,
+  [Attack-Surface-Apps-PASS](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md) and its two companion files (Commerce, and
   Forum and Smithy) for mr-pass and the Mantle services its operations reach. A framework hook the phase added goes in that area's framework file
   ([index](../security/Attack-Surface.md#the-files)), never in the index.
   Commands in a record name no machine's paths (`/Applications/...`, `/tmp/...`): point to [Build-Test](../Build-Test.md) for

@@ -241,7 +241,7 @@ Read for the framework's REST surfaces: service REST `/rest/s1` and entity REST 
 `/rest/v1` as a deprecated alias), on by default; the PASS authority's REST form
 `/rest/s1/pass/v1/sites/{siteId}/{route}`, whenever mr-mantle is loaded; and `/a2a`, `/mcp` and the model gateway,
 off by default. Their rules are in [Attack-Surface-Routes](../Attack-Surface-Routes.md),
-[Attack-Surface-Apps-PASS](../Attack-Surface-Apps-PASS.md#how-pass-reaches-the-authority) and
+[Attack-Surface-Apps-PASS](../../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS.md#how-pass-reaches-the-authority) and
 [Attack-Surface-AI](../Attack-Surface-AI.md). A note marked *(map)* is taken from those files and is not a proof.
 
 | Item | Requirement | Status | Proof | Where it is thin |

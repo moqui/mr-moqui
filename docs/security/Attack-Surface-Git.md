@@ -18,7 +18,7 @@ Push to review, forks and reads by id (`docs/interfaces/Git-Hosting.md`): with `
 
 SSH git is a channel on the SSH server, not this route. See [SSH and the TUI](Attack-Surface-SSH.md#ssh-and-the-tui).
 
-Smithy, the application over these services (groups, confidential issues, the forks policy, access tokens), is in [Smithy](Attack-Surface-Apps-PASS-Forum-Smithy.md#smithy).
+Smithy, the application over these services (groups, confidential issues, the forks policy, access tokens), is in [Smithy](../../runtime/components/addon/mr-pass/docs/security/Attack-Surface-Apps-PASS-Forum-Smithy.md#smithy).
 
 ### Git LFS
 
