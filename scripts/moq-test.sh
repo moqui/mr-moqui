@@ -10,7 +10,7 @@ set -o pipefail
 # Every command below belongs to the throwaway fixture. A caller's runtime can contain directory symlinks into a
 # live workspace, and its worker override changes the defaults these checks exercise. Explicit env overrides on
 # individual checks still work; unsetting these here affects only this self-test process and its children.
-unset MOQUI_RUNTIME MOQ_TEST_WORKERS
+unset MOQUI_RUNTIME MOQ_TEST_WORKERS VAULT_WASM_ENSURED
 
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 # The physical path: moq resolves its root with cd -P, so its output names /private/var/... on macOS, where TMPDIR is
@@ -231,6 +231,30 @@ check "failed build" 1 'cargo build failed' -- env CARGO_STUB_FAIL=1 "$M" load
 "$R/bin/cargo" build --profile release -p moqui
 rm -f "$R/cargo.log"
 
+# The vault's browser module, built on demand by scripts/vault-wasm.sh: a stub that records its call in cargo.log, so
+# its order against cargo shows, and fails when VAULT_STUB_FAIL is set. Without the script (the fixture above) nothing.
+cat >"$R/scripts/vault-wasm.sh" <<'EOF2'
+#!/bin/sh
+echo "vault-wasm: $*" >>"$(dirname "$0")/../cargo.log"
+[ -z "${VAULT_STUB_FAIL:-}" ] || { echo "vault-wasm.sh: no target" >&2; exit 1; }
+EOF2
+check "build makes the vault module before cargo" 0 '' -- "$M" build --debug
+check "the vault module first, then cargo" 0 '^vault-wasm: --quiet cargo: build --profile dev ' -- \
+    sh -c "paste -sd' ' '$R/cargo.log'"
+check "dry build shows the vault module" 0 'vault-wasm\.sh --quiet' -- dry "$M" build --embed production
+check "build stops when the vault module does not build" 1 "could not build the vault's browser module" -- \
+    env VAULT_STUB_FAIL=1 "$M" build --debug
+rm -f "$R/cargo.log"
+check "run --nobuild warns when the vault module does not build" 0 "could not build the vault's browser module" -- \
+    env VAULT_STUB_FAIL=1 "$M" run --nobuild
+check "run --nobuild makes the vault module" 0 '^vault-wasm: --quiet$' -- cat "$R/cargo.log"
+check "test-framework makes the vault module once" 0 '^1$' -- \
+    sh -c "MOQ_DRY_RUN=1 '$M' test-framework 2>&1 | grep -c 'vault-wasm\.sh'"
+check "archive stops when the vault module does not build" 1 "could not build the vault's browser module" -- \
+    sh -c "cd '$FIX' && VAULT_STUB_FAIL=1 '$M' archive --binary --nobuild '$FIX/vault-archive.gz'"
+check "no archive without the vault module" 1 '' -- test -e "$FIX/vault-archive.gz"
+rm -f "$R/scripts/vault-wasm.sh" "$R/cargo.log"
+
 # sccache as the rustc wrapper, opt-in with MOQ_SCCACHE=1: a stub sccache on the PATH, a cargo home of its own, and
 # no wrapper from the caller.
 mkdir -p "$FIX/sccache-bin" "$FIX/cargo-home"
@@ -273,14 +297,14 @@ fi
 rm -f "$R/cargo.log" "$R/wrapper.log"
 # An add-on component crate builds through the generated crate, a workspace of its own, which takes the repository's
 # crate patches (cargo reads them only from the root of the workspace it builds; plans/Security-Review.md SEC-CLI-126).
-mkdir -p "$R/runtime/components/addon/crate-x" "$R/patches/yrs"
+mkdir -p "$R/runtime/components/addon/crate-x" "$R/patches/crate-p"
 printf '<component name="crate-x"/>\n' >"$R/runtime/components/addon/crate-x/component.xml"
 printf '[package]\nname = "crate-x"\n' >"$R/runtime/components/addon/crate-x/Cargo.toml"
-printf '[workspace]\n\n[patch.crates-io]\n# a patched crate\nyrs = { path = "patches/yrs" }\n\n[profile.release]\nlto = true\n' \
+printf '[workspace]\n\n[patch.crates-io]\n# a patched crate\ncrate-p = { path = "patches/crate-p" }\n\n[profile.release]\nlto = true\n' \
     >"$R/Cargo.toml"
 : >"$R/Cargo.lock"
 check "build links an add-on component crate" 0 'Linking component crate crate-x' -- "$M" build --debug
-check "the generated crate takes the repository's patches" 0 "^yrs = \\{ path = \"$R/patches/yrs\" \\}\$" -- \
+check "the generated crate takes the repository's patches" 0 "^crate-p = \\{ path = \"$R/patches/crate-p\" \\}\$" -- \
     cat "$R/target/moqui-app/Cargo.toml"
 lacks "the generated crate takes no other table of the repository's" '^lto = true' -- cat "$R/target/moqui-app/Cargo.toml"
 rm -rf "$R/runtime/components/addon/crate-x" "$R/patches" "$R/Cargo.toml" "$R/Cargo.lock" "$R/target/moqui-app" "$R/cargo.log"

@@ -8,7 +8,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-15.1.1 | 1 | Documented deadlines for patching vulnerable dependencies | Gap | none found: `SECURITY.md`, `docs/Build-Test.md` (Forks, Before a release) set no time frame; `deny.toml` ignores RUSTSEC-2023-0071 with a reason and no date | - |
+| v5.0.0-15.1.1 | 1 | Documented deadlines for patching vulnerable dependencies | Gap | none found: `SECURITY.md`, `docs/Build-Test.md` (Forks, Before a release) set no time frame; `deny.toml` ignores no advisory (RUSTSEC-2023-0071 was ignored with a reason and no date until rsa 0.10.0 fixed it) | - |
 | v5.0.0-15.1.2 | 2 | Inventory of third-party components from trusted sources | Gap | partly: `Cargo.lock`; `deny.toml` `[sources]` (crates.io and four named forks only); webroot `libs/MANIFEST.json`, `NOTICES.md` (`refresh.mjs`: sha256, npm integrity); no SBOM export; `cargo deny` in neither `ci.xml` nor the release list; SEC-OUT-91 open (downloads checked against a same-place sum or none) | - |
 | v5.0.0-15.1.3 | 2 | Resource-heavy features documented with availability defenses | Framework | documentation: Limits columns of `docs/security/Attack-Surface-*.md`; web protection table and `request-timeout` 300 s → 504 (`Attack-Surface-Web.md`); script heap and time caps (`Attack-Surface-Scripts.md`); telemetry queue (`docs/tools/Monitoring.md`); no single list (map) | - (documentation) |
 
@@ -16,7 +16,7 @@ table, and what a status claims, is in the [index](README.md).
 
 | Requirement | L | Topic | Status | Evidence | Proof |
 | --- | --- | --- | --- | --- | --- |
-| v5.0.0-15.2.1 | 1 | Dependencies kept within the patching deadlines | Gap | no deadlines to keep (15.1.1); `cargo deny check` runs in no pipeline (`ci.xml`, pre-production skill); RUSTSEC-2023-0071 (rsa via russh, huskarl) ignored | - |
+| v5.0.0-15.2.1 | 1 | Dependencies kept within the patching deadlines | Gap | no deadlines to keep (15.1.1); `cargo deny check` runs in no pipeline (`ci.xml`, pre-production skill); no advisory ignored (RUSTSEC-2023-0071 was, until rsa 0.10.0) | - |
 | v5.0.0-15.2.2 | 2 | Defenses against resource exhaustion by heavy features | Gap | partly: web protection connection, request and overload limits (`crates/moqui-host/src/guard.rs`), `request-timeout`, outbound 30 s and 16 MiB (`crates/moqui-lib/src/http.rs`); per-client rules off until `webapp-list/webapp[webroot]@trusted-proxies` or `web-protection@enabled`; open: SEC-COM-81, SEC-COM-82 (Medium leads) | - |
 | v5.0.0-15.2.3 | 2 | No test or development code exposed in production | Configuration | build without `devtools` (`./moq build --enterprise`; Run-Deploy production checklist); dev tools open only off `instance@purpose` production (the default); test hooks gated in code (`service/http_fixtures.rs` `allow`; `test_peer::allow`, `mail_capture::allow` (map)); SEC-OUT-90 open (image script builds with `devtools`); `/echopath`, a sample screen kept from Moqui Java, answers 500 (SEC-RTE-89) | V15SecureCoding "v5.0.0-15.2.3: no development or example component's pages or files are served" |
 

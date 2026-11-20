@@ -26,7 +26,8 @@
 //! - [`ops`] is the module's JSON calls (feature `json`, which `wasm` takes): the browser module, the `moqui vault`
 //!   command and the test client's `vault` member drive the same [`ops::Session`], and the server reads the records'
 //!   JSON shapes from [`ops::shapes`]. `wasm` is the module's `extern "C"` ABI (feature `wasm`); `scripts/vault-wasm.sh`
-//!   builds it to `runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm`.
+//!   builds it to `runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm` on demand (`./moq build`,
+//!   the test tasks), not kept in git, and rebuilds it only when this crate, its dependencies or rustc changed.
 
 pub mod aead;
 pub mod delivery;
@@ -52,10 +53,6 @@ pub mod vault;
 pub mod vectors;
 #[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 mod wasm;
-
-#[cfg(test)]
-#[path = "wasm_stamp_tests.rs"]
-mod wasm_stamp_tests;
 
 pub use error::Error;
 pub use keys::Key32;

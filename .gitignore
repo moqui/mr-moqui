@@ -40,6 +40,11 @@ node_modules/
 !/runtime/components/dev/dev-aide/
 !/runtime/components/dev/example/
 !/runtime/components/dev/template/
+# The vault's browser module and its stamp (the build record), built on demand by scripts/vault-wasm.sh (./moq build,
+# the test tasks; docs/security/Vaults.md, The browser module)
+/runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm
+/runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm.json
+/runtime/components/base/webroot/screen/webroot/js/vault/moqui_vault.wasm*.part
 
 # Python HTTP security tests
 /runtime/components/base/framework/test/.venv/

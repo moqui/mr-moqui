@@ -38,6 +38,22 @@ scripts/pg-payload.sh check            # before a distribution: no psql or readl
 Tasks that run moqui build a missing binary themselves. `./moq build` also links the crates of native components
 ([Native-Components](dev/Native-Components.md)), which plain `cargo build` does not.
 
+**The vault's browser module** (`crates/moqui-vault` built to `wasm32-unknown-unknown`, served as the webroot's
+`js/vault/moqui_vault.wasm`; [Vaults](security/Vaults.md#the-browser-module)) is not kept in git. `scripts/vault-wasm.sh`
+builds it on demand, into `target/vault-wasm` and then the webroot, with a stamp beside it (`moqui_vault.wasm.json`)
+that records what it was built from: the crate's sources, its workspace dependency lines, the Cargo.lock entries it
+links, the release profile and `rustc -V`. A run with none of those changed builds nothing and takes well under a
+second; `--check` only says whether it is missing or stale (exit 1), and `--force` builds it anyway. Its one tool
+dependency beyond the toolchain is the `wasm32-unknown-unknown` target, which the script adds with `rustup target add`
+for the toolchain `rust-toolchain.toml` pins when it is missing; without rustup it says what to install. `./moq build`
+(every package and `--embed` level) runs it before cargo, as do `./moq archive`, `podman/build.sh`, the test and
+accept tasks (once for the suites they start) and the tasks that run moqui with `--nobuild` (where a failure is only a
+warning). A plain `cargo build` does not: run the script first for a build with the production or all runtime built
+in, which refuses to build without the module ([Embedded runtime and programs](#embedded-runtime-and-programs)). Where
+the module is missing, the vault screens answer that it is not built and the `VaultModule` client spec fails saying
+so. The desktop and mobile shells will carry their own copy (plans/Vault-Instances.md §3.6); a shell build that
+bundles it runs the script first.
+
 ### Windows
 
 - **Toolchain.** The host is `x86_64-pc-windows-msvc`. Visual Studio Build Tools supplies the C compiler (the
@@ -88,15 +104,16 @@ and the system `ssh` for git remotes.
 #### Forks
 
 One dependency is pinned by `rev` to a branch of moqui's fork, as quickjs-oxide is, because it does not keep ring out
-through a feature; another, a dependency of a dependency, is held at moqui's fork by `[patch.crates-io]`. The branch is one commit on the release we use; its `pr/` branch is the same commit on upstream's
-own branch, for a pull request. Go back to the crates.io release once upstream publishes the change, as rsipstack did
+through a feature; others are held at moqui's fork by `[patch.crates-io]`, for every crate that depends on them. The
+branch is our commits on the release we use; each `pr/` branch is one of them on upstream's own branch, for a pull
+request. Go back to the crates.io release once upstream publishes the change, as rsipstack did
 with 0.8.5.
 
 | Crate | Fork and branch (`pr/` branch) | Change |
 |---|---|---|
 | mysql 28.0.4 | [moqui/rust-mysql-simple](https://github.com/moqui/rust-mysql-simple) `moqui/28.0.4-no-webpki` (`pr/no-webpki-0.22`) | `rustls` no longer pulls webpki 0.22 (unmaintained, links ring) for two error types: `TlsError::InvalidDnsName` holds rustls's own error, and the unused `TlsError::Pki` is gone |
 | stun-proto, stun-types 2.0.5 (through turn-server-proto) | [moqui/stun-proto](https://github.com/moqui/stun-proto) `main` (`moqui-nonce-bound`), by `[patch.crates-io]` | A change to `LongTermServerAuth`'s nonce handling, to be offered upstream. Both crates come from the fork's workspace so the graph has one stun-types |
-| yrs 0.28.1 (moqui-collab, moqui-host) | The published source in [`patches/yrs`](../patches/README.md), by `[patch.crates-io]` with a `path` | `Any::decode` reads at most 128 levels of maps and arrays, so a co-editing update nested deeper is refused, not a stack overflow (SEC-TLS-95). To move to a GitHub fork when one is made |
+| yrs 0.28.2 (moqui-collab) | [moqui/y-crdt](https://github.com/moqui/y-crdt) `moqui/0.28.2-decode-bounds` (`pr/any-decode-depth`, `pr/decode-reserve-bounded`), by `[patch.crates-io]` | `Any::decode` reads at most 128 levels of maps and arrays, so a co-editing update nested deeper is refused, not a stack overflow (SEC-TLS-95); a length read from an update or a state vector reserves at most 1024 entries up front (SEC-TLS-117). Both are upstream's issue #675 |
 
 Moving a pin: push the fork's branch first, then change the `rev` in `Cargo.toml` and run `cargo update -p <crate>`.
 
@@ -272,7 +289,9 @@ own ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)). How much i
   Neither the binary nor `./moq archive` takes the names `crates/moqui-embedded/archive-excludes.txt` lists. Each file
   is deflated on its own; at the production level with mr-mantle, mr-boss and the other add-ons that is about 25 MB of
   the binary for about 4,500 files. Cargo watches each component's top-level entries, not its `test/` or `.git`, and
-  `./moq` passes the list of component directories (`MOQUI_EMBED_COMPONENTS`), so a new component packs again.
+  `./moq` passes the list of component directories (`MOQUI_EMBED_COMPONENTS`), so a new component packs again. The
+  production and all levels pack the whole webroot, so they need the vault's browser module, which is built on demand
+  ([Build](#build)): `./moq build` makes it before cargo, and a plain cargo build without it fails naming it.
 - **Programs.** `--embed-opensearch` and `--embed-chromium` build in the archives `./moq opensearch-download` and
   `./moq chromium-download` keep in the embed cache (`$XDG_CACHE_HOME` or `~/.cache`, then `moqui/embed`;
   `%LOCALAPPDATA%\moqui\embed` on Windows; `MOQUI_EMBED_CACHE` moves it): `opensearch-<version>-<target>.tar.gz`, checked

@@ -4,7 +4,8 @@
 # Lite, Maximal (with and without the dev tools) and Enterprise packages of the binary, the host with no features (`cargo lint-min`) and with only
 # the terminal client (the client-only build of `moqui tui --server`) and with only the SMTP listener (which shares the
 # SSH server's request worker handoff and must build without SSH) and with only phone calls (sip, with the call media it
-# joins) and with only XMPP (xmpp, without the call media), and the framework with none (what the browser build links); the entity crate alone (without the test-support the workspace's tests turn on); the report crate without
+# joins) and with only XMPP (xmpp, without the call media), the vault crate natively and as its wasm module (whose
+# tree must hold no getrandom), and the framework with none (what the browser build links); the entity crate alone (without the test-support the workspace's tests turn on); the report crate without
 # xlsx (as the browser links it); the dev kit without its file watcher (as Lite links it); the Tools crate alone (on
 # moqui-core with only the features it asks for); the drivers with no
 # database client, with their tests; the mail crate without imap (the send half alone, as Lite links it); the
@@ -35,6 +36,15 @@ run -p moqui-host --no-default-features --features instances --all-targets "$@"
 run -p moqui-host --no-default-features --features manage --all-targets "$@"
 run -p moqui-vault --no-default-features --all-targets "$@"
 run -p moqui-vault --no-default-features --features wasm --lib --target wasm32-unknown-unknown "$@"
+# The vault's browser module takes its randomness from the page: no getrandom and no wasm-bindgen in its tree
+# (scripts/vault-wasm.sh refuses to build one that has either).
+echo "== cargo tree -p moqui-vault --target wasm32-unknown-unknown --features wasm: no getrandom or wasm-bindgen" >&2
+vault_tree=$(cargo tree -p moqui-vault --target wasm32-unknown-unknown --no-default-features --features wasm -e normal \
+    --prefix none --format '{p}')
+if grep -E '^(getrandom|wasm-bindgen) ' <<<"$vault_tree"; then
+    echo "the vault's wasm module links the crates above; it must take its randomness from the page" >&2
+    exit 1
+fi
 run -p moqui-core --no-default-features --all-targets "$@"
 run -p moqui-entity --all-targets "$@"
 run -p moqui-report --no-default-features --all-targets "$@"

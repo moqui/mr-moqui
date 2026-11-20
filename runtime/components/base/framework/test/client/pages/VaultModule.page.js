@@ -3,6 +3,12 @@
 // One worker for Alice and one for Bob; each case asks them for what it needs.
 const vault = new window.MoquiVaultClient({ idleMinutes: 0 });
 const bob = new window.MoquiVaultClient({ idleMinutes: 0 });
+// The module is built on demand (scripts/vault-wasm.sh, which the moq test tasks run), not kept in git: a run of
+// `moqui test-client` straight after a checkout says so rather than fail on a 404.
+const built = fetch("/js/vault/moqui_vault.wasm").then((response) => response.ok, () => false);
+async function needModule() {
+    if (!(await built)) throw new Error("the vault module is not built: ./moq build or scripts/vault-wasm.sh");
+}
 
 async function nativeVectors() {
     return (await fetch("/files/crates/moqui-vault/testdata/vectors.json")).json();
@@ -14,6 +20,7 @@ async function check(client, keyId, publicKey) {
 }
 
 test("the module in its worker makes the native known-answer vectors, the CFRG HPKE vector among them", async () => {
+    await needModule();
     const made = await vault.vectors();
     const native = await nativeVectors();
     assert.deepEqual(made, native);
@@ -22,6 +29,7 @@ test("the module in its worker makes the native known-answer vectors, the CFRG H
 });
 
 test("an item seals and opens in the worker, and a lock forgets every key", async () => {
+    await needModule();
     const made = await vault.personalMake({ personal_key_id: "pk-1", user_id: "alice", passphrase: "a long passphrase" });
     assert.equal(made.fingerprint.split("-").length, 6);
     await vault.vaultKeyNew({ vault_id: "v", key_version: 1 });
@@ -48,6 +56,7 @@ test("an item seals and opens in the worker, and a lock forgets every key", asyn
 });
 
 test("a vault key crosses from one worker to another only through a checked member list", async () => {
+    await needModule();
     await vault.lock();
     const alice = await vault.personalMake({ personal_key_id: "pk-alice", user_id: "alice", passphrase: "pass phrase" });
     const b = await bob.personalMake({ personal_key_id: "pk-bob", user_id: "bob", passphrase: "pass phrase" });
