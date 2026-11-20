@@ -43,6 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
             <resource name="members">
                 <method type="post"><service name="org.moqui.security.VaultServices.add#VaultMember"/></method>
             </resource>
+            <resource name="secretWrap"><method type="put"><service name="org.moqui.security.VaultServices.update#VaultSecretWrap"/></method></resource>
             <resource name="removeMember"><method type="post"><service name="org.moqui.security.VaultServices.remove#VaultMember"/></method></resource>
             <resource name="ack"><method type="post"><service name="org.moqui.security.VaultServices.ack#VaultKeyVersion"/></method></resource>
             <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>
@@ -81,4 +82,18 @@ along with this software (see the LICENSE.md file). If not, see
         </id>
     </resource>
     <resource name="events"><method type="get"><service name="org.moqui.security.VaultServices.list#VaultEvents"/></method></resource>
+    <resource name="recoveryKeys">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#VaultRecoveryKeys"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.create#VaultRecoveryKey"/></method>
+    </resource>
+    <resource name="recoveries">
+        <method type="get"><service name="org.moqui.security.VaultServices.list#VaultRecoverySessions"/></method>
+        <method type="post"><service name="org.moqui.security.VaultServices.start#VaultRecovery"/></method>
+        <id name="recoverySessionId">
+            <method type="get"><service name="org.moqui.security.VaultServices.get#VaultRecoverySession"/></method>
+            <resource name="shares"><method type="post"><service name="org.moqui.security.VaultServices.deliver#VaultRecoveryShare"/></method></resource>
+            <resource name="complete"><method type="post"><service name="org.moqui.security.VaultServices.complete#VaultRecovery"/></method></resource>
+            <resource name="cancel"><method type="post"><service name="org.moqui.security.VaultServices.cancel#VaultRecovery"/></method></resource>
+        </id>
+    </resource>
 </resource>

@@ -511,6 +511,10 @@ impl LeaseRegistry {
     /// then each item key.
     fn open_approval(&self, facade: &EntityFacade, lease_id: &str, row: &EntityValue) -> Result<(), LibError> {
         let approval = approval_of_row(row)?;
+        // a recovery key is listed as a manager, never an approver, and no one signs in as it (§3.10)
+        if moqui_vault::keyversion::recovery_key_of(&approval.approver_user_id).is_some() {
+            return Err(fail("A recovery key does not approve a lease"));
+        }
         let approver_key = find(facade, PERSONAL_KEY)?
             .eq("personalKeyId", Value::string(field(row, "approverKeyId")))
             .one()?

@@ -30,6 +30,7 @@ mod deliveries;
 mod leases;
 mod members;
 mod personal;
+mod recovery;
 mod vaults;
 
 const SERVICES: &str = "org.moqui.security.VaultServices.";

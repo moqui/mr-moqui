@@ -37,6 +37,7 @@
 //! - [`reveal`]: one operational value to a member with the reveal role (§3.7).
 //! - [`events`]: the `VaultEvent` rows of §3.13, written in the transaction of their change; a lease's use in its own,
 //!   before the value is returned.
+//! - [`recovery`]: the organization's recovery keys split k of n, recovery on a vault, and recoveries (§3.10).
 
 use std::collections::BTreeMap;
 
@@ -51,6 +52,7 @@ pub mod lease;
 pub mod machine;
 pub mod members;
 pub mod personal;
+pub mod recovery;
 pub mod reveal;
 pub mod vaults;
 
@@ -77,6 +79,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     items::register(map)?;
     members::register(map)?;
     deliveries::register(map)?;
+    recovery::register(map)?;
     deposit::register(map)?;
     lease::services::register(map)?;
     machine::register(map)?;

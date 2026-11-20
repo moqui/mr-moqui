@@ -188,9 +188,10 @@ feature("a removed member gets no wrap, a write at the old key version is refuse
         const oldWrite = api(a, "PUT", `/items/${itemId}`, { expectedRevision: 1, keyVersion: 1,
             wrappedItemKey: old.wrapped_item_key, bodyCipher: old.sealed_body })
         const current = api(a, "GET", `/vaults/${vaultId}/items`).itemList[0]
+        // the item key was made at version 1 (itemKeyVersion, which the rotation left): this first write after it makes a new one
         const sealed = a.c.call("item_seal", { vault_id: vaultId, item_id: itemId, key_version: 2, body: JSON.stringify(BODY),
-            wrapped_item_key: current.wrappedItemKey, wrapped_key_version: current.keyVersion })
-        const newWrite = api(a, "PUT", `/items/${itemId}`, { expectedRevision: 1, keyVersion: 2,
+            wrapped_item_key: current.wrappedItemKey, wrapped_key_version: current.keyVersion, item_key_version: current.itemKeyVersion })
+        const newWrite = api(a, "PUT", `/items/${itemId}`, { expectedRevision: 1, keyVersion: 2, newItemKey: sealed.new_item_key,
             wrappedItemKey: sealed.wrapped_item_key, bodyCipher: sealed.sealed_body })
         const cVault = api(c, "GET", `/vaults/${vaultId}`)
         const events = api(a, "GET", `/vaults/${vaultId}/events`).eventList.map(e => e.eventTypeEnumId)

@@ -128,7 +128,17 @@
                 try {
                     await navigator.clipboard.writeText("");
                 } catch (e) {
-                    // the page lost focus; nothing more can be done from here
+                    // a page without focus may not write the clipboard: clear it when the window has focus again
+                    const clear = async () => {
+                        window.removeEventListener("focus", clear);
+                        try {
+                            if ((await navigator.clipboard.readText()) !== text) return;
+                        } catch (e2) {
+                            // no permission to read: clear anyway
+                        }
+                        try { await navigator.clipboard.writeText(""); } catch (e3) { /* nothing more to do */ }
+                    };
+                    if (typeof window !== "undefined") window.addEventListener("focus", clear);
                 }
             }, this.clipboardMs);
         }
@@ -138,6 +148,8 @@
         personalMake(args) { return this.call("personal_make", args); }
         personalOpen(args) { return this.call("personal_open", args); }
         personalOpenRecovery(args) { return this.call("personal_open_recovery", args); }
+        /** A new key passphrase for the open personal key ({passphrase}): its new wrap to store (rewrap#PersonalKey). */
+        personalRewrap(args) { return this.call("personal_rewrap", args); }
         fingerprint(args) { return this.call("fingerprint", args); }
         /** A signed check of a key, made only with the fingerprint the user compared ({fingerprint, ...}). */
         keyCheckMake(args) { return this.call("key_check_make", args); }
@@ -151,17 +163,32 @@
         vaultKeyOpen(args) { return this.call("vault_key_open", args); }
         vaultKeyPasswordWrap(args) { return this.call("vault_key_password_wrap", args); }
         vaultKeyPasswordOpen(args) { return this.call("vault_key_password_open", args); }
+        /** A single-secret vault's generated key (HKDF, no Argon2id): made in the module unless given; answers {generated, wrap}. */
+        vaultKeyGeneratedWrap(args) { return this.call("vault_key_generated_wrap", args); }
+        vaultKeyGeneratedOpen(args) { return this.call("vault_key_generated_open", args); }
+        /** Forgets one opened vault key version ({vault_id, key_version}): undoes a vault_rotate whose server call failed. */
+        vaultKeyForget(args) { return this.call("vault_key_forget", args); }
+        /** A personal vault's header (its name) sealed by, or opened with, the vault key of a version. */
+        headerSeal(args) { return this.call("header_seal", args); }
+        headerOpen(args) { return this.call("header_open", args); }
         vaultRotate(args) { return this.call("vault_rotate", args); }
         depositKeyNew(args) { return this.call("deposit_key_new", args); }
         /** A deposited item taken in: its key rewrapped by the vault key ({vault_id, item_id, key_version, label, deposit_wrapped_private, wrapped_item_key}). */
         depositAdopt(args) { return this.call("deposit_adopt", args); }
         itemSeal(args) { return this.call("item_seal", args); }
         itemOpen(args) { return this.call("item_open", args); }
+        /** An item's name, type, URIs, tags and unmasked fields for a list ({...item_open's args, masked: [field names]}). */
+        itemSummary(args) { return this.call("item_summary", args); }
+        deliverySend(args) { return this.call("delivery_send", args); }
+        deliveryOpen(args) { return this.call("delivery_open", args); }
         leaseApprove(args) { return this.call("lease_approve", args); }
-        recoveryWrap(args) { return this.call("recovery_wrap", args); }
+        recoveryMake(args) { return this.call("recovery_make", args); }
+        recoveryMember(args) { return this.call("recovery_member", args); }
+        recoverySessionStart(args) { return this.call("recovery_session_start", args); }
         recoveryShareDeliver(args) { return this.call("recovery_share_deliver", args); }
         recoveryCombine(args) { return this.call("recovery_combine", args); }
         recoveryOpenVault(args) { return this.call("recovery_open_vault", args); }
+        recoveryRekey(args) { return this.call("recovery_rekey", args); }
     }
 
     global.MoquiVaultClient = MoquiVaultClient;

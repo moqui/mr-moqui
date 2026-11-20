@@ -66,7 +66,7 @@ fn key_fetch_max_age_millis() -> i64 {
 /// Refuses unless the session's user signed in strongly and recently, saying what to do: set up a second factor
 /// when the account has a password and none (an account without a password signs in by SSO, which is strong), else
 /// confirm who they are again.
-fn require_strong_sign_in(facade: &EntityFacade, user_id: &str) -> Result<(), LibError> {
+pub(crate) fn require_strong_sign_in(facade: &EntityFacade, user_id: &str) -> Result<(), LibError> {
     if moqui_core::user::strong_recent_auth(key_fetch_max_age_millis()) {
         return Ok(());
     }

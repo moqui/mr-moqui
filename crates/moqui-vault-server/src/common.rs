@@ -35,7 +35,10 @@ pub(crate) const PERSONAL_KEY: &str = "moqui.security.vault.VaultPersonalKey";
 pub(crate) const KEY_CHECK: &str = "moqui.security.vault.VaultKeyCheck";
 pub(crate) const DELIVERY: &str = "moqui.security.vault.VaultDelivery";
 pub(crate) const EVENT: &str = "moqui.security.vault.VaultEvent";
-pub(crate) const RECOVERY_WRAP: &str = "moqui.security.vault.VaultRecoveryWrap";
+pub(crate) const RECOVERY_KEY: &str = "moqui.security.vault.VaultRecoveryKey";
+pub(crate) const RECOVERY_HOLDER: &str = "moqui.security.vault.VaultRecoveryHolder";
+pub(crate) const RECOVERY_SESSION: &str = "moqui.security.vault.VaultRecoverySession";
+pub(crate) const RECOVERY_DELIVERY: &str = "moqui.security.vault.VaultRecoveryDelivery";
 pub(crate) const LEASE: &str = "moqui.security.vault.VaultLease";
 pub(crate) const MACHINE_ACCESS: &str = "moqui.security.vault.VaultMachineAccess";
 
@@ -61,10 +64,17 @@ pub(crate) fn authz_off() -> Option<AuthzGuard> {
 
 /// The signed-in user's id.
 pub(crate) fn user() -> Result<String, LibError> {
-    moqui_core::user::current_user_id()
+    let user_id = moqui_core::user::current_user_id()
         .map_err(|err| fail(err.message()))?
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| fail("Sign in first"))
+        .ok_or_else(|| fail("Sign in first"))?;
+    // `recovery:` names a recovery key in a member list (§3.10): no account under such an id acts in a vault
+    if moqui_vault::keyversion::recovery_key_of(&user_id).is_some() {
+        return Err(fail(
+            "A user id that starts with recovery: is reserved for recovery keys",
+        ));
+    }
+    Ok(user_id)
 }
 
 pub(crate) fn find(facade: &EntityFacade, entity: &str) -> Result<EntityFind, LibError> {
@@ -251,6 +261,10 @@ pub(crate) fn membership(
     vault: &EntityValue,
     user_id: &str,
 ) -> Result<Option<EntityValue>, LibError> {
+    // a recovery key is listed as a member, but is no one's membership
+    if moqui_vault::keyversion::recovery_key_of(user_id).is_some() {
+        return Ok(None);
+    }
     find(facade, MEMBER)?
         .eq("vaultId", Value::string(field(vault, "vaultId")))
         .eq("userId", Value::string(user_id))

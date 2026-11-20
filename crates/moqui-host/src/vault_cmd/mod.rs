@@ -23,11 +23,14 @@
 //! - `key check <username>`: compare a user's fingerprint, then store the check signed by this user's key.
 //! - `list`: this user's vaults.
 //! - `open <vaultId> [--item <id>]`: open a vault through its member-list chain and list its items, or print one.
+//! - `recovery ...`: an organization recovery holder's steps, and turning recovery on ([`recovery`]).
+//! - `export-open FILE [--item <id>]`: open an encrypted export file of Commons › Vault here, with its password.
 //! - `leases [--vault <id>]`: the leases waiting for this user's approval and those they asked for, or a vault's.
 //! - `approve <leaseId>`: show what the signed lease names, check the server's lease key once, and approve it here
 //!   (§3.7): the item keys unwrapped under the lease's own names and sealed to it, signed by this user's key.
 
 pub(crate) mod client;
+mod recovery;
 mod remote;
 mod state;
 
@@ -49,6 +52,19 @@ Usage: moqui vault --server URL --user USERNAME <command>
   key check <username>      Compare a user's key fingerprint with them, then store your signed check
   list                      Your vaults
   open <vaultId> [--item ID]  Open a vault through its member list and list its items, or print one item
+  recovery list             The organization's recovery keys, and the recoveries you can seal a share to
+  recovery make --k K [--group G] <username>...
+                            Make a recovery key split K of these holders (each key checked)
+  recovery on <vaultId> [--key ID]
+                            As a manager: turn recovery on for a vault (the recovery key's maker checked)
+  recovery start <vaultId> <username> [--key ID]
+                            As a holder: recover the vault to the member's new key (checked); waits for the shares
+  recovery share <recoverySessionId>
+                            As another holder: seal your share to a recovery
+  recovery replace <vaultId> --key ID
+                            As a manager: list a new recovery key in place of a used one (rotates the vault key)
+  export-open FILE [--item ID]
+                            Open an encrypted export file (Commons › Vault) here, with its password: no server
   leases [--vault ID]       Leases waiting for your approval and those you asked for, or one vault's leases
   approve <leaseId>         Show what a lease names and approve it here, with your personal key
 
@@ -84,6 +100,10 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         }
     }
     let words: Vec<&str> = words.iter().map(String::as_str).collect();
+    // an export file opens here, with its password: no server, no sign-in
+    if let ["export-open", file] = words.as_slice() {
+        return export_open(file, &item);
+    }
     if server.is_empty() || user.is_empty() || words.is_empty() {
         return Err(Error::new(USAGE));
     }
@@ -103,6 +123,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         ["key", "check", username] => key_check(&mut remote, &mut client, username),
         ["list"] => list(&mut remote),
         ["open", vault_id] => open(&mut remote, &mut client, vault_id, &item),
+        ["recovery", rest @ ..] => recovery::dispatch(&mut remote, &mut client, &user, rest),
         ["leases"] => leases(&mut remote, &vault),
         ["approve", lease_id] => approve(&mut remote, &mut client, lease_id),
         _ => Err(Error::new(USAGE)),
@@ -460,16 +481,24 @@ fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: 
     let vault = remote.get(&format!("/vaults/{}", segment(vault_id)), &[])?;
     let key_version = vault["vault"]["keyVersion"].as_u64().unwrap_or(0);
     if text(&vault["vault"], "lockEnumId") == "VlSingleSecret" {
-        if text(&vault["vault"], "secretKindEnumId") != "VsPassword" {
-            return Err(Error::new("A vault opened by a generated key opens in the browser"));
+        if text(&vault["vault"], "secretKindEnumId") == "VsGenerated" {
+            let generated = ask("Generated key", true)?;
+            client
+                .call(
+                    "vault_key_generated_open",
+                    json!({ "vault_id": vault_id, "key_version": key_version, "wrap": vault["secretWrap"],
+                            "generated": generated.trim() }),
+                )
+                .map_err(vault_err)?;
+        } else {
+            let password = ask("Vault password", true)?;
+            client
+                .call(
+                    "vault_key_password_open",
+                    json!({ "vault_id": vault_id, "key_version": key_version, "wrap": vault["secretWrap"], "password": password.as_str() }),
+                )
+                .map_err(vault_err)?;
         }
-        let password = ask("Vault password", true)?;
-        client
-            .call(
-                "vault_key_password_open",
-                json!({ "vault_id": vault_id, "key_version": key_version, "wrap": vault["secretWrap"], "password": password.as_str() }),
-            )
-            .map_err(vault_err)?;
     } else {
         open_key(remote, client)?;
         open_shared(remote, client, vault_id, &vault)?;
@@ -490,6 +519,53 @@ fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: 
             "item_open",
             json!({ "vault_id": vault_id, "item_id": id, "key_version": item["keyVersion"], "label": label,
                     "wrapped_item_key": item["wrappedItemKey"], "sealed_body": item["bodyCipher"] }),
+        );
+        let body: Value = match opened {
+            Ok(opened) => serde_json::from_str(opened["body"].as_str().unwrap_or("")).unwrap_or(Value::Null),
+            Err(err) => {
+                eprintln!("{id}: {err}");
+                continue;
+            }
+        };
+        if item_id.is_empty() {
+            println!("{id}  {}  {}", text(&body, "type"), text(&body, "name"));
+        } else {
+            println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        }
+    }
+    Ok(())
+}
+
+/// `export-open FILE`: an encrypted export file of Commons › Vault (`{"format": "moqui-vault-export", "v": 1,
+/// "export_id", "key_version", "wrap", "items"}`: a vault key wrapped by the export's password, each item sealed under
+/// it), opened here with its password: each item's type and name, or one item's body.
+fn export_open(file: &str, item_id: &str) -> Result<(), Error> {
+    let text_of = std::fs::read_to_string(file).map_err(|err| Error::new(format!("{file}: {err}")))?;
+    let export: Value = serde_json::from_str(&text_of).map_err(|_| Error::new(format!("{file} is not JSON")))?;
+    if export["format"] != json!("moqui-vault-export") || export["v"] != json!(1) {
+        return Err(Error::new(format!(
+            "{file} is not a vault export (moqui-vault-export, v 1)"
+        )));
+    }
+    let export_id = text(&export, "export_id");
+    let key_version = export["key_version"].as_u64().unwrap_or(1);
+    let password = ask("Export password", true)?;
+    let mut client = VaultClient::default();
+    client
+        .call(
+            "vault_key_password_open",
+            json!({ "vault_id": export_id, "key_version": key_version, "wrap": export["wrap"], "password": password.as_str() }),
+        )
+        .map_err(vault_err)?;
+    for row in export["items"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let id = text(row, "item_id");
+        if !item_id.is_empty() && id != item_id {
+            continue;
+        }
+        let opened = client.call(
+            "item_open",
+            json!({ "vault_id": export_id, "item_id": id, "key_version": key_version,
+                    "wrapped_item_key": row["wrapped_item_key"], "sealed_body": row["sealed_body"] }),
         );
         let body: Value = match opened {
             Ok(opened) => serde_json::from_str(opened["body"].as_str().unwrap_or("")).unwrap_or(Value::Null),

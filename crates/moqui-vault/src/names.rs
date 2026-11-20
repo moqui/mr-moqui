@@ -29,6 +29,8 @@ pub enum Purpose {
     ItemKey,
     /// An item body under its item key.
     Body,
+    /// A personal vault's header (its name) under the vault key of a version.
+    VaultHeader,
     /// The deposit key's private half wrapped by the vault key.
     DepositKey,
     /// An item key wrapped to the deposit key's public half.
@@ -37,10 +39,10 @@ pub enum Purpose {
     PersonalPassphrase,
     /// A personal key's private halves wrapped by the recovery code.
     PersonalRecoveryCode,
-    /// A vault key wrapped to the organization recovery key.
-    RecoveryKey,
     /// A recovery-key share wrapped to a holder's personal key.
     RecoveryShare,
+    /// A recovery-key share sealed to a recovery session's ephemeral key.
+    RecoverySessionShare,
     /// A delivered value wrapped to its recipient's personal key.
     Delivery,
     /// An item key sealed to a lease's public key.
@@ -55,12 +57,13 @@ impl Purpose {
             Purpose::VaultKey => "vault-key",
             Purpose::ItemKey => "item-key",
             Purpose::Body => "body",
+            Purpose::VaultHeader => "vault-header",
             Purpose::DepositKey => "deposit-key",
             Purpose::DepositItemKey => "deposit-item-key",
             Purpose::PersonalPassphrase => "personal-passphrase",
             Purpose::PersonalRecoveryCode => "personal-recovery-code",
-            Purpose::RecoveryKey => "recovery-key",
             Purpose::RecoveryShare => "recovery-share",
+            Purpose::RecoverySessionShare => "recovery-session-share",
             Purpose::Delivery => "delivery",
             Purpose::Lease => "lease",
             Purpose::Machine => "machine",
