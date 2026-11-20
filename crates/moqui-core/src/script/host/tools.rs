@@ -967,6 +967,10 @@ macro_rules! tools_js {
         authzDisabled: host.authzDisabled,
         // whether disableAuthz() is refused here: a preview's proposed screen text runs (SEC-AI-102)
         authzLocked: host.authzLocked,
+        // a screen's inline expression in a preview: whether one holds the runtime, and the expression run as a region
+        // of its allow-list host, its value as data (SEC-AI-102)
+        inPreview: host.inPreview,
+        previewRegion: (thunk) => host.previewRegion(thunk),
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
         disableTarpit: host.disableTarpit, enableTarpit: host.enableTarpit,
         // Java's stack: each frame as {name, typeEnumId, actionEnumId}, top first. No history is kept here: what ran
@@ -1268,6 +1272,8 @@ static METHODS: &[Method] = &[
     method!("tools", "enableAuthz", [], enable_authz),
     method!("tools", "authzDisabled", [], authz_disabled),
     method!("tools", "authzLocked", [], authz_locked),
+    method!("tools", "inPreview", [], None, leaf, in_preview),
+    method!("tools", "previewRegion", [Callback], None, leaf, preview_region),
     method!("tools", "disableTarpit", [], disable_tarpit),
     method!("tools", "enableTarpit", [], enable_tarpit),
     method!("tools", "entityEcaDisabled", [], entity_eca_disabled),
@@ -3015,6 +3021,21 @@ fn disable_tarpit(_call: &mut Call<'_>) -> Result<Ret, HostError> {
 
 fn enable_tarpit(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(crate::context::ExecutionContext::enable_tarpit)?))
+}
+
+/// `ec.artifactExecution.inPreview()`: whether a preview holds this thread's script runtime, so a screen's inline
+/// expression runs through [`preview_region`].
+fn in_preview(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(crate::script::preview::held()))
+}
+
+/// `ec.artifactExecution.previewRegion(thunk)`: the value of a screen's inline expression (a `condition`, a field's
+/// `hide`, a form-single's `map`, a `text-map`, a `currency-unit-field`, a report's frame), run as a region of the
+/// preview's allow-list host when a proposed screen's code runs (plans/Security-Review-Low.md SEC-AI-102). The value
+/// comes back as data, so nothing the text made runs later in the unit.
+fn preview_region(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let _region = crate::script::preview::enter().map_err(|err| HostError::message(err.message()))?;
+    call.ops.call_back(0, Vec::new()).map(Ret::Value)
 }
 
 /// `ec.artifactExecution.authzLocked()`: whether `disableAuthz()` is refused here, as while a preview's proposed screen

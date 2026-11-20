@@ -2507,6 +2507,195 @@ fn a_previewed_screen_changes_no_built_in_object() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// SEC-AI-102: in a preview `ec`, each facade under it, `sri` and the host classes' prototypes are frozen once the
+/// preview's runtime has made them, so the proposed text replaces no function the framework's render code calls after it
+/// (`ec.resource.expand`, `ec.l10n.localize`, an entity value's `get`), nor `ec` itself.
+#[test]
+fn a_previewed_screen_poisons_no_host_object() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-poison-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let location = dir.join("Poison.xml");
+    let screen = r#"<screen require-authentication="false"><actions><script><![CDATA[
+            const taken = function () { return 'POISONED' }
+            const value = ec.entity.find('moqui.basic.Enumeration').condition('enumId', 'NONE_SUCH').one()
+                ?? ec.entity.makeValue('moqui.basic.Enumeration')
+            value.set ? value.set('enumId', 'E1') : (value.enumId = 'E1')
+            const kept = []
+            for (const [name, change, holds] of [
+                ['expand', () => { ec.resource.expand = taken }, () => ec.resource.expand('a${1 + 1}', '') === 'a2'],
+                ['define', () => { Object.defineProperty(ec.resource, 'expand', {value: taken}) },
+                    () => ec.resource.expand('b', '') === 'b'],
+                ['localize', () => { ec.l10n.localize = taken }, () => ec.l10n.localize('Name') !== 'POISONED'],
+                ['entity', () => { Object.getPrototypeOf(value).get = taken }, () => value.get('enumId') === 'E1'],
+                ['facade', () => { ec.resource = {expand: taken} }, () => ec.resource.expand('c', '') === 'c'],
+                ['ec', () => { globalThis.ec = {resource: {expand: taken}} }, () => ec.resource.expand('d', '') === 'd'],
+                ['sri', () => { sri.renderSection = taken }, () => sri.renderSection !== taken],
+            ]) {
+                try { change() } catch (e) {}
+                kept.push(name + '=' + (holds() ? 'kept' : 'changed'))
+            }
+            out = kept.join(' ')
+        ]]></script></actions><widgets><label text="MARK ${out} ${ec.l10n.localize('Name')}"/></widgets></screen>"#;
+    std::fs::write(&location, screen).unwrap();
+    let root = location.to_string_lossy().into_owned();
+    let render = || {
+        make_render(&world.factory)
+            .root_screen(root.clone())
+            .screen_path("")
+            .render_mode("html")
+            .render()
+            .map(|output| output.body_text())
+            .unwrap_or_else(|err| err.message().to_string())
+    };
+    let mut overlay = crate::screen::overlay::Overlay::new();
+    overlay.insert(&root, None, screen);
+    let previewed = crate::screen::overlay::with(overlay, render);
+    assert!(
+        previewed.contains("MARK expand=kept define=kept localize=kept entity=kept facade=kept ec=kept sri=kept"),
+        "{previewed}"
+    );
+    assert!(!previewed.contains("POISONED"), "{previewed}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: the expressions a render unit writes into its own code (a field's `hide`, a `conditional-field`'s
+/// condition, a form-single's `map`, a `text-map`, a `currency-unit-field`, a report-embed's `variables`) run in a
+/// preview as a region of the allow-list host, so the proposed text in them may not write to the response; the same text
+/// from the file runs as it is.
+#[test]
+fn a_previewed_screens_inline_expressions_run_on_the_allow_list_host() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-inline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let refused = "not available in a preview";
+    // a response write, refused anywhere in a preview's code; a JSON response in place of the page, which a render unit
+    // may send but the proposed text's own code may not
+    for write in [
+        "ec.web.response.write('PWNED')",
+        "ec.web.sendJsonResponse({x: 'PWNED'})",
+    ] {
+        let rows = r#"<actions><script>rows = [{v: 1}]; v = 1</script></actions>"#;
+        let cases: Vec<(&str, String)> = vec![
+            (
+                "hide",
+                format!(
+                    r#"{rows}<widgets><form-list name="F" list="rows" skip-form="true"><field name="v" hide="({write}, false)">
+                <default-field><display/></default-field></field></form-list></widgets>"#
+                ),
+            ),
+            (
+                "conditional-field",
+                format!(
+                    r#"{rows}<widgets><form-single name="F"><field name="v"><conditional-field condition="({write}, true)">
+                <display text="x"/></conditional-field><default-field><display text="y"/></default-field></field>
+                </form-single></widgets>"#
+                ),
+            ),
+            (
+                "map",
+                format!(
+                    r#"<widgets><form-single name="F" map="({write}, {{v: 1}})"><field name="v"><default-field><display/>
+                </default-field></field></form-single></widgets>"#
+                ),
+            ),
+            (
+                "text-map",
+                format!(r#"<widgets><label text="L${{a}}" text-map="({write}, {{a: 1}})"/></widgets>"#),
+            ),
+            (
+                "currency",
+                format!(
+                    r#"{rows}<widgets><form-single name="F"><field name="v"><default-field>
+                <display currency-unit-field="({write}, 'USD')"/></default-field></field></form-single></widgets>"#
+                ),
+            ),
+            (
+                "report-embed",
+                format!(r#"<widgets><report-embed definition-id="NONE_SUCH" variables="({write}, {{}})"/></widgets>"#),
+            ),
+        ];
+        for (name, body) in &cases {
+            let location = dir.join(format!("Inline{}.xml", name.replace('-', "")));
+            let screen = format!(r#"<screen require-authentication="false">{body}</screen>"#);
+            std::fs::write(&location, &screen).unwrap();
+            let root = location.to_string_lossy().into_owned();
+            let render = || {
+                make_render(&world.factory)
+                    .root_screen(root.clone())
+                    .screen_path("")
+                    .render_mode("html")
+                    .as_request(true)
+                    .render()
+                    .map(|output| output.body_text())
+                    .unwrap_or_else(|err| err.message().to_string())
+            };
+            let plain = render();
+            assert!(!plain.contains(refused), "{name} from the file: {plain}");
+            let mut overlay = crate::screen::overlay::Overlay::new();
+            overlay.insert(&root, None, &screen);
+            let previewed = crate::screen::overlay::with(overlay, render);
+            assert!(previewed.contains(refused), "{name} in a preview: {previewed}");
+            assert!(!previewed.contains("PWNED"), "{name} in a preview: {previewed}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a name or a size a render unit writes into the page as it is (a `field-ref`'s name in its error note, a
+/// panel's width) holds no markup of the proposed text in a preview, so the page gains no tag of its own (a
+/// `<meta http-equiv="refresh">` that would take the viewer to another site).
+#[test]
+fn a_previewed_screen_writes_no_markup_of_a_name_or_size() {
+    let world = World::open_in_framework("");
+    let dir = std::env::temp_dir().join(format!("moqui-screen-overlay-asis-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let meta = "&lt;meta http-equiv=&quot;refresh&quot; content=&quot;0;url=https://evil.example/&quot;&gt;";
+    let cases = [
+        (
+            "field-ref",
+            format!(
+                r#"<widgets><form-single name="F"><field name="v"><default-field><display text="x"/></default-field></field>
+                <field-layout><field-ref name="{meta}"/></field-layout></form-single></widgets>"#
+            ),
+        ),
+        (
+            "panel",
+            format!(
+                r#"<widgets><container-panel id="P"><panel-left size="1&quot;&gt;{meta}"><label text="left"/></panel-left>
+                <panel-center><label text="center"/></panel-center></container-panel></widgets>"#
+            ),
+        ),
+    ];
+    for (name, body) in &cases {
+        let location = dir.join(format!("AsIs{}.xml", name.replace('-', "")));
+        let screen = format!(r#"<screen require-authentication="false">{body}</screen>"#);
+        std::fs::write(&location, &screen).unwrap();
+        let root = location.to_string_lossy().into_owned();
+        let render = || {
+            make_render(&world.factory)
+                .root_screen(root.clone())
+                .screen_path("")
+                .render_mode("html")
+                .render()
+                .map(|output| output.body_text())
+                .unwrap_or_else(|err| err.message().to_string())
+        };
+        let mut overlay = crate::screen::overlay::Overlay::new();
+        overlay.insert(&root, None, &screen);
+        let previewed = crate::screen::overlay::with(overlay, render);
+        assert!(!previewed.contains("<meta"), "{name} in a preview: {previewed}");
+        assert!(
+            previewed.contains("meta http-equiv"),
+            "{name} in a preview renders: {previewed}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// SEC-AI-102: a trusted screen whose form extends a proposed screen's form takes on its text: the form's row-actions
 /// run on the preview's host there too.
 #[test]
@@ -2666,6 +2855,21 @@ fn a_widget_expressions_disable_ends_with_it() {
         "{out}"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// SEC-AI-102: a preview's response carries no `Refresh` header (a timed redirect to anywhere) and no Location to another
+/// site, whatever its render set.
+#[test]
+fn a_preview_response_drops_a_refresh_and_a_redirect_to_another_site() {
+    let _web = crate::web::install_with(Default::default(), "http://localhost:8080".to_string());
+    crate::web::set_header("Refresh", Some("0; url=https://evil.example/phish"));
+    crate::web::set_header("Location", Some("https://evil.example/steal"));
+    crate::screen::render::preview_response();
+    assert!(crate::web::response_header_values("Refresh").is_empty());
+    assert!(crate::web::response_header_values("Location").is_empty());
+    assert!(crate::web::response_header_values("Content-Security-Policy")
+        .iter()
+        .any(|policy| policy == crate::screen::render::PREVIEW_POLICY));
 }
 
 /// SEC-AI-102: a preview's response policy loads nothing from another site: images, styles' `url()`, fonts, fetches and

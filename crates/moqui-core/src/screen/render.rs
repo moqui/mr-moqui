@@ -843,10 +843,14 @@ pub(crate) fn run_job(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> 
 }
 
 /// A preview's response, whatever its render set (plans/Security-Review-Low.md SEC-AI-102): the preview's policy again,
-/// and a redirect only to this site (a relative path, or this host), else a 403 with no Location. It backs up the
-/// allow-list host, which gives the proposed text no `ec.web` member to set either.
-fn preview_response() {
+/// no `Refresh` header (a timed redirect the Location rule would not see), and a redirect only to this site (a relative
+/// path, or this host), else a 403 with no Location. It backs up the allow-list host, which gives the proposed text no
+/// `ec.web` member to set either. A `<meta http-equiv="refresh">` in the body would need raw output of the proposed
+/// text, which a preview never writes (its `encode="false"` text is encoded, SEC-AI-82, and its code has no response
+/// write), so the header is the one place left.
+pub(super) fn preview_response() {
     web::set_header("Content-Security-Policy", Some(PREVIEW_POLICY));
+    web::set_header("Refresh", None);
     for location in web::response_header_values("Location") {
         let local = location.starts_with('/') && !location.starts_with("//") && !location.starts_with("/\\");
         if !local && !same_origin(&location) {

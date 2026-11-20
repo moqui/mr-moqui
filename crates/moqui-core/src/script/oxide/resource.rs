@@ -48,10 +48,17 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
         let function = context.new_function(
             FunctionOptions::new(name).length(length),
             move |scope: &mut Scope<'_>| -> JsResult<Value> {
-                // a preview's proposed text runs no script file (SEC-AI-102)
-                if name == "script" && crate::script::preview::restricted() {
-                    let refusal = crate::script::preview::refusal("ec.resource.script");
-                    return Err(scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, &refusal));
+                // a preview's proposed text runs no script file, and its render units only a component's (SEC-AI-102)
+                if name == "script" {
+                    let component = matches!(scope.arg(0), Value::String(text)
+                        if text.to_utf8_lossy().trim_start().starts_with("component://"));
+                    if crate::script::preview::restricted() || (crate::script::preview::unit_restricted() && !component)
+                    {
+                        let refusal = crate::script::preview::refusal("ec.resource.script");
+                        return Err(
+                            scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, &refusal)
+                        );
+                    }
                 }
                 // each run holds the scope a service call holds: what it disables ends with it (SEC-RTE-92)
                 let _authz =

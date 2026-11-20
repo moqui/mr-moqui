@@ -38,6 +38,9 @@ thread_local! {
 thread_local! {
     /// Set while a preview holds the thread with no runtime of its own ([`PreviewHeld`]): its text runs no code.
     static SHARED: Cell<bool> = const { Cell::new(false) };
+    /// Set while a preview holds the thread with a runtime of its own ([`PreviewHeld`]): the screens' code outside a
+    /// region (the framework's render units, the shell's actions) runs on the units' list ([`unit_allowed`]).
+    static HELD: Cell<bool> = const { Cell::new(false) };
 }
 
 /// A preview's hold of the thread's script runtime ([`crate::screen::overlay::with`]): a fresh one with its built-in
@@ -45,6 +48,7 @@ thread_local! {
 pub(crate) struct PreviewHeld {
     _runtime: Option<crate::script::oxide::PreviewRuntime>,
     shared_before: bool,
+    held_before: bool,
 }
 
 impl PreviewHeld {
@@ -57,6 +61,7 @@ impl PreviewHeld {
         Self {
             _runtime: runtime,
             shared_before: SHARED.with(|held| held.replace(shared)),
+            held_before: HELD.with(|held| held.replace(!shared)),
         }
     }
 }
@@ -64,6 +69,7 @@ impl PreviewHeld {
 impl Drop for PreviewHeld {
     fn drop(&mut self) {
         SHARED.with(|held| held.set(self.shared_before));
+        HELD.with(|held| held.set(self.held_before));
     }
 }
 
@@ -114,6 +120,21 @@ impl PreviewCode {
 /// screen's (not an entity find's or a service call's that the text called into).
 pub(crate) fn restricted() -> bool {
     DEPTH.with(Cell::get) > 0
+        && crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::top_is_screen)
+            .unwrap_or(false)
+}
+
+/// Whether a preview holds this thread's script runtime ([`PreviewHeld`]).
+pub(crate) fn held() -> bool {
+    HELD.with(Cell::get)
+}
+
+/// Whether a screen's own code outside a region runs in a preview's runtime now: the framework's render units and the
+/// trusted screens' actions around the proposed text, which call only [`unit_allowed`]'s members. A service's body, an
+/// entity filter or an ECA rule (whose frame is on top) is not a screen's.
+pub(crate) fn unit_restricted() -> bool {
+    HELD.with(Cell::get)
+        && DEPTH.with(Cell::get) == 0
         && crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::top_is_screen)
             .unwrap_or(false)
 }
@@ -196,6 +217,8 @@ const SRI_READS: &[&str] = &[
 /// the entity definitions a find reads.
 const TOOLS: &[&str] = &[
     "authzLocked",
+    "inPreview",
+    "previewRegion",
     "contextPush",
     "contextPop",
     "contextPushContext",
@@ -224,6 +247,126 @@ const WEB_UTILITIES: &[&str] = &[
     "isSafeSinglePathSegment",
     "lastPathSegment",
 ];
+
+/// The `ec.web` members a preview's render units may call: the request's reads, the screen history, and the JSON answer
+/// of a data transition (`menuData`). No raw text, file or error response, no session switch.
+const UNIT_WEB: &[&str] = &[
+    "parameters",
+    "requestParameters",
+    "savedMessages",
+    "savedErrors",
+    "savedValidationErrors",
+    "errorParameters",
+    "multiPartParameters",
+    "sessionToken",
+    "getHostName",
+    "getPageMessages",
+    "getScreenHistory",
+    "getWebappRootUrl",
+    "reservedPaths",
+    "reservedSubPaths",
+    "saveScreenLastInfo",
+    "sendJsonResponse",
+    "sendJsonError",
+];
+
+/// The `tools` members a preview's render units may call beyond [`TOOLS`]: authorization's own questions, the forms'
+/// and transitions' definitions, the request's reads, and text helpers. A resource is read only at a component's
+/// location ([`location_first`]).
+const UNIT_TOOLS: &[&str] = &[
+    "authzDisabled",
+    "disableAuthz",
+    "enableAuthz",
+    "isPermitted",
+    "isPermittedOwn",
+    "artifactStack",
+    "stackNameString",
+    "getStatusMap",
+    "formXml",
+    "dbFormXml",
+    "valuesFromPlainMap",
+    "transitionInfo",
+    "secureRequestParameters",
+    "getRequestDetails",
+    "webRequestInfo",
+    "webAttribute",
+    "webAttributeNames",
+    "webSessionId",
+    "webStatus",
+    "webHeaderValues",
+    "webHeaderNames",
+    "webCommitted",
+    "getAvailableTimeZones",
+    "markdownHtml",
+    "cronDescription",
+    "isTextFilename",
+    "getRuntimePath",
+    "getInstanceId",
+    "convertValidateCleanParameters",
+];
+
+/// The `tools` members whose first argument is a resource location, which a render unit reads only at a component's.
+const LOCATION_FIRST: &[&str] = &[
+    "resourceText",
+    "resourceTextIn",
+    "resourceStream",
+    "resourceInfo",
+    "resourceStat",
+    "resourceEntries",
+    "resourceSupportsVersion",
+];
+
+/// Whether `first`, a location, is a component's.
+fn component_location(first: Option<&str>) -> bool {
+    first.is_some_and(|location| location.trim_start().starts_with("component://"))
+}
+
+/// Whether the framework's render code and the trusted screens' actions in a preview's runtime may call the host member at
+/// census `path`, with `first` its first argument when it is text: the units' own list. It holds what the render needs
+/// besides what a preview's text may call ([`allowed`]): every `sri` and `UrlInstance` member (the page is written through
+/// `sri`), the request's reads and the JSON answer of a data transition, the conf's values and the render modes,
+/// authorization's own questions, the forms' definitions, a component's resources, and the user's visit. Not: a raw
+/// response write, header, redirect or error by `ec.web` or `tools`, a file or URL, raw SQL, the caches, the factory's
+/// tools, a change of user or time, a job, or another screen's render. Nothing here is reachable by the proposed text: it
+/// runs in a region, the host objects are frozen in a preview's runtime, and a value it gives back is data.
+pub(crate) fn unit_allowed(path: &str, first: Option<&str>) -> bool {
+    if allowed(path) {
+        return true;
+    }
+    let Some((class, name)) = path.rsplit_once('.') else {
+        return false;
+    };
+    match class {
+        "sri" | "UrlInstance" | "ec.resource.theme" => true,
+        "ec.web" => UNIT_WEB.contains(&name),
+        "ec.factory" => matches!(
+            name,
+            "getConfValue" | "isConfValueSet" | "isConfSecret" | "moquiVersion" | "hasFeature"
+        ),
+        "ec.screen" => matches!(
+            name,
+            "isRenderModeValid" | "getMimeTypeByMode" | "isRenderModeText" | "isRenderModeBinary"
+        ),
+        "ec.user" => matches!(
+            name,
+            "randomString"
+                | "getVisitId"
+                | "visitId"
+                | "getVisit"
+                | "visit"
+                | "getVisitorId"
+                | "getClientIp"
+                | "machineTimeZone"
+        ),
+        "ec.resource" => name == "template" && component_location(first),
+        "System" => {
+            matches!(name, "getProperty" | "isPropertySet") && first.is_some_and(|key| key.starts_with("webapp_"))
+        }
+        "WebUtilities" => true,
+        "tools" => UNIT_TOOLS.contains(&name) || (LOCATION_FIRST.contains(&name) && component_location(first)),
+        _ => false,
+    }
+}
 
 /// Whether a preview's proposed text may call the host member at census `path` (`ec.entity.find`,
 /// `EntityFind.list`, `ec.service.sync().call`). `disableAuthz` of a find or a service call passes here and is refused

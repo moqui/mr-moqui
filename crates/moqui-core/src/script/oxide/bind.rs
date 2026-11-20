@@ -352,6 +352,32 @@ fn instance(js: &mut impl Js, binder: &Rc<Binder>, obj: HostObject, class: &'sta
     Ok(made)
 }
 
+thread_local! {
+    /// The class prototypes a preview runtime's start made, frozen once the start's installs are done
+    /// ([`freeze_pending_prototypes`]).
+    static PENDING_FREEZE: RefCell<Vec<ObjectRef>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `Object.freeze(object)`.
+fn freeze_object(js: &mut impl Js, object: &ObjectRef) -> JsResult<()> {
+    let freeze = super::compiled::eval_start(js, "(function (o) { Object.freeze(o); })")?;
+    if let JsValue::Object(function) = &freeze {
+        if let Some(freeze) = js.as_callable(function)? {
+            js.call(&freeze, JsValue::Undefined, &[JsValue::Object(object.clone())])?;
+        }
+    }
+    Ok(())
+}
+
+/// Freeze the prototypes a preview runtime's start made ([`PENDING_FREEZE`]).
+pub(super) fn freeze_pending_prototypes(js: &mut impl Js) -> JsResult<()> {
+    let pending = PENDING_FREEZE.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+    for proto in &pending {
+        freeze_object(js, proto)?;
+    }
+    Ok(())
+}
+
 fn prototype(js: &mut impl Js, binder: &Rc<Binder>, class: &'static HostClass) -> JsResult<ObjectRef> {
     if let Some(found) = binder.prototypes.borrow().get(class.name) {
         return Ok(found.clone());
@@ -397,6 +423,15 @@ fn prototype(js: &mut impl Js, binder: &Rc<Binder>, class: &'static HostClass) -
             &[JsValue::Object(proto.clone()), JsValue::Object(hidden)],
         )?;
     }
+    // in a preview's runtime a class's prototype is frozen once made: the proposed text replaces none of its methods
+    // (SEC-AI-102); one its start makes is frozen when the start's installs are done, as they may still add to it
+    if super::engine::preview_start() {
+        if super::engine::starting() {
+            PENDING_FREEZE.with(|pending| pending.borrow_mut().push(proto.clone()));
+        } else {
+            freeze_object(js, &proto)?;
+        }
+    }
     binder.prototypes.borrow_mut().insert(class.name, proto.clone());
     Ok(proto)
 }
@@ -423,11 +458,20 @@ fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_
     }
     // a preview's proposed screen text calls only the members of its allow-list (SEC-AI-102); the runtime's own start,
     // which a region's first script may set off, installs its shims with the whole host
-    if !super::engine::starting()
-        && crate::script::preview::restricted()
-        && !crate::script::preview::allowed(method.path)
-    {
-        return Err(scope.throw_error(NativeErrorKind::Type, &crate::script::preview::refusal(method.path)));
+    if !super::engine::starting() {
+        if crate::script::preview::restricted() {
+            if !crate::script::preview::allowed(method.path) {
+                return Err(scope.throw_error(NativeErrorKind::Type, &crate::script::preview::refusal(method.path)));
+            }
+        } else if crate::script::preview::unit_restricted() {
+            let first = match scope.arg(0) {
+                JsValue::String(text) => Some(text.to_utf8_lossy()),
+                _ => None,
+            };
+            if !crate::script::preview::unit_allowed(method.path, first.as_deref()) {
+                return Err(scope.throw_error(NativeErrorKind::Type, &crate::script::preview::refusal(method.path)));
+            }
+        }
     }
     let required = method.required();
     let given = scope.argc();

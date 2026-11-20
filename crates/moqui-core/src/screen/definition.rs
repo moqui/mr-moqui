@@ -1303,6 +1303,18 @@ impl ScreenDef {
             return Err(Error::new(format!("{location} root is {} and not screen", node.name())));
         }
         let extended = apply_screen_extends(factory, &node, location, &mut sources)?;
+        // a screen at a preview's proposed text: each expression the render units inline runs as a region of the
+        // preview's allow-list host, and a name or size they write into the page as it is holds no markup (SEC-AI-102)
+        if super::overlay::active()
+            && sources
+                .iter()
+                .any(|source| super::overlay::text_of(&source.location).is_some())
+        {
+            wrap_inline_expressions(&node);
+            for item in extended.forms.iter().chain(extended.sections.iter()) {
+                wrap_inline_expressions(item);
+            }
+        }
         if crate::devtools::is_dev_instance() {
             // F10: each widget element keeps the file that wrote it, merged ones their screen-extend's
             for root in node
@@ -1610,6 +1622,66 @@ impl ScreenDef {
             config_generation,
             generated: super::generate::Generated::default(),
         })
+    }
+}
+
+/// The attributes whose text the render units write into a unit's code as a JavaScript expression of their own (not
+/// through `ec.resource.expand`, `expression` or `condition`, nor an engine entry, which run as a region already): a
+/// widget's or a field's `condition`, a field's `hide`, a form-single's `map`, a `text-map`, a `currency-unit-field`, a
+/// `disable-condition`, a `move-condition`, and a report's `variables`, `dashboard`, `frames`, `frame` and `panel`.
+const INLINE_EXPRESSIONS: &[&str] = &[
+    "condition",
+    "hide",
+    "map",
+    "text-map",
+    "currency-unit-field",
+    "disable-condition",
+    "move-condition",
+    "variables",
+    "dashboard",
+    "frames",
+    "frame",
+    "panel",
+];
+
+/// The attributes whose text a render unit writes into the page as it is, not encoded, as the XSD gives them a name or
+/// a number: a `field-ref`'s or a form's `name` (an error note, a boundary comment), a container's `id` and `type`, a
+/// panel's `size`, a box body's `height`, a `width`.
+const WRITTEN_AS_IS: &[&str] = &["name", "id", "type", "size", "height", "width"];
+
+/// `text` with no character that would end the attribute, the comment or the tag it is written into, nor start one.
+fn markup_free(text: &str) -> String {
+    text.chars()
+        .filter(|c| !matches!(c, '<' | '>' | '"' | '\'' | '&' | '`'))
+        .collect::<String>()
+        .replace("--", "-")
+}
+
+/// Wrap each [`INLINE_EXPRESSIONS`] attribute of `node` and its descendants so that in a preview its value comes from
+/// `ec.artifactExecution.previewRegion`, a region of the preview's allow-list host, and elsewhere is the expression as
+/// written; and take the markup out of each [`WRITTEN_AS_IS`] attribute (SEC-AI-102).
+fn wrap_inline_expressions(node: &MNode) {
+    for (name, value) in node.attributes() {
+        if WRITTEN_AS_IS.contains(&name.as_str()) {
+            let free = markup_free(&value);
+            if free != value {
+                node.set_attribute(name, free);
+            }
+            continue;
+        }
+        let text = value.trim();
+        if text.is_empty() || !INLINE_EXPRESSIONS.contains(&name.as_str()) {
+            continue;
+        }
+        node.set_attribute(
+            name,
+            format!(
+                "(ec.artifactExecution.inPreview() ? ec.artifactExecution.previewRegion(() => ({text})) : ({text}))"
+            ),
+        );
+    }
+    for child in node.child_iter() {
+        wrap_inline_expressions(&child);
     }
 }
 

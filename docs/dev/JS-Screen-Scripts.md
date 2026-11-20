@@ -249,16 +249,25 @@ a form's or tree's data are covered as the render is. The code may call:
 | The user | `ec.user` `userId`, `username`, `hasPermission`, `isInGroup`, `getUserGroupIdSet`, `getPreference`, `getPreferences`, `nowTimestamp`, `timestampMillis`, `locale`, `timeZone`, `getLocale`, `getTimeZone`, `userAccount` |
 | Helpers | `StringUtilities`, `CollectionUtilities`, the pure `WebUtilities` encoders, `compare`, the decimal and date globals |
 | `sri` | the reads of the render, its field values, options and validations, and the URL builders (`buildUrl`, `makeUrlByType`, `UrlInstance`); no render, write or redirect |
-| The lock | `ec.artifactExecution.authzLocked()` |
+| The lock | `ec.artifactExecution.authzLocked()`, `inPreview()`, `previewRegion(thunk)` |
 
 Anything else throws "... is not available in a preview of proposed screen text": every `ec.web` member (the
 response's writes, headers, redirects, errors and status, cookies, the session and the request's parameters), the rest
 of `ec.resource` (files, locations, `script`, `template`), `ec.cache`, `ec.factory`, the rest of
 `ec.artifactExecution`, raw SQL and the other `tools`, the user's switches (sign in and out, `runAsUser`) and the
 effective time, `ec.screen`, the search index and notifications. A service the code calls, and the entity filters and
-ECA rules its finds and writes reach, run their own code on the whole host. The preview renders on a script runtime of
-its own whose built-in objects and prototypes are frozen, let go after it; the response keeps the preview's
-`Content-Security-Policy` and redirects only to this site.
+ECA rules its finds and writes reach, run their own code on the whole host, and an entity filter's map reads only
+`ec.user.context`, never a name the screen set.
+
+The preview renders on a script runtime of its own, let go after it, and the allow-list holds for all of it. Its built-in
+objects are frozen, and so are `ec`, each facade under it, `sri`, the helpers, the host classes' prototypes and a mode's
+render functions, each once made, so the proposed text replaces no function the framework's code calls after it. The
+framework's render units and the screens' code around the proposed text run on a list of their own, the members a render
+needs (`sri`, its writes to the page, the reads of the request, the settings and `component://` files), and no
+response write of `ec.web`. An expression a render unit writes into its code (a `condition`, a field's `hide`, a
+form-single's `map`, a `text-map`, a `currency-unit-field`, a `disable-condition`, a report's `variables`, `frame` or
+`panel`) runs as the proposed text's own, through `ec.artifactExecution.previewRegion`. The response keeps the preview's
+`Content-Security-Policy`, drops a `Refresh` header and redirects only to this site.
 
 ## Server-static screens
 

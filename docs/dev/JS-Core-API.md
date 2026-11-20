@@ -473,7 +473,9 @@ context.
 | `disableAuthz()` | Authorization is not checked in this execution context until `enableAuthz()`. Returns whether it was already disabled |
 | `enableAuthz()` | Checks authorization again |
 | `authzDisabled()` | Whether authorization is disabled, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing |
-| `authzLocked()` | Whether a preview's proposed screen text runs here, on its allow-list host ([JS-Screen-Scripts, In a preview of proposed text](JS-Screen-Scripts.md#in-a-preview-of-proposed-text)): `disableAuthz()`, a find's or a service call's, and a change of user are refused then. Framework template code asks it before a read it would otherwise make with authorization off; it is the one `ec.artifactExecution` member the proposed text may call |
+| `authzLocked()` | Whether a preview's proposed screen text runs here, on its allow-list host ([JS-Screen-Scripts, In a preview of proposed text](JS-Screen-Scripts.md#in-a-preview-of-proposed-text)): `disableAuthz()`, a find's or a service call's, and a change of user are refused then. Framework template code asks it before a read it would otherwise make with authorization off; it, `inPreview()` and `previewRegion()` are the `ec.artifactExecution` members the proposed text may call |
+| `inPreview()` | Whether a preview of proposed screen text holds this thread's script runtime |
+| `previewRegion(thunk)` | `thunk()`'s value, run as the proposed text's own code on the preview's allow-list host: a screen's expression that a render unit writes into its code is wrapped in it while its screen stands at proposed text. Its value comes back as data |
 | `disableEntityEca()` | Entity ECA rules do not run for this execution context's writes. Returns whether they were already disabled |
 | `enableEntityEca()`, `entityEcaDisabled()` | Runs them again; whether they are disabled |
 | `disableTarpit()` | No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled |
