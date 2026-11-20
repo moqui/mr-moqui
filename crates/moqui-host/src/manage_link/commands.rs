@@ -81,18 +81,29 @@ pub trait Managed: Send + Sync + 'static {
     fn enter_share(&self, _share: &str) -> Result<(), String> {
         Err("this instance has no seal".to_string())
     }
-    /// Whether the recovery shares of an automatic init are held, unread.
-    fn shares_waiting(&self) -> bool {
-        false
+    /// The recovery shares of an automatic init, read without taking them: they stay on the operator socket until
+    /// every holder confirmed theirs.
+    fn held_shares(&self) -> Option<Vec<zeroize::Zeroizing<String>>> {
+        None
     }
-    /// The held shares, once.
-    fn take_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
-        Err("no recovery shares are held".to_string())
-    }
-    /// A new set of recovery shares in place of the old one (a holder was replaced).
-    fn new_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
+    /// Drop the held shares: every holder confirmed theirs.
+    fn release_held_shares(&self) {}
+    /// A new set of recovery shares in place of the old one (a holder was replaced), made but not kept until
+    /// [`Managed::commit_new_shares`].
+    fn prepare_new_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
         Err("this instance has no seal".to_string())
     }
+    /// Keep the prepared set: the manager took its deliveries.
+    fn commit_new_shares(&self) -> Result<(), String> {
+        Err("no new recovery shares are prepared".to_string())
+    }
+    /// Drop the prepared set: the manager refused its deliveries.
+    fn drop_new_shares(&self) {}
+    /// The proof key of the root key a rotate-root of this process replaced, until the manager pinned the new one.
+    fn previous_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        None
+    }
+    fn forget_previous_proof(&self) {}
     /// The recovery shares' threshold and count.
     fn recovery_counts(&self) -> (u32, u32) {
         (0, 0)
@@ -215,12 +226,15 @@ fn take_approvers(link: &LinkContext, set: &super::proto::ApproverSet) -> Result
 /// The server's own link: its seal's keeper and its factory, by its runtime directory.
 pub(crate) struct ServerManaged {
     runtime_dir: PathBuf,
+    /// A new set of recovery shares made, until the manager takes its deliveries (M6).
+    prepared: Mutex<Option<moqui_core::seal::PreparedRecovery>>,
 }
 
 impl ServerManaged {
     pub(crate) fn new(runtime_dir: &Path) -> Self {
         Self {
             runtime_dir: runtime_dir.to_path_buf(),
+            prepared: Mutex::new(None),
         }
     }
 
@@ -390,18 +404,47 @@ impl Managed for ServerManaged {
             .map_err(|err| err.to_string())
     }
 
-    fn shares_waiting(&self) -> bool {
-        self.keeper().is_some_and(|keeper| keeper.status().shares_waiting)
+    fn held_shares(&self) -> Option<Vec<zeroize::Zeroizing<String>>> {
+        self.keeper()?.held_shares()
     }
 
-    fn take_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
-        self.keeper_or_err()?.take_shares().map_err(|err| err.to_string())
+    fn release_held_shares(&self) {
+        if let Some(keeper) = self.keeper() {
+            let _ = keeper.take_shares();
+        }
     }
 
-    fn new_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
+    fn prepare_new_shares(&self) -> Result<Vec<zeroize::Zeroizing<String>>, String> {
+        let (prepared, shares) = self
+            .keeper_or_err()?
+            .prepare_recovery_shares()
+            .map_err(|err| err.to_string())?;
+        *lock(&self.prepared) = Some(prepared);
+        Ok(shares)
+    }
+
+    fn commit_new_shares(&self) -> Result<(), String> {
+        let prepared = lock(&self.prepared)
+            .take()
+            .ok_or_else(|| "no new recovery shares are prepared".to_string())?;
         self.keeper_or_err()?
-            .new_recovery_shares()
+            .commit_recovery_shares(prepared)
             .map_err(|err| err.to_string())
+    }
+
+    fn drop_new_shares(&self) {
+        *lock(&self.prepared) = None;
+    }
+
+    fn previous_proof_key(&self) -> Option<moqui_vault::sign::SigningKey> {
+        let seed = self.keeper()?.previous_proof_seed()?;
+        Some(moqui_vault::sign::SigningKey::from_seed(&seed))
+    }
+
+    fn forget_previous_proof(&self) {
+        if let Some(keeper) = self.keeper() {
+            keeper.forget_previous_proof();
+        }
     }
 
     fn recovery_counts(&self) -> (u32, u32) {

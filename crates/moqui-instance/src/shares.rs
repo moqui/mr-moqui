@@ -22,19 +22,19 @@
 //!   holder's active key, one share to a holder, and stores them as deliveries (`VaultDelivery`, sender `instance`) with
 //!   an `InstanceRecoveryShare` row each. The holder's client confirms with their signing key ([`confirm`]); the
 //!   instance checks the confirmations itself ([`confirmations`] hands them over). An unconfirmed share is reported.
-//! - **The relay** ([`offer_unseal_key`], [`post_sealed_share`]): a sealed instance makes a key for one unseal and
-//!   signs it with its link key; a holder's `moqui vault seal-share` checks it and seals their share to it; the manager
-//!   keeps that ciphertext in memory for the instance's next ask, and nothing else.
+//! - **The relay** ([`offer_unseal_key`], [`post_sealed_share`]): a sealed instance makes a key for one unseal, with a
+//!   time it stops being taken, and signs it with its link key; a holder's `moqui vault seal-share` checks it against
+//!   the link key fingerprint the holder filed with their share and seals their share to it. The key, its signature and
+//!   the sealed shares are rows (any member of a manager cluster answers), ciphertext only, dropped when the instance
+//!   takes them, unseals ([`drop_relay`]) or its link ends.
 //! - **The recovery bundle** ([`deposit_seal_bundle`]): what `export-seal` gives (wrapped values only), deposited as an
 //!   operational item of the environment's vault beside the instance's other items.
 
 use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
 
 use moqui_core::entity::{EntityFacade, EntityValue};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
-use moqui_lib::sync::lock;
 use moqui_vault::delivery::Delivery;
 use moqui_vault::fingerprint::KeyCheck;
 use moqui_vault::managed::{self, UnsealKey};
@@ -70,36 +70,55 @@ fn key32(text: &str) -> Option<[u8; 32]> {
 }
 
 /// The members of `instance_id`'s environment's recovery group, now, with their active personal keys and the checks of
-/// them (see the module doc); none when the environment names no group.
+/// them by a member of the environment's approver group (see the module doc); none when the environment names no group.
+/// A user with two active keys is given with the newest; a key given for two users is left out.
 pub fn holders(facade: &EntityFacade, instance_id: &str) -> Result<Vec<HolderKey>, LibError> {
     let _authz = authz_off();
     let row = instance(facade, instance_id)?;
-    let group = one(facade, ENVIRONMENT, "environmentId", &field(&row, "environmentId"))?
-        .map(|environment| field(&environment, "recoveryUserGroupId"))
+    let environment = one(facade, ENVIRONMENT, "environmentId", &field(&row, "environmentId"))?;
+    let group = environment
+        .as_ref()
+        .map(|environment| field(environment, "recoveryUserGroupId"))
         .unwrap_or_default();
     if group.is_empty() {
         return Ok(Vec::new());
     }
+    let approver_group = environment
+        .as_ref()
+        .map(|environment| field(environment, "approverUserGroupId"))
+        .unwrap_or_default();
     let now_millis = moqui_core::user::now_millis();
-    let mut users: Vec<String> = rows(facade, "moqui.security.UserGroupMember", "userGroupId", &group)?
-        .iter()
-        .filter(|member| {
-            member
-                .get("thruDate")
-                .and_then(moqui_core::user::value_millis)
-                .is_none_or(|thru| thru > now_millis)
-        })
-        .map(|member| field(member, "userId"))
-        .collect();
-    users.sort_unstable();
-    users.dedup();
-    let mut holders = Vec::new();
-    for user_id in users.into_iter().take(MAX_HOLDERS) {
-        let Some(key) = find(facade, PERSONAL_KEY)?
+    let members = |group: &str| -> Result<Vec<String>, LibError> {
+        let mut users: Vec<String> = rows(facade, "moqui.security.UserGroupMember", "userGroupId", group)?
+            .iter()
+            .filter(|member| {
+                member
+                    .get("thruDate")
+                    .and_then(moqui_core::user::value_millis)
+                    .is_none_or(|thru| thru > now_millis)
+            })
+            .map(|member| field(member, "userId"))
+            .collect();
+        users.sort_unstable();
+        users.dedup();
+        Ok(users)
+    };
+    let approvers = members(&approver_group)?;
+    let mut holders: Vec<HolderKey> = Vec::new();
+    for user_id in members(&group)?.into_iter().take(MAX_HOLDERS) {
+        let mut keys = find(facade, PERSONAL_KEY)?
             .eq("userId", Value::string(&user_id))
             .eq("statusId", Value::string("VpkActive"))
-            .one()?
-        else {
+            .order_by("fromDate", false)
+            .list()?
+            .into_values();
+        if keys.len() > 1 {
+            tracing::error!(
+                "Instances: recovery holder {user_id} has {} active personal keys; the newest is taken",
+                keys.len()
+            );
+        }
+        let Some(key) = (!keys.is_empty()).then(|| keys.swap_remove(0)) else {
             tracing::warn!("Instances: recovery holder {user_id} has no personal vault key; left out");
             continue;
         };
@@ -110,13 +129,23 @@ pub fn holders(facade: &EntityFacade, instance_id: &str) -> Result<Vec<HolderKey
             tracing::error!("Instances: the personal key of recovery holder {user_id} does not read; left out");
             continue;
         };
+        if holders
+            .iter()
+            .any(|other| other.encrypt_public == encrypt_public || other.verify_public == verify_public)
+        {
+            tracing::error!("Instances: recovery holder {user_id}'s key is another holder's too; left out");
+            continue;
+        }
         let personal_key_id = field(&key, "personalKeyId");
+        // the checks by the environment's approvers only, before the limit: another user's check is of no use to the
+        // instance, and a flood of them must not push an approver's out
         let checks = find(facade, KEY_CHECK)?
             .eq("checkedKeyId", Value::string(&personal_key_id))
             .eq("checkedUserId", Value::string(&user_id))
             .list()?
             .into_values()
             .iter()
+            .filter(|check| approvers.binary_search(&field(check, "checkerUserId")).is_ok())
             .take(MAX_CHECKS)
             .filter_map(|check| {
                 Some(KeyCheck {
@@ -168,6 +197,17 @@ pub fn record_shares(
         return Err(fail(
             "a share set has an id of at most 40 characters and at least one share",
         ));
+    }
+    // each index once, from 1 to the count, and a threshold the shares can meet
+    let count = u32::try_from(shares.len()).unwrap_or(u32::MAX);
+    let mut indexes: Vec<u32> = shares.iter().map(|share| share.index).collect();
+    indexes.sort_unstable();
+    indexes.dedup();
+    if indexes.len() != shares.len() || indexes.first() != Some(&1) || indexes.last() != Some(&count) {
+        return Err(fail("a share set's indexes are 1 to its count, each once"));
+    }
+    if threshold < 2 || threshold > count {
+        return Err(fail("a share set's threshold is at least 2 and at most its count"));
     }
     let current: BTreeMap<String, String> = holders(facade, instance_id)?
         .into_iter()
@@ -329,134 +369,184 @@ pub fn share_report(facade: &EntityFacade, instance_id: &str) -> Result<Vec<(i64
     Ok(report)
 }
 
-/// What the manager holds for a sealed instance's unseal by shares: the key the instance made, signed with its link key,
-/// and the ciphertexts holders sealed to it. Never a share.
-#[derive(Clone, Debug)]
-pub struct Relay {
-    pub key: UnsealKey,
-    pub link_public: [u8; 32],
-    pub sealed: Vec<(String, Vec<u8>)>,
-}
+const SEALED_SHARE: &str = "moqui.server.instance.InstanceSealedShare";
 
-static RELAYS: LazyLock<Mutex<BTreeMap<String, Relay>>> = LazyLock::new(Mutex::default);
-
-/// A sealed instance's key for this unseal (see the module doc): checked against its pinned link key, kept in place of
-/// one it made before (whose shares are dropped), and the shares sealed to it since are handed over once.
+/// A sealed instance's key for this unseal (see the module doc): checked against its pinned link key and its expiry,
+/// kept on its row in place of one it made before (whose sealed shares are dropped), and the shares sealed to it since
+/// handed over once, as ciphertext.
 pub fn offer_unseal_key(
     facade: &EntityFacade,
     instance_id: &str,
     link_public: &[u8],
-    unseal_public: &[u8],
-    signature: &[u8],
+    key: &UnsealKey,
 ) -> Result<Vec<(String, Vec<u8>)>, LibError> {
     let _authz = authz_off();
-    let row = instance(facade, instance_id)?;
-    let unseal_public: [u8; 32] = unseal_public
-        .try_into()
-        .map_err(|_| fail("the unseal key is an X25519 key"))?;
-    let key = UnsealKey {
-        instance_id: instance_id.to_string(),
-        unseal_public,
-        signature: signature.to_vec(),
-    };
-    key.verify(link_public, &field(&row, "linkKeyFingerprint"))
-        .map_err(|err| fail(format!("the unseal key of AppInstance {instance_id} is refused: {err}")))?;
-    let link_public: [u8; 32] = link_public.try_into().map_err(|_| fail("the link key is 32 bytes"))?;
-    let mut relays = lock(&RELAYS);
-    match relays.get_mut(instance_id) {
-        Some(relay) if relay.key.unseal_public == unseal_public => Ok(std::mem::take(&mut relay.sealed)),
-        _ => {
-            relays.insert(
-                instance_id.to_string(),
-                Relay {
-                    key,
-                    link_public,
-                    sealed: Vec::new(),
-                },
-            );
-            Ok(Vec::new())
-        }
+    let mut row = instance(facade, instance_id)?;
+    if key.instance_id != instance_id {
+        return Err(fail("the unseal key names another instance"));
     }
+    key.verify(
+        link_public,
+        &field(&row, "linkKeyFingerprint"),
+        moqui_core::user::now_millis(),
+    )
+    .map_err(|err| fail(format!("the unseal key of AppInstance {instance_id} is refused: {err}")))?;
+    let unseal_public = hex(&key.unseal_public);
+    let mut taken = Vec::new();
+    if field(&row, "unsealKeyPublic") == unseal_public {
+        for sealed in rows(facade, SEALED_SHARE, "appInstanceId", instance_id)? {
+            if field(&sealed, "unsealPublic") == unseal_public {
+                if let Ok(bytes) = unhex(&field(&sealed, "sealedShare")) {
+                    taken.push((field(&sealed, "holderUserId"), bytes));
+                }
+            }
+            sealed.delete(facade)?;
+        }
+        return Ok(taken);
+    }
+    // a new unseal's key: what was sealed to the one before is dropped
+    for sealed in rows(facade, SEALED_SHARE, "appInstanceId", instance_id)? {
+        sealed.delete(facade)?;
+    }
+    row.set("unsealKeyPublic", Value::string(&unseal_public));
+    row.set("unsealKeySignature", Value::string(hex(&key.signature)));
+    row.set("unsealKeyExpires", Value::I64(key.expires));
+    row.set("linkSignPublic", Value::string(hex(link_public)));
+    row.update(facade)?;
+    Ok(taken)
 }
 
-/// The unseal key `instance_id` offers now, with its link key and the fingerprint the manager pinned, for a holder's
-/// client to check (`get#InstanceUnsealKey`); none when it asks for no shares.
-pub fn unseal_key(facade: &EntityFacade, instance_id: &str) -> Result<Option<(UnsealKey, [u8; 32], String)>, LibError> {
-    require_holder(facade, instance_id)?;
-    let _authz = authz_off();
-    let fingerprint = field(&instance(facade, instance_id)?, "linkKeyFingerprint");
-    Ok(lock(&RELAYS)
-        .get(instance_id)
-        .map(|relay| (relay.key.clone(), relay.link_public, fingerprint)))
+/// The unseal key `instance_id` offers now, with its link key, for a holder's client to check against the link key
+/// fingerprint the holder filed with their share (`get#InstanceUnsealKey`); none when it asks for no shares.
+pub fn unseal_key(facade: &EntityFacade, instance_id: &str) -> Result<Option<(UnsealKey, [u8; 32])>, LibError> {
+    let (_, row) = require_holder(facade, instance_id)?;
+    let (Some(unseal_public), Some(link_public)) = (
+        key32(&field(&row, "unsealKeyPublic")),
+        key32(&field(&row, "linkSignPublic")),
+    ) else {
+        return Ok(None);
+    };
+    let expires: i64 = field(&row, "unsealKeyExpires").parse().unwrap_or(0);
+    if expires <= moqui_core::user::now_millis() {
+        return Ok(None);
+    }
+    Ok(Some((
+        UnsealKey {
+            instance_id: instance_id.to_string(),
+            unseal_public,
+            expires,
+            signature: unhex(&field(&row, "unsealKeySignature")).unwrap_or_default(),
+        },
+        link_public,
+    )))
 }
 
 /// A holder's share sealed to `instance_id`'s unseal key `unseal_public` (`send#InstanceSealedShare`): kept, as
-/// ciphertext, for the instance's next ask, when that key is still the one it offers.
+/// ciphertext, for the instance's next ask, when that key is still the one it offers and in time.
 pub fn post_sealed_share(
     facade: &EntityFacade,
     instance_id: &str,
     unseal_public: &[u8],
     sealed: &[u8],
 ) -> Result<(), LibError> {
-    let user = require_holder(facade, instance_id)?;
+    let (user, row) = require_holder(facade, instance_id)?;
     if sealed.is_empty() || sealed.len() > 4096 {
         return Err(fail("a sealed share is 1 to 4096 bytes"));
     }
-    let mut relays = lock(&RELAYS);
-    let relay = relays
-        .get_mut(instance_id)
-        .filter(|relay| relay.key.unseal_public.as_slice() == unseal_public)
-        .ok_or_else(|| {
-            fail(format!(
-                "AppInstance {instance_id} does not ask for shares with that key now: fetch its unseal key again"
-            ))
-        })?;
-    relay.sealed.retain(|(holder, _)| *holder != user);
-    relay.sealed.push((user.clone(), sealed.to_vec()));
+    let _authz = authz_off();
+    let expires: i64 = field(&row, "unsealKeyExpires").parse().unwrap_or(0);
+    if field(&row, "unsealKeyPublic") != hex(unseal_public) || expires <= moqui_core::user::now_millis() {
+        return Err(fail(format!(
+            "AppInstance {instance_id} does not ask for shares with that key now: fetch its unseal key again"
+        )));
+    }
+    let mut kept = facade.make_value(SEALED_SHARE)?;
+    kept.set("appInstanceId", Value::string(instance_id));
+    kept.set("holderUserId", Value::string(&user));
+    kept.set("unsealPublic", Value::string(hex(unseal_public)));
+    kept.set("sealedShare", Value::string(hex(sealed)));
+    kept.set("postedDate", now());
+    kept.create_or_update(facade)?;
     tracing::info!("Instances: {user} sealed a recovery share to AppInstance {instance_id}'s unseal");
     Ok(())
 }
 
-/// What the relay holds for `instance_id`: a test reads it to see that it is ciphertext only.
-#[must_use]
-pub fn relay_of(instance_id: &str) -> Option<Relay> {
-    lock(&RELAYS).get(instance_id).cloned()
+/// What the relay holds for `instance_id`: the sealed shares as kept (a test reads it to see that it is ciphertext
+/// only).
+pub fn relay_rows(facade: &EntityFacade, instance_id: &str) -> Result<Vec<EntityValue>, LibError> {
+    let _authz = authz_off();
+    rows(facade, SEALED_SHARE, "appInstanceId", instance_id)
 }
 
-/// Forget a relay (the instance unsealed, or was revoked).
-pub fn drop_relay(instance_id: &str) {
-    lock(&RELAYS).remove(instance_id);
+/// Forget a sealed instance's unseal key and the shares sealed to it (it unsealed, its link ended, or it was revoked);
+/// a failure is logged.
+pub fn drop_relay(facade: &EntityFacade, instance_id: &str) {
+    let _authz = authz_off();
+    let dropped = (|| -> Result<(), LibError> {
+        for sealed in rows(facade, SEALED_SHARE, "appInstanceId", instance_id)? {
+            sealed.delete(facade)?;
+        }
+        if let Some(mut row) = one(facade, crate::common::APP_INSTANCE, "appInstanceId", instance_id)? {
+            if !field(&row, "unsealKeyPublic").is_empty() {
+                row.set("unsealKeyPublic", Value::Null);
+                row.set("unsealKeySignature", Value::Null);
+                row.set("unsealKeyExpires", Value::Null);
+                row.update(facade)?;
+            }
+        }
+        Ok(())
+    })();
+    if let Err(err) = dropped {
+        tracing::error!("Instances: the unseal relay of AppInstance {instance_id} was not dropped: {err}");
+    }
 }
 
-/// The caller holds a share of `instance_id`: a member of its environment's recovery group, signed in. Its user id.
-fn require_holder(facade: &EntityFacade, instance_id: &str) -> Result<String, LibError> {
+/// The caller holds a share of `instance_id`: a member of its environment's recovery group, signed in. Its user id and
+/// the instance's row. An unknown instance and one the caller holds no share of are refused alike.
+fn require_holder(facade: &EntityFacade, instance_id: &str) -> Result<(String, EntityValue), LibError> {
     let user = moqui_core::user::current_user_id()
         .ok()
         .flatten()
         .ok_or_else(|| fail("a recovery holder signs in"))?;
+    let refused = || {
+        fail(format!(
+            "{user} holds no recovery share of AppInstance {instance_id} (reasonCode notRecoveryHolder)"
+        ))
+    };
+    let groups = moqui_core::user::user_group_ids(Some(&user)).unwrap_or_default();
     let _authz = authz_off();
-    let row = instance(facade, instance_id)?;
+    let row = one(facade, crate::common::APP_INSTANCE, "appInstanceId", instance_id)?.ok_or_else(refused)?;
     let group = one(facade, ENVIRONMENT, "environmentId", &field(&row, "environmentId"))?
         .map(|environment| field(&environment, "recoveryUserGroupId"))
         .unwrap_or_default();
-    let member = !group.is_empty()
-        && moqui_core::user::user_group_ids(Some(&user))
-            .map(|groups| groups.contains(&group))
-            .unwrap_or(false);
-    if !member {
-        return Err(fail(format!(
-            "{user} holds no recovery share of AppInstance {instance_id} (reasonCode notRecoveryHolder)"
-        )));
+    if group.is_empty() || !groups.contains(&group) {
+        return Err(refused());
     }
-    Ok(user)
+    Ok((user, row))
 }
 
+/// The most of a recovery bundle the manager deposits.
+const MAX_BUNDLE: usize = 1024 * 1024;
+
 /// Deposit `instance_id`'s recovery bundle (`export-seal`'s text: wrapped values only) as an operational item of its
-/// environment's vault, `AppInstance:{id}:sealBundle`, a new item each time (the vault keeps every one); the date is
-/// kept on the instance's row.
-pub fn deposit_seal_bundle(facade: &EntityFacade, instance_id: &str, bundle: &str) -> Result<String, LibError> {
+/// environment's vault, `AppInstance:{id}:sealBundle:{time}`, when it is a bundle and not the one deposited last (a new
+/// one after a rekey or rotate-root); its SHA-256 and the date are kept on the instance's row. None when it was
+/// deposited already.
+pub fn deposit_seal_bundle(facade: &EntityFacade, instance_id: &str, bundle: &str) -> Result<Option<String>, LibError> {
     let _authz = authz_off();
+    if bundle.is_empty() || bundle.len() > MAX_BUNDLE {
+        return Err(fail(format!("a seal bundle is 1 byte to {MAX_BUNDLE} bytes")));
+    }
+    let parsed: serde_json::Value =
+        serde_json::from_str(bundle).map_err(|_| fail("the seal bundle is not a bundle (not JSON)"))?;
+    if parsed["format"] != json!(moqui_core::seal::export::BUNDLE_FORMAT) {
+        return Err(fail("the seal bundle is not a moqui-seal-bundle"));
+    }
+    let hash = hex(&<sha2::Sha256 as sha2::Digest>::digest(bundle.as_bytes()));
     let mut row = instance(facade, instance_id)?;
+    if field(&row, "sealBundleHash") == hash {
+        return Ok(None);
+    }
     let vault_id = one(facade, ENVIRONMENT, "environmentId", &field(&row, "environmentId"))?
         .map(|environment| field(&environment, "vaultId"))
         .filter(|vault| !vault.is_empty())
@@ -484,9 +574,10 @@ pub fn deposit_seal_bundle(facade: &EntityFacade, instance_id: &str, bundle: &st
         },
     )?;
     row.set("sealBundleDate", now());
+    row.set("sealBundleHash", Value::string(hash));
     row.update(facade)?;
     tracing::info!("Instances: deposited the seal bundle of AppInstance {instance_id} into vault {vault_id}");
-    Ok(item_id)
+    Ok(Some(item_id))
 }
 
 /// The share rows of an instance (its page).

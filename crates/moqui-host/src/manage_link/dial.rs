@@ -340,8 +340,12 @@ struct Shared {
     now: Mutex<Option<LinkNow>>,
     /// The runtime the link runs on: an unseal from the gate's thread is a call spawned there.
     handle: tokio::runtime::Handle,
-    /// The key this sealed instance offers for an unseal by recovery shares, made once while it stays sealed.
-    unseal_key: Mutex<Option<Arc<moqui_vault::hpke::SecretKey>>>,
+    /// The key this sealed instance offers for an unseal by recovery shares, and when it stops being taken; made again
+    /// once it expires, and dropped once unsealed.
+    unseal_key: Mutex<Option<(Arc<moqui_vault::hpke::SecretKey>, i64)>>,
+    /// A new set of recovery shares sent to replace the old one, until the manager takes or refuses its deliveries:
+    /// in memory only, as the seal keeps the new split only then.
+    replacement: Mutex<Option<(super::proto::SharesRequest, super::state::ShareSet)>>,
 }
 
 /// Clears the link now when a link ends.
@@ -392,6 +396,7 @@ impl Dialer {
             now: Mutex::new(None),
             handle: handle.clone(),
             unseal_key: Mutex::new(None),
+            replacement: Mutex::new(None),
         });
         let (stop, stopped) = watch::channel(false);
         handle.spawn(run(config, managed, Arc::clone(&shared), stopped, shutdown));
@@ -692,9 +697,7 @@ async fn link_once(
                 .await
                 .unwrap_or(false)
         };
-        if !send_status(config, managed, shared, &mut client).await? {
-            verify_transit(config, managed, shared, &mut client).await;
-        }
+        prove_unsealed(config, managed, shared, &mut client).await?;
         {
             let kind = if seen_sealed { "unsealed" } else { "started" };
             client
@@ -768,23 +771,85 @@ async fn send_status(
     Ok(reply.unsealed_verified)
 }
 
+/// The status with its proof; when the manager does not take it: a rotate-root's new proof key signed by the old one,
+/// or, on the manager's transit, its unwrap of the root key once on this link (the first pin), then the status again.
+async fn prove_unsealed(
+    config: &ManageConfig,
+    managed: &Arc<dyn Managed>,
+    shared: &Shared,
+    client: &mut ManagerClient,
+) -> Result<(), LinkError> {
+    if send_status(config, managed, shared, client).await? {
+        return Ok(());
+    }
+    if managed.previous_proof_key().is_some() {
+        if rotate_proof(config, managed, shared, client).await {
+            send_status(config, managed, shared, client).await?;
+        }
+        return Ok(());
+    }
+    if verify_transit(config, managed, shared, client).await {
+        send_status(config, managed, shared, client).await?;
+    }
+    Ok(())
+}
+
+/// After a rotate-root: the new proof key (and the new transit wrap), signed by the old root key's proof key, so the
+/// manager pins it; true when it did.
+async fn rotate_proof(
+    config: &ManageConfig,
+    managed: &Arc<dyn Managed>,
+    shared: &Shared,
+    client: &mut ManagerClient,
+) -> bool {
+    let (Some(old), Some(new)) = (managed.previous_proof_key(), managed.unsealed_proof_key()) else {
+        return false;
+    };
+    let instance_id = shared.link.snapshot().app_instance_id;
+    let wrapped = managed.seal_method().1.unwrap_or_default();
+    let new_public = *new.verifying_key().as_bytes();
+    let signature =
+        moqui_vault::managed::sign_rotation(&old, &instance_id, config.key.fingerprint(), &new_public, &wrapped);
+    let asked = client
+        .rotate_proof(super::proto::RotateProofRequest {
+            new_public: new_public.to_vec(),
+            wrapped_root: wrapped,
+            signature: signature.to_vec(),
+        })
+        .await;
+    match asked {
+        Ok(_) => {
+            managed.forget_previous_proof();
+            tracing::info!("Manager link: the manager pinned this instance's new unsealed proof key (a rotate-root)");
+            true
+        }
+        Err(status) => {
+            tracing::error!(
+                "Manager link: the manager did not take the new unsealed proof key: {}",
+                status.message()
+            );
+            false
+        }
+    }
+}
+
 /// The manager did not take this link's proof and the seal is the manager's transit (the instance's first unseal was
-/// its own init, or its root key is new): the manager unwraps the root key once on this link, as an unseal does, and
-/// the instance checks it got its own root key back. Under the approval policy it waits for a member; it is asked
-/// again on a later status.
+/// its own init): the manager unwraps the root key once on this link, as an unseal does, and the instance checks it got
+/// its own root key back; true when it did. Under the approval policy, or outside its first start, it waits for a
+/// member; it is asked again on a later status.
 async fn verify_transit(
     config: &ManageConfig,
     managed: &Arc<dyn Managed>,
     shared: &Shared,
     client: &mut ManagerClient,
-) {
+) -> bool {
     let Some(wrapped) = managed.seal_method().1 else {
-        return;
+        return false;
     };
     let instance_id = shared.link.snapshot().app_instance_id;
     let ephemeral = moqui_vault::hpke::SecretKey::random(&mut moqui_vault::rng::OsRng);
     let Ok(public) = ephemeral.public() else {
-        return;
+        return false;
     };
     let asked = tokio::time::timeout(
         config.connect_timeout,
@@ -802,21 +867,31 @@ async fn verify_transit(
                     "Manager link: the manager has not taken this instance's unseal: {}",
                     reply.waiting
                 );
-                return;
+                return false;
             }
             let opened = moqui_vault::managed::open_reply(&ephemeral, &instance_id, &reply.sealed_root);
             match opened {
                 Ok(root) if managed.is_root(&root) => {
                     tracing::info!("Manager link: the manager's transit unwrapped this instance's root key");
+                    true
                 }
-                _ => tracing::error!("Manager link: the manager's transit did not give this instance's root key back"),
+                _ => {
+                    tracing::error!("Manager link: the manager's transit did not give this instance's root key back");
+                    false
+                }
             }
         }
-        Ok(Err(status)) => tracing::warn!(
-            "Manager link: the manager did not unwrap this instance's root key: {}",
-            status.message()
-        ),
-        Err(_) => tracing::warn!("Manager link: the manager did not answer the unwrap in time"),
+        Ok(Err(status)) => {
+            tracing::warn!(
+                "Manager link: the manager did not unwrap this instance's root key: {}",
+                status.message()
+            );
+            false
+        }
+        Err(_) => {
+            tracing::warn!("Manager link: the manager did not answer the unwrap in time");
+            false
+        }
     }
 }
 
@@ -839,8 +914,11 @@ async fn sealed_step(config: &ManageConfig, managed: &Arc<dyn Managed>, shared: 
     }
 }
 
-/// Offer this unseal's key (signed with the link key) and enter each share a holder sealed to it. A share that does not
-/// open with it (sealed for another unseal, or changed) is refused.
+/// How long a key for an unseal by shares is taken; a new one is made after.
+const UNSEAL_KEY_MILLIS: i64 = 60 * 60_000;
+
+/// Offer this unseal's key (signed with the link key, with the time it stops being taken) and enter each share a holder
+/// sealed to it. A share that does not open with it (sealed for another unseal, or changed) is refused.
 async fn take_sealed_shares(
     config: &ManageConfig,
     managed: &Arc<dyn Managed>,
@@ -848,21 +926,30 @@ async fn take_sealed_shares(
     client: &mut ManagerClient,
 ) {
     let instance_id = shared.link.snapshot().app_instance_id;
-    let secret = Arc::clone(
-        lock(&shared.unseal_key)
-            .get_or_insert_with(|| Arc::new(moqui_vault::hpke::SecretKey::random(&mut moqui_vault::rng::OsRng))),
-    );
+    let now = moqui_core::user::now_millis();
+    let (secret, expires) = {
+        let mut held = lock(&shared.unseal_key);
+        if held.as_ref().is_none_or(|(_, expires)| *expires <= now + 60_000) {
+            *held = Some((
+                Arc::new(moqui_vault::hpke::SecretKey::random(&mut moqui_vault::rng::OsRng)),
+                now + UNSEAL_KEY_MILLIS,
+            ));
+        }
+        let (secret, expires) = held.as_ref().expect("made just above when missing or expiring");
+        (Arc::clone(secret), *expires)
+    };
     let Ok(public) = secret.public() else {
         return;
     };
     let link_key = config.key.signing_key();
-    let key = moqui_vault::managed::UnsealKey::sign(&link_key, &instance_id, public.as_bytes());
+    let key = moqui_vault::managed::UnsealKey::sign(&link_key, &instance_id, public.as_bytes(), expires);
     let asked = tokio::time::timeout(
         config.connect_timeout,
         client.sealed_shares(SealedSharesRequest {
             unseal_public: public.as_bytes().to_vec(),
             signature: key.signature,
             link_public: link_key.verifying_key().as_bytes().to_vec(),
+            expires,
         }),
     )
     .await;
@@ -901,40 +988,117 @@ async fn take_sealed_shares(
     }
 }
 
-/// Send a share set the manager has not taken yet; false when it is still not taken.
-async fn send_pending_shares(shared: &Shared, client: &mut ManagerClient) -> bool {
+/// How the manager answered a share set.
+enum Sent {
+    Taken,
+    /// Not now (the link, or the manager not yet taking this link's unsealed): sent again later.
+    Later,
+    /// Refused for good (a holder or a key it no longer takes): a new set is made for the current holders.
+    Refused(String),
+}
+
+/// Send a share set; whether the manager took it.
+async fn send_shares(client: &mut ManagerClient, request: super::proto::SharesRequest) -> Sent {
+    match client.shares(request).await {
+        Ok(_) => Sent::Taken,
+        Err(status)
+            if matches!(
+                status.code(),
+                tonic::Code::PermissionDenied | tonic::Code::InvalidArgument | tonic::Code::AlreadyExists
+            ) =>
+        {
+            Sent::Refused(status.message().to_string())
+        }
+        Err(status) => {
+            tracing::warn!(
+                "Manager link: the manager did not take the recovery shares now (sent again later): {}",
+                status.message()
+            );
+            Sent::Later
+        }
+    }
+}
+
+/// The first share set, kept to send (its deliveries only, each sealed to one holder) until the manager takes it:
+/// false when it waits still.
+async fn send_first_set(shared: &Shared, client: &mut ManagerClient) -> bool {
     use prost::Message as _;
     let pending = shared.link.snapshot().pending_shares;
     if pending.is_empty() {
         return true;
     }
-    let Some(request) = moqui_vault::text::unhex(&pending)
+    let request = moqui_vault::text::unhex(&pending)
         .ok()
-        .and_then(|bytes| super::proto::SharesRequest::decode(bytes.as_slice()).ok())
-    else {
-        tracing::error!("Manager link: the share set kept to send does not read; it is dropped");
-        let _ = shared.link.update(|state| state.pending_shares.clear());
-        return true;
+        .and_then(|bytes| super::proto::SharesRequest::decode(bytes.as_slice()).ok());
+    let sent = match request {
+        Some(request) => send_shares(client, request).await,
+        None => Sent::Refused("the share set kept to send does not read".to_string()),
     };
-    let holders = request.deliveries.len();
-    match client.shares(request).await {
-        Ok(_) => {
+    match sent {
+        Sent::Taken => {
             let _ = shared.link.update(|state| state.pending_shares.clear());
-            tracing::info!("Manager link: the recovery shares went to {holders} holders, one each");
+            tracing::info!("Manager link: the recovery shares went to their holders, one each");
             true
         }
-        Err(status) => {
+        Sent::Later => false,
+        Sent::Refused(why) => {
             tracing::error!(
-                "Manager link: the manager did not take the recovery shares (sent again on the next link): {}",
-                status.message()
+                "Manager link: the manager refused the recovery shares for good ({why}): a new set is made for the \
+                 current holders"
             );
-            false
+            let _ = shared.link.update(|state| {
+                state.pending_shares.clear();
+                if let Some(set) = state.share_set.as_mut() {
+                    set.refused = true;
+                }
+            });
+            true
         }
     }
 }
 
-/// Once unsealed (M6): the recovery shares to their holders, the holders' confirmations, and a new set when a holder
-/// was replaced (`check_holders`, once a link). A failure is logged; the link goes on.
+/// A replacement set in flight: kept (the old shares stop opening the seal) only once the manager took its deliveries,
+/// dropped when it refused them for good. False when it waits still.
+async fn send_replacement(managed: &Arc<dyn Managed>, shared: &Shared, client: &mut ManagerClient) -> bool {
+    let Some((request, set)) = lock(&shared.replacement).clone() else {
+        return true;
+    };
+    match send_shares(client, request).await {
+        Sent::Taken => {
+            *lock(&shared.replacement) = None;
+            let committed = {
+                let managed = Arc::clone(managed);
+                tokio::task::spawn_blocking(move || managed.commit_new_shares()).await
+            };
+            match committed {
+                Ok(Ok(())) => {
+                    if let Err(err) = shared.link.update(|state| state.share_set = Some(set)) {
+                        tracing::error!("Manager link: the new share set was not kept in the pairing state: {err}");
+                    }
+                    tracing::warn!(
+                        "Manager link: a new set of recovery shares went to the holders; the old one is void"
+                    );
+                }
+                Ok(Err(err)) => tracing::error!(
+                    "Manager link: the new recovery shares were sent and not kept ({err}): the old set still opens the \
+                     seal, and a new one is made"
+                ),
+                Err(err) => tracing::error!("Manager link: the new recovery shares were not kept: {err}"),
+            }
+            true
+        }
+        Sent::Later => false,
+        Sent::Refused(why) => {
+            *lock(&shared.replacement) = None;
+            managed.drop_new_shares();
+            tracing::error!("Manager link: the manager refused the new recovery shares ({why}): they are dropped");
+            true
+        }
+    }
+}
+
+/// Once unsealed (M6): the recovery shares to their holders, the holders' confirmations, and a new set when the first
+/// was refused for good or a holder was replaced (`check_holders`, once a link). A failure is logged; the link goes on.
 async fn shares_step(
     config: &ManageConfig,
     managed: &Arc<dyn Managed>,
@@ -942,13 +1106,15 @@ async fn shares_step(
     client: &mut ManagerClient,
     check_holders: bool,
 ) {
-    if !send_pending_shares(shared, client).await {
+    if !send_first_set(shared, client).await || !send_replacement(managed, shared, client).await {
         return;
     }
     let state = shared.link.snapshot();
-    let instance_id = state.app_instance_id.clone();
-    let waiting = managed.shares_waiting();
-    if waiting || (check_holders && state.share_set.is_some()) {
+    let held = managed.held_shares();
+    let first = state.share_set.as_ref().is_none_or(|set| set.refused) && held.is_some();
+    let maybe_replaced =
+        state.share_set.as_ref().is_some_and(|set| set.refused) || (check_holders && state.share_set.is_some());
+    if first || maybe_replaced {
         let holders = match client.holders(HoldersRequest {}).await {
             Ok(reply) => reply.into_inner(),
             Err(status) => {
@@ -959,31 +1125,31 @@ async fn shares_step(
         let checked = super::shares::checked_holders(&holders, &state.approver_set());
         let (threshold, count) = managed.recovery_counts();
         let count = usize::try_from(count).unwrap_or(usize::MAX);
-        let due = waiting
+        let due = first
             || state
                 .share_set
                 .as_ref()
-                .is_some_and(|set| super::shares::holder_replaced(set, &checked));
+                .is_some_and(|set| set.refused || super::shares::holder_replaced(set, &checked));
         if due && checked.len() < count {
             tracing::error!(
                 "Manager link: {} of the {count} recovery holders have a key that an approver this instance pinned \
                  checked: the shares are not sent{}",
                 checked.len(),
-                if waiting {
+                if first {
                     "; they wait for `moqui operator init --take-shares` on the operator socket"
                 } else {
                     ", and the old set stays"
                 }
             );
         } else if due {
-            make_and_send(config, managed, shared, client, &checked, threshold, waiting).await;
+            make_and_send(config, managed, shared, client, &checked, threshold, held).await;
         }
     }
-    take_confirmations(shared, client, &instance_id).await;
+    take_confirmations(managed, shared, client).await;
 }
 
-/// A new share set, from the held shares of an automatic init (`first`) or a new split, to `holders`; kept to send
-/// again until the manager takes it.
+/// A new share set to `holders`: the held shares of an automatic init (`held`), kept to send until the manager takes
+/// them, or a new split, kept in the seal only once the manager took its deliveries.
 async fn make_and_send(
     config: &ManageConfig,
     managed: &Arc<dyn Managed>,
@@ -991,30 +1157,29 @@ async fn make_and_send(
     client: &mut ManagerClient,
     holders: &[super::shares::Checked],
     threshold: u32,
-    first: bool,
+    held: Option<Vec<zeroize::Zeroizing<String>>>,
 ) {
     use prost::Message as _;
     let instance_id = shared.link.snapshot().app_instance_id;
-    let taken = {
-        let managed = Arc::clone(managed);
-        tokio::task::spawn_blocking(move || {
-            if first {
-                managed.take_shares()
-            } else {
-                managed.new_shares()
+    let first = held.is_some();
+    let shares = match held {
+        Some(shares) => shares,
+        None => {
+            let prepared = {
+                let managed = Arc::clone(managed);
+                tokio::task::spawn_blocking(move || managed.prepare_new_shares()).await
+            };
+            match prepared {
+                Ok(Ok(shares)) => shares,
+                Ok(Err(err)) => {
+                    tracing::error!("Manager link: no new recovery shares: {err}");
+                    return;
+                }
+                Err(err) => {
+                    tracing::error!("Manager link: the new recovery shares were not made: {err}");
+                    return;
+                }
             }
-        })
-        .await
-    };
-    let shares = match taken {
-        Ok(Ok(shares)) => shares,
-        Ok(Err(err)) => {
-            tracing::error!("Manager link: no recovery shares to send: {err}");
-            return;
-        }
-        Err(err) => {
-            tracing::error!("Manager link: the recovery shares were not read: {err}");
-            return;
         }
     };
     let made = super::shares::make_set(
@@ -1025,27 +1190,43 @@ async fn make_and_send(
         threshold,
     );
     drop(shares);
-    match made {
-        Ok((request, set)) => {
-            let encoded = moqui_vault::text::hex(&request.encode_to_vec());
-            if let Err(err) = shared.link.update(|state| {
-                state.share_set = Some(set);
-                state.pending_shares = encoded;
-            }) {
-                tracing::error!("Manager link: the share set was not kept: {err}");
+    let (request, set) = match made {
+        Ok(made) => made,
+        Err(err) => {
+            tracing::error!("Manager link: the recovery shares were not sealed: {err}");
+            if !first {
+                managed.drop_new_shares();
             }
-            send_pending_shares(shared, client).await;
+            return;
         }
-        Err(err) => tracing::error!("Manager link: the recovery shares were not sealed: {err}"),
+    };
+    if first {
+        let encoded = moqui_vault::text::hex(&request.encode_to_vec());
+        if let Err(err) = shared.link.update(|state| {
+            state.share_set = Some(set);
+            state.pending_shares = encoded;
+        }) {
+            tracing::error!("Manager link: the share set was not kept: {err}");
+        }
+        send_first_set(shared, client).await;
+    } else {
+        *lock(&shared.replacement) = Some((request, set));
+        send_replacement(managed, shared, client).await;
     }
 }
 
-/// The holders' confirmations of the share set, each checked here; the unconfirmed ones reported.
-async fn take_confirmations(shared: &Shared, client: &mut ManagerClient, instance_id: &str) {
+/// The holders' confirmations of the share set, each checked here; the unconfirmed ones reported. Once every share
+/// is confirmed, the held shares of an automatic init are dropped from the operator socket.
+async fn take_confirmations(managed: &Arc<dyn Managed>, shared: &Shared, client: &mut ManagerClient) {
+    let instance_id = shared.link.snapshot().app_instance_id;
     let Some(mut set) = shared.link.snapshot().share_set else {
         return;
     };
+    if set.refused || !shared.link.snapshot().pending_shares.is_empty() {
+        return;
+    }
     if set.complete() {
+        managed.release_held_shares();
         return;
     }
     let reply = match client
@@ -1060,11 +1241,12 @@ async fn take_confirmations(shared: &Shared, client: &mut ManagerClient, instanc
             return;
         }
     };
-    if super::shares::take_confirmations(&mut set, instance_id, &reply) > 0 {
+    if super::shares::take_confirmations(&mut set, &instance_id, &reply) > 0 {
         if let Err(err) = shared.link.update(|state| state.share_set = Some(set.clone())) {
             tracing::error!("Manager link: the confirmations were not kept: {err}");
         }
         if set.complete() {
+            managed.release_held_shares();
             tracing::info!("Manager link: every recovery share is confirmed by its holder: init is complete");
             return;
         }
@@ -1163,10 +1345,9 @@ async fn serve(
                 if managed.sealed() {
                     break Served::Sealed;
                 }
-                // not taken as unsealed (a root key the manager has not seen yet): its transit unwraps it again
-                if !send_status(config, managed, shared, client).await? {
-                    verify_transit(config, managed, shared, client).await;
-                }
+                // the status with its proof, and when the manager does not take it, its new proof key or the transit's
+                // unwrap once
+                prove_unsealed(config, managed, shared, client).await?;
                 // now and then (M6): a share set the manager has not taken, the held shares of an automatic init (once
                 // the manager takes this link's unsealed), and the holders' confirmations until every share is confirmed
                 ticks = ticks.wrapping_add(1);

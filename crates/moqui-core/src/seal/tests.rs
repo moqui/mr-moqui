@@ -867,7 +867,7 @@ fn the_socket_pacing_and_tpm_program_settings_come_only_from_the_conf_files() {
 }
 
 #[test]
-fn a_new_share_set_replaces_the_old_one_and_the_proof_key_follows_the_root_key() {
+fn a_new_share_set_is_kept_only_when_committed_and_the_proof_key_follows_the_root_key() {
     // a managed instance whose recovery holder was replaced (plans/Vault-Instances.md §4.5, M6)
     let scratch = Scratch::new();
     let made = keeper(&scratch, "test");
@@ -875,8 +875,22 @@ fn a_new_share_set_replaces_the_old_one_and_the_proof_key_follows_the_root_key()
     let root_id = made.status().root_id;
     // the unsealed proof's key is derived from the root key: the same while it stays, and none while sealed
     let proof = made.unsealed_proof_seed().unwrap();
-    let fresh = made.new_recovery_shares().unwrap();
+    // a set made and dropped (its deliveries refused) changes nothing
+    let (dropped, _) = made.prepare_recovery_shares().unwrap();
+    drop(dropped);
+    assert_eq!(made.seal_file().unwrap().generation, 1);
+    // a set made, then kept once the manager took it
+    let (prepared, fresh) = made.prepare_recovery_shares().unwrap();
     assert_eq!(fresh.len(), 5);
+    assert_eq!(
+        made.seal_file().unwrap().generation,
+        1,
+        "nothing kept before the commit"
+    );
+    // a set prepared before another change is refused at its commit
+    let (stale, _) = made.prepare_recovery_shares().unwrap();
+    made.commit_recovery_shares(prepared).unwrap();
+    assert!(made.commit_recovery_shares(stale).is_err());
     assert_eq!(made.status().root_id, root_id);
     assert_eq!(made.seal_file().unwrap().generation, 2);
     assert_eq!(made.unsealed_proof_seed().unwrap().as_bytes(), proof.as_bytes());
@@ -896,4 +910,46 @@ fn a_new_share_set_replaces_the_old_one_and_the_proof_key_follows_the_root_key()
     assert!(reopened.is_unsealed());
     assert_eq!(reopened.status().root_id, root_id);
     assert_eq!(reopened.unsealed_proof_seed().unwrap().as_bytes(), proof.as_bytes());
+    // a rotate-root keeps the old root key's proof seed, which signs the new proof key for the manager, until forgotten
+    assert!(reopened.previous_proof_seed().is_none());
+    reopened
+        .rotate_root(rotate::RotateRoot {
+            shares: texts(&fresh[..3]),
+            passphrase: None,
+        })
+        .unwrap();
+    assert_eq!(reopened.previous_proof_seed().unwrap().as_bytes(), proof.as_bytes());
+    assert_ne!(reopened.unsealed_proof_seed().unwrap().as_bytes(), proof.as_bytes());
+    reopened.forget_previous_proof();
+    assert!(reopened.previous_proof_seed().is_none());
+}
+
+#[test]
+fn a_bogus_share_relayed_to_an_unseal_leaves_the_shares_entered_before_it() {
+    // a share sealed to a managed instance's unseal key goes to the keeper as an operator's does (M6): one of another
+    // split is refused on entry and does not spoil the ones entered before it
+    let scratch = Scratch::new();
+    let made = keeper(&scratch, "test");
+    let issued = init(&made, MethodKind::Shamir, None);
+    made.seal();
+    let keeper = reopen(&scratch, "test");
+    keeper.set_base_delay(std::time::Duration::from_millis(1));
+    keeper
+        .unseal(UnsealInput::Recovery(Zeroizing::new(
+            issued.recovery_shares[0].to_string(),
+        )))
+        .unwrap();
+    assert_eq!(keeper.status().entered, 1);
+    assert!(keeper.unseal(UnsealInput::Recovery(foreign_share())).is_err());
+    assert!(keeper
+        .unseal(UnsealInput::Recovery(Zeroizing::new("not a share".to_string())))
+        .is_err());
+    assert_eq!(keeper.status().entered, 1, "the refused shares were not kept");
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    for share in &issued.recovery_shares[1..3] {
+        keeper
+            .unseal(UnsealInput::Recovery(Zeroizing::new(share.to_string())))
+            .unwrap();
+    }
+    assert!(keeper.is_unsealed());
 }

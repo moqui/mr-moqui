@@ -240,10 +240,13 @@ fn managed_sealed_start() {
     let gate = crate::common::start_with_files(
         "managed-sealed",
         Some(&data(&approver, &holders)),
-        &[(
-            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-            &port_text,
-        )],
+        &[
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+            ("moqui_conf__instance__purpose", "test"),
+        ],
         &[
             ("cert/default.crt", &pem("CERTIFICATE", cert.der())),
             ("cert/default.key", &pem("PRIVATE KEY", &key.serialize_der())),
@@ -305,7 +308,11 @@ fn managed_sealed_start() {
         .len()
             == 3
     });
-    assert!(!keeper.status().shares_waiting, "the held shares were taken");
+    // the held shares stay on the operator socket until every holder confirmed theirs
+    assert!(
+        keeper.status().shares_waiting,
+        "the held shares are kept until confirmed"
+    );
     // each holder opens their own share against the instance's pinned link key, and confirms it
     let instance = &rows(&gate, "moqui.server.instance.AppInstance", "appInstanceId", "MS_APP")[0];
     let link = moqui_vault::managed::pinned_link_key(
@@ -314,6 +321,8 @@ fn managed_sealed_start() {
     )
     .unwrap();
     let mut shares = Vec::new();
+    // what each holder files with their share: the link key fingerprint they checked the delivery against
+    let filed_fingerprint = instance["linkKeyFingerprint"].clone();
     for (n, holder) in holders.iter().enumerate() {
         let user = format!("MS_HOLDER{}", n + 1);
         let sent = rows(&gate, "moqui.security.vault.VaultDelivery", "recipientUserId", &user);
@@ -460,11 +469,14 @@ fn managed_sealed_start() {
                 .unwrap()
                 .try_into()
                 .unwrap(),
+            expires: text("expires").parse().unwrap(),
             signature: moqui_vault::text::unhex(&text("signature")).unwrap(),
         };
+        // checked against the link key fingerprint the holder filed with their share, never one the manager gives
         key.verify(
             &moqui_vault::text::unhex(&text("linkPublic")).unwrap(),
-            &text("linkKeyFingerprint"),
+            &filed_fingerprint,
+            moqui_core::user::now_millis(),
         )
         .unwrap();
         let sealed = moqui_vault::managed::seal_share(&key, share, &mut OsRng).unwrap();

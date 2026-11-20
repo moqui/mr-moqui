@@ -43,6 +43,8 @@ service Manager {
   rpc Shares(SharesRequest) returns (SharesReply);
   // The holders' confirmations of a share set, each signed with the holder's key (M6).
   rpc ShareConfirmations(ShareConfirmationsRequest) returns (ShareConfirmationsReply);
+  // A rotate-root's new unsealed proof key, signed by the old one, with the new transit wrap (M6).
+  rpc RotateProof(RotateProofRequest) returns (RotateProofReply);
   // An event of the instance: started, unsealed, failed. Only while unsealed.
   rpc Event(EventRequest) returns (EventReply);
   // The manager's calls of the instance: each Command down, each CommandReply up. Only while unsealed.
@@ -147,6 +149,8 @@ message SealedSharesRequest {
   bytes signature = 2;
   // the link key's public half, which the manager checks against the pinned fingerprint for the holders
   bytes link_public = 3;
+  // when the key stops being taken, epoch milliseconds, signed with it
+  int64 expires = 4;
 }
 
 message SealedShare {
@@ -217,6 +221,16 @@ message ShareConfirmation {
 message ShareConfirmationsReply {
   repeated ShareConfirmation confirmations = 1;
 }
+
+message RotateProofRequest {
+  // the new root key's proof key, its wrap to the transit key (empty for a method the manager does not unseal), and
+  // the old proof key's signature over them (moqui_vault::managed::sign_rotation)
+  bytes new_public = 1;
+  bytes wrapped_root = 2;
+  bytes signature = 3;
+}
+
+message RotateProofReply {}
 
 message EventRequest {
   // started, unsealed or failed

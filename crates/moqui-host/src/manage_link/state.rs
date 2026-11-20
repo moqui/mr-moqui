@@ -46,6 +46,8 @@ pub struct ShareSet {
     pub set_id: String,
     pub threshold: u32,
     pub shares: Vec<SentShare>,
+    /// The manager refused it for good: a new set is made for the current holders.
+    pub refused: bool,
 }
 
 impl ShareSet {
@@ -133,6 +135,7 @@ impl LinkState {
             "shareSet": self.share_set.as_ref().map(|set| json!({
                 "setId": set.set_id,
                 "threshold": set.threshold,
+                "refused": set.refused,
                 "shares": set.shares.iter().map(|share| json!({
                     "index": share.index, "userId": share.user_id, "verifyPublic": share.verify_public,
                     "digest": share.digest, "confirmed": share.confirmed,
@@ -185,6 +188,7 @@ fn share_set_from(kept: &Value) -> ShareSet {
             .as_u64()
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(0),
+        refused: kept["refused"].as_bool().unwrap_or(false),
         shares: kept["shares"]
             .as_array()
             .map(|list| {

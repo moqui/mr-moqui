@@ -471,6 +471,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="linkSignPublic" type="text-medium"/>
         <field name="recoverySetId" type="text-short"/>
         <field name="sealBundleDate" type="date-time"/>
+        <field name="sealBundleHash" type="text-medium"><description>SHA-256 of the seal bundle last deposited, hex: a
+            changed bundle (after a rekey or rotate-root) is deposited again</description></field>
+        <!-- while the instance is sealed and takes recovery shares: the key it made for this unseal (hex), its
+            signature by the link key and when it stops being taken, so any member of a manager cluster answers a
+            holder (InstanceSealedShare holds what holders sealed to it) -->
+        <field name="unsealKeyPublic" type="text-medium"/>
+        <field name="unsealKeySignature" type="text-medium"/>
+        <field name="unsealKeyExpires" type="number-integer"/>
         <!-- SSH, the other transport (§4.4): host:port of the instance's SSH admin shell or its host's sshd, the user, and
             its host key as pinned (an OpenSSH known_hosts key: type and base64); the key it signs in with is the vault item
             AppInstance:{id}:sshKey, used under a lease -->
@@ -561,6 +569,17 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" related="moqui.server.instance.AppInstance"/>
         <index name="INST_RSHARE_DELIVERY"><index-field name="deliveryId"/></index>
     </entity>
+    <entity entity-name="InstanceSealedShare" package="moqui.server.instance" use="nontransactional" cache="never">
+        <description>A recovery holder's share sealed to the key a sealed managed instance made for one unseal
+            (plans/Vault-Instances.md §4.5, M6): ciphertext that only that unseal opens, relayed to the instance and
+            removed when it takes it, unseals or its link ends.</description>
+        <field name="appInstanceId" type="id" is-pk="true"/>
+        <field name="holderUserId" type="id" is-pk="true"/>
+        <field name="unsealPublic" type="text-medium"/>
+        <field name="sealedShare" type="text-long"/>
+        <field name="postedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.server.instance.AppInstance"/>
+    </entity>
     <entity entity-name="InstanceRotation" package="moqui.server.instance" use="transactional" cache="never">
         <description>One operational item's rotation (plans/Vault-Instances.md §4.7): while one runs or waits for its lease,
             its claim (claimToken, the lease's id or the run's own, until claimedUntil), which a second rotation of the
@@ -603,6 +622,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="deployRequest" type="text-long"><description>A deploy by hand waiting for another member's approval:
             what was asked (the request#InstanceDeploy parameters; no value), which approve#InstanceDeploy runs</description></field>
         <field name="report" type="text-very-long"/>
+        <!-- an unseal's (M6): the link generation and address that asked, which an approval is bound to, and until
+            when the approval stands -->
+        <field name="linkGeneration" type="number-integer"/>
+        <field name="remoteAddress" type="text-medium"/>
+        <field name="approvedUntil" type="date-time"/>
         <field name="startDate" type="date-time"/>
         <field name="endDate" type="date-time"/>
         <index name="INST_ACTION_INST"><index-field name="appInstanceId"/><index-field name="startDate"/></index>

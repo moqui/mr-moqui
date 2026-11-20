@@ -177,6 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldName="shareIndex" label="Share" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="sharesNeeded" label="Shares needed" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="share" label="Share" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
+        <fields fieldName="linkKeyFingerprint" label="Instance link key" fieldKindEnumId="VfText" masked="N" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
 
     <!-- the services and their REST paths (/rest/s1/vault) for every signed-in user; each checks the caller itself -->

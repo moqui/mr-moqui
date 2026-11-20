@@ -413,6 +413,26 @@ fn an_instance_pairs_once_links_sealed_then_unsealed_and_a_revoke_cuts_it() {
     ));
     fake.sealed.store(false, Ordering::SeqCst);
     wait_status(&dialer, "serving once unsealed", |status| status.serving);
+    // its first proof's key waits for an operator: until then its status is unverified and no command runs
+    wait_until("its proof key waits for an operator", || {
+        text(
+            &call(
+                &gate,
+                "call#InstanceCommand",
+                &[("appInstanceId", "ML_APP"), ("command", "status")],
+            )
+            .unwrap(),
+            "sealState",
+        ) == "unverified"
+    });
+    let held = call(
+        &gate,
+        "call#InstanceCommand",
+        &[("appInstanceId", "ML_APP"), ("command", "export-seal")],
+    )
+    .unwrap_err();
+    assert!(held.contains("taken as sealed"), "{held}");
+    call(&gate, "confirm#InstanceUnsealProofKey", &[("appInstanceId", "ML_APP")]).unwrap();
     wait_until("the manager takes its unsealed", || {
         text(
             &call(&gate, "get#InstanceLink", &[("appInstanceId", "ML_APP")]).unwrap(),
@@ -545,10 +565,13 @@ fn transit_unseals_only_a_pinned_instance_under_its_policy_and_unsealed_is_taken
             "IupAutomatic",
             "transit",
         )),
-        &[(
-            "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
-            &port_text,
-        )],
+        &[
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+            ("moqui_conf__instance__purpose", "test"),
+        ],
         &[
             ("cert/default.crt", &pem("CERTIFICATE", cert.der())),
             ("cert/default.key", &pem("PRIVATE KEY", &key.serialize_der())),
@@ -642,8 +665,18 @@ fn transit_unseals_only_a_pinned_instance_under_its_policy_and_unsealed_is_taken
     fake.sealed.store(true, Ordering::SeqCst);
     wait_status(&dialer, "sealed again", |status| !status.serving);
 
-    // the manager's transit unseals it, for its pinned key: that link's unsealed is taken
+    // the manager's transit unseals it, for its pinned key, at its first start: that link's unsealed is taken
     assert_eq!(unsealed(&dialer, &wrapped).unwrap(), root);
+    // a root key of a link-key holder's own, wrapped to the public transit key, is refused after that
+    let forged = moqui_vault::managed::wrap_root(
+        &moqui_vault::hpke::PublicKey::from_bytes(&transit).unwrap(),
+        &instance_id,
+        &[77_u8; 32],
+        &mut moqui_vault::rng::OsRng,
+    )
+    .unwrap();
+    let refused = unsealed(&dialer, &forged).unwrap_err();
+    assert!(refused.contains("not this instance's"), "{refused}");
     let seed = moqui_core::seal::unsealed_proof_seed(&moqui_core::seal::RootKey::from_slice(&root).unwrap());
     *fake.proof.lock().unwrap() = Some(moqui_vault::sign::SigningKey::from_seed(&seed));
     fake.sealed.store(false, Ordering::SeqCst);

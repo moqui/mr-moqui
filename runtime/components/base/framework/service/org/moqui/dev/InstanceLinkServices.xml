@@ -119,23 +119,36 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
         <out-parameters><parameter name="vaultItemId"/></out-parameters>
     </service>
+    <service verb="confirm" noun="InstanceUnsealProofKey" type="rust"
+            location="moqui_host::manage_link::services::confirm_instance_unseal_proof_key" allow-remote="false"
+            transaction="ignore">
+        <description>An operator confirms the key an instance proves it is unsealed with, which it gave on its first
+            unsealed link (an environment whose method is tpm, passphrase or shamir): its claims of unsealed are taken
+            from then on. Its administrators were told when it gave it. INSTANCE_ADMIN and the environment's approver
+            group.</description>
+        <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
+        <out-parameters><parameter name="unsealProofKey"/></out-parameters>
+    </service>
     <service verb="forget" noun="InstanceUnsealProofKey" type="rust"
             location="moqui_host::manage_link::services::forget_instance_unseal_proof_key" allow-remote="false"
             transaction="ignore">
-        <description>Forget the key the instance proves it is unsealed with: an operator confirms its new root key (a
-            rotate-root under a method the manager does not unseal), and its next proof pins the new one.</description>
+        <description>Forget the key the instance proves it is unsealed with, when a rotate-root's new key could not be
+            signed by the old one (the instance restarted between): under the manager's transit its next unseal pins the
+            new one with a member's approval; under another method its next proof waits for
+            confirm#InstanceUnsealProofKey.</description>
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
     </service>
     <!-- for a recovery holder, over REST (vault.rest.xml): each checks that the caller holds a share of the instance -->
     <service verb="get" noun="InstanceUnsealKey" type="rust"
             location="moqui_host::manage_link::services::get_instance_unseal_key" transaction="ignore">
         <description>The key a sealed instance made for this unseal, its signature by the instance's link key, the link
-            key and the fingerprint this manager pinned for it, which moqui vault seal-share checks before it seals a share
-            to the key. waiting is false when the instance asks for no shares.</description>
+            key and when the key stops being taken. moqui vault seal-share checks the link key against the fingerprint the
+            holder filed with their share, never one this manager hands over. waiting is false when the instance asks for
+            no shares.</description>
         <in-parameters><parameter name="appInstanceId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="waiting" type="Boolean"/><parameter name="unsealPublic"/><parameter name="signature"/>
-            <parameter name="linkPublic"/><parameter name="linkKeyFingerprint"/>
+            <parameter name="linkPublic"/><parameter name="expires" type="Long"/>
         </out-parameters>
     </service>
     <service verb="send" noun="InstanceSealedShare" type="rust"

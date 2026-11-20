@@ -63,6 +63,8 @@ pub enum Statement {
     UnsealKey,
     /// A recovery holder's confirmation that they filed a managed instance's share, by their signing key (§4.5).
     ShareConfirm,
+    /// A managed instance's new proof key after a rotate-root, by its old one (§4.4).
+    ProofRotated,
 }
 
 impl Statement {
@@ -83,6 +85,7 @@ impl Statement {
             Statement::UnsealedProof => "unsealed-proof",
             Statement::UnsealKey => "unseal-key",
             Statement::ShareConfirm => "share-confirm",
+            Statement::ProofRotated => "proof-rotated",
         }
     }
 }

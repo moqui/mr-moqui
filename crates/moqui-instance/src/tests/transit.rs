@@ -13,9 +13,12 @@
  */
 
 //! M6's rules on the manager (plans/Vault-Instances.md §6): transit unseals an instance only for its pinned link key
-//! and not after a revoke; the approval policy waits for a member; an unseal from a new address is told apart; the
-//! manager takes "unsealed" only from its own unseal or a proof by the key it pinned; each share goes to one current
-//! holder; and the relay holds ciphertext only.
+//! and not after a revoke, and only to its own root key (a wrap a holder of its link key made is refused, and the key
+//! pinned stays); the first pin is the instance's first start's, or a member's approval; the approval policy waits for
+//! a member, the approval bound to the ask; an unseal from a new address is told apart; the manager takes "unsealed"
+//! only from its own unseal or a proof by the key it pinned (a first-use key waits for an operator, a rotated key is
+//! taken only signed by the old one); each share goes to one current holder, indexed once; the relay holds ciphertext
+//! only, for holders, in time.
 
 use moqui_vault::hpke::SecretKey;
 use moqui_vault::managed::{self, ProofLink, UnsealKey};
@@ -41,21 +44,33 @@ fn environment(facade: &moqui_core::entity::EntityFacade, policy: &str, method: 
     environment
 }
 
-fn instance(facade: &moqui_core::entity::EntityFacade, environment: &str, fingerprint: &str) -> String {
+/// An instance paired `paired_ago` milliseconds ago.
+fn instance_paired(
+    facade: &moqui_core::entity::EntityFacade,
+    environment: &str,
+    fingerprint: &str,
+    paired_ago: i64,
+) -> String {
     let id = new_id("inst");
     create(
         facade,
         INSTANCE,
         json!({ "appInstanceId": id, "instanceKindId": "mr-moqui", "environmentId": environment,
                 "linkKeyFingerprint": fingerprint, "linkState": "linked", "sealState": "sealed",
-                "unsealAddresses": "10.0.0.1" }),
+                "unsealAddresses": "10.0.0.1", "linkPairedDate": moqui_core::user::now_millis() - paired_ago }),
     );
     id
 }
 
+/// An instance at its first start: paired a moment ago.
+fn instance(facade: &moqui_core::entity::EntityFacade, environment: &str, fingerprint: &str) -> String {
+    instance_paired(facade, environment, fingerprint, 1_000)
+}
+
 /// The instance's root key wrapped to its transit key, as its seal.json keeps it.
-fn wrapped(id: &str, root: &[u8; 32]) -> Vec<u8> {
-    let public = moqui_vault::hpke::PublicKey::from_bytes(&sys(|| transit::transit_public(id)).unwrap()).unwrap();
+fn wrapped(facade: &moqui_core::entity::EntityFacade, id: &str, root: &[u8; 32]) -> Vec<u8> {
+    let public =
+        moqui_vault::hpke::PublicKey::from_bytes(&sys(|| transit::transit_public(facade, id)).unwrap()).unwrap();
     managed::wrap_root(&public, id, root, &mut OsRng).unwrap()
 }
 
@@ -75,15 +90,31 @@ fn proof_key(root: &[u8; 32]) -> SigningKey {
     SigningKey::from_seed(&moqui_core::seal::unsealed_proof_seed(&root))
 }
 
+fn waiting(answer: Result<Answer, moqui_lib::error::Error>) -> String {
+    match answer {
+        Ok(Answer::Waiting(why)) => why,
+        other => panic!("the unseal did not wait: {other:?}"),
+    }
+}
+
+fn action_of(why: &str) -> String {
+    why.split("InstanceAction ")
+        .nth(1)
+        .and_then(|rest| rest.split(';').next())
+        .unwrap()
+        .to_string()
+}
+
 #[test]
-fn transit_unseals_only_for_the_pinned_link_key_and_not_after_a_revoke_and_tells_a_new_address() {
+fn transit_unseals_only_its_own_root_key_for_the_pinned_link_key_and_not_after_a_revoke() {
     let (ctx, facade) = setup();
     let _guard = ctx.enter();
     let env = environment(&facade, "IupAutomatic", "", "");
     let id = instance(&facade, &env, "fp-pinned");
     let other = instance(&facade, &env, "fp-other");
     let root = [5_u8; 32];
-    let wrap = wrapped(&id, &root);
+    let wrap = wrapped(&facade, &id, &root);
+    sys(|| transit::transit_public(&facade, &other)).unwrap();
     let ephemeral = SecretKey::random(&mut OsRng);
     let ephemeral_public = ephemeral.public().unwrap().as_bytes().to_vec();
 
@@ -93,7 +124,7 @@ fn transit_unseals_only_for_the_pinned_link_key_and_not_after_a_revoke_and_tells
     // another instance's own link does not open this one's wrap: its transit key is its own
     assert!(sys(|| transit::unseal(&facade, &ask(&other, "fp-other", "10.0.0.1", &wrap, &ephemeral_public))).is_err());
 
-    // its pinned key, from the address it unsealed from before
+    // its pinned key, at its first start, from the address it unsealed from before: the proof key is pinned
     let answer =
         sys(|| transit::unseal(&facade, &ask(&id, "fp-pinned", "10.0.0.1", &wrap, &ephemeral_public))).unwrap();
     let Answer::Sealed {
@@ -105,12 +136,11 @@ fn transit_unseals_only_for_the_pinned_link_key_and_not_after_a_revoke_and_tells
     };
     assert!(!new_address);
     assert_eq!(*managed::open_reply(&ephemeral, &id, &sealed_root).unwrap(), root);
-    // only the unseal that asked opens the answer
     assert!(managed::open_reply(&SecretKey::random(&mut OsRng), &id, &sealed_root).is_err());
-    // the proof key is derived from the root key it saw, and the unseal is an action and a Monitor unseal
+    let pinned = moqui_vault::text::hex(proof_key(&root).verifying_key().as_bytes());
     assert_eq!(
         field_of(&facade, INSTANCE, "appInstanceId", &id, "unsealProofKey"),
-        moqui_vault::text::hex(proof_key(&root).verifying_key().as_bytes())
+        pinned
     );
     assert_eq!(
         field_of(&facade, INSTANCE, "appInstanceId", &id, "unsealProofTrust"),
@@ -120,8 +150,18 @@ fn transit_unseals_only_for_the_pinned_link_key_and_not_after_a_revoke_and_tells
         field_of(&facade, INSTANCE, "appInstanceId", &id, "sealState"),
         "unsealed"
     );
-    let actions = super::all_text(&facade, ACTION);
-    assert!(actions.iter().any(|text| text == "IatUnseal"), "{actions:?}");
+    assert!(super::all_text(&facade, ACTION).iter().any(|text| text == "IatUnseal"));
+
+    // a holder of the link key alone wraps a root key of their own to the public transit key: refused, and the key
+    // pinned stays (never pinned in its place)
+    let forged = wrapped(&facade, &id, &[66_u8; 32]);
+    let stolen = sys(|| transit::unseal(&facade, &ask(&id, "fp-pinned", "10.6.6.6", &forged, &ephemeral_public)));
+    assert!(stolen.unwrap_err().message().contains("not this instance's"));
+    assert_eq!(
+        field_of(&facade, INSTANCE, "appInstanceId", &id, "unsealProofKey"),
+        pinned
+    );
+    assert!(super::all_text(&facade, ACTION).iter().any(|text| text == "IasRefused"));
 
     // sealed again, then unsealed from an address it never unsealed from: told apart (§4.8's alert)
     sys(|| crate::link::note_state(&facade, &id, "linked", Some("sealed"), "10.0.0.1"));
@@ -137,7 +177,44 @@ fn transit_unseals_only_for_the_pinned_link_key_and_not_after_a_revoke_and_tells
 }
 
 #[test]
-fn the_approval_policy_waits_for_a_member_once_for_each_unseal() {
+fn a_first_pin_after_the_first_start_and_a_method_not_the_managers_are_not_unsealed_by_transit() {
+    let (ctx, facade) = setup();
+    let _guard = ctx.enter();
+    let env = environment(&facade, "IupAutomatic", "transit", "");
+    // paired an hour ago, never unsealed by the manager: a first pin now waits for a member, even automatic
+    let late = instance_paired(&facade, &env, "fp-late", 3_600_000);
+    let wrap = wrapped(&facade, &late, &[9_u8; 32]);
+    let public = SecretKey::random(&mut OsRng).public().unwrap().as_bytes().to_vec();
+    let why = waiting(sys(|| {
+        transit::unseal(&facade, &ask(&late, "fp-late", "10.0.0.1", &wrap, &public))
+    }));
+    assert!(why.contains("outside its first start"), "{why}");
+    assert_eq!(
+        field_of(&facade, INSTANCE, "appInstanceId", &late, "unsealProofKey"),
+        ""
+    );
+    let operator = new_id("operator");
+    create(&facade, "moqui.security.UserAccount", json!({ "userId": operator, "username": operator }));
+    login(&operator);
+    sys(|| transit::approve(&facade, &action_of(&why))).unwrap();
+    assert!(matches!(
+        sys(|| transit::unseal(&facade, &ask(&late, "fp-late", "10.0.0.1", &wrap, &public))).unwrap(),
+        Answer::Sealed { .. }
+    ));
+
+    // a tpm environment: no transit key is made for it, and transit refuses its unseal
+    let tpm_env = environment(&facade, "IupAutomatic", "tpm", "");
+    let tpm = instance(&facade, &tpm_env, "fp-tpm");
+    assert!(sys(|| transit::transit_public(&facade, &tpm)).is_err());
+    let refused = sys(|| transit::unseal(&facade, &ask(&tpm, "fp-tpm", "10.0.0.1", &wrap, &public)));
+    assert!(refused
+        .unwrap_err()
+        .message()
+        .contains("does not unseal by the manager's transit"));
+}
+
+#[test]
+fn the_approval_policy_waits_for_a_member_and_an_approval_is_bound_to_its_ask() {
     let (ctx, facade) = setup();
     let _guard = ctx.enter();
     let group = new_id("APPR");
@@ -156,28 +233,35 @@ fn the_approval_policy_waits_for_a_member_once_for_each_unseal() {
     let env = environment(&facade, "IupApproval", "transit", &group);
     let id = instance(&facade, &env, "fp-a");
     let root = [6_u8; 32];
-    let wrap = wrapped(&id, &root);
+    let wrap = wrapped(&facade, &id, &root);
     let ephemeral = SecretKey::random(&mut OsRng);
     let public = ephemeral.public().unwrap().as_bytes().to_vec();
-    let waiting = |remote: &str| match sys(|| transit::unseal(&facade, &ask(&id, "fp-a", remote, &wrap, &public))) {
-        Ok(Answer::Waiting(why)) => why,
-        other => panic!("the approval policy answered: {other:?}"),
-    };
-    let first = waiting("10.0.0.1");
+    let first = waiting(sys(|| {
+        transit::unseal(&facade, &ask(&id, "fp-a", "10.0.0.1", &wrap, &public))
+    }));
     assert!(first.contains(&group), "{first}");
     // asked again, it still waits on the one action: no second request
-    assert_eq!(waiting("10.0.0.1"), first);
-    let action_id = first
-        .split("InstanceAction ")
-        .nth(1)
-        .and_then(|rest| rest.split(';').next())
-        .unwrap()
-        .to_string();
+    assert_eq!(
+        waiting(sys(|| transit::unseal(
+            &facade,
+            &ask(&id, "fp-a", "10.0.0.1", &wrap, &public)
+        ))),
+        first
+    );
+    let action_id = action_of(&first);
     // a caller who is no instance administrator does not approve it
     login(&member);
     assert!(transit::approve(&facade, &action_id).is_err());
-    // a member does (authorization off stands for INSTANCE_ADMIN here), once
+    // a member does (authorization off stands for INSTANCE_ADMIN here)
     sys(|| transit::approve(&facade, &action_id)).unwrap();
+    assert!(!field_of(&facade, ACTION, "instanceActionId", &action_id, "approvedUntil").is_empty());
+    // the approval is for the ask that waited: another address does not take it
+    let mut elsewhere = ask(&id, "fp-a", "10.7.7.7", &wrap, &public);
+    elsewhere.generation = 7;
+    assert!(matches!(
+        sys(|| transit::unseal(&facade, &elsewhere)).unwrap(),
+        Answer::Waiting(_)
+    ));
     let answer = sys(|| transit::unseal(&facade, &ask(&id, "fp-a", "10.0.0.1", &wrap, &public))).unwrap();
     let Answer::Sealed { sealed_root, .. } = answer else {
         panic!("the approved unseal waited");
@@ -191,11 +275,13 @@ fn the_approval_policy_waits_for_a_member_once_for_each_unseal() {
         "IasDone"
     );
     // the next unseal waits again
-    assert!(!waiting("10.0.0.1").is_empty());
+    waiting(sys(|| {
+        transit::unseal(&facade, &ask(&id, "fp-a", "10.0.0.1", &wrap, &public))
+    }));
 }
 
 #[test]
-fn unsealed_is_taken_only_from_the_managers_unseal_or_a_proof_by_the_pinned_key() {
+fn unsealed_is_taken_only_from_the_managers_unseal_or_a_proof_by_a_pinned_and_confirmed_key() {
     let (ctx, facade) = setup();
     let _guard = ctx.enter();
     let root = [8_u8; 32];
@@ -213,7 +299,7 @@ fn unsealed_is_taken_only_from_the_managers_unseal_or_a_proof_by_the_pinned_key(
     let id: &'static str = Box::leak(instance(&facade, &env, "fp-p").into_boxed_str());
     let proof = managed::sign_proof(&key, &link(id, 1));
     assert!(!sys(|| transit::check_proof(&facade, &link(id, 1), &public, &proof)).unwrap());
-    let wrap = wrapped(id, &root);
+    let wrap = wrapped(&facade, id, &root);
     let ephemeral = SecretKey::random(&mut OsRng).public().unwrap().as_bytes().to_vec();
     sys(|| transit::unseal(&facade, &ask(id, "fp-p", "10.0.0.1", &wrap, &ephemeral))).unwrap();
     assert!(sys(|| transit::check_proof(&facade, &link(id, 1), &public, &proof)).unwrap());
@@ -223,15 +309,37 @@ fn unsealed_is_taken_only_from_the_managers_unseal_or_a_proof_by_the_pinned_key(
     let forged = managed::sign_proof(&thief, &link(id, 1));
     assert!(!sys(|| transit::check_proof(&facade, &link(id, 1), thief.verifying_key().as_bytes(), &forged)).unwrap());
 
-    // a method the manager does not unseal: the first proof pins its key (first-use), and later ones must match it
+    // a rotate-root: the new key is taken only signed by the old one, and its wrap must open to it
+    let new_root = [18_u8; 32];
+    let new_key = proof_key(&new_root);
+    let new_public = *new_key.verifying_key().as_bytes();
+    let new_wrap = wrapped(&facade, id, &new_root);
+    let by_thief = managed::sign_rotation(&thief, id, "fp-p", &new_public, &new_wrap);
+    assert!(sys(|| transit::rotate_proof(&facade, id, "fp-p", &new_public, &new_wrap, &by_thief)).is_err());
+    let by_other_wrap = managed::sign_rotation(&key, id, "fp-p", &new_public, &wrap);
+    assert!(sys(|| transit::rotate_proof(&facade, id, "fp-p", &new_public, &wrap, &by_other_wrap)).is_err());
+    let signed = managed::sign_rotation(&key, id, "fp-p", &new_public, &new_wrap);
+    sys(|| transit::rotate_proof(&facade, id, "fp-p", &new_public, &new_wrap, &signed)).unwrap();
+    let new_proof = managed::sign_proof(&new_key, &link(id, 3));
+    assert!(sys(|| transit::check_proof(&facade, &link(id, 3), &new_public, &new_proof)).unwrap());
+    assert!(!sys(|| transit::check_proof(&facade, &link(id, 1), &public, &proof)).unwrap());
+
+    // a method the manager does not unseal: the first proof's key waits for an operator, then is taken
     let env = environment(&facade, "IupAutomatic", "tpm", "");
     let tpm: &'static str = Box::leak(instance(&facade, &env, "fp-p").into_boxed_str());
     let proof = managed::sign_proof(&key, &link(tpm, 1));
-    assert!(sys(|| transit::check_proof(&facade, &link(tpm, 1), &public, &proof)).unwrap());
+    assert!(!sys(|| transit::check_proof(&facade, &link(tpm, 1), &public, &proof)).unwrap());
+    assert_eq!(
+        field_of(&facade, INSTANCE, "appInstanceId", tpm, "unsealProofTrust"),
+        "pending"
+    );
+    assert!(!sys(|| transit::check_proof(&facade, &link(tpm, 1), &public, &proof)).unwrap());
+    sys(|| transit::confirm_proof_key(&facade, tpm)).unwrap();
     assert_eq!(
         field_of(&facade, INSTANCE, "appInstanceId", tpm, "unsealProofTrust"),
         "first-use"
     );
+    assert!(sys(|| transit::check_proof(&facade, &link(tpm, 1), &public, &proof)).unwrap());
     let forged = managed::sign_proof(&thief, &link(tpm, 3));
     assert!(!sys(|| transit::check_proof(&facade, &link(tpm, 3), thief.verifying_key().as_bytes(), &forged)).unwrap());
 }
@@ -262,7 +370,7 @@ fn holder(facade: &moqui_core::entity::EntityFacade, group: &str) -> (String, St
 }
 
 #[test]
-fn each_share_goes_to_one_current_holder_and_the_relay_holds_ciphertext_only() {
+fn each_share_goes_to_one_current_holder_and_the_relay_holds_ciphertext_only_for_holders_in_time() {
     use crate::shares::{self, SentShare};
     let (ctx, facade) = setup();
     let _guard = ctx.enter();
@@ -297,22 +405,31 @@ fn each_share_goes_to_one_current_holder_and_the_relay_holds_ciphertext_only() {
         )
         .unwrap(),
     };
-    let record = |shares: &[SentShare], signer: &SigningKey| {
-        sys(|| shares::record_shares(&facade, &id, signer.verifying_key().as_bytes(), "rs-test", 2, shares))
+    let record = |shares: &[SentShare], signer: &SigningKey, threshold: u32| {
+        sys(|| {
+            shares::record_shares(
+                &facade,
+                &id,
+                signer.verifying_key().as_bytes(),
+                "rs-test",
+                threshold,
+                shares,
+            )
+        })
     };
-    // two shares to one holder, a delivery the link key did not sign, and a link key not pinned are refused
-    let twice = record(&[send(&alice, 1, &link), send(&alice, 2, &link)], &link).unwrap_err();
+    // two shares to one holder, a delivery the link key did not sign, a link key not pinned, an index twice or out of
+    // range, and a threshold the shares cannot meet are refused
+    let twice = record(&[send(&alice, 1, &link), send(&alice, 2, &link)], &link, 2).unwrap_err();
     assert!(twice.message().contains("each holder holds one"), "{twice}");
     let stranger = SigningKey::random(&mut OsRng);
-    assert!(record(&[send(&alice, 1, &stranger)], &link).is_err());
-    assert!(record(&[send(&alice, 1, &stranger)], &stranger).is_err());
+    assert!(record(&[send(&alice, 1, &stranger)], &link, 2).is_err());
+    assert!(record(&[send(&alice, 1, &stranger)], &stranger, 2).is_err());
+    assert!(record(&[send(&alice, 1, &link), send(&bob, 1, &link)], &link, 2).is_err());
+    assert!(record(&[send(&alice, 1, &link), send(&bob, 3, &link)], &link, 2).is_err());
+    assert!(record(&[send(&alice, 1, &link), send(&bob, 2, &link)], &link, 3).is_err());
     // one to each holder is kept, as deliveries and share rows
-    record(&[send(&alice, 1, &link), send(&bob, 2, &link)], &link).unwrap();
+    record(&[send(&alice, 1, &link), send(&bob, 2, &link)], &link, 2).unwrap();
     assert_eq!(sys(|| shares::share_report(&facade, &id)).unwrap().len(), 2);
-    assert_eq!(
-        field_of(&facade, INSTANCE, "appInstanceId", &id, "linkSignPublic"),
-        moqui_vault::text::hex(link.verifying_key().as_bytes())
-    );
     // only its recipient confirms a share
     login(&bob.0);
     assert!(shares::confirm(&facade, &format!("rs-test-{id}-1"), &"ab".repeat(64)).is_err());
@@ -320,37 +437,30 @@ fn each_share_goes_to_one_current_holder_and_the_relay_holds_ciphertext_only() {
     shares::confirm(&facade, &format!("rs-test-{id}-1"), &"ab".repeat(64)).unwrap();
     assert_eq!(sys(|| shares::confirmations(&facade, &id, "rs-test")).unwrap().len(), 1);
 
-    // the relay: a key not signed by the pinned link key is refused
+    // the relay: a key not signed by the pinned link key, or expired, is refused
+    let now = moqui_core::user::now_millis();
     let unseal = SecretKey::random(&mut OsRng);
     let unseal_public = *unseal.public().unwrap().as_bytes();
-    let forged = UnsealKey::sign(&stranger, &id, &unseal_public);
-    assert!(sys(|| shares::offer_unseal_key(
-        &facade,
-        &id,
-        stranger.verifying_key().as_bytes(),
-        &unseal_public,
-        &forged.signature
-    ))
-    .is_err());
-    let key = UnsealKey::sign(&link, &id, &unseal_public);
-    let offered = sys(|| {
-        shares::offer_unseal_key(
-            &facade,
-            &id,
-            link.verifying_key().as_bytes(),
-            &unseal_public,
-            &key.signature,
-        )
-    });
+    let forged = UnsealKey::sign(&stranger, &id, &unseal_public, now + 60_000);
+    assert!(sys(|| shares::offer_unseal_key(&facade, &id, stranger.verifying_key().as_bytes(), &forged)).is_err());
+    let expired = UnsealKey::sign(&link, &id, &unseal_public, now - 1);
+    assert!(sys(|| shares::offer_unseal_key(&facade, &id, link.verifying_key().as_bytes(), &expired)).is_err());
+    let key = UnsealKey::sign(&link, &id, &unseal_public, now + 60_000);
+    let offered = sys(|| shares::offer_unseal_key(&facade, &id, link.verifying_key().as_bytes(), &key));
     assert!(offered.unwrap().is_empty());
-    // a holder seals their share to it; the manager keeps the ciphertext, and nothing of the share
+    // a holder reads the key (with no fingerprint: theirs is the one filed with their share), seals their share to it,
+    // and the manager keeps the ciphertext, and nothing of the share
+    let (relayed, relayed_link) = shares::unseal_key(&facade, &id).unwrap().unwrap();
+    assert_eq!(relayed, key);
+    assert_eq!(&relayed_link, link.verifying_key().as_bytes());
     let sealed = managed::seal_share(&key, "the-share-of-alice", &mut OsRng).unwrap();
     shares::post_sealed_share(&facade, &id, &unseal_public, &sealed).unwrap();
-    let relay = shares::relay_of(&id).unwrap();
-    for (_, held) in &relay.sealed {
-        assert!(!held.windows(9).any(|window| window == b"the-share"));
+    for row in sys(|| shares::relay_rows(&facade, &id)).unwrap() {
+        let kept = super::super::common::field(&row, "sealedShare");
+        assert!(!kept.contains(&moqui_vault::text::hex(b"the-share")));
+        assert!(!kept.contains("the-share"));
     }
-    // someone who holds no share of it is refused
+    // someone who holds no share of it is refused, and so is any caller for an instance that is not there, alike
     let outsider = new_id("outsider");
     create(
         &facade,
@@ -358,37 +468,28 @@ fn each_share_goes_to_one_current_holder_and_the_relay_holds_ciphertext_only() {
         json!({ "userId": outsider, "username": outsider }),
     );
     login(&outsider);
-    assert!(shares::post_sealed_share(&facade, &id, &unseal_public, &sealed).is_err());
+    let refused = shares::post_sealed_share(&facade, &id, &unseal_public, &sealed).unwrap_err();
+    let unknown = shares::post_sealed_share(&facade, "no-such-instance", &unseal_public, &sealed).unwrap_err();
+    assert!(refused.message().contains("notRecoveryHolder") && unknown.message().contains("notRecoveryHolder"));
     // the instance's next ask takes it, and only its unseal key opens it
-    let taken = sys(|| {
-        shares::offer_unseal_key(
-            &facade,
-            &id,
-            link.verifying_key().as_bytes(),
-            &unseal_public,
-            &key.signature,
-        )
-    })
-    .unwrap();
+    let taken = sys(|| shares::offer_unseal_key(&facade, &id, link.verifying_key().as_bytes(), &key)).unwrap();
     assert_eq!(taken.len(), 1);
     assert_eq!(
         managed::open_share(&unseal, &id, &taken[0].1).unwrap().as_str(),
         "the-share-of-alice"
     );
-    // a new unseal's key drops what was sealed to the old one
+    // a new unseal's key drops what was sealed to the old one; and once it unseals, the relay goes
     let next = SecretKey::random(&mut OsRng);
     let next_public = *next.public().unwrap().as_bytes();
-    let next_key = UnsealKey::sign(&link, &id, &next_public);
-    sys(|| {
-        shares::offer_unseal_key(
-            &facade,
-            &id,
-            link.verifying_key().as_bytes(),
-            &next_public,
-            &next_key.signature,
-        )
-    })
-    .unwrap();
+    let next_key = UnsealKey::sign(&link, &id, &next_public, now + 60_000);
+    sys(|| shares::offer_unseal_key(&facade, &id, link.verifying_key().as_bytes(), &next_key)).unwrap();
     login(&alice.0);
     assert!(shares::post_sealed_share(&facade, &id, &unseal_public, &sealed).is_err());
+    shares::post_sealed_share(&facade, &id, &next_public, &sealed).unwrap();
+    sys(|| shares::drop_relay(&facade, &id));
+    assert!(sys(|| shares::relay_rows(&facade, &id)).unwrap().is_empty());
+    assert!(shares::unseal_key(&facade, &id).unwrap().is_none());
+
+    // a bundle that is not a seal bundle is not deposited
+    assert!(sys(|| shares::deposit_seal_bundle(&facade, &id, "not a bundle")).is_err());
 }

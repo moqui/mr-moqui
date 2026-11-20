@@ -155,10 +155,13 @@ impl Keeper {
         let mut inner = self.inner();
         let held = file::lock(&self.path)?;
         self.refresh(&mut inner, &held)?;
+        // the old root key's proof seed, which signs the new proof key for a manager (Vault-Instances §4.4)
+        let previous = inner.root.as_ref().map(super::unsealed_proof_seed);
         let (seal, root, issued) = self.rotated(&mut inner, &request)?;
         file::stage(&self.path, &seal)?.commit()?;
         inner.file = Some(seal);
         self.opened(&mut inner, root);
+        inner.previous_proof = previous;
         tracing::warn!("Rotated the root key: seal.json holds the new wraps; export the recovery bundle again");
         Ok(issued)
     }

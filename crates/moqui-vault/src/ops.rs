@@ -900,7 +900,8 @@ impl Session {
         if sent.sender_kind != "instance" || sent.purpose != managed::SHARE_PURPOSE {
             return Err(Error::Refused("only an instance's recovery share opens here"));
         }
-        let link = managed::pinned_link_key(&bytes_of(args, "link_public")?, str_of(args, "link_fingerprint")?)?;
+        let fingerprint = str_of(args, "link_fingerprint")?;
+        let link = managed::pinned_link_key(&bytes_of(args, "link_public")?, fingerprint)?;
         let me = self.me()?;
         if sent.recipient_user_id != me.user_id || sent.recipient_key_id != me.key_id {
             return Err(Error::Refused("the delivery is for someone else"));
@@ -916,6 +917,9 @@ impl Session {
             "delivery_id": sent.delivery_id, "value": text, "item_name": share.item_name(),
             "instance_id": share.instance_id, "set_id": share.set_id, "index": share.index,
             "confirmation": hex(&confirmation),
+            // filed with the share: the holder's own anchor of the instance's link key, which `seal-share` checks a
+            // sealed instance's unseal key against (never the fingerprint a manager hands over then)
+            "link_fingerprint": fingerprint.to_ascii_lowercase(),
         });
         if !self.filed.first_time(&sent) {
             return Err(Error::Refused("that delivery was opened already"));

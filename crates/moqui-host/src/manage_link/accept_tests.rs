@@ -27,10 +27,11 @@ fn conn(pairing: bool, helloed: bool, sealed: bool) -> Conn {
         close: Mutex::new(None),
         challenge: Vec::new(),
         verified: AtomicBool::new(false),
+        noted: Mutex::new(String::new()),
     }
 }
 
-const CALLS: [Call; 11] = [
+const CALLS: [Call; 12] = [
     Call::Pair,
     Call::Hello,
     Call::Status,
@@ -40,6 +41,7 @@ const CALLS: [Call; 11] = [
     Call::Holders,
     Call::Shares,
     Call::ShareConfirmations,
+    Call::RotateProof,
     Call::Event,
     Call::Serve,
 ];
@@ -79,6 +81,7 @@ fn the_manager_answers_a_sealed_instance_only_its_sealed_calls() {
             Call::Holders,
             Call::Shares,
             Call::ShareConfirmations,
+            Call::RotateProof,
             Call::Event,
             Call::Serve
         ]

@@ -95,10 +95,20 @@ pub(crate) fn checked_holders(
     let mut checked = Vec::new();
     for holder in &reply.holders {
         match check_holder(holder, approvers) {
-            Ok(holder) if !checked.iter().any(|other: &Checked| other.user_id == holder.user_id) => {
+            // one share to a holder, and to a key: two holders given one key hold no two shares between them
+            Ok(holder)
+                if !checked.iter().any(|other: &Checked| {
+                    other.user_id == holder.user_id
+                        || other.public.encrypt.as_bytes() == holder.public.encrypt.as_bytes()
+                        || other.public.verify.as_bytes() == holder.public.verify.as_bytes()
+                }) =>
+            {
                 checked.push(holder)
             }
-            Ok(_) => {}
+            Ok(holder) => tracing::error!(
+                "Manager link: recovery holder {} is given twice, or with another holder's key: left out",
+                holder.user_id
+            ),
             Err(err) => tracing::error!("Manager link: recovery holder {err}"),
         }
     }
@@ -136,6 +146,7 @@ pub(crate) fn make_set(
         set_id: set_id.clone(),
         threshold,
         shares: Vec::new(),
+        refused: false,
     };
     for ((position, share), holder) in shares.iter().enumerate().zip(holders) {
         let index = u32::try_from(position + 1).map_err(|_| "too many shares".to_string())?;

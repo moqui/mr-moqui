@@ -216,6 +216,18 @@ pub fn pair(facade: &EntityFacade, secret: &str, key_fingerprint: &str, bundle_k
             row.set("linkPairedDate", moqui_core::user::now_value());
             row.set("linkState", Value::string("paired"));
             row.set("approverSet", Value::string(approvers_json(&approvers)));
+            // a new link key: what the old one's links proved or offered is not this one's (M6)
+            for name in [
+                "unsealProofKey",
+                "unsealProofTrust",
+                "linkSignPublic",
+                "recoverySetId",
+                "unsealKeyPublic",
+                "unsealKeySignature",
+                "unsealKeyExpires",
+            ] {
+                row.set(name, Value::Null);
+            }
             row.update(facade)?;
             tracing::info!("Manager link: AppInstance {id} paired with link key {key_fingerprint}");
             Ok(Ok(Paired {
@@ -461,7 +473,7 @@ pub fn revoke(facade: &EntityFacade, instance_id: &str) -> Result<(), LibError> 
     row.update(facade)?;
     drop_bundle(instance_id);
     // its transit refuses it from now on (the key is not pinned), and no share waits for it (M6)
-    crate::shares::drop_relay(instance_id);
+    crate::shares::drop_relay(facade, instance_id);
     tracing::warn!("Manager link: the link of AppInstance {instance_id} was revoked");
     Ok(())
 }

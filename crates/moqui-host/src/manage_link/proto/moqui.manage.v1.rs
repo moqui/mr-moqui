@@ -140,6 +140,9 @@ pub struct SealedSharesRequest {
     /// the link key's public half, which the manager checks against the pinned fingerprint for the holders
     #[prost(bytes = "vec", tag = "3")]
     pub link_public: ::prost::alloc::vec::Vec<u8>,
+    /// when the key stops being taken, epoch milliseconds, signed with it
+    #[prost(int64, tag = "4")]
+    pub expires: i64,
 }
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct SealedShare {
@@ -243,6 +246,19 @@ pub struct ShareConfirmationsReply {
     #[prost(message, repeated, tag = "1")]
     pub confirmations: ::prost::alloc::vec::Vec<ShareConfirmation>,
 }
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RotateProofRequest {
+    /// the new root key's proof key, its wrap to the transit key (empty for a method the manager does not unseal), and
+    /// the old proof key's signature over them (moqui_vault::managed::sign_rotation)
+    #[prost(bytes = "vec", tag = "1")]
+    pub new_public: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub wrapped_root: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bytes = "vec", tag = "3")]
+    pub signature: ::prost::alloc::vec::Vec<u8>,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct RotateProofReply {}
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct EventRequest {
     /// started, unsealed or failed
@@ -626,6 +642,31 @@ pub mod manager_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// A rotate-root's new unsealed proof key, signed by the old one, with the new transit wrap (M6).
+        pub async fn rotate_proof(
+            &mut self,
+            request: impl tonic::IntoRequest<super::RotateProofRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RotateProofReply>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/moqui.manage.v1.Manager/RotateProof",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(GrpcMethod::new("moqui.manage.v1.Manager", "RotateProof"));
+            self.inner.unary(req, path, codec).await
+        }
         /// An event of the instance: started, unsealed, failed. Only while unsealed.
         pub async fn event(
             &mut self,
@@ -739,6 +780,14 @@ pub mod manager_server {
             request: tonic::Request<super::ShareConfirmationsRequest>,
         ) -> std::result::Result<
             tonic::Response<super::ShareConfirmationsReply>,
+            tonic::Status,
+        >;
+        /// A rotate-root's new unsealed proof key, signed by the old one, with the new transit wrap (M6).
+        async fn rotate_proof(
+            &self,
+            request: tonic::Request<super::RotateProofRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::RotateProofReply>,
             tonic::Status,
         >;
         /// An event of the instance: started, unsealed, failed. Only while unsealed.
@@ -1213,6 +1262,51 @@ pub mod manager_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ShareConfirmationsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/moqui.manage.v1.Manager/RotateProof" => {
+                    #[allow(non_camel_case_types)]
+                    struct RotateProofSvc<T: Manager>(pub Arc<T>);
+                    impl<
+                        T: Manager,
+                    > tonic::server::UnaryService<super::RotateProofRequest>
+                    for RotateProofSvc<T> {
+                        type Response = super::RotateProofReply;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::RotateProofRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as Manager>::rotate_proof(&inner, request).await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = RotateProofSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

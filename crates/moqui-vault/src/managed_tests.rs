@@ -94,11 +94,12 @@ fn an_unsealed_proof_holds_for_its_own_link_only() {
 fn a_share_sealed_for_one_unseal_does_not_open_at_another() {
     let link = link_key(9);
     let fingerprint = link_fingerprint(link.verifying_key().as_bytes());
-    let first = SecretKey::random(&mut TestRng::new("managed-7"));
-    let second = SecretKey::random(&mut TestRng::new("managed-8"));
-    let key = UnsealKey::sign(&link, "prod-1", first.public().unwrap().as_bytes());
-    key.verify(link.verifying_key().as_bytes(), &fingerprint).unwrap();
-    let sealed = seal_share(&key, "share-text-3-of-5", &mut TestRng::new("managed-9")).unwrap();
+    let first = SecretKey::random(&mut TestRng::new("unseal-first"));
+    let second = SecretKey::random(&mut TestRng::new("unseal-second"));
+    let key = UnsealKey::sign(&link, "prod-1", first.public().unwrap().as_bytes(), 2_000);
+    key.verify(link.verifying_key().as_bytes(), &fingerprint, 1_000)
+        .unwrap();
+    let sealed = seal_share(&key, "share-text-3-of-5", &mut TestRng::new("seal-share")).unwrap();
     // what the manager relays is ciphertext: the share is not in it
     assert!(!sealed
         .windows(b"share-text".len())
@@ -109,14 +110,52 @@ fn a_share_sealed_for_one_unseal_does_not_open_at_another() {
     );
     assert!(open_share(&second, "prod-1", &sealed).is_err());
     assert!(open_share(&first, "prod-2", &sealed).is_err());
-    // a key the manager made in the instance's name is refused by the holder's client
-    let forged = UnsealKey::sign(&link_key(10), "prod-1", second.public().unwrap().as_bytes());
+}
+
+#[test]
+fn a_holder_takes_an_unseal_key_only_by_the_link_key_they_filed_and_in_time() {
+    let link = link_key(9);
+    let filed = link_fingerprint(link.verifying_key().as_bytes());
+    let unseal = *SecretKey::random(&mut TestRng::new("unseal-a"))
+        .public()
+        .unwrap()
+        .as_bytes();
+    let key = UnsealKey::sign(&link, "prod-1", &unseal, 2_000);
+    assert!(key.verify(link.verifying_key().as_bytes(), &filed, 1_000).is_ok());
+    // a key the manager made in the instance's name, with the manager's own link key and its fingerprint: the holder
+    // compares with the fingerprint they filed with their share, so it is refused
+    let manager = link_key(10);
+    let forged = UnsealKey::sign(&manager, "prod-1", &unseal, 2_000);
+    let supplied = link_fingerprint(manager.verifying_key().as_bytes());
     assert!(forged
-        .verify(link_key(10).verifying_key().as_bytes(), &fingerprint)
+        .verify(manager.verifying_key().as_bytes(), &supplied, 1_000)
+        .is_ok());
+    assert!(forged
+        .verify(manager.verifying_key().as_bytes(), &filed, 1_000)
         .is_err());
+    // another key under the instance's signature, a changed expiry, and an expired key are refused
     let mut swapped = key.clone();
-    swapped.unseal_public = *second.public().unwrap().as_bytes();
-    assert!(swapped.verify(link.verifying_key().as_bytes(), &fingerprint).is_err());
+    swapped.unseal_public = *SecretKey::random(&mut TestRng::new("unseal-b"))
+        .public()
+        .unwrap()
+        .as_bytes();
+    assert!(swapped.verify(link.verifying_key().as_bytes(), &filed, 1_000).is_err());
+    let mut longer = key.clone();
+    longer.expires = 9_000;
+    assert!(longer.verify(link.verifying_key().as_bytes(), &filed, 1_000).is_err());
+    assert!(key.verify(link.verifying_key().as_bytes(), &filed, 2_000).is_err());
+}
+
+#[test]
+fn a_new_proof_key_is_taken_only_signed_by_the_old_one() {
+    let old = link_key(20);
+    let new = *link_key(21).verifying_key().as_bytes();
+    let signature = sign_rotation(&old, "prod-1", "fp", &new, b"wrap");
+    assert!(verify_rotation(&old.verifying_key(), "prod-1", "fp", &new, b"wrap", &signature).is_ok());
+    assert!(verify_rotation(&old.verifying_key(), "prod-1", "fp", &new, b"other wrap", &signature).is_err());
+    assert!(verify_rotation(&old.verifying_key(), "prod-2", "fp", &new, b"wrap", &signature).is_err());
+    let thief = sign_rotation(&link_key(22), "prod-1", "fp", &new, b"wrap");
+    assert!(verify_rotation(&old.verifying_key(), "prod-1", "fp", &new, b"wrap", &thief).is_err());
 }
 
 #[test]

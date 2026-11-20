@@ -109,6 +109,15 @@ fn a_holders_key_with_no_check_by_a_pinned_approver_is_refused() {
             holder("alice", &key, Some((&approver, "alice"))),
         ],
     };
+    // a key given for two holders counts once: no two shares end with one key
+    let shared_key = approver_key();
+    let twice = proto::HoldersReply {
+        holders: vec![
+            holder("erin", &shared_key, Some((&approver, "erin"))),
+            holder("frank", &shared_key, Some((&approver, "frank"))),
+        ],
+    };
+    assert_eq!(checked_holders(&twice, &pinned).len(), 1);
     let checked: Vec<String> = checked_holders(&reply, &pinned)
         .into_iter()
         .map(|holder| holder.user_id)

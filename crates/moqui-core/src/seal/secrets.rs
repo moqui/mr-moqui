@@ -382,6 +382,61 @@ pub fn read_from(keeper: &Keeper, facade: &EntityFacade, name: &str) -> Result<O
     Ok(lock(&keeper.secret_values).values.get(&name).cloned())
 }
 
+/// The secret `name` read from its row now (not the opened rows kept in memory); none when there is no row.
+///
+/// # Errors
+///
+/// A bootstrap secret's name, sealed, a boot with no seal, or a row that does not open.
+pub fn row_value(keeper: &Keeper, facade: &EntityFacade, name: &str) -> Result<Option<Zeroizing<String>>, Error> {
+    let name = canonical(name);
+    if name.is_empty() || is_bootstrap(&name) {
+        return Err(Error::new(format!("{name} is not the name of a SecretValue row")));
+    }
+    if keeper.is_ephemeral() {
+        return Err(no_seal(&format!("the secret {name} is not kept")));
+    }
+    if !keeper.is_unsealed() {
+        return Err(Error::new("sealed: the stored secrets open only once unsealed"));
+    }
+    read_row(&keeper.secret_value_key()?, facade, &name)
+}
+
+/// The secret `name`, read from its row now (not the opened rows kept in memory), or made by `make` and created when
+/// there is no row: create-only, so a row another cluster member made meanwhile wins and is read. A row that does not
+/// open is an error and is never replaced (a key that cannot be replaced, such as a managed instance's transit key,
+/// Vault-Instances M6), and a boot with no seal keeps nothing.
+///
+/// # Errors
+///
+/// A bootstrap secret's name, sealed, a boot with no seal, or a row that does not open or cannot be read or written.
+pub fn row_or_create(
+    keeper: &Keeper,
+    facade: &EntityFacade,
+    name: &str,
+    make: impl FnOnce() -> Zeroizing<String>,
+) -> Result<Zeroizing<String>, Error> {
+    let name = canonical(name);
+    if name.is_empty() || is_bootstrap(&name) {
+        return Err(Error::new(format!("{name} is not the name of a SecretValue row")));
+    }
+    if keeper.is_ephemeral() {
+        return Err(no_seal(&format!("the secret {name} is not kept")));
+    }
+    if !keeper.is_unsealed() {
+        return Err(Error::new("sealed: the stored secrets open only once unsealed"));
+    }
+    let key = keeper.secret_value_key()?;
+    if let Some(kept) = read_row(&key, facade, &name)? {
+        return Ok(kept);
+    }
+    let value = make();
+    if matches!(create_rows(&key, facade, &[(name.clone(), value.clone())]), Ok(true)) {
+        return Ok(value);
+    }
+    // a row another member made at the same time: its value, which is the one kept
+    read_row(&key, facade, &name)?.ok_or_else(|| Error::new(format!("the secret {name} was neither made nor found")))
+}
+
 /// Keep `value` as the secret `name`: a bootstrap secret in `seal.json`, else a SecretValue row.
 ///
 /// # Errors

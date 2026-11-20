@@ -2246,45 +2246,70 @@ A managed instance's seal (plans/Vault-Instances.md §4.5, M6; [Sealed start](#s
   `unsealMethod`: `transit` (the manager's, the default for a container) or `tpm`, each automatic, so the first start
   makes its seal by itself; `passphrase` and `shamir` leave it waiting sealed for `moqui operator init` on its socket.
   A passphrase for it is a vault item an operator uses under a lease; shares are never typed into the manager.
-- **Transit by the manager.** The manager keeps one X25519 transit key per instance in its own keyring
-  (`SecretValue` `instance-transit/<id>`, a platform secret: an unattended unseal needs it) and gives the public half in
-  the link's Hello. At init the instance wraps its root key to it (HPKE, its id as associated data: `seal.json` records
-  `backend: moqui-manager` and the wrap), so the manager sees no root key then. At each start the instance sends the wrap
-  with a key it made for that one unseal; while its link key is pinned (a revoke unpins it) the manager unwraps it with
-  that instance's transit key and seals the root key to that key. The manager sees the root key during the unwrap, as
-  every transit seal does. Right after init the instance has the manager unwrap it once on that link, so the manager
-  pins its unsealed-proof key; a seal.json whose transit is OpenBao's, or a `seal@transit-url`, stays the core's transit.
+- **Transit by the manager.** The manager keeps one X25519 transit key per instance whose environment's method is
+  transit, in its own keyring (`SecretValue` `instance-transit/<id>`, a platform secret: an unattended unseal needs
+  it), and gives the public half in the link's Hello. The key is made once, when no row holds it, and only read after:
+  a row that does not open, or a manager with no seal of its own, is an error, never a new key. At init the instance
+  wraps its root key to it (HPKE, its id as associated data: `seal.json` records `backend: moqui-manager` and the wrap),
+  so the manager sees no root key then. At each start the instance sends the wrap with a key it made for that one
+  unseal; while its link key is pinned (a revoke unpins it) the manager unwraps it with that instance's transit key and
+  seals the root key to that key. The manager sees the root key during the unwrap, as every transit seal does. A seal.json
+  whose transit is OpenBao's, or a `seal@transit-url`, stays the core's transit; an environment whose method is not
+  transit gets no transit key, and its Unseal is refused.
+- **Only the instance's own root key.** HPKE base mode names no sender, so whoever holds the link key can wrap a key of
+  their own to the public transit key. The manager therefore takes only the root key whose unsealed-proof key is the one
+  it pinned: the first is pinned at the instance's first start (its first unseal within the pairing window, which the
+  instance makes right after init, on that link), or, later, with a member's approval; after it, an unseal whose root
+  key gives another proof key is refused, recorded (`IasRefused`) and told to the administrators (topic
+  `InstanceUnsealRefused`), and the pinned key stays. A rotate-root's new key reaches the manager signed by the old one
+  (`RotateProof`, with the new transit wrap, which must open to it); when the instance restarted between and lost the
+  old key, an operator forgets the pinned one (`forget#InstanceUnsealProofKey`) and the next unseal pins the new one with
+  a member's approval. Re-pairing clears the pinned key, the link's signing key and the share set.
 - **The unseal policy** (`InstanceEnvironment.unsealPolicyEnumId`): `IupAutomatic` answers while the link key is pinned;
   `IupApproval` holds each unseal for a member's approval: an unseal `InstanceAction` waits, the approver group hears of
   it (topic `InstanceUnsealApproval`), `approve#InstanceUnseal` (INSTANCE_ADMIN and the approver group) lets the
-  instance's next unseal through, once. Every unseal is an `InstanceAction` and a Monitor unseal
+  instance's next unseal through, once, on the link generation and from the address that asked, within 15 minutes. Every unseal is an `InstanceAction` and a Monitor unseal
   (`moqui.instance.unseals`), told apart when it comes from an address the instance never unsealed from
   (`moqui.instance.new_address`, the shipped alert rule). The policy is a rule the manager keeps: a compromised manager
   holds the transit keys whatever it says (§4.9).
 - **While sealed.** When the transit unseal fails (the manager out of reach, or holding the unseal for an approval) the
   instance stays sealed and ready (`STATUS=sealed: auto-unseal failed`), tries again on each status of its link, and
-  takes recovery shares: it makes a key for this unseal, signs it with its link key, and offers it over the link
-  (`SealedShares`); a holder runs `moqui vault --server <manager> --user <them> seal-share <appInstanceId>`, which checks
-  that key's signature against the instance's link key as the manager pinned it, and seals their share to it; the
-  manager relays the ciphertext, which only that unseal opens. A holder can also enter a share at the instance's own
+  takes recovery shares: it makes a key for this unseal, with a time it stops being taken (an hour, then a new key),
+  signs both with its link key, and offers it over the link (`SealedShares`); a holder runs `moqui vault --server
+  <manager> --user <them> seal-share <appInstanceId> --vault <their personal vault>`, which takes the share they filed
+  and checks the key's signature against the link key fingerprint filed with it (never one the manager hands over then:
+  a key the manager makes in the instance's name is refused) and its time, and seals the share to it. The manager keeps
+  the ciphertext in rows (`InstanceSealedShare`, so any member of a manager cluster answers) until the instance takes
+  it, unseals or its link ends; only that unseal opens it. A share of another split is refused on entry and leaves the
+  shares entered before it. A holder can also enter a share at the instance's own
   operator socket (`moqui operator unseal --recovery`), the way when the manager is gone; `rekey` then moves the
   instance to another method.
 - **Recovery shares to holders.** The environment names its holders (`recoveryUserGroupId`). After an automatic first
-  start the instance takes each holder's public keys over the link with the key checks of them, and takes a key only
-  with a check signed by an approver it pinned at pairing; a key without one is refused, so the manager cannot put a key
-  of its own in a holder's place. It seals each share to one holder (one each, so no place holds two) and sends it as a
-  delivery signed with its link key. The holder runs `moqui vault --server <manager> --user <them> shares --vault
-  <their personal vault>`: the delivery is checked against the instance's pinned link key, the share filed as a
-  `recovery-share` item ("Recovery share 2 of 5, <instance>"), and a confirmation signed with their key goes back,
-  which the instance checks itself. Init is complete when every share is confirmed; the instance logs the unconfirmed
-  ones, and `get#InstanceLink` lists each share with its holder and whether it is confirmed. When fewer holders have a
-  checked key than there are shares, nothing is sent and the shares wait for `moqui operator init --take-shares` on the
-  socket, printed. When a holder is replaced (no longer among the checked holders), the instance makes a new set and
-  the old shares stop opening its seal.
-- **The recovery bundle.** The first time a link the manager takes as unsealed serves commands, the manager runs
-  export-seal over it and deposits the bundle (wrapped values only) as a `note` item of the environment's operational
-  vault (`AppInstance:<id>:sealBundle:<time>`, `sealBundleDate` on the row); `store#InstanceSealBundle` deposits it again
-  after a rekey or rotate-root. The manager does not read it back without a lease, though it could unwrap the root key
+  start the instance takes each holder's public keys over the link with the key checks of them by the environment's
+  approvers, and takes a key only with a check signed by an approver it pinned at pairing; a key without one is refused,
+  so the manager cannot put a key of its own in a holder's place. It seals each share to one holder (one each, and one
+  key each, so no place holds two) and sends it as a delivery signed with its link key; only on a link the manager takes
+  as unsealed. The holder runs `moqui vault --server <manager> --user <them> shares --vault <their personal vault>`: the
+  delivery is checked against the instance's link key as the manager pinned it, the share filed as a `recovery-share`
+  item ("Recovery share 2 of 5, <instance>") with that link key's fingerprint, the holder's own anchor of the instance
+  from then on, and a confirmation signed with their key goes back, which the instance checks itself. The held shares
+  stay on the operator socket (`init --take-shares`) until every share is confirmed; init is complete then. The instance
+  logs the unconfirmed ones, and `get#InstanceLink` lists each share with its holder and whether it is confirmed. When
+  fewer holders have a checked key than there are shares, nothing is sent and the shares wait on the socket, printed. A
+  set the manager refuses for good is dropped and a new one made for the current holders. When a holder is replaced (no
+  longer among the checked holders), the instance makes a new split, sends it, and keeps it in its seal only once the
+  manager took its deliveries: then the old shares stop opening its seal. The manager chooses the holders among the
+  users an approver checked; that the holders are the right people rests on the approvers' checks (§4.9).
+- **First-use proof keys.** For an environment whose method is tpm, passphrase or shamir the manager cannot derive the
+  instance's proof key: the key the instance gives on its first unsealed link is held as pending, the administrators
+  are told (topic `InstanceUnsealRefused`), and its claims are not taken until an operator confirms it
+  (`confirm#InstanceUnsealProofKey`). Until a link is taken as unsealed, its status reports `sealState` `unverified`,
+  which a deploy (M3) and a rotation (M5) read as not up, and Monitor keeps the instance sealed.
+- **The recovery bundle.** Each time a link the manager takes as unsealed serves commands, the manager runs export-seal
+  over it and, when it is a seal bundle (at most 1 MiB) and not the one deposited last (`sealBundleHash`), deposits it
+  (wrapped values only) as a `note` item of the environment's operational vault (`AppInstance:<id>:sealBundle:<time>`,
+  `sealBundleDate` on the row): the first time, and after a rekey or rotate-root; `store#InstanceSealBundle` does the
+  same on demand. The manager does not read it back without a lease, though it could unwrap the root key
   in it with the transit key (§4.9).
 - **The limits** (plans/Vault-Instances.md §4.4, §4.9). The link key works while sealed, so without a TPM it is a usable
   key on disk; under the automatic policy a stolen disk with the link key and `seal.json` gets the root key from the
@@ -2321,8 +2346,8 @@ approver opens or the environment's machine access, as a provision does.
 
 1. Before anything changes: no other rotation of the item runs or waits for its lease (one at a time, on any cluster
    member: its `InstanceRotation` row's claim, `rotationRunning`); the vault's deposit key is checked; each instance
-   that uses the credential must be up and unsealed on its link (until M6 ties "unsealed" to the transit unseal, that
-   is the instance's claim, [The manager link](#the-manager-link); a new value goes only to an instance the manager
+   that uses the credential must be up and unsealed on its link (as the manager takes it, [The manager
+   link](#the-manager-link): a bare claim reads `unverified` and is not up; a new value goes only to an instance the manager
    would deploy to); and the value it holds now could go back where the new one goes (a MySQL password with a quote or
    a backslash, or an OpenSearch one a netrc file cannot hold, is changed by hand). Otherwise nothing is changed.
 2. A new value is made and **staged before the source changes**: the item's body opened under the lease with only the

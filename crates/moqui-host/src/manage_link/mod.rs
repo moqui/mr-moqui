@@ -115,6 +115,7 @@ pub enum Call {
     Holders,
     Shares,
     ShareConfirmations,
+    RotateProof,
     Event,
     Serve,
 }
@@ -142,6 +143,7 @@ impl Call {
             Self::Holders => "Holders",
             Self::Shares => "Shares",
             Self::ShareConfirmations => "ShareConfirmations",
+            Self::RotateProof => "RotateProof",
             Self::Event => "Event",
             Self::Serve => "Serve",
         }

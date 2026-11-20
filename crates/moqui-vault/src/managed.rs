@@ -174,48 +174,103 @@ pub fn verify_proof(key: &VerifyingKey, link: &ProofLink<'_>, signature: &[u8]) 
     key.verify(Statement::UnsealedProof, &crate::names::refs(&parts), signature)
 }
 
-/// A key a sealed instance made for one unseal by recovery shares, signed with its link key.
+/// A key a sealed instance made for one unseal by recovery shares, signed with its link key, with the time it stops
+/// being taken (epoch milliseconds, the instance's choice): a key the manager kept from an older unseal is not taken
+/// after it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnsealKey {
     pub instance_id: String,
     pub unseal_public: [u8; 32],
+    pub expires: i64,
     pub signature: Vec<u8>,
 }
 
 impl UnsealKey {
-    fn parts(instance_id: &str, unseal_public: &[u8; 32]) -> [Vec<u8>; 2] {
-        [instance_id.as_bytes().to_vec(), unseal_public.to_vec()]
+    fn parts(instance_id: &str, unseal_public: &[u8; 32], expires: i64) -> [Vec<u8>; 3] {
+        [
+            instance_id.as_bytes().to_vec(),
+            unseal_public.to_vec(),
+            expires.to_be_bytes().to_vec(),
+        ]
     }
 
-    /// Signed with the instance's link key.
+    /// Signed with the instance's link key, taken until `expires`.
     #[must_use]
-    pub fn sign(link_key: &SigningKey, instance_id: &str, unseal_public: &[u8; 32]) -> Self {
+    pub fn sign(link_key: &SigningKey, instance_id: &str, unseal_public: &[u8; 32], expires: i64) -> Self {
         let signature = link_key
             .sign(
                 Statement::UnsealKey,
-                &crate::names::refs(&Self::parts(instance_id, unseal_public)),
+                &crate::names::refs(&Self::parts(instance_id, unseal_public, expires)),
             )
             .to_vec();
         Self {
             instance_id: instance_id.to_string(),
             unseal_public: *unseal_public,
+            expires,
             signature,
         }
     }
 
-    /// A holder's check: signed by the link key pinned as `link_fingerprint`.
+    /// A holder's check, at `now` (epoch milliseconds): signed by the link key whose fingerprint the holder filed with
+    /// their share (`link_fingerprint`, never one the manager hands over), and not expired.
     ///
     /// # Errors
     ///
-    /// The link key is not the pinned one, or the signature is wrong.
-    pub fn verify(&self, link_public: &[u8], link_fingerprint: &str) -> Result<(), Error> {
+    /// The link key is not the one the holder filed, the signature is wrong, or the key expired.
+    pub fn verify(&self, link_public: &[u8], link_fingerprint: &str, now: i64) -> Result<(), Error> {
         let link = pinned_link_key(link_public, link_fingerprint)?;
         link.verify(
             Statement::UnsealKey,
-            &crate::names::refs(&Self::parts(&self.instance_id, &self.unseal_public)),
+            &crate::names::refs(&Self::parts(&self.instance_id, &self.unseal_public, self.expires)),
             &self.signature,
-        )
+        )?;
+        if self.expires <= now {
+            return Err(Error::Refused("the instance's unseal key expired"));
+        }
+        Ok(())
     }
+}
+
+/// What a rotated root key's new proof key is signed with: the old proof key, over the instance, its link key, the
+/// new proof key and the new transit wrap (none for a method the manager does not unseal).
+fn rotation_parts(instance_id: &str, link_fingerprint: &str, new_public: &[u8; 32], wrapped: &[u8]) -> [Vec<u8>; 4] {
+    [
+        instance_id.as_bytes().to_vec(),
+        link_fingerprint.as_bytes().to_vec(),
+        new_public.to_vec(),
+        Sha256::digest(wrapped).to_vec(),
+    ]
+}
+
+/// The instance's word, by its old root key's proof key, that its root key was rotated to the one whose proof key is
+/// `new_public` (and, under the manager's transit, wrapped as `wrapped`).
+#[must_use]
+pub fn sign_rotation(
+    old_key: &SigningKey,
+    instance_id: &str,
+    link_fingerprint: &str,
+    new_public: &[u8; 32],
+    wrapped: &[u8],
+) -> [u8; SIGNATURE_LEN] {
+    let parts = rotation_parts(instance_id, link_fingerprint, new_public, wrapped);
+    old_key.sign(Statement::ProofRotated, &crate::names::refs(&parts))
+}
+
+/// The manager's check of a rotation against the proof key it pinned.
+///
+/// # Errors
+///
+/// A wrong signature, or one over another key or wrap.
+pub fn verify_rotation(
+    pinned: &VerifyingKey,
+    instance_id: &str,
+    link_fingerprint: &str,
+    new_public: &[u8; 32],
+    wrapped: &[u8],
+    signature: &[u8],
+) -> Result<(), Error> {
+    let parts = rotation_parts(instance_id, link_fingerprint, new_public, wrapped);
+    pinned.verify(Statement::ProofRotated, &crate::names::refs(&parts), signature)
 }
 
 fn share_aad(instance_id: &str, unseal_public: &[u8; 32]) -> Vec<u8> {

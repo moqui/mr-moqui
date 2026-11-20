@@ -240,8 +240,10 @@ plans/Vault-Instances.md §4.4.
     its bootstrap bundle if one is still held (the manager holds it in memory only, until taken, a restart or 15
     minutes), and answer the manager's commands. Its claim of unsealed runs no command but status and seal (M6): the
     manager takes "unsealed" only on a link it unsealed by transit, or on which the instance signed the link's generation
-    and a challenge with the key derived from its root key, pinned on the row (from the root key at a transit unseal; on
-    first use for a method the manager does not unseal). A link of the instance from a new address is refused while its
+    and a challenge with the key derived from its root key, pinned on the row (from the root key at its first transit
+    unseal, within its pairing window or with a member's approval; on first use, confirmed by an operator, for a method
+    the manager does not unseal). A root key of the holder's own making, wrapped to the public transit key, is refused
+    once a key is pinned, and the pinned key stays; a new one is taken only signed by the old one. A link of the instance from a new address is refused while its
     link is live or within `manage@address-change-wait-seconds` of it going down, and told to the administrators, unless
     an operator confirms (`confirm#InstanceLinkAddress`). Under the automatic unseal policy such a holder, at the same
     address or after the wait, gets the root key by transit: the limit of the link key the plan names (§4.4); the
@@ -250,7 +252,8 @@ plans/Vault-Instances.md §4.4.
     is looked up again at each Hello and each unseal. A pairing takes the row's token under a row lock in a transaction,
     so one token pairs once. The manager keeps one transit key per instance in its keyring and sees each root key it
     unwraps; a holder's key reaches an instance only with an approver's signed key check the instance pinned the
-    approver for, and the manager relays a share sealed to a sealed instance's one-unseal key without opening it.
+    approver for, and the manager relays a share sealed to a sealed instance's one-unseal key without opening it; the
+    holder checks that key against the link key fingerprint filed with their share, not one the manager hands over.
 - **On the instance** the link opens no listener. It pins the manager's key from `manage@pin` (a provision's setting, or
   what a code is shown with); a manager that presents another key is refused before any secret is sent. The manager's
   commands run as the link's one identity and only these: status, seal, restart, drain, undrain, put-secret (the

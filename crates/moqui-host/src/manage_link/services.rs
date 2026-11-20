@@ -56,6 +56,7 @@ fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<
     moqui_core::rust_service!(map, approve_instance_unseal)?;
     moqui_core::rust_service!(map, store_instance_seal_bundle)?;
     moqui_core::rust_service!(map, forget_instance_unseal_proof_key)?;
+    moqui_core::rust_service!(map, confirm_instance_unseal_proof_key)?;
     moqui_core::rust_service!(map, get_instance_unseal_key)?;
     moqui_core::rust_service!(map, send_instance_sealed_share)?;
     moqui_core::rust_service!(map, confirm_instance_recovery_share)?;
@@ -455,7 +456,13 @@ pub(in crate::manage_link) mod manager {
             )));
         }
         let item_id = moqui_instance::shares::deposit_seal_bundle(facade, &instance_id, &reply.text)?;
-        Ok(out([("vaultItemId", Value::string(item_id))]))
+        Ok(out([("vaultItemId", Value::string(item_id.unwrap_or_default()))]))
+    }
+
+    pub(super) fn confirm_instance_unseal_proof_key(params: &Params, facade: &EntityFacade) -> Out {
+        let instance_id = required(params, "appInstanceId")?;
+        let key = moqui_instance::transit::confirm_proof_key(facade, &instance_id)?;
+        Ok(out([("unsealProofKey", Value::string(key))]))
     }
 
     pub(super) fn forget_instance_unseal_proof_key(params: &Params, facade: &EntityFacade) -> Out {
@@ -466,7 +473,8 @@ pub(in crate::manage_link) mod manager {
 
     pub(super) fn get_instance_unseal_key(params: &Params, facade: &EntityFacade) -> Out {
         let instance_id = required(params, "appInstanceId")?;
-        let Some((key, link_public, fingerprint)) = moqui_instance::shares::unseal_key(facade, &instance_id)? else {
+        // no fingerprint goes with it: the holder checks the link key against the one they filed with their share
+        let Some((key, link_public)) = moqui_instance::shares::unseal_key(facade, &instance_id)? else {
             return Ok(out([("waiting", Value::Bool(false))]));
         };
         Ok(out([
@@ -477,7 +485,7 @@ pub(in crate::manage_link) mod manager {
             ),
             ("signature", Value::string(moqui_vault::text::hex(&key.signature))),
             ("linkPublic", Value::string(moqui_vault::text::hex(&link_public))),
-            ("linkKeyFingerprint", Value::string(fingerprint)),
+            ("expires", Value::I64(key.expires)),
         ]))
     }
 
@@ -546,6 +554,9 @@ mod manager {
     pub(super) fn forget_instance_unseal_proof_key(_params: &Params, _facade: &EntityFacade) -> Out {
         not_built()
     }
+    pub(super) fn confirm_instance_unseal_proof_key(_params: &Params, _facade: &EntityFacade) -> Out {
+        not_built()
+    }
     pub(super) fn get_instance_unseal_key(_params: &Params, _facade: &EntityFacade) -> Out {
         not_built()
     }
@@ -601,6 +612,12 @@ fn store_instance_seal_bundle(params: &Params, facade: &EntityFacade) -> Out {
 /// not unseal; its next proof is pinned again.
 fn forget_instance_unseal_proof_key(params: &Params, facade: &EntityFacade) -> Out {
     manager::forget_instance_unseal_proof_key(params, facade)
+}
+
+/// `confirm#InstanceUnsealProofKey`: an operator confirms the proof key an instance gave on its first unsealed link,
+/// for a method the manager does not unseal.
+fn confirm_instance_unseal_proof_key(params: &Params, facade: &EntityFacade) -> Out {
+    manager::confirm_instance_unseal_proof_key(params, facade)
 }
 
 /// `get#InstanceUnsealKey`: a sealed instance's key for this unseal, signed with its link key, for a recovery holder.
