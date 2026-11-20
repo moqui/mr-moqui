@@ -160,6 +160,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="sslRootCert" type="text-medium"/>
         <field name="readOnly" type="text-indicator" default="'Y'"/>
         <field name="ownerUserId" type="id"/>
+        <field name="revision" type="number-integer"><description>One more at each store#DatabaseConnection: a pool
+            of an older revision is not used, on any cluster member (SEC-TLS-101).</description></field>
         <relationship type="one" title="Owner" related="moqui.security.UserAccount">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
     </entity>

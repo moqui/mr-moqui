@@ -73,6 +73,7 @@ fn bed(name: &str) -> Bed {
             "moqui.security.UserAccount",
             &[("userId", id), ("username", id), ("userFullName", name)],
         );
+        crate::run::grant_agent_use(&facade, id);
     }
     row(
         &facade,
@@ -802,6 +803,64 @@ fn a_background_agent_writes_by_policy_and_a_read_capped_one_gets_no_approval() 
         RunState::Completed
     );
     assert!(calls("job-1").is_empty());
+    assert!(
+        result_text(&bed).contains("nobody can give it here"),
+        "{}",
+        result_text(&bed)
+    );
+}
+
+/// SEC-AI-96: a job run whose starter lowered `approval.policy` away (an eval experiment's, whose text may be another
+/// user's) gets no write approved by the agent's policy: with nobody to ask it is refused.
+#[test]
+fn a_job_run_without_the_policy_capability_gets_no_write_approved_by_policy() {
+    let bed = bed("nopolicy");
+    let _entered = bed.ctx.enter();
+    row(
+        &bed.facade,
+        "moqui.agent.AgentDefinition",
+        &[
+            ("agentId", "jobber"),
+            ("agentName", "Jobber"),
+            ("featureId", "assist"),
+            ("surfaces", "job"),
+        ],
+    );
+    row(
+        &bed.facade,
+        "moqui.agent.AgentToolPolicy",
+        &[
+            ("agentId", "jobber"),
+            ("sequenceNum", "1"),
+            ("toolPattern", "test_*"),
+            ("approvalModeEnumId", "AgamPolicy"),
+        ],
+    );
+    fake::script(
+        &bed.endpoint,
+        vec![
+            tool_step("e1", "test_approve", json!({"key": "experiment-1"})),
+            fake::Reply::text("Cannot."),
+        ],
+    );
+    let started = run::start_run(
+        &bed.factory,
+        &StartRequest {
+            user_id: USER.to_string(),
+            agent_id: "jobber".to_string(),
+            surface: crate::prompt::Surface::Job,
+            text: "Write it".to_string(),
+            client_caps: Some(vec!["screen".to_string()]),
+            extra_caps: vec![TEST_CAP.to_string()],
+            ..StartRequest::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        run::wait_for(&bed.factory, &started.run_id, WAIT).unwrap(),
+        RunState::Completed
+    );
+    assert!(calls("experiment-1").is_empty(), "policy approved nothing");
     assert!(
         result_text(&bed).contains("nobody can give it here"),
         "{}",

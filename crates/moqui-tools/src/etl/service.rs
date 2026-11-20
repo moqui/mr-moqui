@@ -189,10 +189,41 @@ fn sign_in_owner(facade: &EntityFacade, mapping_id: &str, job_name: &str) -> Res
             .eq("jobName", Value::string(job_name))
             .eq("userId", Value::string(&owner))
             .one()?;
-        if job_user.is_none() {
+        let Some(job_user) = job_user else {
             return Err(LibError::new(format!(
                 "The owner of ETL mapping {mapping_id} is not a user of ServiceJob {job_name}"
             )));
+        };
+        // the row is the owner's consent only when the owner added it, or a holder of ADMIN_LOGIN_AS who may act as
+        // the owner (user::held_beyond): a job manager adds recipients too (SEC-TLS-103)
+        let added_by = job_user.get("addedByUserId").map(to_plain_string).unwrap_or_default();
+        if added_by != owner && !may_act_as(facade, &added_by, &owner)? {
+            return Err(LibError::new(format!(
+                "The owner of ETL mapping {mapping_id} was made a user of ServiceJob {job_name} by someone who may not \
+                 run it as them"
+            )));
+        }
+        // a value map another user saved since is not the owner's to run (SEC-TLS-103)
+        for field in facade
+            .find(MAPPING_FIELD)?
+            .eq("mappingId", Value::string(mapping_id))
+            .list()?
+            .iter()
+        {
+            let Some(value_map_id) = field.get("valueMapId").map(to_plain_string).filter(|id| !id.is_empty()) else {
+                continue;
+            };
+            let map_owner = facade
+                .find(VALUE_MAP)?
+                .eq("valueMapId", Value::string(&value_map_id))
+                .one()?
+                .and_then(|row| row.get("ownerUserId").map(to_plain_string))
+                .unwrap_or_default();
+            if map_owner != owner {
+                return Err(LibError::new(format!(
+                    "ETL mapping {mapping_id} reads value map {value_map_id}, which is not its owner's"
+                )));
+            }
         }
         let account = facade
             .find("moqui.security.UserAccount")?
@@ -215,6 +246,34 @@ fn sign_in_owner(facade: &EntityFacade, mapping_id: &str, job_name: &str) -> Res
         ))
     })?;
     Ok(restore)
+}
+
+/// Whether the user `actor` (who added a job's user row) may run as `owner`: an active account holding
+/// `ADMIN_LOGIN_AS`, of whom `owner` holds no access beyond (`user::held_beyond`), asked in a context of its own.
+fn may_act_as(facade: &EntityFacade, actor: &str, owner: &str) -> Result<bool, LibError> {
+    if actor.is_empty() {
+        return Ok(false);
+    }
+    let Some(username) = facade
+        .find("moqui.security.UserAccount")?
+        .eq("userId", Value::string(actor))
+        .one()?
+        .and_then(|row| row.get("username").map(to_plain_string))
+    else {
+        return Ok(false);
+    };
+    let Some(factory) = ExecutionContext::with_current(|ec| std::sync::Arc::clone(ec.factory())) else {
+        return Ok(false);
+    };
+    let context = factory.new_context();
+    let _entered = context.enter();
+    if moqui_core::user::internal_login_user(&username).is_err() {
+        return Ok(false);
+    }
+    Ok(moqui_core::user::has_permission("ADMIN_LOGIN_AS").unwrap_or(false)
+        && moqui_core::user::held_beyond(owner)
+            .map_err(|err| LibError::new(err.to_string()))?
+            .is_none())
 }
 
 /// [`may_change_owned`] of a saved mapping.
@@ -959,7 +1018,10 @@ pub(crate) fn get_etl_mapping(
 }
 
 /// Save `mapping` (an inline map) as `EtlMapping` and its `EtlMappingField` rows, its fields replaced. A new mapping
-/// gets an id. Returns the id.
+/// gets an id. Returns the id. Whoever saves a mapping owns it: a `DATABASE_ADMIN` holder who changes another user's
+/// mapping becomes its owner, so a scheduled run (which signs in as the owner, [`sign_in_owner`]) never runs what
+/// another user wrote under the old owner's permissions, and the old owner's jobs refuse it until the new owner is a
+/// user of them (SEC-TLS-103).
 fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibError> {
     let user_id = moqui_core::user::current_user_id().ok().flatten();
     let Value::Map(map) = mapping.to_value() else {
@@ -974,7 +1036,19 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
         };
         let creating = existing.is_none();
         let mut row = match existing {
-            Some(row) => row,
+            Some(mut row) => {
+                let owner = row.get("ownerUserId").map(to_plain_string).unwrap_or_default();
+                if let Some(user) = user_id.as_ref().filter(|user| **user != owner) {
+                    tracing::info!(
+                        mapping = mapping.mapping_id.as_deref().unwrap_or_default(),
+                        from = owner,
+                        to = user.as_str(),
+                        "An ETL mapping saved by a user other than its owner is now that user's"
+                    );
+                    row.set("ownerUserId", Value::string(user));
+                }
+                row
+            }
             None => {
                 let mut row = facade.make_value(MAPPING)?;
                 match &mapping.mapping_id {
@@ -1213,6 +1287,11 @@ pub(crate) fn store_etl_value_map(
             let id = match existing {
                 Some(mut row) => {
                     row.set("description", Value::string(&description));
+                    // whoever saves a value map owns it, as a mapping: a scheduled run of the old owner's mapping
+                    // refuses it then (SEC-TLS-103)
+                    if !owner.is_empty() {
+                        row.set("ownerUserId", Value::string(&owner));
+                    }
                     row.update(facade)?;
                     value_map_id.clone()
                 }

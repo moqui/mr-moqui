@@ -66,18 +66,67 @@ fn steward_of(id: &str) -> Result<(), Error> {
 fn reads_document(ec: &ExecutionContext, document: &str) -> Result<bool, Error> {
     let groups = moqui_core::user::user_group_ids(moqui_core::user::current_user_id().map_err(fail)?.as_deref())
         .map_err(fail)?;
+    Ok(document_groups(ec, document)?
+        .iter()
+        .any(|group| groups.contains(group)))
+}
+
+/// The groups that read `document`: its `DataDocumentUserGroup` rows.
+fn document_groups(ec: &ExecutionContext, document: &str) -> Result<Vec<String>, Error> {
     let rows = metadata(ec, || {
         entity(ec)?
             .find(DOCUMENT_GROUP)?
             .eq("dataDocumentId", Value::string(document))
             .list()
     })?;
-    let reads = rows.iter().any(|row| {
-        row.get("userGroupId")
-            .and_then(Value::as_str)
-            .is_some_and(|group| groups.contains(group))
-    });
-    Ok(reads)
+    Ok(rows
+        .iter()
+        .filter_map(|row| row.get("userGroupId").and_then(Value::as_str).map(str::to_owned))
+        .collect())
+}
+
+/// Refused unless every group that reads `document` is the steward's to widen (SEC-TLS-92, [`may_widen`]): one they
+/// belong to by a membership of their own (never the implicit `ALL_USERS`), or one whose widen artifact their own grant
+/// holds; `ADMIN` reads everything already. A field added to the document, of its own entity or a related one, is read by all
+/// of them from the index.
+fn check_readers_own(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
+    let mut others = 0;
+    for group in document_groups(ec, document)? {
+        if !may_widen(&group)? {
+            others += 1;
+        }
+    }
+    if others > 0 {
+        return Err(fail(format!(
+            "document {document} is read by {others} group(s) that are not yours to widen; a field is added to it by a \
+             steward who belongs to, or holds the widen grant of, every group that reads the document"
+        )));
+    }
+    Ok(())
+}
+
+/// The artifact of adding a field to a document a group reads, for a steward not in that group:
+/// `org.moqui.report.widen.<userGroupId>` (update), apart from the share artifacts, which let a definition be shared
+/// with the group and nothing more.
+pub(crate) const WIDEN_ARTIFACT: &str = "org.moqui.report.widen";
+
+/// Whether a field the caller adds to a document `group` reads is theirs to add (SEC-TLS-92): `ADMIN`, which reads every
+/// entity already, is no group to widen; any other is the caller's by a membership of their own (never the implicit
+/// `ALL_USERS`, which no grant widens either) or by its widen artifact ([`WIDEN_ARTIFACT`]) in their own grant.
+fn may_widen(group: &str) -> Result<bool, Error> {
+    if group == "ADMIN" {
+        return Ok(true);
+    }
+    if group == "ALL_USERS" {
+        return Ok(false);
+    }
+    if moqui_core::user::is_in_group(group).map_err(fail)? {
+        return Ok(true);
+    }
+    if !group.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-.:".contains(&c)) {
+        return Ok(false);
+    }
+    moqui_core::user::permitted_own("AT_SERVICE", &format!("{WIDEN_ARTIFACT}.{group}"), "update").map_err(fail)
 }
 
 /// The steward's check before dataset `id` is made over its document, changes it or builds its index (SEC-TLS-92): the
@@ -979,6 +1028,11 @@ pub fn store_business_dataset_fields(
             (None, Some(old)) => old.to_owned(),
             (None, None) => return Err(fail("a new field needs a field path")),
         };
+        // a field added is read from the index by every reader group of the document: the steward adds one only where
+        // those groups are all theirs to widen (SEC-TLS-92)
+        if old_path != Some(path.as_str()) {
+            check_readers_own(ec, &document)?;
+        }
         let alias = change["fieldNameAlias"].as_str().unwrap_or("");
         if !alias.is_empty() && !plain_name(alias) {
             return Err(fail(format!("field name {alias} must be letters, digits or _")));

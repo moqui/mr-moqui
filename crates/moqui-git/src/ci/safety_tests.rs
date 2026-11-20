@@ -107,13 +107,13 @@ fn the_pools_are_an_operators_and_a_registered_pool_is_one_owners() {
     let mut owned = registered("P1");
     owned.push(("ownerId", s("acme")));
     ok(&fixture, WRITER, &store, &owned);
-    // never the host's network or another container's
-    for rule in ["host", "container:db"] {
+    // never the host's network, another container's or a namespace by path
+    for rule in ["host", "container:db", "ns:/proc/1/ns/net"] {
         let mut escaping = owned.clone();
         escaping.push(("egressRule", s(rule)));
         let (_, errors) = call(&fixture, WRITER, &store, &escaping);
         assert!(
-            errors.contains("is the host's network or another container's"),
+            errors.contains("is not bridge, none or the name of a network of the host"),
             "{rule}: {errors}"
         );
     }
@@ -320,24 +320,26 @@ fn what_a_repository_keeps_is_capped_and_its_caches_count() {
             path: None,
             cache_key: (kind == Kind::Cache).then_some(key.as_str()),
             retention_days: None,
+            size: Some(bytes.len() as u64),
         };
         artifact::store(&entity, &run, &job, &upload, &mut &bytes[..])
     };
     upload(Kind::Artifact, "a", &[1u8; 60]).unwrap();
     upload(Kind::Cache, "c", &[2u8; 30]).unwrap();
-    // the cap: what is left is 10 bytes, so a larger upload is cut there and refused as the quota's
+    // SEC-GIT-90: a cache is evicted to make room, least recently used first; an artifact never is, so what is left
+    // (40 bytes) cuts a larger upload there and it is refused as the quota's
     let refused = upload(Kind::Artifact, "b", &[3u8; 50]).unwrap_err();
     assert!(refused.message().starts_with("GitCiStorageQuota: "), "{refused}");
     let usage = super::artifact::stored_by_kind(&entity, "repositoryId", "app").unwrap();
-    assert_eq!(usage, (60, 30));
-    assert_eq!(super::artifact::stored_bytes(&entity, "ownerId", "acme").unwrap(), 90);
+    assert_eq!(usage, (60, 0), "the cache was evicted");
+    assert_eq!(super::artifact::stored_bytes(&entity, "ownerId", "acme").unwrap(), 60);
     upload(Kind::Report, "r", &[4u8; 10]).unwrap();
-    let refused = upload(Kind::Report, "r2", &[5u8; 1]).unwrap_err();
+    let refused = upload(Kind::Report, "r2", &[5u8; 31]).unwrap_err();
     assert!(refused.message().contains("GitCiStorageQuota"), "{refused}");
     // every upload of a job counts toward max-artifacts, its cache too
-    {
+    for id in ["A-OTHER", "A-OTHER-2"] {
         let mut capped = EntityValue::make(&entity, "moqui.resource.GitRunArtifact").unwrap();
-        capped.set("artifactId", s("A-OTHER"));
+        capped.set("artifactId", s(id));
         capped.set("repositoryId", s("elsewhere"));
         capped.set("jobRunId", s("J1"));
         capped.set("sizeBytes", Value::I64(0));
@@ -348,6 +350,161 @@ fn what_a_repository_keeps_is_capped_and_its_caches_count() {
         refused.message().contains("at most 4 artifacts, reports and caches"),
         "{refused}"
     );
+}
+
+/// An upload body that, as it is read, has another upload of the job stored beside it: what a second upload sent at
+/// once does.
+struct Beside<'a> {
+    entity: &'a moqui_core::entity::EntityFacade,
+    body: &'a [u8],
+    stored: bool,
+}
+
+impl std::io::Read for Beside<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if !self.stored {
+            self.stored = true;
+            let mut beside = EntityValue::make(self.entity, "moqui.resource.GitRunArtifact").unwrap();
+            beside.set("artifactId", s("A-BESIDE"));
+            beside.set("repositoryId", s("app"));
+            beside.set("jobRunId", s("J1"));
+            beside.set("sizeBytes", Value::I64(0));
+            beside.create(self.entity).unwrap();
+        }
+        std::io::Read::read(&mut self.body, buf)
+    }
+}
+
+/// SEC-GIT-90: a job's uploads are counted again once one is stored, so of two sent at once with room for one, the one
+/// that went past `max-artifacts` is taken back.
+#[test]
+fn a_jobs_uploads_are_counted_again_once_one_is_stored() {
+    let fixture = operator_fixture("ci-safety-recount", r#"<git-ci max-artifacts="1"/>"#);
+    queued_run(&fixture, Some("acme"));
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    let job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
+    let upload = Upload {
+        kind: Kind::Artifact,
+        name: "a",
+        path: None,
+        cache_key: None,
+        retention_days: None,
+        size: None,
+    };
+    let mut body = Beside {
+        entity: &entity,
+        body: b"the artifact",
+        stored: false,
+    };
+    let refused = artifact::store(&entity, &run, &job, &upload, &mut body).unwrap_err();
+    assert!(refused.message().contains("at most 1 artifacts"), "{refused}");
+    let kept: Vec<String> = entity
+        .find("moqui.resource.GitRunArtifact")
+        .unwrap()
+        .eq("jobRunId", s("J1"))
+        .list()
+        .unwrap()
+        .iter()
+        .map(|row| text(row, "artifactId"))
+        .collect();
+    assert_eq!(kept, ["A-BESIDE"], "the one past the count was taken back");
+}
+
+/// SEC-GIT-90: an untrusted run's upload evicts no trusted cache, and a trusted upload of no said size evicts caches
+/// for the bytes it stored, not for its kind's whole limit.
+#[test]
+fn only_a_trusted_upload_evicts_caches_and_by_what_it_stored() {
+    let fixture = operator_fixture(
+        "ci-safety-evict",
+        r#"<git-ci max-repository-upload-bytes="100" max-untrusted-run-upload-bytes="0"/>"#,
+    );
+    queued_run(&fixture, Some("acme"));
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("trusted", s("Y"));
+    run.update(&entity).unwrap();
+    let job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
+    let upload = |run: &EntityValue, kind: Kind, name: &str, bytes: &[u8], size: Option<u64>| {
+        let key = format!("key-{name}");
+        let upload = Upload {
+            kind,
+            name,
+            path: None,
+            cache_key: (kind == Kind::Cache).then_some(key.as_str()),
+            retention_days: None,
+            size,
+        };
+        artifact::store(&entity, run, &job, &upload, &mut &bytes[..])
+    };
+    upload(&run, Kind::Cache, "c", &[1u8; 30], None).unwrap();
+    upload(&run, Kind::Cache, "d", &[2u8; 30], None).unwrap();
+    let usage = || super::artifact::stored_by_kind(&entity, "repositoryId", "app").unwrap();
+    assert_eq!(usage(), (0, 60));
+    // an untrusted run's upload: the trusted caches stay, and what is left cuts it
+    let mut untrusted = run.clone();
+    untrusted.set("trusted", s("N"));
+    let refused = upload(&untrusted, Kind::Artifact, "u", &[3u8; 50], Some(50)).unwrap_err();
+    assert!(refused.message().starts_with("GitCiStorageQuota: "), "{refused}");
+    assert_eq!(usage(), (0, 60), "no cache evicted for an untrusted upload");
+    // a trusted upload of no said size: stored, then one cache (the least recently used) evicted for its 50 bytes
+    upload(&run, Kind::Artifact, "a", &[4u8; 50], None).unwrap();
+    assert_eq!(usage(), (50, 30), "one cache, not every one");
+}
+
+/// SEC-GIT-90: an untrusted run keeps at most `git-ci` `max-untrusted-run-upload-bytes` over all its jobs, below the
+/// repository's cap, which has a default now.
+#[test]
+fn an_untrusted_run_keeps_less_than_the_repository_may() {
+    let fixture = operator_fixture(
+        "ci-safety-untrusted-quota",
+        r#"<git-ci max-untrusted-run-upload-bytes="50"/>"#,
+    );
+    queued_run(&fixture, Some("acme"));
+    let entity = fixture.entity.clone();
+    let _entered = fixture.context.enter();
+    let _authz = fixture.context.disable_authz();
+    let mut run = super::one(&entity, PIPELINE_RUN, "pipelineRunId", "R1")
+        .unwrap()
+        .unwrap();
+    run.set("trusted", s("N"));
+    run.update(&entity).unwrap();
+    let job = super::one(&entity, JOB_RUN, "jobRunId", "J1").unwrap().unwrap();
+    let upload = |run: &EntityValue, name: &str, bytes: &[u8]| {
+        let upload = Upload {
+            kind: Kind::Artifact,
+            name,
+            path: None,
+            cache_key: None,
+            retention_days: None,
+            size: None,
+        };
+        artifact::store(&entity, run, &job, &upload, &mut &bytes[..])
+    };
+    upload(&run, "a", &[1u8; 40]).unwrap();
+    let refused = upload(&run, "b", &[2u8; 20]).unwrap_err();
+    assert!(
+        refused
+            .message()
+            .starts_with("GitCiStorageQuota: the untrusted run keeps"),
+        "{refused}"
+    );
+    assert_eq!(
+        super::artifact::stored_bytes(&entity, "pipelineRunId", "R1").unwrap(),
+        40
+    );
+    // a trusted run of the repository is held only to the repository's cap
+    run.set("trusted", s("Y"));
+    run.update(&entity).unwrap();
+    upload(&run, "c", &[3u8; 20]).unwrap();
 }
 
 #[test]
@@ -526,6 +683,7 @@ fn a_cache_of_a_job_given_secrets_is_protected() {
         path: None,
         cache_key: Some("deps-1"),
         retention_days: None,
+        size: None,
     };
     let id = artifact::store(&entity, &run, &job, &upload, &mut &b"cached"[..])
         .unwrap()

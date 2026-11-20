@@ -866,6 +866,9 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
             &format!("there is no agent {}", run.agent_id),
         );
     };
+    if let Some((code, text)) = lost_standing(&facade, &run, &agent) {
+        return fail(&facade, &mut sink, run_id, code, &text);
+    }
     if run.state == RunState::Submitted {
         quietly(|| transition(&facade, &mut sink, run_id, RunState::Working, &Change::default()))?;
     }
@@ -989,6 +992,43 @@ pub(crate) fn seen_references(facade: &EntityFacade, conversation_id: &str) -> R
         }
     }
     Ok(seen)
+}
+
+/// Whether `user_id` is an agent's own account (some agent's `runAsUserId` or `chatUserId`): a service user a trigger
+/// runs as, not a person. One that cannot be read is not.
+fn agent_account(facade: &EntityFacade, user_id: &str) -> bool {
+    quietly(|| {
+        facade
+            .find("moqui.agent.AgentDefinition")?
+            .condition(Condition::or(vec![
+                Condition::equals("runAsUserId", Value::string(user_id)),
+                Condition::equals("chatUserId", Value::string(user_id)),
+            ]))
+            .disable_authz()
+            .count()
+    })
+    .is_ok_and(|count| count > 0)
+}
+
+/// Why a run may not take another step, checked at each step as `start_run` and its callers check at the start: its
+/// agent was disabled, or its user became external (`EXTERNAL_USER`) or lost `AgentUse`. A trigger's run as an agent's
+/// own account ([`agent_account`]) is that service user's, whose `AgentUse` is the trigger's to check; a trigger that
+/// runs as a person is held to theirs. The code and the text of the run's end, or `None`.
+fn lost_standing(facade: &EntityFacade, run: &RunRow, agent: &AgentDef) -> Option<(&'static str, String)> {
+    if agent.disabled {
+        return Some(("agent_disabled", format!("agent {} is disabled", agent.agent_id)));
+    }
+    if moqui_core::user::is_external_user(&run.user_id) {
+        return Some(("not_permitted", "the agents are not available to this user".to_string()));
+    }
+    let service_user = run.trigger_id.is_some() && agent_account(facade, &run.user_id);
+    if !service_user && !moqui_core::user::user_has_permission(&run.user_id, "AgentUse").unwrap_or(false) {
+        return Some((
+            "not_permitted",
+            "the run's user no longer has the AgentUse permission".to_string(),
+        ));
+    }
+    None
 }
 
 fn fail(facade: &EntityFacade, sink: &mut EventSink, run_id: &str, code: &str, text: &str) -> Result<Next, Error> {

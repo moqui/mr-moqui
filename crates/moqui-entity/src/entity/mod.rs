@@ -64,7 +64,7 @@ pub use find::{
 #[doc(hidden)]
 pub use fk::fk_scope;
 pub use fk::{missing_related, MissingRelated};
-pub use meta::{DdlConf, EntityDbMeta, TableCheck};
+pub use meta::{DdlConf, EntityDbMeta, ForcedCheck, TableCheck};
 pub use meta_compare::{
     CatalogForeignKey, CatalogIndex, ColumnTypeDiff, ForeignKeyDiff, IndexDiff, IndexKind, SchemaDiff, TableDiff,
 };

@@ -84,6 +84,8 @@ const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote
 /// and its confirmation (plans/Security-Review-Medium.md SEC-TLS-88). No entity-auto service writes them either.
 const AUDIT_ENTITY_KEYS: &[&str] = &[
     "databaseaudit",
+    // the replay keys of signed requests: a generic delete would let a captured message through again (SEC-DAT-90)
+    "signaturereplay",
     "sqlruntoken",
     "databaseconnection",
     "databasejob",

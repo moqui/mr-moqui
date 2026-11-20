@@ -93,6 +93,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="jobName" type="text-short" is-pk="true"/>
         <field name="userId" type="id" is-pk="true"/>
         <field name="receiveNotifications" type="text-indicator"/>
+        <field name="addedByUserId" type="id"><description>Who made the row, set by the ServiceJobUserAddedBy entity
+            ECA: a job that runs as its user (an ETL mapping's owner) takes the row as their consent only when they or a
+            holder of ADMIN_LOGIN_AS who may act as them made it (SEC-TLS-103).</description></field>
         <relationship type="one" related="moqui.service.job.ServiceJob"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount"/>
     </entity>

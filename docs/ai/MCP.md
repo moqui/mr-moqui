@@ -55,7 +55,11 @@ The server is off by default; while it is off `/mcp` and its documents answer 40
 login key as the password); never the account password. Credentials are taken only over TLS, a believed proxy's https
 or loopback (403 otherwise). Without valid credentials the answer is 401 with
 `WWW-Authenticate: Bearer realm="mcp", Basic realm="mcp"` and the JSON-RPC code `-31401`; a user without the
-permissions is 403 (`-31403`). A refused login counts for web protection. `server/discover` needs no credentials.
+permissions is 403 (`-31403`). When an `LlmApiClient` row with the `mcp` scope names the credential, one such row of the
+user's must not be disabled and, with `allowedAgents` set, allow the MCP agent (403 otherwise); a credential no row with
+the `mcp` scope names (none, or rows for the gateway or A2A only, as a developer's key with a gateway row) is
+bounded by its user's permissions alone. A refused login counts for web protection. `server/discover` needs no
+credentials.
 
 OAuth comes later: Moqui as the OAuth 2.1 authorization server, with general JWT validation (plan 11, answered question
 10). The seam is `llm::mcp::www_authenticate`, where a 401 will name its protected resource metadata.
@@ -267,8 +271,7 @@ legacy one with sessions and event streams, the fence and sim refusals, the SSRF
 
 ## Not yet
 
-- OAuth 2.1 (Moqui as the authorization server, protected resource metadata, JWT validation) and `LlmApiClient` with the
-  `mcp` scope.
+- OAuth 2.1 (Moqui as the authorization server, protected resource metadata, JWT validation).
 - `subscriptions/listen` and `listChanged` (the TTL is the freshness hint), resources and prompts, progress
   notifications and SSE answers.
 - The legacy `initialize` protocol (2025-11-25 and earlier) for older clients; such a client gets 400 HeaderMismatch or

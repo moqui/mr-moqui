@@ -171,6 +171,11 @@ pub static CATALOG: &[Unit] = &[
         "tools",
         Class::Restart("the tool factories and the worker and request pools start at boot"),
     )
+    // read on each use: the audit's days at its purge, the external databases' address rule at each pool
+    .attrs(&[
+        ("database-audit-days", Class::Live),
+        ("external-database-private-network", Class::Live),
+    ])
     .children(&[keyed(
         "tool-factory",
         &["class"],
@@ -185,6 +190,8 @@ pub static CATALOG: &[Unit] = &[
         keyed("artifact", &["type"], TELEMETRY),
         keyed("metric", &["name"], TELEMETRY),
         single("operations", TELEMETRY).children(&[keyed("operation", &["service"], TELEMETRY)]),
+        // read on each post (moqui-report browser.rs)
+        single("browser", Class::Live),
     ]),
     // only read at boot for deprecation warnings
     single("server-stats", Class::Live).children(&[keyed("artifact-stats", &["type", "sub-type"], Class::Live)]),
@@ -294,6 +301,11 @@ pub static CATALOG: &[Unit] = &[
         "search-facade",
         Class::Restart("the search backend is attached at boot"),
     )
+    // read at each search
+    .attrs(&[
+        ("query-timeout-seconds", Class::Live),
+        ("query-max-clauses", Class::Live),
+    ])
     .children(&[
         single("cluster", Class::Restart("the search backend is attached at boot"))
             .secrets(&[("password", Secret::Kept)]),

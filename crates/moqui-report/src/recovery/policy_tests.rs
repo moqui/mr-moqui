@@ -30,6 +30,7 @@ fn facts() -> Facts {
         stopped: false,
         allow_automatic: true,
         confidence: 0.999,
+        regressed: true,
         degraded: false,
         locality: "instance".into(),
         affected: vec!["a".into()],
@@ -235,4 +236,22 @@ fn adapters_and_targets_must_fit_the_action() {
         (manual.step.action, manual.status),
         (Action::Restart, Status::AwaitingApproval)
     );
+}
+
+/// SEC-TLS-107: an incident with no regression (an alert's, an operator's, a row written by hand) has no measured
+/// confidence, so an automatic policy only asks for approval of its step.
+#[test]
+fn an_incident_with_no_regression_takes_no_automatic_step() {
+    let unmeasured = Facts {
+        regressed: false,
+        confidence: 1.0,
+        ..facts()
+    };
+    let outcome = decide(
+        &policy(Mode::Automatic, vec![step("isolate-instance", None, None)]),
+        &unmeasured,
+    );
+    assert_eq!(outcome.step.action, Action::IsolateInstance);
+    assert_eq!(outcome.status, Status::AwaitingApproval);
+    assert!(outcome.blocked.unwrap_or_default().contains("no regression"));
 }

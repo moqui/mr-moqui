@@ -453,9 +453,12 @@ fn new_id() -> Result<String, Error> {
     Ok(moqui_lib::codec::hex_encode(&bytes))
 }
 
-/// A background agent: its run is a job, and every surface it serves is (plan 4.8: policy approves only for them).
+/// A background agent: its run is a job, and every surface it serves is (plan 4.8: policy approves only for them). A
+/// job run whose starter lowered `approval.policy` away (an eval experiment's, whose text may be another user's) is not:
+/// its writes need a person, so with nobody to ask they are refused.
 fn is_background(ctx: &TurnContext<'_>) -> bool {
     ctx.surface == Surface::Job
+        && ctx.caps.has(crate::tools::caps::APPROVAL_POLICY)
         && !ctx.agent.surfaces.is_empty()
         && ctx.agent.surfaces.iter().all(|surface| *surface == Surface::Job)
 }

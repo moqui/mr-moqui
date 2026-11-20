@@ -618,3 +618,19 @@ fn telemetry_bulk_acknowledges_individual_inputs_and_rejects_incomplete_response
     assert!(backend.index_telemetry_batch(&mapping, &documents[..1]).is_err());
     assert_eq!(server.join().unwrap(), ["POST /_bulk HTTP/1.1", "POST /_bulk HTTP/1.1"]);
 }
+
+/// SEC-DAT-87: a wildcard term keeps only its own `*` and `?` as wildcards: a backslash-escaped `:` or `/` is text, not
+/// a field or a regular expression.
+#[test]
+fn a_wildcard_term_carries_no_query_syntax() {
+    let compiled = |text: &str| {
+        let Query::Text { terms, kind, .. } = crate::search::parse::parse_query_string(text).unwrap() else {
+            panic!("{text} is not a text clause");
+        };
+        assert_eq!(kind, crate::search::query::TextMatch::Wildcard, "{text}");
+        super::escape_wildcard(&terms)
+    };
+    assert_eq!(compiled(r"a\:b*c*"), r"a\:b*c*");
+    assert_eq!(compiled(r"\/.*x.*\/*?*"), r"\/.*x.*\/*?*");
+    assert_eq!(compiled(r"a\*b?c*"), r"a\*b?c*");
+}

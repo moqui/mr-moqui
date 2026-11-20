@@ -88,6 +88,15 @@ pub struct TableCheck {
     pub errors: usize,
 }
 
+/// What [`EntityFacade::check_tables_forced`] did: the statements that ran, the steps that failed, and the entities
+/// not checked at all with why.
+#[derive(Debug, Default)]
+pub struct ForcedCheck {
+    pub ddl: Vec<String>,
+    pub errors: usize,
+    pub failed: Vec<(String, String)>,
+}
+
 /// How long a DDL statement of [`EntityFacade::check_tables_ddl`] waits for its table's lock on Postgres.
 const DDL_LOCK_TIMEOUT: &str = "5s";
 
@@ -321,6 +330,62 @@ impl EntityFacade {
     pub fn forget_tables(&self) {
         lock(&self.inner.tables.exists).clear();
         lock(&self.inner.tables.checked).clear();
+    }
+
+    /// Check the tables of `names` (view entities by their members), first forgetting what is known of the tables, as
+    /// Java's `forceCheckExistingTables`. With `groups`, only the entities of those entity groups are checked. The
+    /// names are checked together; when that fails (a view with a member that is not defined), each is checked on its
+    /// own, and a name that fails is logged and listed in [`ForcedCheck::failed`] while the rest go on.
+    pub fn check_tables_forced(&self, names: Vec<String>, groups: Option<&[String]>) -> ForcedCheck {
+        let default_group = self.default_group().to_string();
+        let mut failed: Vec<(String, String)> = Vec::new();
+        let names: Vec<String> = match groups {
+            None => names,
+            Some(groups) => names
+                .into_iter()
+                .filter(|name| {
+                    match self.with_entity(name, |entity, _, _| {
+                        Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
+                    }) {
+                        Ok(group) => groups.contains(&group),
+                        Err(err) => {
+                            failed.push((name.clone(), err.message().to_string()));
+                            false
+                        }
+                    }
+                })
+                .collect(),
+        };
+        self.forget_tables();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut check = match self.check_tables_ddl(&refs) {
+            Ok(check) => check,
+            Err(err) => {
+                tracing::warn!(
+                    "Checking the tables together failed, checking each entity: {}",
+                    err.message()
+                );
+                let mut each = TableCheck::default();
+                for name in &names {
+                    match self.check_tables_ddl(&[name.as_str()]) {
+                        Ok(check) => {
+                            each.ddl.extend(check.ddl);
+                            each.errors += check.errors;
+                        }
+                        Err(err) => {
+                            tracing::error!("Table check of entity {name} failed: {}", err.message());
+                            failed.push((name.clone(), err.message().to_string()));
+                        }
+                    }
+                }
+                each
+            }
+        };
+        ForcedCheck {
+            ddl: std::mem::take(&mut check.ddl),
+            errors: check.errors,
+            failed,
+        }
     }
 
     /// Before a find: the runtime check when the group adds missing tables at runtime, then whether there is a
