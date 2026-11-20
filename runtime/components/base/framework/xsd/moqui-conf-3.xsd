@@ -2361,6 +2361,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="timeout-seconds" type="xs:string" default="20"/>
                     <xs:attribute name="language" type="xs:string"/>
                     <xs:attribute name="store" type="xs:string" default="false"/>
+                    <xs:attribute name="retention-days" type="xs:string" default="30"><xs:annotation><xs:documentation>The days a caption kept by store is kept: expire#Recordings removes older ones; 0 keeps them.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="prompt-audio" type="xs:string"/>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="queue"><xs:complexType>

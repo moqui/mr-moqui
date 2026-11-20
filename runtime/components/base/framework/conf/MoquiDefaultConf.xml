@@ -195,7 +195,8 @@
         speech provider (the model bound to the transcribe feature; calls/captions@provider local is speech-local, not built
         yet), at most calls/captions@workers at once, each within calls/captions@timeout-seconds; past calls/captions@queue
         waiting chunks the oldest is dropped. calls/captions@language: an ISO 639-1 code, empty to let the model tell.
-        calls/captions@store true keeps each caption as a CallTranscript (by default nothing is kept).
+        calls/captions@store true keeps each caption as a CallTranscript (by default nothing is kept), for
+        calls/captions@retention-days (the recording job removes older ones; 0 keeps them).
         calls/captions@prompt-audio: a WAV file a phone leg hears after the captions tones (docs/interfaces/SIP.md, Notices). -->
     <!-- ICE-TCP (W4): a TCP port on media-server@host for browsers that cannot reach the UDP one; off while empty. -->
     <!-- The embedded TURN server on the media node (W4; docs/interfaces/TURN.md), for browsers behind NAT and firewalls that
@@ -236,7 +237,7 @@
     <calls ring-seconds="45" guest-joins-per-minute="20" transfer-ring-seconds="30" hold-music-location=""
             direct-path="true" forward-ring-seconds="30" forward-max-hops="5">
         <captions enabled="false" provider="llm" chunk-seconds="5" queue="6" workers="2" timeout-seconds="20"
-                language="" store="false" prompt-audio=""/>
+                language="" store="false" retention-days="30" prompt-audio=""/>
         <queue tick-seconds="5" prompt-location=""/>
         <recording enabled="false" ack-required="false" policy-revision="1" retention-days="90" queue-frames="4096"
                 segment-mb="64" segment-minutes="30" max-mb="2048" prompt-audio=""/>
