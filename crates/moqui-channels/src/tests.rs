@@ -445,6 +445,14 @@ impl Bed {
             "meta": {"attempt": 1}})
     }
 
+    /// A text from `from` the provider received at `received_at` (RFC 3339), signed now; the response.
+    fn text_in_at(&self, from: &str, body: &str, received_at: &str) -> WebhookResponse {
+        let n = self.next();
+        let mut event = self.received(&format!("ev-{n}"), &format!("in-{n}"), from, body, json!([]));
+        event["data"]["payload"]["received_at"] = json!(received_at);
+        self.hook(&self.signed(&event, now() / 1000))
+    }
+
     /// A text from `from`, signed now; the response.
     fn text_in(&self, from: &str, body: &str, media: Json) -> (WebhookResponse, String) {
         let n = self.next();
@@ -1052,7 +1060,8 @@ fn an_uncertain_send_is_not_sent_again() {
         )["optedOut"],
         "Y"
     );
-    bed.text_in(THEIRS, "START", json!([]));
+    // a START sent after that refusal (its time the provider's, later than the opt-out it undoes: SEC-COM-90)
+    bed.text_in_at(THEIRS, "START", &jiff::Timestamp::now().to_string());
 
     // the provider unreachable: not connected, tried again
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2102,6 +2111,30 @@ fn a_providers_opt_out_signal_is_kept_once() {
         ),
         (json!("ignored"), json!("unknownNumber"))
     );
+}
+
+/// SEC-COM-90: a STOP or START older than the pair's last change changes nothing, so an old signed text posted again
+/// (as a new message, past the once-only mark) cannot undo a later keyword; a newer one still does.
+#[test]
+fn an_older_keyword_does_not_undo_a_later_one() {
+    let bed = bed();
+    let _entered = bed.ctx.enter();
+    let opted_out = || {
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(THEIRS))],
+        )["optedOut"]
+            .clone()
+    };
+    assert_eq!(
+        status(&bed.text_in_at(THEIRS, "STOP", "2026-11-01T12:05:00.000+00:00")),
+        200
+    );
+    assert_eq!(opted_out(), "Y");
+    bed.text_in_at(THEIRS, "START", "2026-11-01T12:00:00.000+00:00");
+    assert_eq!(opted_out(), "Y", "a START sent before the STOP does not opt back in");
+    bed.text_in_at(THEIRS, "START", "2026-11-01T12:10:00.000+00:00");
+    assert_eq!(opted_out(), "N", "a later START does");
 }
 
 /// A bridge whose provider carries no group texts (its capabilities say `groupTexts` false): Text a number with several

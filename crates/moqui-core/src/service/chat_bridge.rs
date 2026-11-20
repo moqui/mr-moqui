@@ -1187,7 +1187,8 @@ fn set_status(facade: &EntityFacade, bridge_id: &str, status: &str, error: Optio
 }
 
 /// Remove the inbound batches done more than 30 days ago, once an hour, and the provider's contents sends left, once a
-/// day.
+/// day. A keyword's once-only mark (`signal:`) stays as long as the opt-out it set, so a signed copy posted again
+/// later is a duplicate still (SEC-COM-90).
 fn clean(factory: &ExecutionContextFactory, worker: &Worker, facade: &EntityFacade, now: i64) {
     {
         let mut state = lock(&worker.state);
@@ -1201,6 +1202,7 @@ fn clean(factory: &ExecutionContextFactory, worker: &Worker, facade: &EntityFaca
             .find("moqui.chat.ChatBridgeInbound")?
             .eq("statusEnumId", Value::string("CbiDone"))
             .condition(Condition::less("receivedDate", stamp(now - 30 * 86_400_000)))
+            .condition(Condition::not_like("transactionId", Value::string("signal:%")))
             .disable_authz()
             .delete_all()
     });

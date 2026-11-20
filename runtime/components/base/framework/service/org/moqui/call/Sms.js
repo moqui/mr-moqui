@@ -558,13 +558,25 @@ function keywordOf(text) {
   return null
 }
 
-/** Internal: keep a pair's opt-out after a keyword (in a transaction of its own). */
+/**
+ * Internal: keep a pair's opt-out after a keyword (in a transaction of its own). With messageMillis (the provider's
+ * time of the message, which its signature covers) a STOP or START older than the pair's last change is stale and
+ * changes nothing, so an old signed request posted again cannot undo a later keyword (SEC-COM-90); changedDate is
+ * then the message's time. HELP changes no opt-out and keeps changedDate. outcome noted or stale.
+ */
 function noteKeyword(p) {
   const keyword = p.keyword
   if (!['STOP', 'START', 'HELP'].includes(keyword)) return {}
   const row = find(OPT_OUT).condition({ phoneNumber: p.ourNumber, otherNumber: p.theirNumber }).forUpdate(true).one()
-  const fields = { lastKeyword: keyword, changedDate: ec.user.nowTimestamp }
-  if (keyword !== 'HELP') fields.optedOut = keyword === 'STOP' ? 'Y' : 'N'
+  const at = p.messageMillis != null && !Number.isNaN(Number(p.messageMillis)) ? Number(p.messageMillis) : null
+  const fields = { lastKeyword: keyword }
+  if (keyword !== 'HELP') {
+    if (row && at != null && row.changedDate != null && at < Number(row.changedDate)) return { outcome: 'stale' }
+    fields.optedOut = keyword === 'STOP' ? 'Y' : 'N'
+    fields.changedDate = at != null ? new Date(at) : ec.user.nowTimestamp
+  } else if (!row) {
+    fields.changedDate = ec.user.nowTimestamp
+  }
   if (row) {
     row.setFields(fields, true, null, null)
     row.update()
@@ -573,14 +585,15 @@ function noteKeyword(p) {
     created.setFields(Object.assign({ phoneNumber: p.ourNumber, otherNumber: p.theirNumber, optedOut: 'N' }, fields), true, null, null)
     created.create()
   }
-  return {}
+  return { outcome: 'noted' }
 }
 
 /**
  * Internal (the adapter's webhook, after it checked the provider's signature): an opt-out (STOP) or opt-in (START) the
  * provider tells of as its event eventId, applied once: the event is kept as a done ChatBridgeInbound (transactionId
- * signal:<eventId>, removed with the batches after 30 days), so a copy changes nothing. Only for a number of ours on this
- * bridge. outcome noted, duplicate or ignored.
+ * signal:<eventId>, kept as long as the opt-out, not removed with the batches), so a copy changes nothing; with
+ * originMillis one older than the pair's last change changes nothing either (SEC-COM-90). Only for a number of ours on
+ * this bridge. outcome noted, stale, duplicate or ignored.
  */
 function noteOptSignal(p) {
   const keyword = String(p.keyword || '').toUpperCase()
@@ -598,8 +611,7 @@ function noteOptSignal(p) {
   seen.setFields({ chatBridgeId: p.chatBridgeId, transactionId, receivedDate: ec.user.nowTimestamp, processedDate: ec.user.nowTimestamp,
     statusEnumId: 'CbiDone', itemCount: 0, waitingCount: 0 }, true, null, null)
   seen.create()
-  noteKeyword({ ourNumber: ours, theirNumber: theirs, keyword })
-  return { outcome: 'noted' }
+  return { outcome: noteKeyword({ ourNumber: ours, theirNumber: theirs, keyword, messageMillis: p.originMillis }).outcome || 'noted' }
 }
 
 /**
@@ -710,7 +722,7 @@ function receive(p) {
   // opt-out again after a later keyword; HELP changes no opt-out
   if (keyword === 'HELP') sub('org.moqui.call.SmsServices.note#SmsKeyword', { ourNumber: ours, theirNumber: theirs, keyword })
   else if (keyword) sub('org.moqui.call.SmsServices.note#SmsOptSignal', { chatBridgeId: p.chatBridgeId,
-    eventId: 'text:' + String(p.messageId), ourNumber: ours, theirNumber: theirs, keyword })
+    eventId: 'text:' + String(p.messageId), ourNumber: ours, theirNumber: theirs, keyword, originMillis: p.originMillis })
   // a room's text member (plans/Comms-Messaging.md §18.3 phase 18): a pair text from a number that is one on ours goes to
   // its room as the member, unjudged (a moderator added it with its consent); STOP takes it out, HELP is answered. A route
   // that fails, or a room that refuses the text, leaves it to the pair room below
