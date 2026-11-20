@@ -69,6 +69,8 @@ const DEFAULT_MAX_PER_SOURCE: usize = 8;
 const DEFAULT_MAX_FILE: usize = 256 * 1024 * 1024;
 /// Session channels of one connection waiting for their request or running `sftp`; one more is refused (SEC-FIL-61).
 const MAX_SESSION_CHANNELS: usize = 8;
+/// The longest `TERM` of a pty request and value of an `env` request a channel keeps (SEC-FIL-88).
+const MAX_CHANNEL_TEXT: usize = 256;
 /// The connection's inactivity timeout; `apps` ends after as long without input (`crate::term::IDLE`).
 pub(super) const IDLE: Duration = Duration::from_secs(600);
 /// How long a connection has from accept to a successful login.
@@ -759,6 +761,14 @@ fn window(columns: u32, rows: u32) -> (u16, u16) {
 }
 
 impl Connection {
+    /// Remove `channel` from the per-channel maps: its open handle, pty, terminal variables and `GIT_PROTOCOL`.
+    fn forget_channel(&mut self, channel: ChannelId) {
+        self.channels.remove(&channel);
+        self.ptys.remove(&channel);
+        self.terminal_env.remove(&channel);
+        self.git_protocol.remove(&channel);
+    }
+
     /// Let the user in, with what the permissions allow; every user gets `apps`, but for a login by app password, which
     /// gets the drives over SFTP only.
     fn accept(&mut self, username: &str, permissions: Permissions, by: LoginBy) -> Auth {
@@ -1105,6 +1115,9 @@ impl russh::server::Handler for Connection {
         _modes: &[(russh::Pty, u32)],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if term.len() > MAX_CHANNEL_TEXT {
+            return session.channel_failure(channel);
+        }
         let (size, _) = tokio::sync::watch::channel(window(col_width, row_height));
         self.ptys.insert(
             channel,
@@ -1314,12 +1327,15 @@ impl russh::server::Handler for Connection {
         variable_value: &str,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if variable_value.len() > MAX_CHANNEL_TEXT {
+            return session.channel_failure(channel);
+        }
         if variable_name == "GIT_PROTOCOL" && self.username.is_some() {
             self.git_protocol.insert(channel, variable_value.to_string());
             return session.channel_success(channel);
         }
         #[cfg(feature = "tui")]
-        if crate::term::is_terminal_variable(variable_name) && self.let_in() && variable_value.len() < 256 {
+        if crate::term::is_terminal_variable(variable_name) && self.let_in() {
             self.terminal_env
                 .entry(channel)
                 .or_default()
@@ -1327,6 +1343,13 @@ impl russh::server::Handler for Connection {
             return session.channel_success(channel);
         }
         session.channel_failure(channel)
+    }
+
+    /// A closed channel's entries go from every per-channel map, so a connection that opens and closes channels does
+    /// not keep each one's `TERM` and variables until it ends (SEC-FIL-88).
+    async fn channel_close(&mut self, channel: ChannelId, _session: &mut Session) -> Result<(), Self::Error> {
+        self.forget_channel(channel);
+        Ok(())
     }
 
     /// The admin shell for a user with `SSH_SHELL` who logged in by key or password; for everyone else, `apps` is the
