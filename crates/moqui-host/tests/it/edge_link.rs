@@ -449,6 +449,100 @@ fn pairing_links_both_ways_and_unpairing_cuts_the_link() {
         matches!(&refused, LinkError::Refused(message) if message.contains("revoked")),
         "{refused:?}"
     );
+
+    // SEC-CLU-82: a code made for no node, or for another, does not pair the revoked id with a new key and what was
+    // kept for it; a code made for that id does
+    let any = rt
+        .block_on(pair(&pair_config(&url, &code(&gate), "local-a", &certs)))
+        .unwrap_err();
+    assert!(any.message().contains("was paired before"), "{any:?}");
+    let for_other =
+        to_plain_string(&call(&gate, "create#PairingCode", &[("pairedNodeId", "local-z")]).unwrap()["code"]);
+    assert!(rt
+        .block_on(pair(&pair_config(&url, &for_other, "local-a", &certs)))
+        .is_err());
+    assert_eq!(client(&gate, "local-a")["statusId"], "EdgeClientRevoked");
+    let for_a = to_plain_string(&call(&gate, "create#PairingCode", &[("pairedNodeId", "local-a")]).unwrap()["code"]);
+    let again = rt
+        .block_on(pair(&pair_config(&url, &for_a, "local-a", &certs)))
+        .unwrap();
+    assert_eq!(client(&gate, "local-a")["statusId"], "EdgeClientActive");
+    assert_eq!(client(&gate, "local-a")["keyFingerprint"], again.key_fingerprint);
+}
+
+/// An up connection with a self-signed client certificate of a new key, which no pairing has: its role answer.
+fn stranger_up(rt: &tokio::runtime::Runtime, port: u16) -> (u8, String) {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = rcgen::CertificateParams::new(vec!["stranger".to_string()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    let der = rustls::pki_types::PrivateKeyDer::try_from(key.serialize_der()).unwrap();
+    let mut config = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AnyCert(provider)))
+        .with_client_auth_cert(vec![cert.der().clone()], der)
+        .unwrap();
+    config.alpn_protocols = vec![ALPN.to_vec()];
+    let mut stream = rt.block_on(async {
+        let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(name, tcp)
+            .await
+            .unwrap()
+    });
+    role_answer(rt, &mut stream, ROLE_UP)
+}
+
+/// SEC-CLU-84: an address past `edge@up-refusals` refused up connections of keys no pairing has is refused before the
+/// look-up, but a paired node's key from the same address still links: a busy source never blocks a paired node, also
+/// right after the edge node restarts (its paired keys are read at its start).
+#[test]
+fn refused_strangers_do_not_block_a_paired_node_from_their_address() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let certs = certs();
+    let port = crate::common::free_port();
+    let port_text = port.to_string();
+    let gate = crate::common::start_with_files(
+        "edge-refusals",
+        None,
+        &[
+            ("moqui_conf__instance__node_role", "front_edge"),
+            (
+                "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port",
+                &port_text,
+            ),
+            ("moqui_conf__edge__up_refusals", "2"),
+        ],
+        &[
+            ("cert/default.crt", &certs.cert_pem),
+            ("cert/default.key", &certs.key_pem),
+        ],
+    );
+    let url = format!("https://localhost:{port}");
+    let rt = runtime();
+    let paired = rt
+        .block_on(pair(&pair_config(&url, &code(&gate), "local-r", &certs)))
+        .unwrap();
+    // a restart: what this process paired is gone from memory, the pairing's row is not
+    let _restarted = gate.restart();
+    for _ in 0..3 {
+        let (answer, message) = stranger_up(&rt, port);
+        assert_eq!(answer, 1, "{message}");
+        assert!(message.contains("not paired"), "{message}");
+    }
+    let mut local = LocalConfig::new(&url, &paired.key, &paired.pin, "local-r");
+    quick(&mut local);
+    let up = rt
+        .block_on(connect_up(&local))
+        .expect("the paired node links from the busy address");
+    rt.block_on(up.ping()).unwrap();
 }
 
 /// A TCP relay in front of the edge node: what NAT does to the local node's connections, with a switch that cuts them

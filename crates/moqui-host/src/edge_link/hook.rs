@@ -517,7 +517,10 @@ impl Hook {
         // this instance's own key, which its links prove (plans/Edge-Node2.md §4.11), and the edge cluster's list it
         // keeps (§4.6), each pairing's apart
         if let Some(factory) = &factory {
-            config.member_key = Some(super::member_key::MemberKey::load_or_create(factory.runtime_dir())?);
+            let key = super::member_key::MemberKey::load_or_create(factory.runtime_dir())?;
+            // published on this member's cluster row, so its edge node admits this id only with it (SEC-CLU-81)
+            moqui_core::cluster::set_edge_member_key(factory, &key.fingerprint());
+            config.member_key = Some(key);
             if config.members_file.is_none() {
                 config.members_file = Some(pairing.members_file(factory.runtime_dir()));
             }

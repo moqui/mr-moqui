@@ -47,6 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="statusId" type="id"/>
         <field name="lastErrorText" type="text-long"/>
         <field name="lastStatusDate" type="date-time"/>
+        <field name="alertedDate" type="date-time"><description>When the voice admins last heard this trunk failed.</description></field>
         <relationship type="one" title="VoiceTransport" related="moqui.basic.Enumeration" short-alias="transport">
             <key-map field-name="transportEnumId"/></relationship>
         <relationship type="one" title="VoiceMediaEncryption" related="moqui.basic.Enumeration" short-alias="mediaEncryption">

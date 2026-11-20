@@ -167,7 +167,9 @@
         Trunk credentials are VoiceTrunk.authJson, encrypted; the fraud limits are VoicePolicy (System/Voice). The flood caps
         (0 turns one off): sip-server/limits@request-rate new requests a second from one source, sip-server/limits@request-burst of them at once;
         sip-server/limits@max-transactions, past which new requests are dropped; sip-server/limits@max-connections, TCP and TLS connections at once,
-        and sip-server/limits@max-connections-per-source of them from one source. -->
+        and sip-server/limits@max-connections-per-source of them from one source. On a local node, an edge node's engine
+        reports its own blocks (kept apart from this node's engines'): sip-server/limits@edge-blocks-per-hour new blocked
+        sources an hour at most, and sip-server/limits@edge-alerts-per-hour alerts of its blocks and trunks. -->
     <!-- The registrar for desk and soft phones (V4, docs/interfaces/SIP.md "Registrar"): off unless sip-server/registrar@enabled is
         true, even with the SIP listeners on. sip-server@domain is the realm of the digest challenges and the domain phones register
         to (sip-server@public-address, else moqui, when empty; changing it needs each phone's password made again). A binding's
@@ -176,7 +178,7 @@
     <sip-server port="" host="127.0.0.1" tls-port="" tls-host="" tls-ca-file="" rtp-ports="20000-20999" rtp-host=""
             public-address="" domain="">
         <limits request-rate="20" request-burst="100" max-transactions="2000" max-connections="500"
-                max-connections-per-source="100"/>
+                max-connections-per-source="100" edge-blocks-per-hour="200" edge-alerts-per-hour="10"/>
         <registrar enabled="false" min-expires="60" max-expires="3600" default-expires="600" nat-expires="60"/>
     </sip-server>
 
@@ -1248,9 +1250,13 @@
         internet: true takes mail from the internet (port 25 on an edge node; plans/archive/Edge-Node.md §5.4, E5b): any
         address, STARTTLS, per-address limits, SPF, DKIM, DMARC and ARC checked with an Authentication-Results of its own
         (DMARC is RFC 9989's: t=y lowers the policy, and there is no pct). arc-trusted-sealers: the domains whose passing
-        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts); empty for no ARC
-        exception. rspamd-url: Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for
-        none. Rspamd not reached fails open (logged, not spam); checks that do not finish in 45 seconds answer 451.
+        ARC seal overrides a DMARC reject or quarantine (forwarders and lists this node trusts), only when that sealer's
+        ARC-Authentication-Results records dmarc=pass for the From domain; empty for no ARC exception. rspamd-url:
+        Rspamd's HTTP API for the spam verdict in that mode (http://127.0.0.1:11333); empty for none. Rspamd not reached
+        fails open (logged, not spam); checks that do not finish in 45 seconds, no
+        resolver, or a DMARC DNS error where it matters (the domain's record not read, or its policy reject or
+        quarantine), answer 451, so an instance in internet mode with no DNS defers all mail unless
+        mail-delivery@dns-offline is true.
         proxy-protocol: each connection starts with a PROXY v1 or v2 header, and
         the address it names must be in allowed-addresses too. spam-headers: the gateway's spam verdict fields; mail one
         of them says yes to goes to Junk. plus-separator: the plus-addressing characters (sales+news@ is sales@); none
@@ -1302,8 +1308,13 @@
     <!-- How work crosses the edge link (plans/archive/Edge-Node.md §5.2), read by both ends. The queue: items delivered or
         failed are kept queue-retention-days from their delivery or failure (receipts as long; both nodes should keep
         the same period), and an item still waiting after that fails, with a logged error naming it; when the waiting
-        items pass queue-max-megabytes the oldest fail the same way. A payload is at most 1 MiB; a larger body (up to
-        64 MiB, counted in the cap) is the item's content, sent over the link before it; the content a receiver keeps
+        items pass queue-max-megabytes the oldest fail the same way, items of other kinds before mail (newest first); past
+        queue-mail-percent of that cap an edge node's SMTP listener refuses new mail for the pairing for now (452 at
+        RCPT TO, 451 after the data), so mail it answered 250 for is not what the cap fails. A payload is at most 1 MiB;
+        a larger body (up to 64 MiB, counted in the cap) is the item's content, sent over the link before it (at most
+        content-calls such sends of one pairing at once, past which one waits uncounted, each asked of the cap before it
+        is read, and ended when its next part does not come within forward-idle-seconds or it takes over
+        content-call-seconds in all); the content a receiver keeps
         for its deliveries counts against the same cap, and on a node that takes links so do a pairing's replicated
         records against replica-max-rows: at either the pairing pauses until an administrator resumes it (SEC-CLU-02).
         A receiver's refusal
@@ -1346,14 +1357,16 @@
         (System › Edge Clients › Ports). call-legs-per-pairing: on a node that takes links, the most call legs of one
         paired node on its media node at once (200; 0 for no cap). smtp-tunnel-host: on a front node, where an EdgePort
         row of kind smtp listens (empty for every address). -->
-    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-max-content-files="10000" queue-max-attempts="10"
+    <edge queue-retention-days="14" queue-max-megabytes="1024" queue-mail-percent="90" queue-max-content-files="10000"
+            content-calls="4" content-call-seconds="900" up-refusals="30" queue-max-attempts="10"
             queue-retry-seconds="5" replica-max-rows="1000000" link-key="CHANGEME" link-url="" offline-page=""
             ssh-tunnel-port="" ssh-tunnel-host="" smtp-tunnel-host="" xmpp-port="" xmpp-tls-port="" xmpp-host=""
             call-legs-per-pairing=""
             public-addresses="">
         <node url="" key="" pin="" id="" pairing="" calls-enabled="" sip-enabled="" pass-client=""/>
         <front-node url="" key="" pin="" id=""/>
-        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"/>
+        <queue-kind name="mail" service="org.moqui.mail.EmailServices.deliver#EdgeMail"
+                failed-service="org.moqui.mail.EmailServices.fail#EdgeMail"/>
         <queue-kind name="mailOut" service="org.moqui.mail.EmailServices.deliver#EdgeOutboundMail"
                 failed-service="org.moqui.mail.EmailServices.fail#EdgeOutboundMail"/>
         <queue-kind name="mailStatus" service="org.moqui.mail.EmailServices.note#EdgeMailStatus"/>

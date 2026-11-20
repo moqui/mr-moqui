@@ -510,6 +510,9 @@ pub(crate) enum RcptAnswer {
     TempFail(String),
     /// The account keeps its mailbox quota of mail or more: 452, and the sender tries again later (SEC-MAIL-07).
     OverQuota,
+    /// The paired node's queue is past its share for mail (`edge@queue-mail-percent`): 452 4.3.1, and the sender
+    /// tries again later (SEC-MAIL-86).
+    QueueFull,
 }
 
 /// The answer for the server's own account `account`: [`RcptAnswer::OverQuota`] when it is over its mailbox quota
@@ -1621,6 +1624,19 @@ impl<B: Backend> Session<'_, B> {
                 );
                 self.reply(&format!(
                     "452 4.2.2 <{}>: Mailbox full, try again later",
+                    clip(&address)
+                ))
+                .await
+            }
+            RcptAnswer::QueueFull => {
+                self.refused += 1;
+                tracing::info!(
+                    "SMTP session {} answered recipient {} with 452: its node's queue is full for now",
+                    self.id,
+                    clip(&address)
+                );
+                self.reply(&format!(
+                    "452 4.3.1 <{}>: Insufficient system storage, try again later",
                     clip(&address)
                 ))
                 .await

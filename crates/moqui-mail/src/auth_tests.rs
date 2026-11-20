@@ -357,3 +357,129 @@ fn a_forged_mail_from_writes_no_results_of_its_own() {
         "Authentication-Results: mx; none (the MAIL FROM could not be written)\r\n"
     );
 }
+
+/// SEC-MAIL-90: with `mail-delivery/dkim@domains` set, a paired node's mail is still signed only for that node's own
+/// domains; the list narrows them, so one pairing's mail is never signed for another pairing's listed domain.
+#[test]
+fn a_paired_nodes_mail_is_signed_only_for_its_own_domains_whatever_the_list() {
+    let paired: std::collections::BTreeSet<String> = ["desk.example".to_string()].into();
+    let list = vec!["desk.example".to_string(), "other-node.example".to_string()];
+    assert!(paired_signs("desk.example", &paired, &[]));
+    assert!(paired_signs("desk.example", &paired, &list));
+    assert!(
+        !paired_signs("other-node.example", &paired, &list),
+        "another pairing's domain, though listed"
+    );
+    assert!(!paired_signs("other-node.example", &paired, &[]));
+    assert!(
+        !paired_signs("desk.example", &paired, &["other-node.example".to_string()]),
+        "the paired node's domain, not listed"
+    );
+}
+
+/// SEC-MAIL-88: a trusted sealer overrides a DMARC failure only when its own `ARC-Authentication-Results` recorded
+/// `dmarc=pass` for the From domain; a failure it recorded and sealed anyway stays a failure, and the stored field says
+/// when a failure was overridden.
+#[test]
+fn a_trusted_arc_sealer_overrides_dmarc_only_for_a_pass_it_recorded() {
+    let trusted = vec!["lists.example".to_string()];
+    let newest = |sealer: &str, results: &'static str| Some((sealer.to_string(), results.as_bytes()));
+    let passed =
+        " i=2; lists.example; dkim=pass header.d=example.com;\r\n\tdmarc=pass (p=reject) header.from=Example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", passed), "example.com", &trusted).as_deref(),
+        Some("lists.example")
+    );
+    let failed = " i=2; lists.example; spf=fail smtp.mailfrom=evil.example; dmarc=fail header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", failed), "example.com", &trusted),
+        None
+    );
+    // a pass for another domain, a pass only inside a comment, and an untrusted sealer
+    let other = " i=1; lists.example; dmarc=pass header.from=evil.example\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", other), "example.com", &trusted),
+        None
+    );
+    let comment = " i=1; lists.example; dmarc=fail (; dmarc=pass header.from=example.com) header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", comment), "example.com", &trusted),
+        None
+    );
+    assert_eq!(
+        arc_overrides(newest("other.example", passed), "example.com", &trusted),
+        None
+    );
+    assert_eq!(arc_overrides(None, "example.com", &trusted), None);
+    // a quoted MAIL FROM the sealer copied as it came, holding a `;` entry of its own (with a `\"` inside it), and a
+    // quoted header.from that is the domain
+    let quoted =
+        " i=1; lists.example; spf=pass smtp.mailfrom=\"x\\\";dmarc=pass header.from=example.com z\"@evil.example; \
+                  dmarc=fail header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", quoted), "example.com", &trusted),
+        None
+    );
+    let helo = " i=1; lists.example; spf=none smtp.helo=\"a;dmarc=pass header.from=example.com\"; dmarc=fail \
+                header.from=example.com\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", helo), "example.com", &trusted),
+        None
+    );
+    let quoted_from = " i=1; lists.example; dmarc=pass header.from=\"example.com\"\r\n";
+    assert_eq!(
+        arc_overrides(newest("lists.example", quoted_from), "example.com", &trusted).as_deref(),
+        Some("lists.example")
+    );
+
+    let field = "Authentication-Results: mx;\r\n\tspf=fail smtp.mailfrom=lists.example;\r\n\tdmarc=fail \
+                 header.from=example.com policy.dmarc=reject\r\n"
+        .to_string();
+    assert_eq!(
+        overridden_field(field, "lists.example"),
+        "Authentication-Results: mx;\r\n\tspf=fail smtp.mailfrom=lists.example;\r\n\tdmarc=fail (overridden by the \
+         trusted ARC sealer lists.example) header.from=example.com policy.dmarc=reject\r\n"
+    );
+}
+
+/// SEC-MAIL-92: a DMARC lookup that ends in a DNS error is a temporary error (451), not an accepted message.
+#[test]
+fn a_dmarc_dns_error_is_a_temporary_error() {
+    let records = Records::offline();
+    records.fix_txt("example.com", "v=spf1 ip4:192.0.2.1 -all").unwrap();
+    records.fail_txt("_dmarc.example.com");
+    let verdict = dns::run(verify(
+        MESSAGE.as_bytes().to_vec(),
+        session("198.51.100.7"),
+        "edge.example.net".to_string(),
+        Some(Arc::new(records)),
+    ))
+    .unwrap();
+    assert!(verdict.temp_error, "{verdict:?}");
+    assert!(verdict.field.contains("dmarc=temperror"), "{verdict:?}");
+    // a domain whose record is read is judged as before
+    assert!(!check(MESSAGE.as_bytes(), "198.51.100.7", "none").temp_error);
+    // a signature whose key does not resolve: deferred only when the policy is reject or quarantine, so a p=none
+    // domain's mail is taken, not deferred until it bounces
+    let signed = test_key().sign(MESSAGE.as_bytes(), "example.com", "moqui").unwrap();
+    let key_down = |policy: &str| {
+        let records = Records::offline();
+        records.fix_txt("example.com", "v=spf1 ip4:192.0.2.1 -all").unwrap();
+        records
+            .fix_txt("_dmarc.example.com", &format!("v=DMARC1; p={policy}"))
+            .unwrap();
+        records.fail_txt("moqui._domainkey.example.com");
+        dns::run(verify(
+            signed.clone(),
+            session("198.51.100.7"),
+            "edge.example.net".to_string(),
+            Some(Arc::new(records)),
+        ))
+        .unwrap()
+    };
+    let none = key_down("none");
+    assert!(none.field.contains("dmarc=temperror"), "{none:?}");
+    assert!(!none.temp_error, "{none:?}");
+    assert!(key_down("reject").temp_error);
+    assert!(key_down("quarantine").temp_error);
+}

@@ -298,10 +298,13 @@ fn store_edge_call_audio(
         .map_err(|e| LibError::new(format!("call audio item {item}: {e}")))?
         .ok_or_else(|| LibError::new(format!("call audio item {item}: its file is not there")))?;
     let size = bytes.len() as u64;
-    // on an all-in-one node the server's own greetings and prompts are at the shared paths: the paired node's are kept
-    // apart, where the SIP engine reads them for its calls (sip/voicemail.rs call_audio_job)
+    // each pairing's greetings and prompts are kept apart (the server's own are at the shared paths on an all-in-one
+    // node), where the SIP engine reads them for its calls (sip/voicemail.rs call_audio_job), within the pairing's cap
+    // (SEC-CLU-90)
     let node = parameters.get("pairedNodeId").map(to_plain_string).unwrap_or_default();
-    let kept = crate::edge::media::kept_audio_location(&factory, &node, &location);
+    crate::edge::media::check_kept_audio(&factory, &node, size)
+        .map_err(|why| LibError::new(format!("call audio item {item}: {location} not kept: {why}")))?;
+    let kept = crate::edge::media::kept_audio_location(&node, &location);
     factory
         .resource()
         .write_from(&kept, &mut std::io::Cursor::new(bytes), Some(size))
