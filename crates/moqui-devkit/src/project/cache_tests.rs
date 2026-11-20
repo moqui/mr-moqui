@@ -96,12 +96,6 @@ fn another_project_is_read_only_for_an_admin() {
     assert!(requested(&own_runtime.display().to_string(), false, &own, false)
         .unwrap()
         .is_none());
-    // nor does a full rebuild of it (forget_requested) drop an index an admin had read
-    let project = super::super::detect(&root).unwrap();
-    let dirs = project.model_dirs(|| None).unwrap();
-    open(project, dirs, false).unwrap();
-    forget_requested(&root.display().to_string(), false);
-    assert!(kept().contains(&root), "the index stays");
     clean(&root);
 }
 
@@ -114,6 +108,9 @@ fn a_failed_boot_again_keeps_the_index_read_before() {
     let dirs = project.model_dirs(|| None).unwrap();
     let first = open(project.clone(), dirs.clone(), false).unwrap();
     assert!(first.describe("entity:proj.ProjThing").is_some());
+    // a user not in ADMIN (none is signed in here) drops nothing of it by a full rebuild (SEC-DEV-82)
+    forget_requested(&root.display().to_string(), false);
+    assert!(kept().contains(&root), "the index stays");
     let summary = first.summary();
     assert!(
         summary.files > 0 && summary.components.contains(&"proj-a".to_string()),
