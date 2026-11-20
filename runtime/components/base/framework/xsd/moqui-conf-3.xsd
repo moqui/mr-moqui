@@ -3328,6 +3328,20 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="monitor-other-host" type="xs:string" default="false"><xs:annotation><xs:documentation>On
                 a manager: true lets monitor-url name another host than link-url's, where the instances' ingest keys
                 then go.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="deploy-wait-seconds" type="xs:string" default="600"><xs:annotation>
+                <xs:documentation>On a manager: how long a deploy waits for a changed instance to report healthy and
+                unsealed (plans/Vault-Instances.md §4.6) before it puts its old container back and stops the roll. Read at
+                each deploy.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="drain-wait-seconds" type="xs:string" default="30"><xs:annotation><xs:documentation>On a
+                manager: how long a deploy lets a drained cluster member finish the requests it was serving, once it
+                reports itself drained, before it changes it.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="backup-wait-seconds" type="xs:string" default="3600"><xs:annotation><xs:documentation>On
+                a manager: how long the backup a deploy runs first may take before it is stopped and the deploy
+                refused.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="rotate-retry-days" type="xs:string" default="7"><xs:annotation><xs:documentation>On a
+                manager: how many days the rotation job (rotate#DueCredentials) leaves a due item whose last rotation
+                failed, telling the administrators (topic InstanceRotationFailed) instead of trying it each night
+                (plans/Vault-Instances.md §4.7). Read at each run of the job.</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 

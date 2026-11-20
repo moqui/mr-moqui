@@ -422,7 +422,7 @@ fn delete_vault(params: &Params, facade: &EntityFacade) -> Out {
         return Err(fail("Deleting an operational vault needs the VAULT_ADMIN permission"));
     }
     crate::common::require_recent_auth()?;
-    for entity in [ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION] {
+    for entity in [crate::common::ITEM_PENDING, ITEM_HISTORY, ITEM, MEMBER, KEY_VERSION] {
         let rows = find(facade, entity)?.eq("vaultId", Value::string(&vault_id)).list()?;
         for row in rows.iter() {
             row.delete(facade)?;

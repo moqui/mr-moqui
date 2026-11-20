@@ -511,6 +511,20 @@ fn answer(state: &mut State, request: &FakeRequest) -> Answer {
                 Err(err) => message(400, &format!("not a tar: {err}")),
             }
         }
+        ("POST", ["containers", reference, "rename"]) => {
+            let name = decode(query(&request.target, "name").unwrap_or_default());
+            if state.containers.values().any(|container| container.name == name) {
+                return message(
+                    409,
+                    &format!("Conflict. The container name \"/{name}\" is already in use"),
+                );
+            }
+            let Some(container) = find(state, reference) else {
+                return message(404, "No such container");
+            };
+            container.name = name;
+            (204, "application/json", Vec::new())
+        }
         ("POST", ["containers", reference, action]) => {
             let one_shot = state.one_shot.clone();
             let Some(container) = find(state, reference) else {

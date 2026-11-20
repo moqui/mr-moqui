@@ -30,8 +30,9 @@
 //!   the rows that each member reads again at most every 30 seconds and after a link change ([`refresh`],
 //!   [`mark_changed`]), computed at collection time: how long
 //!   it has been sealed, how long its link has been down, whether its check fails, and the items past their rotation
-//!   age (M5 fills them); and counters of what happened: each unseal (and whether from an address the instance never
-//!   unsealed from before, [`note_seal`]), each failed deploy, and each use of machine access outside a deploy.
+//!   age in each environment's vault (`crate::rotate::due`); and counters of what happened: each unseal (and whether
+//!   from an address the instance never unsealed from before, [`note_seal`]), each failed deploy, and each use of
+//!   machine access outside a deploy.
 //! - **Clusters.** The live members of a managed instance's cluster, as its link reports them, are kept on its row
 //!   ([`note_members`]): with the identity above they are the `AppInstance` ids Monitor's per-instance comparison sees.
 
@@ -56,7 +57,8 @@ const DEPLOY_VERBS: &[&str] = &["deploy", "upgrade", "rollback"];
 
 const INGEST_KEY: &str = "moqui.monitor.IngestKey";
 const SCRAPE_TARGET: &str = "moqui.monitor.ScrapeTarget";
-/// How long an instance's ingest key lasts; rotation (M5) makes a new one before it ends.
+/// How long an instance's ingest key lasts. Its item (an api-key) is due at its type's age, 365 days, or its own
+/// shorter one (set#VaultItemRotation), and is rotated by hand (its kind's rotateByHand, crate::rotate::due).
 const INGEST_KEY_DAYS: i64 = 365;
 /// The most cluster members of an instance's report that its row keeps.
 const MAX_MEMBERS: usize = 256;
@@ -179,20 +181,27 @@ pub fn identity_env(facade: &EntityFacade, plan: &Plan, step: &Step) -> Vec<(Str
         return Vec::new();
     }
     let _ = facade;
+    identity_of(&plan.environment_id, &step.instance)
+}
+
+/// The Monitor identity settings of the mr-moqui instance `instance` of `environment_id`, as [`identity_env`] gives a
+/// new one, and a deploy (M3) gives the new container it replaces one with: its version as `instance` names it.
+#[must_use]
+pub fn identity_of(environment_id: &str, instance: &EntityValue) -> Vec<(String, String)> {
     let mut env = vec![
-        ("moqui_conf__instance__id".to_string(), step.id()),
+        ("moqui_conf__instance__id".to_string(), field(instance, "appInstanceId")),
         (
             "moqui_conf__telemetry__deployment_environment".to_string(),
-            plan.environment_id.clone(),
+            environment_id.to_string(),
         ),
         // an environment's instances are one service, apart from this manager's own (whose name Monitor's receiver
         // would turn a sender's into `<name> (received)`)
         (
             "moqui_conf__telemetry__service_name".to_string(),
-            format!("moqui-{}", plan.environment_id),
+            format!("moqui-{environment_id}"),
         ),
     ];
-    let version = version_of(&step.instance);
+    let version = version_of(instance);
     if !version.is_empty() {
         env.push(("moqui_conf__telemetry__service_version".to_string(), version));
     }
@@ -428,12 +437,15 @@ struct Snapshot {
     read_at: Option<std::time::Instant>,
     dirty: bool,
     readings: Vec<Reading>,
+    /// The items past their rotation age in each environment's vault (M5, crate::rotate::due).
+    past_rotation: Vec<(String, usize)>,
 }
 
 static SNAPSHOT: Mutex<Snapshot> = Mutex::new(Snapshot {
     read_at: None,
     dirty: false,
     readings: Vec::new(),
+    past_rotation: Vec::new(),
 });
 
 /// The facade the gauges read the rows with, set at the start of the server.
@@ -480,12 +492,17 @@ pub fn readings(facade: &EntityFacade) -> Result<Vec<Reading>, LibError> {
 
 /// Reads the instances again for the gauges; a failure is logged and the last snapshot stays.
 pub fn refresh(facade: &EntityFacade) {
+    let past = crate::rotate::due::past_by_environment(facade, moqui_core::user::now_millis());
     match readings(facade) {
         Ok(readings) => {
             let mut snapshot = lock(&SNAPSHOT);
             snapshot.readings = readings;
             snapshot.read_at = Some(std::time::Instant::now());
             snapshot.dirty = false;
+            match past {
+                Ok(past) => snapshot.past_rotation = past,
+                Err(err) => tracing::error!("Instances: the rotation ages were not read for Monitor: {err}"),
+            }
         }
         Err(err) => tracing::error!("Instances: the Monitor snapshot of the instances was not read: {err}"),
     }
@@ -499,7 +516,7 @@ pub fn mark_changed() {
 
 /// The snapshot's readings, read again from the rows first when a change was seen or it is older than
 /// [`SNAPSHOT_MAX_AGE`] and the server's facade is known.
-fn current() -> Vec<Reading> {
+fn current() -> (Vec<Reading>, Vec<(String, usize)>) {
     let stale = {
         let snapshot = lock(&SNAPSHOT);
         snapshot.dirty || snapshot.read_at.is_none_or(|at| at.elapsed() > SNAPSHOT_MAX_AGE)
@@ -510,24 +527,20 @@ fn current() -> Vec<Reading> {
             refresh(&facade);
         }
     }
-    lock(&SNAPSHOT).readings.clone()
+    let snapshot = lock(&SNAPSHOT);
+    (snapshot.readings.clone(), snapshot.past_rotation.clone())
 }
 
 /// The snapshot's series of one gauge at `now`.
 #[must_use]
 pub fn series(gauge: &str, now: i64) -> Vec<(ValueMap, f64)> {
-    let snapshot = current();
+    let (snapshot, past_rotation) = current();
     match gauge {
-        "moqui.instance.items_past_rotation" => {
-            // the rotation ages are M5's; until then each environment reports none past its age
-            let mut environments: Vec<String> = snapshot.iter().map(|reading| reading.environment_id.clone()).collect();
-            environments.sort_unstable();
-            environments.dedup();
-            environments
-                .into_iter()
-                .map(|environment| (attributes(None, &environment, &[]), 0.0))
-                .collect()
-        }
+        // each environment with a vault: its items past their rotation age (M5)
+        "moqui.instance.items_past_rotation" => past_rotation
+            .iter()
+            .map(|(environment, count)| (attributes(None, environment, &[]), *count as f64))
+            .collect(),
         _ => snapshot
             .iter()
             .map(|reading| {

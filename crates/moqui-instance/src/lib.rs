@@ -33,6 +33,9 @@
 //! - [`actions`]: `InstanceAction` rows, and an action asked for from a screen: run now, or a lease asked for and the
 //!   action run once it is approved.
 //! - [`reconcile`]: the job that writes what each host says of its instances and changes nothing else (§4.1).
+//! - [`deploy`]: deploys to an environment's instances (M3, §4.6): the gate, the lease its approval opens, the plan
+//!   with versions before and after, a backup first, the roll one instance at a time (drained over the link when a
+//!   cluster member), the annotations, and rollback to the recorded versions, refused across a schema change.
 //! - [`link`]: the manager's rules of the manager link (M2): pairing once by a token or code, the approvers pinned at
 //!   pairing, who may call an instance, and the bootstrap bundle held in memory until the instance takes it.
 //! - [`services`]: the Rust services, and the INSTANCE_ADMIN check each makes.
@@ -53,6 +56,12 @@
 //! - [`shares`]: the recovery holders' keys an instance takes, its share deliveries and their confirmations, the relay
 //!   of shares sealed to a sealed instance's unseal key (ciphertext only), and its recovery bundle as an operational
 //!   item.
+//!
+//! M5 (§6): rotation.
+//!
+//! - [`rotate`]: a managed credential changed at its source, put on each instance that uses it and checked, then
+//!   written as the item's new revision with the one before kept in its history; the old value put back when a step
+//!   fails. Rotation ages ([`rotate::due`]), the job at the policy age, the incident list and a member removal's offer.
 
 use std::collections::BTreeMap;
 
@@ -61,6 +70,7 @@ use moqui_core::extension::RustServiceFn;
 pub mod actions;
 mod common;
 pub mod database;
+pub mod deploy;
 pub mod fleet;
 pub mod kinds;
 pub mod lifecycle;
@@ -70,6 +80,7 @@ pub mod plan;
 pub mod provision;
 pub mod reconcile;
 pub mod recovery;
+pub mod rotate;
 pub mod services;
 pub mod shares;
 pub mod ssh;
@@ -88,7 +99,10 @@ moqui_core::extension::submit! {
 }
 
 fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
-    services::register(map)
+    // a member's removal from an operational vault offers to rotate its items at their source (§3.9, M5)
+    moqui_vault_server::members::install_rotation_offer(rotate::due::offer);
+    services::register(map)?;
+    rotate::services::register(map)
 }
 
 #[cfg(test)]

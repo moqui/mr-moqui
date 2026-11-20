@@ -192,6 +192,39 @@ A member with the reveal role can see one value: `reveal#VaultItem` sends that i
 their client, which opens it with the vault key, and writes a `VeReveal` event first. No other call sends an
 operational body to a client.
 
+### Rotation of operational items
+
+An operational item has a rotation age: its own (`rotationDays`, which a manager of the vault sets with
+`set#VaultItemRotation`), else its type's (`VaultItemType.rotationDays`), counted from `rotatedDate`, when its value
+last changed at its source. Making or depositing an item sets it, and so does a write marked `rotated`
+(`update#VaultItem`, which its event says) after the value was changed by hand; taking a deposit in or changing notes
+does not. An item written before rotation ages is given the time of the next start (once), so its age counts from the
+upgrade. Past its age the item is due.
+
+The instance manager rotates the credentials it can change at their source (Vault-Instances §4.7,
+[Run-Deploy](../Run-Deploy.md#rotation)). Before it changes the source it stages the new value: the lease opens the
+item's body on the server, only the rotated field is changed (its other fields, notes, tags and URIs stay), and the body
+is sealed under a new item key wrapped to the deposit key, a `VaultItemPending` row (`stage_revision`); no caller gets
+the body. Once the source and the instances took the value, the staged value becomes the item's next revision
+(`promote_revision`, event `VeItemRotated`), refused when the item was written since the rotation read it; the revision
+before is kept in `VaultItemHistory` with its wrapped key and body as they were, the way back that a member opens in
+their client. When the rotation puts the old value back, the staged one is dropped; when it cannot put it back
+everywhere, the staged one is kept (`keptDate`), since the source may hold it: `list#VaultItemHistory` lists it
+(`pendingList`, no body) and `reveal#VaultItem` with its `pendingId` sends it to the reveal role. Staging and the new
+revision move the vault's revision, so a member removal computed before is refused. Like any deposit, a member takes the
+new revision in before a lease names the item again; an environment's machine access to it is marked stale, since its
+sealed key is of the old item key. A rotation checks the deposit key before it changes anything at a source. The
+provision's undo (`withdraw_item`) takes only a first revision, never a rotated one.
+
+**Taking a deposit in.** `take#VaultDeposit` takes a member's client's rewrap of a deposited item's key from the deposit
+key to the vault key (`deposit_adopt`), at the vault's current key version, naming the revision it was made from; the
+body stays as it is. A vault's page in System › Vaults offers *Take in* for its deposited items: the vault worker loads
+as the lease dialog's does, the key passphrase opens the personal key there, and only the wrapped item keys come back.
+
+Removing a member from an operational vault rotates the vault key, but the removed member may have kept item keys or
+values, so the removal's answer (`rotationOffer`) lists the vault's items: which the instance manager can rotate at
+their source, and what to do by hand for the rest (§3.9).
+
 ### System › Vaults
 
 The operational vaults the user is a member of; a vault's members and roles, its items (names, bindings, types,

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Take in deposited items (plans/Vault-Instances.md §3.2, §4.7): opened from a vault's page with ?vaultId=. The server
+    deposits the credentials a provision makes and a rotation's new values wrapped to the vault's deposit key, which it
+    cannot open; a lease names an item only after a member takes it in. TakeIn.qvue does that in the browser through the
+    vault worker (js/vault/VaultClient.js, its worker and wasm module loaded with integrity hashes, as the lease dialog
+    does): the key passphrase opens the personal key there, the vault key opens through the member-list chain, and each
+    deposited item's key is unwrapped with the deposit key's private half and wrapped by the vault key (deposit_adopt);
+    only that wrapped key comes back here (take#VaultDeposit, a member who may write). The passphrase and every key stay
+    in the worker; no body crosses. TakeIn.tui.json: the terminal says where to do it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Take in" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+    <parameter name="vaultId" required="true"/>
+
+    <!-- the vault's chain and the caller's wraps, its deposit key's wrapped private half, the deposited items (their wrapped
+        keys and names, no body), the caller's key checks and personal key, and the module's hashes -->
+    <transition name="takeInData" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const vault = (name, parameters) => {
+                const out = ec.service.sync().name('org.moqui.security.VaultServices.' + name).requireNewTransaction(true).parameters(parameters || {}).call()
+                if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
+                return out
+            }
+            // SRI of a webroot file: sha256 of its bytes as base64
+            const base64 = (hex) => {
+                const table = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+                const bytes = []
+                for (let i = 0; i + 1 < hex.length; i += 2) bytes.push(parseInt(hex.slice(i, i + 2), 16))
+                let text = ''
+                for (let i = 0; i < bytes.length; i += 3) {
+                    const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0)
+                    text += table[(n >> 18) & 63] + table[(n >> 12) & 63] + (i + 1 < bytes.length ? table[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? table[n & 63] : '=')
+                }
+                return text
+            }
+            const sri = (file) => 'sha256-' + base64(ec.resource.digest('component://webroot/screen/webroot/js/vault/' + file, 'sha256'))
+            try {
+                const module = ec.resource.getLocationReference('component://webroot/screen/webroot/js/vault/moqui_vault.wasm')
+                if (!module || !module.getExists()) throw new Error('The vault module is not built: ./moq build or scripts/vault-wasm.sh')
+                const got = vault('get#Vault', {vaultId})
+                const deposited = Array.from(vault('list#VaultItems', {vaultId}).itemList || [])
+                    .filter(item => item.itemKeyWrapEnumId === 'VwDeposit')
+                    .map(item => ({vaultItemId: item.vaultItemId, revision: item.revision, keyVersion: item.keyVersion,
+                        wrappedItemKey: item.wrappedItemKey, vaultItemTypeId: item.vaultItemTypeId, bindingKey: item.bindingKey,
+                        itemName: item.itemName}))
+                ec.web.sendJsonResponse({vaultName: got.vault.vaultName, keyVersion: got.vault.keyVersion, roleEnumId: got.vault.roleEnumId,
+                    entries: got.entries, wraps: got.wraps, depositWrappedPrivate: got.depositWrappedPrivate || null, deposited,
+                    keyChecks: vault('list#KeyChecks').keyCheckList, personal: vault('get#PersonalKey'),
+                    integrity: {client: sri('VaultClient.js'), worker: sri('VaultWorker.js'), wasm: sri('moqui_vault.wasm')}})
+            } catch (err) {
+                ec.message.clearErrors()
+                ec.web.sendJsonResponse({errors: String(err.message || err)})
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the caller's wrapped personal key, after a strong, recent sign-in (get#WrappedPersonalKey refuses otherwise) -->
+    <transition name="wrappedKey">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.security.VaultServices.get#WrappedPersonalKey').requireNewTransaction(true).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({personalKeyId: out.personalKeyId, userId: out.userId, public: out.public, passphraseWrap: out.passphraseWrap})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- one item's key the worker wrapped by the vault key -->
+    <transition name="take">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.security.VaultServices.take#VaultDeposit').requireNewTransaction(true)
+                .parameters({vaultItemId, expectedRevision, keyVersion, wrappedItemKey}).call()
+            if (ec.message.hasError()) { const errors = ec.message.getErrorsString(); ec.message.clearErrors(); ec.web.sendJsonResponse({errors}) }
+            else ec.web.sendJsonResponse({revision: out.revision})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode><text type="qvue" location="component://tools/screen/System/Vaults/TakeIn.qvue" template="false"/><text type="tui" location="component://tools/screen/System/Vaults/TakeIn.tui.json" template="false"/></render-mode>
+    </widgets>
+</screen>

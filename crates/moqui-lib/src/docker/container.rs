@@ -177,6 +177,28 @@ impl DockerHost {
         Ok(())
     }
 
+    /// Rename container `id` to `name` (a deploy sets the old one aside while its replacement takes the name).
+    ///
+    /// # Errors
+    ///
+    /// When the name is not one, the host refuses it (the name is taken), or has no such container.
+    pub fn rename(&self, id: &str, name: &str) -> Result<(), Error> {
+        let id = checked("container", id)?;
+        if !super::valid_name(name) {
+            return Err(Error::new(format!("{name:?} is not a container name")));
+        }
+        let response = self.send(
+            Method::Post,
+            &format!("/containers/{id}/rename?name={}", super::encode(name)),
+            None,
+            CALL_TIMEOUT,
+        )?;
+        if response.status() >= 300 {
+            return Err(Self::problem(&format!("renaming container {id}"), &response));
+        }
+        Ok(())
+    }
+
     /// Restart container `id`, killing it after `grace` (at most [`MAX_GRACE`]) if it does not stop.
     ///
     /// # Errors

@@ -1,0 +1,122 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Take in deposited items (TakeIn.xml): the vault's items the server deposited (a provision's credentials, a rotation's
+    new values), and taking them in through the vault worker (js/vault/VaultClient.js, loaded with its integrity hash,
+    which loads its worker and the wasm module with theirs). The worker opens the personal key with the key passphrase,
+    the vault key through the member-list chain, and rewraps each item's key from the deposit key to the vault key; the
+    passphrase and every key stay in the worker, which is locked when it is done. Brand color names and Quasar classes
+    only. -->
+<template><div class="m-vault-take-in q-pa-sm" style="max-width:720px">
+    <div v-if="error" class="text-negative q-mb-md">{{error}}</div>
+    <div v-if="!data && !error" class="m-muted">{{t('Loading the vault…')}}</div>
+    <template v-if="data">
+        <div class="text-h6">{{t('Take in deposited items of')}} {{data.vaultName}}</div>
+        <div class="text-caption m-muted q-mb-md">{{t('The server wrote these to the vault\'s deposit key and cannot read them. Taking them in wraps each item\'s key by the vault key in your client, so a lease can name it. No value is shown or sent.')}}</div>
+        <div v-if="!data.deposited.length" class="text-weight-medium">{{t('Nothing waits to be taken in.')}}</div>
+        <template v-else>
+            <q-list bordered separator class="q-mb-md">
+                <q-item v-for="item in data.deposited" :key="item.vaultItemId">
+                    <q-item-section avatar><q-icon :name="taken[item.vaultItemId] ? 'sym_o_check_circle' : 'sym_o_key'"></q-icon></q-item-section>
+                    <q-item-section><q-item-label>{{item.itemName}}</q-item-label><q-item-label caption>{{item.bindingKey}} · {{item.vaultItemTypeId}} · {{t('revision')}} {{item.revision}}</q-item-label></q-item-section>
+                </q-item>
+            </q-list>
+            <q-input v-model="passphrase" type="password" outlined dense autocomplete="off" :label="t('Your key passphrase')" class="q-mb-sm" @keyup.enter="takeIn"></q-input>
+            <q-btn unelevated no-caps color="primary" icon="sym_o_move_to_inbox" :label="t('Take in')" :loading="busy"
+                    :disable="busy || !passphrase || !data.depositWrappedPrivate" @click="takeIn"></q-btn>
+            <div v-if="!data.depositWrappedPrivate" class="text-warning q-mt-sm">{{t('The vault has no deposit key now: a manager makes one in their client.')}}</div>
+        </template>
+    </template>
+</div></template>
+
+<script>
+const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+
+module.exports = {
+    name: 'VaultTakeIn',
+    inject: { mScreen: { default: null } },
+    data() { return { data: null, error: null, passphrase: '', busy: false, client: null, taken: {} }; },
+    computed: {
+        base() { return this.mScreen ? this.mScreen.path : this.$root.basePath + '/System/Vaults/TakeIn'; },
+        vaultId() { return (this.$root.currentParameters || {}).vaultId || ''; }
+    },
+    methods: {
+        t,
+        url(name) { return this.base + '/' + name; },
+        post(name, params) {
+            return moqui.request(this.url(name), { method: 'POST', params }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) throw new Error(json.errors);
+                return json;
+            });
+        },
+        load() {
+            return moqui.request(this.url('takeInData'), { params: { vaultId: this.vaultId } }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { this.error = json.errors; return; }
+                this.data = json;
+            }, (err) => { this.error = String(err && err.message || err); });
+        },
+        // as the lease dialog: VaultClient.js with its integrity hash, also in its URL (?v=) so a copy cached before an
+        // upgrade is not taken; it loads the worker and the module with theirs the same way
+        startClient() {
+            if (this.client) return Promise.resolve(this.client);
+            const integrity = this.data.integrity;
+            const ready = window.MoquiVaultClient ? Promise.resolve() : new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = '/js/vault/VaultClient.js?v=' + encodeURIComponent(String(integrity.client).replace(/^sha256-/, ''));
+                script.integrity = integrity.client;
+                script.crossOrigin = 'anonymous';
+                script.onload = resolve;
+                script.onerror = () => reject(new Error(t('The vault module could not be loaded')));
+                document.head.appendChild(script);
+            });
+            return ready.then(() => {
+                this.client = new window.MoquiVaultClient({ workerIntegrity: integrity.worker, wasmIntegrity: integrity.wasm, idleMinutes: 5 });
+                return this.client.start().then(() => this.client);
+            });
+        },
+        takeIn() {
+            if (this.busy) return;
+            this.busy = true;
+            this.error = null;
+            let client = null;
+            const version = Number(this.data.keyVersion);
+            this.startClient().then((started) => {
+                client = started;
+                return this.post('wrappedKey', {});
+            }).then((wrapped) => client.call('personal_open', { personal_key_id: wrapped.personalKeyId, user_id: wrapped.userId,
+                public: wrapped.public, passphrase_wrap: wrapped.passphraseWrap, passphrase: this.passphrase })).then(() => {
+                this.passphrase = '';
+                const wrap = (this.data.wraps || []).find((one) => Number(one.key_version) === version);
+                if (!wrap) throw new Error(t('You hold no wrap of this vault\'s key version'));
+                return client.call('vault_key_open', { entries: this.data.entries, key_checks: this.data.keyChecks || [], wrap });
+            }).then(() => {
+                // one item after another: each names the revision it was made from, and one refused stops the rest
+                return this.data.deposited.filter((item) => !this.taken[item.vaultItemId]).reduce((done, item) => done.then(() =>
+                    client.call('deposit_adopt', { vault_id: this.vaultId, item_id: item.vaultItemId, key_version: version,
+                        label: { item_type: item.vaultItemTypeId, binding: item.bindingKey, name: item.itemName },
+                        deposit_wrapped_private: this.data.depositWrappedPrivate, wrapped_item_key: item.wrappedItemKey })
+                    .then((adopted) => this.post('take', { vaultItemId: item.vaultItemId, expectedRevision: item.revision,
+                        keyVersion: version, wrappedItemKey: adopted.wrapped_item_key }))
+                    .then(() => { this.taken = Object.assign({}, this.taken, { [item.vaultItemId]: true }); })), Promise.resolve());
+            }).then(() => {
+                moqui.notifyMessages([{ type: 'success', message: t('Deposited items taken in') }], null);
+            }).catch((err) => { this.error = String(err && err.message || err); })
+            .then(() => { this.busy = false; this.passphrase = ''; if (client) client.lock(); });
+        }
+    },
+    mounted() { this.load(); },
+    beforeUnmount() { if (this.client) this.client.terminate(); }
+};
+</script>

@@ -16,12 +16,14 @@ along with this software (see the LICENSE.md file). If not, see
     bindings, types, revisions and the days since each was last changed, its rotation age; never a value: an
     operational body goes to no page), its leases (waiting, open, ended) with Revoke (revoke#VaultLease: a manager, an
     approver, the requester or VAULT_ADMIN), its machine access with Revoke (revoke#VaultMachineAccess, VAULT_ADMIN,
-    which names the items to rotate) and its events. -->
+    which names the items to rotate) and its events. Take in opens TakeIn for the items the server deposited (a
+    provision's credentials, a rotation's new values), which a lease names only once a member took them in. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Vault" default-menu-include="false">
     <parameter name="vaultId" required="true"/>
 
     <transition name="lease"><default-response url="../Lease"/></transition>
+    <transition name="takeIn"><default-response url="../TakeIn"/></transition>
     <transition name="revokeLease">
         <service-call name="org.moqui.security.VaultServices.revoke#VaultLease"/>
         <default-response url="."/>
@@ -56,6 +58,7 @@ along with this software (see the LICENSE.md file). If not, see
             itemList = Array.from(call('list#VaultItems', {vaultId})?.itemList || []).map(item => Object.assign({}, item, {
                 ageDays: days(item.lastModifiedDate || item.createdDate),
                 wrapText: item.itemKeyWrapEnumId === 'VwDeposit' ? 'Deposited: a member takes it in' : ''}))
+            depositedCount = itemList.filter(item => item.itemKeyWrapEnumId === 'VwDeposit').length
             leaseList = Array.from(call('list#VaultLeases', {vaultId})?.leaseList || []).map(lease => Object.assign({}, lease, {
                 expiresText: lease.expiresAt ? ec.l10n.format(Number(lease.expiresAt), 'yyyy-MM-dd HH:mm') : '',
                 approverText: lease.machineAccess === 'Y' ? 'machine' : (lease.approvedByUserId || ''),
@@ -81,6 +84,8 @@ along with this software (see the LICENSE.md file). If not, see
         <label text="Items" type="h6" style="q-mt-md"/>
         <label text="Names, bindings and types only: the server sends no operational value to a page. A member with the reveal role sees one value in their own client."
                 type="p" style="text-caption m-muted"/>
+        <link url="takeIn" text="Take in ${depositedCount} deposited" parameter-map="{vaultId:vaultId}" btn-type="primary"
+                icon="sym_o_move_to_inbox" condition="depositedCount &gt; 0"/>
         <form-list name="ItemList" list="itemList" skip-form="true">
             <field name="itemName"><default-field title="Name"><display/></default-field></field>
             <field name="bindingKey"><default-field title="Binding"><display/></default-field></field>

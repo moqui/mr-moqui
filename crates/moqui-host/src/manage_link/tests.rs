@@ -410,3 +410,25 @@ fn a_bundle_keeps_only_bootstrap_secrets_and_never_another_crypt_pass() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `call#InstanceCommand` takes a deploy-component only signed (an attested deploy): an unsigned one is the manager's
+/// own (M3), which only a deploy that passed its gate, lease and approval sends, from Rust, never from a parameter.
+#[cfg(feature = "instances")]
+#[test]
+fn call_instance_command_does_not_deploy_unsigned() {
+    use moqui_lib::object::Value;
+    let parameters = |signature: Option<&str>| {
+        let mut parameters = std::collections::BTreeMap::new();
+        parameters.insert("attestation".to_string(), Value::string("{\"commitId\":\"abc\"}"));
+        if let Some(signature) = signature {
+            parameters.insert("signature".to_string(), Value::string(signature));
+        }
+        parameters
+    };
+    for unsigned in [parameters(None), parameters(Some(""))] {
+        let refused = super::services::manager::body(CommandKind::DeployComponent, &unsigned).unwrap_err();
+        assert!(refused.message().contains("signature"), "{refused}");
+    }
+    let signed = super::services::manager::body(CommandKind::DeployComponent, &parameters(Some("sha256=00"))).unwrap();
+    assert!(matches!(signed, Body::DeployComponent(deploy) if deploy.signature == "sha256=00"));
+}

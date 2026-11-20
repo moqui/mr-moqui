@@ -298,7 +298,10 @@ fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
                 ("approvalRequired", Value::Bool(is_yes(row, "approvalRequired"))),
                 copy("approverGroupId"),
                 copy("allowedRefs"),
-                ("hasToken", Value::Bool(crate::ci::deploy::target_token(row).is_some())),
+                copy("instanceEnvironmentId"),
+                copy("vaultId"),
+                ("machineAccess", Value::Bool(is_yes(row, "machineAccess"))),
+                ("hasToken", Value::Bool(crate::ci::deploy::has_token(facade, row))),
                 copy("lastCommitId"),
                 copy("lastDeploymentId"),
                 copy("lastDeployDate"),
@@ -308,12 +311,17 @@ fn find_ci_environments(parameters: &Parameters, facade: &EntityFacade) -> Out {
     Ok(out([("environmentList", Value::List(environments))]))
 }
 
-/// `store#CiEnvironment`: make or change an environment. The target's `token` is written and never read back. Out:
-/// `environmentId`.
+/// `store#CiEnvironment`: make or change an environment. A target's token is an item of the vault it names, never a
+/// row's (plans/Vault-Instances.md §4.6); naming managed instances' environment needs `INSTANCE_ADMIN`, and machine
+/// access to the token `VAULT_ADMIN`. Out: `environmentId`, `cleared`.
 fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
     let Some(scope) = scope_of(parameters, "writing an environment") else {
         return none();
     };
+    // the caller's own rights, read before the rows are read as the system
+    let as_application = authz_disabled();
+    let names_instances = as_application || moqui_core::user::has_permission("INSTANCE_ADMIN").unwrap_or(false);
+    let gives_machine_access = as_application || moqui_core::user::has_permission("VAULT_ADMIN").unwrap_or(false);
     let _rows = crate::rows_guard();
     let existing = match text(parameters, "environmentId") {
         Some(id) => {
@@ -351,6 +359,7 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
             is_yes(row, "approvalRequired"),
             field(row, "targetUrl"),
             field(row, "approverGroupId"),
+            field(row, "vaultId"),
         )
     });
     let mut row = match existing {
@@ -399,28 +408,72 @@ fn store_ci_environment(parameters: &Parameters, facade: &EntityFacade) -> Out {
             return none();
         }
     }
-    if text(parameters, "token").is_some_and(|token| token.len() < crate::ci::attest::MIN_SECRET) {
-        add_error(format!(
-            "the target's token is at least {} characters",
-            crate::ci::attest::MIN_SECRET
-        ));
+    if parameters.contains_key("token") {
+        add_error(
+            "a target's token is an item of the environment's vault (vaultId, the item bound to \
+             GitCiEnvironment:<environmentId>:targetToken), never a parameter",
+        );
         return none();
     }
     if parameters.contains_key("approvalRequired") {
         row.set("approvalRequired", yes_no(flag(parameters, "approvalRequired")));
     }
-    if let Some(token) = text(parameters, "token") {
-        row.set("targetToken", Value::string(token));
+    // managed instances: deploying to them is their administrators' to give (plans/Vault-Instances.md §4.6)
+    if parameters.contains_key("instanceEnvironmentId") {
+        let given = text(parameters, "instanceEnvironmentId");
+        if given != field(&row, "instanceEnvironmentId") {
+            if !names_instances {
+                add_error("deploying to managed instances is named by an INSTANCE_ADMIN");
+                return none();
+            }
+            if let Some(id) = &given {
+                let known = facade
+                    .find("moqui.server.instance.InstanceEnvironment")?
+                    .eq("environmentId", Value::string(id))
+                    .count()?
+                    > 0;
+                if !known {
+                    add_error(format!("no InstanceEnvironment {id}"));
+                    return none();
+                }
+            }
+            row.set("instanceEnvironmentId", opt(given));
+        }
+    }
+    if parameters.contains_key("vaultId") {
+        let given = text(parameters, "vaultId");
+        if let Some(id) = &given {
+            let operational = facade
+                .find("moqui.security.vault.Vault")?
+                .eq("vaultId", Value::string(id))
+                .one()?
+                .and_then(|vault| field(&vault, "vaultKindEnumId"))
+                .is_some_and(|kind| kind == "VkOperational");
+            if !operational {
+                add_error(format!("no operational vault {id}"));
+                return none();
+            }
+        }
+        row.set("vaultId", opt(given));
+    }
+    if parameters.contains_key("machineAccess") {
+        let wanted = flag(parameters, "machineAccess");
+        if wanted && !is_yes(&row, "machineAccess") && !gives_machine_access {
+            add_error("signing with the target's token unattended (machineAccess) is given by a VAULT_ADMIN");
+            return none();
+        }
+        row.set("machineAccess", yes_no(wanted));
     }
     let mut cleared = Vec::new();
-    if let Some((refs_before, approval_before, target_before, approvers_before)) = &before {
-        // a new address takes no token given for the old one (SEC-TLS-116's rule)
-        if text(parameters, "token").is_none()
-            && field(&row, "targetUrl") != *target_before
-            && field(&row, "targetToken").is_some()
+    if let Some((refs_before, approval_before, target_before, approvers_before, vault_before)) = &before {
+        // a new address or vault takes no machine access given for the old one (SEC-TLS-116's rule): signing for it
+        // waits for an approver again
+        if (field(&row, "targetUrl") != *target_before || field(&row, "vaultId") != *vault_before)
+            && is_yes(&row, "machineAccess")
+            && !(gives_machine_access && parameters.contains_key("machineAccess") && flag(parameters, "machineAccess"))
         {
-            row.set("targetToken", Value::Null);
-            cleared.push("the target's token".to_string());
+            row.set("machineAccess", yes_no(false));
+            cleared.push("machine access to the target's token".to_string());
         }
         // a secret is given to the runs the environment allows: who widens that (a ref allowedRefs did not name, or
         // approval no longer required) gives it again, so whoever edits does not hand on a value another maintainer

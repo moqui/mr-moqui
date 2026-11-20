@@ -211,17 +211,25 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="GitCiEnvironment" package="moqui.resource" use="nontransactional" cache="never">
         <description>A place a repository deploys to, which scopes secrets. For deployments (plans/Dogfood.md §8.6,
-            docs/interfaces/Pipelines.md "Deployments"): the target instance and the token it issued, the pipeline
-            that must pass for a commit, and who approves.</description>
+            docs/interfaces/Pipelines.md "Deployments"): the managed instances' environment, or the target instance not
+            managed here and the vault that holds the token it issued; the pipeline that must pass for a commit, and
+            who approves.</description>
         <field name="environmentId" type="id" is-pk="true"/>
         <field name="repositoryId" type="id"/>
         <field name="ownerId" type="id-long"/>
         <field name="name" type="text-medium"/>
         <field name="targetUrl" type="text-medium"><description>The target instance's base URL (https; http only to a
             loopback IP literal); a deployment posts to its Component-Deploy REST</description></field>
-        <field name="targetToken" type="text-long" encrypt="true"><description>The secret the target issued (its
-            component-deploy attestation-secret): it signs each deployment's attestation and is never sent or read
-            back</description></field>
+        <field name="instanceEnvironmentId" type="id"><description>The InstanceEnvironment of managed instances this
+            environment deploys to (plans/Vault-Instances.md §4.6): over the manager link or SSH, no attestation posted,
+            the deployment's decision opening its lease; targetUrl and the token are then unused</description></field>
+        <field name="vaultId" type="id"><description>A target not managed here: the operational vault holding the
+            secret the target issued (its component-deploy attestation-secret), the item bound to
+            GitCiEnvironment:&lt;environmentId&gt;:targetToken (field secret). It signs each attestation under the
+            deployment's lease, or the environment's machine access; never sent, and no row holds it</description></field>
+        <field name="machineAccess" type="text-indicator"><description>Y: the deploy step signs under the vault's machine
+            access for git-ci-&lt;environmentId&gt; (System › Vaults), with no approver of the lease; the deployment's own
+            approval rule stands</description></field>
         <field name="cloneUrl" type="text-medium"><description>The URL the target fetches the repository from; the
             repository's public clone URL when empty</description></field>
         <field name="requiredPipeline" type="text-medium"><description>The pipeline (with the deploy event) that must
@@ -336,6 +344,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="approvedByUserId" type="id"/>
         <field name="approvedDate" type="date-time"/>
         <field name="refusedByUserId" type="id"/>
+        <field name="leaseId" type="id"><description>The vault lease its approval opens (plans/Vault-Instances.md §4.6):
+            of the managed instances' items, or of the target's token; asked once its pipeline passed, on the cluster
+            member that then runs its deploy step</description></field>
         <field name="deployResult" type="text-long"><description>What the target answered, as JSON (status,
             component, commitId, problems)</description></field>
         <field name="errorText" type="text-long"><description>Why it failed, was refused or cancelled; never a

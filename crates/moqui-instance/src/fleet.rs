@@ -88,6 +88,11 @@ pub fn fleet(facade: &EntityFacade, now: i64) -> Result<Vec<BTreeMap<String, Val
             }
         }
     }
+    // the items bound to each instance past their rotation age (M5, crate::rotate::due); read once for the fleet
+    let past_rotation = crate::rotate::due::past_by_instance(facade, now).unwrap_or_else(|err| {
+        tracing::error!("Instances: the rotation ages of the fleet were not read: {err}");
+        BTreeMap::new()
+    });
     let mut instances = find(facade, APP_INSTANCE)?.list()?.into_values();
     instances.retain(|row| field(row, "desiredStateEnumId") != "IdsRemoved");
     instances.sort_by_key(|row| (field(row, "environmentId"), field(row, "instanceName")));
@@ -186,8 +191,10 @@ pub fn fleet(facade: &EntityFacade, now: i64) -> Result<Vec<BTreeMap<String, Val
                 ),
             ),
             ("openIncidents", Value::I64(incidents as i64)),
-            // the rotation ages are M5's: until then no item is past its age
-            ("itemsPastRotation", Value::Null),
+            (
+                "itemsPastRotation",
+                Value::I64(past_rotation.get(&id).copied().unwrap_or(0) as i64),
+            ),
             (
                 "rolloutPaused",
                 text(

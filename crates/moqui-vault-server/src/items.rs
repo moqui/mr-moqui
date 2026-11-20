@@ -31,7 +31,7 @@ use moqui_lib::object::{Value, ValueMap};
 use crate::common::{
     authz_off, bump_revision, check_hex, check_id, fail, field, find, id_has_history, id_not_available, int, int_field,
     now, out, refused, require_recent_auth, required, text, user, vault_for, Access, Out, Params, ITEM, ITEM_HISTORY,
-    MAX_WRAP_HEX, OPERATIONAL,
+    ITEM_PENDING, MAX_WRAP_HEX, OPERATIONAL,
 };
 use crate::events::{self, Event};
 
@@ -44,6 +44,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     moqui_core::rust_service!(map, list_vault_items)?;
     moqui_core::rust_service!(map, list_vault_item_history)?;
     moqui_core::rust_service!(map, delete_vault_item)?;
+    moqui_core::rust_service!(map, set_vault_item_rotation)?;
+    moqui_core::rust_service!(map, take_vault_deposit)?;
     Ok(())
 }
 
@@ -152,6 +154,7 @@ fn create_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     row.set("createdByUserId", Value::string(&me));
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
+    row.set("rotatedDate", now());
     row.create(facade)?;
     bump_revision(facade, &mut vault)?;
     events::write(
@@ -207,26 +210,7 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
             return Err(fail(format!("The binding {binding} is taken in this vault")));
         }
     }
-    let mut history = facade.make_value(ITEM_HISTORY)?;
-    for name in [
-        "vaultItemId",
-        "revision",
-        "vaultId",
-        "itemKeyWrapEnumId",
-        "wrappedItemKey",
-        "keyVersion",
-        "bodyCipher",
-        "vaultItemTypeId",
-        "bindingKey",
-        "itemName",
-    ] {
-        if let Some(given) = row.get(name).cloned() {
-            history.set(name, given);
-        }
-    }
-    history.set("changedDate", now());
-    history.set("changedByUserId", Value::string(&me));
-    history.create(facade)?;
+    keep_history(facade, &row, Some(&me))?;
     // decision (c) of §9: an item key made before the vault's current key version (a rotation rewraps item keys, it does
     // not make new ones) is replaced at the item's first write after it
     let new_item_key = crate::common::flag(params, "newItemKey").unwrap_or(false);
@@ -251,6 +235,12 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     // environment's sealed key of this item stale (§3.8): marked here, so a machine lease under it is refused clearly
     row.set("lastModifiedDate", now());
     row.set("lastModifiedByUserId", Value::string(&me));
+    // a value the writer changed at its source by hand (a credential the manager cannot rotate, §4.7): its age starts
+    // again; taking a deposit in, or a change of its notes, leaves it
+    let rotated = crate::common::flag(params, "rotated").unwrap_or(false);
+    if rotated {
+        row.set("rotatedDate", now());
+    }
     row.update(facade)?;
     if new_item_key {
         let access = find(facade, crate::common::MACHINE_ACCESS)?
@@ -270,6 +260,7 @@ fn update_vault_item(params: &Params, facade: &EntityFacade) -> Out {
             vault_id: Some(&vault_id),
             item_id: Some(&item_id),
             key_version: Some(key_version),
+            detail: rotated.then(|| "marked rotated by hand: its value changed at its source".to_string()),
             ..Event::default()
         },
     )?;
@@ -357,7 +348,32 @@ fn list_vault_item_history(params: &Params, facade: &EntityFacade) -> Out {
         "changedByUserId",
     ];
     let history = rows.iter().map(|row| item_json(row, operational, &names)).collect();
-    Ok(out([("historyList", Value::List(history))]))
+    // a rotation's new value staged or kept (§4.7): wrapped to the deposit key, which a member opens to recover it
+    let pending_names = [
+        "vaultItemId",
+        "pendingId",
+        "itemKeyWrapEnumId",
+        "wrappedItemKey",
+        "keyVersion",
+        "bodyCipher",
+        "vaultItemTypeId",
+        "bindingKey",
+        "itemName",
+        "expectedRevision",
+        "createdDate",
+        "keptDate",
+        "keptReason",
+    ];
+    let pending = find(facade, ITEM_PENDING)?
+        .eq("vaultItemId", Value::string(&item_id))
+        .list()?
+        .iter()
+        .map(|row| item_json(row, operational, &pending_names))
+        .collect();
+    Ok(out([
+        ("historyList", Value::List(history)),
+        ("pendingList", Value::List(pending)),
+    ]))
 }
 
 /// `delete#VaultItem`: an item and its history, by a member who may write.
@@ -370,11 +386,13 @@ fn delete_vault_item(params: &Params, facade: &EntityFacade) -> Out {
     vault_for(facade, &vault_id, &me, Access::Read, false).map_err(|_| fail(format!("No item {item_id}")))?;
     let mut vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
     require_recent_auth()?;
-    let history = find(facade, ITEM_HISTORY)?
-        .eq("vaultItemId", Value::string(&item_id))
-        .list()?;
-    for old in history.iter() {
-        old.delete(facade)?;
+    for entity in [ITEM_HISTORY, ITEM_PENDING] {
+        let old = find(facade, entity)?
+            .eq("vaultItemId", Value::string(&item_id))
+            .list()?;
+        for one in old.iter() {
+            one.delete(facade)?;
+        }
     }
     row.delete(facade)?;
     bump_revision(facade, &mut vault)?;
@@ -388,4 +406,158 @@ fn delete_vault_item(params: &Params, facade: &EntityFacade) -> Out {
         },
     )?;
     Ok(out([("vaultItemId", Value::string(item_id))]))
+}
+
+/// `set#VaultItemRotation`: an operational item's own rotation age in days, over its type's (plans/Vault-Instances.md
+/// §4.7), by a manager of its vault; empty clears it, so the type's applies. An event, with no value.
+fn set_vault_item_rotation(params: &Params, facade: &EntityFacade) -> Out {
+    let _authz = authz_off();
+    let me = user()?;
+    let item_id = required(params, "vaultItemId")?;
+    let mut row = item_row(facade, &item_id)?;
+    let vault_id = field(&row, "vaultId");
+    vault_for(facade, &vault_id, &me, Access::Read, false).map_err(|_| fail(format!("No item {item_id}")))?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Manage, true)?;
+    if field(&vault, "vaultKindEnumId") != OPERATIONAL {
+        return Err(fail("A rotation age is an operational item's"));
+    }
+    let given = text(params, "rotationDays");
+    let days = if given.is_empty() {
+        None
+    } else {
+        Some(
+            given
+                .parse::<i64>()
+                .ok()
+                .filter(|days| (1..=3650).contains(days))
+                .ok_or_else(|| fail("rotationDays is a whole number of days from 1 to 3650, or empty"))?,
+        )
+    };
+    row.set("rotationDays", days.map_or(Value::Null, Value::I64));
+    row.update(facade)?;
+    bump_revision(facade, &mut vault)?;
+    events::write(
+        facade,
+        Event {
+            kind: "VeItemUpdated",
+            vault_id: Some(&vault_id),
+            item_id: Some(&item_id),
+            detail: Some(match days {
+                Some(days) => format!("rotation age {days} days"),
+                None => "rotation age of its type".to_string(),
+            }),
+            ..Event::default()
+        },
+    )?;
+    Ok(out([("rotationDays", days.map_or(Value::Null, Value::I64))]))
+}
+
+/// Keeps an item's revision as it is now in `VaultItemHistory`, with its wrapped key and body as they were.
+pub(crate) fn keep_history(facade: &EntityFacade, row: &EntityValue, by: Option<&str>) -> Result<(), LibError> {
+    let mut history = facade.make_value(ITEM_HISTORY)?;
+    for name in [
+        "vaultItemId",
+        "revision",
+        "vaultId",
+        "itemKeyWrapEnumId",
+        "wrappedItemKey",
+        "keyVersion",
+        "bodyCipher",
+        "vaultItemTypeId",
+        "bindingKey",
+        "itemName",
+    ] {
+        if let Some(given) = row.get(name).cloned() {
+            history.set(name, given);
+        }
+    }
+    history.set("changedDate", now());
+    if let Some(by) = by {
+        history.set("changedByUserId", Value::string(by));
+    }
+    history.create(facade)
+}
+
+/// `take#VaultDeposit`: a member who may write takes in an item the server deposited (a provision's, or a rotation's new
+/// revision, §3.2, §4.7): its item key, which their client unwrapped with the deposit key's private half and wrapped by
+/// the vault key (`deposit_adopt`), at the vault's current key version, naming the revision it was made from. The body
+/// stays as it is, so no client sends one; the revision before is kept as history. A lease can name the item after
+/// this. An event.
+fn take_vault_deposit(params: &Params, facade: &EntityFacade) -> Out {
+    let _authz = authz_off();
+    let me = user()?;
+    let item_id = required(params, "vaultItemId")?;
+    let mut row = item_row(facade, &item_id)?;
+    let vault_id = field(&row, "vaultId");
+    vault_for(facade, &vault_id, &me, Access::Read, false).map_err(|_| fail(format!("No item {item_id}")))?;
+    let mut vault = vault_for(facade, &vault_id, &me, Access::Write, true)?;
+    if field(&row, "itemKeyWrapEnumId") != "VwDeposit" {
+        return Err(fail(format!("Item {item_id} is not a deposit: it is taken in already")));
+    }
+    let revision = int_field(&row, "revision");
+    if int(params, "expectedRevision") != Some(revision) {
+        return Err(fail(format!(
+            "The item changed since you read it (revision {revision}): read it again"
+        )));
+    }
+    let current = int_field(&vault, "keyVersion");
+    if int(params, "keyVersion") != Some(current) || int_field(&row, "keyVersion") != current {
+        return Err(fail(format!(
+            "The vault key changed (version {current}): open the vault again and take it in at the current version"
+        )));
+    }
+    let wrapped = required(params, "wrappedItemKey")?;
+    check_hex("wrappedItemKey", &wrapped, MAX_WRAP_HEX)?;
+    keep_history(facade, &row, Some(&me))?;
+    row.set("itemKeyWrapEnumId", Value::string("VwVault"));
+    row.set("wrappedItemKey", Value::string(wrapped));
+    row.set("revision", Value::I64(revision + 1));
+    row.set("lastModifiedDate", now());
+    row.set("lastModifiedByUserId", Value::string(&me));
+    row.update(facade)?;
+    bump_revision(facade, &mut vault)?;
+    events::write(
+        facade,
+        Event {
+            kind: "VeItemUpdated",
+            vault_id: Some(&vault_id),
+            item_id: Some(&item_id),
+            key_version: Some(current),
+            detail: Some(format!("{} taken in from the deposit key", field(&row, "bindingKey"))),
+            ..Event::default()
+        },
+    )?;
+    Ok(out([("revision", Value::I64(revision + 1))]))
+}
+
+/// At each start (the vault extension's after-boot): an item written before rotation ages has no `rotatedDate`; it is
+/// given the time of this start, so its age counts from the upgrade and not from when it was made, and the rotation
+/// job does not find every older item due at once. Items written since set it themselves, so this changes rows once. A
+/// failure is logged.
+pub fn backfill_rotated_dates(factory: &moqui_core::context::ExecutionContextFactory) {
+    let Some(facade) = factory.entity() else {
+        return;
+    };
+    let _authz = authz_off();
+    let filled = (|| -> Result<usize, LibError> {
+        let tx = facade.transactions_for(ITEM)?;
+        tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+            let mut filled = 0;
+            for mut row in find(&facade, ITEM)?
+                .eq("rotatedDate", Value::Null)
+                .list()?
+                .into_values()
+            {
+                row.set("rotatedDate", now());
+                row.update(&facade)?;
+                filled += 1;
+            }
+            Ok(filled)
+        })
+    })();
+    match filled {
+        Ok(0) => {}
+        Ok(count) => tracing::info!("Vaults: {count} items written before rotation ages count their age from now"),
+        Err(err) => tracing::error!("Vaults: the rotation dates of older items were not set: {err}"),
+    }
 }

@@ -72,3 +72,21 @@ fn a_deployments_public_status_says_how_it_ended_only() {
     assert_eq!(public_description(super::CANCELLED), "Deploy cancelled");
     assert_eq!(public_description(super::DEPLOYED), "Deployed");
 }
+
+/// A target's token is the item of a binding of its own environment, its machine access an environment of its own,
+/// and its lease names the deployment and where the attestation goes, never more than a lease holds and never with
+/// credentials of the URL (plans/Vault-Instances.md §4.6).
+#[test]
+fn a_targets_token_is_its_environments_vault_item_and_its_lease_names_the_deployment() {
+    assert_eq!(super::token_binding("100042"), "GitCiEnvironment:100042:targetToken");
+    assert_eq!(super::machine_environment("100042"), "git-ci-100042");
+    let operation = super::sign_operation("100500", "https://target.example.com");
+    assert_eq!(
+        operation,
+        "deploy GitDeployment 100500: sign its attestation for https://target.example.com/"
+    );
+    let long = format!("https://{}.example.com", "a".repeat(300));
+    let operation = super::sign_operation("100500", &long);
+    assert!(operation.len() <= 255, "{operation}");
+    assert!(operation.contains("GitDeployment 100500"));
+}

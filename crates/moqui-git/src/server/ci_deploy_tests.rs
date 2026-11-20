@@ -16,7 +16,9 @@
 //! component with a deploy pipeline, `request#GitDeployment`, the pipeline's job on the fake host type ended as a
 //! runner would end it, the approval, and the deploy step's call over loopback to a target that verifies the
 //! attestation with the same code the target's `deploy#AttestedComponent` uses (`ci::attest::verify`; the target's own
-//! gate is tested in moqui-devkit, `deploy/git_tests.rs`).
+//! gate is tested in moqui-devkit, `deploy/git_tests.rs`). The token the target issued is an item of an operational
+//! vault (plans/Vault-Instances.md §4.6), signing under the environment's machine access, or under the deployment's
+//! lease, which its approval opens.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -24,6 +26,7 @@ use std::sync::{Arc, Mutex};
 
 use super::*;
 use crate::ci::{attest, deploy};
+use moqui_vault_server::testing::OperationalVault;
 
 const TOKEN: &str = "the-target-issued-this-0123456789";
 const FORGED_TOKEN: &str = "not-what-the-target-issued-0123456789";
@@ -167,13 +170,47 @@ fn environment(fixture: &Fixture, target: &str, token: &str, approval: bool) -> 
             ("repositoryId", s("site")),
             ("name", s("prod")),
             ("targetUrl", s(target)),
-            ("token", s(token)),
             ("requiredPipeline", s("release")),
             ("approvalRequired", Value::Bool(approval)),
             ("allowedRefs", s("main")),
         ],
     );
-    to_plain_string(&out["environmentId"])
+    let id = to_plain_string(&out["environmentId"]);
+    token_vault(fixture, &id, token, "tok");
+    id
+}
+
+/// The target's `token` as an item of a new operational vault (users named for `tag`), the environment's vault, and
+/// the environment's machine access to it (given by its approver, as a VAULT_ADMIN turns it on).
+fn token_vault(fixture: &Fixture, environment_id: &str, token: &str, tag: &str) -> OperationalVault {
+    let _entered = fixture.context.enter();
+    let binding = deploy::token_binding(environment_id);
+    let mut vault = OperationalVault::new(&fixture.entity, tag);
+    vault.item(
+        "api-key",
+        &binding,
+        &serde_json::json!({ "keyId": "target", "secret": token }),
+    );
+    {
+        let _authz = fixture.context.disable_authz();
+        // the grant before: one vault's machine access signs
+        let _ = fixture
+            .entity
+            .find("moqui.security.vault.VaultMachineAccess")
+            .unwrap()
+            .eq("environmentId", s(&deploy::machine_environment(environment_id)))
+            .delete_all();
+        let mut row = rows(fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", environment_id)]).remove(0);
+        row.set("vaultId", s(&vault.vault_id));
+        row.set("machineAccess", s("Y"));
+        row.update(&fixture.entity).unwrap();
+    }
+    vault.give_machine_access(
+        &fixture.entity,
+        &deploy::machine_environment(environment_id),
+        &[binding],
+    );
+    vault
 }
 
 fn deployment(fixture: &Fixture, id: &str) -> EntityValue {
@@ -324,7 +361,7 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
         "{}",
         sent[0].request
     );
-    // the token is in no request, no answer and no row a service reads
+    // the token is in no request, no answer and no row a service reads, and was read under the machine access only
     assert!(!sent[0].request.contains(TOKEN));
     let got = ok(
         &fixture,
@@ -393,16 +430,7 @@ fn a_deployment_runs_its_pipeline_then_posts_a_signed_attestation_its_target_ver
 
     // a token the target did not issue: the target refuses the forged attestation, and the deployment fails with its
     // answer, the token still in no row
-    ok(
-        &fixture,
-        WRITER,
-        &format!("{DEPLOYMENTS}.store#CiEnvironment"),
-        &[
-            ("repositoryId", s("site")),
-            ("environmentId", s(&environment_id)),
-            ("token", s(FORGED_TOKEN)),
-        ],
-    );
+    token_vault(&fixture, &environment_id, FORGED_TOKEN, "forged");
     let forged = requested_and_run(&fixture, "success");
     step(&fixture, &forged);
     let row = deployment(&fixture, &forged);
@@ -666,11 +694,19 @@ fn an_environment_refuses_a_clone_url_with_credentials_an_unknown_group_and_a_sh
     }
     let errors = stored(&[("approverGroupId", s("NO_SUCH_GROUP"))]);
     assert!(errors.contains("no user group NO_SUCH_GROUP"), "{errors}");
-    let errors = stored(&[("token", s("only-31-characters-long-0123456"))]);
-    assert!(errors.contains("at least 32 characters"), "{errors}");
+    // a token is an item of the environment's vault, never a parameter or a row's (plans/Vault-Instances.md §4.6)
+    let errors = stored(&[("token", s(TOKEN))]);
+    assert!(errors.contains("never a parameter"), "{errors}");
+    assert!(!errors.contains(TOKEN), "{errors}");
+    // naming managed instances is an INSTANCE_ADMIN's, and machine access to the token a VAULT_ADMIN's
+    let errors = stored(&[("instanceEnvironmentId", s("prod-env"))]);
+    assert!(errors.contains("INSTANCE_ADMIN"), "{errors}");
+    let errors = stored(&[("machineAccess", Value::Bool(true))]);
+    assert!(errors.contains("VAULT_ADMIN"), "{errors}");
+    let errors = stored(&[("vaultId", s("no-such-vault"))]);
+    assert!(errors.contains("no operational vault"), "{errors}");
     assert!(stored(&[
         ("cloneUrl", s("ssh://git@source.example.com/site.git")),
-        ("token", s(TOKEN)),
         ("dataTypes", s("seed, seed-initial")),
     ])
     .is_empty());
@@ -944,10 +980,10 @@ fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
         let row = rows(&fixture, crate::ci::CI_SECRET, &[("environmentId", &id)]).remove(0);
         text(&row, "secretValue")
     };
-    let token = || {
+    let machine = || {
         text(
             &rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", &id)])[0],
-            "targetToken",
+            "machineAccess",
         )
     };
     let change = |fields: &[(&str, Value)]| {
@@ -982,7 +1018,263 @@ fn widening_an_environment_clears_its_secrets_and_a_new_target_its_token() {
     );
     change(&[("approvalRequired", Value::Bool(false))]);
     assert_eq!(value(), "", "approval no longer required");
-    assert_eq!(token(), TOKEN);
-    change(&[("targetUrl", s("https://elsewhere.example.com"))]);
-    assert_eq!(token(), "", "a new target takes no old token");
+    assert_eq!(machine(), "Y");
+    let cleared = change(&[("targetUrl", s("https://elsewhere.example.com"))]);
+    assert!(cleared.contains("machine access to the target's token"), "{cleared}");
+    assert_eq!(
+        machine(),
+        "N",
+        "a new target takes no machine access given for the old one"
+    );
+    // nor does one who is not a VAULT_ADMIN keep it on by asking for it with the new target
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = rows(&fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", &id)]).remove(0);
+        row.set("machineAccess", s("Y"));
+        row.update(&fixture.entity).unwrap();
+    }
+    let cleared = change(&[
+        ("targetUrl", s("https://third.example.com")),
+        ("machineAccess", Value::Bool(true)),
+    ]);
+    assert!(cleared.contains("machine access"), "{cleared}");
+    assert_eq!(machine(), "N");
+}
+
+/// Signing needs the deployment's lease when the environment has no machine access (plans/Vault-Instances.md §4.6):
+/// once the pipeline passed, the lease of the target's token is asked and the deployment waits for approval whatever
+/// approvalRequired says; approving it is opening the lease (one decision, with the approver's client's approval of
+/// it), the step signs under it, and the lease ends with the step.
+#[test]
+fn a_deployment_whose_token_is_leased_is_approved_by_opening_its_lease() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, _commit) = site("ci-deploy-lease");
+    let (target, received) = fake_target(TOKEN);
+    let environment_id = environment(&fixture, &target, TOKEN, false);
+    let mut vault = token_vault_leased(&fixture, &environment_id);
+    let id = requested_and_run(&fixture, "success");
+    let row = deployment(&fixture, &id);
+    assert_eq!(
+        text(&row, "statusId"),
+        deploy::WAITING_APPROVAL,
+        "{}",
+        text(&row, "errorText")
+    );
+    let lease_id = text(&row, "leaseId");
+    assert!(!lease_id.is_empty());
+    // the lease names the deployment, whose attestation it signs
+    let lease = rows(&fixture, "moqui.security.vault.VaultLease", &[("leaseId", &lease_id)]).remove(0);
+    assert!(
+        text(&lease, "operation").contains(&format!("GitDeployment {id}")),
+        "{lease:?}"
+    );
+    let decide = format!("{DEPLOYMENTS}.decide#GitDeployment");
+    // approving with no approval of the lease, the lease still waiting: refused, and nothing is sent
+    let (_, errors) = call(
+        &fixture,
+        "git.second",
+        &decide,
+        &[("deploymentId", s(&id)), ("decision", s("approve"))],
+    );
+    assert!(errors.contains("approved by opening its lease"), "{errors}");
+    assert_eq!(text(&deployment(&fixture, &id), "statusId"), deploy::WAITING_APPROVAL);
+    // the vault's approver, who also decides the repository's deployments, approves both in one decision
+    {
+        let _entered = fixture.context.enter();
+        let approval = vault.approval(&lease_id);
+        let user = vault.approver.user.clone();
+        moqui_core::user::login_external_user(&user, Some(moqui_core::user::now_millis())).unwrap();
+        let parameters: BTreeMap<String, Value> = [
+            ("deploymentId".to_string(), s(&id)),
+            ("decision".to_string(), s("approve")),
+            ("leaseApproval".to_string(), moqui_lib::json::from_json(&approval)),
+        ]
+        .into();
+        let answer = moqui_core::service::sync(&decide, &parameters);
+        let errors = moqui_core::context::ExecutionContext::with_current(|ec| ec.message().errors_text().join("\n"))
+            .unwrap_or_default();
+        assert!(answer.is_ok() && errors.is_empty(), "{answer:?} {errors}");
+        moqui_core::user::logout().unwrap();
+    }
+    let row = deployment(&fixture, &id);
+    assert_eq!(text(&row, "statusId"), deploy::DEPLOYING, "{}", text(&row, "errorText"));
+    assert_eq!(text(&row, "approvedByUserId"), vault.approver.user);
+    step(&fixture, &id);
+    let row = deployment(&fixture, &id);
+    assert_eq!(text(&row, "statusId"), deploy::DEPLOYED, "{}", text(&row, "errorText"));
+    assert!(
+        received.lock().unwrap()[0].attestation.is_some(),
+        "the target verified it"
+    );
+    // the lease was used for the token once, and ended with the step
+    let lease = rows(&fixture, "moqui.security.vault.VaultLease", &[("leaseId", &lease_id)]).remove(0);
+    assert_eq!(text(&lease, "statusId"), "VlsEnded");
+    let used = rows(
+        &fixture,
+        "moqui.security.vault.VaultEvent",
+        &[("leaseId", &lease_id), ("eventTypeEnumId", "VeLeaseUsed")],
+    );
+    assert_eq!(used.len(), 1);
+    // a decision that crosses the lease dialog's changes nothing the second time
+    {
+        let _entered = fixture.context.enter();
+        let row = deployment(&fixture, &id);
+        let again = deploy::decide(
+            &fixture.entity,
+            &row,
+            Some(vault.approver.user.clone()),
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(again, deploy::DEPLOYED);
+    }
+    // a deployment whose lease ended before it deployed is failed by the sweep (end#OverdueJobRuns)
+    let stale = {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut row = EntityValue::make(&fixture.entity, "moqui.resource.GitDeployment").unwrap();
+        row.set_sequenced_id_primary(&fixture.entity).unwrap();
+        let stale = text(&row, "deploymentId");
+        for (name, value) in [
+            ("repositoryId", "site"),
+            ("environmentId", environment_id.as_str()),
+            ("environmentName", "prod"),
+            ("statusId", deploy::WAITING_APPROVAL),
+            ("leaseId", lease_id.as_str()),
+        ] {
+            row.set(name, s(value));
+        }
+        row.create(&fixture.entity).unwrap();
+        deploy::resume(&fixture.entity, crate::ci::now_millis()).unwrap();
+        stale
+    };
+    let row = deployment(&fixture, &stale);
+    assert_eq!(text(&row, "statusId"), deploy::FAILED);
+    assert!(
+        text(&row, "errorText").contains("its lease"),
+        "{}",
+        text(&row, "errorText")
+    );
+}
+
+/// The token's vault for a lease: a new vault whose approver also decides the repository's deployments (a member of
+/// its writers, a maintainer), as the environment's vault, with no machine access.
+fn token_vault_leased(fixture: &Fixture, environment_id: &str) -> OperationalVault {
+    let _entered = fixture.context.enter();
+    let binding = deploy::token_binding(environment_id);
+    let mut vault = OperationalVault::new(&fixture.entity, "lease");
+    vault.item(
+        "api-key",
+        &binding,
+        &serde_json::json!({ "keyId": "target", "secret": TOKEN }),
+    );
+    let _authz = fixture.context.disable_authz();
+    let mut row = rows(fixture, crate::ci::CI_ENVIRONMENT, &[("environmentId", environment_id)]).remove(0);
+    row.set("vaultId", s(&vault.vault_id));
+    row.set("machineAccess", s("N"));
+    row.update(&fixture.entity).unwrap();
+    let mut member = EntityValue::make(&fixture.entity, "moqui.security.UserGroupMember").unwrap();
+    member.set("userId", s(&vault.approver.user));
+    member.set("userGroupId", s("GIT_WRITERS"));
+    member.set(
+        "fromDate",
+        moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+    );
+    member.create(&fixture.entity).unwrap();
+    vault
+}
+
+/// A deployment to managed instances is decided only by a member of their environment's approver group, checked as
+/// the decider (plans/Vault-Instances.md §4.6): a maintainer who may decide the repository's deployments is refused
+/// without it, and decides with it.
+#[test]
+fn a_deployment_to_managed_instances_is_decided_by_their_environments_approver_group() {
+    if !git_available() {
+        eprintln!("skipped: git is not on the PATH");
+        return;
+    }
+    let (fixture, _base, _work, commit) = site("ci-deploy-managed");
+    let (target, _received) = fake_target(TOKEN);
+    let environment_id = environment(&fixture, &target, TOKEN, true);
+    let deployment_id = {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        create(
+            &fixture.entity,
+            "moqui.security.UserGroup",
+            &[("userGroupId", "PROD_APPROVERS")],
+        );
+        create(
+            &fixture.entity,
+            "moqui.server.instance.InstanceEnvironment",
+            &[
+                ("environmentId", "prod-managed"),
+                ("approverUserGroupId", "PROD_APPROVERS"),
+            ],
+        );
+        let mut row = rows(
+            &fixture,
+            crate::ci::CI_ENVIRONMENT,
+            &[("environmentId", &environment_id)],
+        )
+        .remove(0);
+        row.set("instanceEnvironmentId", s("prod-managed"));
+        row.update(&fixture.entity).unwrap();
+        // a deployment whose pipeline passed and that waits for its decision (no lease: the managed side is not
+        // linked into this test)
+        let mut deployment = EntityValue::make(&fixture.entity, "moqui.resource.GitDeployment").unwrap();
+        deployment.set_sequenced_id_primary(&fixture.entity).unwrap();
+        let id = text(&deployment, "deploymentId");
+        for (name, value) in [
+            ("repositoryId", "site"),
+            ("environmentId", environment_id.as_str()),
+            ("environmentName", "prod"),
+            ("commitId", commit.as_str()),
+            ("refName", "refs/heads/main"),
+            ("statusId", deploy::WAITING_APPROVAL),
+            ("requestedByUserId", WRITER),
+            ("approvalRequired", "Y"),
+        ] {
+            deployment.set(name, s(value));
+        }
+        deployment.create(&fixture.entity).unwrap();
+        id
+    };
+    let decide = format!("{DEPLOYMENTS}.decide#GitDeployment");
+    let (_, errors) = call(
+        &fixture,
+        "git.second",
+        &decide,
+        &[("deploymentId", s(&deployment_id)), ("decision", s("refuse"))],
+    );
+    assert!(errors.contains("approver group PROD_APPROVERS"), "{errors}");
+    assert_eq!(
+        text(&deployment(&fixture, &deployment_id), "statusId"),
+        deploy::WAITING_APPROVAL
+    );
+    {
+        let _entered = fixture.context.enter();
+        let _authz = fixture.context.disable_authz();
+        let mut member = EntityValue::make(&fixture.entity, "moqui.security.UserGroupMember").unwrap();
+        member.set("userId", s("git.second"));
+        member.set("userGroupId", s("PROD_APPROVERS"));
+        member.set(
+            "fromDate",
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "Timestamp").value,
+        );
+        member.create(&fixture.entity).unwrap();
+    }
+    ok(
+        &fixture,
+        "git.second",
+        &decide,
+        &[("deploymentId", s(&deployment_id)), ("decision", s("refuse"))],
+    );
+    assert_eq!(text(&deployment(&fixture, &deployment_id), "statusId"), deploy::REFUSED);
 }

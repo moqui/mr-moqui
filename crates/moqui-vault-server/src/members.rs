@@ -551,10 +551,33 @@ fn remove_vault_member(params: &Params, facade: &EntityFacade) -> Out {
             ..Event::default()
         },
     )?;
+    // a removed member may have kept item keys or values: the real revocation is a new value at each source, offered
+    // here (§3.9, §4.7) with what the instance manager can rotate and what is done by hand
+    let offer = if field(&vault, "vaultKindEnumId") == OPERATIONAL {
+        ROTATION_OFFER
+            .get()
+            .map(|offer| offer(facade, &vault_id))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     Ok(out([
         ("keyVersion", Value::I64(new_version)),
         ("revision", Value::I64(int_field(&vault, "revision"))),
+        ("rotationOffer", Value::List(offer)),
     ]))
+}
+
+/// What a removal from an operational vault offers to rotate at the source (§3.9): each item of the vault, with whether
+/// the instance manager can rotate it (`rotatable`) and else what to do by hand. The instance manager (moqui-instance)
+/// installs it; without it the offer is empty.
+pub type RotationOffer = fn(&EntityFacade, &str) -> Vec<Value>;
+
+static ROTATION_OFFER: std::sync::OnceLock<RotationOffer> = std::sync::OnceLock::new();
+
+/// Installs [`RotationOffer`] (once; a second install is ignored).
+pub fn install_rotation_offer(offer: RotationOffer) {
+    let _ = ROTATION_OFFER.set(offer);
 }
 
 /// `ack#VaultKeyVersion`: the caller opened `keyVersion` of the vault key; their wraps of earlier versions are deleted

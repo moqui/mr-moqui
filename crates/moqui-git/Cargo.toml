@@ -24,6 +24,8 @@ getrandom = { workspace = true }
 gix = { workspace = true }
 gix-pack = { workspace = true }
 hmac = { workspace = true }
+# a target's token, read from its vault item to sign a deployment's attestation (src/ci/deploy.rs)
+zeroize = { workspace = true }
 indexmap = { workspace = true }
 inventory = { workspace = true }
 jiff = { workspace = true }
@@ -48,6 +50,8 @@ moqui-core = { workspace = true, features = ["http", "test-support", "image", "x
 moqui-dav = { workspace = true }
 # The report definitions' git sync, which a push to a repository runs (pull#DefinitionGitSyncs), as in the host.
 moqui-report = { workspace = true }
+# a deployment's lease and machine access: the target's token is an item of an operational vault (ci_deploy_tests)
+moqui-vault-server = { workspace = true, features = ["test-support"] }
 # The file services' image thumbnails and spreadsheet previews, written by the tests.
 image = { workspace = true }
 rust_xlsxwriter = { workspace = true }

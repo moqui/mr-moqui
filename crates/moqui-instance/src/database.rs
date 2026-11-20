@@ -78,7 +78,7 @@ pub fn identifier<'a>(name: &'a str, what: &str) -> Result<&'a str, LibError> {
 }
 
 /// A host name, container name or user name that goes into a one-shot's script: letters, digits, `.`, `_` and `-`.
-fn plain_word<'a>(text: &'a str, what: &str) -> Result<&'a str, LibError> {
+pub(crate) fn plain_word<'a>(text: &'a str, what: &str) -> Result<&'a str, LibError> {
     if !text.is_empty()
         && text
             .bytes()
@@ -150,11 +150,14 @@ fn option_value(text: &str) -> String {
     format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-/// What a one-shot client container is given: its entrypoint and command (no secret in them) and its secret files.
+/// What a one-shot client container is given: its entrypoint and command (no secret in them), its secret files, the
+/// volumes it mounts (name and path: a backup's), and how long it may run when not [`ONE_SHOT_WAIT`].
 pub struct OneShot {
     pub entrypoint: Vec<String>,
     pub cmd: Vec<String>,
     pub files: Vec<(String, Zeroizing<Vec<u8>>)>,
+    pub mounts: Vec<(String, String)>,
+    pub wait: Option<std::time::Duration>,
 }
 
 impl std::fmt::Debug for OneShot {
@@ -263,13 +266,65 @@ fn exists_queries(conf_name: &str, database: &str, user: &str) -> (String, Strin
     }
 }
 
-fn one_shot(script: String, mut files: Vec<(String, Zeroizing<Vec<u8>>)>) -> OneShot {
+pub(crate) fn one_shot(script: String, mut files: Vec<(String, Zeroizing<Vec<u8>>)>) -> OneShot {
     files.push(("database.sh".to_string(), Zeroizing::new(script.into_bytes())));
     OneShot {
         entrypoint: vec!["/bin/sh".to_string()],
         cmd: vec!["/run/secrets/database.sh".to_string()],
         files,
+        mounts: Vec::new(),
+        wait: None,
     }
+}
+
+/// Where a backup one-shot writes: the server's backups volume, mounted here.
+pub const BACKUPS_DIR: &str = "/backups";
+
+/// The one-shot that backs up `database` on the server, or every database when none, into `file` of the backups volume
+/// `volume` (plans/Vault-Instances.md §4.6, step 5): `pg_dump` (custom format) or `pg_dumpall`, `mysqldump`, written as
+/// `file.partial` and renamed to `file` only when the dump succeeds (a failed one is deleted). It runs at most
+/// `manage@backup-wait-seconds` (3600). Its logs hold only the script's own `moqui:` lines.
+pub fn one_shot_backup(
+    server: Server,
+    admin: &AdminLogin,
+    database: Option<&str>,
+    file: &str,
+    volume: &str,
+) -> Result<OneShot, LibError> {
+    let file = plain_word(file, "backup file")?;
+    let host = plain_word(server.host, "server")?;
+    let port = plain_word(server.port, "port")?;
+    let user = plain_word(&admin.user, "admin user")?;
+    let dump = match (server.conf_name, database) {
+        ("postgres", Some(database)) => format!(
+            "pg_dump -h {host} -p {port} -U {user} -Fc -f {BACKUPS_DIR}/{file}.partial {}",
+            identifier(database, "database")?
+        ),
+        ("postgres", None) => format!("pg_dumpall -h {host} -p {port} -U {user} -f {BACKUPS_DIR}/{file}.partial"),
+        (_, Some(database)) => format!(
+            "mysqldump --defaults-extra-file=/run/secrets/admin.cnf -h {host} -P {port} --single-transaction {} > \
+             {BACKUPS_DIR}/{file}.partial",
+            identifier(database, "database")?
+        ),
+        (_, None) => format!(
+            "mysqldump --defaults-extra-file=/run/secrets/admin.cnf -h {host} -P {port} --single-transaction \
+             --all-databases > {BACKUPS_DIR}/{file}.partial"
+        ),
+    };
+    let script = format!(
+        "set -u\n{}\
+         {dump} 2>/dev/null || {{ rm -f {BACKUPS_DIR}/{file}.partial; echo 'moqui: the backup {file} failed'; exit 7; }}\n\
+         mv {BACKUPS_DIR}/{file}.partial {BACKUPS_DIR}/{file} || {{ echo 'moqui: the backup {file} was not kept'; exit 7; }}\n\
+         echo 'moqui: backup {file}'\n",
+        client_lines(server, &admin.user)?
+    );
+    let mut shot = one_shot(script, vec![admin_file(server, admin)]);
+    shot.mounts.push((volume.to_string(), BACKUPS_DIR.to_string()));
+    let seconds: u64 = moqui_core::context::conf_env::setting("manage@backup-wait-seconds")
+        .parse()
+        .unwrap_or(3600);
+    shot.wait = Some(std::time::Duration::from_secs(seconds));
+    Ok(shot)
 }
 
 /// The one-shot that makes `user` (with `password`) and `database` on the server, refusing (exit [`EXIT_EXISTS`], a
@@ -354,6 +409,136 @@ pub fn one_shot_check(server: Server, admin: &AdminLogin, database: &str, user: 
         client_lines(server, &admin.user)?
     );
     Ok(one_shot(script, vec![admin_file(server, admin)]))
+}
+
+// ----- rotation (plans/Vault-Instances.md §4.7) -----
+
+/// Whose password a rotation sets: a database's own user (its `CREATE USER`), or the server's admin (Postgres's
+/// `postgres`, MySQL's `root`, both of its hosts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Whose {
+    User,
+    Admin,
+}
+
+/// The statements that set `user`'s password: `ALTER ROLE ... PASSWORD '<SCRAM verifier>'` on Postgres, so the password
+/// is in no statement or server log; `ALTER USER ... IDENTIFIED BY` on MySQL (letters and digits only, SEC-TLS-10), for
+/// `'root'@'%'` and `'root'@'localhost'` when it is the admin.
+pub fn password_statements(
+    conf_name: &str,
+    user: &str,
+    password: &str,
+    whose: Whose,
+) -> Result<Zeroizing<String>, LibError> {
+    let user = identifier(user, "user")?;
+    Ok(Zeroizing::new(match conf_name {
+        "postgres" => format!("ALTER ROLE {user} WITH PASSWORD '{}';\n", scram_verifier(password)),
+        "mysql" | "mysql8" => {
+            let password = mysql_password(password)?;
+            match whose {
+                Whose::User => format!("ALTER USER '{user}'@'%' IDENTIFIED BY '{password}';\n"),
+                Whose::Admin => format!(
+                    "ALTER USER IF EXISTS '{user}'@'%' IDENTIFIED BY '{password}';\n\
+                     ALTER USER IF EXISTS '{user}'@'localhost' IDENTIFIED BY '{password}';\n"
+                ),
+            }
+        }
+        other => return Err(fail(format!("No database kind {other}: postgres or mysql"))),
+    }))
+}
+
+/// The one-shot that sets `user`'s password on the server to `password`, signed in as `admin` (for the admin's own
+/// rotation, the admin login before it): exit 5 when the admin login is refused, 6 when the statement fails. Its logs
+/// hold only the script's own `moqui:` lines.
+pub fn one_shot_set_password(
+    server: Server,
+    admin: &AdminLogin,
+    user: &str,
+    password: &str,
+    whose: Whose,
+) -> Result<OneShot, LibError> {
+    let statements = password_statements(server.conf_name, user, password, whose)?;
+    let user = identifier(user, "user")?;
+    let (flag, source) = if server.conf_name == "postgres" {
+        ("-c", "-f /run/secrets/password.sql")
+    } else {
+        ("-e", "< /run/secrets/password.sql")
+    };
+    let script = format!(
+        "set -u\n{}\
+         q {flag} 'SELECT 1' >/dev/null 2>&1 || {{ echo 'moqui: the admin login was refused'; exit 5; }}\n\
+         q {source} >/dev/null 2>&1 || {{ echo 'moqui: setting the password of {user} failed'; exit 6; }}\n\
+         echo 'moqui: set the password of {user}'\n",
+        client_lines(server, &admin.user)?
+    );
+    Ok(one_shot(
+        script,
+        vec![
+            admin_file(server, admin),
+            (
+                "password.sql".to_string(),
+                Zeroizing::new(statements.as_bytes().to_vec()),
+            ),
+        ],
+    ))
+}
+
+/// The one-shot that signs in to the server as `login` (to `database` on Postgres, `postgres` when none) and does
+/// nothing else: exit 0 when the server takes it, 5 when it refuses it. A rotation's check of the new value at its
+/// source.
+pub fn one_shot_login(server: Server, login: &AdminLogin, database: Option<&str>) -> Result<OneShot, LibError> {
+    let host = plain_word(server.host, "server")?;
+    let port = server
+        .port
+        .parse::<u16>()
+        .map_err(|_| fail(format!("{} is not a port", server.port)))?;
+    let user = identifier(&login.user, "user")?;
+    let sign_in = match server.conf_name {
+        "postgres" => format!(
+            "export PGPASSFILE=/run/secrets/pgpass\n\
+             psql -h {host} -p {port} -U {user} -d {} -tAq -c 'SELECT 1'",
+            identifier(database.unwrap_or("postgres"), "database")?
+        ),
+        "mysql" | "mysql8" => {
+            format!("mysql --defaults-extra-file=/run/secrets/admin.cnf -h {host} -P {port} -N -e 'SELECT 1'")
+        }
+        other => return Err(fail(format!("No database kind {other}: postgres or mysql"))),
+    };
+    let script = format!(
+        "set -u\n{sign_in} >/dev/null 2>&1 || {{ echo 'moqui: the login of {user} was refused'; exit 5; }}\n\
+         echo 'moqui: {user} signed in'\n"
+    );
+    Ok(one_shot(script, vec![admin_file(server, login)]))
+}
+
+/// Sets `user`'s password on a database host as its leased admin, over verified TLS ([`password_statements`]).
+pub fn set_password_direct(direct: &Direct, user: &str, password: &str, whose: Whose) -> Result<(), LibError> {
+    let statements = password_statements(direct.conf_name, user, password, whose)?;
+    let mut conn = connect(direct, admin_database(direct.conf_name)?)?;
+    for statement in statements.split(";\n").filter(|statement| !statement.trim().is_empty()) {
+        conn.execute(statement, &[])?;
+    }
+    Ok(())
+}
+
+/// Signs in to a database host as `login`, to `database`, over verified TLS: a rotation's check of the new value.
+pub fn login_direct(
+    conf_name: &str,
+    host: &str,
+    port: &str,
+    login: &AdminLogin,
+    database: &str,
+) -> Result<(), LibError> {
+    let database = identifier(database, "database")?;
+    let direct = Direct {
+        conf_name,
+        host,
+        port,
+        admin: login,
+    };
+    let mut conn = connect(&direct, database)?;
+    conn.query_once("SELECT 1", &[])?;
+    Ok(())
 }
 
 // ----- a database host, over TLS -----

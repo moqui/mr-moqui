@@ -39,6 +39,12 @@ moqui_core::extension::submit! {
 }
 
 fn register_services(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
+    // a deploy's own (M3) goes to the link from Rust, never through call#InstanceCommand
+    #[cfg(feature = "instances")]
+    moqui_instance::link::install_link_deploy(manager::deploy_unsigned);
+    // a rotation's new value (M5) goes to the link from Rust too, never as a service's parameter
+    #[cfg(feature = "instances")]
+    moqui_instance::link::install_link_put(manager::put_secret);
     moqui_core::rust_service!(map, get_instance_link)?;
     moqui_core::rust_service!(map, create_instance_pairing_code)?;
     moqui_core::rust_service!(map, call_instance_command)?;
@@ -142,7 +148,7 @@ fn get_manager_link(_params: &Params, _facade: &EntityFacade) -> Out {
 }
 
 #[cfg(feature = "instances")]
-mod manager {
+pub(in crate::manage_link) mod manager {
     use moqui_lib::object::Value;
 
     use super::super::proto::command::Body;
@@ -247,7 +253,7 @@ mod manager {
     }
 
     /// The command a service call names, as the link carries it.
-    fn body(kind: CommandKind, params: &Params) -> Result<Body, LibError> {
+    pub(in crate::manage_link) fn body(kind: CommandKind, params: &Params) -> Result<Body, LibError> {
         Ok(match kind {
             CommandKind::Status => Body::Status(Default::default()),
             CommandKind::Seal => Body::Seal(Default::default()),
@@ -259,6 +265,8 @@ mod manager {
                 value: required(params, "value")?,
                 force: matches!(text(params, "force").as_str(), "Y" | "true"),
             }),
+            // signed only: an unsigned deploy is the manager's own (M3), which only a deploy that passed its gate, lease
+            // and approval sends, from Rust (deploy_unsigned)
             CommandKind::DeployComponent => Body::DeployComponent(DeployComponentCommand {
                 attestation: required(params, "attestation")?,
                 signature: required(params, "signature")?,
@@ -270,6 +278,47 @@ mod manager {
                 return Err(LibError::new("a changed approver set goes by update#InstanceApprovers"))
             }
         })
+    }
+
+    /// The manager's own deploy on an instance (M3), unsigned, over its link (`moqui_instance::link::link_deploy`):
+    /// called only by `moqui_instance::deploy` once its gate, lease and approval passed.
+    pub(super) fn deploy_unsigned(instance_id: &str, deploy: &str) -> Result<String, String> {
+        let factory = factory().map_err(|err| err.to_string())?;
+        let server = server(&factory).map_err(|err| err.to_string())?;
+        let reply = server.call(
+            instance_id,
+            Body::DeployComponent(DeployComponentCommand {
+                attestation: deploy.to_string(),
+                signature: String::new(),
+                data_types: String::new(),
+            }),
+        )?;
+        if !reply.ok {
+            return Err(reply.error);
+        }
+        Ok(reply.text)
+    }
+
+    /// A rotation's put-secret on an instance (M5, `moqui_instance::link::link_put`): `not linked` when its link is not
+    /// up now, so the rotation may take SSH; called only by `moqui_instance::rotate` under its lease.
+    pub(super) fn put_secret(instance_id: &str, name: &str, value: &str) -> Result<(), String> {
+        let factory = factory().map_err(|err| err.to_string())?;
+        let server = server(&factory).map_err(|err| err.to_string())?;
+        if !server.view(instance_id).linked {
+            return Err(format!("not linked: AppInstance {instance_id} has no link now"));
+        }
+        let reply = server.call(
+            instance_id,
+            Body::PutSecret(PutSecretCommand {
+                name: name.to_string(),
+                value: value.to_string(),
+                force: false,
+            }),
+        )?;
+        if !reply.ok {
+            return Err(reply.error);
+        }
+        Ok(())
     }
 
     pub(super) fn call_instance_command(params: &Params, facade: &EntityFacade) -> Out {

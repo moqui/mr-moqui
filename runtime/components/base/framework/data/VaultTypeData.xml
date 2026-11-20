@@ -84,6 +84,8 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="VeRecoveryCancelled" enumTypeId="VaultEventType" description="Recovery cancelled" sequenceNum="30"/>
     <moqui.basic.Enumeration enumId="VeSecretRewrapped" enumTypeId="VaultEventType" description="Single-secret vault wrapped again" sequenceNum="31"/>
     <moqui.basic.Enumeration enumId="VeHeaderChanged" enumTypeId="VaultEventType" description="Vault renamed" sequenceNum="32"/>
+    <!-- a rotation's new revision of an item, deposited by the manager (plans/Vault-Instances.md §4.7) -->
+    <moqui.basic.Enumeration enumId="VeItemRotated" enumTypeId="VaultEventType" description="Item rotated at its source" sequenceNum="33"/>
 
     <moqui.basic.StatusType statusTypeId="VaultRecoverySession" description="Vault recovery"/>
     <moqui.basic.StatusItem statusId="VrsOpen" statusTypeId="VaultRecoverySession" description="Open" sequenceNum="1"/>
@@ -108,8 +110,9 @@ along with this software (see the LICENSE.md file). If not, see
             typeString="warning" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" titleTemplate="${title || 'A vault lease waits for your approval'}"/>
 
     <!-- The framework's item types (§3.4); the body is {"v": 1, "type": <vaultItemTypeId>, "name", "fields", "notes",
-        "tags", "uris"} -->
-    <moqui.security.vault.VaultItemType vaultItemTypeId="login" description="Login" sequenceNum="1">
+        "tags", "uris"}. rotationDays is the age past which an operational item of the type is due for rotation
+        (plans/Vault-Instances.md §4.7), unless its binding sets its own; it means nothing in a personal vault. -->
+    <moqui.security.vault.VaultItemType vaultItemTypeId="login" description="Login" sequenceNum="1" rotationDays="90">
         <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="2"/>
         <fields fieldName="totp" label="One-time code seed" fieldKindEnumId="VfTotp" masked="Y" sequenceNum="3"/>
@@ -138,29 +141,29 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldName="phone" label="Phone" fieldKindEnumId="VfText" masked="N" sequenceNum="4"/>
         <fields fieldName="address" label="Address" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="ssh-key" description="SSH key" sequenceNum="6">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="ssh-key" description="SSH key" sequenceNum="6" rotationDays="365">
         <fields fieldName="privateKey" label="Private key" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="1"/>
         <fields fieldName="publicKey" label="Public key" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="2"/>
         <fields fieldName="passphrase" label="Passphrase" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="api-key" description="API key" sequenceNum="7">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="api-key" description="API key" sequenceNum="7" rotationDays="365">
         <fields fieldName="url" label="Service" fieldKindEnumId="VfUrl" masked="N" sequenceNum="1"/>
         <fields fieldName="keyId" label="Key id" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="secret" label="Secret" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="database-credential" description="Database credential" sequenceNum="8">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="database-credential" description="Database credential" sequenceNum="8" rotationDays="90">
         <fields fieldName="host" label="Host" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="port" label="Port" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="database" label="Database" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="4"/>
         <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="tls-key-pair" description="TLS key pair" sequenceNum="9">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="tls-key-pair" description="TLS key pair" sequenceNum="9" rotationDays="365">
         <fields fieldName="certificate" label="Certificate" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="1"/>
         <fields fieldName="chain" label="Chain" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="2"/>
         <fields fieldName="privateKey" label="Private key" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="registry-login" description="Registry login" sequenceNum="10">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="registry-login" description="Registry login" sequenceNum="10" rotationDays="180">
         <fields fieldName="registry" label="Registry" fieldKindEnumId="VfUrl" masked="N" sequenceNum="1"/>
         <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="password" label="Password or token" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
