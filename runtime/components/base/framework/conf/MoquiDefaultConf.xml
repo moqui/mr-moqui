@@ -87,8 +87,9 @@
         for the bridge and from one client address, unverified-max-bytes their body, and unverified-waiting how many of
         the bridge's wait in its queue; media-max-bytes is the largest file it keeps for an MMS, and media-node-megabytes
         the files of one local node it keeps at most. Texts and files from outside senders, which no user's quota counts:
-        new-pair-rooms-per-day caps the new conversations (pair rooms) a day for one of our numbers, a text from another
-        new number past it is not taken; inbound-media-bytes-per-day caps the files a bridge fetches from its network a
+        new-pair-rooms-per-day caps the new conversations (pair rooms) a day opened to the users of one of our numbers, a
+        text from another new number past it is kept in a room held out of their sight (as spam, Not spam brings it
+        back) and the voice admins (VoicePolicy alertUserGroupId) hear of it once a day; inbound-media-bytes-per-day caps the files a bridge fetches from its network a
         day, a file past it is named as not received (0 for either: no cap). -->
     <channels webhooks-enabled="false" webhook-max-bytes="262144" public-url="" media-key="CHANGEME" media-minutes="60"
             new-pair-rooms-per-day="200" inbound-media-bytes-per-day="2147483648">

@@ -730,9 +730,11 @@ function receive(p) {
     const routed = memberText(p, ours, theirs, keyword, sub)
     if (routed) return routed
   }
-  // a new pair room: at most channels@new-pair-rooms-per-day a day for one of our numbers, so outside senders cannot make
-  // rooms (a member row for each user of the number, and their files) without end; past it the text is not taken, and
-  // logged (SEC-COM-91). A keyword above is kept whatever the cap.
+  // a new pair room: at most channels@new-pair-rooms-per-day a day for one of our numbers are opened to its users, so
+  // outside senders rotating numbers cannot fill everyone's room list (SEC-COM-91). Past it the text is kept, never
+  // lost, in a room held out of every user's sight with no push (as spam is: Not spam brings it back), and the voice
+  // admins hear of it once a day. A keyword above is kept whatever the cap.
+  let held = false
   if (!groupNumbers && !threadList) {
     const pairRooms = Number(ec.factory.getConfValue('channels@new-pair-rooms-per-day') || 0)
     const known = find(MAPPING).condition('chatBridgeId', p.chatBridgeId).condition('externalRoomId', pairKey(ours, pairTheirs))
@@ -741,10 +743,24 @@ function receive(p) {
       const day = today()
       const pairsKey = 'pairs:' + ours
       if (sentToday(pairsKey, day) >= pairRooms) {
-        ec.logger.warn(`SMS ${p.messageId}: a text from a new number ${theirs} to ${ours} past the day's ${pairRooms} new conversations; not taken`)
-        return { outcome: 'ignored', reasonCode: 'tooManyNewConversations' }
+        held = true
+        ec.logger.warn(`SMS ${p.messageId}: a text from a new number ${theirs} to ${ours} past the day's ${pairRooms} new conversations; held`)
+        const overKey = 'pairs-held:' + ours
+        const first = sentToday(overKey, day) === 0
+        ec.transaction.runRequireNew(null, 'The held conversation was not counted', () => countSent([overKey], day, 1))
+        if (first) {
+          try {
+            // the title's names are the message's: a number is never part of the template
+            ec.makeNotificationMessage().topic('VoiceAlert').userGroupId((one(POLICY, { voicePolicyId: 'DEFAULT' }) || {}).alertUserGroupId)
+              .message({ kind: 'newConversationsHeld', ourNumber: ours, cap: pairRooms })
+              .title('New text conversations on ${ourNumber} are held: more than ${cap} came today').send()
+          } catch (err) {
+            ec.logger.error(`SMS ${p.messageId}: the admins were not told of the held conversations: ${err && err.message ? err.message : err}`)
+          }
+        }
+      } else {
+        ec.transaction.runRequireNew(null, 'The new conversation was not counted', () => countSent([pairsKey], day, 1))
       }
-      ec.transaction.runRequireNew(null, 'The new conversation was not counted', () => countSent([pairsKey], day, 1))
     }
   }
   // the blocks and the spam filter (SmsSpam.js judge, in a transaction of its own): what each user's room is (in sight,
@@ -756,6 +772,11 @@ function receive(p) {
   } catch (err) {
     ec.logger.error(`SMS ${p.messageId}: not judged for spam or blocks, taken in: ${err && err.message ? err.message : err}`)
     ec.message.clearErrors()
+  }
+  if (held) {
+    verdict.memberFilterMap = Object.assign({}, verdict.memberFilterMap)
+    for (const userId of usersOf(number)) verdict.memberFilterMap[userId] = verdict.memberFilterMap[userId] || 'CmfSpam'
+    note = note || ec.l10n.localize('[Held: more new conversations came to this number today than are opened]')
   }
   const pair = sub('org.moqui.call.SmsServices.ensure#PairRoom', groupNumbers ? { ourNumber: ours, theirNumberList: groupNumbers,
     memberFilterMap: verdict.memberFilterMap } : { ourNumber: ours, theirNumber: pairTheirs, memberFilterMap: verdict.memberFilterMap })
@@ -784,7 +805,7 @@ function receive(p) {
   }
   // the conversation of a new outside party filed on a record by the apps (external-conversation), until one did it; not
   // while it is spam (Not spam and the next text file it)
-  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && pair.chatRoomBridgeId && !verdict.spam) {
+  if (first.outcome === 'accepted' && first.eventSeq != null && out.duplicate !== true && pair.chatRoomBridgeId && !verdict.spam && !held) {
     const mapping = one(MAPPING, { chatRoomBridgeId: pair.chatRoomBridgeId })
     if (mapping && !mapping.filedDate) {
       try {

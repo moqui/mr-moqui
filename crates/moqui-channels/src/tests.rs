@@ -2162,8 +2162,9 @@ fn an_older_keyword_does_not_undo_a_later_one() {
 }
 
 /// SEC-COM-91: texts from outside senders are capped: past channels@new-pair-rooms-per-day new conversations a day a
-/// text from another new number is not taken (a known one still is), and past channels@inbound-media-bytes-per-day a
-/// bridge's file is named as not received.
+/// text from another new number is kept in a room held out of every user's sight (spam's filter), never lost (a known
+/// one still comes in as before), and past channels@inbound-media-bytes-per-day a bridge's file is named as not
+/// received.
 #[test]
 fn new_conversations_and_inbound_files_have_a_day_cap() {
     let bed =
@@ -2175,15 +2176,43 @@ fn new_conversations_and_inbound_files_have_a_day_cap() {
     assert_eq!(body_json(&first)["outcome"], "accepted");
     let room = bed.room(THEIRS).unwrap();
     const NEW: &str = "+15556667777";
-    let (refused, _) = bed.text_in(NEW, "Hello", json!([]));
-    assert_eq!(
-        (
-            body_json(&refused)["outcome"].clone(),
-            body_json(&refused)["reasonCode"].clone()
-        ),
-        (json!("ignored"), json!("tooManyNewConversations"))
+    let (held, _) = bed.text_in(NEW, "Hello", json!([]));
+    assert_eq!(body_json(&held)["outcome"], "accepted", "kept");
+    let held_room = bed.room(NEW).expect("its room");
+    let kept = bed.messages(&held_room);
+    assert_eq!(kept.len(), 1);
+    assert!(
+        kept[0].1.contains("Hello") && kept[0].1.contains("Held"),
+        "{}",
+        kept[0].1
     );
-    assert!(bed.room(NEW).is_none(), "no room for the new number");
+    {
+        let _authz = bed.ctx.disable_authz();
+        let members = bed
+            .facade
+            .find("moqui.chat.ChatRoomMember")
+            .unwrap()
+            .eq("chatRoomId", text(&held_room))
+            .list()
+            .unwrap();
+        let users: Vec<_> = members
+            .values()
+            .iter()
+            .filter(|member| {
+                member
+                    .get("userId")
+                    .is_some_and(|user| !to_plain_string(user).is_empty())
+            })
+            .collect();
+        assert!(!users.is_empty());
+        for member in users {
+            assert_eq!(
+                member.get("filterEnumId").map(to_plain_string).as_deref(),
+                Some("CmfSpam"),
+                "held out of sight"
+            );
+        }
+    }
     // the known number's next text comes in, and its file is past the bridge's bytes of the day
     let (again, _) = bed.text_in(THEIRS, "Another", media(&picture));
     assert_eq!(body_json(&again)["outcome"], "accepted");

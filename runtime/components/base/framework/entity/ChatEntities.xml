@@ -772,6 +772,15 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
+    <entity entity-name="ChatBridgeMediaDay" package="moqui.chat" use="transactional" cache="never">
+        <description>The bytes of the files a bridge fetched from its network on a day (UTC, yyyy-MM-dd), against
+            channels@inbound-media-bytes-per-day (store#BridgeMedia, SEC-COM-91): files from outside senders are no
+            user's upload, so no user's quota counts them.</description>
+        <field name="chatBridgeId" type="id" is-pk="true"/>
+        <field name="dayDate" type="text-short" is-pk="true"/>
+        <field name="byteCount" type="number-integer"/>
+        <field name="lastDate" type="date-time"/>
+    </entity>
     <entity entity-name="ChatBridgeInbound" package="moqui.chat" use="transactional" cache="never">
         <description>An authenticated batch from a bridge (the Matrix application service transaction contract), stored
             before it is acknowledged: the bridge and its transaction id are unique together, so a batch sent again does

@@ -572,43 +572,60 @@ fn safe_name(given: Option<&str>, content_type: &str) -> String {
     format!("file{extension}")
 }
 
-/// The counter of bridge `bridge_id`'s inbound file bytes today (UTC), a `moqui.call.SmsSendCount` row keyed
-/// `media-in:(bridge)`, read for update; None when there is none yet.
-fn media_day_counter(facade: &EntityFacade, bridge_id: &str) -> Result<Option<crate::entity::EntityValue>, LibError> {
-    facade
-        .find("moqui.call.SmsSendCount")?
-        .eq("counterKey", Value::string(format!("media-in:{bridge_id}")))
+/// The bridges' inbound file bytes of a day (UTC).
+const MEDIA_DAY: &str = "moqui.chat.ChatBridgeMediaDay";
+
+/// Bridge `bridge_id`'s inbound file bytes today, read with no lock: the fetch that follows holds nothing.
+fn media_day_bytes(facade: &EntityFacade, bridge_id: &str) -> Result<u64, LibError> {
+    Ok(facade
+        .find(MEDIA_DAY)?
+        .eq("chatBridgeId", Value::string(bridge_id))
         .eq("dayDate", Value::string(utc_day()))
-        .for_update(true)
         .disable_authz()
-        .one()
+        .one()?
+        .and_then(|row| row.get("byteCount").map(to_plain_string))
+        .and_then(|count| count.parse::<u64>().ok())
+        .unwrap_or(0))
 }
 
-/// Add `size` bytes to bridge `bridge_id`'s count of today, in the caller's transaction (the message's).
-fn count_media_day(
-    facade: &EntityFacade,
-    bridge_id: &str,
-    counter: Option<crate::entity::EntityValue>,
-    size: i64,
-) -> Result<(), LibError> {
-    let now = crate::user::stamp_value(crate::user::now_millis());
-    match counter {
-        Some(mut row) => {
-            let used = row
-                .get("sentCount")
-                .and_then(|count| moqui_lib::object::to_plain_string(count).parse::<i64>().ok())
-                .unwrap_or(0);
-            row.set("sentCount", Value::I64(used.saturating_add(size)));
-            row.set("lastSentDate", now);
-            row.update(facade)
-        }
-        None => {
-            let mut row = facade.make_value("moqui.call.SmsSendCount")?;
-            row.set("counterKey", Value::string(format!("media-in:{bridge_id}")));
-            row.set("dayDate", Value::string(utc_day()));
-            row.set("sentCount", Value::I64(size));
-            row.set("lastSentDate", now);
-            row.create(facade)
+/// Add `size` bytes to bridge `bridge_id`'s count of today, in a short transaction of its own after the file was
+/// fetched, so files of one bridge are not fetched one at a time. Two first files of a day at once: the one whose
+/// create lost adds to the row the other made. A count that fails is logged and the file stays.
+fn count_media_day(facade: &EntityFacade, bridge_id: &str, size: i64) {
+    let add = || {
+        super::force_new(facade, MEDIA_DAY, || {
+            let now = stamp(now_millis());
+            let row = facade
+                .find(MEDIA_DAY)?
+                .eq("chatBridgeId", Value::string(bridge_id))
+                .eq("dayDate", Value::string(utc_day()))
+                .for_update(true)
+                .disable_authz()
+                .one()?;
+            match row {
+                Some(mut row) => {
+                    let used = row
+                        .get("byteCount")
+                        .and_then(|count| to_plain_string(count).parse::<i64>().ok())
+                        .unwrap_or(0);
+                    row.set("byteCount", Value::I64(used.saturating_add(size)));
+                    row.set("lastDate", now);
+                    row.update(facade)
+                }
+                None => {
+                    let mut row = facade.make_value(MEDIA_DAY)?;
+                    row.set("chatBridgeId", Value::string(bridge_id));
+                    row.set("dayDate", Value::string(utc_day()));
+                    row.set("byteCount", Value::I64(size));
+                    row.set("lastDate", now);
+                    row.create(facade)
+                }
+            }
+        })
+    };
+    if let Err(first) = add() {
+        if let Err(error) = add() {
+            tracing::error!("chat bridge {bridge_id}: its file bytes of today were not counted: {first}; {error}");
         }
     }
 }
@@ -659,24 +676,19 @@ fn store_bridge_media(
         .trim()
         .parse::<u64>()
         .unwrap_or(0);
-    let day_counter = if day_quota > 0 {
-        let counter = media_day_counter(facade, &bridge_id)?;
-        let used = counter
-            .as_ref()
-            .and_then(|row| row.get("sentCount"))
-            .and_then(|count| moqui_lib::object::to_plain_string(count).parse::<u64>().ok())
-            .unwrap_or(0);
+    let day_left = if day_quota > 0 {
+        let used = media_day_bytes(facade, &bridge_id)?;
         if used >= day_quota {
             tracing::warn!(
                 "chat bridge {bridge_id}: its files of today are past {day_quota} bytes; a file is not fetched"
             );
             return not_fetched(format!("the bridge's files of today are past {day_quota} bytes"));
         }
-        Some((counter, day_quota - used))
+        Some(day_quota - used)
     } else {
         None
     };
-    let max = day_counter.as_ref().map_or(max, |(_, left)| max.min(*left));
+    let max = day_left.map_or(max, |left| max.min(left));
     let fetched = match std::panic::catch_unwind(AssertUnwindSafe(|| adapter.fetch_media(&info, &url, max))) {
         Ok(Ok(fetched)) => fetched,
         Ok(Err(error)) => return not_fetched(error),
@@ -703,8 +715,8 @@ fn store_bridge_media(
         .write_bytes(&location, &fetched.bytes)
         .map_err(|error| LibError::new(format!("The file was not kept: {}", error.message())))?;
     let size = i64::try_from(fetched.bytes.len()).unwrap_or(i64::MAX);
-    if let Some((counter, _)) = day_counter {
-        count_media_day(facade, &bridge_id, counter, size)?;
+    if day_left.is_some() {
+        count_media_day(facade, &bridge_id, size);
     }
     attachment.set("chatRoomId", Value::string(&room));
     attachment.set("location", Value::string(&location));
