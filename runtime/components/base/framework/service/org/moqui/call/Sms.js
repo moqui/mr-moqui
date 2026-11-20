@@ -560,22 +560,22 @@ function keywordOf(text) {
 
 /**
  * Internal: keep a pair's opt-out after a keyword (in a transaction of its own). With messageMillis (the provider's
- * time of the message, which its signature covers) a STOP or START older than the pair's last change is stale and
- * changes nothing, so an old signed request posted again cannot undo a later keyword (SEC-COM-90); changedDate is
- * then the message's time. HELP changes no opt-out and keeps changedDate. outcome noted or stale.
+ * time of the message, which its signature covers) a STOP or START older than the message of the last STOP or START
+ * applied by its time (keywordDate) is stale and changes nothing, so an old signed request posted again cannot undo a
+ * later keyword (SEC-COM-90). Only a STOP or START with its message time sets keywordDate: a HELP, or a STOP the
+ * provider refused a send for, which have no time of the person's, never make a later keyword stale. changedDate is
+ * when this server changed the row. outcome noted or stale.
  */
 function noteKeyword(p) {
   const keyword = p.keyword
   if (!['STOP', 'START', 'HELP'].includes(keyword)) return {}
   const row = find(OPT_OUT).condition({ phoneNumber: p.ourNumber, otherNumber: p.theirNumber }).forUpdate(true).one()
   const at = p.messageMillis != null && !Number.isNaN(Number(p.messageMillis)) ? Number(p.messageMillis) : null
-  const fields = { lastKeyword: keyword }
+  const fields = { lastKeyword: keyword, changedDate: ec.user.nowTimestamp }
   if (keyword !== 'HELP') {
-    if (row && at != null && row.changedDate != null && at < Number(row.changedDate)) return { outcome: 'stale' }
+    if (row && at != null && row.keywordDate != null && at < Number(row.keywordDate)) return { outcome: 'stale' }
     fields.optedOut = keyword === 'STOP' ? 'Y' : 'N'
-    fields.changedDate = at != null ? new Date(at) : ec.user.nowTimestamp
-  } else if (!row) {
-    fields.changedDate = ec.user.nowTimestamp
+    if (at != null) fields.keywordDate = new Date(at)
   }
   if (row) {
     row.setFields(fields, true, null, null)

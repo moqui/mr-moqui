@@ -1063,8 +1063,7 @@ fn an_uncertain_send_is_not_sent_again() {
         )["optedOut"],
         "Y"
     );
-    // a START sent after that refusal (its time the provider's, later than the opt-out it undoes: SEC-COM-90)
-    bed.text_in_at(THEIRS, "START", &jiff::Timestamp::now().to_string());
+    bed.text_in(THEIRS, "START", json!([]));
 
     // the provider unreachable: not connected, tried again
     let closed = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2138,6 +2137,17 @@ fn an_older_keyword_does_not_undo_a_later_one() {
     assert_eq!(opted_out(), "Y", "a START sent before the STOP does not opt back in");
     bed.text_in_at(THEIRS, "START", "2026-11-01T12:10:00.000+00:00");
     assert_eq!(opted_out(), "N", "a later START does");
+    // a HELP processed first makes no STOP stale, whatever their order: an opt-out is never lost
+    const OTHER: &str = "+15554443333";
+    bed.text_in_at(OTHER, "HELP", "2026-11-01T12:10:00.000+00:00");
+    bed.text_in_at(OTHER, "STOP", "2026-11-01T12:05:00.000+00:00");
+    assert_eq!(
+        bed.one(
+            "moqui.call.SmsOptOut",
+            &[("phoneNumber", text(OURS)), ("otherNumber", text(OTHER))],
+        )["optedOut"],
+        "Y"
+    );
 }
 
 /// SEC-COM-91: texts from outside senders are capped: past channels@new-pair-rooms-per-day new conversations a day a
