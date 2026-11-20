@@ -112,12 +112,10 @@ feature("through the screens' services a new address clears the key or password 
         // a new auth header moves the key too
         out.header = service("john.doe", "store#" + ENDPOINT, {endpointId, authHeader: "X-Collect"})
         out.headerKey = endpoint().apiKey
-        // the same key again is no new one; entered in a save of its own it is kept
+        // the same key entered again with a new address is given, so it is kept
         service("john.doe", "store#" + ENDPOINT, {endpointId, apiKey: "spec-key-two"})
         out.again = service("john.doe", "store#" + ENDPOINT, {endpointId, baseUrl: "https://models.example.com", apiKey: "spec-key-two"})
         out.againKey = endpoint().apiKey
-        out.keyed = service("john.doe", "store#" + ENDPOINT, {endpointId, apiKey: "spec-key-two"})
-        out.keyedKey = endpoint().apiKey
         // an entity sync: a new address with a new password keeps the new one, a new username alone clears it
         out.syncMoved = service("john.doe", "update#" + SYNC, {entitySyncId, targetServerUrl: "https://sync.example.org", targetPassword: "spec-pass-two"})
         out.syncPassword = sync().targetPassword
@@ -140,9 +138,7 @@ feature("through the screens' services a new address clears the key or password 
         out.header.error == ""
         out.headerKey == null
         out.again.error == ""
-        out.againKey == null
-        out.keyed.error == ""
-        out.keyedKey == "spec-key-two"
+        out.againKey == "spec-key-two"
         out.syncMoved.error == ""
         out.syncPassword == "spec-pass-two"
         out.renamed.error == ""
@@ -162,8 +158,27 @@ feature("a message remote, a scrape target, a mail server and an MCP server lose
         update("john.doe", SERVER, {emailServerId, smtpHost: "edge:"})
         update("john.doe", SERVER, {emailServerId, smtpHost: "smtp.example.com"})
         out.edgeKept = row(SERVER, {emailServerId}).mailPassword
+        // read and written back with a new incoming server: the password set again with it is kept (as the account page
+        // saves it, SEC-MAIL-84), the one it carries over is not
+        out.reentered = as("john.doe", () => {
+            const server = row(SERVER, {emailServerId})
+            server.set("storeHost", "imap.example.org")
+            server.set("mailPassword", "spec-mail-pass")
+            server.update()
+        })
+        out.reenteredPassword = row(SERVER, {emailServerId}).mailPassword
         out.mail = update("john.doe", SERVER, {emailServerId, smtpHost: "smtp.collector.example.net"})
         out.mailPassword = row(SERVER, {emailServerId}).mailPassword
+        // an entity sync read and written back with a new address holds its stored password, which it did not give
+        out.writtenBack = as("john.doe", () => {
+            const sync = row(SYNC, {entitySyncId})
+            sync.set("targetPassword", "spec-pass-three")
+            sync.update()
+            const again = row(SYNC, {entitySyncId})
+            again.set("targetServerUrl", "https://sync.collector.example.net")
+            again.update()
+        })
+        out.writtenBackPassword = row(SYNC, {entitySyncId}).targetPassword
         // an MCP server's URL counts by its origin, as its store service decides
         update("john.doe", MCP, {mcpServerId, url: "https://mcp.example.com/b"})
         out.samePlace = row(MCP, {mcpServerId}).authJson
@@ -177,11 +192,15 @@ feature("a message remote, a scrape target, a mail server and an MCP server lose
         out.scrape.error == ""
         out.scrapeToken == null
         out.edgeKept == "spec-mail-pass"
+        out.reentered.error == ""
+        out.reenteredPassword == "spec-mail-pass"
         out.mail.error == ""
         out.mailPassword == null
         out.samePlace == '{"type":"bearer","token":"spec-mcp"}'
         out.mcp.error == ""
         out.mcpAuth == null
+        out.writtenBack.error == ""
+        out.writtenBackPassword == null
     }
 })
 

@@ -9,9 +9,10 @@
 // origin: a URL counts as changed only when its scheme, host or port does, as the store service of the record decides,
 // passThrough: an address that is no network host (the edge node's "edge:"), to or from which a change keeps the secrets}.
 // When an endpoint field given in the write differs from the stored row, the change is refused outside ADMIN (admin), and
-// each stored secret is cleared unless a new one is given in the same write, with a message saying so. The stored one
-// again is not a new one: an update of an entity with an audit-logged field carries the whole stored row, so a secret the
-// caller did not give looks given; after a new address the same secret is entered again in a save of its own. Only a
+// each stored secret is cleared unless the write's caller gives one with it, with a message saying so. The same secret
+// entered again with the new address is given (entityValue.isFieldGiven: the caller set it); the stored one an update
+// carries over is not, though the rule's value holds it: an update of an entity with an audit-logged field fills in the
+// whole stored row, and a value read and written back holds what it read. Only a
 // seed or install load (an entity data load that is not a request's: UserSecurityChecks.seedLoadRunning) answers for
 // itself; a Tools load or an entity sync, which restrict sensitive entities, and a service with authorization disabled
 // are held to the rule too.
@@ -36,14 +37,14 @@ function moved(entityValue, originalValue, rule) {
     const cleared = []
     for (const name of rule.secrets) {
         const stored = plain(originalValue.get(name))
-        const given = entityValue.isFieldSet(name) ? plain(entityValue.get(name)) : ""
-        if (stored !== "" && (given === "" || given === stored)) {
+        const given = entityValue.isFieldGiven(name) ? plain(entityValue.get(name)) : ""
+        if (stored !== "" && given === "") {
             entityValue.set(name, null)
             cleared.push(name)
         }
     }
     if (cleared.length)
-        ec.message.addMessage(ec.l10n.localize("The stored secret was cleared because the address changed; enter it again, in a save of its own if it is the same") +
+        ec.message.addMessage(ec.l10n.localize("The stored secret was cleared because the address changed; enter it again") +
             " (" + cleared.join(", ") + ")", "warning")
 }
 

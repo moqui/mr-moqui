@@ -613,6 +613,7 @@ is identity; `equals` compares them.
 | `isField(name)` | Whether the entity has a field of the name |
 | `isFieldSet(name)` | Whether the value holds the field, null or not |
 | `isFieldModified(name)`, `isModified()` | Whether the field, or any field, changed since the value was read or last written |
+| `isFieldGiven(name)` | Whether the code holding the value set the field, to what it held or not: each field held on a value not read, each one set since on one read. In an entity ECA rule, whether the write's caller gave it, not the update filling it in from the stored row |
 | `getOriginalDbValue(name)` | What the field held when the value was read or last written |
 | `getPrimaryKeys()` | The primary key fields as a map |
 | `getPrimaryKeysString()` | The primary key values joined by `::` |

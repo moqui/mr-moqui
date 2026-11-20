@@ -470,6 +470,7 @@ pub(crate) static ENTITY_VALUE: HostClass = HostClass {
         method!("EntityValue", "deleteRelated", [Text], value_delete_related),
         method!("EntityValue", "isFieldSet", [Text], None, leaf, value_is_field_set),
         method!("EntityValue", "isField", [Text], None, leaf, value_is_field),
+        method!("EntityValue", "isFieldGiven", [Text], None, leaf, value_is_field_given),
         method!(
             "EntityValue",
             "isFieldModified",
@@ -2095,6 +2096,15 @@ fn value_is_field(call: &mut Call<'_>) -> Result<Ret, HostError> {
         })
         .map_err(lib)?;
     Ok(found.into())
+}
+
+/// Whether the code that holds the value set the field, to what it held or not; in an entity ECA rule, whether the
+/// write's caller gave it (`EntityValue::is_field_given`, SEC-TLS-116).
+fn value_is_field_given(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cell = this_cell(call)?;
+    let field = call.text_or_empty(0);
+    let given = val(&cell).is_field_given(&field);
+    Ok(given.into())
 }
 
 fn value_is_field_modified(call: &mut Call<'_>) -> Result<Ret, HostError> {
