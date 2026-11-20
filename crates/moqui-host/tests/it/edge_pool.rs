@@ -638,13 +638,6 @@ fn delivered_items_go_again_and_the_receipts_make_the_repeat_do_nothing() {
 /// The cluster directory a second member's child process adopts; set only for that child.
 const MEMBER_ENV: &str = "MOQUI_EDGE_POOL_MEMBER_CLUSTER";
 const MEMBER_TEST: &str = "edge_pool::pool_member_process";
-/// The generated secrets a second member of the cluster takes from the first.
-const SHARED_SECRETS: [&str; 4] = [
-    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
-    "moqui_conf__cluster_member__tls_cert",
-    "moqui_conf__cluster_member__tls_key",
-    "moqui_conf__entity_facade__crypt_pass",
-];
 
 /// A second member of a local server's cluster, on its database, in a child process of this test binary: its member
 /// row and heartbeat are real. Dropping it closes the child's stdin, which stops it.
@@ -654,15 +647,11 @@ struct ChildMember {
 }
 
 impl ChildMember {
-    fn start(cluster_dir: &std::path::Path) -> ChildMember {
+    fn start(first: &moqui_core::context::ExecutionContextFactory, cluster_dir: &std::path::Path) -> ChildMember {
         use std::io::BufRead as _;
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        for name in SHARED_SECRETS {
-            let value = moqui_lib::env::get_prop_or_env(name);
-            if !value.is_empty() {
-                command.env(name, value);
-            }
-        }
+        // its sessions, cluster certificate and encrypted fields are the first's
+        crate::common::share_secrets(&mut command, first, &crate::common::MEMBER_SHARED_SECRETS);
         let mut child = command
             .args([MEMBER_TEST, "--exact", "--nocapture", "--test-threads", "1"])
             .env("MOQUI_TEST_OWN_PROCESS", MEMBER_TEST)
@@ -787,7 +776,7 @@ fn clients_shows_a_cluster_member_that_is_live_but_not_linked() {
         None,
         &[("moqui_conf__cluster_member__https_port", &cluster_port)],
     );
-    let second = ChildMember::start(&local.cluster_dir);
+    let second = ChildMember::start(local.server.factory(), &local.cluster_dir);
     let (edge, paired, url) = edge_for("edge-pool-cluster-edge", &local, &certs);
     let rt = runtime();
     let (config, dialer, _stop) = server_dialer(&rt, &local, &paired, &url);

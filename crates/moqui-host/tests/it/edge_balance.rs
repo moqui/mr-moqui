@@ -414,13 +414,6 @@ fn a_pool_shares_a_host_by_turn_and_a_session_stays_on_one_member() {
 const MEMBER_CLUSTER: &str = "MOQUI_EDGE_BALANCE_CLUSTER";
 const MEMBER_LINK: &str = "MOQUI_EDGE_BALANCE_LINK";
 const MEMBER_TEST: &str = "edge_balance::balance_member_process";
-/// The generated secrets a second member of the cluster takes from the first: its session cookies are the first's.
-const SHARED_SECRETS: [&str; 4] = [
-    "moqui_conf__webapp_list__webapp__WEBROOT__session_config__cookie_key",
-    "moqui_conf__cluster_member__tls_cert",
-    "moqui_conf__cluster_member__tls_key",
-    "moqui_conf__entity_facade__crypt_pass",
-];
 
 /// A second member of the local cluster in a child process of this test binary, on the first's database, whose own
 /// hook links to the edge node with the pairing's key as the `.env` would give it. Dropping it stops it.
@@ -430,15 +423,15 @@ struct ChildMember {
 }
 
 impl ChildMember {
-    fn start(cluster_dir: &std::path::Path, link: &[(&str, &str)]) -> ChildMember {
+    fn start(
+        first: &moqui_core::context::ExecutionContextFactory,
+        cluster_dir: &std::path::Path,
+        link: &[(&str, &str)],
+    ) -> ChildMember {
         use std::io::BufRead as _;
         let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        for name in SHARED_SECRETS {
-            let value = moqui_lib::env::get_prop_or_env(name);
-            if !value.is_empty() {
-                command.env(name, value);
-            }
-        }
+        // its sessions, cluster certificate and encrypted fields are the first's
+        crate::common::share_secrets(&mut command, first, &crate::common::MEMBER_SHARED_SECRETS);
         let link: Vec<String> = link.iter().map(|(name, value)| format!("{name}={value}")).collect();
         let mut child = command
             .args([MEMBER_TEST, "--exact", "--nocapture", "--test-threads", "1"])
@@ -563,6 +556,7 @@ impl Pool {
             status.state == LinkState::Linked
         });
         let second = ChildMember::start(
+            local.server.factory(),
             &local.cluster_dir,
             &[
                 (moqui_core::edge::NODE_URL, &url),

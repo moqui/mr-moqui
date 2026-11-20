@@ -897,6 +897,37 @@ pub fn start_member_with_files(
     (server, guard)
 }
 
+/// The generated secrets a second member of a local cluster takes from the first: the session cookie key (its sessions
+/// are the first's), the cluster's certificate (each member checks the others' fingerprints) and the key of the
+/// encrypted fields of the one database.
+#[allow(dead_code)]
+pub const MEMBER_SHARED_SECRETS: [&str; 4] = [
+    "webapp-list/webapp[webroot]/session-config@cookie-key",
+    "cluster-member@tls-cert",
+    "cluster-member@tls-key",
+    "entity-facade@crypt-pass",
+];
+
+/// Give `command`, the process of a second member of `first`'s cluster, each of `selectors` as `first` has it, by its
+/// environment name. A booted server keeps a generated secret in its seal (plans/Sealed-Secrets.md S4), not a process
+/// property, so it is read by selector from the first's own factory (this process may run another server, an edge
+/// node, booted after it).
+#[allow(dead_code)]
+pub fn share_secrets(
+    command: &mut std::process::Command,
+    first: &moqui_core::context::ExecutionContextFactory,
+    selectors: &[&str],
+) {
+    for selector in selectors {
+        let value = first
+            .secret(selector)
+            .unwrap_or_else(|err| panic!("the secret {selector}: {err}"));
+        if let Some(value) = value.filter(|value| !value.is_empty()) {
+            command.env(moqui_core::context::conf_env::env_name_of(selector), value.as_str());
+        }
+    }
+}
+
 /// A loopback TCP port free now, for a listener whose port a test names before the server starts (in its conf, a link
 /// URL, or a port a cluster member advertises, which an ephemeral `0` is not). The server binds it later, so the port
 /// is taken from below the kernel's ephemeral range (32768 and up on Linux, 49152 on macOS): a port the kernel hands
