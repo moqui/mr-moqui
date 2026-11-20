@@ -372,3 +372,12 @@ fn a_message_to_both_sides_is_split_by_side_and_the_queued_ids_are_bare() {
     assert_eq!(bare_account("100"), "100");
     assert_eq!(node_account("node-a", "100"), "node:node-a:100");
 }
+
+/// SEC-MAIL-86: an all-in-one node asks the queue room of the paired node a recipient's account is tagged with, and of
+/// no node for the server's own, untagged one.
+#[test]
+fn a_paired_recipients_queue_is_the_node_of_its_account_tag() {
+    assert_eq!(account_node(&node_account("node-a", "100")), "node-a");
+    assert_eq!(account_node("100"), "");
+    assert_eq!(side(&node_account("node-a", "100")), Side::Paired);
+}
