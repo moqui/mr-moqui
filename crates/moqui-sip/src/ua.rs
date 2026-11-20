@@ -445,18 +445,30 @@ struct BlockInspector {
     phones: Option<(Arc<Mutex<Registrar>>, mpsc::UnboundedSender<UaEvent>)>,
 }
 
-/// A request outside a dialog, other than the ACK and CANCEL of one this side already has: one with no To tag, or
-/// one whose Call-ID and tags `in_dialog` does not know (SEC-COM-83). A To tag alone is the sender's to write, so a
-/// made-up one does not pass the rate and the transaction cap; the tag test is only the fast path before the lookup.
-fn is_new_request(message: &SipMessage, in_dialog: impl FnOnce(&Request) -> bool) -> bool {
+/// A request outside a dialog or transaction this side has, which the rate and the transaction cap count: one with no
+/// To tag, or one whose Call-ID and tags `known.dialog` does not know (SEC-COM-83); a CANCEL only when `known.invite`
+/// has no INVITE transaction it cancels, and an ACK only when neither knows it (the ACK of a 2xx is in a dialog, of
+/// another final answer in the INVITE's transaction). A To tag, a branch and a Call-ID are the sender's to write, so
+/// none of them alone lets a request past; the tag test is only the fast path before the lookup.
+fn is_new_request(message: &SipMessage, known: &Known<'_>) -> bool {
     let SipMessage::Request(request) = message else {
         return false;
     };
-    if matches!(request.method, Method::Ack | Method::Cancel) {
-        return false;
+    match request.method {
+        Method::Cancel => !(known.invite)(request),
+        Method::Ack => !(known.dialog)(request) && !(known.invite)(request),
+        _ => {
+            let tagged = request.to_header().is_ok_and(|to| to.value().contains(";tag="));
+            !tagged || !(known.dialog)(request)
+        }
     }
-    let tagged = request.to_header().is_ok_and(|to| to.value().contains(";tag="));
-    !tagged || !in_dialog(request)
+}
+
+/// What [`is_new_request`] asks of the endpoint: whether a request is in a dialog it has, and whether it names an
+/// INVITE server transaction running (by its Via branch and sender).
+struct Known<'a> {
+    dialog: &'a dyn Fn(&Request) -> bool,
+    invite: &'a dyn Fn(&Request) -> bool,
 }
 
 impl BlockInspector {
@@ -467,6 +479,22 @@ impl BlockInspector {
         };
         rsipstack::dialog::DialogId::try_from((request, TransactionRole::Server))
             .is_ok_and(|id| dialogs.get_dialog(&id).is_some())
+    }
+
+    /// Whether an INVITE server transaction with `request`'s Via branch and sender is running: the one a CANCEL
+    /// cancels, or a non-2xx ACK acknowledges.
+    fn has_invite(&self, request: &Request) -> bool {
+        let Some(endpoint) = self.endpoint.get().and_then(std::sync::Weak::upgrade) else {
+            return false;
+        };
+        let mut invite = request.clone();
+        invite.method = Method::Invite;
+        let Ok(key) = TransactionKey::from_request(&invite, TransactionRole::Server) else {
+            return false;
+        };
+        endpoint
+            .get_running_transactions()
+            .is_some_and(|running| running.contains(&key))
     }
 }
 
@@ -482,7 +510,11 @@ impl TransportEventInspector for BlockInspector {
                 if lock(&self.guard).is_blocked(addr.ip(), now) {
                     return None;
                 }
-                if is_new_request(message, |request| self.has_dialog(request)) {
+                let known = Known {
+                    dialog: &|request| self.has_dialog(request),
+                    invite: &|request| self.has_invite(request),
+                };
+                if is_new_request(message, &known) {
                     let running = self
                         .endpoint
                         .get()

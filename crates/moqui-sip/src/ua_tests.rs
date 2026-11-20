@@ -923,6 +923,50 @@ async fn a_made_up_to_tag_does_not_pass_the_rate() {
     ua.shutdown();
 }
 
+/// A CANCEL or an ACK of no transaction or dialog this side has is counted by the rate as a new request is
+/// (SEC-COM-83): of twenty CANCELs only the burst is answered.
+#[tokio::test]
+async fn a_stray_cancel_or_ack_does_not_pass_the_rate() {
+    if !loopback_sources(&["127.0.0.8"]).await {
+        return;
+    }
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            udp: Some("127.0.0.1:0".parse().unwrap()),
+            realm: "moqui.test".to_string(),
+            limits: RequestLimits {
+                rate: 1.0,
+                burst: 3,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let addr = ua.bound().udp.unwrap();
+    let flood = FakeTrunk::on("127.0.0.8").await;
+    for n in 0..20 {
+        let text = format!(
+            "CANCEL sip:100@{addr} SIP/2.0\r\nVia: SIP/2.0/UDP {};branch=z9hG4bK-cancel-{n}\r\nMax-Forwards: 70\r\n\
+             From: <sip:x@{}>;tag=from-{n}\r\nTo: <sip:100@{addr}>\r\nCall-ID: cancel-{n}\r\n\
+             CSeq: 1 CANCEL\r\nContent-Length: 0\r\n\r\n",
+            flood.addr, flood.addr
+        );
+        flood.send(&text, addr).await;
+    }
+    let mut answered = std::collections::BTreeSet::new();
+    while let Some((message, _)) = flood.recv(Duration::from_millis(400)).await {
+        if let SipMessage::Response(response) = message {
+            answered.insert(response.call_id_header().unwrap().value().to_string());
+        }
+    }
+    assert!(answered.len() <= 3, "{answered:?}");
+    ua.shutdown();
+}
+
 #[test]
 fn an_inbound_range_wider_than_a_slash_8_or_a_slash_32_matches_nothing() {
     let ip = |s: &str| s.parse::<IpAddr>().unwrap();
