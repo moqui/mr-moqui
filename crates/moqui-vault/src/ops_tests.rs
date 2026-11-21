@@ -831,3 +831,83 @@ fn device_memory_opens_the_personal_key_only_with_its_key_and_memory() {
         assert_eq!(refused, "bad format: unknown op");
     }
 }
+
+/// An item's one-time codes are made in the module: the summary says what its seed is and `item_otp` gives the codes,
+/// and neither answer holds the seed; `otp_parse` reads what a user scanned.
+#[test]
+fn one_time_codes_come_from_the_module_without_the_seed() {
+    let mut rng = TestRng::new("ops-otp");
+    let mut s = shared(&mut rng);
+    // RFC 6238's SHA1 key, as base32
+    let seed = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+    let body = json!({ "v": 1, "type": "otp", "name": "Example", "fields": {
+        "issuer": "Example", "account": "ada", "code": format!("otpauth://totp/Example:ada?secret={seed}&digits=8") } });
+    let sealed = call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "item_seal", "vault_id": "v", "item_id": "o", "key_version": 1, "body": body.to_string() }),
+    )
+    .unwrap();
+    let item = |op: &str| {
+        json!({ "op": op, "vault_id": "v", "item_id": "o", "key_version": 1, "otp_fields": ["code"], "now": 59_000,
+                "wrapped_item_key": sealed["wrapped_item_key"], "sealed_body": sealed["sealed_body"] })
+    };
+    let summary = call(&mut s.alice, &mut rng, item("item_summary")).unwrap();
+    assert_eq!(
+        summary["otp"],
+        json!({ "issuer": "Example", "account": "ada", "algorithm": "SHA1", "digits": 8, "period": 30 })
+    );
+    let codes = call(&mut s.alice, &mut rng, item("item_otp")).unwrap();
+    assert_eq!(codes["code"], json!("94287082"));
+    assert_eq!(codes["remaining_ms"], json!(1000));
+    assert_eq!(codes["next"].as_str().map(str::len), Some(8));
+    for answer in [&summary, &codes] {
+        assert!(!answer.to_string().contains(seed), "{answer}");
+    }
+
+    // an item with no seed: no otp in its summary, and item_otp refuses
+    let plain = call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "item_seal", "vault_id": "v", "item_id": "n", "key_version": 1, "body": "{\"v\":1,\"fields\":{}}" }),
+    )
+    .unwrap();
+    let mut no_seed = item("item_otp");
+    no_seed["item_id"] = json!("n");
+    no_seed["wrapped_item_key"] = plain["wrapped_item_key"].clone();
+    no_seed["sealed_body"] = plain["sealed_body"].clone();
+    assert!(call(&mut s.alice, &mut rng, no_seed.clone())
+        .unwrap_err()
+        .contains("no one-time code"));
+    no_seed["op"] = json!("item_summary");
+    assert_eq!(call(&mut s.alice, &mut rng, no_seed).unwrap()["otp"], Value::Null);
+
+    // a locked vault makes no code
+    call(
+        &mut s.alice,
+        &mut rng,
+        json!({ "op": "vault_key_forget", "vault_id": "v", "key_version": 1 }),
+    )
+    .unwrap();
+    assert!(call(&mut s.alice, &mut rng, item("item_otp"))
+        .unwrap_err()
+        .contains("locked"));
+
+    // otp_parse needs no vault: the normalized URI to seal, and the code to compare
+    let parsed = call(
+        &mut Session::default(),
+        &mut rng,
+        json!({ "op": "otp_parse", "text": format!("  {} ", seed.to_ascii_lowercase()), "now": 59_000 }),
+    )
+    .unwrap();
+    let entry = &parsed["entries"][0];
+    assert_eq!(entry["code"], json!("287082"));
+    assert_eq!(entry["seed"], json!(format!("otpauth://totp/?secret={seed}")));
+    assert!(call(
+        &mut Session::default(),
+        &mut rng,
+        json!({ "op": "otp_parse", "text": "otpauth://hotp/x?secret=GEZDGNBV", "now": 0 })
+    )
+    .unwrap_err()
+    .contains("HOTP"));
+}

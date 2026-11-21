@@ -82,6 +82,26 @@ ceiling checked; the same call changes the password or moves the vault to a gene
   not hold every item's secrets. `copy` clears the clipboard after 30 seconds, and when the page has no focus then,
   when the window has focus again.
 
+### One-time codes
+
+A vault is also an authenticator: an item may hold the seed of a site's two-step sign-in, as an `otpauth://totp/` URI
+or a bare base32 secret, in a field of kind TOTP (the `otp` type's, "One-time code", or a login's `totp`). The codes are
+made in the module (`moqui_vault::otp`, which the server's own sign-in factor also checks codes with: HOTP and TOTP on
+HMAC-SHA1, SHA-256 or SHA-512, 6 to 8 digits, any period up to an hour), so a page shows them and never holds the seed:
+
+- `item_summary` answers `otp`, what the seed is (issuer, account, algorithm, digits, period), or why it does not read,
+  never the seed. The page passes `otp_fields`, the names of the TOTP fields of every type; else the field `totp`.
+- `item_otp` answers an item's `code`, the `next` one and `remaining_ms` at the page's `now`. It is passive: a list
+  refreshing its codes does not count as use, so a vault left showing codes still locks at its idle time (in the
+  browser `VaultClient.js` does not reset its timer for it; the apps do not count it as a call).
+- `otp_parse` reads what a user scanned or pasted (an `otpauth://totp/` URI, a bare secret, or a Google Authenticator
+  export, `otpauth-migration://`, of many seeds) into each seed's `otpauth` URI for the page to seal, with its current
+  code to compare. A counter (`hotp`) or Steam seed is refused; a counter seed in an export is left out.
+
+Commons › Vault's Codes view lists the codes of the open vaults, and `moqui vault codes` prints a vault's. A site
+checking a code is not this server, so the codes are made by the device's clock; a page whose clock is 15 seconds or
+more off the server's (by its answers' `Date`) says so, and can follow the server's time for the tab.
+
 ## Operational vaults
 
 An operational vault holds the secrets of deployed instances: database passwords, registry logins, TLS keys. Its
@@ -326,6 +346,7 @@ second factor and keeps nothing of the sign-in.
 | `key check <username>` | Shows a user's fingerprint to compare with them; on yes, stores your signed check |
 | `list` | Your vaults |
 | `open <vaultId> [--item ID]` | Opens a vault through its member list and lists its items, or prints one |
+| `codes <vaultId> [--watch]` | Opens a vault and prints the one-time codes of its items with a seed (each made here, the seeds never printed); `--watch` redraws them each second, the seconds left in yellow from 10 and red from 5 |
 | `leases [--vault ID]` | The leases waiting for your approval and those you asked for, or one vault's |
 | `approve <leaseId>` | Shows what the signed lease names, has you compare the lease key's fingerprint the first time, and on yes approves it here |
 | `recovery list` | The organization's recovery keys, and the recoveries you may seal a share to |
@@ -410,9 +431,9 @@ The browser runs the same crate as a wasm module, `runtime/components/base/webro
 - `VaultClient.js` (`MoquiVaultClient`) is the page side: it fetches the worker's script and the module, each with its
   integrity hash when given (and that hash in its URL, `?v=`, as the pages load `VaultClient.js` itself, so a copy the
   browser cached before an upgrade is never asked for under the new hash, which it would fail), starts the worker from a `blob:` URL, gives it the module's bytes, and has a typed method
-  for each call (`personalOpen`, `vaultKeyOpen`, `itemOpen`, `leaseApprove`, ...). It locks after 15 minutes with no
-  call (a lock never rejects; a worker that cannot answer is ended), and `copy(text)` clears the clipboard after 30
-  seconds when it still holds that text.
+  for each call (`personalOpen`, `vaultKeyOpen`, `itemOpen`, `itemOtp`, `leaseApprove`, ...). It locks after 15 minutes
+  with no call but a passive one, `itemOtp` (a lock never rejects; a worker that cannot answer is ended), and
+  `copy(text)` clears the clipboard after 30 seconds when it still holds that text.
 - The calls are JSON, one request and one answer (`crates/moqui-vault/src/ops.rs`); the raw ABI is `src/wasm.rs`, the
   crate's only `unsafe`. The module decides what it trusts itself, never by the page's say-so: a trust anchor or a key
   to wrap to is only one named by a key check its own personal key signed; a vault key opens only through the

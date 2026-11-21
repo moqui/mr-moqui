@@ -54,6 +54,7 @@ Usage: moqui vault --server URL --user USERNAME <command>
   key check <username>      Compare a user's key fingerprint with them, then store your signed check
   list                      Your vaults
   open <vaultId> [--item ID]  Open a vault through its member list and list its items, or print one item
+  codes <vaultId> [--watch] The one-time codes of the vault's items with a seed, made here; --watch shows them live
   recovery list             The organization's recovery keys, and the recoveries you can seal a share to
   recovery make --k K [--group G] <username>...
                             Make a recovery key split K of these holders (each key checked)
@@ -86,6 +87,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
     let mut user = String::new();
     let mut item = String::new();
     let mut vault = String::new();
+    let mut watch = false;
     let mut words = Vec::new();
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
@@ -99,6 +101,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
             "--user" => user = value("--user")?,
             "--item" => item = value("--item")?,
             "--vault" => vault = value("--vault")?,
+            "--watch" => watch = true,
             "-h" | "--help" | "help" => {
                 println!("{USAGE}");
                 return Ok(());
@@ -130,6 +133,7 @@ pub(crate) fn dispatch(args: &[String]) -> Result<(), Error> {
         ["key", "check", username] => key_check(&mut remote, &mut client, username),
         ["list"] => list(&mut remote),
         ["open", vault_id] => open(&mut remote, &mut client, vault_id, &item),
+        ["codes", vault_id] => codes(&mut remote, &mut client, vault_id, watch),
         ["recovery", rest @ ..] => recovery::dispatch(&mut remote, &mut client, &user, rest),
         ["leases"] => leases(&mut remote, &vault),
         ["approve", lease_id] => approve(&mut remote, &mut client, lease_id),
@@ -487,6 +491,163 @@ fn approve(remote: &mut Remote, client: &mut VaultClient, lease_id: &str) -> Res
 /// `open <vaultId>`: the vault key opened through the vault's chain (checked against this user's checks and what was
 /// remembered), each item's name and type, or one item's body.
 fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: &str) -> Result<(), Error> {
+    open_vault_key(remote, client, vault_id)?;
+    let items = remote.get(&format!("/vaults/{}/items", segment(vault_id)), &[])?;
+    for item in items["itemList"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let id = text(item, "vaultItemId");
+        if !item_id.is_empty() && id != item_id {
+            continue;
+        }
+        let body: Value = match client.call("item_open", item_args(vault_id, item)) {
+            Ok(opened) => serde_json::from_str(opened["body"].as_str().unwrap_or("")).unwrap_or(Value::Null),
+            Err(err) => {
+                eprintln!("{id}: {err}");
+                continue;
+            }
+        };
+        if item_id.is_empty() {
+            println!("{id}  {}  {}", text(&body, "type"), text(&body, "name"));
+        } else {
+            println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+        }
+    }
+    Ok(())
+}
+
+/// The module's arguments that name an item row of `vault_id`, as `item_open` and the calls like it take them.
+fn item_args(vault_id: &str, item: &Value) -> Value {
+    let label = match text(item, "itemName") {
+        name if name.is_empty() => Value::Null,
+        name => {
+            json!({ "item_type": text(item, "vaultItemTypeId"), "binding": text(item, "bindingKey"), "name": name })
+        }
+    };
+    json!({ "vault_id": vault_id, "item_id": text(item, "vaultItemId"), "key_version": item["keyVersion"], "label": label,
+            "wrapped_item_key": item["wrappedItemKey"], "sealed_body": item["bodyCipher"] })
+}
+
+/// An item with a one-time code seed, as `codes` lists it.
+struct CodeRow {
+    issuer: String,
+    account: String,
+    args: Value,
+}
+
+/// `codes <vaultId>`: the one-time codes of the vault's items with a seed (a One-time code item, or a login's seed),
+/// each made by the module from the item's seed, which is never printed; with `--watch` redrawn each second.
+fn codes(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, watch: bool) -> Result<(), Error> {
+    open_vault_key(remote, client, vault_id)?;
+    let items = remote.get(&format!("/vaults/{}/items", segment(vault_id)), &[])?;
+    let mut rows = Vec::new();
+    for item in items["itemList"].as_array().map(Vec::as_slice).unwrap_or_default() {
+        let id = text(item, "vaultItemId");
+        let args = item_args(vault_id, item);
+        // one item that does not open, or whose seed does not read, is told and the others still listed
+        let summary = match client.call("item_summary", args.clone()) {
+            Ok(summary) => summary,
+            Err(err) => {
+                eprintln!("{id}: {err}");
+                continue;
+            }
+        };
+        let otp = &summary["otp"];
+        if otp.is_null() {
+            continue;
+        }
+        if let Some(error) = otp["error"].as_str() {
+            eprintln!("{id} {}: {error}", text(&summary, "name"));
+            continue;
+        }
+        let first = |names: &[(&Value, &str)]| {
+            names
+                .iter()
+                .map(|(value, name)| text(value, name))
+                .find(|found| !found.is_empty())
+                .unwrap_or_default()
+        };
+        rows.push(CodeRow {
+            issuer: first(&[(&summary["fields"], "issuer"), (otp, "issuer"), (&summary, "name")]),
+            account: first(&[
+                (&summary["fields"], "account"),
+                (otp, "account"),
+                (&summary["fields"], "username"),
+            ]),
+            args,
+        });
+    }
+    if rows.is_empty() {
+        println!("No item of this vault has a one-time code seed.");
+        return Ok(());
+    }
+    rows.sort_by(|a, b| a.issuer.cmp(&b.issuer).then_with(|| a.account.cmp(&b.account)));
+    let color = watch && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    loop {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
+        let mut out = String::new();
+        if color {
+            // the screen cleared and the cursor home, so each second draws over the last
+            out.push_str("\x1b[2J\x1b[H");
+        }
+        out.push_str(&format!(
+            "{:<24}  {:<32}  {:<10}  {:<10}  LEFT\n",
+            "ISSUER", "ACCOUNT", "CODE", "NEXT"
+        ));
+        for row in &rows {
+            let mut args = row.args.clone();
+            args["now"] = json!(now);
+            match client.call("item_otp", args) {
+                Ok(made) => {
+                    let left = made["remaining_ms"].as_u64().unwrap_or(0).div_ceil(1000);
+                    // the seconds left as an authenticator shows them: warning from 10, alarm from 5
+                    let (start, end) = match (color, left) {
+                        (false, _) => ("", ""),
+                        (true, 0..=5) => ("\x1b[31m", "\x1b[0m"),
+                        (true, 6..=10) => ("\x1b[33m", "\x1b[0m"),
+                        (true, _) => ("", ""),
+                    };
+                    out.push_str(&format!(
+                        "{:<24}  {:<32}  {start}{:<10}{end}  {:<10}  {start}{left:>2}s{end}\n",
+                        clipped(&row.issuer, 24),
+                        clipped(&row.account, 32),
+                        grouped(&text(&made, "code")),
+                        grouped(&text(&made, "next")),
+                    ));
+                }
+                Err(err) => out.push_str(&format!(
+                    "{:<24}  {:<32}  {err}\n",
+                    clipped(&row.issuer, 24),
+                    clipped(&row.account, 32)
+                )),
+            }
+        }
+        print!("{out}");
+        if !watch {
+            return Ok(());
+        }
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+}
+
+/// A code in two groups, as authenticators show it: `123 456`, `1234 5678`.
+fn grouped(code: &str) -> String {
+    let half = code.len().div_ceil(2);
+    match (code.get(..half), code.get(half..)) {
+        (Some(first), Some(second)) if code.len() > 4 => format!("{first} {second}"),
+        _ => code.to_string(),
+    }
+}
+
+/// `text` cut to `width` characters.
+fn clipped(text: &str, width: usize) -> String {
+    text.chars().take(width).collect()
+}
+
+/// A vault's key opened in `client`: a single-secret vault's by its password or generated key, asked for here; a shared
+/// one's through the vault's chain with the personal key, as `open` does.
+fn open_vault_key(remote: &mut Remote, client: &mut VaultClient, vault_id: &str) -> Result<(), Error> {
     let vault = remote.get(&format!("/vaults/{}", segment(vault_id)), &[])?;
     let key_version = vault["vault"]["keyVersion"].as_u64().unwrap_or(0);
     if text(&vault["vault"], "lockEnumId") == "VlSingleSecret" {
@@ -511,36 +672,6 @@ fn open(remote: &mut Remote, client: &mut VaultClient, vault_id: &str, item_id: 
     } else {
         open_key(remote, client)?;
         open_shared(remote, client, vault_id, &vault)?;
-    }
-    let items = remote.get(&format!("/vaults/{}/items", segment(vault_id)), &[])?;
-    for item in items["itemList"].as_array().map(Vec::as_slice).unwrap_or_default() {
-        let id = text(item, "vaultItemId");
-        if !item_id.is_empty() && id != item_id {
-            continue;
-        }
-        let label = match text(item, "itemName") {
-            name if name.is_empty() => Value::Null,
-            name => {
-                json!({ "item_type": text(item, "vaultItemTypeId"), "binding": text(item, "bindingKey"), "name": name })
-            }
-        };
-        let opened = client.call(
-            "item_open",
-            json!({ "vault_id": vault_id, "item_id": id, "key_version": item["keyVersion"], "label": label,
-                    "wrapped_item_key": item["wrappedItemKey"], "sealed_body": item["bodyCipher"] }),
-        );
-        let body: Value = match opened {
-            Ok(opened) => serde_json::from_str(opened["body"].as_str().unwrap_or("")).unwrap_or(Value::Null),
-            Err(err) => {
-                eprintln!("{id}: {err}");
-                continue;
-            }
-        };
-        if item_id.is_empty() {
-            println!("{id}  {}  {}", text(&body, "type"), text(&body, "name"));
-        } else {
-            println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
-        }
     }
     Ok(())
 }

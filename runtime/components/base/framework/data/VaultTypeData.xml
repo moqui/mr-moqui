@@ -117,62 +117,69 @@ along with this software (see the LICENSE.md file). If not, see
         <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="2"/>
         <fields fieldName="totp" label="One-time code seed" fieldKindEnumId="VfTotp" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="note" description="Note" sequenceNum="2">
+    <!-- a one-time code seed of its own, an authenticator's entry: the seed an otpauth://totp/ URI (or a bare base32
+        secret), whose codes the vault module makes (docs/security/Vaults.md, One-time codes); a login keeps one too -->
+    <moqui.security.vault.VaultItemType vaultItemTypeId="otp" description="One-time code" sequenceNum="2">
+        <fields fieldName="issuer" label="Issuer" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
+        <fields fieldName="account" label="Account" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
+        <fields fieldName="totp" label="One-time code seed" fieldKindEnumId="VfTotp" masked="Y" sequenceNum="3"/>
+    </moqui.security.vault.VaultItemType>
+    <moqui.security.vault.VaultItemType vaultItemTypeId="note" description="Note" sequenceNum="3">
         <fields fieldName="text" label="Text" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="1"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="card" description="Card" sequenceNum="3">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="card" description="Card" sequenceNum="4">
         <fields fieldName="cardholder" label="Name on card" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="number" label="Number" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="2"/>
         <fields fieldName="expires" label="Expires" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="code" label="Security code" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
         <fields fieldName="pin" label="PIN" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="identity" description="Identity" sequenceNum="4">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="identity" description="Identity" sequenceNum="5">
         <fields fieldName="fullName" label="Full name" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="birthDate" label="Birth date" fieldKindEnumId="VfDate" masked="N" sequenceNum="2"/>
         <fields fieldName="documentType" label="Document" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="documentNumber" label="Document number" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="4"/>
         <fields fieldName="address" label="Address" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="contact" description="Private contact" sequenceNum="5">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="contact" description="Private contact" sequenceNum="6">
         <fields fieldName="fullName" label="Name" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="organization" label="Organization" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="email" label="Email" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="phone" label="Phone" fieldKindEnumId="VfText" masked="N" sequenceNum="4"/>
         <fields fieldName="address" label="Address" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="ssh-key" description="SSH key" sequenceNum="6" rotationDays="365">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="ssh-key" description="SSH key" sequenceNum="7" rotationDays="365">
         <fields fieldName="privateKey" label="Private key" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="1"/>
         <fields fieldName="publicKey" label="Public key" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="2"/>
         <fields fieldName="passphrase" label="Passphrase" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="api-key" description="API key" sequenceNum="7" rotationDays="365">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="api-key" description="API key" sequenceNum="8" rotationDays="365">
         <fields fieldName="url" label="Service" fieldKindEnumId="VfUrl" masked="N" sequenceNum="1"/>
         <fields fieldName="keyId" label="Key id" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="secret" label="Secret" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="database-credential" description="Database credential" sequenceNum="8" rotationDays="90">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="database-credential" description="Database credential" sequenceNum="9" rotationDays="90">
         <fields fieldName="host" label="Host" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="port" label="Port" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="database" label="Database" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
         <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="4"/>
         <fields fieldName="password" label="Password" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="5"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="tls-key-pair" description="TLS key pair" sequenceNum="9" rotationDays="365">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="tls-key-pair" description="TLS key pair" sequenceNum="10" rotationDays="365">
         <fields fieldName="certificate" label="Certificate" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="1"/>
         <fields fieldName="chain" label="Chain" fieldKindEnumId="VfMultiLine" masked="N" sequenceNum="2"/>
         <fields fieldName="privateKey" label="Private key" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="registry-login" description="Registry login" sequenceNum="10" rotationDays="180">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="registry-login" description="Registry login" sequenceNum="11" rotationDays="180">
         <fields fieldName="registry" label="Registry" fieldKindEnumId="VfUrl" masked="N" sequenceNum="1"/>
         <fields fieldName="username" label="Username" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="password" label="Password or token" fieldKindEnumId="VfSecret" masked="Y" sequenceNum="3"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="recovery-code" description="Recovery codes" sequenceNum="11">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="recovery-code" description="Recovery codes" sequenceNum="12">
         <fields fieldName="service" label="For" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="codes" label="Codes" fieldKindEnumId="VfMultiLine" masked="Y" sequenceNum="2"/>
     </moqui.security.vault.VaultItemType>
-    <moqui.security.vault.VaultItemType vaultItemTypeId="recovery-share" description="Recovery share" sequenceNum="12">
+    <moqui.security.vault.VaultItemType vaultItemTypeId="recovery-share" description="Recovery share" sequenceNum="13">
         <fields fieldName="instance" label="Instance" fieldKindEnumId="VfText" masked="N" sequenceNum="1"/>
         <fields fieldName="shareIndex" label="Share" fieldKindEnumId="VfText" masked="N" sequenceNum="2"/>
         <fields fieldName="sharesNeeded" label="Shares needed" fieldKindEnumId="VfText" masked="N" sequenceNum="3"/>
