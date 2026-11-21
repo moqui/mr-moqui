@@ -147,7 +147,7 @@ seed, seed-initial, and install. types= with an empty value, or types=all, loads
   moqui load
   moqui load types=seed,seed-initial
   moqui load types=all components=mr-mantle
-  moqui load location=runtime/components/addon/mr-mantle/data/SomeData.xml
+  moqui load location=runtime/components/addon/mr-mantle/data/20-install/GeographyEurope.xml
   moqui load raw=true timeout=600
 
 Flags:

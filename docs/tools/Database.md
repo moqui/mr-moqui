@@ -239,7 +239,7 @@ What a person reads there is set in the authorization data, not in a document. A
   its data read anew when over a minute old. A reader of the dataset holds `org.moqui.report.dataset.calcgrid`
   (a member of `CALC_GRID`).
 
-The profile that ships is Mantle's **`sales`** (`mr-mantle/data/CalcGridProfileData.xml`, group `CALC_PROFILE_SALES`):
+The profile that ships is Mantle's **`sales`** (`mr-mantle/data/10-seed/Sales.xml`, group `CALC_PROFILE_SALES`):
 orders by their part (`OrderPart`, `OrderHeaderAndPart`, `OrderHeaderAndPartSummary`, `OrderItemAndPartSummary`),
 returns, invoices (`Invoice`, `InvoiceSummary`), payments, parties (`Party`, `PartyDetail`), products, categories and
 stores. It ships with no grant. BOSS grants it to its Sales administrators with `MANTLE_USER_ORG`,

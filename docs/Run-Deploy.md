@@ -170,7 +170,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Load every data type | `./moq load` | `./gradlew load` |
 | Load some types | `./moq load seed seed-initial install` | `./gradlew load -Ptypes=seed,seed-initial,install` |
 | Load one component's data | `./moq load seed components=mr-mantle` | `java -jar moqui.war load components=...` |
-| Load one file | `./moq load -l runtime/components/addon/mr-mantle/data/SomeData.xml` | `java -jar moqui.war load location=...` |
+| Load one file | `./moq load -l runtime/components/addon/mr-mantle/data/20-install/GeographyEurope.xml` | `java -jar moqui.war load location=...` |
 | Start over with an empty database | `./moq clean-db && ./moq load` | `./gradlew cleanDb load` |
 | Load once, then save a snapshot | `./moq load-save` | `./gradlew loadSave` |
 | Save a snapshot / restore it | `./moq save-db before-upgrade`, `./moq reload-save before-upgrade` | `./gradlew reloadSave` |
@@ -1856,7 +1856,7 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
 
 1. Run a BOSS server: `./moq component-get mr-boss`, which brings mr-mantle. It can be one server or a
    [cluster](#cluster). Use Maximal or Enterprise: forum thumbnails need `image`, and sign-in providers need `sso`.
-   The site readiness check reports what is missing. The PASS jobs are in Mantle's data (`ForumSetupData.xml`) and run
+   The site readiness check reports what is missing. The PASS jobs are in Mantle's data (`15-seed-initial/Communications.xml`) and run
    here. Add mr-pass only if this server also serves sites itself.
 2. Register each PASS deployment: in the conf its sites and exact SSO callback (`pass-authority/client[<id>]@sites`, `@callback`), in `.env` its secret (`pass-authority/client[<id>]@secret`). The conf turns on gRPC for PASS
    clients (`pass-authority@grpc-enabled`); the HTTPS listener takes the same calls over [HTTP/2](#http2), so no other

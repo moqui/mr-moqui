@@ -15,7 +15,7 @@
 //! The data files a component holds, as `EntityDataLoaderImpl` gathers them: the load command's component files and
 //! the data of one component loaded on a running server (plans/archive/Component-Deploy.md).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use moqui_db::model::entity_definition_paths;
 use moqui_lib::vfs;
@@ -41,50 +41,53 @@ pub fn component_data_locations(name: &str, location: &Path, seed: bool) -> Vec<
     locations
 }
 
-/// Each `.xml`, `.csv` and `.json` file in `data_dir`, then those in each directory directly under it, by file name
-/// within each directory. A file in `data/es/` is `component://name/data/es/file`. Deeper directories are not walked.
+/// The XML, CSV and JSON files in each directory, in name order, followed depth first by its sorted subdirectories.
 #[must_use]
 pub fn data_directory_locations(component_name: &str, data_dir: &Path) -> Vec<String> {
-    // with the files built into the binary that are not on disk (moqui_lib::vfs)
-    let Ok(read) = vfs::read_dir(data_dir) else {
-        return Vec::new();
+    let mut locations = Vec::new();
+    collect_data_files(
+        data_dir,
+        &format!("component://{component_name}/data"),
+        &mut Vec::new(),
+        &mut locations,
+    );
+    locations
+}
+
+fn collect_data_files(dir: &Path, location: &str, ancestors: &mut Vec<PathBuf>, locations: &mut Vec<String>) {
+    let entries = match vfs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            // Components may have no data directory.
+            if !ancestors.is_empty() || err.kind() != std::io::ErrorKind::NotFound {
+                tracing::error!(%location, error = %err, "Could not list data directory");
+            }
+            return;
+        }
     };
-    let mut files = Vec::new();
+    // A disk link may lead back to a parent. Embedded directories have no disk path to resolve.
+    let identity = dir.canonicalize().unwrap_or_else(|_| dir.to_owned());
+    if ancestors.contains(&identity) {
+        tracing::warn!(%location, "Skipping data directory link to an ancestor");
+        return;
+    }
+    ancestors.push(identity);
     let mut directories = Vec::new();
-    for entry in read {
+    // The VFS returns the merged disk and embedded entries in name order.
+    for entry in entries {
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
-        if entry.is_file() && is_data_file(&name) {
-            files.push(name);
-        } else if entry.is_dir() {
+        if entry.is_dir() {
             directories.push(name);
+        } else if is_data_file(&name) {
+            locations.push(format!("{location}/{name}"));
         }
     }
-    files.sort();
-    directories.sort();
-    let mut locations: Vec<String> = files
-        .into_iter()
-        .map(|name| format!("component://{component_name}/data/{name}"))
-        .collect();
-    for directory in directories {
-        let Ok(read) = vfs::read_dir(data_dir.join(&directory)) else {
-            continue;
-        };
-        let mut nested: Vec<String> = read
-            .into_iter()
-            .filter(vfs::DirEntry::is_file)
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| is_data_file(name))
-            .collect();
-        nested.sort();
-        locations.extend(
-            nested
-                .into_iter()
-                .map(|name| format!("component://{component_name}/data/{directory}/{name}")),
-        );
+    for name in directories {
+        collect_data_files(&dir.join(&name), &format!("{location}/{name}"), ancestors, locations);
     }
-    locations
+    ancestors.pop();
 }
 
 /// The data types the data file at `path` declares, as the loader reads them: an XML file's `entity-facade-xml`

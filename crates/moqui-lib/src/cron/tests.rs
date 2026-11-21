@@ -204,7 +204,7 @@ fn the_day_of_week_specials_follow_quartz() {
         next("0 0 0 ? * FRI#5", "2026-01-31T00:00:00[UTC]", 1),
         ["2026-05-29T00:00:00+00:00[UTC]"]
     );
-    // mr-mantle's Columbus Day (HolidayUsaData.xml): the second Monday of October.
+    // mr-mantle's Columbus Day (20-install/GeographyNorthAmerica.xml): the second Monday of October.
     assert_eq!(
         next("0 15 10 ? 10 2#2", "2026-01-01T00:00:00[UTC]", 1),
         ["2026-10-12T10:15:00+00:00[UTC]"]

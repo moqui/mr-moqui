@@ -1381,7 +1381,7 @@ take the index refresh interval to appear.
   moqui load location=runtime/components/base/framework/data/ReportEmailData.xml
   moqui load location=runtime/components/base/tools/data/MonitoringSecurityData.xml
   # Only when mr-mantle is installed:
-  moqui load location=runtime/components/addon/mr-mantle/data/MonitoringSalesSecurityData.xml
+  moqui load location=runtime/components/addon/mr-mantle/data/15-seed-initial/SalesDocumentsAndReports.xml
   ```
 
   Then set the report email template's SMTP server.
@@ -1393,12 +1393,12 @@ take the index refresh interval to appear.
   longer any screen. A user group that was granted only `MONITOR_APP` needs `SYSTEM_APP` to open Monitor, which also
   opens the rest of System to it. The `MONITOR_*` permissions are unchanged. The old routes answer 404.
 - **Business datasets** (Insights P3): the entity check creates `moqui.report.BusinessDataset`; load `ReportSetupData.xml` again
-  for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
+  for the `ReportScopePolicy` type and mr-mantle's `15-seed-initial/SalesDocumentsAndReports.xml` for its policy. From then on a dataset with `signal`
   business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of
   one sees it as not admitted until a steward admits it ([Business datasets](#business-datasets)).
 - **Business events, drill and the semantic guards** (Insights P6): load `ReportSetupData.xml` (the `ReportAnnotationSource`
   type), `MonitoringSecurityData.xml` (`REPORT_BUSINESS_ADMIN`: the business annotation artifact and the restricted records
-  artifacts, `ADMIN`'s) and mr-mantle's `MonitoringSalesSecurityData.xml` (its source) again. The annotations index gains four
+  artifacts, `ADMIN`'s) and mr-mantle's `15-seed-initial/SalesDocumentsAndReports.xml` (its source) again. The annotations index gains four
   fields (`organizationPartyId`, `event`, `recordType`, `recordId`), added to an existing table in place. From then on a panel
   over a business dataset that sums an amount across several currencies without grouping by the currency says so
   (`UNIT_MIXED`) instead of showing a number without a unit: group it by its unit field or filter it to one.

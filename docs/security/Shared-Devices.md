@@ -126,7 +126,7 @@ What happens to a device is written to the audit log on its display account (`Us
 secondary key): `deviceRegistered` (and the showing of its code), `deviceRedeemed`, `deviceRevoked`, `deviceStopped`
 and `deviceRefused` (a code presented again, expired or revoked; a request refused for its address or its account, at
 most every ten minutes). An owner that knows organizations registers the audit projections for them (Mantle's
-`PartyAuditData.xml`).
+`10-seed/PartyAndIdentity.xml`).
 
 ## Tests
 
