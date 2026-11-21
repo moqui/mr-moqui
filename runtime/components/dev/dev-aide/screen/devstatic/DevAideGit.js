@@ -346,6 +346,11 @@
   </div>
   <div class="text-subtitle2 q-mt-md">Components</div>
   <div class="text-caption" v-for="component in rootInfo.components || []" :key="component.name">{{component.name}}{{component.site ? ' (site)' : ''}} · {{component.path || ''}}</div>
+  <div class="text-subtitle2 q-mt-md">Editing</div>
+  <div class="text-caption" id="DevRootEditing">{{rootInfo.upstream
+      ? 'Upstream: no site component is in this repository, so its files are read only' + (ws.upstreamEdits ? ', but editing upstream components is on.' : ' unless "Allow editing upstream components" is on.')
+      : 'A site repository: its site components are editable.'}}
+    <a href="/qapps/dev/Settings">Dev AIDE Settings</a> has that and the other settings for every root: the site components, editing upstream components, and each root's read only flag.</div>
   <div class="text-subtitle2 q-mt-md">Publish</div>
   <div class="text-caption">{{rootInfo.publishBranch ? 'Publish pushes to ' + rootInfo.publishBranch + (rootInfo.publishBranchRequired ? ', and Push is off for this repository' : '') : 'Publish pushes to the current branch.'}}
     <a href="/qapps/dev/Settings">Dev AIDE Settings</a> has the labels, read only flags and publish branches.</div>

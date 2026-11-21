@@ -326,6 +326,14 @@
                 return this.goto.files.filter((path) => !filter || path.toLowerCase().indexOf(filter) >= 0).slice(0, 50);
             },
             canWrite() { return this.tier !== "view" && !this.narrow; },
+            // What the upstream lock means and where it is turned off, for the lock icon and the upstream chip.
+            upstreamHint() {
+                if (this.upstreamEdits) return "Upstream: no site component is in this repository. Editing upstream components is on, so its files are editable; "
+                    + "each edit is a fork every upgrade has to merge. Dev AIDE › Settings turns it off.";
+                return "Upstream: no site component is in this repository, so its files are read only and are extended from a site component. "
+                    + (this.tier === "full" ? "Dev AIDE › Settings has \"Allow editing upstream components\" to edit them in place, and the site components."
+                        : "Editing them in place needs the full Dev AIDE tier; Dev AIDE › Settings has the site components.");
+            },
             guided() { return this.mode === "guided"; },
             siteComponent() { const root = this.roots.find((item) => !item.upstream); return root ? ((root.components || []).find((c) => c.site) || {}).name : null; },
             currentViews() { return this.current ? pure.viewsFor(devAide.viewSpecs, this.current.path, pure.rootElement(this.current.saved || this.current.text)) : []; },
@@ -408,6 +416,7 @@
             post(name, params) { return moqui.request(this.base + "/" + name, { method: "POST", params: params || {} }).then((result) => result.json || {}); },
             // Notes and failures at the bottom: at the app's top right they would cover the editor's toolbar (Save) while shown.
             fail(error) { this.busy = ""; this.$q.notify({ type: "negative", message: pure.errorText(error), timeout: 8000, position: "bottom-right" }); },
+            openSettings() { root.location.assign("/qapps/dev/Settings"); },
             note(message, type) { this.$q.notify({ type: type || "positive", message, timeout: 4000, position: "bottom-right" }); },
             loadRoots() {
                 return this.get("roots").then((answer) => {
@@ -1339,7 +1348,7 @@
         template: `
 <div class="m-dev-workspace column no-wrap" :class="{ 'm-dev-guided': guided }" id="DevWorkspace" tabindex="-1" @keydown="onKey">
   <div v-if="guided" class="row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs" id="DevGuidedBar">
-    <q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"></q-icon>
+    <q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"><q-tooltip v-if="root && root.upstream" max-width="24rem">{{upstreamHint}}</q-tooltip></q-icon>
     <span class="text-subtitle2 ellipsis">{{current ? current.path.split('/').pop() : ''}}</span>
     <span class="text-caption m-muted ellipsis">{{root ? root.label : ''}}</span>
     <q-space></q-space>
@@ -1348,9 +1357,10 @@
   <div v-else class="m-dev-repo-bar row items-center no-wrap q-gutter-x-sm q-px-sm q-py-xs">
     <q-select dense outlined emit-value map-options options-dense style="min-width: 14rem" :model-value="rootId" @update:model-value="selectRoot"
         :options="roots.map(r => ({ label: r.label + (r.upstream ? '' : ' (site)'), value: r.id, upstream: r.upstream }))" id="DevRootSelect">
-      <template v-slot:prepend><q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"></q-icon></template>
+      <template v-slot:prepend><q-icon :name="root && root.upstream ? 'sym_o_lock' : 'sym_o_folder'" size="18px"><q-tooltip v-if="root && root.upstream" max-width="24rem">{{upstreamHint}}</q-tooltip></q-icon></template>
     </q-select>
-    <q-chip v-if="root && root.upstream" dense square icon="sym_o_lock" class="m-dev-upstream-chip">upstream{{upstreamEdits ? ' · editing on' : ''}}</q-chip>
+    <q-chip v-if="root && root.upstream" dense square clickable icon="sym_o_lock" class="m-dev-upstream-chip" id="DevUpstreamChip"
+        @click="openSettings">upstream{{upstreamEdits ? ' · editing on' : ''}}<q-tooltip max-width="24rem">{{upstreamHint}}</q-tooltip></q-chip>
     <template v-if="isGit && status">
       <q-btn-dropdown dense flat no-caps icon="sym_o_account_tree" :label="status.branch || 'detached'" id="DevBranchMenu">
         <q-list dense style="min-width: 12rem">

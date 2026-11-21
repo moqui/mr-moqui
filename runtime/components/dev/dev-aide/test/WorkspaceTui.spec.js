@@ -4,8 +4,8 @@
 // file changed on disk (the conflict kept for the compare) and Save mine over it; one tui render of the Workspace (its
 // dynamic container at a palette link's file and line) and one of the twin, with its header, tabs, tree, editor and that
 // conflict's diff (and no References for a file that defines no artifact), with the artifacts of a file the index has,
-// which the File menu's References takes; Repositories' row of the root opening the Workspace at it with no path. The
-// directory goes with the scratch runtime.
+// which the File menu's References takes; Repositories' and Home's rows of the root opening the Workspace at it with no
+// path. The directory goes with the scratch runtime.
 // Run: ./moq test dev-aide --spec WorkspaceTui
 const WS = "org.moqui.devaide.WorkspaceServices."
 const ws = (name, params) =>
@@ -170,6 +170,24 @@ feature("Repositories' row of a root opens the Workspace at that root with no pa
     when() {
         const rootId = rootOf().id
         const page = devAide().render("Repositories", {}, null)
+        const out = String(page.output)
+        const link = (out.match(new RegExp('<a href="([^"]*)"[^>]*>Workspace spec[^<]*</a>')) || [])[1] || ""
+        return {rootId, page, link}
+    },
+    then({rootId, page, link}) {
+        page.status == 200
+        page.errorMessages.length == 0
+        link.includes("Workspace?")
+        link.includes("rootId=" + rootId)
+        !link.includes("path=")
+    }
+})
+
+// Home's one render: its roots' rows open the Workspace as Repositories' do, with no path
+feature("Home's row of a root opens the Workspace at that root with no path", {
+    when() {
+        const rootId = rootOf().id
+        const page = devAide().render("Home", {}, null)
         const out = String(page.output)
         const link = (out.match(new RegExp('<a href="([^"]*)"[^>]*>Workspace spec[^<]*</a>')) || [])[1] || ""
         return {rootId, page, link}

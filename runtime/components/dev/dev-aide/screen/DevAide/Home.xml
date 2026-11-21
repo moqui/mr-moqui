@@ -69,8 +69,9 @@ along with this software (see the LICENSE.md file). If not, see
             <label type="p" text="Open a root to browse its files and review changes. Unpublished site changes: ${(overview.unpublished || 0)}."/>
         </box-body><box-body-nopad>
             <form-list name="RootList" list="roots" skip-form="true">
+                <!-- the row's own path (an absolute directory) is not Workspace's path (a file in the root): the empty value leaves it out -->
                 <field name="label"><default-field title="Root">
-                    <link url="workspace" text="${label}" parameter-map="{rootId: rootId}" link-type="anchor"/></default-field></field>
+                    <link url="workspace" text="${label}" parameter-map="{rootId: rootId, path: ''}" link-type="anchor"/></default-field></field>
                 <field name="kind"><default-field title="Kind"><display text="${kind == 'git' ? 'git' : 'Not a git repository'}${upstream ? ' · upstream' : ' · site'}"/></default-field></field>
                 <field name="branch"><default-field title="Branch"><display text="${(branch || '')}${ahead ? ' ↑' + ahead : ''}${behind ? ' ↓' + behind : ''}"/></default-field></field>
                 <field name="changes"><default-field title="Changes"><display text="${(changes || 0)}"/></default-field></field>
