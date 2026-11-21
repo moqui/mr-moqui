@@ -127,7 +127,7 @@ Loads data into the configured database with the dev conf. With no data
 types it loads all of them, like gradle load.
   ./moq load
   ./moq load seed seed-initial install
-  ./moq load -l runtime/components/addon/mr-mantle/data/SomeData.xml
+  ./moq load -l runtime/components/addon/mr-mantle/data/20-install/GeographyEurope.xml
   ./moq load seed components=mr-mantle
 
 $LOAD_HELP

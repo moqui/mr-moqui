@@ -15,7 +15,7 @@
         where it wants CALC_GRID_AUTHOR to the groups it opens CalcGrid to, each with an access profile of its own data: an
         artifact group with org.moqui.calc.profile.[profileId] (inheritAuthz Y) and an org.moqui.calc.entity.[entityName] for
         each entity offered, granted AUTHZT_ALWAYS for view, with the entity filter sets of its row scope on that grant
-        (mr-mantle's CalcGridProfileData.xml). The Tools app's own access needs no profile: every source of the data grid, no
+        (mr-mantle's 10-seed/Sales.xml). The Tools app's own access needs no profile: every source of the data grid, no
         filter. -->
     <artifactGroups artifactGroupId="CALC_GRID" description="CalcGrid: spreadsheets over the database">
         <artifacts artifactName="component://tools/screen/Dashboards/CalcGrid.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>

@@ -198,7 +198,7 @@ An `<entity>` operation of a REST file (`list`, `one`, `count`, `create`, `updat
 
 ### The `moqui` REST root
 
-The `*.rest.xml` files under `runtime/components/base` are `tools/service/moqui.rest.xml`, root `moqui`, and `framework/service/vault.rest.xml`, root `vault` ([below](#the-vault-rest-root)); `runtime/components/dev` has only the component template's. The seed grants on `AT_REST_PATH`, each inheritable, are `/moqui` to `ADMIN` (group `MOQUI_API`), `/moqui/git` and `/moqui/hosting` to `ALL_USERS`, `/moqui/reports` to `ADMIN` (group `DASHBOARDS_APP`), and `/moqui/aide` to `ADMIN` and for view to `AIDE_READERS` (group `AIDE_READ_API`). mr-boss grants `/moqui/reports` to its Insights groups too (group `BOSS_INS_REPORT_READ`, `BossSetupData.xml`). A git access token signs in on `/moqui/git` and `/moqui/hosting` (`user/login.rs`).
+The `*.rest.xml` files under `runtime/components/base` are `tools/service/moqui.rest.xml`, root `moqui`, and `framework/service/vault.rest.xml`, root `vault` ([below](#the-vault-rest-root)); `runtime/components/dev` has only the component template's. The seed grants on `AT_REST_PATH`, each inheritable, are `/moqui` to `ADMIN` (group `MOQUI_API`), `/moqui/git` and `/moqui/hosting` to `ALL_USERS`, `/moqui/reports` to `ADMIN` (group `DASHBOARDS_APP`), and `/moqui/aide` to `ADMIN` and for view to `AIDE_READERS` (group `AIDE_READ_API`). mr-boss grants `/moqui/reports` to its Insights groups too (group `BOSS_INS_REPORT_READ`, `BossSetupData07InsightsAndAdminAccess.xml`). A git access token signs in on `/moqui/git` and `/moqui/hosting` (`user/login.rs`).
 
 | Resource under `/rest/s1/moqui` | What it reaches | Gate |
 | --- | --- | --- |

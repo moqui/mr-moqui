@@ -34,7 +34,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | --- | --- |
 | `component.xml`, `MoquiConf.xml` | The component and its conf: screen mounts (`screen-facade`), tool factories, its own settings element ([Conf settings](#conf-settings)). |
 | `entity/*.xml`, `entity/<domain>/*.xml` | Entity definitions, view entities and extensions (`extend-entity`). Mantle groups these by domain, with separate `*Entities.xml`, `*Views.xml` and `*Extensions.xml` files. |
-| `data/*.xml` | Seed, setup and demo data (`type="seed"`, `"seed-initial"`, `"demo"`): enumerations, status flows, security (`ArtifactGroup`, `ArtifactAuthz`, `UserGroupPermission`), demo records the walks use. |
+| `data/` | XML data files, in name order in each directory, followed by its subdirectories in name order, depth first. Seed, initial settings, install and demo data (`type="seed"`, `"seed-initial"`, `"install"`, `"demo"`): enumerations, status flows, security (`ArtifactGroup`, `ArtifactAuthz`, `UserGroupPermission`), demo records the walks use. |
 | `service/<package path>/*.xml` | Service definitions: verb and noun, parameters, `<description>`, and the implementation, inline XML Actions in `<actions>` (§4). SECAs in `*.secas.xml`, EECAs in `entity/*.eecas.xml`. |
 | `service/<package path>/*.js` | Script modules for logic too involved for XML Actions: one module per area (`Prices.js`, `Methods.js`), plus a shared library (`ProductsLib.js`). |
 | `screen/<App>.xml`, `screen/<App>/**/*.xml` | XML Screens: the app root, its sections and subscreens. `screen/Shared/*.xml` holds screens mounted in several apps. |

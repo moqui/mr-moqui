@@ -100,7 +100,7 @@ fn a_component_loads_its_entities_rules_services_and_data() {
         ("entity/GateEntities.xml", ENTITIES),
         ("entity/Gate.eecas.xml", RULES),
         ("service/gate/comp/GateServices.xml", SERVICES),
-        ("data/GateData.xml", DATA),
+        ("data/10-seed/gate/GateData.xml", DATA),
     ] {
         let file = component.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();

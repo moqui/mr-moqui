@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ===== The framework's own records: of the whole instance (no sourceService), read by a holder of ADMIN_AUDIT_VIEW.
         A user's account, its memberships and its subscriptions belong to the organizations the user works for, which
         the framework does not know: their projections are registered by the component that does (mr-mantle
-        data/PartyAuditData.xml), and without one they are not found here. ===== -->
+        data/10-seed/PartyAndIdentity.xml), and without one they are not found here. ===== -->
 
     <!-- access and grants (AccessServices; impl-admin P3, P9): the dates of a grant are shown; a group's allowed
         addresses and a group default's value are markers, as the access review leaves them out -->

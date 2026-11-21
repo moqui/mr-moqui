@@ -840,6 +840,9 @@ fn drop_telemetry(_cluster_dir: &Path) {}
 #[cfg(feature = "embedded-postgres")]
 #[allow(dead_code)]
 pub fn cluster_password(runtime: &Path) -> Option<moqui_host::db::embedded::SuperuserPassword> {
+    if !moqui_core::seal::file::path_in(runtime).exists() {
+        return None;
+    }
     moqui_core::seal::keeper_of(runtime)
         .and_then(|keeper| {
             keeper

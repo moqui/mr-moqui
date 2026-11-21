@@ -1233,7 +1233,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The OutOfOffice screen: the accounts the user manages (not the Internal one) with whether their automatic
             reply is on now, and the chosen account's reply (emailAccountId, else the first) for the form, from
             org.moqui.mail.EmailClientServices.get#EmailOutOfOffice, with who gets it (replyAudienceEnumId: EraEveryone,
-            EraContacts, EraInternal; who is a contact is the hook BossSetupData sets, STRT_EMAIL_CONTACT_SERVICE) and the
+            EraContacts, EraInternal; who is a contact is the hook BossSetupData03CommonsAndPermissions.xml sets, STRT_EMAIL_CONTACT_SERVICE) and the
             more domains whose senders count as inside the organization (internalDomains, shown comma and space), and
             hasContactHook: whether a contact hook answers for the chosen account (without one, EraContacts reaches people
             inside only). Each account's state stands alone: one that fails is logged and shown as unknown.</description>
