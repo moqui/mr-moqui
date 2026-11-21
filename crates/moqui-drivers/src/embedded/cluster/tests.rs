@@ -1484,6 +1484,7 @@ fn a_cluster_under_a_path_with_a_space_starts_with_its_socket_in_temp() {
 
 /// SEC-DAT-06: the superuser's password file is written `0600` before the setup reads it, and one already there (an
 /// older run's, made with the umask) is made so, its password kept.
+#[cfg(unix)]
 #[test]
 fn the_password_file_is_this_user_s_alone() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1502,6 +1503,7 @@ fn the_password_file_is_this_user_s_alone() {
 
 /// SEC-OUT-06: a socket directory under temp that was already there is used only when it is this user's with mode
 /// 0700; one another user could write in is refused before the server starts.
+#[cfg(unix)]
 #[test]
 fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
     use std::os::unix::fs::PermissionsExt as _;
@@ -1529,7 +1531,6 @@ fn a_socket_dir_that_is_not_this_user_s_alone_is_refused() {
 #[test]
 fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file() {
     use std::io::Write as _;
-    use std::os::unix::fs::PermissionsExt as _;
 
     let runtime = temp_cluster_dir();
     let _guard = DirGuard(runtime.clone());
@@ -1558,7 +1559,11 @@ fn a_sealed_dump_opens_for_a_restore_only_with_its_key_and_leaves_no_plain_file(
     let path = opened.path().to_path_buf();
     assert!(path.starts_with(runtime.join("db")), "{}", path.display());
     assert_eq!(std::fs::read(&path).unwrap(), b"PGDMP and the rest of a dump");
-    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    }
     drop(opened);
     assert!(!path.exists(), "the plain file stays after the restore");
 

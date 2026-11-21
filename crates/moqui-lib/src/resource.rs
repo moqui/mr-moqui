@@ -344,7 +344,7 @@ fn plain_fs_path(path: PathBuf) -> PathBuf {
         if plain.encode_utf16().count() >= 260 {
             return path;
         }
-        return PathBuf::from(plain);
+        PathBuf::from(plain)
     }
     #[cfg(not(windows))]
     path

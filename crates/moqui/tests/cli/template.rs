@@ -16,6 +16,8 @@
 //! makes from it passes its own specs under `moqui test`, whole (its screens in qvt and tui, its services, its REST API)
 //! and REST API only. The template itself, beside them in `components/dev`, never loads.
 
+#![cfg(unix)]
+
 use std::path::Path;
 use std::process::Command;
 

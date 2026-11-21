@@ -726,12 +726,41 @@ fn prepare_runtime(runtime: &Path, fixtures: &Template, extra_conf: &str) {
     .unwrap();
     let base =
         std::fs::canonicalize(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base")).unwrap();
-    moqui_core::context::layout::link_base_set(&base, runtime).unwrap();
+    link_base_set(&base, runtime);
     // The example dev component (its gallery, the Example entity, the token route screen) loads from component/ here, so
     // the gates have it on their production purpose; in the repository runtime it loads only on a dev instance.
     let example = std::fs::canonicalize(repo_root().join("runtime/components/dev/example")).unwrap();
     std::fs::create_dir_all(runtime.join("components/addon")).unwrap();
-    std::os::unix::fs::symlink(&example, runtime.join("components/addon/example")).unwrap();
+    link_dir(&example, runtime.join("components/addon/example"));
+}
+
+/// A directory link. On Unix a symlink. On Windows a junction, which needs no extra privilege (a symlink does).
+fn link_dir(from: impl AsRef<Path>, to: impl AsRef<Path>) {
+    let from = from.as_ref();
+    let to = to.as_ref();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(from, to).unwrap();
+    #[cfg(windows)]
+    junction::create(plain_link(from), plain_link(to)).unwrap();
+}
+
+/// `canonicalize` prefixes `\\?\`. A junction stores an NT path, and a second prefix is a link that does not open.
+#[cfg(windows)]
+fn plain_link(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        PathBuf::from(rest.to_string())
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// [`moqui_core::context::layout::link_base_set`]: a symlink on Unix, a junction on Windows, with the sets' manifest
+/// copied beside it.
+fn link_base_set(base: &Path, runtime: &Path) {
+    moqui_core::context::layout::link_base_set(base, runtime).unwrap();
 }
 
 /// Load the seed (the framework files and each component's `data` directory), the demo users, and the grants of the fixture.
@@ -1051,7 +1080,7 @@ fn start_seeded_under(
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
-        std::os::unix::fs::symlink(from, &dest).unwrap();
+        link_dir(from, dest);
     }
     let framework = repo_root().join("runtime/components/base/framework");
     if let Some((data, data_types)) = data {

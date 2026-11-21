@@ -571,7 +571,8 @@ fn held_slot(dir: &Path, name: &str) -> (PathBuf, String) {
 }
 
 /// Drop every key held in memory: the seal drops the keys (plans/Sealed-Secrets.md §3.5); the next unsealed start's
-/// ACME sync holds them again from their rows.
+/// ACME sync holds them again from their rows. The operator gate is the only caller, and it is Unix.
+#[cfg(all(unix, feature = "axum", any(feature = "postgres", feature = "mysql")))]
 pub(crate) fn drop_held_keys() {
     sync::write(&HELD).clear();
 }

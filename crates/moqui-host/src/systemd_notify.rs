@@ -26,8 +26,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// `STOPPING=1`, since the process stays and waits sealed, and the binary's server boots again into the gate.
 static SEALED_STOP: AtomicBool = AtomicBool::new(false);
 
-/// Mark the server's stop as a seal's.
-#[cfg_attr(not(any(feature = "postgres", feature = "mysql")), allow(dead_code))]
+/// Mark the server's stop as a seal's. The operator gate is the only caller, and it is Unix.
+#[cfg(all(unix, feature = "axum", any(feature = "postgres", feature = "mysql")))]
 pub(crate) fn mark_sealed_stop() {
     SEALED_STOP.store(true, Ordering::SeqCst);
 }

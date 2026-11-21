@@ -423,20 +423,24 @@ fn a_delete_removes_only_a_directory_that_is_its_own_and_a_rollback_keeps_everyt
     assert_eq!(delete("own").get("directoryRemoved"), Some(&Value::Bool(true)));
     assert!(!at("own.git").exists());
 
-    // a `..` that leaves the runtime directory, and a link that does: kept
+    // a `..` that leaves the runtime directory is kept
     let outside = fixture.dir.join("outside.git");
     bare_at(&outside);
     let climb = "../".repeat(runtime.components().count());
     let dotted = format!("{climb}{}", outside.to_string_lossy().trim_start_matches('/'));
     define_at(&fixture, "dotted", &dotted);
     assert!(kept(&delete("dotted")).is_some_and(|path| path.contains("..")));
-    std::os::unix::fs::symlink(&outside, at("link.git")).unwrap();
-    define_at(&fixture, "linked", &under("link.git"));
-    assert!(kept(&delete("linked")).is_some());
-    assert!(
-        outside.join("HEAD").is_file(),
-        "what is outside the runtime directory stays"
-    );
+    // a link that leaves the runtime directory is kept; making one needs a symlink
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&outside, at("link.git")).unwrap();
+        define_at(&fixture, "linked", &under("link.git"));
+        assert!(kept(&delete("linked")).is_some());
+        assert!(
+            outside.join("HEAD").is_file(),
+            "what is outside the runtime directory stays"
+        );
+    }
 
     // the runtime directory itself, and a directory that is no repository: kept
     define_at(&fixture, "root", ".");
@@ -755,6 +759,7 @@ fn an_lfs_upload_asks_the_service_the_conf_names() {
     moqui_core::user::logout().unwrap();
 }
 
+#[cfg(unix)]
 #[test]
 fn blame_and_archive_through_the_services() {
     if !git_available() {
