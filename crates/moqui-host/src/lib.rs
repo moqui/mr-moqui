@@ -2774,19 +2774,7 @@ fn framework_xml_paths(framework_dir: &std::path::Path) -> Result<Vec<std::path:
             push_unique(&mut paths, &mut seen, path);
         }
     }
-    let mut extras = Vec::new();
-    let dir = framework_dir.join("entity");
-    // with the files built into the binary that are not on disk (moqui_lib::vfs)
-    let read = moqui_lib::vfs::read_dir(&dir)
-        .map_err(|err| moqui_lib::error::Error::new(format!("could not read {}", dir.display())).with_source(err))?;
-    for entry in read {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("xml") {
-            extras.push(path);
-        }
-    }
-    extras.sort();
-    for path in extras {
+    for path in moqui_core::entity::entity_definition_paths(&framework_dir.join("entity"))? {
         push_unique(&mut paths, &mut seen, path);
     }
     Ok(paths)
@@ -2836,20 +2824,15 @@ fn entity_names(
     let mut seen = std::collections::BTreeSet::new();
     let mut paths = framework_xml_paths(framework_dir)?;
     for dir in entity_dirs.iter().skip(1) {
-        let read = moqui_lib::vfs::read_dir(dir).map_err(|err| {
-            moqui_lib::error::Error::new(format!("could not read {}", dir.display())).with_source(err)
-        })?;
-        let mut found: Vec<std::path::PathBuf> = read
-            .iter()
-            .map(moqui_lib::vfs::DirEntry::path)
-            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("xml"))
-            .collect();
-        found.sort();
-        paths.extend(found);
+        paths.extend(moqui_core::entity::entity_definition_paths(dir)?);
     }
     for path in paths {
-        let root = MNode::parse_file(&path)?;
-        collect_entities(&root, skipped, &mut names, &mut seen);
+        match MNode::parse_file(&path) {
+            Ok(root) => collect_entities(&root, skipped, &mut names, &mut seen),
+            Err(err) => {
+                tracing::error!(file = %path.display(), error = %err, "Could not read entities for the table check")
+            }
+        }
     }
     Ok(names)
 }

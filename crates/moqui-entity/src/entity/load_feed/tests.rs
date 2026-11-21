@@ -390,15 +390,21 @@ fn data_directory_includes_one_level_of_subdirectories() {
 #[test]
 fn component_data_locations_take_entity_files_for_seed() {
     let (dir, _guard) = temp_dir();
-    std::fs::create_dir_all(dir.join("entity")).unwrap();
+    std::fs::create_dir_all(dir.join("entity/account/too-deep")).unwrap();
     std::fs::create_dir_all(dir.join("data")).unwrap();
     std::fs::write(dir.join("entity/SiteEntities.xml"), "<entities/>").unwrap();
     std::fs::write(dir.join("entity/Site.eecas.xml"), "<eecas/>").unwrap();
+    std::fs::write(dir.join("entity/account/InvoiceEntities.xml"), "<entities/>").unwrap();
+    std::fs::write(dir.join("entity/account/InvoiceExtensions.xml"), "<entities/>").unwrap();
+    std::fs::write(dir.join("entity/account/Invoice.eecas.xml"), "<eecas/>").unwrap();
+    std::fs::write(dir.join("entity/account/too-deep/Ignored.xml"), "<entities/>").unwrap();
     std::fs::write(dir.join("data/SiteSeedData.xml"), "<entity-facade-xml/>").unwrap();
     assert_eq!(
         component_data_locations("site", &dir, true),
         [
             "component://site/entity/SiteEntities.xml".to_string(),
+            "component://site/entity/account/InvoiceEntities.xml".to_string(),
+            "component://site/entity/account/InvoiceExtensions.xml".to_string(),
             "component://site/data/SiteSeedData.xml".to_string(),
         ]
     );

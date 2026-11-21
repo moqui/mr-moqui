@@ -68,6 +68,7 @@ pub use meta::{DdlConf, EntityDbMeta, ForcedCheck, TableCheck};
 pub use meta_compare::{
     CatalogForeignKey, CatalogIndex, ColumnTypeDiff, ForeignKeyDiff, IndexDiff, IndexKind, SchemaDiff, TableDiff,
 };
+pub use moqui_db::model::entity_definition_paths;
 /// The condition tree `EntityFind::condition` takes, so callers need not depend on `moqui-db`.
 pub use moqui_db::sql::{CompareOp, Condition};
 pub use relink::{RelinkPreview, RelinkReport};

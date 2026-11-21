@@ -20,7 +20,7 @@ mod condition;
 mod view;
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
@@ -440,7 +440,7 @@ impl EntityModel {
         &self.problems
     }
 
-    /// Every `*.xml` in `directory` whose root is `entities`. `*.eecas.xml` has another root and is skipped.
+    /// Every entity definition in `directory` and its immediate subdirectories, in discovery order.
     pub fn load_directory(conf: &MNode, directory: &Path) -> Result<Self, Error> {
         let mut problems = Vec::new();
         let documents = entity_documents(directory, &mut problems)?;
@@ -656,21 +656,39 @@ enum Completion {
     Failed,
 }
 
-/// The `entities` documents of the `*.xml` files in `directory`; one that does not parse is logged and left out.
-fn entity_documents(directory: &Path, problems: &mut Vec<String>) -> Result<Vec<MNode>, Error> {
-    // with the files built into the binary that are not on disk (moqui_lib::vfs)
-    let entries = moqui_lib::vfs::read_dir(directory)
+/// Entity definition XML paths, excluding EECAs. The files at the root come first, then the files in each immediate
+/// subdirectory. Files and subdirectories are each visited in name order, including files in VFS overlays.
+///
+/// # Errors
+///
+/// The root directory could not be read. A child directory that could not be read is logged and skipped.
+pub fn entity_definition_paths(directory: &Path) -> Result<Vec<PathBuf>, Error> {
+    use moqui_lib::vfs;
+
+    let entries = vfs::read_dir(directory)
         .map_err(|err| Error::new(format!("could not read {}", directory.display())).with_source(err))?;
-    let mut paths = Vec::new();
-    for entry in entries {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("xml") {
-            paths.push(path);
+    let definition_path = |entry: &vfs::DirEntry| {
+        let name = entry.file_name();
+        (entry.is_file()
+            && Path::new(&name).extension().is_some_and(|ext| ext == "xml")
+            && !name.to_string_lossy().ends_with(".eecas.xml"))
+        .then(|| entry.path())
+    };
+    let mut paths: Vec<PathBuf> = entries.iter().filter_map(definition_path).collect();
+    for entry in entries.iter().filter(|entry| entry.is_dir()) {
+        let child = entry.path();
+        match vfs::read_dir(&child) {
+            Ok(entries) => paths.extend(entries.iter().filter_map(definition_path)),
+            Err(err) => tracing::error!(directory = %child.display(), error = %err, "Could not read entity directory"),
         }
     }
-    paths.sort();
+    Ok(paths)
+}
+
+/// The `entities` documents of the discovered files. Each file that fails to parse is logged and left out.
+fn entity_documents(directory: &Path, problems: &mut Vec<String>) -> Result<Vec<MNode>, Error> {
     let mut documents = Vec::new();
-    for path in paths {
+    for path in entity_definition_paths(directory)? {
         documents.extend(entity_document(&path, problems));
     }
     Ok(documents)

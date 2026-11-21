@@ -45,6 +45,8 @@ const FILES: &[(&str, &str)] = &[
     ("src/lib.rs", ""),
     ("entity/CEntities.xml", "<entities/>"),
     ("entity/C.eecas.xml", "<eecas/>"),
+    ("entity/account/InvoiceEntities.xml", "<entities/>"),
+    ("entity/account/too-deep/Ignored.xml", "<entities/>"),
     ("service/c/CServices.xml", "<services/>"),
     ("screen/C.xml", "<screen/>"),
     ("data/CSeedData.xml", "<entity-facade-xml/>"),
@@ -66,7 +68,13 @@ fn the_reload_takes_the_artifacts_the_load_does_not_apply_itself() {
         ["entity/C.eecas.xml", "screen/C.xml", "service/c/CServices.xml"]
     );
     let entities: Vec<PathBuf> = entity_files(&dir.0);
-    assert_eq!(entities, [dir.0.join("entity/CEntities.xml")]);
+    assert_eq!(
+        entities,
+        [
+            dir.0.join("entity/CEntities.xml"),
+            dir.0.join("entity/account/InvoiceEntities.xml")
+        ]
+    );
 }
 
 /// A file that does not parse is named; data files and tests are not parsed here (the load reports each data file).

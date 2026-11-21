@@ -15,14 +15,14 @@
 //! One entity facade. One [`TransactionManager`] per entity group.
 
 use std::any::{Any, TypeId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use moqui_db::dialect::{Dialect, Dialects};
-use moqui_db::model::{EntityDefinition, EntityModel};
+use moqui_db::model::{entity_definition_paths, EntityDefinition, EntityModel};
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
@@ -956,8 +956,12 @@ fn load_entity_files(
     };
     // a directory only built into the binary (moqui_lib::vfs) has no canonical path; its name is used
     let canonical = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| moqui_lib::vfs::normalize(path));
-    let mut dirs: Vec<std::path::PathBuf> = vec![canonical(&framework_dir.join("entity"))];
-    dirs.extend(component_entity_dirs.iter().map(|dir| canonical(dir)));
+    let framework_entities = framework_dir.join("entity");
+    let dirs: Vec<&Path> = std::iter::once(framework_entities.as_path())
+        .chain(component_entity_dirs.iter().map(std::path::PathBuf::as_path))
+        .collect();
+    let canonical_dirs: Vec<_> = dirs.iter().map(|dir| canonical(dir)).collect();
+    let mut discovered = None;
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     for node in facade.named_iter("load-entity") {
         let location = node.attribute("location").unwrap_or_default();
@@ -989,10 +993,24 @@ fn load_entity_files(
             continue;
         };
         let path = canonical(&path);
-        if path.parent().is_some_and(|parent| dirs.iter().any(|dir| dir == parent)) || files.contains(&path) {
+        // The root XML files (including EECAs) have their own loaders.
+        if (path.extension().is_some_and(|ext| ext == "xml")
+            && path
+                .parent()
+                .is_some_and(|parent| canonical_dirs.iter().any(|dir| dir == parent)))
+            || files.contains(&path)
+        {
             continue;
         }
-        files.push(path);
+        let discovered = discovered.get_or_insert_with(|| {
+            dirs.iter()
+                .flat_map(|dir| entity_definition_paths(dir).unwrap_or_default())
+                .map(|path| canonical(&path))
+                .collect::<HashSet<_>>()
+        });
+        if !discovered.contains(&path) {
+            files.push(path);
+        }
     }
     files
 }

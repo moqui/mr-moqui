@@ -271,25 +271,34 @@ fn an_entity_defined_again_that_does_not_parse_keeps_the_earlier_definition() {
 }
 
 #[test]
-fn load_paths_reads_a_file_as_well_as_a_directory() {
+fn load_paths_reads_explicit_files_and_entity_directories_one_level_deep() {
     let dir = std::env::temp_dir().join(format!("moqui-model-paths-{}", std::process::id()));
-    std::fs::create_dir_all(dir.join("entity")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("entity/account/extra.xml")).unwrap();
+    for (path, name) in [
+        ("entity/Z.xml", "InRoot"),
+        ("entity/account/B.xml", "InAccount"),
+        ("entity/account/extra.xml/Ignored.xml", "TooDeep"),
+        ("entity/account/T.eecas.xml", "AnEeca"),
+        ("Extra.xml", "InFile"),
+    ] {
+        std::fs::write(
+            dir.join(path),
+            format!(r#"<entities><entity entity-name="{name}" package="p" no-update-stamp="true"><field name="id" type="id" is-pk="true"/></entity></entities>"#),
+        )
+        .unwrap();
+    }
     std::fs::write(
-        dir.join("entity/A.xml"),
-        r#"<entities><entity entity-name="InDir" package="p" no-update-stamp="true"><field name="id" type="id" is-pk="true"/></entity></entities>"#,
+        dir.join("entity/account/C.xml"),
+        r#"<entities><extend-entity entity-name="InRoot" package="p"><field name="extra" type="id"/></extend-entity></entities>"#,
     )
     .unwrap();
-    let file = dir.join("Extra.xml");
-    std::fs::write(
-        &file,
-        r#"<entities><entity entity-name="InFile" package="p" no-update-stamp="true"><field name="id" type="id" is-pk="true"/></entity></entities>"#,
-    )
-    .unwrap();
-    let model = EntityModel::load_paths(&id_conf(), &[dir.join("entity").as_path(), file.as_path()]);
+    let model = EntityModel::load_paths(&id_conf(), &[&dir.join("entity"), &dir.join("Extra.xml")]);
     let _ = std::fs::remove_dir_all(&dir);
     let model = model.unwrap();
-    assert!(model.entity("p.InDir").is_ok());
-    assert!(model.entity("p.InFile").is_ok());
+    assert!(model.problems().is_empty(), "{:?}", model.problems());
+    assert_eq!(model.full_names(), ["p.InRoot", "p.InAccount", "p.InFile"]);
+    assert!(model.entity("p.InRoot").unwrap().field("extra").is_some());
 }
 
 /// A `pq-expression` alias is kept apart from the view's fields with its expression, as Java's `pqExpressionNodeMap`,

@@ -17,28 +17,24 @@
 
 use std::path::Path;
 
+use moqui_db::model::entity_definition_paths;
 use moqui_lib::vfs;
 
-/// The data files of the component `name` at `location`, in load order: with `seed`, `component://name/entity/file`
-/// for each entity definition file (their `seed-data` blocks; not `*.eecas.xml`), then the files of its `data`
-/// directory ([`data_directory_locations`]).
+/// The data files of the component `name` at `location`, in load order: with `seed`, the definition files in `entity`
+/// and its immediate subdirectories for their `seed-data` blocks, then the files of its `data` directory
+/// ([`data_directory_locations`]).
 #[must_use]
 pub fn component_data_locations(name: &str, location: &Path, seed: bool) -> Vec<String> {
     let mut locations = Vec::new();
-    if seed {
-        if let Ok(read) = vfs::read_dir(location.join("entity")) {
-            let mut names: Vec<String> = read
-                .into_iter()
-                .filter(vfs::DirEntry::is_file)
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .filter(|file| file.ends_with(".xml") && !file.ends_with(".eecas.xml"))
-                .collect();
-            names.sort();
-            locations.extend(
-                names
-                    .into_iter()
-                    .map(|file| format!("component://{name}/entity/{file}")),
-            );
+    let entity_dir = location.join("entity");
+    if seed && vfs::is_dir(&entity_dir) {
+        match entity_definition_paths(&entity_dir) {
+            Ok(paths) => locations.extend(paths.iter().filter_map(|path| {
+                let file = path.strip_prefix(&entity_dir).ok()?.to_str()?;
+                let file = file.replace(std::path::MAIN_SEPARATOR, "/");
+                Some(format!("component://{name}/entity/{file}"))
+            })),
+            Err(err) => tracing::error!(component = name, error = %err, "Could not list entity files for seed data"),
         }
     }
     locations.extend(data_directory_locations(name, &location.join("data")));

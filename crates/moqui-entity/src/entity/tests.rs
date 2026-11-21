@@ -2560,8 +2560,8 @@ fn a_db_view_entity_that_does_not_build_is_logged_and_not_found() {
 fn a_relink_swaps_the_model_under_finds_in_flight() {
     let dir = std::env::temp_dir().join(format!("moqui-relink-model-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("entity")).unwrap();
-    let file = dir.join("entity/RelinkEntities.xml");
+    std::fs::create_dir_all(dir.join("entity/relink")).unwrap();
+    let file = dir.join("entity/relink/RelinkEntities.xml");
     let entities = |extra: &str| {
         format!(
             "<entities><entity entity-name=\"RelinkThing\" package=\"relink\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/>{extra}</entity></entities>"
@@ -2587,13 +2587,18 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
         },
     )
     .unwrap();
-    let facade = EntityFacade::open_components(
+    let conf = framework_conf();
+    let explicit = MNode::parse_text("load", &format!(r#"<load-entity location="{}"/>"#, file.display())).unwrap();
+    conf.first_named("entity-facade").unwrap().append_node(explicit);
+    let facade = EntityFacade::open_components_with_conf(
         &framework_dir(),
         &[dir.join("entity")],
         "transactional",
         vec![EntityGroup::new("transactional", "postgres", transactions)],
+        &conf,
     )
     .unwrap();
+    assert!(facade.entity_files().is_empty(), "{:?}", facade.entity_files());
     facade.set_disable_fk_create(true);
     let fields = |facade: &EntityFacade| {
         facade

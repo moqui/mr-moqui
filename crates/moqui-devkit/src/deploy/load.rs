@@ -27,6 +27,7 @@ use moqui_core::context::conf_reload::{self, ConfReport};
 use moqui_core::context::{ComponentInfo, ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::load_feed::{component_data_locations, data_types_of, load_entity_data, LoadOptions};
 use moqui_core::entity::{RelinkPreview, RelinkReport};
+use moqui_db::model::entity_definition_paths;
 use moqui_db::sql::Condition;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
@@ -784,12 +785,14 @@ fn file_of(component: &ComponentInfo, location: &str) -> PathBuf {
 
 /// The component's entity definition files, for the relink's table check.
 fn entity_files(location: &Path) -> Vec<PathBuf> {
-    let mut files = files_under(&location.join("entity"));
-    files.retain(|file| {
-        let name = file.to_string_lossy();
-        name.ends_with(".xml") && !name.ends_with(".eecas.xml")
-    });
-    files
+    let directory = location.join("entity");
+    if !moqui_lib::vfs::is_dir(&directory) {
+        return Vec::new();
+    }
+    entity_definition_paths(&directory).unwrap_or_else(|err| {
+        tracing::error!(error = %err, "Could not list entity files for component deployment");
+        Vec::new()
+    })
 }
 
 /// The component's files the reload pipeline takes: all but its conf and `component.xml` (the load applies those),
