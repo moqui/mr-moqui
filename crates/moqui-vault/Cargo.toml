@@ -31,9 +31,12 @@ argon2 = { version = "0.6", default-features = false, features = ["alloc", "zero
 ed25519-dalek.workspace = true
 getrandom = { workspace = true, optional = true }
 hkdf.workspace = true
+# One-time codes (otp): HMAC-SHA1 as authenticators make them, beside SHA-256 and SHA-512.
+hmac.workspace = true
 hpke.workspace = true
 # The vectors and the wasm module's JSON calls.
 serde_json = { workspace = true, optional = true }
+sha1.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 zeroize.workspace = true

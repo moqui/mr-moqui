@@ -489,10 +489,19 @@ fn sessions_are_per_page_and_lock_when_idle() {
         .call_at("example.org-ba9876543210", PAGE, "status", json!({}), T0)
         .unwrap();
     assert_eq!(other["personal"], Value::Null, "another account's session is its own");
+    // a list of codes refreshing on its timer is not use (it fails here, with no vault open, but still counts nothing)
+    let codes = json!({ "vault_id": "v", "item_id": "i1", "key_version": 1, "now": 0,
+                        "wrapped_item_key": "00", "sealed_body": "00" });
+    assert!(vaults
+        .call_at(ACCOUNT, PAGE, "item_otp", codes, T0 + 4 * MINUTE)
+        .is_err());
     vaults.sweep_at(T0 + 4 * MINUTE);
     assert!(vaults.is_open(ACCOUNT, PAGE));
     vaults.sweep_at(T0 + 5 * MINUTE);
-    assert!(!vaults.is_open(ACCOUNT, PAGE));
+    assert!(
+        !vaults.is_open(ACCOUNT, PAGE),
+        "locked at its idle time, item_otp or not"
+    );
     make_key(&vaults);
     vaults.lock_label(PAGE);
     assert!(!vaults.is_open(ACCOUNT, PAGE), "the page left the vault screens");

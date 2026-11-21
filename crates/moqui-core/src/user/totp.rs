@@ -15,10 +15,8 @@
 //! TOTP (RFC 6238) on HMAC-SHA1, as Java's `DefaultCodeVerifier` and the authenticator apps use it: a base32 secret,
 //! six digits, a 30 second step, and one step either side accepted. The `otpauth://totp/` URI an app scans.
 
-use hmac::{KeyInit as _, Mac as _};
+use moqui_vault::otp::{self, Algorithm};
 
-/// RFC 4648 base32, the alphabet of authenticator secrets.
-const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 /// The shortest key RFC 4226 allows: 128 bits.
 const MIN_KEY_BYTES: usize = 16;
 
@@ -28,59 +26,17 @@ pub(super) const SKEW: u64 = 1;
 
 /// `bytes` as base32, without padding.
 pub(super) fn base32(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len().div_ceil(5) * 8);
-    let (mut buffer, mut bits) = (0u32, 0u32);
-    for &byte in bytes {
-        buffer = (buffer << 8) | u32::from(byte);
-        bits += 8;
-        while bits >= 5 {
-            bits -= 5;
-            out.push(char::from(ALPHABET[((buffer >> bits) & 31) as usize]));
-        }
-    }
-    if bits > 0 {
-        out.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
-    }
-    out
-}
-
-/// The bytes of base32 `text` (upper case; trailing `=` padding allowed); `None` for any other character.
-pub(super) fn from_base32(text: &str) -> Option<Vec<u8>> {
-    let text = text.trim_end_matches('=');
-    let mut out = Vec::with_capacity(text.len() * 5 / 8);
-    let (mut buffer, mut bits) = (0u32, 0u32);
-    for ch in text.bytes() {
-        let value = ALPHABET.iter().position(|&letter| letter == ch)? as u32;
-        buffer = (buffer << 5) | value;
-        bits += 5;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buffer >> bits) & 0xFF) as u8);
-        }
-    }
-    Some(out)
+    otp::base32(bytes)
 }
 
 /// The key of base32 `secret` (any case, spaces around it), when it is long enough to be one.
 pub(super) fn key(secret: &str) -> Option<Vec<u8>> {
-    from_base32(&secret.trim().to_ascii_uppercase()).filter(|key| key.len() >= MIN_KEY_BYTES)
+    otp::from_base32(&secret.trim().to_ascii_uppercase()).filter(|key| key.len() >= MIN_KEY_BYTES)
 }
 
-/// The code of `key` for the step `counter` (RFC 4226's HOTP, dynamic truncation), zero padded to [`DIGITS`].
+/// The code of `key` for the step `counter`, six digits on HMAC-SHA1 ([`otp::hotp`]).
 pub(super) fn code(key: &[u8], counter: u64) -> String {
-    let Ok(mut mac) = hmac::Hmac::<sha1::Sha1>::new_from_slice(key) else {
-        return String::new();
-    };
-    mac.update(&counter.to_be_bytes());
-    let digest = mac.finalize().into_bytes();
-    let offset = usize::from(digest[digest.len() - 1] & 0x0F);
-    let value = u32::from_be_bytes([
-        digest[offset],
-        digest[offset + 1],
-        digest[offset + 2],
-        digest[offset + 3],
-    ]) & 0x7FFF_FFFF;
-    format!("{:0width$}", value % 10u32.pow(DIGITS), width = DIGITS as usize)
+    otp::hotp(key, counter, Algorithm::Sha1, DIGITS)
 }
 
 /// Whether `entered` is the code of `key` at `time` (seconds since the epoch), or one step either side. Only
@@ -118,35 +74,20 @@ pub(super) fn uri(label: &str, issuer: Option<&str>, key: &[u8]) -> Option<Strin
     if label.is_empty() || label.contains(':') || issuer.is_some_and(|issuer| issuer.contains(':')) {
         return None;
     }
-    let secret = base32(key);
-    Some(match issuer {
-        Some(issuer) => {
-            let issuer = percent_encoded(issuer);
-            format!(
-                "otpauth://totp/{issuer}:{}?secret={secret}&issuer={issuer}",
-                percent_encoded(label)
-            )
-        }
-        None => format!("otpauth://totp/{}?secret={secret}", percent_encoded(label)),
-    })
-}
-
-/// `text` with every byte but ASCII letters, digits and `-_.~` percent encoded.
-fn percent_encoded(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(char::from(byte));
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    out
+    Some(otp::uri(&otp::Seed {
+        key: zeroize::Zeroizing::new(key.to_vec()),
+        algorithm: Algorithm::Sha1,
+        digits: DIGITS,
+        period: STEP,
+        issuer: issuer.map(str::to_string),
+        account: Some(label.to_string()),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{base32, code, from_base32, key, matches, matching_step, uri};
+    use super::{base32, code, key, matches, matching_step, uri};
+    use moqui_vault::otp::from_base32;
 
     /// RFC 6238's SHA1 test key, its codes cut to six digits.
     #[test]

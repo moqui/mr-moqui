@@ -22,6 +22,8 @@
 //!   Ed25519 statements.
 //! - [`personal`] (§3.5), [`vault`] (§3.2, §3.9), [`keyversion`] (§3.9), [`lease`] (§3.7), [`machine`] (§3.8),
 //!   [`recovery`] (§3.10), [`delivery`] (§3.3) and [`fingerprint`] (§3.5) are the vaults' formats.
+//! - [`otp`] makes one-time codes (HOTP, TOTP) of a seed and reads `otpauth` URIs and Google Authenticator exports;
+//!   the server's sign-in factor and the module's `item_otp` share it.
 //! - [`managed`] (§4.4, §4.5) is a managed instance's sealed start: transit by its manager, its unsealed proof, and
 //!   its recovery shares to holders (feature `json`).
 //! - [`vectors`] writes the known-answer vectors of `testdata/vectors.json`, natively and in the wasm module.
@@ -47,6 +49,7 @@ pub mod managed;
 pub mod names;
 #[cfg(any(test, feature = "json"))]
 pub mod ops;
+pub mod otp;
 pub mod personal;
 pub mod recovery;
 pub mod rng;

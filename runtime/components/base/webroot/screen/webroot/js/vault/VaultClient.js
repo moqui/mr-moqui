@@ -8,6 +8,7 @@
  *   await vault.start();
  *   const opened = await vault.personalOpen({ personal_key_id, user_id, public, passphrase_wrap, passphrase });
  *   const { body } = await vault.itemOpen({ vault_id, key_version, item_id, wrapped_item_key, sealed_body });
+ *   const { code, next, remaining_ms } = await vault.itemOtp({ ...sameArgs, now: Date.now() });   // the seed stays in the module
  *   await vault.copy(secretText);   // cleared from the clipboard after 30 s
  *
  * The page fetches the worker's script and the module itself, each with its integrity hash when one is given (and that
@@ -104,15 +105,19 @@
             });
         }
 
-        /** One call of the module (crates/moqui-vault/src/ops.rs); each resets the idle timer. */
-        async call(op, args) {
+        /**
+         * One call of the module (crates/moqui-vault/src/ops.rs); each resets the idle timer but a passive one (options.passive),
+         * which a page makes on a timer rather than on the user's word, so a list of codes left open still locks.
+         */
+        async call(op, args, options) {
+            const active = !(options && options.passive);
             if (this.native) {
                 await this.start();
-                this.touch();
+                if (active) this.touch();
                 return this.native.call(op, args || {});
             }
             if (!this.worker) await this.start();
-            this.touch();
+            if (active) this.touch();
             return this.post({ op, args: args || {} });
         }
 
@@ -278,8 +283,15 @@
         depositAdopt(args) { return this.call("deposit_adopt", args); }
         itemSeal(args) { return this.call("item_seal", args); }
         itemOpen(args) { return this.call("item_open", args); }
-        /** An item's name, type, URIs, tags and unmasked fields for a list ({...item_open's args, masked: [field names]}). */
+        /** An item's name, type, URIs, tags and unmasked fields for a list ({...item_open's args, masked: [field names],
+         *  otp_fields: [the TOTP field names]}), and `otp`, what its one-time code seed is (issuer, account, digits, period), never the seed. */
         itemSummary(args) { return this.call("item_summary", args); }
+        /** An item's one-time codes at `now` (epoch ms): {code, next, remaining_ms, period, digits}; the seed stays in the module.
+         *  Passive: a page refreshing its codes does not hold the vault open past its idle time. */
+        itemOtp(args) { return this.call("item_otp", args, { passive: true }); }
+        /** What a user scanned or pasted ({text, now}: an otpauth URI, a bare secret, or a Google Authenticator export):
+         *  {entries: [{issuer, account, algorithm, digits, period, seed, code, next, remaining_ms}]}, seed the otpauth URI to seal. */
+        otpParse(args) { return this.call("otp_parse", args); }
         deliverySend(args) { return this.call("delivery_send", args); }
         deliveryOpen(args) { return this.call("delivery_open", args); }
         leaseApprove(args) { return this.call("lease_approve", args); }

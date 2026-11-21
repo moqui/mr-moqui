@@ -21,7 +21,8 @@
 //!
 //! What the app adds to the module:
 //!
-//! - **Locking:** a page's session locks after its idle time with no call (the page's `idleMinutes`, 15 by default, at
+//! - **Locking:** a page's session locks after its idle time with no call but `item_otp`, which a list of codes makes on
+//!   a timer (the page's `idleMinutes`, 15 by default, at
 //!   most [`MAX_IDLE_MINUTES`]), on the page's Lock, when the page leaves the vault screens, on sign-out, revocation and
 //!   removal, when another account becomes current, and on the host's word (the device's sleep or screen lock, the
 //!   phone's activity leaving the screen).
@@ -77,7 +78,11 @@ const CHAIN_OPS: [&str; 6] = [
 ];
 
 /// The ops that open an item, whose revision (when the page names it) is checked against the highest seen.
-const ITEM_OPS: [&str; 2] = ["item_open", "item_summary"];
+const ITEM_OPS: [&str; 3] = ["item_open", "item_summary", "item_otp"];
+
+/// The ops a page makes on a timer, not on the user's word: they do not count as use, so a list of one-time codes left
+/// open still locks at the idle time.
+const PASSIVE_OPS: [&str; 1] = ["item_otp"];
 
 /// A page's open session.
 struct Open {
@@ -265,7 +270,9 @@ impl Vaults {
                 used: now,
                 memory: None,
             });
-            entry.used = now;
+            if !PASSIVE_OPS.contains(&op) {
+                entry.used = now;
+            }
             Zeroizing::new(entry.session.call(&request, &mut OsRng))
         };
         let mut parsed: Value = serde_json::from_str(&answer).map_err(|err| err.to_string())?;

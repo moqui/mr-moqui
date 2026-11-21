@@ -167,8 +167,9 @@ item, many to one with the vault, as the user asked.
 
 `VaultItemType` is seed data that registers each type's fields: name, label, kind (text, secret, URL, TOTP, multi-line,
 date, file name) and whether a value is masked. The client draws forms from it. For operational types, the server checks
-an item's shape when it uses it. The framework ships login, note, card, identity, contact, SSH key, API key, database
-credential, TLS key pair, registry login, recovery code and recovery share. Components add their own: an instance kind
+an item's shape when it uses it. The framework ships login, one-time code, note, card, identity, contact, SSH key, API
+key, database credential, TLS key pair, registry login, recovery code and recovery share. A TOTP field's codes are made
+in the client's module from its seed, which the page never holds ([Vaults, One-time codes](../docs/security/Vaults.md#one-time-codes)). Components add their own: an instance kind
 adds the items it needs ([§4.1](#41-the-model)).
 
 A body is versioned JSON: `{"v": 1, "type": "login", "name": "…", "fields": {…}, "notes": "…", "tags": […], "uris": […]}`.

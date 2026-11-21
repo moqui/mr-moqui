@@ -50,6 +50,8 @@ use crate::text::{hex, unhex};
 use crate::vault::{self, ItemRef, Recipient, RotateInput, Signer};
 use crate::Error;
 
+#[path = "ops_otp.rs"]
+mod otp_ops;
 #[path = "ops_json.rs"]
 pub mod shapes;
 
@@ -387,6 +389,8 @@ impl Session {
                 Ok(json!({ "forgotten": self.vault_keys.remove(&slot).is_some() }))
             }
             "item_summary" => self.item_summary(args),
+            "item_otp" => self.item_otp(args),
+            "otp_parse" => otp_ops::otp_parse(args),
             "header_seal" => {
                 // a personal vault's header (its name), sealed by the vault key of its current version
                 let vault_id = str_of(args, "vault_id")?;
@@ -752,7 +756,8 @@ impl Session {
     }
 
     /// An item's header for a list view: its name, type, URIs, tags and unmasked fields, never a masked field's value or
-    /// its notes, so a page lists a vault without holding its secrets. A field is masked when its type says so (the
+    /// its notes, so a page lists a vault without holding its secrets. `otp` says what its one-time code seed is (issuer,
+    /// account, digits, period; the seed from the page's `otp_fields`, else `totp`), never the seed. A field is masked when its type says so (the
     /// page passes the type's masked field names, `masked`) or when its name says it holds a secret.
     fn item_summary(&self, args: &Value) -> Result<Value, Error> {
         let item = ItemRef {
@@ -784,6 +789,7 @@ impl Session {
             "uris": parsed.get("uris").cloned().unwrap_or(Value::Null),
             "tags": parsed.get("tags").cloned().unwrap_or(Value::Null),
             "fields": fields,
+            "otp": otp_ops::otp_header(&parsed, args).unwrap_or(Value::Null),
         });
         scrub(&mut parsed);
         Ok(summary)
