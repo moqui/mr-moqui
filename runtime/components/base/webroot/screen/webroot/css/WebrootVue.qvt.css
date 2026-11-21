@@ -52,6 +52,9 @@ body.body--dark { --m-page-bg:var(--q-dark-page); --m-panel-bg:var(--q-dark); --
     --m-accent-text:color-mix(in srgb, var(--q-accent) 55%, white); --m-blue-text:#64b5f6;
     --m-border:rgba(255,255,255,.28); --m-divider:rgba(255,255,255,.12); }
 body { font-family:var(--m-font-body); line-height:var(--m-line-height); color:var(--m-text); background:var(--m-page-bg); }
+/* dark scrollbars in dark mode, on the background of what they scroll (Chrome draws light ones on a white track while the
+   root's color-scheme is light); scrollbar-color inherits, and the page's own scrollbar takes the root element's */
+html:has(> body.body--dark), body.body--dark { color-scheme:dark; scrollbar-color:rgba(255,255,255,.28) transparent; }
 h1, h2, h3, h4, h5, h6, .text-h1, .text-h2, .text-h3, .text-h4, .text-h5, .text-h6 { font-family:var(--m-font-heading); }
 code, kbd, pre, samp, .text-mono { font-family:var(--m-font-mono); }
 /* the surfaces Quasar makes white in light mode take the panel color (its dark mode already takes --q-dark, which a scheme sets);

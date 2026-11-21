@@ -206,7 +206,11 @@
                 ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", lineHeight: "1.5" },
                 ".cm-gutters": dark ? { backgroundColor: "#1d1d1d", color: "#8a8a8a", border: "none" }
                     : { backgroundColor: "#f7f7f9", color: "#999", border: "none" },
-                ".cm-m-highlight": { backgroundColor: dark ? "rgba(255, 213, 79, 0.12)" : "rgba(255, 213, 79, 0.3)" }
+                ".cm-m-highlight": { backgroundColor: dark ? "rgba(255, 213, 79, 0.12)" : "rgba(255, 213, 79, 0.3)" },
+                // dark: the current line a faint grey-violet tint, between the background and the selection's teal (#233), not
+                // CodeMirror's bright cyan wash (#99eeff33), which hid that line's selection and dimmed its text; translucent,
+                // as the selection layer is drawn under the lines
+                ...(dark ? { ".cm-activeLine": { backgroundColor: "rgba(170, 170, 210, 0.07)" }, ".cm-activeLineGutter": { backgroundColor: "#28282f" } } : {})
             }, { dark: !!dark }),
             CM.syntaxHighlighting(dark ? darkStyle : CM.defaultHighlightStyle, { fallback: true })
         ];
