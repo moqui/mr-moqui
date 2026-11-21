@@ -59,6 +59,11 @@ audits and historical tests do not complete a walk. The
   focused effort (Remaining-Work).
 
 
+- [Install-DevCA.md](Install-DevCA.md): dev over HTTPS only (no 8080 or 4317 in the dev conf, `http-listen-port` and
+  one `grpc-listen-port`), a name-constrained dev CA trusted once by `./moq trust-dev-cert` for every checkout, one
+  client trust helper for the dev tools, and the shared `~/.mr-moqui/` runtime (a layer between the start
+  directory's runtime and the embedded files, `moqui install`, `moqui --installed`). Plan; nothing built.
+
 **Security**
 - [Security-Review.md](Security-Review.md): the findings register of the security review that began 2026-11-15, open until 0.1.0 by the README's notice: the method, coverage by slice, what was found sound, the findings by area with their status (reported, checked a second time, confirmed by the lead), the High ones in full, and what is left. The Medium findings in full are in [Security-Review-Medium.md](Security-Review-Medium.md) and the Low and Info ones in [Security-Review-Low.md](Security-Review-Low.md). Rounds 1 and 2 read every slice in part and their High, Medium and most Low findings are fixed; round 3 (2026-11-17 and 18) read what they did not reach and recorded 406 more (12 High, 89 Medium), none fixed yet. The map it reviews is [Attack-Surface](../docs/security/Attack-Surface.md).
 - [Proofs-Initial.md](Proofs-Initial.md): the plan for a public library of security proofs filed under OWASP ASVS 5.0.0 requirements, with the Top 10, CWE and NIST SP 800-63B as cross-references: what a proof is, the standards and their licenses (ids and links only, no standard's text), a responsibility matrix for the framework and PASS at levels 1 and 2 (framework, configuration, application, gap), proofs as a third kind of test in `test/proofs` that a certifier runs against their own deployment, and the phases. Plan; nothing built.

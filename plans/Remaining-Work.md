@@ -298,6 +298,9 @@ items) and say how apps plug into the framework in §1.5. The framework items th
 
 ## Framework internals
 
+- **Dev over HTTPS only and the shared runtime** ([Install-DevCA](Install-DevCA.md), plan): the dev conf with no
+  8080 or 4317, a dev CA trusted once, the dev tools on `https://localhost:8443`, and `~/.mr-moqui/` with
+  `moqui install` and `--installed`. Waiting on the user's review before any phase starts.
 - **Left from the high-level review** ([High-Level-Review](archive/High-Level-Review.md), archived): the opt-in gRPC
   listener has admission and a TLS deadline but no total connection cap (the family of HL-027 and HL-031); TURN reads
   its UDP sockets by polling on its main thread, though its TCP and TLS connections are now tasks (HL-031); a job run
