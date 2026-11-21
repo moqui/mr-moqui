@@ -183,8 +183,11 @@ test("the key map runs a binding, a chord within its time, a screen's scope befo
     assert.equal(keymap.handle(key("?", { shiftKey: true, target: { tagName: "TEXTAREA" } }), 10000), false);
     assert.equal(keymap.handle(key("k", { ctrlKey: true, target: input }), 10000), true);
     assert.equal(keymap.handle(key("k", { ctrlKey: true, target: { tagName: "DIV", isContentEditable: true } }), 10000), false);
+    // the code editor is contenteditable too, but its Ctrl+K opens the palette
+    const codeEditor = { tagName: "DIV", isContentEditable: true, closest: (selector) => selector === ".cm-editor" ? {} : null };
+    assert.equal(keymap.handle(key("k", { ctrlKey: true, target: codeEditor }), 10000), true);
     assert.equal(keymap.handle(key("c", { target: { tagName: "INPUT", type: "checkbox" } }), 10000), true);
-    assert.deepEqual(ran, ["palette", "create"]);
+    assert.deepEqual(ran, ["palette", "palette", "create"]);
     // a screen's scope wins while it is registered, and its unregister function takes it back
     const offInbox = keymap.registerScope("inbox", [{ keys: "c", action: "compose", label: "Compose", run: () => { ran.push("compose"); } },
         { keys: "g t", label: "Sent", run: () => { ran.push("sent"); } }]);

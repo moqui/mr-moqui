@@ -9023,9 +9023,10 @@
     // function that takes them back. A binding is { keys, label, run(event), action, when(), notInEditor }: keys like "Mod+K"
     // (Ctrl, or Cmd on a Mac), "Ctrl+Shift+A", "Esc", "?" or the chord "g c" (g, then c within 1.5 s); run returns false
     // when it did not use the key; when() says whether it is on now; notInEditor leaves the key to a rich-text editor
-    // (contenteditable). The latest scope is tried first and "global" last. A text input, select or editable element
-    // keeps the single keys it types (a key with no Ctrl, Alt or Cmd). The KEYMAP user preference changes a binding's keys:
-    // JSON {scope: {id: keys}}, where the id is the binding's action, else its keys as registered.
+    // (contenteditable, but not the CodeMirror code editor, whose Ctrl+K is free and would open the browser's search). The
+    // latest scope is tried first and "global" last. A text input, select or editable element keeps the single keys it
+    // types (a key with no Ctrl, Alt or Cmd). The KEYMAP user preference changes a binding's keys: JSON {scope: {id: keys}},
+    // where the id is the binding's action, else its keys as registered.
     const KEY_NAMES = { esc: "escape", escape: "escape", enter: "enter", return: "enter", space: " ", spacebar: " ", tab: "tab", up: "arrowup",
         down: "arrowdown", left: "arrowleft", right: "arrowright", del: "delete", delete: "delete", backspace: "backspace", plus: "+" };
     const MODIFIER_KEYS = ["shift", "control", "alt", "meta", "os", "altgraph"];
@@ -9078,6 +9079,9 @@
             if (target.isContentEditable) return true;
             return !!(target.closest && target.closest("[contenteditable]:not([contenteditable=false])"));
         },
+        // an editable element of a rich-text editor, which keeps the notInEditor keys; the code editor (CodeMirror's
+        // .cm-editor, contenteditable too) does not
+        isRichText(target) { return keymap.isEditable(target) && !(target.closest && target.closest(".cm-editor")); },
         // a text input, a text area, a select or an editable element
         isText(target) {
             if (!target) return false;
@@ -9153,7 +9157,7 @@
             const at = now === undefined ? Date.now() : now;
             if (MODIFIER_KEYS.indexOf(String(event.key || "").toLowerCase()) >= 0) return false;
             const inText = keymap.isText(event.target);
-            const inEditor = keymap.isEditable(event.target);
+            const inEditor = keymap.isRichText(event.target);
             const typedBlocked = keymap.typedBlocked ? !!keymap.typedBlocked() : false;
             const pending = keymap.pending && at - keymap.pending.time <= keymap.CHORD_MS ? keymap.pending.steps : [];
             keymap.pending = null;
