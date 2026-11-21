@@ -17,12 +17,18 @@
 //! (`.env`, the log and the postmaster lock). The server is a stub that answers every request; the client specs over a
 //! real server are `crates/moqui-host/tests/it/test_client.rs`.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
+#[cfg(unix)]
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(unix)]
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::{Duration, SystemTime};
 
 /// A directory removed on drop.
@@ -63,16 +69,19 @@ fn free_port() -> u16 {
 }
 
 /// Answers every request with 200 and a session cookie, after `delay`, until dropped.
+#[cfg(unix)]
 struct Stub {
     stop: Arc<AtomicBool>,
 }
 
+#[cfg(unix)]
 impl Drop for Stub {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
     }
 }
 
+#[cfg(unix)]
 fn stub(port: u16, delay: Duration) -> Stub {
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = Arc::clone(&stop);
@@ -90,6 +99,7 @@ fn stub(port: u16, delay: Duration) -> Stub {
     Stub { stop }
 }
 
+#[cfg(unix)]
 fn answer(mut stream: TcpStream) {
     stream.set_nonblocking(false).unwrap();
     stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();

@@ -1,0 +1,40 @@
+# Compiles and tests #[cfg(windows)]. The ci.xml jobs run in the Linux moqui-build image, so cargo lint
+# there never builds that code. The dev profile's split-debuginfo=unpacked is not a Windows option;
+# moq sets packed, and so does this job (docs/Build-Test.md, Windows).
+
+name: windows
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: "4"
+  CARGO_PROFILE_DEV_SPLIT_DEBUGINFO: packed
+
+jobs:
+  host:
+    name: moqui-host
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.USERPROFILE }}/.theseus
+          key: theseus-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml', '.cargo/config.toml') }}
+          restore-keys: theseus-
+      - name: Clippy
+        run: cargo clippy -p moqui-host --all-targets -- -D warnings
+      - name: test_cmd
+        run: cargo test -p moqui-host --lib test_cmd::

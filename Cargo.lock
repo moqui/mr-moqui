@@ -4695,6 +4695,7 @@ dependencies = [
  "inventory",
  "ironcalc",
  "jiff",
+ "junction",
  "md-5",
  "memchr",
  "moqui-db",

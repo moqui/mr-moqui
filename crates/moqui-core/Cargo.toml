@@ -75,6 +75,11 @@ aes-gcm = { workspace = true, optional = true }
 # seal credential file must not belong to (seal/methods/mod.rs).
 rustix = { workspace = true, features = ["fs", "process"] }
 
+[target.'cfg(windows)'.dependencies]
+# Directory junctions for a scratch runtime (context/layout.rs). A symlink needs Developer Mode or an extra privilege;
+# a junction does not. MIT OR Apache-2.0. 1.4.1 strips the `\\?\` prefix canonicalize adds.
+junction = "1.4.1"
+
 # Default on. The browser build (crates/moqui-browser, plans/archive/Wasm.md) turns them all off so no
 # socket, TLS (aws-lc), or blocking-HTTP code is linked. The packages (docs/Build-Test.md) pick them through moqui-host.
 # A service of a feature left out is still registered and reports that the feature is not built into this host.

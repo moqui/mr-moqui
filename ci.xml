@@ -15,7 +15,8 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- MR Moqui's own pipelines, for a server that hosts this repository (docs/interfaces/Pipelines.md; plans/Dogfood.md
     §8.5). The jobs run in the moqui-build image (podman/Containerfile.build) in a pool named linux. The suites' rules
     hold here as on a laptop (docs/Build-Test.md): the regression suite on every change, acceptance only nightly and
-    when asked, budgets not raised. A component's own repository needs no file: it gets the built-in pipeline. -->
+    when asked, budgets not raised. A component's own repository needs no file: it gets the built-in pipeline.
+    cfg(windows) is compiled by .github/workflows/windows.yml on windows-latest; these jobs do not build it. -->
 <ci xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-git-ci.xsd">
     <!-- A push or a merge request: lint, the packages' feature sets, and the framework's regression suite -->
     <pipeline name="check" on="push merge-request">

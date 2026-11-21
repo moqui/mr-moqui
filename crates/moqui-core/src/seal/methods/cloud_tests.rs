@@ -607,8 +607,6 @@ fn transit_wraps_and_unwraps_with_the_vault_token_and_a_refused_unseal_stays_sea
 
 #[test]
 fn a_credential_is_a_file_or_a_systemd_credential_never_a_conf_literal() {
-    let scratch = Scratch::new();
-    super::allow_own_credential_files(true);
     assert_eq!(
         Credentials::parse("seal@kms-credentials", "").unwrap(),
         Credentials::Metadata
@@ -621,10 +619,12 @@ fn a_credential_is_a_file_or_a_systemd_credential_never_a_conf_literal() {
         Credentials::parse("seal@transit-token", "systemd:bao-token").unwrap(),
         Credentials::Systemd("bao-token".into())
     );
-    let open = scratch.file("open-token", "x");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
+        let scratch = Scratch::new();
+        super::allow_own_credential_files(true);
+        let open = scratch.file("open-token", "x");
         let Credentials::File(path) = &open else { unreachable!() };
         assert!(open.read("seal@transit-token").is_ok());
         for mode in [0o666, 0o604, 0o620] {

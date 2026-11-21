@@ -587,6 +587,7 @@ fn a_bootstrap_secret_moved_to_another_name_does_not_open() {
 }
 
 /// A stub of `systemd-creds` in `dir`: base64 for encrypt and decrypt, failing while `fail` is in `dir`.
+#[cfg(unix)]
 fn stub_systemd_creds(dir: &std::path::Path) -> String {
     let path = dir.join("systemd-creds");
     std::fs::write(
@@ -688,6 +689,7 @@ fn reopen(scratch: &Scratch, purpose: &str) -> Keeper {
     keeper(scratch, purpose)
 }
 
+#[cfg(unix)]
 #[test]
 fn an_unattended_production_boot_never_makes_a_seal_even_with_an_automatic_method() {
     let scratch = Scratch::new();
@@ -714,6 +716,7 @@ fn an_unattended_production_boot_never_makes_a_seal_even_with_an_automatic_metho
     assert_eq!(dev.start(Mode::NoSocket).unwrap(), Start::Unsealed);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_seal_by_an_operator_lasts_across_a_restart_until_unseal_and_drops_the_held_shares() {
     let scratch = Scratch::new();

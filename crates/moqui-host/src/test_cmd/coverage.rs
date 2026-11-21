@@ -74,6 +74,12 @@ pub fn coverage(component_dir: &Path, counts: &BTreeMap<String, u64>) -> Vec<Fil
             continue;
         }
         let relative = path.strip_prefix(&service_dir).unwrap_or(&path);
+        // A service location uses `/` on every platform. `display` would write `\` on Windows.
+        let relative_name = relative
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
         let package = relative
             .with_extension("")
             .components()
@@ -97,7 +103,7 @@ pub fn coverage(component_dir: &Path, counts: &BTreeMap<String, u64>) -> Vec<Fil
         }
         if !services.is_empty() {
             out.push(FileCoverage {
-                file: format!("service/{}", relative.display()),
+                file: format!("service/{relative_name}"),
                 services,
             });
         }
