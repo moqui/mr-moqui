@@ -1773,7 +1773,14 @@
             if (root.document && !root.document.getElementById("m-dev-aide-style")) {
                 const style = root.document.createElement("style");
                 style.id = "m-dev-aide-style";
-                style.textContent = ".m-dev-workspace{height:calc(100vh - 120px);min-height:28rem}" +
+                // from 1024 px the workspace fills the page to the footer: the page is held at its min-height (the window
+                // less the header and footer, which Quasar sets), and each element between it and the workspace is a
+                // column that fills it, its other children keeping their height; no guess at the header's height
+                style.textContent = ".m-dev-workspace{min-height:28rem}" +
+                    "@media (min-width:1024px){.q-page:has(.m-dev-workspace){display:flex;flex-direction:column;height:0}" +
+                    ".q-page :has(.m-dev-workspace){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}" +
+                    ".q-page :has(.m-dev-workspace)>:not(.m-dev-workspace):not(:has(.m-dev-workspace)){flex-shrink:0}" +
+                    ".m-dev-workspace{flex:1 1 auto}}" +
                     ".m-dev-side{width:280px;min-width:200px;border-right:1px solid var(--m-border,rgba(0,0,0,.12))}" +
                     ".m-dev-editor-tabs{overflow-x:auto;border-bottom:1px solid var(--m-border,rgba(0,0,0,.12))}" +
                     ".m-dev-editor-tab{padding:2px 4px 2px 10px;cursor:pointer;max-width:14rem;border-right:1px solid var(--m-border,rgba(0,0,0,.08))}" +
