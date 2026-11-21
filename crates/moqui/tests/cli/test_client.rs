@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 /// A directory removed on drop.
 struct TempDir(PathBuf);
@@ -62,9 +62,12 @@ fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
-/// Answers every request with 200 and a session cookie, after `delay`, until dropped.
+/// Answers every request with 200 and a session cookie, after `delay`, until dropped. It holds its port from the start
+/// (bound here, on a port the system picks), so a test running beside it cannot take the port in between; before
+/// `delay` it closes each connection unanswered, which the client takes as nothing answering yet.
 struct Stub {
     stop: Arc<AtomicBool>,
+    port: u16,
 }
 
 impl Drop for Stub {
@@ -73,21 +76,23 @@ impl Drop for Stub {
     }
 }
 
-fn stub(port: u16, delay: Duration) -> Stub {
+fn stub(delay: Duration) -> Stub {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    listener.set_nonblocking(true).unwrap();
     let stop = Arc::new(AtomicBool::new(false));
     let stopped = Arc::clone(&stop);
+    let opens = Instant::now() + delay;
     std::thread::spawn(move || {
-        std::thread::sleep(delay);
-        let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
-        listener.set_nonblocking(true).unwrap();
         while !stopped.load(Ordering::Relaxed) {
             match listener.accept() {
+                Ok((stream, _)) if Instant::now() < opens => drop(stream),
                 Ok((stream, _)) => answer(stream),
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),
             }
         }
     });
-    Stub { stop }
+    Stub { stop, port }
 }
 
 fn answer(mut stream: TcpStream) {
@@ -201,9 +206,8 @@ fn wait_finds_a_late_server_and_the_runtime_files_are_untouched() {
         .iter()
         .map(|(path, _)| std::fs::metadata(path).unwrap().modified().unwrap())
         .collect();
-    let port = free_port();
-    let _stub = stub(port, Duration::from_millis(1500));
-    let server = format!("http://127.0.0.1:{port}");
+    let stub = stub(Duration::from_millis(1500));
+    let server = format!("http://127.0.0.1:{}", stub.port);
     let junit = dir.0.join("junit");
     let (out, err, ok) = test_client(
         &dir.0,
@@ -305,9 +309,8 @@ fn proofs_write_the_summary_by_requirement() {
     let filed = "feature('v5.0.0-3.4.1: the stub answers', {\n    expect() {\n        http.get('/').text == 'ok'\n    },\n})\n\
                  feature('v5.0.0-6.3.2: a fixture user signs in', {\n    expect() {\n        needsFixtures('the stub user')\n        profile == 'fixtures'\n    },\n})\n";
     std::fs::write(proofs.join("V3Stub.spec.js"), filed).unwrap();
-    let port = free_port();
-    let _stub = stub(port, Duration::ZERO);
-    let server = format!("http://127.0.0.1:{port}");
+    let stub = stub(Duration::ZERO);
+    let server = format!("http://127.0.0.1:{}", stub.port);
     let out = dir.0.join("out");
     let run = |extra: &[&str]| {
         let mut args = vec![
