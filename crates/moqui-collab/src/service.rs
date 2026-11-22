@@ -89,6 +89,7 @@ fn save_meeting_board(
         .map(to_plain_string)
         .filter(|id| !id.is_empty())
         .ok_or_else(|| LibError::new("no host to save the meeting board"))?;
+    let note = meeting_note(facade, session.as_ref());
     let result = (|| -> Result<Option<String>, crate::Refusal> {
         let room = match crate::room_of(&key) {
             Some(room) => room,
@@ -109,13 +110,32 @@ fn save_meeting_board(
         if crate::lock(&room).unsaved.is_empty() {
             return Ok(None);
         }
-        crate::save_room(&key, &room, &writer, Some(&format!("Meeting {call} ended"))).map_err(Into::into)
+        crate::save_room(&key, &room, &writer, Some(&note)).map_err(Into::into)
     })();
     let version = result.map_err(|err| LibError::new(err.message))?;
     Ok(BTreeMap::from([(
         "versionName".into(),
         version.map_or(Value::Null, Value::string),
     )]))
+}
+
+/// The version note of a board saved as its meeting ends: the meeting by its link's or its room's name, in the
+/// session's language.
+fn meeting_note(facade: &EntityFacade, session: Option<&moqui_core::entity::EntityValue>) -> String {
+    let named = |entity: &str, key: &str, field: &str| {
+        let id = session?.get(key).map(to_plain_string).filter(|id| !id.is_empty())?;
+        let row = facade.find(entity).ok()?.eq(key, Value::string(&id)).one().ok()??;
+        row.get(field)
+            .map(to_plain_string)
+            .filter(|name| !name.trim().is_empty())
+    };
+    let localize = |text: &str| moqui_core::l10n::localize(text).unwrap_or_else(|_| text.to_string());
+    match named("moqui.call.CallLink", "callLinkId", "name")
+        .or_else(|| named("moqui.chat.ChatRoom", "chatRoomId", "roomName"))
+    {
+        Some(name) => localize("Meeting ${name} ended").replace("${name}", name.trim()),
+        None => localize("Meeting ended"),
+    }
 }
 
 /// `recheck#MeetingBoards`: once the caller's transaction commits (at once outside one), every server asks again the

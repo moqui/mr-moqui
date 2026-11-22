@@ -666,6 +666,8 @@ fn write_row(
         let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
         let state_bytes = state.len();
         let snapshot = codec.search_text(doc);
+        // a compacted row has no state but is there (compact_row)
+        let creating = existing.is_none();
         let mut row = match existing {
             Some(row) => row,
             None => {
@@ -675,7 +677,6 @@ fn write_row(
                 row
             }
         };
-        let creating = row.get("stateData").is_none();
         row.set("stateData", Value::Bytes(state));
         row.set("snapshotText", Value::string(snapshot));
         if let Some(hash) = base_hash {
@@ -1121,13 +1122,50 @@ fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
             flush(key, room)?;
         }
         if members == 0 {
-            let still_empty = lock(room).members == 0;
+            let (still_empty, compact, stamp) = {
+                let room = lock(room);
+                let compact = matches!(room.target.codec, Codec::Board) && room.unsaved.is_empty() && !room.dirty;
+                (room.members == 0, compact, room.stamp)
+            };
             if still_empty {
                 lock(rooms()).remove(key);
+                if compact {
+                    if let Err(err) = compact_row(key, stamp) {
+                        tracing::warn!("co-edited {key}: its stored state was not compacted: {}", err.message());
+                    }
+                }
             }
         }
     }
     Ok(())
+}
+
+/// A board's room closed with every change in a version: its row's state is cleared, so the next join seeds the
+/// document again from the saved scene ([`load`], [`Stored::Replace`]) and its Yjs history (every revision of every
+/// element) does not grow for good. The saved scene keeps the deleted elements' tombstones (`board::render`). Left as
+/// it is when another server wrote the row since this one did (`stamp`), as it may have the board open.
+fn compact_row(key: &str, stamp: Option<i64>) -> Result<(), Error> {
+    let facade = entity()?;
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let tx = facade.transactions_for(COLLAB_DOCUMENT)?;
+    tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+        let Some(mut row) = facade
+            .find(COLLAB_DOCUMENT)?
+            .eq("documentKey", Value::string(key))
+            .for_update(true)
+            .one()?
+        else {
+            return Ok(());
+        };
+        let unsaved = row.get("editorUserIds").is_some_and(|ids| !is_empty(ids));
+        if unsaved || stamp.is_none() || stamp_of(&row) != stamp {
+            return Ok(());
+        }
+        row.set("stateData", Value::Null);
+        row.update(&facade)?;
+        Ok(())
+    })
+    .map_err(Error::from)
 }
 
 /// Write the room's state now.
@@ -1239,6 +1277,15 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
     }
     let out = result?;
     let version_name = Some(text(&out, "versionName")).filter(|name| !name.is_empty());
+    // before the state's write, so the row's stamp is the one that write leaves (refresh, compact_row)
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let facade = entity()?;
+        facade
+            .find(COLLAB_DOCUMENT)?
+            .eq("documentKey", Value::string(key))
+            .update_all([("lastSaveDate".to_string(), now_value())])?;
+    }
     {
         let mut room = lock(room);
         // The page service ran without the room lock. A stroke made meanwhile belongs
@@ -1266,14 +1313,6 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
         room.unsaved = unsaved;
         room.dirty = false;
         wrote(key, &mut room, written);
-    }
-    {
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-        let facade = entity()?;
-        facade
-            .find(COLLAB_DOCUMENT)?
-            .eq("documentKey", Value::string(key))
-            .update_all([("lastSaveDate".to_string(), now_value())])?;
     }
     lock(events()).push(Event::Saved {
         document_key: key.to_string(),

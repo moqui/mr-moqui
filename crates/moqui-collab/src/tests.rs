@@ -927,3 +927,114 @@ fn a_meeting_grant_is_answered_in_memory_and_asked_again_when_the_call_changes()
     super::tick();
     let _ = super::take_events();
 }
+
+/// A board page in a space of its own, and its document key.
+fn board_page(space: &str, scene: &serde_json::Value) -> String {
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[("wikiSpaceId", Value::string(space))],
+    );
+    let saved = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string(space)),
+            ("pageName", Value::string("Board")),
+            ("wikiType", Value::string("excalidraw")),
+            ("pageText", Value::string(scene.to_string())),
+        ],
+    );
+    format!("WikiPage:{}", to_plain_string(saved.get("wikiPageId").unwrap()))
+}
+
+/// A client's change to a board: `edit` seeded over what it has, the update it sends.
+fn board_edit(doc: &Doc, edit: &serde_json::Value) -> Vec<u8> {
+    let before = doc.transact().state_vector();
+    super::board::seed(doc, &edit.to_string()).unwrap();
+    doc.transact().encode_state_as_update_v1(&before)
+}
+
+fn room_render(key: &str) -> String {
+    super::board::render(&super::lock(&super::room_of(key).unwrap()).doc)
+}
+
+/// SEC-TLS-113: a board update past board@max-update-bytes, or one that takes the document past
+/// board@max-document-bytes, is refused (413); an update that is not one leaves the room as it was, and the next good
+/// update is taken.
+#[test]
+fn a_board_holds_its_update_and_document_limits_and_survives_a_malformed_update() {
+    use serde_json::json;
+    let _serial = serial();
+    let (context, facade) = setup_with_conf(BOARD_CONF);
+    let _entered = context.enter();
+    user(&facade, "limiter");
+    login("limiter");
+    let scene = json!({"type":"excalidraw","elements":[{"id":"a","type":"text","text":"Start","index":"a0","version":1}],"files":{}});
+    let key = board_page("LIMITS", &scene);
+    let document = client(&super::join(&key, "limiter", &[]).unwrap());
+    let before = room_render(&key);
+    assert_eq!(
+        super::apply(&key, "limiter", &[0xff, 0x01, 0x02]).unwrap_err().code,
+        400
+    );
+    assert_eq!(room_render(&key), before, "the malformed update changed nothing");
+    let big = json!({"type":"excalidraw","elements":[
+        {"id":"b","type":"text","text":"x".repeat(3000),"index":"a1","version":1}
+    ]});
+    let large = board_edit(&document, &big);
+    let limited = |selector: &str| {
+        let setting = moqui_core::context::conf_env::env_name_of(selector);
+        moqui_lib::env::set_property(&setting, "1024");
+        let refused = super::apply(&key, "limiter", &large);
+        moqui_lib::env::clear_property(&setting);
+        refused.unwrap_err().code
+    };
+    assert_eq!(limited("board@max-update-bytes"), 413);
+    assert_eq!(limited("board@max-document-bytes"), 413);
+    super::apply(&key, "limiter", &large).unwrap();
+    assert!(
+        super::snapshot(&key).unwrap().contains("xxx"),
+        "the next good update is taken"
+    );
+    super::leave_as(&key, Some("limiter"));
+    super::tick();
+    let _ = super::take_events();
+}
+
+/// A board room that closes with every change in a version has its row's state cleared, and the next join seeds the
+/// board from the saved scene: its edit is there, and its deleted element stays deleted though a client that still
+/// holds it sends it again.
+#[test]
+fn a_closed_board_is_seeded_again_from_its_saved_scene() {
+    use serde_json::json;
+    let _serial = serial();
+    let (context, facade) = setup_with_conf(BOARD_CONF);
+    let _entered = context.enter();
+    user(&facade, "compactor");
+    login("compactor");
+    let scene = json!({"type":"excalidraw","elements":[
+        {"id":"keep","type":"text","text":"Keep","index":"a0","version":1,"versionNonce":1},
+        {"id":"drop","type":"text","text":"Drop","index":"a1","version":1,"versionNonce":1}
+    ],"files":{}});
+    let key = board_page("COMPACT", &scene);
+    let document = client(&super::join(&key, "compactor", &[]).unwrap());
+    let edit = json!({"type":"excalidraw","elements":[
+        {"id":"keep","type":"text","text":"Kept","index":"a0","version":2,"versionNonce":1},
+        {"id":"drop","type":"text","text":"Drop","index":"a1","version":2,"versionNonce":1,"isDeleted":true}
+    ]});
+    super::apply(&key, "compactor", &board_edit(&document, &edit)).unwrap();
+    super::leave_as(&key, Some("compactor"));
+    super::tick();
+    assert!(super::room_of(&key).is_none(), "the room closed");
+    let row = super::stored(&key).unwrap().unwrap();
+    assert!(super::bytes_of(&row, "stateData").is_empty(), "its state was cleared");
+    let again = client(&super::join(&key, "compactor", &[]).unwrap());
+    assert_eq!(super::board::search_text(&again), "Kept");
+    let stale = Doc::new();
+    super::board::seed(&stale, &scene.to_string()).unwrap();
+    let everything = stale.transact().encode_state_as_update_v1(&StateVector::default());
+    super::apply(&key, "compactor", &everything).unwrap();
+    assert_eq!(super::snapshot(&key).unwrap(), "Kept");
+    super::leave_as(&key, Some("compactor"));
+    super::tick();
+    let _ = super::take_events();
+}

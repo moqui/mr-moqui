@@ -22,7 +22,9 @@
             <if condition="frameFile.getContentType() !== 'image/png' || frameFile.getName() !== 'capture.png'">
                 <return error="true" message="A snapshot needs a PNG frame"/></if>
             <script><![CDATA[
-                if (scene.length > Number(ec.factory.getConfValue('board@max-document-bytes'))) { ec.message.addError('Snapshot too large'); return }
+                // bytes, as parseScene measures them, not UTF-16 units
+                if (encodeURIComponent(scene).replace(/%[0-9a-f]{2}/gi, 'x').length > Number(ec.factory.getConfValue('board@max-document-bytes'))) {
+                    ec.message.addError(ec.l10n.localize('Snapshot too large')); return }
                 let content
                 try { content = JSON.parse(scene) } catch (_) { ec.message.addError('Invalid snapshot scene'); return }
                 const images = Array.isArray(content?.elements) ? content.elements.filter(e => e?.type === 'image') : []

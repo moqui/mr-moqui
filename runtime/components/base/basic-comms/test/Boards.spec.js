@@ -106,3 +106,41 @@ feature("a snapshot stores its locked frame as an attachment and its annotations
         r.info.attachmentList.some(file=>file.filename === "capture.png")
     }
 })
+
+feature("a saved board version takes its preview, links from markdown and leaves out files its scene dropped", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const wiki = "org.moqui.resource.WikiServices."
+        const created = boardCall("org.moqui.comms.BoardServices.create#Board", {pageName:"Pruned sketch"})
+        const wikiPageId = created.wikiPageId
+        const info = boardCall(wiki + "get#WikiPageInfo", {wikiPageId})
+        const upload = name => boardCall(wiki + "upload#WikiPageAttachment",
+            {wikiPageId, attachmentFile:uploadedFile(name, "pixels", "image/png")})
+        const uploads = [upload("used.png"), upload("stale.png")].map(u => u.error)
+        const scene = {type:"excalidraw", version:2, elements:[{id:"photo", type:"image", fileId:"f1", x:0, y:0, width:4, height:4,
+            version:1, versionNonce:1, index:"a0"}], appState:{}, files:{f1:{id:"f1", attachmentName:"used.png", mimeType:"image/png"}}}
+        const page = boardCall(wiki + "update#WikiPage", {wikiPageId, wikiSpaceId:info.wikiSpaceId, pagePath:info.pagePath,
+            pageName:info.pageName, pageText:JSON.stringify(scene)})
+        const preview = '<svg xmlns="http://www.w3.org/2000/svg"><text>Client preview</text></svg>'
+        const saved = boardCall("org.moqui.comms.BoardServices.save#Board", {wikiPageId, note:"Checked", preview, scene:JSON.stringify(scene)})
+        // the files themselves, as the board's services read them
+        ec.artifactExecution.disableAuthz()
+        const shown = boardCall(wiki + "get#WikiPageAttachment", {wikiPageId, filename:"_board.svg"}).attachmentReference.getText()
+        const removed = ec.resource.script("component://framework/service/org/moqui/resource/WikiBoard.js")
+            .pruneFiles(wikiPageId, saved.versionName || page.versionName, 0)
+        const after = boardCall(wiki + "get#WikiPageInfo", {wikiPageId}).attachmentList.map(file => file.filename)
+        const notes = boardCall(wiki + "update#WikiPage", {wikiSpaceId:info.wikiSpaceId, pageName:"Sketch notes",
+            pageText:"See [[" + info.pagePath + "]]"})
+        const html = withConf("comms@app-root", "/apps/Comms", () =>
+            boardCall(wiki + "render#WikiPage", {wikiPageId:notes.wikiPageId}).pageHtml)
+        ec.artifactExecution.enableAuthz()
+        return {uploads, page, saved, shown, removed:Array.from(removed), after, html, wikiPageId}
+    },
+    then(r) {
+        JSON.stringify(r.uploads) === "[\"\",\"\"]" && r.page.error === "" && r.saved.error === ""
+        r.shown.includes("Client preview")
+        JSON.stringify(r.removed) === '["stale.png"]'
+        r.after.includes("used.png") && !r.after.includes("stale.png") && r.after.includes("_board.svg")
+        r.html.includes('href="/apps/Comms/Boards/Board?wikiPageId=' + r.wikiPageId)
+    }
+})

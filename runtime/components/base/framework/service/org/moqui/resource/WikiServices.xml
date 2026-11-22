@@ -791,6 +791,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="wikiSpaceId"><description>Optional if pagePath is a wikiPageId or the first segment is a wikiSpaceId</description></parameter>
             <parameter name="pagePath"><description>Not required, is empty for the space root page. Can be a wikiPageId or the page path within the space.</description></parameter>
             <parameter name="attachmentFile" type="FileItem"/>
+            <parameter name="versionNote"><description>The note of the file's version, as on a page save: who it was for when
+                internal work uploads it (a meeting board's guest)</description></parameter>
         </in-parameters>
         <out-parameters><parameter name="attachmentReference" type="ResourceReference"/></out-parameters>
         <actions>
@@ -814,12 +816,18 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.addError(ec.l10n.localize('Image exceeds the board image size limit'))
                 } else if (/^_board-.*\.svg$/.test(filename)) {
                     ec.message.addError(ec.l10n.localize('Version preview names are reserved'))
-                } else if (filename !== '_board.svg' && !attachmentReference.exists) {
+                } else {
                     const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo')
                             .parameters({wikiSpaceId, pagePath}).call()
-                    const count = Array.from(info.attachmentList || []).filter(file => file.filename !== '_board.svg' && !/^_board-.*\.svg$/.test(file.filename)).length
-                    if (count >= Number(ec.factory.getConfValue('board@max-images'))) {
+                    const files = Array.from(info.attachmentList || [])
+                    const count = files.filter(file => file.filename !== '_board.svg' && !/^_board-.*\.svg$/.test(file.filename)).length
+                    // all of the board's files together, the one this replaces left out
+                    const total = files.filter(file => file.filename !== filename)
+                            .reduce((sum, file) => sum + Number(file.resourceReference.getSize() || 0), Number(attachmentFile.getSize()))
+                    if (filename !== '_board.svg' && !attachmentReference.exists && count >= Number(ec.factory.getConfValue('board@max-images'))) {
                         ec.message.addError(ec.l10n.localize('Board has reached its image limit'))
+                    } else if (total > Number(ec.factory.getConfValue('board@max-total-image-bytes'))) {
+                        ec.message.addError(ec.l10n.localize('Board files exceed the board total size limit'))
                     }
                 }
             ]]></script></if>
@@ -830,7 +838,8 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="ec.message.hasError()"><return/></if>
             <script><![CDATA[
                 ec.logger.info(`Uploading file ${filename} for page path ${pagePath} in space ${wikiSpaceId}`)
-                attachmentReference.putUpload(attachmentFile)
+                if (versionNote) ec.resource.putContent(attachmentReference.location, attachmentFile, String(versionNote))
+                else attachmentReference.putUpload(attachmentFile)
             ]]></script>
         </actions>
     </service>
@@ -1798,10 +1807,44 @@ along with this software (see the LICENSE.md file). If not, see
             }
         ]]></script></actions>
     </service>
+    <service verb="delete" noun="WikiPageRows" allow-remote="false">
+        <description>A page's record and the framework rows that name it, for delete#WikiPage once it has checked the page
+            may go, and for a room's board space as the room goes (ChatBoard.eecas.xml): a child page record's parent, the
+            page's aliases, categories, history, users, links (its own go; another page's links to it stay, to a page not
+            there), reviews (a waiting one leaves the reviewers' approvals), blog posts, its co-edited document, its
+            meeting boards and the meeting links it is the recurring board of. Its files are the caller's. No access
+            check: internal work only.</description>
+        <in-parameters><parameter name="wikiPageId" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            const find = (name, keys) => ec.entity.find(name).condition(keys).disableAuthz()
+            const wiki = 'moqui.resource.wiki.'
+            // a child page's record (one without a file) keeps no parent that is not there
+            find(wiki+'WikiPage', {parentWikiPageId:wikiPageId}).updateAll({parentWikiPageId:null})
+            for (const name of ['WikiPageAlias','WikiPageCategoryMember','WikiPageHistory','WikiPageUser','WikiPageLink'])
+                find(wiki+name, {wikiPageId}).deleteAll()
+            find(wiki+'WikiPageLink', {toWikiPageId:wikiPageId}).updateAll({toWikiPageId:null})
+            // its reviews go, and a review still waiting leaves the reviewers' approvals
+            for (const review of Array.from(find(wiki+'WikiPageReview', {wikiPageId}).list())) {
+                if (review.notificationMessageId) ec.service.sync().name('org.moqui.resource.WikiServices.close#WikiPageReviewNotification')
+                        .parameter('notificationMessageId', review.notificationMessageId).disableAuthz().call()
+                review.delete()
+            }
+            for (const blog of Array.from(find(wiki+'WikiBlog', {wikiPageId}).list())) {
+                find(wiki+'WikiBlogCategory', {wikiBlogId:blog.wikiBlogId}).deleteAll()
+                blog.delete()
+            }
+            // a board's co-editing and meetings: an open room of it closes at its server's next tick (the row gone)
+            find('moqui.resource.CollabDocument', {documentKey:'WikiPage:'+wikiPageId}).deleteAll()
+            find('moqui.call.CallBoard', {wikiPageId}).deleteAll()
+            find('moqui.call.CallLink', {wikiPageId}).updateAll({wikiPageId:null})
+            find(wiki+'WikiPage', {wikiPageId}).deleteAll()
+        ]]></script></actions>
+    </service>
     <service verb="delete" noun="WikiPage">
         <description>Delete a page (not a space's root page) with the framework rows of it: its aliases, categories,
             history, users, links (its own go; another page's links to it stay, to a page not there), reviews (a waiting
-            one leaves the reviewers' approvals) and a child page record's parent. For a user who may update the page
+            one leaves the reviewers' approvals), a child page record's parent, and a board's co-edited document, meeting
+            boards and the meeting links it is the recurring board of (delete#WikiPageRows). For a user who may update the page
             (get#WikiPageAccess; internal work with no user and authorization disabled may). A page with child pages or
             Wiki Blog references is kept; with attachments only when deleteAttachments. Each refusal is an error, so the
             transaction rolls back with what a pre-service SECA did. A page record without a file is deleted too.
@@ -1869,40 +1912,10 @@ along with this software (see the LICENSE.md file). If not, see
                 </else></if>
             </if>
 
+            <!-- the page's record and the rows that name it -->
             <if condition="wikiPageId">
-                <!-- delete dependent records -->
-                <script><![CDATA[
-                    // a child page's record (one without a file) keeps no parent that is not there
-                    for (const child of Array.from(ec.entity.find('moqui.resource.wiki.WikiPage').condition('parentWikiPageId', wikiPageId).list())) {
-                        child.parentWikiPageId = null
-                        child.update()
-                    }
-                ]]></script>
-                <entity-delete-by-condition entity-name="moqui.resource.wiki.WikiPageAlias">
-                    <econdition field-name="wikiPageId"/></entity-delete-by-condition>
-                <entity-delete-by-condition entity-name="moqui.resource.wiki.WikiPageCategoryMember">
-                    <econdition field-name="wikiPageId"/></entity-delete-by-condition>
-                <entity-delete-by-condition entity-name="moqui.resource.wiki.WikiPageHistory">
-                    <econdition field-name="wikiPageId"/></entity-delete-by-condition>
-                <entity-delete-by-condition entity-name="moqui.resource.wiki.WikiPageUser">
-                    <econdition field-name="wikiPageId"/></entity-delete-by-condition>
-                <!-- the page's links go; links to it stay in the pages that have them, as links to a page not there -->
-                <entity-delete-by-condition entity-name="moqui.resource.wiki.WikiPageLink">
-                    <econdition field-name="wikiPageId"/></entity-delete-by-condition>
-                <script><![CDATA[
-                    for (const link of Array.from(ec.entity.find('moqui.resource.wiki.WikiPageLink').condition('toWikiPageId', wikiPageId).list())) {
-                        link.toWikiPageId = null
-                        link.update()
-                    }
-                    // its reviews go, and a review still waiting leaves the reviewers' approvals
-                    for (const review of Array.from(ec.entity.find('moqui.resource.wiki.WikiPageReview').condition('wikiPageId', wikiPageId).list())) {
-                        if (review.notificationMessageId) ec.service.sync().name('org.moqui.resource.WikiServices.close#WikiPageReviewNotification')
-                                .parameter('notificationMessageId', review.notificationMessageId).call()
-                        review.delete()
-                    }
-                ]]></script>
-                <!-- delete WikiPage record -->
-                <entity-delete value-field="wikiPage"/>
+                <service-call name="org.moqui.resource.WikiServices.delete#WikiPageRows" in-map="{wikiPageId}"/>
+                <if condition="ec.message.hasError()"><return/></if>
             </if>
 
             <!-- lastly delete the page file and related directory -->

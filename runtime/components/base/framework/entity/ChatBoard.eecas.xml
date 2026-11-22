@@ -12,19 +12,16 @@
             if (space.rootPageLocation !== prefix + '.md')
                 throw new Error('Cannot remove a room space with a different storage root')
             const wiki = 'moqui.resource.wiki.'
+            // each page's rows as delete#WikiPage removes them; a page that fails is logged and the others go on, and
+            // the space's files go below with all of its pages' files
             for (const page of find(wiki+'WikiPage',{wikiSpaceId:id}).forUpdate(true).list()) {
-                const wikiPageId = page.wikiPageId
-                find('moqui.call.CallBoard',{wikiPageId}).deleteAll()
-                find('moqui.call.CallLink',{wikiPageId}).updateAll({wikiPageId:null})
-                find('moqui.resource.CollabDocument',{documentKey:'WikiPage:'+wikiPageId}).deleteAll()
-                find(wiki+'WikiPageLink',{toWikiPageId:wikiPageId}).updateAll({toWikiPageId:null})
-                for (const blog of find(wiki+'WikiBlog',{wikiPageId}).list()) {
-                    find(wiki+'WikiBlogCategory',{wikiBlogId:blog.wikiBlogId}).deleteAll()
-                    blog.delete()
-                }
-                for (const name of ['WikiPageAlias','WikiPageCategoryMember','WikiPageHistory','WikiPageUser','WikiPageLink','WikiPageReview'])
-                    find(wiki+name,{wikiPageId}).deleteAll()
-                page.delete()
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.resource.WikiServices.delete#WikiPageRows')
+                        .parameter('wikiPageId', page.wikiPageId).disableAuthz().call()
+                    if (ec.message.hasError()) ec.logger.error('Could not remove page ' + page.wikiPageId + ' of room space ' + id + ': ' + ec.message.errorsString)
+                } catch (e) { ec.logger.error('Could not remove page ' + page.wikiPageId + ' of room space ' + id + ': ' + e) }
+                finally { ec.message.clearErrors(); ec.message.popErrors() }
             }
             find(wiki+'WikiPageAlias',{wikiSpaceId:id}).deleteAll()
             find(wiki+'WikiSpaceUser',{wikiSpaceId:id}).deleteAll()

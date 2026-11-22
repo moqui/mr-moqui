@@ -350,10 +350,54 @@ fn deliverable(
     }
 }
 
+/// Refused updates in a row past which a socket's clients leave the page.
+const REFUSED_IN_A_ROW: u32 = 5;
+
+/// Whether the socket may send one more update (`update`) or awareness frame this minute: a token bucket per socket
+/// (`PresenceCaps`, SEC-TLS-113).
+fn within_rate(caps: &super::PresenceCaps, slot_id: u64, update: bool) -> bool {
+    static UPDATES: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
+    static AWARENESS: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
+    if update {
+        super::take(UPDATES.get_or_init(Default::default), &slot_id, caps.updates_per_minute)
+    } else {
+        super::take(
+            AWARENESS.get_or_init(Default::default),
+            &slot_id,
+            caps.awareness_per_minute,
+        )
+    }
+}
+
+/// The socket's updates refused in a row, by document; one accepted puts it back to none.
+fn refused_in_a_row() -> &'static Mutex<HashMap<(u64, String), u32>> {
+    static REFUSED: OnceLock<Mutex<HashMap<(u64, String), u32>>> = OnceLock::new();
+    REFUSED.get_or_init(Default::default)
+}
+
+/// An update over the socket's rate: refused (429), and at the fifth in a row its clients leave the page, told why.
+fn refuse_rate(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str) {
+    let count = {
+        let mut refused = lock(refused_in_a_row());
+        let count = refused.entry((slot.id, doc.to_string())).or_insert(0);
+        *count += 1;
+        *count
+    };
+    if count < REFUSED_IN_A_ROW {
+        return error(slot, doc, client, 429, "too many updates; slow down");
+    }
+    lock(refused_in_a_row()).remove(&(slot.id, doc.to_string()));
+    error(slot, doc, client, 429, "too many updates; join the page again");
+    leave(factory, slot.id, doc, None);
+}
+
 fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
     let Some(member) = member(doc, client, slot.id) else {
         return error(slot, doc, client, 409, "join the document first");
     };
+    if !within_rate(&super::PresenceCaps::of(factory), slot.id, true) {
+        return refuse_rate(factory, slot, doc, client);
+    }
     let encoded = message.get("update").and_then(Json::as_str).unwrap_or_default();
     let frame = json!({"topic": topic(doc), "type": "update", "client": client, "update": encoded});
     let remote = match remote_message(json!({"doc": doc, "frame": frame})) {
@@ -366,6 +410,7 @@ fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &st
     if let Err(refusal) = moqui_collab::apply(doc, &member.actor_key(), &update) {
         return error(slot, doc, client, refusal.code, &refusal.message);
     }
+    lock(refused_in_a_row()).remove(&(slot.id, doc.to_string()));
     if let Some(id) = message.get("id") {
         send(
             slot,
@@ -380,10 +425,15 @@ fn awareness(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: 
     if member(doc, client, slot.id).is_none() {
         return;
     }
+    let caps = super::PresenceCaps::of(factory);
+    // a cursor's moves past the socket's rate are dropped: the next one carries where it is
+    if !within_rate(&caps, slot.id, false) {
+        return;
+    }
     // an awareness goes to every editor: held to its size (SEC-TLS-113)
     if message
         .get("update")
-        .is_some_and(|update| update.to_string().len() > super::PresenceCaps::of(factory).awareness_bytes)
+        .is_some_and(|update| update.to_string().len() > caps.awareness_bytes)
     {
         return error(slot, doc, client, 413, "the awareness is too large");
     }
@@ -418,6 +468,7 @@ fn leave(factory: &ExecutionContextFactory, slot_id: u64, doc: &str, client: Opt
 
 /// The socket closed: its clients leave every document.
 pub(super) fn socket_closed(factory: &ExecutionContextFactory, slot_id: u64) {
+    lock(refused_in_a_row()).retain(|(slot, _), _| *slot != slot_id);
     let docs: Vec<String> = lock(members())
         .iter()
         .filter(|(_, list)| list.iter().any(|member| member.slot_id == slot_id))
@@ -775,6 +826,58 @@ mod tests {
             "the receiver still held, no member is kept"
         );
         drop(rx);
+    }
+
+    /// SEC-TLS-113: a socket's updates and awareness frames a minute are each held to their rate, and at the fifth
+    /// refused update in a row its clients leave the page.
+    #[test]
+    fn a_socket_over_its_update_rate_is_refused_then_leaves_the_page() {
+        let context = ExecutionContextFactory::test_context();
+        let factory = Arc::clone(context.factory());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let slot = Arc::new(Slot {
+            id: super::super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            user_id: "flooder".into(),
+            session_id: "session".into(),
+            topics: Mutex::new(Default::default()),
+            tx,
+            overflow: tokio::sync::Notify::new(),
+        });
+        let mut caps = super::super::PresenceCaps::of(&factory);
+        caps.updates_per_minute = 2;
+        caps.awareness_per_minute = 1;
+        assert!(within_rate(&caps, slot.id, true) && within_rate(&caps, slot.id, true));
+        assert!(!within_rate(&caps, slot.id, true), "the third update in the minute");
+        assert!(within_rate(&caps, slot.id, false), "awareness has its own bucket");
+        assert!(!within_rate(&caps, slot.id, false));
+
+        let doc = "flooded";
+        lock(members()).insert(
+            doc.into(),
+            vec![Member {
+                slot: Arc::downgrade(&slot),
+                slot_id: slot.id,
+                client: "f".into(),
+                user_id: "flooder".into(),
+                name: "Flooder".into(),
+                awareness: Json::Null,
+                meeting: None,
+            }],
+        );
+        for _ in 1..REFUSED_IN_A_ROW {
+            refuse_rate(&factory, &slot, doc, "f");
+        }
+        assert!(lock(members()).get(doc).is_some(), "still on the page before the fifth");
+        refuse_rate(&factory, &slot, doc, "f");
+        assert!(
+            lock(members()).get(doc).is_none(),
+            "the fifth in a row takes it off the page"
+        );
+        let mut codes = Vec::new();
+        while let Ok(push) = rx.try_recv() {
+            codes.push(serde_json::from_str::<Json>(&push.text).unwrap()["code"].clone());
+        }
+        assert_eq!(codes, vec![json!(429); REFUSED_IN_A_ROW as usize]);
     }
 
     /// A socket with two memberships of one board: a frame naming one of its clients is judged by that membership, a

@@ -190,14 +190,17 @@ enum TopicCommand {
 
 /// What one socket may hold of presence (SEC-TLS-113), from the webroot webapp: the clients it keeps in one CalcGrid
 /// room or co-edited page (`socket-room-clients`), the bytes of one awareness (`socket-awareness-bytes`), and the
-/// joins it makes a minute (`socket-joins-per-minute`), and the joins one user's sockets make a minute together
-/// (`socket-user-joins-per-minute`).
+/// joins it makes a minute (`socket-joins-per-minute`), the joins one user's sockets make a minute together
+/// (`socket-user-joins-per-minute`), and the co-editing updates and awareness frames it sends a minute
+/// (`socket-updates-per-minute`, `socket-awareness-per-minute`).
 #[derive(Clone, Copy)]
 struct PresenceCaps {
     room_clients: usize,
     awareness_bytes: usize,
     joins_per_minute: u32,
     user_joins_per_minute: u32,
+    updates_per_minute: u32,
+    awareness_per_minute: u32,
 }
 
 impl PresenceCaps {
@@ -215,6 +218,8 @@ impl PresenceCaps {
             awareness_bytes: number("socket-awareness-bytes", 4096),
             joins_per_minute: u32::try_from(number("socket-joins-per-minute", 60)).unwrap_or(u32::MAX),
             user_joins_per_minute: u32::try_from(number("socket-user-joins-per-minute", 240)).unwrap_or(u32::MAX),
+            updates_per_minute: u32::try_from(number("socket-updates-per-minute", 1200)).unwrap_or(u32::MAX),
+            awareness_per_minute: u32::try_from(number("socket-awareness-per-minute", 600)).unwrap_or(u32::MAX),
         }
     }
 }

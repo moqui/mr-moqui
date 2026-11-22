@@ -89,7 +89,11 @@
         largest picture and its longest side in pixels; pack-max, the stickers of a server pack, server-packs-max the
         server packs; user-packs-max and user-pack-max, the packs a user makes and the stickers in each; uploads-per-hour,
         the stickers a user adds an hour. -->
-    <board max-image-bytes="10485760" max-images="200" max-update-bytes="1048576" max-document-bytes="20971520"/>
+    <!-- Wiki boards (Excalidraw): max-image-bytes, one image; max-images, the images of one board; max-total-image-bytes,
+        the bytes of all of one board's files together; max-update-bytes and max-document-bytes, one co-editing update
+        and the whole co-edited board. -->
+    <board max-image-bytes="10485760" max-images="200" max-total-image-bytes="209715200" max-update-bytes="1048576"
+        max-document-bytes="20971520"/>
     <chat server-name="localhost" store-key-secret="CHANGEME" to-device-retention-days="30" device-active-days="90"
             device-auto-expire-days="30" spam-purge-days="0" attachment-root="dbresource://chat"
             attachment-max-bytes="26214400" attachment-daily-bytes="1073741824" changes-keep-days="30"
@@ -502,7 +506,7 @@
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"
                 socket-room-clients="4" socket-awareness-bytes="4096" socket-joins-per-minute="60"
-                socket-user-joins-per-minute="240"
+                socket-user-joins-per-minute="240" socket-updates-per-minute="1200" socket-awareness-per-minute="600"
             app-redirect-uris="" app-loopback-redirect="true">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
