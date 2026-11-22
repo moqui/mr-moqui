@@ -1,0 +1,1024 @@
+{
+ "$comment": "Agent Code settings: names, types and defaults of T3 Code's ClientSettingsSchema and ServerSettings (MIT, see ../../../../NOTICE), with the MR Moqui changes of plans/agent-code/10-Web-UI.md section 9. A name not here is refused.",
+ "client": {
+  "appearanceContrast": {
+   "type": "integer",
+   "default": 100,
+   "store": "user",
+   "min": 0,
+   "max": 200
+  },
+  "boringSidebarEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "boringSidebarMultilineRows": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "browserAutoShowFloatingPreview": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "browserCustomSearchUrl": {
+   "type": "string",
+   "default": "",
+   "store": "user",
+   "maxLength": 2048
+  },
+  "browserDefaultAppearance": {
+   "type": "enum",
+   "values": [
+    "system",
+    "light",
+    "dark"
+   ],
+   "default": "system",
+   "store": "user"
+  },
+  "browserDefaultProfileId": {
+   "type": "string",
+   "default": "default",
+   "store": "user",
+   "maxLength": 64
+  },
+  "browserDefaultViewport": {
+   "type": "any",
+   "default": "fill",
+   "store": "user"
+  },
+  "browserDefaultZoomFactor": {
+   "type": "number",
+   "default": 1.0,
+   "store": "user",
+   "min": 0.25,
+   "max": 5
+  },
+  "browserLinkTarget": {
+   "type": "enum",
+   "values": [
+    "system",
+    "app"
+   ],
+   "default": "system",
+   "store": "device"
+  },
+  "browserProfiles": {
+   "type": "list",
+   "default": [],
+   "store": "user"
+  },
+  "browserRecordingFrameRate": {
+   "type": "integer",
+   "default": 30,
+   "store": "user",
+   "min": 1,
+   "max": 60
+  },
+  "browserRecordingShowKeyPresses": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "browserRecordingShowMousePresses": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "browserSearchEngine": {
+   "type": "enum",
+   "values": [
+    "duckduckgo",
+    "google",
+    "bing",
+    "brave",
+    "kagi",
+    "ecosia",
+    "custom"
+   ],
+   "default": "duckduckgo",
+   "store": "user"
+  },
+  "chatWidth": {
+   "type": "enum",
+   "values": [
+    "comfortable",
+    "wide",
+    "full"
+   ],
+   "default": "comfortable",
+   "store": "user"
+  },
+  "composerRichTextEnabled": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "confirmQuit": {
+   "type": "enum",
+   "values": [
+    "direct",
+    "hold",
+    "double-click"
+   ],
+   "default": "hold",
+   "store": "device"
+  },
+  "confirmTerminalClose": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "confirmThreadArchive": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "confirmThreadDelete": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "confirmThreadUnpin": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "diffColorScheme": {
+   "type": "enum",
+   "values": [
+    "red-green",
+    "blue-orange"
+   ],
+   "default": "red-green",
+   "store": "user"
+  },
+  "diffFilesCollapsed": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "diffIgnoreWhitespace": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "diffLayout": {
+   "type": "enum",
+   "values": [
+    "stacked",
+    "split"
+   ],
+   "default": "stacked",
+   "store": "user"
+  },
+  "effortDisplay": {
+   "type": "enum",
+   "values": [
+    "label",
+    "bars"
+   ],
+   "default": "label",
+   "store": "user"
+  },
+  "environmentIdentificationMode": {
+   "type": "enum",
+   "values": [
+    "artwork",
+    "nightly-artwork",
+    "dev-artwork",
+    "pill",
+    "none"
+   ],
+   "default": "artwork",
+   "store": "user"
+  },
+  "favorites": {
+   "type": "list",
+   "default": [],
+   "store": "user"
+  },
+  "followUpBehavior": {
+   "type": "enum",
+   "values": [
+    "queue",
+    "steer"
+   ],
+   "default": "steer",
+   "store": "user"
+  },
+  "fontFamilyCode": {
+   "type": "string",
+   "default": "",
+   "store": "device",
+   "maxLength": 256
+  },
+  "fontFamilyComposer": {
+   "type": "string",
+   "default": "",
+   "store": "device",
+   "maxLength": 256
+  },
+  "fontFamilySans": {
+   "type": "string",
+   "default": "",
+   "store": "device",
+   "maxLength": 256
+  },
+  "fontFamilyTerminal": {
+   "type": "string",
+   "default": "",
+   "store": "device",
+   "maxLength": 256
+  },
+  "fontSizeCode": {
+   "type": "number",
+   "default": 13,
+   "store": "device",
+   "min": 8,
+   "max": 40
+  },
+  "fontSizeInterface": {
+   "type": "number",
+   "default": 16,
+   "store": "device",
+   "min": 8,
+   "max": 40
+  },
+  "fontSizePrompt": {
+   "type": "number",
+   "default": 14,
+   "store": "device",
+   "min": 8,
+   "max": 40
+  },
+  "fontSizeTerminal": {
+   "type": "number",
+   "default": 12,
+   "store": "device",
+   "min": 8,
+   "max": 40
+  },
+  "fontSmoothing": {
+   "type": "boolean",
+   "default": true,
+   "store": "device"
+  },
+  "glassOpacity": {
+   "type": "integer",
+   "default": 80,
+   "store": "user",
+   "min": 0,
+   "max": 100
+  },
+  "inAppNotificationsEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "loadBalancingEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "device"
+  },
+  "loadBalancingWeights": {
+   "type": "record",
+   "default": {},
+   "store": "device"
+  },
+  "mathRenderingEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "notificationMode": {
+   "type": "enum",
+   "values": [
+    "off",
+    "notifications",
+    "sound",
+    "notifications-and-sound"
+   ],
+   "default": "off",
+   "store": "device"
+  },
+  "onboardingCompletedAt": {
+   "type": "any",
+   "default": null,
+   "store": "user"
+  },
+  "panelAnimationDurationMs": {
+   "type": "integer",
+   "default": 0,
+   "store": "user",
+   "min": 0,
+   "max": 2000
+  },
+  "persistComposerContextStrip": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "proactivePanelsEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "providerModelPreferences": {
+   "type": "record",
+   "default": {},
+   "store": "user"
+  },
+  "pullRequestLinksOpenInApp": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "pullRequestMergeMethodOverrides": {
+   "type": "record",
+   "default": {},
+   "store": "user"
+  },
+  "screenReaderAnnouncements": {
+   "type": "enum",
+   "values": [
+    "status",
+    "messages",
+    "everything"
+   ],
+   "default": "status",
+   "store": "user"
+  },
+  "screenReaderWindowTitle": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "sendShortcut": {
+   "type": "enum",
+   "values": [
+    "enter",
+    "mod-enter-multiline",
+    "mod-enter"
+   ],
+   "default": "enter",
+   "store": "user"
+  },
+  "showSkillsInSlashMenu": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "sideThreadOpenTarget": {
+   "type": "enum",
+   "values": [
+    "panel",
+    "main"
+   ],
+   "default": "panel",
+   "store": "user"
+  },
+  "sidebarProjectGroupingMode": {
+   "type": "enum",
+   "values": [
+    "repository",
+    "repository_path",
+    "separate"
+   ],
+   "default": "repository",
+   "store": "user"
+  },
+  "sidebarProjectGroupingOverrides": {
+   "type": "record",
+   "default": {},
+   "store": "user"
+  },
+  "sidebarProjectSortOrder": {
+   "type": "enum",
+   "values": [
+    "updated_at",
+    "created_at",
+    "manual"
+   ],
+   "default": "updated_at",
+   "store": "user"
+  },
+  "sidebarThreadSortOrder": {
+   "type": "enum",
+   "values": [
+    "updated_at",
+    "created_at"
+   ],
+   "default": "updated_at",
+   "store": "user"
+  },
+  "sidebarWorkingShelfEnabled": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "snapShotAnimations": {
+   "type": "boolean",
+   "default": true,
+   "store": "device"
+  },
+  "snapShotEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "device"
+  },
+  "snapShotFlash": {
+   "type": "boolean",
+   "default": true,
+   "store": "device"
+  },
+  "snapShotIncludeAccessibility": {
+   "type": "boolean",
+   "default": true,
+   "store": "device"
+  },
+  "snapShotPlaySound": {
+   "type": "boolean",
+   "default": true,
+   "store": "device"
+  },
+  "snapShotShortcut": {
+   "type": "string",
+   "default": "default",
+   "store": "device",
+   "maxLength": 64
+  },
+  "snapShotSound": {
+   "type": "string",
+   "default": "soft-pop",
+   "store": "device",
+   "maxLength": 64
+  },
+  "speechCorrectionWord": {
+   "type": "string",
+   "default": "",
+   "store": "user",
+   "maxLength": 64
+  },
+  "speechCustomWords": {
+   "type": "list",
+   "default": [],
+   "store": "user"
+  },
+  "speechLanguage": {
+   "type": "string",
+   "default": "auto",
+   "store": "user",
+   "maxLength": 32
+  },
+  "speechPostProcessingPrompt": {
+   "type": "any",
+   "default": {
+    "kind": "default"
+   },
+   "store": "user"
+  },
+  "speechRemoveFillerWords": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "speechSilenceFiltering": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "speechStreaming": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  },
+  "speechTranslateToEnglish": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "threadDetailsItems": {
+   "type": "record",
+   "default": {},
+   "store": "user"
+  },
+  "threadDetailsUsageEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "user"
+  },
+  "timestampFormat": {
+   "type": "enum",
+   "values": [
+    "locale",
+    "12-hour",
+    "24-hour"
+   ],
+   "default": "locale",
+   "store": "user"
+  },
+  "toolCallVisibility": {
+   "type": "enum",
+   "values": [
+    "showAll",
+    "hideSuccessful",
+    "hideAll",
+    "zen"
+   ],
+   "default": "showAll",
+   "store": "user"
+  },
+  "voiceMicrophone": {
+   "type": "string",
+   "default": "",
+   "store": "device",
+   "maxLength": 512
+  },
+  "voiceMicrophones": {
+   "type": "list",
+   "default": [],
+   "store": "device"
+  },
+  "voiceShortcutMode": {
+   "type": "enum",
+   "values": [
+    "auto",
+    "hold",
+    "toggle"
+   ],
+   "default": "auto",
+   "store": "user"
+  },
+  "wordWrap": {
+   "type": "boolean",
+   "default": true,
+   "store": "user"
+  }
+ },
+ "server": {
+  "addProjectBaseDirectory": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "autoResumeLimitedThreads": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "automaticGitFetchInterval": {
+   "type": "integer",
+   "default": 30,
+   "store": "server",
+   "min": 0,
+   "max": 86400
+  },
+  "backgroundActivity": {
+   "type": "enum",
+   "values": [
+    "low",
+    "balanced",
+    "high"
+   ],
+   "default": "balanced",
+   "store": "server"
+  },
+  "backgroundActivityProfile": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "branchNameInstructions": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "branchNamePrefix": {
+   "type": "string",
+   "default": "moqui",
+   "store": "server",
+   "maxLength": 64
+  },
+  "branchNamingMode": {
+   "type": "enum",
+   "values": [
+    "static",
+    "generated"
+   ],
+   "default": "static",
+   "store": "server"
+  },
+  "cloudSpeechCredentials": {
+   "type": "record",
+   "default": {},
+   "store": "server"
+  },
+  "compactIdleThreads": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "continueThreadsAfterServerUpdate": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "defaultAppearance": {
+   "type": "enum",
+   "values": [
+    "system",
+    "light",
+    "dark"
+   ],
+   "default": "system",
+   "store": "server"
+  },
+  "defaultAutoPull": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "defaultModelSelection": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "defaultProjectScripts": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "defaultRuntimeMode": {
+   "type": "enum",
+   "values": [
+    "read-only",
+    "approval-required",
+    "auto-accept-edits",
+    "auto",
+    "full-access"
+   ],
+   "default": "approval-required",
+   "store": "server"
+  },
+  "defaultTheme": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "defaultThreadEnvMode": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "deviceHosts": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "deviceOnboardingCompleted": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "easDeviceHosts": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "enableAgentBrowserAccess": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "enableAgentDeviceAccess": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "enableDeviceSupport": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "enablePreviewTunnel": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "enableProviderUpdateChecks": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "environmentIcon": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "fallbackModelSelection": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "fastWorktreeCheckout": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "favorites": {
+   "type": "list",
+   "default": [],
+   "store": "server"
+  },
+  "ghqCloneLayout": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "guestSharingEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "hiddenThreadTags": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "hideTaggedThreads": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "idleCompaction": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "keepAwakeWhileAgentsWork": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "linkedEnvironmentsEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "newWorktreesStartFromOrigin": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "observability": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "offeredSourceControlProviders": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "previousWorktreesDirectories": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "projectAgentBrowserAccessOverrides": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "projectAutoPullOverrides": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "projectScriptOverrides": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "projectSettingsFolded": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "projectSettingsOverrides": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "promptSuggestionsEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "providerHealthRefreshInterval": {
+   "type": "integer",
+   "default": 300,
+   "store": "server",
+   "min": 10,
+   "max": 86400
+  },
+  "providerModelPreferences": {
+   "type": "record",
+   "default": {},
+   "store": "server"
+  },
+  "pullRequestMergeMethod": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "removeAgentCreditsOnMerge": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "requireDeviceApproval": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "responseStreamingMode": {
+   "type": "enum",
+   "values": [
+    "turn",
+    "paragraph"
+   ],
+   "default": "paragraph",
+   "store": "server"
+  },
+  "reviewGuideInstructions": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "reviewGuideModelSelection": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "reviewGuidesEnabled": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "sidebarAutoSettleAfterDays": {
+   "type": "integer",
+   "default": 7,
+   "store": "server",
+   "min": 0,
+   "max": 365
+  },
+  "sidebarAutoSettleKeepPullRequests": {
+   "type": "boolean",
+   "default": false,
+   "store": "server"
+  },
+  "sidebarAutoSettleOnMerge": {
+   "type": "boolean",
+   "default": true,
+   "store": "server"
+  },
+  "simlockDeviceHosts": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "simlockDeviceHostsEnabled": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "snoozeLimitedThreads": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "snoozePresets": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "sourceControlWriterModelSelection": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "sourceControlWritingStyle": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "speechAcceleration": {
+   "type": "enum",
+   "values": [
+    "auto",
+    "cpu",
+    "gpu"
+   ],
+   "default": "auto",
+   "store": "server"
+  },
+  "speechModelId": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "speechModelUnloadTimeout": {
+   "type": "enum",
+   "values": [
+    "never",
+    "min_5",
+    "min_15",
+    "min_30",
+    "hour_1"
+   ],
+   "default": "min_15",
+   "store": "server"
+  },
+  "speechPostProcessingModelSelection": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "speechProjectCustomWords": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "storageCleanup": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "textGenerationModelSelection": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "threadTitleInstructions": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "usageHistoryRetentionDays": {
+   "type": "integer",
+   "default": 92,
+   "store": "server",
+   "min": 1,
+   "max": 3650
+  },
+  "usageModelAliases": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "usageModelFilter": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "usagePriceOverrides": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "worktreeCleanup": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "worktreeSubmodules": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  },
+  "worktreesDirectory": {
+   "type": "any",
+   "default": null,
+   "store": "server"
+  }
+ },
+ "policy": {
+  "limits.maxRuntimeMode": {
+   "type": "enum",
+   "values": [
+    "read-only",
+    "approval-required",
+    "auto-accept-edits",
+    "auto",
+    "full-access"
+   ],
+   "default": "full-access",
+   "store": "policy"
+  }
+ }
+}

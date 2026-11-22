@@ -765,6 +765,9 @@ fn begin_run(
                 .one()?
                 .filter(|row| text_of(row, "userId").as_deref() == Some(request.user_id.as_str()))
                 .ok_or_else(|| Error::new(format!("there is no agent conversation {conversation_id}")))?;
+            if !crate::conversation::uses_native(&row) {
+                return Err(Error::new("use ConversationServices.start#Run for this conversation"));
+            }
             if let Some(active) = text_of(&row, "activeRunId") {
                 let state = load_run(facade, &active)?.map(|run| run.state);
                 match state {
@@ -943,6 +946,7 @@ fn take_active_in_tx(facade: &EntityFacade, conversation_id: &str, run_id: &str)
     let updated = facade
         .find(CONVERSATION)?
         .eq("conversationId", Value::string(conversation_id))
+        .condition(crate::conversation::native_condition())
         .condition(Condition::or(vec![
             Condition::is_null("activeRunId"),
             Condition::equals("activeRunId", Value::string(run_id)),
@@ -957,6 +961,7 @@ fn take_active_in_tx(facade: &EntityFacade, conversation_id: &str, run_id: &str)
     Ok(facade
         .find(CONVERSATION)?
         .eq("conversationId", Value::string(conversation_id))
+        .condition(crate::conversation::native_condition())
         .disable_authz()
         .one()?
         .and_then(|row| text_of(&row, "activeRunId"))

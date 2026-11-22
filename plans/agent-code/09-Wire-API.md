@@ -18,8 +18,10 @@ environment,auth,clientRpcPermissions}.ts`, `t3:apps/server/src/ws.ts`, `t3:apps
 
 ### 2.1 Route and auth
 
-- Route `GET /agentws` in `crates/moqui-host/src/http.rs`, handler `crates/moqui-code/src/ws/` (registered by the
-  native component, as `/termws` is by `moqui-host`).
+- Route `GET /agentws` in `crates/moqui-host/src/http.rs`. The transport (upgrade, auth, ping, recheck) is
+  `crates/moqui-host/src/agentws.rs`, because only `moqui-host` may depend on Tokio and axum. The frames, scopes and
+  limits are `crates/moqui-code/src/ws.rs`, with no transport. On while the endpoint's `enabled` is `true`, or `dev`
+  (the default) on a dev instance.
 - Auth, as `/notws`: origin check, then the session cookie, else a `login_key` (device or link key). For a browser on
   another origin (none allowed by default) or for a peer link: a ticket from `POST /rest/s1/code/wsTicket` (5 min, one
   use, names its use `rpc` or `media`), passed as `?ticket=`.

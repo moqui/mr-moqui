@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <service verb="get" noun="Settings" type="rust" location="moqui_code::services::get_settings"
+            transaction="ignore">
+        <description>Agent Code settings (plans/agent-code/10-Web-UI.md section 9) for a user with AgentCodeUse. kind
+            client: the current user's, each stored one or its default (device settings answer their default; each
+            device keeps its own). kind server: the environment's. kind schema: the names, types, defaults and stores
+            of settings-schema.json.</description>
+        <in-parameters><parameter name="kind" default-value="client"/></in-parameters>
+        <out-parameters><parameter name="settings" type="Map"/></out-parameters>
+    </service>
+
+    <service verb="update" noun="Settings" type="rust" location="moqui_code::services::update_settings"
+            transaction="ignore">
+        <description>Change Agent Code settings. patch maps names to values; a null value restores the default. Each
+            name and value is checked against settings-schema.json, and an unknown name, a device setting or a value
+            of the wrong type is refused before anything is stored. kind client changes the current user's (as
+            UserPreference code.name, AgentCodeUse); kind server and kind policy need AgentCodeAdmin.</description>
+        <in-parameters>
+            <parameter name="kind" default-value="client"/>
+            <parameter name="patch" type="Map" required="true" allow-html="any"/>
+        </in-parameters>
+    </service>
+</services>

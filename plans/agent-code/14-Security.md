@@ -167,7 +167,7 @@ desktops stay on the baseline (one user owns the machine there).
 | Every command (`commandId`, type, user, thread) | `AgentCodeCommand` (7 days), plus `AgentAuditLog` for admin actions on other users' threads |
 | Approvals and decisions | `AgentApproval` (existing) |
 | Terminal sessions | `TerminalSession` (existing) with `conversationId` |
-| Pairing, device approve, revoke, link, unlink | `AgentCodeAccessLog` (new: logId, userId, actionEnumId, targetText, clientIp, date) |
+| Pairing, device approve, revoke, link, unlink | `AgentCodeAccessLog` (new: logId, userId, actionEnumId, targetText, clientIp, logDate) |
 | Runtime mode raised to `full-access` | `AgentCodeAccessLog` |
 | Webhook deliveries | `AgentWebhookDelivery` |
 | Authz failures | `ArtifactAuthzFailure` (existing) |

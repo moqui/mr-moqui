@@ -95,6 +95,8 @@ const LOCATIONS: &[(&str, &str)] = &[
     // CalcGrid (crates/moqui-calc), linked under the host's xlsx feature
     ("moqui_calc::", "calc"),
     ("moqui_dav::", "dav"),
+    // Agent Code (crates/moqui-code), the host's code feature
+    ("moqui_code::", "code"),
     ("moqui_vault_server::", "vault"),
     ("moqui_instance::", "instances"),
     ("moqui_devkit::", "devkit"),

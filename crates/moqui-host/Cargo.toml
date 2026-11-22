@@ -19,9 +19,9 @@ default = ["maximal", "devtools"]
 # dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, the terminal client, and
 # gRPC (the cluster's transport, and the OTLP receiver when it is turned on).
-lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push", "backup-s3", "grpc", "vault", "manage"]
+lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "code", "test-client", "telemetry", "web-push", "backup-s3", "grpc", "vault", "manage"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
-enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "backup-s3", "rtc", "sip", "channels", "xmpp", "edge", "vault", "instances", "manage"]
+enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "code", "test-client", "telemetry", "grpc", "web-push", "backup-s3", "rtc", "sip", "channels", "xmpp", "edge", "vault", "instances", "manage"]
 # Maximal package (`./moq build`, the default, and the debug build), with devtools: everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
@@ -86,6 +86,8 @@ backup-s3 = ["moqui-core/backup-s3"]
 xlsx = ["moqui-core/xlsx", "moqui-report/xlsx", "dep:moqui-calc"]
 # The agents and the model providers (crates/moqui-llm).
 llm = ["dep:moqui-llm"]
+# Agent Code (crates/moqui-code): its commands, change feed, effects and settings, and the /agentws socket with axum.
+code = ["dep:moqui-code"]
 # Calls (crates/moqui-rtc, plans/archive/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
 # on /notws (src/notws/rtc.rs). The media socket starts only when media-server@port is set. In Maximal, Enterprise and
 # Debug; not Lite.
@@ -155,6 +157,7 @@ test-client = ["dep:tungstenite", "dep:webpki-roots", "dep:regex", "dep:getrando
 moqui-core = { workspace = true, features = ["http", "cluster-tls"] }
 moqui-lib = { workspace = true, features = ["http"] }
 moqui-llm = { workspace = true, optional = true }
+moqui-code = { workspace = true, optional = true }
 moqui-git = { workspace = true, optional = true }
 moqui-mail = { workspace = true, optional = true }
 # Reports, dashboards, alerts and monitoring keys (crates/moqui-report), in every build.

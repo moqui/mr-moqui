@@ -34,7 +34,7 @@ use moqui_lib::reconnect::Backoff;
 use moqui_lib::sync::lock;
 
 /// The paths a page may open a socket to.
-pub const PATHS: [&str; 3] = ["/notws", "/callws", "/termws"];
+pub const PATHS: [&str; 4] = ["/notws", "/callws", "/termws", "/agentws"];
 
 /// How long a read waits before the thread looks for frames to send and for a close.
 const POLL: Duration = Duration::from_millis(50);

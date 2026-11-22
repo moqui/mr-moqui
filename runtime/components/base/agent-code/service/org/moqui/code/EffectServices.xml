@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <service verb="run" noun="Effects" type="rust" location="moqui_code::services::run_effects"
+            transaction="ignore" allow-remote="false">
+        <description>One pass of the Agent Code effect worker (plans/agent-code/02-Orchestration.md section 1): claim
+            the due AgentCodeEffect rows with a lease, run the handler of each type, and mark each done, queued again
+            after a backoff, or failed after 8 tries. While the oldest open effect of a thread waits, its later ones
+            wait too. A failing effect is logged with its id and type and the pass goes on. Not allowed
+            remotely.</description>
+        <out-parameters>
+            <parameter name="done" type="Integer"/>
+            <parameter name="retried" type="Integer"/>
+            <parameter name="failed" type="Integer"/>
+        </out-parameters>
+    </service>
+
+    <service verb="clean" noun="AgentCodeFeed" type="rust" location="moqui_code::services::clean_feed"
+            transaction="ignore" allow-remote="false">
+        <description>Delete done effects and command receipts older than 7 days, and changes older than 1 day. Failed
+            effects are kept. Each part logs its own failure and the others go on.</description>
+        <out-parameters>
+            <parameter name="effects" type="Integer"/>
+            <parameter name="receipts" type="Integer"/>
+            <parameter name="changes" type="Integer"/>
+        </out-parameters>
+    </service>
+</services>

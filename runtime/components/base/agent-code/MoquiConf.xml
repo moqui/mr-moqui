@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- No copyright or license for configuration file, details here are not considered a creative work. -->
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-moqui-conf.xsd">
+    <!-- The Agent Code screens (/qapps/code) come in phase P1; the /agentws socket, the descriptor and the services are
+        here now. The switch is the /agentws endpoint of the webroot webapp in MoquiDefaultConf.xml. -->
+</moqui-conf>

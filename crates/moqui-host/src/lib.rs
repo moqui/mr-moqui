@@ -29,6 +29,9 @@
 // The agent runtime. Naming it keeps its moqui_core::llm_hooks entry in the binary.
 #[cfg(feature = "llm")]
 use moqui_llm as _;
+// Agent Code's services, the same way.
+#[cfg(feature = "code")]
+use moqui_code as _;
 // git:// locations and the git services. Naming it keeps its moqui_core::extension entry in the binary.
 #[cfg(feature = "git")]
 use moqui_git as _;
@@ -187,6 +190,8 @@ mod guard_share;
 mod http;
 #[cfg(feature = "axum")]
 pub mod in_process;
+#[cfg(all(feature = "axum", feature = "code"))]
+mod agentws;
 #[cfg(all(feature = "axum", feature = "llm"))]
 mod llm;
 #[cfg(feature = "axum")]

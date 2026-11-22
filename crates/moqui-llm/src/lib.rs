@@ -32,6 +32,7 @@ pub mod assist;
 pub mod chat;
 pub mod conf;
 pub mod constitution;
+pub mod conversation;
 pub mod embed;
 pub mod facts;
 pub mod gateway;

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+
+<!-- Agent Code types (plans/agent-code/01-Data-Mapping.md section 12): engines, drivers, modes, kinds and the
+    statuses of the new entities. The run statuses Agent Code adds (queued, prepared, ...) come with the harness engine,
+    with llm/run/state.rs. -->
+<entity-facade-xml type="seed">
+
+    <moqui.basic.EnumerationType enumTypeId="AgentEngine" description="Agent Engine"/>
+    <moqui.basic.Enumeration enumId="AgengNative" enumTypeId="AgentEngine" enumCode="native" sequenceNum="1" description="Native (moqui-llm)"/>
+    <moqui.basic.Enumeration enumId="AgengHarness" enumTypeId="AgentEngine" enumCode="harness" sequenceNum="2" description="Harness"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentHarnessDriver" description="Agent Harness Driver"/>
+    <moqui.basic.Enumeration enumId="AghdNative" enumTypeId="AgentHarnessDriver" enumCode="native" sequenceNum="1" description="MR Moqui"/>
+    <moqui.basic.Enumeration enumId="AghdCodex" enumTypeId="AgentHarnessDriver" enumCode="codex" sequenceNum="2" description="Codex"/>
+    <moqui.basic.Enumeration enumId="AghdClaude" enumTypeId="AgentHarnessDriver" enumCode="claudeAgent" sequenceNum="3" description="Claude"/>
+    <moqui.basic.Enumeration enumId="AghdCursor" enumTypeId="AgentHarnessDriver" enumCode="cursor" sequenceNum="4" description="Cursor"/>
+    <moqui.basic.Enumeration enumId="AghdGrok" enumTypeId="AgentHarnessDriver" enumCode="grok" sequenceNum="5" description="Grok"/>
+    <moqui.basic.Enumeration enumId="AghdFx" enumTypeId="AgentHarnessDriver" enumCode="fx" sequenceNum="6" description="Fx"/>
+    <moqui.basic.Enumeration enumId="AghdOpenCode" enumTypeId="AgentHarnessDriver" enumCode="opencode" sequenceNum="7" description="OpenCode"/>
+    <moqui.basic.Enumeration enumId="AghdAntigravity" enumTypeId="AgentHarnessDriver" enumCode="antigravity" sequenceNum="8" description="Antigravity"/>
+    <moqui.basic.Enumeration enumId="AghdKiro" enumTypeId="AgentHarnessDriver" enumCode="kiro" sequenceNum="9" description="Kiro"/>
+    <moqui.basic.Enumeration enumId="AghdPi" enumTypeId="AgentHarnessDriver" enumCode="pi" sequenceNum="10" description="Pi"/>
+    <moqui.basic.Enumeration enumId="AghdMuse" enumTypeId="AgentHarnessDriver" enumCode="muse" sequenceNum="11" description="Muse"/>
+    <moqui.basic.Enumeration enumId="AghdAcpRegistry" enumTypeId="AgentHarnessDriver" enumCode="acpRegistry" sequenceNum="12" description="ACP Registry"/>
+    <moqui.basic.Enumeration enumId="AghdAcpLocal" enumTypeId="AgentHarnessDriver" enumCode="acp" sequenceNum="13" description="ACP (local)"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentRuntimeMode" description="Agent Runtime Mode"/>
+    <moqui.basic.Enumeration enumId="AgrmReadOnly" enumTypeId="AgentRuntimeMode" enumCode="read-only" sequenceNum="1" description="Read only"/>
+    <moqui.basic.Enumeration enumId="AgrmApproval" enumTypeId="AgentRuntimeMode" enumCode="approval-required" sequenceNum="2" description="Approval required"/>
+    <moqui.basic.Enumeration enumId="AgrmAutoEdits" enumTypeId="AgentRuntimeMode" enumCode="auto-accept-edits" sequenceNum="3" description="Auto-accept edits"/>
+    <moqui.basic.Enumeration enumId="AgrmAuto" enumTypeId="AgentRuntimeMode" enumCode="auto" sequenceNum="4" description="Auto"/>
+    <moqui.basic.Enumeration enumId="AgrmFull" enumTypeId="AgentRuntimeMode" enumCode="full-access" sequenceNum="5" description="Full access"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentInteractionMode" description="Agent Interaction Mode"/>
+    <moqui.basic.Enumeration enumId="AgimDefault" enumTypeId="AgentInteractionMode" enumCode="default" sequenceNum="1" description="Default"/>
+    <moqui.basic.Enumeration enumId="AgimPlan" enumTypeId="AgentInteractionMode" enumCode="plan" sequenceNum="2" description="Plan"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentDispatchMode" description="Agent Dispatch Mode"/>
+    <moqui.basic.Enumeration enumId="AgdmQueue" enumTypeId="AgentDispatchMode" enumCode="queue" sequenceNum="1" description="Queue"/>
+    <moqui.basic.Enumeration enumId="AgdmSteer" enumTypeId="AgentDispatchMode" enumCode="steer" sequenceNum="2" description="Steer"/>
+    <moqui.basic.Enumeration enumId="AgdmInterrupt" enumTypeId="AgentDispatchMode" enumCode="interrupt" sequenceNum="3" description="Interrupt"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentConversationNotify" description="Agent Thread Notification"/>
+    <moqui.basic.Enumeration enumId="AgcnDefault" enumTypeId="AgentConversationNotify" enumCode="default" sequenceNum="1" description="Default"/>
+    <moqui.basic.Enumeration enumId="AgcnAll" enumTypeId="AgentConversationNotify" enumCode="all" sequenceNum="2" description="All"/>
+    <moqui.basic.Enumeration enumId="AgcnNone" enumTypeId="AgentConversationNotify" enumCode="none" sequenceNum="3" description="None"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentTitleSource" description="Agent Thread Title Source"/>
+    <moqui.basic.Enumeration enumId="AgtsUser" enumTypeId="AgentTitleSource" enumCode="user" sequenceNum="1" description="User"/>
+    <moqui.basic.Enumeration enumId="AgtsGenerated" enumTypeId="AgentTitleSource" enumCode="generated" sequenceNum="2" description="Generated"/>
+    <moqui.basic.Enumeration enumId="AgtsDefault" enumTypeId="AgentTitleSource" enumCode="default" sequenceNum="3" description="Default"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentCreationSource" description="Agent Thread Creation Source"/>
+    <moqui.basic.Enumeration enumId="AgcsUser" enumTypeId="AgentCreationSource" enumCode="user" sequenceNum="1" description="User"/>
+    <moqui.basic.Enumeration enumId="AgcsAgent" enumTypeId="AgentCreationSource" enumCode="agent" sequenceNum="2" description="Agent"/>
+    <moqui.basic.Enumeration enumId="AgcsAutomation" enumTypeId="AgentCreationSource" enumCode="automation" sequenceNum="3" description="Automation"/>
+    <moqui.basic.Enumeration enumId="AgcsWebhook" enumTypeId="AgentCreationSource" enumCode="webhook" sequenceNum="4" description="Webhook"/>
+    <moqui.basic.Enumeration enumId="AgcsImport" enumTypeId="AgentCreationSource" enumCode="import" sequenceNum="5" description="Import"/>
+    <moqui.basic.Enumeration enumId="AgcsLink" enumTypeId="AgentCreationSource" enumCode="link" sequenceNum="6" description="Linked environment"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentConversationRelation" description="Agent Thread Relation"/>
+    <moqui.basic.Enumeration enumId="AgcrFork" enumTypeId="AgentConversationRelation" enumCode="fork" sequenceNum="1" description="Fork"/>
+    <moqui.basic.Enumeration enumId="AgcrSideChat" enumTypeId="AgentConversationRelation" enumCode="side-chat" sequenceNum="2" description="Side chat"/>
+    <moqui.basic.Enumeration enumId="AgcrDelegated" enumTypeId="AgentConversationRelation" enumCode="delegated" sequenceNum="3" description="Delegated task"/>
+    <moqui.basic.Enumeration enumId="AgcrSubagent" enumTypeId="AgentConversationRelation" enumCode="subagent" sequenceNum="4" description="Subagent"/>
+    <moqui.basic.Enumeration enumId="AgcrHandoff" enumTypeId="AgentConversationRelation" enumCode="handoff" sequenceNum="5" description="Handoff"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentWorkRootKind" description="Agent Work Root Kind"/>
+    <moqui.basic.Enumeration enumId="AgwkLocal" enumTypeId="AgentWorkRootKind" enumCode="local" sequenceNum="1" description="Local"/>
+    <moqui.basic.Enumeration enumId="AgwkWorktree" enumTypeId="AgentWorkRootKind" enumCode="worktree" sequenceNum="2" description="Worktree"/>
+    <moqui.basic.Enumeration enumId="AgwkScratch" enumTypeId="AgentWorkRootKind" enumCode="scratch" sequenceNum="3" description="Scratch"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentProjectRole" description="Agent Project Role"/>
+    <moqui.basic.Enumeration enumId="AgpmOwner" enumTypeId="AgentProjectRole" enumCode="owner" sequenceNum="1" description="Owner"/>
+    <moqui.basic.Enumeration enumId="AgpmMember" enumTypeId="AgentProjectRole" enumCode="member" sequenceNum="2" description="Member"/>
+    <moqui.basic.Enumeration enumId="AgpmViewer" enumTypeId="AgentProjectRole" enumCode="viewer" sequenceNum="3" description="Viewer"/>
+
+    <moqui.basic.EnumerationType enumTypeId="AgentCodeAccessAction" description="Agent Code Access Action"/>
+    <moqui.basic.Enumeration enumId="AgaaPair" enumTypeId="AgentCodeAccessAction" enumCode="pair" sequenceNum="1" description="Pair"/>
+    <moqui.basic.Enumeration enumId="AgaaDeviceApprove" enumTypeId="AgentCodeAccessAction" enumCode="device-approve" sequenceNum="2" description="Approve device"/>
+    <moqui.basic.Enumeration enumId="AgaaRevoke" enumTypeId="AgentCodeAccessAction" enumCode="revoke" sequenceNum="3" description="Revoke"/>
+    <moqui.basic.Enumeration enumId="AgaaLink" enumTypeId="AgentCodeAccessAction" enumCode="link" sequenceNum="4" description="Link"/>
+    <moqui.basic.Enumeration enumId="AgaaUnlink" enumTypeId="AgentCodeAccessAction" enumCode="unlink" sequenceNum="5" description="Unlink"/>
+    <moqui.basic.Enumeration enumId="AgaaFullAccess" enumTypeId="AgentCodeAccessAction" enumCode="mode-full-access" sequenceNum="6" description="Full access mode"/>
+
+    <moqui.basic.Enumeration enumId="AgsfCode" enumTypeId="AgentSurface" enumCode="code" sequenceNum="20" description="Agent Code"/>
+    <moqui.basic.StatusItem statusId="AgcDeleted" statusTypeId="AgentConversation" statusCode="deleted" sequenceNum="3" description="Deleted"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgcActive" toStatusId="AgcDeleted" transitionName="Delete"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgcArchived" toStatusId="AgcDeleted" transitionName="Delete"/>
+
+    <moqui.basic.StatusType statusTypeId="AgentCodeEffect" description="Agent Code Effect"/>
+    <moqui.basic.StatusItem statusId="AgceQueued" statusTypeId="AgentCodeEffect" statusCode="queued" sequenceNum="1" description="Queued"/>
+    <moqui.basic.StatusItem statusId="AgceRunning" statusTypeId="AgentCodeEffect" statusCode="running" sequenceNum="2" description="Running"/>
+    <moqui.basic.StatusItem statusId="AgceDone" statusTypeId="AgentCodeEffect" statusCode="done" sequenceNum="3" description="Done"/>
+    <moqui.basic.StatusItem statusId="AgceFailed" statusTypeId="AgentCodeEffect" statusCode="failed" sequenceNum="4" description="Failed"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgceQueued" toStatusId="AgceRunning" transitionName="Claim"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgceRunning" toStatusId="AgceQueued" transitionName="Retry"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgceRunning" toStatusId="AgceDone" transitionName="Finish"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgceRunning" toStatusId="AgceFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgceFailed" toStatusId="AgceQueued" transitionName="Retry"/>
+</entity-facade-xml>

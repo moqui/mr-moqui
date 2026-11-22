@@ -585,6 +585,10 @@
             <!-- The browser terminal: the terminal client on the /termws WebSocket, opened from the account menu's Terminal
                 UI (/qapps/Terminal) by any signed in user; enabled="false" turns the socket and the menu item off. -->
             <endpoint path="/termws" enabled="true"/>
+            <!-- Agent Code (plans/agent-code): the /agentws socket and GET /.well-known/moqui/agent-code. enabled: true,
+                false, or dev (on a dev instance only, the default until the app is finished). Each user still needs
+                AgentCodeUse. -->
+            <endpoint path="/agentws" enabled="dev"/>
 
             <!-- Default response headers, for override keyed on type+name -->
             <response-header type="web-resource-inline" name="Cache-Control" value="max-age=86400, must-revalidate, public"/>
@@ -722,7 +726,7 @@
             to either list with authz child elements, privileged-group and sealed-permission, never by repeating the
             attribute, which would replace these defaults. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,INSTANCE_ADMIN,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN,REPORT_SAVE_LOCATION,VAULT_ADMIN,VAULT_RECOVERY"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,TERMINAL_HOST,LOAD_RUNNER,INSTANCE_ADMIN,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,CONF_EDIT,DATABASE_ADMIN,DATABASE_EXTERNAL,ADMIN_CONSTITUTION_GLOBAL,ADMIN_IDENTITY_GLOBAL,ADMIN_ACCESS_MANAGE,ADMIN_BACKUP_DOWNLOAD,GIT_CI_ADMIN,REPORT_SAVE_LOCATION,VAULT_ADMIN,VAULT_RECOVERY,AgentCodeHost,AgentCodeAdmin"/>
     </user-facade>
 
     <!-- use-transaction-cache: the transaction cache (services marked transaction="cache" or "force-cache" hold their

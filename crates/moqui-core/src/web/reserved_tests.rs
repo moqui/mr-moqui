@@ -55,6 +55,7 @@ fn well_known_and_ci_are_reserved_per_sub_path_for_pages_and_whole_for_names() {
         "/.well-known/agent-card.json",
         "/.well-known/mcp.json",
         "/.well-known/ai-catalog.json",
+        "/.well-known/moqui/agent-code",
         "/ci/runner/jobs/j1/log",
         "/ci/runner",
         "/git/acme/widget.git/info/refs",

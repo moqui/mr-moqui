@@ -663,7 +663,7 @@ where
         .is_some_and(|value| value.trim_start().to_ascii_lowercase().starts_with("multipart/"));
     let socket = matches!(
         request.uri().path(),
-        "/notws" | "/termws" | "/xmpp-websocket" | "/callws"
+        "/notws" | "/termws" | "/agentws" | "/xmpp-websocket" | "/callws"
     );
     // git at a page's URL on a public-site host is served as the same request under /git/, with its exemption from the
     // deadline (docs/interfaces/Git-Hosting.md, Clone URLs); web protection has checked it by the path it came with,

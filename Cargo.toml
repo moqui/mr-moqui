@@ -16,6 +16,7 @@ members = [
     "crates/moqui-core",
     "crates/moqui-llm",
     "crates/moqui-git",
+    "crates/moqui-code",
     "crates/moqui-mail",
     "crates/moqui-report",
     "crates/moqui-collab",
@@ -85,6 +86,7 @@ moqui-llm = { path = "crates/moqui-llm" }
 # git:// locations, the git services and the git server, on moqui-core (plans/archive/Crate-Split.md); the host links it
 # under its git feature.
 moqui-git = { path = "crates/moqui-git" }
+moqui-code = { path = "crates/moqui-code" }
 # The email services, on moqui-core (plans/archive/Crate-Split.md); the host links it under its smtp feature, and turns
 # on its imap feature under its own. default-features off so a host without imap leaves it out.
 moqui-mail = { path = "crates/moqui-mail", default-features = false }

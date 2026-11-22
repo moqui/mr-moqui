@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+
+<!-- Agent Code fields on the agent runtime and framework entities (plans/agent-code/01-Data-Mapping.md sections 3.2
+    and 11). -->
+
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
+
+    <extend-entity entity-name="AgentToolCall" package="moqui.agent">
+        <field name="parentToolCallId" type="id"/>
+        <field name="harnessItemRef" type="text-medium"/>
+        <field name="toolKindEnumId" type="id"><description>AgtkCommand, AgtkFileChange, AgtkFileRead, AgtkSearch, AgtkWeb, AgtkMcp, AgtkDynamic, AgtkSubagent, AgtkPreview, AgtkDevice, AgtkOrchestration</description></field>
+        <field name="cwd" type="text-medium"/>
+        <field name="exitCode" type="number-integer"/>
+        <field name="durationMs" type="number-integer"/>
+        <field name="outputBytes" type="number-integer"/>
+        <field name="nodeStatusEnumId" type="id"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentMessagePart" package="moqui.agent">
+        <field name="phaseEnumId" type="id"/>
+        <field name="harnessItemRef" type="text-medium"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentApproval" package="moqui.agent">
+        <field name="scopeEnumId" type="id"><description>AgasOnce, AgasSession, AgasAlways</description></field>
+        <field name="decisionOptionsJson" type="text-very-long"/>
+        <field name="harnessRequestRef" type="text-medium"/>
+        <field name="notResumable" type="text-indicator"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentQuestion" package="moqui.agent">
+        <field name="questionKind" type="text-medium"><description>question, secret, link, dialog</description></field>
+        <field name="harnessRequestRef" type="text-medium"/>
+        <field name="dismissedDate" type="date-time"/>
+        <field name="asyncAnswer" type="text-indicator"><description>Codex answers by message</description></field>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentArtifact" package="moqui.agent">
+        <field name="statusId" type="id"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentMessage" package="moqui.agent">
+        <field name="senderConversationId" type="id"/>
+        <field name="guestMessageId" type="id"/>
+        <field name="linkedSenderJson" type="text-very-long"/>
+        <field name="outputSchemaJson" type="text-very-long"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentConversation" package="moqui.agent">
+        <field name="engineEnumId" type="id"/>
+        <field name="projectId" type="id"/>
+        <field name="workRootId" type="id"/>
+        <field name="branch" type="text-medium"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="harnessThreadId" type="id"/>
+        <field name="harnessModel" type="text-medium"/>
+        <field name="reasoningLevel" type="text-medium"/>
+        <field name="modelOptionsJson" type="text-very-long"/>
+        <field name="runtimeModeEnumId" type="id"/>
+        <field name="interactionModeEnumId" type="id"/>
+        <field name="titleSourceEnumId" type="id"/>
+        <field name="parentConversationId" type="id"/>
+        <field name="rootConversationId" type="id"/>
+        <field name="relationEnumId" type="id"/>
+        <field name="forkPointJson" type="text-very-long"/>
+        <field name="delegatedFromRunId" type="id"/>
+        <field name="delegatedFromToolCallId" type="id"/>
+        <field name="createdByKindEnumId" type="id"/>
+        <field name="creationSourceEnumId" type="id"/>
+        <field name="linkId" type="id"/>
+        <field name="remoteConversationId" type="id"/>
+        <field name="autoSettleDisabled" type="text-indicator"/>
+        <field name="streamingModeEnumId" type="id"/>
+        <field name="hostInstanceId" type="id"/>
+        <field name="archivedDate" type="date-time"/>
+        <field name="deletedDate" type="date-time"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentRun" package="moqui.agent">
+        <field name="runOrdinal" type="number-integer"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="harnessThreadId" type="id"/>
+        <field name="harnessModel" type="text-medium"/>
+        <field name="reasoningLevel" type="text-medium"/>
+        <field name="runtimeModeEnumId" type="id"/>
+        <field name="interactionModeEnumId" type="id"/>
+        <field name="dispatchModeEnumId" type="id"/>
+        <field name="queueOrderKey" type="text-medium"/>
+        <field name="queueHeld" type="text-indicator"/>
+        <field name="outputSchemaJson" type="text-very-long"/>
+        <field name="checkpointId" type="id"/>
+        <field name="handoffId" type="id"/>
+        <field name="sourcePlanArtifactId" type="id"/>
+        <field name="continuationOfRunId" type="id"/>
+        <field name="continuationKindEnumId" type="id"/>
+        <field name="limitResetDate" type="date-time"/>
+        <field name="freshContext" type="text-indicator"/>
+        <field name="idleCompaction" type="text-indicator"/>
+        <field name="senderConversationId" type="id"/>
+        <field name="guestMessageId" type="id"/>
+        <field name="notifyOnDone" type="text-indicator"/>
+        <field name="hostInstanceId" type="id"/>
+    </extend-entity>
+
+    <extend-entity entity-name="AgentTrigger" package="moqui.agent">
+        <field name="prompt" type="text-very-long"/>
+        <field name="intervalSeconds" type="number-integer"/>
+        <field name="timeOfDay" type="text-medium"/>
+        <field name="weekdays" type="text-medium"/>
+        <field name="runAtDate" type="date-time"/>
+        <field name="projectId" type="id"/>
+        <field name="conversationId" type="id"/>
+        <field name="threadModeEnumId" type="id"/>
+        <field name="workspaceStrategyJson" type="text-very-long"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="modelId" type="id"/>
+        <field name="harnessModel" type="text-medium"/>
+        <field name="runtimeModeEnumId" type="id"/>
+        <field name="interactionModeEnumId" type="id"/>
+        <field name="createdByUserId" type="id"/>
+        <field name="creationSourceEnumId" type="id"/>
+        <field name="nextRunDate" type="date-time"/>
+        <field name="lastRunStatusEnumId" type="id"/>
+        <field name="runCount" type="number-integer"/>
+    </extend-entity>
+
+    <extend-entity entity-name="LlmModel" package="moqui.llm">
+        <field name="providerInstanceId" type="id"/>
+        <field name="harnessSlug" type="text-medium"/>
+        <field name="serviceTiersJson" type="text-very-long"/>
+    </extend-entity>
+
+    <extend-entity entity-name="TerminalSession" package="moqui.terminal">
+        <field name="conversationId" type="id"/>
+        <field name="clientTerminalId" type="id"/>
+        <field name="label" type="text-long"/>
+        <field name="stopOnSettle" type="text-indicator"/>
+        <field name="workRootId" type="id"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="historyLocation" type="text-medium"/>
+    </extend-entity>
+
+    <extend-entity entity-name="WebPushSubscription" package="moqui.security.user">
+        <field name="purposeEnumId" type="id"/>
+        <field name="activityRef" type="text-medium"/>
+        <field name="agentPrefs" type="text-medium"><description>JSON: liveUpdatesEnabled, notificationsEnabled, notifyOn* flags, pushToStartToken</description></field>
+    </extend-entity>
+</entities>
