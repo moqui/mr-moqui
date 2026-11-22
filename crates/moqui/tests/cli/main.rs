@@ -74,3 +74,22 @@ fn installed_dispatch_resolves_the_runtime_before_a_command_from_an_empty_direct
     assert!(!empty.join("runtime").exists());
     std::fs::remove_dir_all(empty).unwrap();
 }
+
+#[cfg(windows)]
+#[test]
+fn per_user_commands_report_the_platform_limit_before_creating_a_runtime() {
+    let empty = std::env::temp_dir().join(format!("moqui-user-platform-{}", std::process::id()));
+    std::fs::create_dir_all(&empty).unwrap();
+    for args in [&["install"][..], &["--installed"], &["trust-dev-cert"], &["dev-cert", "--shared"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_moqui"))
+            .args(args)
+            .current_dir(&empty)
+            .env("MOQUI_SHARED_RUNTIME", empty.join("shared"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("macOS and Linux"));
+    }
+    assert_eq!(std::fs::read_dir(&empty).unwrap().count(), 0);
+    std::fs::remove_dir(empty).unwrap();
+}

@@ -886,6 +886,14 @@ where
             dispatch_types(rest)?;
             Ok(None)
         }
+        [command, ..] if command == "trust-dev-cert" => {
+            let message = if cfg!(any(target_os = "macos", target_os = "linux")) {
+                "run ./moq trust-dev-cert to configure per-user certificate trust"
+            } else {
+                "per-user development certificate trust is supported on macOS and Linux"
+            };
+            Err(moqui_lib::error::Error::new(message))
+        }
         [command, rest @ ..] if command == "dev-cert" => {
             let shared = match rest {
                 [] => false,

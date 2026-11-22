@@ -924,6 +924,7 @@ fn is_known_command(name: &str) -> bool {
             | "refs"
             | "autodoc"
             | "lsp"
+            | "trust-dev-cert"
             | "dev-cert"
             | "install"
             | "embedded"

@@ -162,6 +162,16 @@ check "ambiguous alias gC" 2 'ambiguous: .*get-component' -- "$M" gC
 check "task --help" 0 'Options:' -- "$M" run --help
 check "help partial" 0 './moq component-create' -- "$M" help c-cr
 
+# A trust dry run and removal without an existing issuer touch no store or runtime.
+check "trust supports system removal" 0 'untrust' -- "$M" help trust-dev-cert
+check "missing shared root can be untrusted" 0 'No shared dev CA' -- \
+    env MOQUI_SHARED_RUNTIME="$FIX/no-signer" "$M" trust-dev-cert --untrust
+check "missing shared root stays absent" 1 '' -- test -e "$FIX/no-signer"
+check "a relative shared path cannot install trust" 1 'absolute directory' -- \
+    env MOQUI_SHARED_RUNTIME=relative "$M" trust-dev-cert
+check "trust dry run" 0 'would update dev CA trust' -- \
+    env MOQ_DRY_RUN=1 MOQUI_SHARED_RUNTIME="$FIX/no-signer" "$M" trust-dev-cert --system
+
 # ========== run and load ==========
 
 check "run options" 0 'export moqui_conf__webapp_list__webapp__WEBROOT__http_port=8081' -- dry "$M" run -p 8081 -D moqui_conf__instance__purpose=test lint --screens
