@@ -539,7 +539,7 @@ function revokeAccountAccess(p) {
             Object.entries(counts)
                 .map(([kind, count]) => kind + ": " + count)
                 .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
-        ).slice(0, 255) || ec.l10n.localize("Nothing to revoke"),
+        ).slice(0, 255) || "Nothing to revoke",
         reason || null
     )
     ec.logger.warn(
@@ -602,8 +602,8 @@ function revokeOwnAccess(p) {
             Object.entries(counts)
                 .map(([kind, count]) => kind + ": " + count)
                 .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
-        ).slice(0, 255) || ec.l10n.localize("Nothing to revoke"),
-        ec.l10n.localize("Signed out everywhere by the account itself")
+        ).slice(0, 255) || "Nothing to revoke",
+        "Signed out everywhere by the account itself"
     )
     ec.logger.warn("Account access of " + ec.user.username + " ended by its own sign out everywhere (" + JSON.stringify(counts) + ")")
     return {revokedCounts: counts, failedKinds: failed}

@@ -443,7 +443,7 @@ function described(definition, facts, stored, canTest) {
     const failedCheck = checkList.find(check => check.lastCheckPassed === false)
     if (state === "ready" && failedCheck) {
         state = "failing"
-        reason = ec.resource.expand("Its last check did not pass: ${check}", "", {check: failedCheck.title})
+        reason = ec.resource.expand("Its last check did not pass: ${check}", "", {check: failedCheck.title.toLowerCase()})
     }
     return {
         protocolKey: definition.protocolKey,

@@ -36,7 +36,7 @@
                 body={name:sharedTitle || '',weekdays:days,start:muteStart,end:muteEnd}
             }
             const saved=ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition:{id:definitionId || newId,type:sharedType,title:sharedTitle || definitionId || newId,
-                userGroupId:userGroupId || null,body,version:previous?previous.version:undefined},note:note || ec.l10n.localize('Updated shared alert item')}).call().definition
+                userGroupId:userGroupId || null,body,version:previous?previous.version:undefined},note:note || 'Updated shared alert item'}).call().definition
             definitionId=saved.id
         ]]></script></actions><default-response url="."><parameter name="definitionId"/><parameter name="sharedType"/></default-response>
     </transition>

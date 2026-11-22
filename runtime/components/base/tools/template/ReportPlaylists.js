@@ -118,7 +118,7 @@ function create(p) {
                 title,
                 body: {kind: "playlist", seconds, playlist: ids.map(definitionId => ({definitionId}))}
             },
-            note: ec.l10n.localize("Created dashboard playlist")
+            note: "Created dashboard playlist"
         })
         if (saved.failure) fail(saved.failure)
         return saved.out.definition.id

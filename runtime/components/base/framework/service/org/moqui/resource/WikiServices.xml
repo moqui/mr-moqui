@@ -2995,7 +2995,7 @@ along with this software (see the LICENSE.md file). If not, see
                         open.statusId = 'WprCancelled'
                         open.decidedByUserId = me
                         open.decidedDate = now
-                        open.decisionNote = ec.l10n.localize('Replaced by a newer request')
+                        open.decisionNote = 'Replaced by a newer request'
                         open.update()
                         if (open.notificationMessageId) ec.service.sync().name('org.moqui.resource.WikiServices.close#WikiPageReviewNotification')
                                 .parameter('notificationMessageId', open.notificationMessageId).call()

@@ -783,7 +783,8 @@ function testIdentityProvider(p) {
     const roles = roleMaps(authFlowId)
     const checkList = []
     const check = (name, ok, textOk, textFailed) => {
-        checkList.push({check: name, state: ok ? "ok" : "failed", text: ok ? textOk : textFailed})
+        // check names the check for code and specs; checkText is its name for the reader
+        checkList.push({check: name, checkText: ec.l10n.localize(name), state: ok ? "ok" : "failed", text: ok ? textOk : textFailed})
         return ok
     }
     const problem = incomplete(flow, subRow(flow) ? sub : null)
@@ -792,7 +793,7 @@ function testIdentityProvider(p) {
     const refusedGroups = Array.from(groups.values()).filter(row => !row.allowed)
     passed =
         check(
-            ec.l10n.localize("Role mappings"),
+            "Role mappings",
             !refusedGroups.length,
             roles.length ? ec.l10n.localize("Every mapped group may be given by a sign-in") : ec.l10n.localize("No role is mapped"),
             refusedGroups.map(row => row.reason).join("; ")

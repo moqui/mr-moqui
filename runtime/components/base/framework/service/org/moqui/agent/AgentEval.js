@@ -207,12 +207,12 @@ function live(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
 
 // ---- built-in service scorers: in input, output, groundTruth, runId, config; out score, reason
 const norm=t=>String(t??'').trim().toLowerCase().replace(/\s+/g,' ')
-function exactMatch(p){if(!p.groundTruth)return{score:0,reason:ec.l10n.localize('No expected output')};const ok=norm(p.output)===norm(p.groundTruth);return{score:ok?1:0,reason:ok?ec.l10n.localize('Matches the expected output'):ec.l10n.localize('Differs from the expected output')}}
+function exactMatch(p){if(!p.groundTruth)return{score:0,reason:'No expected output'};const ok=norm(p.output)===norm(p.groundTruth);return{score:ok?1:0,reason:ok?'Matches the expected output':'Differs from the expected output'}}
 // each line of groundTruth (or config.terms) is a phrase the output must contain; the score is the share found
-function contains(p){const terms=(p.config?.terms||String(p.groundTruth||'').split('\n')).map(norm).filter(Boolean);if(!terms.length)return{score:0,reason:ec.l10n.localize('No phrases to look for')}
+function contains(p){const terms=(p.config?.terms||String(p.groundTruth||'').split('\n')).map(norm).filter(Boolean);if(!terms.length)return{score:0,reason:'No phrases to look for'}
  const out=norm(p.output),missing=terms.filter(t=>!out.includes(t));return{score:(terms.length-missing.length)/terms.length,reason:missing.length?'Missing: '+missing.join('; '):'Contains every phrase'}}
 // config.tools (or the lines of groundTruth) are tools the run must have called
-function calledTool(p){if(!p.runId)return{score:0,reason:ec.l10n.localize('No run to check')};const want=(p.config?.tools||String(p.groundTruth||'').split('\n')).map(t=>String(t).trim()).filter(Boolean)
+function calledTool(p){if(!p.runId)return{score:0,reason:'No run to check'};const want=(p.config?.tools||String(p.groundTruth||'').split('\n')).map(t=>String(t).trim()).filter(Boolean)
  const used=new Set(rows('AgentToolCall',{runId:p.runId}).map(c=>c.toolName));if(!want.length)return{score:used.size?1:0,reason:used.size?'Called '+[...used].join(', '):'Called no tool'}
  const missing=want.filter(t=>!used.has(t));return{score:(want.length-missing.length)/want.length,reason:missing.length?'Did not call '+missing.join(', '):'Called '+want.join(', ')}}
 

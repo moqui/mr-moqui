@@ -46,7 +46,27 @@ function reasonCode(error) {
     const match = /(?:^|\s)([A-Z][A-Z0-9_]+): /.exec(String(error?.message ?? error ?? ""))
     return match ? match[1] : null
 }
-const isRefusal = error => refusalCodes.includes(reasonCode(error)) || refusalText.test(String(error?.message || ""))
+// The English originals of a message in the session's locale: a provider refuses through ec.l10n.localize, so its refusal
+// reads in the viewer's language, while refusalText is English. Only a failed provider asks, so the read is rare.
+function originalsOf(message) {
+    const locale = String(ec.user.locale || "")
+    // each message of the text (an owner's errors come joined by lines), without a reason code before it
+    const lines = String(message || "").split("\n").map(line => line.trim().replace(/^[A-Z][A-Z0-9_]+: /, "")).filter(Boolean)
+    if (!lines.length || !locale || /^en(_|$)/.test(locale)) return []
+    const already = ec.artifactExecution.disableAuthz()
+    try {
+        const rows = ec.entity.find("moqui.basic.LocalizedMessage").condition("locale", "in", [locale, locale.split("_")[0]])
+            .condition("localized", "in", lines).useCache(true).list()
+        return Array.from(rows, row => String(row.original))
+    } finally {
+        if (!already) ec.artifactExecution.enableAuthz()
+    }
+}
+const isRefusal = error => {
+    if (refusalCodes.includes(reasonCode(error))) return true
+    const message = String(error?.message || "")
+    return refusalText.test(message) || originalsOf(message).some(original => refusalText.test(original))
+}
 function requireOverview() {
     lib.signedIn()
     if (!ec.user.hasPermission(OVERVIEW)) denied("PERMISSION_DENIED", OVERVIEW + " is required")

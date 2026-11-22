@@ -48,6 +48,14 @@ const ownNames = value => {
     return Object.fromEntries(Object.keys(found).map(name => [name, found[name]]))
 }
 
+// A field's label, localized: a label a part composes from a prefix ("Connection: " + "Address", mr-mantle's
+// remoteFields) has no row of its own, so its two halves are localized apart.
+function labelText(label) {
+    const whole = ec.l10n.localize(label)
+    const parts = whole === label ? /^([^:]+): (.+)$/.exec(String(label)) : null
+    return parts ? ec.l10n.localize(parts[1]) + ": " + ec.l10n.localize(parts[2]) : whole
+}
+
 // ===== validation the kinds share =====
 // A host name or an IPv4 address, nothing else (no scheme, port, path or credentials).
 function hostText(value, what) {
@@ -260,7 +268,7 @@ function engine(def) {
                 .filter(entry => parts[partOf(entry)])
                 .map(entry => ({
                     name: entry.name,
-                    label: ec.l10n.localize(entry.label),
+                    label: labelText(entry.label),
                     kind: entry.kind,
                     value: shown(parts, entry),
                     endpoint: !!entry.endpoint,
@@ -272,7 +280,7 @@ function engine(def) {
                 .filter(entry => parts[partOf(entry)])
                 .map(entry => ({
                     name: entry.name,
-                    label: ec.l10n.localize(entry.label),
+                    label: labelText(entry.label),
                     secretSet: !!text(valueOf(parts, entry)),
                     fixed: fixedOf(entry, parts),
                     help: entry.help ? ec.l10n.localize(entry.help) : ""

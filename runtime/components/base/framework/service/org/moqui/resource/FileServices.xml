@@ -3067,7 +3067,7 @@ along with this software (see the LICENSE.md file). If not, see
             const who = String(uploaderName || '').trim().slice(0, 100)
             const out = ec.service.sync().name('org.moqui.resource.FileServices.upload#Resource').parameters({driveId: row.driveId, path: folder,
                 fileList: files, relativePathList: names, conflictPolicy: 'keepBoth', asInternal: true,
-                versionNote: who ? `Uploaded by ${who} through a link` : ec.l10n.localize('Uploaded through a link')}).disableAuthz().call()
+                versionNote: who ? `Uploaded by ${who} through a link` : 'Uploaded through a link'}).disableAuthz().call()
             // upload#Resource answers one item for each file, in order
             const taken = (out.uploadedList || []).map((item, index) => ({item, index})).filter(({item}) => item.outcome !== 'failed' && item.outcome !== 'skipped')
             if (taken.length) {

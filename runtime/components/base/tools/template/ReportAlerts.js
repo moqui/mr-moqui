@@ -122,7 +122,7 @@ function attempt(action) {
 }
 function number(value, name) {
     const parsed = Number(value)
-    if (value == null || text(value) === "" || !Number.isFinite(parsed)) fail(name + " must be a number")
+    if (value == null || text(value) === "" || !Number.isFinite(parsed)) fail(ec.resource.expand("${name} must be a number", "", {name}))
     return parsed
 }
 function object(json, name) {
@@ -130,9 +130,9 @@ function object(json, name) {
     try {
         value = JSON.parse(text(json) || "{}")
     } catch (error) {
-        fail(name + " must be JSON")
+        fail(ec.resource.expand("${name} must be JSON", "", {name}))
     }
-    if (!value || typeof value !== "object" || Array.isArray(value)) fail(name + " must be a JSON object")
+    if (!value || typeof value !== "object" || Array.isArray(value)) fail(ec.resource.expand("${name} must be a JSON object", "", {name}))
     return value
 }
 
@@ -801,7 +801,7 @@ function basis(m, p, body) {
         body.intervalSeconds = Number(interval?.value || plain(body.intervalSeconds) || 3600)
     } else body.intervalSeconds = Math.max(60, Math.round(number(text(p.intervalSeconds) || 60, ec.l10n.localize("The interval"))))
     for (const name of ["pendingSeconds", "keepFiringSeconds"]) {
-        const seconds = text(p[name]) ? number(p[name], "A duration") : 0
+        const seconds = text(p[name]) ? number(p[name], ec.l10n.localize("A duration")) : 0
         if (seconds < 0 || seconds > 604800) fail(ec.l10n.localize("A duration is 0 to 604800 seconds"))
         body[name] = Math.round(seconds)
     }
@@ -932,7 +932,7 @@ function storeAudience(p) {
                 body: fixedParts(m, body),
                 version: versionOf(p.expectedVersion, existing.version)
             },
-            note: ec.l10n.localize("Changed whom it tells")
+            note: "Changed whom it tells"
         })
         if (saved.failure) fail(saved.failure)
         return done(
@@ -1108,7 +1108,7 @@ function change(p, note, apply) {
 }
 const isoTime = /(Z|[+-]\d\d:\d\d)$/
 function addContact(p) {
-    return change(p, ec.l10n.localize("Added contact point"), body => {
+    return change(p, "Added contact point", body => {
         const contact = {
             id: text(p.contactId) || "contact-" + Date.now(),
             type: text(p.contactType) || "notification",
@@ -1130,7 +1130,7 @@ function addContact(p) {
     })
 }
 function addSilence(p) {
-    return change(p, ec.l10n.localize("Added silence"), body => {
+    return change(p, "Added silence", body => {
         if (!isoTime.test(text(p.silenceFrom)) || !isoTime.test(text(p.silenceThru)))
             fail("Use ISO times including Z or an explicit UTC offset")
         const from = new Date(text(p.silenceFrom))
@@ -1147,7 +1147,7 @@ function addSilence(p) {
     })
 }
 function addMute(p) {
-    return change(p, ec.l10n.localize("Added mute timing"), body => {
+    return change(p, "Added mute timing", body => {
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(text(p.muteStart)) || !/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(text(p.muteEnd)))
             fail("Use HH:mm times")
         const days = idList(p.weekdays).map(Number)
@@ -1158,7 +1158,7 @@ function addMute(p) {
     })
 }
 function removeItem(p) {
-    return change(p, ec.l10n.localize("Removed an item"), body => {
+    return change(p, "Removed an item", body => {
         if (!["contactPoints", "silences", "muteTimings"].includes(p.collection)) fail(ec.l10n.localize("Unknown rule collection"))
         const items = Array.from(body[p.collection] || [])
         const index = Number(p.itemIndex)
@@ -1169,7 +1169,7 @@ function removeItem(p) {
     })
 }
 function addRef(p) {
-    return change(p, ec.l10n.localize("Added a shared item"), body => {
+    return change(p, "Added a shared item", body => {
         const shared = ask("get#Definition", {definitionId: text(p.sharedRef) || "_NA_"}).out?.definition
         const key = pick(sharedRefKeys, shared?.type, null)
         if (!key) fail(ec.l10n.localize("Choose a shared contact point, silence or mute timing"))
@@ -1179,7 +1179,7 @@ function addRef(p) {
     })
 }
 function removeRef(p) {
-    return change(p, ec.l10n.localize("Removed a shared item"), body => {
+    return change(p, "Removed a shared item", body => {
         if (!Object.values(sharedRefKeys).includes(p.refKey)) fail(ec.l10n.localize("Unknown shared reference list"))
         body[p.refKey] = Array.from(body[p.refKey] || []).filter(id => id !== p.refId)
         return "Removed shared reference " + text(p.refId)

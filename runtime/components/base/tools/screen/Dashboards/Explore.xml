@@ -61,7 +61,7 @@
             definition.body.panels[panelId]={title:panelTitle || 'Explore',visualization:datasetId==='otel_logs'?'logs':'table',queries:[{
                 datasetId,mode:'documents',queryString:queryString || '',filters:JSON.parse(filtersJson || '[]'),retrievalMode:retrievalMode || 'lexical',pageSize:1000
             }]}
-            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:ec.l10n.localize('Added panel from Explore')}).call()
+            ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:'Added panel from Explore'}).call()
         ]]></script></actions><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('dashboard')}"><parameter name="definitionId" from="dashboardId"/><parameter name="from"/><parameter name="thru"/></default-response>
     </transition>
     <transition name="split"><default-response url="${ec.resource.script('component://tools/template/ReportMount.js').url('split')}"/></transition>

@@ -706,7 +706,7 @@ function previewPage(p) {
 function ownReportPage(p) {
     const report = ask("get#RecipientReport", {deliveryId: p.deliveryId})
     const body = report.failure
-        ? "<p>" + ec.l10n.localize("This delivery is not available") + ".</p>"
+        ? "<p>" + encode(ec.l10n.localize("This delivery is not available")) + "</p>"
         : !report.out.available
           ? "<p>Your access to this report's data changed since it was sent, so the sent report is not released. Open the report to see what you may read now.</p>"
           : fileLink(report.out, "Download " + (report.out.title || "the report")) +

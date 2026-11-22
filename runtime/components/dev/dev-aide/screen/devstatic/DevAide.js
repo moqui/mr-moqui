@@ -1256,8 +1256,8 @@
             // Sign: your line under both lists of AUTHORS.md, committed alone, by you (an agent has no tool for it)
             signAgreement() {
                 const agreement = this.agreement || {};
-                this.$q.dialog({ title: "Sign the contributor agreement", message: moqui.l10n.localize("Your line goes under both lists of AUTHORS.md and is committed alone.") + "\n" +
-                    (agreement.line || "- Written in <year> by <legal name> - <account>") + "\n" + moqui.l10n.localize("Your legal name") + ":",
+                this.$q.dialog({ title: "Sign the contributor agreement", message: moqui.l10n.localize("Your line goes under both lists of AUTHORS.md, as \"${line}\", and is committed alone. Your legal name:")
+                    .split("${line}").join(agreement.line || "- Written in <year> by <legal name> - <account>"),
                     prompt: { model: "", type: "text" }, cancel: true }).onOk((legalName) => {
                     if (!legalName) return;
                     this.post("signAgreement", { rootId: this.rootId, legalName }).then((answer) => {
@@ -1526,7 +1526,7 @@
           <q-banner dense class="bg-orange-2 text-black">The file on disk (left) changed since it was opened; your text is on the right.
             <template v-slot:action>
               <q-btn dense flat no-caps :label="t('Save mine over it')" @click="keepMine(current)"></q-btn>
-              <q-btn dense flat no-caps :label="t('Take the disk\'s')" @click="takeDisk(current)"></q-btn>
+              <q-btn dense flat no-caps :label="t(&quot;Take the disk's&quot;)" @click="takeDisk(current)"></q-btn>
             </template>
           </q-banner>
           <m-diff-view class="col" :original="current.conflict.diskText" :modified="current.text" :file-name="current.path" editable

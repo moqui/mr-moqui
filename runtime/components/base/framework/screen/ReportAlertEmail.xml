@@ -30,8 +30,8 @@
         <text type="html,html-print"><![CDATA[
 <html><body><h2>${html(title)}</h2>
 <ul><#list alertLines as line><li>${html(line)}</li></#list></ul>
-<#if alertLink><p><a href="${html(alertLink)}">${ec.l10n.localize('Open the alert')}</a></p></#if>
-<p>${ec.l10n.localize('This was sent to you alone, as you may read what its owner reads; opening the alert shows your own current state.')}</p></body></html>
+<#if alertLink><p><a href="${html(alertLink)}">${html(ec.l10n.localize('Open the alert'))}</a></p></#if>
+<p>${html(ec.l10n.localize('This was sent to you alone, as you may read what its owner reads; opening the alert shows your own current state.'))}</p></body></html>
         ]]></text>
         <text type="text"><![CDATA[${title}
 <#list alertLines as line>${line}

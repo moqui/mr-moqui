@@ -109,7 +109,7 @@ along with this software (see the LICENSE.md file). If not, see
                         ec.message.addMessage(tested.passed ? 'The test passed' + (tested.enabled ? '' : ': the provider can be enabled')
                             : 'The test did not pass', tested.passed ? 'success' : 'warning')
                         for (const row of Array.from(tested.checkList || []))
-                            ec.message.addMessage(row.check + ': ' + row.text, row.state === 'ok' ? 'info' : 'warning')
+                            ec.message.addMessage((row.checkText || row.check) + ': ' + row.text, row.state === 'ok' ? 'info' : 'warning')
                         for (const row of Array.from(tested.grantPreview || []))
                             ec.message.addMessage('A test identity with the role ' + row.roleName + ': ' + row.text, row.given ? 'info' : 'warning')
                     }

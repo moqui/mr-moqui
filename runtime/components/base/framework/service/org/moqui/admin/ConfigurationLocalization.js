@@ -425,7 +425,7 @@ function applyMessageTranslationRow(p) {
         locale,
         localized,
         expectedRevision: text(p.sourceRevision),
-        reason: ec.l10n.localize("Imported translation")
+        reason: "Imported translation"
     })
     if (!stored.applied) return {applied: false, reasonCode: stored.reasonCode, reason: stored.reason, resultRef: null}
     return {applied: true, resultRef: (locale + ": " + original).slice(0, 120), resultText: "Translation saved"}

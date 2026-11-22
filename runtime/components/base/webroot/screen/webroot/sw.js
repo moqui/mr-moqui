@@ -103,9 +103,9 @@ function ack(ackId) {
 // message with copyCode=1, whose page copies it.
 function notificationOf(data) {
     const chat = data.kind === "message"
-    const title = chat ? chatTitle(data) : data.title || (typeof moqui !== "undefined" && moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize("New notification") : "New notification")
+    const title = chat ? chatTitle(data) : data.title || "New notification"
     const options = {
-        body: chat ? data.snippet || (data.encrypted ? (typeof moqui !== "undefined" && moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize("New message") : "New message") : "") : data.body || "",
+        body: chat ? data.snippet || (data.encrypted ? "New message" : "") : data.body || "",
         tag: data.tag || undefined,
         icon: "/images/pwa-icon-192.png",
         badge: "/images/pwa-icon-192.png",

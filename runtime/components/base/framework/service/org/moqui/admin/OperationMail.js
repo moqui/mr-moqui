@@ -534,7 +534,7 @@ function claimMailOutcomeRetry(p) {
         {
             sendClaimDate: ec.user.nowTimestamp,
             sendOutcome: "uncertain",
-            sendError: ec.l10n.localize("A retry of this message began and its result was not recorded")
+            sendError: "A retry of this message began and its result was not recorded"
         },
         true,
         null,
@@ -562,10 +562,10 @@ function reconcileMailOutcome(p) {
         const {row, claim} = found
         const revision = row.revision
         if (["sent", "cancelled"].includes(row.state))
-            return refused("NOT_FAILED", "The message is " + row.stateText.toLowerCase(), {revision})
+            return refused("NOT_FAILED", ec.resource.expand("The message is ${state}", "", {state: row.stateText.toLowerCase()}), {revision})
         if (row.state === "sending") return refused("IN_PROGRESS", ec.l10n.localize("A send of this message is under way"), {revision})
         if (row.state === "settled")
-            return refused("ALREADY_SETTLED", "The message is settled (" + row.settlementText.toLowerCase() + ")", {revision})
+            return refused("ALREADY_SETTLED", ec.resource.expand("The message is settled (${settlement})", "", {settlement: row.settlementText.toLowerCase()}), {revision})
         const owned = ownerRefusal(row, revision)
         if (owned) return owned
         if (row.ownerKind === "registered") {

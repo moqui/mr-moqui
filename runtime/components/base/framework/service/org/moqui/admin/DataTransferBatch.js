@@ -490,8 +490,8 @@ function validate(target, p) {
             preview = previewOf(target, batch, source)
             if (preview.skip) {
                 result = "skipped"
-                reason = preview.warnings[0] || preview.errors[0] || ec.l10n.localize("Nothing to change")
-            } else if (!preview.valid) reason = preview.errors.join("; ") || ec.l10n.localize("The row is not valid")
+                reason = preview.warnings[0] || preview.errors[0] || "Nothing to change"
+            } else if (!preview.valid) reason = preview.errors.join("; ") || "The row is not valid"
             else {
                 const key = keyFields.length ? JSON.stringify(keyFields.map(field => preview.values[field] ?? "")) : null
                 if (key && seen.has(key)) reason = "Repeats row " + seen.get(key) + " of this file"
@@ -502,7 +502,7 @@ function validate(target, p) {
             }
         } catch (error) {
             ec.message.clearErrors()
-            reason = lineText(String(error?.message ?? error), 250) || ec.l10n.localize("The row could not be validated")
+            reason = lineText(String(error?.message ?? error), 250) || "The row could not be validated"
         }
         write(ITEM, {
             transferId: batch.row.transferId,
@@ -562,12 +562,12 @@ function applyItem(p) {
         mark({
             result: "failed",
             reasonCode: lineText(reasonCode, 40) || "FAILED",
-            errorMessage: lineText(reason, 250) || ec.l10n.localize("The row was not applied")
+            errorMessage: lineText(reason, 250) || "The row was not applied"
         })
         return {
             applied: false,
             reasonCode: lineText(reasonCode, 40) || "FAILED",
-            reason: lineText(reason, 250) || ec.l10n.localize("The row was not applied")
+            reason: lineText(reason, 250) || "The row was not applied"
         }
     }
     const before = lib.json(item.previewJson, null)
@@ -585,7 +585,7 @@ function applyItem(p) {
     }
     if (!now.valid && now.skip) {
         // what the row would change is already so (another's change, or this row's own apply whose result was not kept)
-        const reason = lineText(now.warnings[0] || now.errors[0], 250) || ec.l10n.localize("Nothing to change")
+        const reason = lineText(now.warnings[0] || now.errors[0], 250) || "Nothing to change"
         mark({result: "skipped", reasonCode: null, errorMessage: reason})
         return {applied: false, reasonCode: "NOTHING_TO_DO", reason}
     }
@@ -604,7 +604,7 @@ function applyItem(p) {
     })
     if (asked.failure) return Object.assign(failed("FAILED", asked.failure), {operationKey})
     if (asked.out.applied !== true)
-        return failed(text(asked.out.reasonCode) || "REFUSED", asked.out.reason || ec.l10n.localize("Its owner did not take the row"))
+        return failed(text(asked.out.reasonCode) || "REFUSED", asked.out.reason || "Its owner did not take the row")
     // a restricted column's values are cleared from what was staged of the row once it is applied
     const restricted = hiddenFields(target, true)
     const appliedFields = {}
@@ -642,7 +642,7 @@ function failItem(p) {
             itemSeqId: item.itemSeqId,
             result: "failed",
             reasonCode: "FAILED",
-            errorMessage: lineText(p.errorMessage, 250) || ec.l10n.localize("The row was not applied"),
+            errorMessage: lineText(p.errorMessage, 250) || "The row was not applied",
             attemptCount: Number(item.attemptCount || 0) + 1
         })
     return {}

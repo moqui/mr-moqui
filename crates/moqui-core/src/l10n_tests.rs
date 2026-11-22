@@ -375,6 +375,12 @@ fn spanish_catalog_files_match_the_message_keys() {
             } else if !original_placeholders.is_empty() {
                 assert_eq!(original_placeholders, dollar_placeholders(&localized), "{original}");
             }
+            if let Some(code) = reason_code(&original) {
+                assert!(
+                    localized.starts_with(code),
+                    "{original} -> {localized} loses its reason code"
+                );
+            }
             let key = (original.clone(), locale.clone());
             assert!(
                 seen.insert(key, localized.clone()).is_none(),
@@ -493,6 +499,19 @@ fn frozen_literal(literal: &str) -> bool {
         || text.contains("MMM")
 }
 
+/// The reason code a message starts with (`RECORD_UNAVAILABLE: `), which code reads back with `/^([A-Z][A-Z0-9_]+):/`, so a
+/// translation keeps it as written, with the ASCII colon and space. A prose word (`NOTE: `, `HR: `) has no `_` and is not one.
+fn reason_code(text: &str) -> Option<&str> {
+    let end = text.find(": ")?;
+    let code = &text[..end];
+    let shaped = code.contains('_')
+        && code.starts_with(|c: char| c.is_ascii_uppercase())
+        && code
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    shaped.then(|| &text[..end + 2])
+}
+
 fn brace_marks(text: &str) -> Vec<&str> {
     let mut found = Vec::new();
     for mark in ["{0}", "{1}", "{2}", "{3}", "{2,choice,0#|1#"] {
@@ -603,6 +622,12 @@ fn chinese_catalog_files_match_the_message_keys() {
                 }
             }
             assert_eq!(brace_marks(&original), brace_marks(&localized), "{original}");
+            if let Some(code) = reason_code(&original) {
+                assert!(
+                    localized.starts_with(code),
+                    "{original} -> {localized} loses its reason code"
+                );
+            }
             let without_equation = localized.replace("方程式", "");
             assert!(!without_equation.contains("程式"), "{original} -> {localized}");
             for word in reject {
