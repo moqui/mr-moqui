@@ -148,3 +148,80 @@ This plan commits so far:
 == runtime/components/addon/mr-three  master -> origin/master
   clean
 ```
+
+## Token pricing and plan pricing
+
+Recorded 2026-11-22 from the meter above. The nine framework commits in this plan, plus the two README lines in mr-boss and mr-marble, are 3,737 changed lines (lines added plus lines deleted). The meter moved $44.69 for that work, including the three subagents and the lint and test runs. That is **$12 per thousand changed lines** of Opus 5.5 medium overage.
+
+The same count on the MR work those plans paid for, David E. Jones's non-merge commits from 9 October through 22 November 2026 in mr-moqui, mr-boss, mr-mantle, mr-marble, mr-pass, mr-l10n, mr-home, and mr-three:
+
+- 6,501 commits, **4.41 million changed lines**, after leaving out lockfiles, `webroot/libs`, minified assets, and `patches/` (the yrs fork was added and removed the same week).
+- At $12 per thousand lines that is about **$53,000**.
+- The plan stack in the notes above is about **$800** at the high estimate (1.5 months × $530). A plan dollar bought about **66 token dollars**.
+- Over the 44 days that is about **100,000 changed lines a day**. The heavy week of 26 October–1 November was 1.03 million lines, about **150,000 a day**.
+
+Lines that remain in the trees are about 3.2 million. Priced the way this follow-up's net lines price ($44.69 for 2,885 net lines) that is about $49,000. The two cuts agree. XML and Markdown are a larger share of the 4.41 million than of this follow-up, which was mostly Rust. If those cost half as much per line as the Rust fix pass, the total would sit closer to $40,000.
+
+Side projects on the same plans (home-scale, ghigs-tdg) are about 30,000 changed lines, a few hundred dollars at this rate. The free week resets are already in the git history, so they are already in the $53,000. They are not extra cash on top of the $800.
+
+The original boards, stage, follow, and per-user install implementation is 25,100 changed lines in eleven commits, the Astra work noted above at about $11 of the $100 plan. At this Opus meter rate those lines are about $300, roughly 27 times the plan allocation for that slice. The six-week multiple is higher because the bulk of the work was Opus.
+
+## Manual effort and the same prices
+
+The same count on David E. Jones's non-merge commits in the Moqui Java repositories under `../moqui/` (the framework repo, runtime, and the nineteen component repos, through 23 October 2026). Minified files and vendored webroot libraries are left out (about 226,000 lines, mostly `assets/lib`).
+
+- 9,369 commits, **741,000 changed lines**, from 8 October 2011 through 23 October 2026.
+- About 144,000 of those lines are the 23 January 2016 imports ("initial files from moqui/moqui" and "from moqui/mantle"). PopCommerce and HiveMind keep their history back to 2011 and 2012. The framework, runtime, and Mantle before the split appear only as the files that existed that day.
+- At the same $12 per thousand lines that is about **$8,900** of token pricing and about **$130** at the 66× plan discount.
+- 2017, the busiest full year after the split, is 106,000 changed lines, about **290 a day**.
+- The trees hold about 358,000 non-vendor lines today. The diffs are about twice that.
+
+An allowance for framework and Mantle edits before the 2016 split, which these clones do not contain, is on the order of 50,000–150,000 lines if those years looked like 2017–2020. That adds roughly $600–$1,800 at the token rate. The Java total stays around $10,000 token and $150 plan.
+
+### Peak spans
+
+Changed lines are lines added plus lines deleted in commits that landed. Net lines are added minus deleted, the lines that stayed. Import commits are left out of the peaks. A span is any 7 or 30 consecutive days, not a calendar week or month.
+
+The best sustained week through 2025 is **29 August–4 September 2016**: 17,000 changed lines, **2,500 a day**, net +400. 67 commits, every day, and the busiest day is a quarter of the week. It is the conversion of the entity and service runtime from Groovy to Java (EntityValueBase, EntityFindBuilder, ExecutionContextImpl, ServiceDefinition, ServiceCallSyncImpl). The net is small because the Java replaced the Groovy.
+
+A week with a higher raw total, **4–10 January 2016**, is 23,000 changed lines (3,200 a day) and a net of +5,600, on 5 of the 7 days. That week moves screens out of HiveMind into SimpleScreens. The heaviest 30 days are **17 August–15 September 2016**: 33,000 changed lines (1,100 a day) and a net of about zero, the same Groovy-to-Java conversion.
+
+The busiest stretch that kept adding application code on nearly every day is **14 January–12 February 2017**: 18,000 changed lines (**590 a day**), net +6,700 (**225 a day**), 333 commits on 29 of the 30 days. Order, receiving, payment-method, calendar, and shipment screens in SimpleScreens, and the Mantle services beside them.
+
+| | Changed lines per day |
+|---|---:|
+| 2017, the whole year | 290 |
+| Best sustained month of application work (14 Jan–12 Feb 2017) | 590 |
+| Best sustained week through 2025 (29 Aug–4 Sep 2016) | 2,500 |
+| MR average, 9 Oct–22 Nov 2026 | 100,000 |
+| MR heavy week, 26 Oct–1 Nov 2026 | 150,000 |
+
+### The 29 August–4 September 2016 week
+
+67 commits in the framework, the runtime, and mantle-usl. The framework's entity and service runtime moved from Groovy to Java, and the commits around that are the rest of the week.
+
+EntityValueBase and EntityFindBuilder were converted on 31 August, ServiceCallImpl on 2 September, and ServiceDefinition and ServiceCallSyncImpl on 3 September. ExecutionContextImpl was converted the same day as ServiceCallImpl, and the internal paths went over to direct final fields. RelationshipInfo and FieldInfo were split out. A new EntityInfo class holds the parsed definition, and the CrUD path uses it. View-entity finds reject unknown fields. Data loads call EntityAutoServiceRunner directly. In-parameter checks got faster, and a parameter can again depend on one later in the list. MessageFacadeImpl no longer lets a caller change the error lists from outside. A ThreadLocal leak on destroy was fixed, and a few tight loops moved to Java. The XML-RPC client was removed.
+
+Java 8 `java.time` replaced Joda Time, in the framework and in mantle-usl, and the runtime uptime display followed. Groovy is pulled in as selected modules. The Gradle wrapper went to 3.0, and the OWASP HTML sanitizer and Shiro were updated.
+
+REST schema generation for JSON Schema, RAML, and Swagger was gathered into `RestSchemaUtil`. DbResource directory creation locks and checks for a record that is already there. Artifact-hit timing had been recording microseconds as milliseconds. An IMAP BODYSTRUCTURE workaround went in for issue #97.
+
+Forms gained print width (zero means leave the field off), alignment, and a text button. The CSV button defaults to off, and a `saveFilename` parameter sets Content-Disposition. `display-entity` can supply a default text. A user can subscribe to every message on a notification topic, and the account screen in the runtime has that dialog.
+
+Screen output in the runtime: print CSS and macros, CSV export through links and container bodies with a CSV button on the form list, and a fixed-width pad and truncate. The text macros were lined up with the CSV.
+
+### The 14 January–12 February 2017 month
+
+331 commits in the framework, the runtime, SimpleScreens, mantle-udm, mantle-usl, HiveMind, PopCommerce, and a library bump in moqui-fop. The new screens are in SimpleScreens. Mantle holds the services and the model. PopCommerce and HiveMind include the same screens.
+
+**Wiki and content.** The wiki screens moved from HiveMind into SimpleScreens: spaces, edit, history, a jsdiff compare, and a published version. DbResource files gained versions, a version suffix on a resource location, and a published version name. A wiki space can allow any HTML. Product content gained list, edit, and compare screens, and the content services save text onto the content record. PopCommerce shows the long description, streams the product images, and has a content root for the store's about and contact pages.
+
+**Orders through shipment.** An order item records a quantity change reason on the audit log. Return screens landed, and receiving landed on the shipment. A receipt creates a lot or uses an existing one. Lots show on assets, reservations, and shipments, and a reservation can require a single lot or newer inventory. Packing can put an item in a package and change its quantity. The pick document and the by-package document follow the lots. Placing an order warns when the ship-to or the shipment method is missing. Promotions are `ProductStorePromotion` records with parameter entities, and a buy-get discount service. Order updates were reworked so tax and shipping recalculate across more kinds of change. A first sales-tax service and per-store ship options landed. An open order can be cancelled.
+
+**Parties.** Duplicate finding matches an identification, an email, a phone, a postal address, a name, and a birth date. The party screens cover the calendar, messages, related parties, time entries, classifications, settings, and bank-account payment methods, including checks, files, and transactions.
+
+**Email.** Order-placed and shipment-shipped messages, HTML and plain text, with a view-tracking image and links built from the store's domain. The body is saved on `EmailMessage`. Orders and shipments keep the messages sent for them, and the order link records the revision. Store settings trigger the sends. Tests wait for the worker pool so the async sends finish before the test moves on.
+
+**Inventory, time, and payroll.** Asset find summarizes by product, location, and lot, with dialogs for a physical inventory. An asset can move, including a partial quantity. Project time entries gained rates and a path to an invoice. Payroll adjustments can be a percentage, and a work type can override the GL account and the tax code.
+
+**Under the screens.** Vue uploads a file through `FormData`. Select2 empty values, optional dynamic-option dependencies, dialog conditions, and focus were fixed. A JSON request gets a JSON error. The transaction cache remembers a row already locked in the transaction, and a for-update read misses the cache. `SimpleEtl` landed, with a flat-XML extractor. A multi-service call feeds each call's results into the next.
