@@ -208,8 +208,13 @@ check "build --embed framework adds no feature" 0 'features enterprise -p moqui$
 check "build --embed needs a known level" 1 'takes framework, production or all' -- dry "$M" build --embed most
 check "build two embed levels" 1 'ask for two levels' -- dry "$M" build --embed all --embed production
 check "run --embed" 0 'embed-production -p moqui$' -- dry "$M" run --embed production
-check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
-    env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+if [ "$(uname -s)" = Darwin ]; then
+    check "build --embed-opensearch explains the missing macOS archive" 1 'OpenSearch publishes no macOS tarball' -- \
+        env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+else
+    check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
+        env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+fi
 check "complete build --embed" 0 '^production$' -- "$M" __complete 3 build --embed p
 rm -f "$R/cargo.log"
 check "run --debug builds first" 0 '' -- "$M" run --debug
@@ -222,7 +227,9 @@ rm -f "$R/cargo.log"
 check "run --nobuild with the binary there does not build" 0 '' -- "$M" run --nobuild
 check "no cargo call" 1 '' -- test -f "$R/cargo.log"
 check "--nobuild says which binary it uses" 0 'using target/release/moqui' -- "$M" run --nobuild
-touch "$R/target/debug/moqui"
+# Bash 3.2 compares whole seconds for -nt. Give the mock binaries distinct mtimes.
+touch -t 202001010000 "$R/target/release/moqui"
+touch -t 202001010001 "$R/target/debug/moqui"
 check "--nobuild with no package takes the newer debug binary" 0 'using target/debug/moqui' -- "$M" run --nobuild
 check "--release takes the release binary whatever is newer" 0 'using target/release/moqui' -- "$M" run --nobuild --release
 mkdir -p "$R/crates/stale-check/src"
@@ -677,6 +684,9 @@ check "deny-apps checks each app for its targets" 0 \
     'cargo deny --manifest-path .*/crates/moqui-mobile/Cargo.toml --target aarch64-linux-android check advisories sources$' -- \
     dry "$M" deny-apps
 rm -rf "$R/crates/moqui-mobile" "$R/Cargo.lock"
+check "test-client port selects HTTPS" 0 'moqui test-client --server https://localhost:9443$' -- dry "$M" test-client -p 9443
+check "test-load port selects HTTPS" 0 'moqui test-load --server https://localhost:9443$' -- dry "$M" test-load -p 9443
+check "test-client rejects an off destination" 1 'numeric HTTPS port' -- dry "$M" test-client -p off
 check "test-client is still test-client" 0 'moqui test-client$' -- dry "$M" test-client
 # an app component and a framework component with specs, a served client suite and an offline one
 mkdir -p "$R/runtime/components/addon/app-x/test/client" "$R/runtime/components/base/fw-x/test/client" \

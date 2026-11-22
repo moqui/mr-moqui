@@ -13,7 +13,7 @@ run by `./moq test-framework`; the load cases
 ```sh
 moqui test-client framework --serve                  # starts the server suite.js declares, runs, stops it
 ./moq run                                            # or a server of your own, in one terminal,
-./moq test-client framework                          # and the specs against http://localhost:8080
+./moq test-client framework                          # and the specs against https://localhost:8443
 moqui test-client framework --spec SecurityAuthn,SecurityRest --server https://test.example.com --insecure
 ```
 

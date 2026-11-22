@@ -504,7 +504,10 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 ./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
 scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
 scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
-adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the app's http://localhost:8080
+# For debug sign-in, start this server in a separate terminal.
+moqui_conf__webapp_list__webapp__WEBROOT__http_bind=127.0.0.1 \
+moqui_conf__webapp_list__webapp__WEBROOT__https_enabled=false ./moq run --http-port 8080
+adb reverse tcp:8080 tcp:8080                # app server URL: http://localhost:8080
 ```
 
 `./moq android` (but `init`) first stages the client's shell into `target/mobile-shell`, the same step and layout as

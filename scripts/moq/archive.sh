@@ -58,7 +58,7 @@ archive_readme() {
         cat <<EOF
 
 Run
-  cd $name && ./moqui starts the server (HTTP on 8080, HTTPS on 8443): this directory is its
+  cd $name && ./moqui starts the server on the listeners selected by MoquiConf.xml: this directory is its
   runtime, found from the working directory. ./moqui help lists its other commands and options.
 
   MoquiConf.xml is this instance's conf, merged over the framework defaults, a copy of

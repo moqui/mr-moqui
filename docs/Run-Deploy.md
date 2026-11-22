@@ -39,10 +39,11 @@ git clone https://github.com/moqui/mr-moqui.git
 cd mr-moqui
 ./moq component-get apps   # optional: Marble ERP (mr-marble), IronStone BOSS (mr-boss) and PASS (mr-pass), with Mantle (mr-mantle)
 ./moq load                 # builds the Maximal package the first time, then loads every data type, demo included
-./moq run                  # serves http://localhost:8080; ctrl-c stops it
+./moq trust-dev-cert       # trust the shared dev CA for this user
+./moq run                  # serves https://localhost:8443; ctrl-c stops it
 ```
 
-Open `http://localhost:8080` and log in as `john.doe` with the password `moqui`.
+Open `https://localhost:8443` and log in as `john.doe` with the password `moqui`.
 
 - **The first build** downloads the embedded Postgres archive once (`scripts/pg-payload.sh strip`).
 - **The dev conf** (`runtime/conf/MoquiDevConf.xml`) loads every data type into an empty database on the first start,
@@ -415,7 +416,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `instance@default-locale`, `instance@default-time-zone`, `entity-facade@database-time-zone` | `en_US`, `UTC`, `UTC` | |
 | `webapp-list/webapp[webroot]@http-host` | empty: the request's host | The host in generated URLs |
 | `webapp-list/webapp[webroot]@http-bind` | empty: every address | The address the HTTP and HTTPS listeners bind; `127.0.0.1` keeps them on the machine |
-| `webapp-list/webapp[webroot]@http-port` | empty: 8080 | The HTTP listen port (`-p`) |
+| `webapp-list/webapp[webroot]@http-port` | empty: 8080 | The HTTP port in generated URLs |
+| `webapp-list/webapp[webroot]@http-listen-port` | empty: use http-port | HTTP listener, or `off`. A numeric `-p` sets both ports |
 | `webapp-list/webapp[webroot]@https-listen-port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
 | `webapp-list/webapp[webroot]@https-port` | empty: 443 | The HTTPS port in generated URLs and redirects |
 | `webapp-list/webapp[webroot]@https-enabled` | `false` | `true` makes generated URLs https |
@@ -553,7 +555,7 @@ Server options:
 
 | Option | What it does |
 |---|---|
-| `-p N`, `--port N` | The HTTP port (`webapp-list/webapp[webroot]@http-port`) |
+| `-p N`, `--port N`, `--http-port N` | Open the HTTP listener and use N in generated HTTP URLs. Pass `off` to close only the listener. |
 | `--https-port N` | The HTTPS listen port (`webapp-list/webapp[webroot]@https-listen-port`), or `off` |
 | `-c FILE`, `--conf FILE` | The runtime conf, as `MOQUI_CONF` does |
 | `--no-run-es` | Do not start the OpenSearch in `runtime/opensearch` (`moqui_conf__search_facade__cluster__run=false`) |
@@ -872,7 +874,7 @@ XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTL
 Through a reverse proxy whose client-ip header is believed, the client it names must be in `webapp-list/webapp[webroot]@status-ips` too:
 list a monitor that probes through the proxy, or have it probe the port directly.
 
-The gRPC listener (4317, `grpc-port` of the telemetry `receiver` or `pass-authority@grpc-port`) and the edge tunnel
+The gRPC listener (webroot `grpc-listen-port`, default 4317, at `grpc-listen-bind` or the web bind address) and the edge tunnel
 ports (`edge@ssh-tunnel-port`, `edge@xmpp-port`, `edge@xmpp-tls-port`) also open only when they are configured.
 
 Before the database opens, a start checks every port it will bind, over TCP or UDP as the listener uses it, and logs
@@ -891,7 +893,7 @@ plain HTTP listener is HTTP/1.1 only. `moqui_conf__webapp_list__webapp__WEBROOT_
 - **WebSockets** (`/notws`, `/callws`, `/termws`, `/xmpp-websocket`) open on an HTTP/2 connection by extended CONNECT
   (RFC 8441), or on a connection of their own over HTTP/1.1, as the client chooses.
 - **gRPC.** When the OTLP/gRPC receiver or the PASS authority's gRPC is on, the HTTPS listener takes their calls over
-  HTTP/2 too, so a client can use the HTTPS port instead of 4317; the gRPC listener stays.
+  HTTP/2 too, so a client can use the HTTPS port instead of 4317; the dedicated port can be disabled independently.
 - **Limits.** One HTTP/2 connection carries at most `webapp-list/webapp[webroot]/web-protection/connections@http2-max-streams` (100) requests at once. One with no
   request for `webapp-list/webapp[webroot]/web-protection/connections@header-timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
   and so is a client's connection when web protection refuses that client.
@@ -913,7 +915,14 @@ A subdomain falls back one label up only: first to `_wildcard.<parent>` (mkcert)
 After that, `default` serves any other name. A domain with no certificate gets a refused handshake. The files are read
 again within seconds of a change, so a renewal needs no restart.
 
-In dev (`moqui_conf__instance__purpose=dev`), an empty directory gets a self-signed `localhost` certificate. Outside dev with no
+In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets a localhost leaf for DNS, IPv4 and IPv6 loopback.
+The server sends it with its constrained signing intermediate. The public root is `cert/dev-ca/ca.crt`.
+Run `./moq trust-dev-cert` once per user to establish the shared issuer and trust the root in the
+macOS login keychain or Linux browser NSS stores. A system-store client on Linux can use
+`curl --cacert runtime/cert/dev-ca/ca.crt https://localhost:8443/health` or `--system` trust.
+Use `--untrust` at the same scope to remove trust. Windows clients can use the runtime-local public root.
+Managed leaves renew within 30 days of expiry. For an existing unmanaged localhost/default identity,
+back up and move aside its certificates and keys (including sealed TLS keys) before requesting a managed leaf. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
 `runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
 the start: the listener waits the same way.
@@ -1979,7 +1988,7 @@ dev conf, with a few properties in their `.env`. Those names and the commands ar
    (`https://team.example.com`) and Connect. The browser opens the group server's sign-in, as the desktop app's does:
    sign in there (with its identity provider, or its own login) and confirm. The dev instance gets a login key of
    your account, kept encrypted and sent only to that server ([Logging in](interfaces/Git-Hosting.md#logging-in); the
-   redirect is the dev instance's own loopback address by its IP literal, `http://127.0.0.1:8080/...` even when the
+   redirect is the dev instance's own loopback address by its IP literal, `https://127.0.0.1:8443/...` even when the
    page is at `localhost`, so you may be asked to sign in to the dev instance at `127.0.0.1` once). A browser signed
    in to the group server already stays signed in there and enters its password again on the confirmation. A server
    without the sign-in takes an access token pasted from its Git access page (Projects › Code › Git access, or Commons

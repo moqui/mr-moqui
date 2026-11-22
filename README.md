@@ -35,10 +35,11 @@ cd mr-moqui
 ./moq component-get apps   # Optional: the applications (Marble ERP, IronStone BOSS and PASS, with Mantle)
 ./moq build                # Every feature and the dev tools; --lite for a smaller, quicker build
 ./moq load                 # Load all data, including demo; the first run on an empty database loads it too
-./moq run                  # Start moqui; logs to console, ctrl-c to stop; default ports 8080 and 8443
+./moq trust-dev-cert       # Trust the localhost development CA for this user (macOS and Linux)
+./moq run                  # Start moqui on HTTPS 8443; ctrl-c to stop
 ```
 
-Open `http://localhost:8080` and sign in as `john.doe` with the password `moqui`.
+Open `https://localhost:8443` and sign in as `john.doe` with the password `moqui`.
 
 It needs Rust 1.99 or newer, git and bash, on Linux, macOS, or Windows ([Build](docs/Build-Test.md#build)). On
 Windows, use the MSVC toolchain, Visual Studio Build Tools and Git for Windows, and `moq.cmd` from PowerShell or cmd

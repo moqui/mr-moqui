@@ -154,7 +154,7 @@ calls run only in a server's process. A script that uses `ssh` connects to `--ss
 | Option | |
 | --- | --- |
 | `--script Name` | `test/load/Name.load.js` of the component |
-| `--server URL` | The server; `http://localhost:8080` by default, or `MOQUI_TEST_SERVER`. `./moq test-load -p N` is `http://localhost:N` |
+| `--server URL` | The server; `https://localhost:8443` by default, or `MOQUI_TEST_SERVER`. `./moq test-load -p N` is `https://localhost:N` |
 | `--ssh host:port` | Where `ssh.connect` goes when the script names no host and port; a port alone is on the server's host. Or `MOQUI_TEST_SSH` |
 | `--param name=value` | A param of the plan, repeatable. `MOQUI_TEST_<NAME>` variables fill the params `--param` leaves out (`MOQUI_TEST_PASSWORD` is `password`), for a password that should not show in `ps` |
 | `--users`, `--ramp-up`, `--duration`, `--iterations` | Every scenario's settings over the script's. `--duration` alone replaces the script's iterations, `--iterations` alone its duration |

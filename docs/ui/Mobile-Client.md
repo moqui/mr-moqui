@@ -105,8 +105,7 @@ own `/qapps`), never both:
   (`webapp-list/webapp[webroot]@app-redirect-uris`).
 - **Requests** are moqui-client's, in Rust, with TLS checked by Android's trust manager (rustls-platform-verifier). They
   do not go through Android's network security config: plain `http://` is refused but to this device
-  (`account::base_url`), so a development server is reached through `adb reverse tcp:8080 tcp:8080` as
-  `http://localhost:8080`. When the verifier cannot start the app makes no request, answers from the store, and the
+  (`account::base_url`), so the debug app reaches `http://localhost:8080` through `adb reverse tcp:8080 tcp:8080`. Start the server with the loopback HTTP settings in [Build-Test](../Build-Test.md#android-app). When the verifier cannot start the app makes no request, answers from the store, and the
   commands that need the server say so.
 
 ## Back

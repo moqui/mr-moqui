@@ -468,7 +468,8 @@
             (moqui_conf__webapp_list__webapp__WEBROOT__http_port):
             http-host: this server's public host name, for generated URLs; an empty https-host takes it.
             http-port, https-port: the ports clients see in generated URLs (they differ from the listeners' behind a
-                reverse proxy); http-port is also the port the HTTP listener binds, 8080 when empty.
+                reverse proxy); http-listen-port selects the HTTP listener (empty uses http-port, default 8080; off disables it).
+            grpc-listen-port selects the dedicated gRPC port (off disables it); grpc-listen-bind defaults to http-bind.
             https-listen-port: the port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is
                 8443, "off" none.
             http-bind: the address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev

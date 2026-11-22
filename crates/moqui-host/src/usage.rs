@@ -332,7 +332,7 @@ directory on the server's machine, read there into memory on first use and kept 
   moqui refs org.moqui.impl.UserServices.create#UserAccount --out
   moqui refs component://example/screen/Gallery/ExampleDetail.xml
   moqui refs --project ~/src/moqui 'update#mantle.order.OrderHeader'
-  moqui refs --server http://localhost:8080 --project ~/src/moqui --out \
+  moqui refs --server https://localhost:8443 --project ~/src/moqui --out \
       ~/src/moqui/runtime/components/addon/my-site/screen/MySite/Order.xml
 ";
 
@@ -512,7 +512,7 @@ fixtures, else deployment, where no fixture user signs in and a spec takes an ac
   moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 
 Options:
-  --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
+  --server URL                    The server, https://localhost:8443 by default, or MOQUI_TEST_SERVER.
                                   Plain http is only for this machine unless --allow-http.
   --serve                         Start each suite's declared server, as above, instead of --server.
                                   Its SSH listener, when it has one, is where ssh.connect goes.
@@ -577,14 +577,14 @@ Otherwise it exits 1 when a threshold of the script is broken or no request succ
 a histogram's, within about 1.6%.
 
   moqui test-load mr-marble
-  moqui test-load mr-marble --script OrderToCash --server http://localhost:8080 --param pdf=false --label \"MR\"
+  moqui test-load mr-marble --script OrderToCash --server https://localhost:8443 --param pdf=false --label \"MR\"
   moqui test-load mr-marble --script OrderToCash --users 50 --duration 300 --ramp-up 30 --out /tmp/otc
   moqui test-load runtime/components/addon/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
   moqui test-load --compare /tmp/otc/java/result.json /tmp/otc/mr/result.json
 
 Options:
   --script Name                   The script test/load/Name.load.js of the component.
-  --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
+  --server URL                    The server, https://localhost:8443 by default, or MOQUI_TEST_SERVER.
                                   Plain http is only for this machine unless --allow-http.
   --ssh host:port                 Where the script's ssh.connect goes when it names no host and port
                                   (a port alone is on the server's host), or MOQUI_TEST_SSH.

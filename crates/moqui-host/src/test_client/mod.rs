@@ -70,7 +70,7 @@ use http::{Ask, Server, Session, SshTarget};
 const PRELUDE: &str = include_str!("prelude.js");
 
 /// The server when neither `--server` nor `MOQUI_TEST_SERVER` names one.
-const DEFAULT_SERVER: &str = "http://localhost:8080";
+const DEFAULT_SERVER: &str = "https://localhost:8443";
 
 /// A request's limit when its own `timeout` does not set one.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
