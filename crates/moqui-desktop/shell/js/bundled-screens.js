@@ -27064,8 +27064,8 @@ module.exports = {
                                                   html: _ctx.draft.quoteHtml,
                                                   "collapse-quotes": false,
                                                   "images-bar": false,
-                                                  title: "Quoted text"
-                                                }, null, 8, ["html"]),
+                                                  title: _ctx.t('Quoted text')
+                                                }, null, 8, ["html", "title"]),
                                                 _createVNode(_component_q_btn, {
                                                   flat: "",
                                                   dense: "",
