@@ -48,7 +48,7 @@ const outgoing = ["ES_READY", "ES_SENT", "ES_BOUNCED", "ES_CANCELLED"]
 const outcomes = ["retryable", "permanent", "uncertain"]
 // what a person may report of an uncertain send (EmailMessage.sendSettlement), and the owner contract's word for each
 const settlements = {
-    delivered: {text: "Reported delivered", ownerAction: "sent"},
+    delivered: {text: ec.l10n.localize("Reported delivered"), ownerAction: "sent"},
     notDelivered: {text: "Reported not delivered", ownerAction: "notSent"}
 }
 // a send under way longer than this stopped (as the mail client's fail#StoppedSend reads a claim)
@@ -61,16 +61,16 @@ const signInTemplates = () =>
     ec.resource.script("component://framework/service/org/moqui/mail/RelayRules.js").signInTemplates()
 
 const states = {
-    retryable: {text: "Not sent", next: "Nothing was sent. It can be sent again."},
-    permanent: {text: "Refused", next: "The server refused it. It can be sent again once what it refused is put right."},
-    bounced: {text: "Bounced", next: "It was returned after it was sent. It can be sent again."},
+    retryable: {text: "Not sent", next: ec.l10n.localize("Nothing was sent. It can be sent again.")},
+    permanent: {text: "Refused", next: ec.l10n.localize("The server refused it. It can be sent again once what it refused is put right.")},
+    bounced: {text: "Bounced", next: ec.l10n.localize("It was returned after it was sent. It can be sent again.")},
     uncertain: {
-        text: "May have been sent",
-        next: "The session was lost part way. Look in the mail server's own log before anything is sent again."
+        text: ec.l10n.localize("May have been sent"),
+        next: ec.l10n.localize("The session was lost part way. Look in the mail server's own log before anything is sent again.")
     },
     // told apart by its conclusion in described(): never "Sent"
     settled: {text: "Settled", next: ""},
-    sending: {text: "Being sent", next: "A send is under way."},
+    sending: {text: ec.l10n.localize("Being sent"), next: ec.l10n.localize("A send is under way.")},
     sent: {text: "Sent", next: ""},
     cancelled: {text: "Cancelled", next: ""}
 }
@@ -78,11 +78,11 @@ const stateList = [
     {state: "attention", text: "Needs attention"},
     {state: "retryable", text: "Not sent"},
     {state: "permanent", text: "Refused"},
-    {state: "uncertain", text: "May have been sent"},
+    {state: "uncertain", text: ec.l10n.localize("May have been sent")},
     {state: "bounced", text: "Bounced"},
-    {state: "settled", text: "Settled by a person"},
+    {state: "settled", text: ec.l10n.localize("Settled by a person")},
     {state: "sent", text: "Sent"},
-    {state: "all", text: "All outgoing"}
+    {state: "all", text: ec.l10n.localize("All outgoing")}
 ]
 
 // ===== reading =====
@@ -182,12 +182,12 @@ function described(message, claim, unanswered, canManage, templates, userNames =
     const failed = ["retryable", "permanent", "bounced"].includes(state) || settlement === "notDelivered"
     const template = message.emailTemplateId ? templates.get(message.emailTemplateId) : null
     let ownerKind = "mailService"
-    let ownerTitle = template ? template.description || template.emailTemplateId : "Mail service"
+    let ownerTitle = template ? template.description || template.emailTemplateId : ec.l10n.localize("Mail service")
     let nextStep =
         settlement === "notDelivered"
-            ? "Someone reported that it did not arrive. It can be sent again."
+            ? ec.l10n.localize("Someone reported that it did not arrive. It can be sent again.")
             : settlement
-              ? "Someone reported that it arrived. Nothing more is done here."
+              ? ec.l10n.localize("Someone reported that it arrived. Nothing more is done here.")
               : states[state].next
     let retryEligible = failed
     let reconcileEligible = state === "uncertain"
@@ -199,10 +199,10 @@ function described(message, claim, unanswered, canManage, templates, userNames =
     }
     if (account) {
         ownerKind = "mailAccount"
-        ownerTitle = "Mail account"
+        ownerTitle = ec.l10n.localize("Mail account")
         retryEligible = false
         reconcileEligible = false
-        if (failed || state === "uncertain") nextStep = "It waits in its sender's Outbox, who sends it again or takes it back."
+        if (failed || state === "uncertain") nextStep = ec.l10n.localize("It waits in its sender's Outbox, who sends it again or takes it back.")
     } else if (claim) {
         ownerKind = "registered"
         ownerTitle = claim.ownerTitle
@@ -210,16 +210,16 @@ function described(message, claim, unanswered, canManage, templates, userNames =
         reconcileEligible = state === "uncertain" && claim.reconcileEligible && !!claim.recoverService
         if (failed && !retryEligible)
             nextStep = claim.selfRetrying
-                ? "Its owner tries it again on its own."
+                ? ec.l10n.localize("Its owner tries it again on its own.")
                 : settlement
-                  ? "Settled with its owner, which keeps its attempts: nothing is sent from here."
-                  : "Its owner keeps its attempts: nothing is sent from here."
-        if (state === "uncertain" && !reconcileEligible) nextStep = "Its owner reconciles it."
+                  ? ec.l10n.localize("Settled with its owner, which keeps its attempts: nothing is sent from here.")
+                  : ec.l10n.localize("Its owner keeps its attempts: nothing is sent from here.")
+        if (state === "uncertain" && !reconcileEligible) nextStep = ec.l10n.localize("Its owner reconciles it.")
     } else if (unanswered.length && (failed || state === "uncertain")) {
         // an owner that cannot be asked may hold this message: nothing is sent or settled here until it answers
         retryEligible = false
         reconcileEligible = false
-        nextStep = "An owner of mail could not be asked whether this message is its own. Try again later."
+        nextStep = ec.l10n.localize("An owner of mail could not be asked whether this message is its own. Try again later.")
     }
     return {
         emailMessageId: message.emailMessageId,
@@ -349,11 +349,11 @@ function outcomeFind(p) {
     if (text(p.emailTemplateId)) found = found.condition("emailTemplateId", text(p.emailTemplateId))
     if (p.binding === "account") found = found.condition("emailAccountId", "not-equals", null)
     else if (p.binding === "instance") found = found.condition("emailAccountId", "equals", null)
-    else if (text(p.binding)) throw new Error("A binding is account or instance")
+    else if (text(p.binding)) throw new Error(ec.l10n.localize("A binding is account or instance"))
     const from = ms(p.fromDate)
     const thru = ms(p.thruDate)
     if ((p.fromDate && (from == null || Number.isNaN(from))) || (p.thruDate && (thru == null || Number.isNaN(thru))))
-        throw new Error("A date is not a date")
+        throw new Error(ec.l10n.localize("A date is not a date"))
     // one message asked for by id is found whatever its age
     const since = from ?? (thru == null && !text(p.emailMessageId) ? ms(ec.user.nowTimestamp) - defaultDays * 86400000 : null)
     if (since != null) found = found.condition("lastUpdatedStamp", "greater-equals", iso(since))
@@ -420,7 +420,7 @@ function actionable(p) {
 // Why a message is not for this action, by its owner: a refusal, or null when it is the mail service's own.
 function ownerRefusal(row, revision) {
     if (row.ownerKind === "mailAccount")
-        return refused("OWNER_ONLY", "This message is in a mail account's Outbox: its sender sends it again or takes it back", {
+        return refused("OWNER_ONLY", ec.l10n.localize("This message is in a mail account's Outbox: its sender sends it again or takes it back"), {
             revision
         })
     if (row.ownerUnavailable && ["retryable", "permanent", "bounced", "uncertain", "settled"].includes(row.state))
@@ -460,9 +460,9 @@ function retryMailOutcome(p) {
         if (found.answer) return found.answer
         const {row, claim} = found
         const revision = row.revision
-        if (row.state === "sent") return refused("NOT_FAILED", "The message was sent", {revision})
-        if (row.state === "cancelled") return refused("NOT_FAILED", "The message was cancelled", {revision})
-        if (row.state === "sending") return refused("IN_PROGRESS", "A send of this message is under way", {revision})
+        if (row.state === "sent") return refused("NOT_FAILED", ec.l10n.localize("The message was sent"), {revision})
+        if (row.state === "cancelled") return refused("NOT_FAILED", ec.l10n.localize("The message was cancelled"), {revision})
+        if (row.state === "sending") return refused("IN_PROGRESS", ec.l10n.localize("A send of this message is under way"), {revision})
         if (row.state === "uncertain")
             return refused(
                 "RECONCILE_REQUIRED",
@@ -471,7 +471,7 @@ function retryMailOutcome(p) {
                 {revision}
             )
         if (row.settlement === "delivered")
-            return refused("SETTLED", "The message was settled as reported delivered: it is not sent again", {revision})
+            return refused("SETTLED", ec.l10n.localize("The message was settled as reported delivered: it is not sent again"), {revision})
         const owned = ownerRefusal(row, revision)
         if (owned) return owned
         if (row.signIn) return refused("SIGN_IN_MAIL", row.nextStep, {revision})
@@ -528,7 +528,7 @@ function claimMailOutcomeRetry(p) {
         {
             sendClaimDate: ec.user.nowTimestamp,
             sendOutcome: "uncertain",
-            sendError: "A retry of this message began and its result was not recorded"
+            sendError: ec.l10n.localize("A retry of this message began and its result was not recorded")
         },
         true,
         null,
@@ -548,7 +548,7 @@ function reconcileMailOutcome(p) {
     const emailMessageId = text(p.emailMessageId)
     const resolution = text(p.resolution)
     if (resolution !== "abandon" && !Object.hasOwn(settlements, resolution))
-        throw new Error("A resolution is delivered, notDelivered or abandon")
+        throw new Error(ec.l10n.localize("A resolution is delivered, notDelivered or abandon"))
     const reason = lib.requiredReason(p)
     return lib.once(key, "mailReconcile", emailMessageId, () => {
         const found = actionable(p)
@@ -557,7 +557,7 @@ function reconcileMailOutcome(p) {
         const revision = row.revision
         if (["sent", "cancelled"].includes(row.state))
             return refused("NOT_FAILED", "The message is " + row.stateText.toLowerCase(), {revision})
-        if (row.state === "sending") return refused("IN_PROGRESS", "A send of this message is under way", {revision})
+        if (row.state === "sending") return refused("IN_PROGRESS", ec.l10n.localize("A send of this message is under way"), {revision})
         if (row.state === "settled")
             return refused("ALREADY_SETTLED", "The message is settled (" + row.settlementText.toLowerCase() + ")", {revision})
         const owned = ownerRefusal(row, revision)

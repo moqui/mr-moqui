@@ -286,7 +286,7 @@
             const name = fnm(n);
             const value = sri.getFieldValueString(n);
             const check = validate(n.parent);
-            const pattern = check.v.regexp ? { pattern: check.v.regexp, "data-msg-pattern": check.v.message || "Invalid format" } : {};
+            const pattern = check.v.regexp ? { pattern: check.v.regexp, "data-msg-pattern": check.v.message || L("Invalid format") } : {};
             const type = at(n, "input-type") || (check.email ? "email" : check.url ? "url" : "text");
             const disabled = cond(at(n, "disabled"));
             if (at(n, "ac-transition")) {

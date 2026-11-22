@@ -206,7 +206,7 @@ function registrationOf(assessed) {
     return {
         descriptorKey: descriptor?.descriptorKey || null,
         ownerApp: descriptor ? ownerName(descriptor) : null,
-        ownerTitle: text(descriptor?.title) || null,
+        ownerTitle: text(descriptor?.title) ? ec.l10n.localize(text(descriptor.title)) : null,
         ownerRoute: text(descriptor?.ownerRoute) || null,
         ownerPermission: text(descriptor?.managePermission) || null,
         idempotencyNote: text(descriptor?.idempotencyNote) || null,
@@ -220,7 +220,7 @@ function registrationOf(assessed) {
 function idList(value) {
     const given = Array.isArray(value) ? value : value?.toArray ? Array.from(value.toArray()) : text(value).split(",")
     const ids = Array.from(new Set(given.map(text).filter(Boolean)))
-    if (!ids.length) throw new Error("Choose what to recover")
+    if (!ids.length) throw new Error(ec.l10n.localize("Choose what to recover"))
     if (ids.length > maxTargets) throw new Error("At most " + maxTargets + " at a time")
     return ids
 }
@@ -330,7 +330,7 @@ function executeOne(kind, action, resolution, reason, key, item, descriptors) {
         return result(Object.assign(done, after))
     } catch (error) {
         ec.logger.error("Recovery of " + kind.noun + " " + targetId + " failed: " + String(error?.message ?? error))
-        return result(refused("FAILED", kind.safeText(String(error?.message ?? error)) || "It could not be recovered"))
+        return result(refused("FAILED", kind.safeText(String(error?.message ?? error)) || ec.l10n.localize("It could not be recovered")))
     }
 }
 // The records of a batch with the revision each was read at: targetList ({targetId, expectedRevision}), or one targetId with
@@ -345,7 +345,7 @@ function itemList(p) {
         if (!targetId || items.some(existing => existing.targetId === targetId)) continue
         items.push({targetId, expectedRevision: text(item.expectedRevision)})
     }
-    if (!items.length) throw new Error("Choose what to recover")
+    if (!items.length) throw new Error(ec.l10n.localize("Choose what to recover"))
     if (items.length > maxTargets) throw new Error("At most " + maxTargets + " at a time")
     return items
 }
@@ -388,7 +388,7 @@ function executeRecovery(p) {
             // a batch that did anything is kept for its key; one where nothing was done may be corrected and repeated
             applied: appliedCount > 0,
             reasonCode: appliedCount ? null : resultList.length === 1 ? resultList[0].reasonCode : "NONE_APPLIED",
-            reason: appliedCount ? null : resultList.length === 1 ? resultList[0].reason : "None of them could be recovered",
+            reason: appliedCount ? null : resultList.length === 1 ? resultList[0].reason : ec.l10n.localize("None of them could be recovered"),
             targetKind: kind.targetKind,
             action,
             appliedCount,

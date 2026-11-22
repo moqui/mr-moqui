@@ -12,7 +12,7 @@
         })).call()
         const anchor = (anchorResult.hits || [])[0]
         contextLines = [];contextNotice = ''
-        if (!anchor) contextNotice = 'This entry is unavailable in the authorized dataset and time range.'
+        if (!anchor) contextNotice = ec.l10n.localize('This entry is unavailable in the authorized dataset and time range.')
         else {
             const field = anchorResult.dataset.timeField
             const values = [anchor.body[field],anchor.documentId+':'+anchor.id]

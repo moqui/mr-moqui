@@ -83,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 ? (target.importAllowed ? (found.canRun ? 'The import wizard' : 'The import wizard, with ADMIN_TRANSFER_RUN') : 'The import wizard, with ' + (target.importPermission || 'its owner\'s permission').split(',').join(' and '))
                                     + (wizard ? '' : ', in an app that has it')
                                 : (target.ownerApp || 'Its owner') + '\'s own wizard',
-                            runsText: target.runsKept ? 'Listed here' : 'Keeps no runs yet'})
+                            runsText: target.runsKept ? ec.l10n.localize('Listed here') : ec.l10n.localize('Keeps no runs yet')})
                     })
                     targetOptions = targets.map(target => ({value: target.targetId, label: target.title}))
                     stateOptions = Array.from(found?.stateList || []).map(row => ({value: row.state, label: row.text}))

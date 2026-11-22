@@ -56,7 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
             const titles = Object.fromEntries(scripts.map((script) => [String(script.location), String(script.title || script.name || '')]))
             scriptOptions = scripts.map((script) => ({key: String(script.location), text: String(script.title || script.name || '') + ' (' + String(script.componentName || '') + ')'}))
             const statuses = {running: ['Running', 'primary'], completed: ['Completed', 'positive'], stopped: ['Stopped', 'warning'], failed: ['Failed', 'negative']}
-            const kinds = {service: "This server's services", this: 'This server'}
+            const kinds = {service: ec.l10n.localize("This server's services"), this: ec.l10n.localize('This server')}
             // a run's start, an RFC 3339 text or epoch milliseconds, as a timestamp
             const DIGITS = /^[0-9]+$/, SCRIPT_DIR = /^.*\//, LOAD_JS = /\.load\.js$/
             const stamp = (value) => {

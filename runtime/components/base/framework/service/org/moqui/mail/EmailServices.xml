@@ -268,25 +268,25 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <actions><script><![CDATA[
             const refuse = (kind, text) => { const e = new Error(text); e.moquiErrorKind = kind; throw e }
-            if (!ec.user.isInGroup('ADMIN')) refuse('Unauthorized', 'Only an administrator changes a mail server here')
+            if (!ec.user.isInGroup('ADMIN')) refuse('Unauthorized', ec.l10n.localize('Only an administrator changes a mail server here'))
             const owned = ec.entity.find('moqui.basic.email.EmailAccount').condition('ownsEmailServer', 'Y')
                     .condition('emailServerId', emailServerId).disableAuthz().count() > 0
             const row = owned ? null : ec.entity.find('moqui.basic.email.EmailServer').condition('emailServerId', emailServerId)
                     .useCache(false).forUpdate(true).one()
             if (!row) { ec.message.addError(`Email server ${emailServerId} not found`); return }
             if (String(row.smtpHost ?? '').trim().toLowerCase() === 'edge:') {
-                ec.message.addError('Mail goes out through the edge node: its setup changes this relay'); return }
+                ec.message.addError(ec.l10n.localize('Mail goes out through the edge node: its setup changes this relay')); return }
             if (row.authTypeEnumId === 'EatOAuth2') {
-                ec.message.addError('This server signs in with OAuth: it is set up where its account signs in'); return }
+                ec.message.addError(ec.l10n.localize('This server signs in with OAuth: it is set up where its account signs in')); return }
             const FIELDS = ['smtpHost', 'smtpPort', 'smtpStartTls', 'smtpSsl', 'storeHost', 'storePort', 'storeProtocol',
                 'storeFolder', 'storeDelete', 'storeMarkSeen', 'storeSkipSeen', 'storeAllowPlain', 'mailUsername', 'mailPassword',
                 'smtpUsername', 'smtpPassword', 'webBaseUrl', 'allowedToDomains', 'authTypeEnumId', 'disabled',
                 'allowPrivateNetwork']
             const given = FIELDS.filter((name) => context.containsKey(name))
             if (given.includes('smtpHost') && String(smtpHost ?? '').trim().toLowerCase() === 'edge:') {
-                ec.message.addError('Mail goes out through the edge node only by its setup'); return }
+                ec.message.addError(ec.l10n.localize('Mail goes out through the edge node only by its setup')); return }
             if (given.includes('authTypeEnumId') && authTypeEnumId === 'EatOAuth2') {
-                ec.message.addError('A server signs in with OAuth only through its account sign-in'); return }
+                ec.message.addError(ec.l10n.localize('A server signs in with OAuth only through its account sign-in')); return }
             if (!given.length) return
             const rules = ec.resource.script('component://framework/service/org/moqui/mail/RelayRules.js')
             // the relay the sign-in mail goes through: an access administrator's, after a recent sign-in
@@ -306,14 +306,14 @@ along with this software (see the LICENSE.md file). If not, see
             const textOf = (value) => String(value ?? '').trim()
             const endpointChanged = given.some((name) => ENDPOINT.includes(name) && textOf(context.get(name)) !== textOf(row[name]))
             if (endpointChanged && given.includes('disabled') && disabled !== 'Y') {
-                ec.message.addError('The server changed: test it as it is now in Admin Connections, and the test enables it'); return }
+                ec.message.addError(ec.l10n.localize('The server changed: test it as it is now in Admin Connections, and the test enables it')); return }
             const wasEnabled = row.disabled !== 'Y'
             // a relay that waits for a test (repointed, or a stored secret cleared) is enabled only by a passing test
             if (!endpointChanged && !wasEnabled && given.includes('disabled') && disabled !== 'Y') {
                 const waiting = ec.entity.find('moqui.server.ConnectionCheck').condition({adapterKey: 'relay', connectionKey: emailServerId})
                         .useCache(false).disableAuthz().one()
                 if (waiting?.pendingTest === 'Y' || waiting?.secretCleared === 'Y') {
-                    ec.message.addError('The server waits for a test: test it as it is now in Admin Connections, and the test enables it'); return }
+                    ec.message.addError(ec.l10n.localize('The server waits for a test: test it as it is now in Admin Connections, and the test enables it')); return }
             }
             for (const name of given) row.set(name, context.get(name))
             let secretCleared = false

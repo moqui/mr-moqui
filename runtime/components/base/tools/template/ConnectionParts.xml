@@ -74,7 +74,7 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{adapterKey:adapterKey, connectionKey:connectionKey, expectedRevision:expectedRevision, enabled:(enable === 'Y'),
                         reason:(reason || null)}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(stored.applied ? (stored.enabled ? 'The connection is enabled' : 'The connection is disabled: nothing is sent through it')
+                <script>ec.message.addMessage(stored.applied ? (stored.enabled ? ec.l10n.localize('The connection is enabled') : ec.l10n.localize('The connection is disabled: nothing is sent through it'))
                     : stored.reason, stored.applied ? 'success' : 'warning')</script>
             </if>
         </actions>

@@ -15,6 +15,7 @@
     "use strict";
 
     const moqui = root.moqui || (root.moqui = {});
+    if (!moqui.l10n) moqui.l10n = { localize: (text) => text };
     const devAide = moqui.devAide = moqui.devAide || {};
 
     // ---- pure parts ----
@@ -366,9 +367,9 @@
                 // the editor in the Assist drawer's page state, and the actions on the code blocks of its answers
                 assist.editorState = () => this.editorState();
                 if (assist.codeActions) {
-                    assist.codeActions.register({ key: "dev.insert", label: "Insert at cursor", icon: "sym_o_input", run: (code) => this.insertCode(code, false) });
-                    assist.codeActions.register({ key: "dev.replace", label: "Replace selection", icon: "sym_o_find_replace", run: (code) => this.insertCode(code, true) });
-                    assist.codeActions.register({ key: "dev.propose", label: "Propose as change", icon: "sym_o_approval", run: (code, language) => this.proposeCode(code, language) });
+                    assist.codeActions.register({ key: "dev.insert", label: moqui.l10n.localize("Insert at cursor"), icon: "sym_o_input", run: (code) => this.insertCode(code, false) });
+                    assist.codeActions.register({ key: "dev.replace", label: moqui.l10n.localize("Replace selection"), icon: "sym_o_find_replace", run: (code) => this.insertCode(code, true) });
+                    assist.codeActions.register({ key: "dev.propose", label: moqui.l10n.localize("Propose as change"), icon: "sym_o_approval", run: (code, language) => this.proposeCode(code, language) });
                 }
             }
             if (this.query && this.query.review) this.openReview(this.query.review);
@@ -412,6 +413,7 @@
             "current.text"() { const tab = this.current; if (tab && tab.view !== "text") this.scheduleOutline(tab); }
         },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             get(name, params) { return moqui.request(this.base + "/" + name, { params: params || {} }).then((result) => result.json || {}); },
             post(name, params) { return moqui.request(this.base + "/" + name, { method: "POST", params: params || {} }).then((result) => result.json || {}); },
             // Notes and failures at the bottom: at the app's top right they would cover the editor's toolbar (Save) while shown.
@@ -472,7 +474,7 @@
                 const draft = store.get(key);
                 if (!draft || typeof draft.text !== "string" || draft.text === buffer.text || buffer.readOnly) return;
                 this.$q.dialog({
-                    title: "Unsaved changes", message: buffer.path + " has changes from an earlier visit that were not saved." +
+                    title: moqui.l10n.localize("Unsaved changes"), message: buffer.path + " has changes from an earlier visit that were not saved." +
                         (draft.base !== buffer.base ? " The file changed since." : "") + " Restore them?", cancel: { label: "Discard them" },
                     ok: { label: "Restore" }
                 }).onOk(() => { buffer.text = draft.text; }).onCancel(() => store.drop(key));
@@ -511,7 +513,7 @@
                     tab.reading = false;
                     Object.assign(tab, {
                         loading: false, text: file.text || "", saved: file.text || "", base: file.hash, status: file.status || "",
-                        readOnly: !!file.readOnly || !this.canWrite, readOnlyReason: file.readOnlyReason || (this.narrow ? "Read only below 1024 px" : ""),
+                        readOnly: !!file.readOnly || !this.canWrite, readOnlyReason: file.readOnlyReason || (this.narrow ? moqui.l10n.localize("Read only below 1024 px") : ""),
                         binary: !!file.binary, lineEnding: file.lineEnding || "LF", component: file.component
                     });
                     this.offerDraft(tab, this.rootId);
@@ -555,7 +557,7 @@
                 if (!draft || typeof draft.text !== "string") return;
                 store.drop(key);
                 buffer.text = draft.text;
-                this.note("Opened with Assist's proposal, not saved: Save keeps it", "info");
+                this.note(moqui.l10n.localize("Opened with Assist's proposal, not saved: Save keeps it"), "info");
             },
             // ---- visual views (5.2) ----
             setView(tab, name) {
@@ -830,10 +832,10 @@
             },
             deletePath(target) {
                 if (!target) return;
-                const plain = !this.isGit ? " This directory has no git history, so it cannot be brought back." : "";
+                const plain = !this.isGit ? " " + moqui.l10n.localize("This directory has no git history, so it cannot be brought back.") : "";
                 this.$q.dialog({ title: "Delete " + target.path + "?", message: (target.dir ? "The folder and what is in it." : "The file.") + plain, cancel: true,
                     ok: { label: "Delete", color: "negative" } }).onOk(() => {
-                    const confirm = plain ? new Promise((resolve) => this.$q.dialog({ title: "Really delete it?", message: target.path, cancel: true,
+                    const confirm = plain ? new Promise((resolve) => this.$q.dialog({ title: moqui.l10n.localize("Really delete it?"), message: target.path, cancel: true,
                         ok: { label: "Delete", color: "negative" } }).onOk(resolve)) : Promise.resolve();
                     confirm.then(() => this.post("delete", { rootId: this.rootId, path: target.path }).then(() => {
                         this.tabs = this.tabs.filter((tab) => tab.path !== target.path && tab.path.indexOf(target.path + "/") !== 0);
@@ -881,7 +883,7 @@
             },
             insertCode(code, replace) {
                 const view = this.liveEditorView();
-                if (!view || !this.current || this.current.readOnly) { this.note("Open a file you may edit first", "warning"); return; }
+                if (!view || !this.current || this.current.readOnly) { this.note(moqui.l10n.localize("Open a file you may edit first"), "warning"); return; }
                 const range = view.state.selection.main;
                 view.dispatch({ changes: { from: replace ? range.from : range.head, to: replace ? range.to : range.head, insert: code } });
             },
@@ -1007,7 +1009,7 @@
             stage(entries) { this.post("stage", { rootId: this.rootId, paths: this.paths(entries) }).then(() => this.refreshStatus(), this.fail); },
             unstage(entries) { this.post("unstage", { rootId: this.rootId, paths: this.paths(entries) }).then(() => this.refreshStatus(), this.fail); },
             discard(entries) {
-                this.$q.dialog({ title: "Discard the changes?", message: entries.map((entry) => entry.path).join("\n"), cancel: true,
+                this.$q.dialog({ title: moqui.l10n.localize("Discard the changes?"), message: entries.map((entry) => entry.path).join("\n"), cancel: true,
                     ok: { label: "Discard", color: "negative" } }).onOk(() => this.post("discard", { rootId: this.rootId, paths: this.paths(entries) })
                     .then(() => { this.refreshStatus(); this.treeKey++; this.tabs.forEach((tab) => this.reloadTab(tab)); }, this.fail));
             },
@@ -1037,7 +1039,7 @@
                     this.showDiff({ path: hunks.path }, hunks.staged);
                 }, (error) => { this.fail(error); this.showDiff({ path: hunks.path }, hunks.staged); });
                 if (kind !== "discard") { run(); return; }
-                this.$q.dialog({ title: "Discard this change?", message: this.hunkLabel(hunks.list[index]), cancel: true,
+                this.$q.dialog({ title: moqui.l10n.localize("Discard this change?"), message: this.hunkLabel(hunks.list[index]), cancel: true,
                     ok: { label: "Discard", color: "negative" } }).onOk(run);
             },
             loadGit() {
@@ -1135,7 +1137,7 @@
                 const upstream = this.status && this.status.upstream;
                 if (!upstream) return;
                 this.post("mergeBranch", { rootId: this.rootId, branch: upstream, mergeCommit: true }).then((answer) => {
-                    if (answer.conflict) { this.note("The merge stopped at conflicts", "warning"); this.afterConflict(); return; }
+                    if (answer.conflict) { this.note(moqui.l10n.localize("The merge stopped at conflicts"), "warning"); this.afterConflict(); return; }
                     this.note("Merged " + upstream); this.refreshStatus(); this.reloadTabs();
                 }, this.fail);
             },
@@ -1254,8 +1256,9 @@
             // Sign: your line under both lists of AUTHORS.md, committed alone, by you (an agent has no tool for it)
             signAgreement() {
                 const agreement = this.agreement || {};
-                this.$q.dialog({ title: "Sign the contributor agreement", message: "Your line goes under both lists of AUTHORS.md, as \"" + (agreement.line || "- Written in <year> by <legal name> - <account>") +
-                    "\", and is committed alone. Your legal name:", prompt: { model: "", type: "text" }, cancel: true }).onOk((legalName) => {
+                this.$q.dialog({ title: "Sign the contributor agreement", message: moqui.l10n.localize("Your line goes under both lists of AUTHORS.md and is committed alone.") + "\n" +
+                    (agreement.line || "- Written in <year> by <legal name> - <account>") + "\n" + moqui.l10n.localize("Your legal name") + ":",
+                    prompt: { model: "", type: "text" }, cancel: true }).onOk((legalName) => {
                     if (!legalName) return;
                     this.post("signAgreement", { rootId: this.rootId, legalName }).then((answer) => {
                         this.note("Signed: " + answer.line + ". Push it to the server."); this.agreement = Object.assign({}, this.agreement, { signedHere: true });
@@ -1302,7 +1305,7 @@
                 if (tab.blame) { tab.blame = null; return; }
                 this.get("blame", { rootId: this.rootId, path: tab.path }).then((answer) => {
                     tab.blame = answer.ranges || [];
-                    if (!tab.blame.length) this.note("Not committed yet: no blame", "info");
+                    if (!tab.blame.length) this.note(moqui.l10n.localize("Not committed yet: no blame"), "info");
                 }, this.fail);
             },
             stageCurrent() { const tab = this.current; if (tab) this.stage([{ path: tab.path }]); },
@@ -1319,8 +1322,8 @@
                 }, this.fail);
             },
             restart() {
-                this.$q.dialog({ title: "Restart the server?", message: "Sessions and the sim overlay are lost; the open tabs come back.", cancel: true })
-                    .onOk(() => this.post("restart").then(() => { this.note("Restarting…", "warning"); this.restartNeeded = false; }, this.fail));
+                this.$q.dialog({ title: moqui.l10n.localize("Restart the server?"), message: "Sessions and the sim overlay are lost; the open tabs come back.", cancel: true })
+                    .onOk(() => this.post("restart").then(() => { this.note(moqui.l10n.localize("Restarting…"), "warning"); this.restartNeeded = false; }, this.fail));
             },
             isDirtyAll(tab) { return pure.isDirtyAll(tab); },
             // Mod+Z, Mod+Shift+Z and Mod+S in a visual view: the buffer's undo and redo, and Save
@@ -1388,7 +1391,7 @@
   </div>
   <q-banner v-if="root && root.worktreeOf" dense class="bg-blue-1 text-black" id="DevWorktreeBanner">A worktree of {{(roots.find((item) => item.id === root.worktreeOf) || {}).label || root.worktreeOf}}
     for an Assist session: not loaded, so the server keeps running the main tree. Check and commit here; a session that needs to run what it changes works in the main tree.</q-banner>
-  <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">A change needs a restart to apply.
+  <q-banner v-if="restartNeeded" dense class="bg-amber-2 text-black" id="DevRestartBanner">{{ t('A change needs a restart to apply') }}.
     <template v-slot:action><q-btn dense flat no-caps label="Restart" @click="restart"></q-btn><q-btn dense flat no-caps label="Later" @click="restartNeeded = false"></q-btn></template>
   </q-banner>
   <q-tabs v-if="!guided" dense align="left" no-caps v-model="tab" class="m-dev-tabs">
@@ -1430,7 +1433,7 @@
         <q-space></q-space>
         <q-btn dense flat round size="sm" icon="sym_o_note_add" aria-label="New file" :disable="!canWrite" @click="newFile(null)"><q-tooltip>New file</q-tooltip></q-btn>
         <q-btn dense flat round size="sm" icon="sym_o_create_new_folder" aria-label="New folder" :disable="!canWrite" @click="newFolder(null)"><q-tooltip>New folder</q-tooltip></q-btn>
-        <q-btn dense flat round size="sm" icon="sym_o_search" aria-label="Go to file" @click="openGoto"><q-tooltip>Go to file (Ctrl+P)</q-tooltip></q-btn>
+        <q-btn dense flat round size="sm" icon="sym_o_search" :aria-label="t('Go to file')" @click="openGoto"><q-tooltip>Go to file (Ctrl+P)</q-tooltip></q-btn>
         <q-btn dense flat round size="sm" icon="sym_o_data_object" aria-label="Go to artifact" @click="openArtifactGoto" id="DevGotoArtifact"><q-tooltip>Go to artifact (Ctrl+Shift+O)</q-tooltip></q-btn>
       </div>
       <div v-show="rail === 'files'" class="col scroll">
@@ -1447,7 +1450,7 @@
         </q-menu>
       </div>
       <div v-show="rail === 'search'" class="col column no-wrap q-pa-xs">
-        <q-input dense outlined v-model="search.query" placeholder="Search in files" @keyup.enter="runSearch" id="DevSearchQuery"></q-input>
+        <q-input dense outlined v-model="search.query" :placeholder="t('Search in files')" @keyup.enter="runSearch" id="DevSearchQuery"></q-input>
         <div class="row items-center no-wrap">
           <q-checkbox dense size="xs" v-model="search.regex" label=".*"></q-checkbox>
           <q-checkbox dense size="xs" v-model="search.caseSensitive" label="Aa" class="q-ml-sm"></q-checkbox>
@@ -1475,7 +1478,7 @@
               <q-item v-if="task.url" clickable v-close-popup :href="task.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
               <q-item clickable v-close-popup @click="copyText(task.key)"><q-item-section>Copy key</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task)"><q-item-section>Use in commit</q-item-section></q-item>
-              <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task, true)"><q-item-section>Set current</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit" @click="useTask(task, true)"><q-item-section>{{ t('Set current') }}</q-item-section></q-item>
               <q-item clickable v-close-popup :disable="!isGit || !canWrite" @click="taskBranch(task)"><q-item-section>Branch</q-item-section></q-item>
             </q-list></q-menu></q-btn></q-item-section>
           </q-item>
@@ -1522,8 +1525,8 @@
         <div v-if="current.conflict" class="col column no-wrap" id="DevCompare">
           <q-banner dense class="bg-orange-2 text-black">The file on disk (left) changed since it was opened; your text is on the right.
             <template v-slot:action>
-              <q-btn dense flat no-caps label="Save mine over it" @click="keepMine(current)"></q-btn>
-              <q-btn dense flat no-caps label="Take the disk's" @click="takeDisk(current)"></q-btn>
+              <q-btn dense flat no-caps :label="t('Save mine over it')" @click="keepMine(current)"></q-btn>
+              <q-btn dense flat no-caps :label="t('Take the disk\'s')" @click="takeDisk(current)"></q-btn>
             </template>
           </q-banner>
           <m-diff-view class="col" :original="current.conflict.diskText" :modified="current.text" :file-name="current.path" editable
@@ -1611,17 +1614,17 @@
       <q-separator class="q-my-sm"></q-separator>
       <div v-if="agreement && agreement.required && !agreement.signed && !agreement.signedHere" class="row items-center no-wrap text-caption text-warning q-mb-xs" id="DevAgreementWarning">
         <span class="col">{{agreement.authorEmail || "The commit's author"}} has not signed {{hosted && hosted.repositoryPath}}'s contributor agreement: the server may not take these commits.</span>
-        <q-btn v-if="agreement.hasAuthorsFile" dense flat no-caps size="sm" label="Sign" :disable="!canWrite" @click="signAgreement" id="DevSignAgreement"></q-btn></div>
+        <q-btn v-if="agreement.hasAuthorsFile" dense flat no-caps size="sm" :label="t('Sign')" :disable="!canWrite" @click="signAgreement" id="DevSignAgreement"></q-btn></div>
       <q-input dense outlined v-model="commitForm.summary" label="Summary" id="DevCommitSummary"></q-input>
       <q-input dense outlined type="textarea" autogrow v-model="commitForm.body" label="Body" class="q-mt-xs"></q-input>
       <div class="row items-center no-wrap q-mt-xs">
         <q-input dense outlined v-model="commitForm.task" label="Task (trailer)" class="col" id="DevCommitTask">
           <template v-slot:prepend><q-icon name="sym_o_task_alt" size="xs"></q-icon></template></q-input>
-        <q-btn dense flat no-caps size="sm" :label="status.currentTask && status.currentTask === commitForm.task ? 'Current' : 'Set current'"
+        <q-btn dense flat no-caps size="sm" :label="status.currentTask && status.currentTask === commitForm.task ? 'Current' : t('Set current')"
             :disable="status.currentTask === (commitForm.task || null)" @click="setCurrentTask" id="DevSetCurrentTask"></q-btn>
       </div>
       <div class="row q-gutter-x-sm"><q-checkbox dense size="xs" v-model="commitForm.amend" label="Amend" @update:model-value="amendChanged"></q-checkbox>
-        <q-checkbox dense size="xs" v-model="commitForm.signOff" label="Sign off"></q-checkbox>
+        <q-checkbox dense size="xs" v-model="commitForm.signOff" :label="t('Sign off')"></q-checkbox>
         <q-checkbox dense size="xs" v-model="commitForm.skipHooks" label="Skip hooks"></q-checkbox></div>
       <div class="text-caption m-muted q-mt-xs">Author {{status.authorName}} &lt;{{status.authorEmail}}&gt;; committer {{status.committerName || '(git user.name is not set)'}}</div>
       <div class="row q-gutter-x-sm q-mt-xs">
@@ -1662,7 +1665,7 @@
         <q-btn dense flat no-caps size="sm" label="Browse files" @click="browseTree('')"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Branch here" :disable="!canWrite" @click="newBranch(commitDetail.id)"></q-btn>
         <q-btn v-if="advanced" dense flat no-caps size="sm" label="Tag here" :disable="tier !== 'full'" @click="tagHere"></q-btn>
-        <q-btn dense flat no-caps size="sm" label="Cherry-pick" :disable="tier !== 'full'" @click="replay('cherry-pick')"></q-btn>
+        <q-btn dense flat no-caps size="sm" :label="t('Cherry-pick')" :disable="tier !== 'full'" @click="replay('cherry-pick')"></q-btn>
         <q-btn dense flat no-caps size="sm" label="Revert" :disable="tier !== 'full'" @click="replay('revert')"></q-btn>
       </div>
       <div v-if="tree" class="col row no-wrap" id="DevCommitTree">
@@ -1701,7 +1704,7 @@
   </q-dialog>
   <q-dialog v-model="goto.open" aria-labelledby="DevGotoTitle">
     <q-card style="width: 40rem; max-width: 95vw">
-      <q-card-section class="q-pb-none"><h2 class="text-h6 q-my-none" id="DevGotoTitle">Go to file</h2></q-card-section>
+      <q-card-section class="q-pb-none"><h2 class="text-h6 q-my-none" id="DevGotoTitle">{{ t('Go to file') }}</h2></q-card-section>
       <q-card-section><q-input dense outlined autofocus v-model="goto.filter" label="File name or path"
           @keyup.enter="gotoFile(gotoMatches[0])" id="DevGotoInput"></q-input></q-card-section>
       <q-card-section v-if="goto.loading" role="status" class="m-muted">Loading files…</q-card-section>
@@ -1737,7 +1740,7 @@
                     this.loading = false;
                     const answer = result && result.json;
                     if (answer && answer.markdown) { this.doc = answer; this.error = ""; }
-                    else this.error = (answer && (answer.errors || answer.errorMessage)) || "There is no doc of this artifact.";
+                    else this.error = (answer && (answer.errors || answer.errorMessage)) || moqui.l10n.localize("There is no doc of this artifact.");
                 }, (err) => { this.loading = false; this.error = String((err && err.message) || err); });
             },
             onLink(link) {

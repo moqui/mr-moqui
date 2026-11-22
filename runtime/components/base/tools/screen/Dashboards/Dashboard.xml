@@ -19,8 +19,8 @@
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
         <actions><script><![CDATA[
-            if (!panelId) throw new Error('Choose a panel')
-            if (!['csv','xlsx'].includes(String(renderMode))) throw new Error('Choose CSV or XLSX')
+            if (!panelId) throw new Error(ec.l10n.localize('Choose a panel'))
+            if (!['csv','xlsx'].includes(String(renderMode))) throw new Error(ec.l10n.localize('Choose CSV or XLSX'))
             const range=ec.resource.script('component://tools/template/ReportMount.js').state().policy.range
             const output=ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,panelId,
                 renderMode,from:from || range.from,thru:thru || range.thru,variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
@@ -29,7 +29,7 @@
     </transition>
     <transition name="inspectPanel" method="get" read-only="true">
         <actions><script><![CDATA[
-            if (!panelId) throw new Error('Choose a panel')
+            if (!panelId) throw new Error(ec.l10n.localize('Choose a panel'))
             const range=ec.resource.script('component://tools/template/ReportMount.js').state().policy.range
             const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,panelId,inspect:true,
                 from:from || range.from,thru:thru || range.thru,variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
@@ -40,7 +40,7 @@
         <actions><script><![CDATA[
             const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
             const variable=(definition.body.variables || []).find(variable=>variable.name===variableName)
-            if (!variable || variable.kind==='constant' || Object.prototype.hasOwnProperty.call(ec.context.get('reportFixedVariables') || {},variableName)) throw new Error('Choose an editable variable')
+            if (!variable || variable.kind==='constant' || Object.prototype.hasOwnProperty.call(ec.context.get('reportFixedVariables') || {},variableName)) throw new Error(ec.l10n.localize('Choose an editable variable'))
             const values=JSON.parse(variableValuesJson || '{}')
             values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
             variableParameters={definitionId,from,thru,filtersJson}
@@ -52,7 +52,7 @@
         <actions><script><![CDATA[
             const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
             const panels=definition.body && definition.body.panels
-            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error('Choose a panel of this dashboard')
+            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error(ec.l10n.localize('Choose a panel of this dashboard'))
             let copyId=String(panelId).slice(0,70)+'-copy'
             while (panels[copyId]) copyId+='-copy'
             if (copyId.length>80) throw new Error('This panel has too many copies; rename one first')
@@ -76,7 +76,7 @@
         <actions><script><![CDATA[
             const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
             const panels=definition.body && definition.body.panels
-            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error('Choose a panel of this dashboard')
+            if (definition.type!=='dashboard' || !panels || !panels[panelId]) throw new Error(ec.l10n.localize('Choose a panel of this dashboard'))
             delete panels[panelId]
             const prune=node=>{
                 if (!node || typeof node!=='object') return

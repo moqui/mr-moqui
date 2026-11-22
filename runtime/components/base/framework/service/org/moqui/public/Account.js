@@ -113,8 +113,8 @@ function throttle(action, address) {
     )
         fail(
             'Tarpit',
-            limits.message ||
-                'Wait before requesting more account instructions',
+            ec.l10n.localize(limits.message ||
+                'Wait before requesting more account instructions'),
         )
 }
 function verified() {
@@ -147,17 +147,17 @@ function passwordAllowed(password) {
 }
 function beginRegistration(p) {
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.emailAddress || ''))
-        fail('Unprocessable', 'A valid email address is required')
+        fail('Unprocessable', ec.l10n.localize('A valid email address is required'))
     const email = p.emailAddress.trim().toLowerCase(),
         template = ec.factory.getConfValue('pass-authority@verification-template')
-    if (!template) fail('Unavailable', 'Verification mail is not configured')
+    if (!template) fail('Unavailable', ec.l10n.localize('Verification mail is not configured'))
     const old = ec.entity
         .find('moqui.security.UserAccount')
         .condition('emailAddress', email)
         .one()
     const own = old && old.userId === ec.user.userId
     if (ec.user.userId && !own)
-        fail('Unprocessable', 'Sign out before registering another address')
+        fail('Unprocessable', ec.l10n.localize('Sign out before registering another address'))
     // A disabled account that never verified its address belongs to nobody yet; a later request replaces its challenge.
     const unclaimed =
         old &&
@@ -186,7 +186,7 @@ function beginRegistration(p) {
                 .call().userId
             if (ec.message.hasError() || !userId) {
                 ec.message.clearErrors()
-                fail('Unavailable', 'Registration is temporarily unavailable')
+                fail('Unavailable', ec.l10n.localize('Registration is temporarily unavailable'))
             }
         }
         for (const earlier of find('RegistrationChallenge', { userId })
@@ -226,7 +226,7 @@ function beginRegistration(p) {
     }
     return {
         message:
-            'If eligible, verification instructions will be sent to the address.',
+            ec.l10n.localize('If eligible, verification instructions will be sent to the address.'),
     }
 }
 function verifyRegistration(p) {
@@ -236,7 +236,7 @@ function verifyRegistration(p) {
         .forUpdate(true)
         .one()
     if (!c || c.consumedAt || ec.user.timestampMillis(c.expiresAt) <= now())
-        fail('NotFound', 'Verification link expired or not found')
+        fail('NotFound', ec.l10n.localize('Verification link expired or not found'))
     if (c.newAccount === 'Y' && !p.newPassword)
         return { passwordRequired: true }
     const ua = ec.entity
@@ -245,7 +245,7 @@ function verifyRegistration(p) {
         .forUpdate(true)
         .one()
     if (!ua || ua.emailAddress !== c.emailAddress)
-        fail('NotFound', 'Verification link expired or not found')
+        fail('NotFound', ec.l10n.localize('Verification link expired or not found'))
     if (
         !find('VerifiedAddress', {
             userId: ua.userId,
@@ -260,7 +260,7 @@ function verifyRegistration(p) {
     if (c.newAccount === 'Y') {
         const password = String(p.newPassword || '')
         if (!passwordAllowed(password))
-            fail('Unprocessable', 'Password does not satisfy account policy')
+            fail('Unprocessable', ec.l10n.localize('Password does not satisfy account policy'))
         const out = ec.service
             .sync()
             .name('org.moqui.impl.UserServices.update#PasswordInternal')
@@ -273,7 +273,7 @@ function verifyRegistration(p) {
             .call()
         if (ec.message.hasError() || !out.updateSuccessful) {
             ec.message.clearErrors()
-            fail('Unprocessable', 'Password does not satisfy account policy')
+            fail('Unprocessable', ec.l10n.localize('Password does not satisfy account policy'))
         }
     }
     c.set('consumedAt', ec.user.nowTimestamp)
@@ -317,7 +317,7 @@ function registeredClient(p) {
             transportVerified(p.clientId),
         )
     )
-        fail('Unauthorized', 'Unregistered deployment or site')
+        fail('Unauthorized', ec.l10n.localize('Unregistered deployment or site'))
 }
 function issueDelegation(p) {
     const ua = ec.user.userId
@@ -327,7 +327,7 @@ function issueDelegation(p) {
               .useCache(false)
               .one()
         : null
-    if (!ua) fail('AuthenticationRequired', 'Complete authentication first')
+    if (!ua) fail('AuthenticationRequired', ec.l10n.localize('Complete authentication first'))
     registeredClient(p)
     const token = ec.user.randomString(64),
         expiresAt = now() + 15 * 60000
@@ -359,12 +359,12 @@ function authenticateDelegation(token, clientId, siteId) {
         siteId,
     }).one()
     if (!v || v.revokedAt || ec.user.timestampMillis(v.expiresAt) <= now())
-        fail('AuthenticationRequired', 'Session expired')
+        fail('AuthenticationRequired', ec.l10n.localize('Session expired'))
     const ua = ec.entity
         .find('moqui.security.UserAccount')
         .condition('userId', v.userId)
         .one()
-    if (closed(ua)) fail('AuthenticationRequired', 'Session expired')
+    if (closed(ua)) fail('AuthenticationRequired', ec.l10n.localize('Session expired'))
     if (
         v.accountStamp &&
         v.accountStamp !==
@@ -377,7 +377,7 @@ function authenticateDelegation(token, clientId, siteId) {
         ec.logger.warn(
             'Delegation rejected because account credentials changed',
         )
-        fail('AuthenticationRequired', 'Session expired')
+        fail('AuthenticationRequired', ec.l10n.localize('Session expired'))
     }
     if (v.visitId) {
         const visit = ec.entity
@@ -388,7 +388,7 @@ function authenticateDelegation(token, clientId, siteId) {
             ec.logger.warn(
                 'Delegation rejected because the issuing visit ended or is unavailable',
             )
-            fail('AuthenticationRequired', 'Session expired')
+            fail('AuthenticationRequired', ec.l10n.localize('Session expired'))
         }
     }
     // Activity in the last third of the lifetime slides the expiry, never past twelve hours from issue.
@@ -418,7 +418,7 @@ function ssoHandoff(p, lock) {
         ec.user.timestampMillis(row.expiresAt) <= now() ||
         row.siteId !== p.siteId
     )
-        fail('NotFound', 'Sign-in handoff expired')
+        fail('NotFound', ec.l10n.localize('Sign-in handoff expired'))
     return row
 }
 function prepareSso(p) {
@@ -431,18 +431,18 @@ function prepareSso(p) {
         !/^https?:\/\/[^/]+\//.test(callback) ||
         /[\r\n#]/.test(callback)
     )
-        fail('Unavailable', 'SSO callback is not registered')
+        fail('Unavailable', ec.l10n.localize('SSO callback is not registered'))
     if (
         !String(ec.factory.getConfValue('pass-authority@sso-flows') || '')
             .split(',')
             .includes(p.authFlowId)
     )
-        fail('Unauthorized', 'Sign-in provider is unavailable')
+        fail('Unauthorized', ec.l10n.localize('Sign-in provider is unavailable'))
     if (
         !/^[A-Za-z0-9_-]{16,80}$/.test(p.state || '') ||
         !/^[A-Za-z0-9_-]{64}$/.test(p.verifier || '')
     )
-        fail('Unprocessable', 'Invalid sign-in challenge')
+        fail('Unprocessable', ec.l10n.localize('Invalid sign-in challenge'))
     const flow = ec.entity
         .find('moqui.security.sso.AuthFlow')
         .condition('authFlowId', p.authFlowId)
@@ -453,7 +453,7 @@ function prepareSso(p) {
         flow.inbound === 'Y' ||
         !['AftOidc', 'AftOauth'].includes(flow.authFlowTypeEnumId)
     )
-        fail('Unavailable', 'Sign-in provider is unavailable')
+        fail('Unavailable', ec.l10n.localize('Sign-in provider is unavailable'))
     const row = create('SsoHandoff', {
         handoffId: ec.user.randomString(32),
         clientId: p.clientId,
@@ -468,7 +468,7 @@ function prepareSso(p) {
 }
 function startSso(p) {
     const row = ssoHandoff(p, false)
-    if (row.codeHash) fail('NotFound', 'Sign-in handoff expired')
+    if (row.codeHash) fail('NotFound', ec.l10n.localize('Sign-in handoff expired'))
     ec.web.sessionAttributes.passSsoHandoffId = row.handoffId
     const returnTo =
         '/rest/s1/pass/v1/sites/' +
@@ -488,12 +488,12 @@ function completeSso(p) {
         ec.web.sessionAttributes.passSsoHandoffId !== row.handoffId ||
         row.codeHash
     )
-        fail('NotFound', 'Sign-in handoff expired')
+        fail('NotFound', ec.l10n.localize('Sign-in handoff expired'))
     const ua = ec.user.userAccount
     if (!ua)
-        fail('AuthenticationRequired', 'Complete account authentication first')
+        fail('AuthenticationRequired', ec.l10n.localize('Complete account authentication first'))
     // the SSO sign-in itself passed the framework's own test, which a tarpit lock does not stop
-    if (closed(ua)) fail('AuthenticationRequired', 'Account is unavailable')
+    if (closed(ua)) fail('AuthenticationRequired', ec.l10n.localize('Account is unavailable'))
     const code = ec.user.randomString(64)
     row.set('userId', ua.userId)
     row.set('codeHash', digest(code))
@@ -521,12 +521,12 @@ function exchangeSso(p) {
         row.verifierHash !== digest(p.verifier || '') ||
         ec.user.timestampMillis(row.codeExpiresAt) <= now()
     )
-        fail('AuthenticationRequired', 'Sign-in handoff expired')
+        fail('AuthenticationRequired', ec.l10n.localize('Sign-in handoff expired'))
     const ua = ec.entity
         .find('moqui.security.UserAccount')
         .condition('userId', row.userId)
         .one()
-    if (closed(ua)) fail('AuthenticationRequired', 'Account is unavailable')
+    if (closed(ua)) fail('AuthenticationRequired', ec.l10n.localize('Account is unavailable'))
     ec.user.internalLoginUser(ua.username)
     row.set('consumedAt', ec.user.nowTimestamp)
     row.update()
@@ -567,12 +567,12 @@ function execute(op, p) {
                 .call()
             ec.message.clearErrors()
             return {
-                message: 'If eligible, recovery instructions will be sent.',
+                message: ec.l10n.localize('If eligible, recovery instructions will be sent.'),
             }
         }
         if (op === 'manageAccount') {
             const ua = ec.user.userAccount
-            if (!ua) fail('AuthenticationRequired', 'Sign in to continue')
+            if (!ua) fail('AuthenticationRequired', ec.l10n.localize('Sign in to continue'))
             if (p.action === 'password')
                 return ec.service
                     .sync()
@@ -591,13 +591,13 @@ function execute(op, p) {
                     .name('org.moqui.impl.UserServices.end#UserVisit')
                     .parameters({ visitId: p.visitId })
                     .call()
-            fail('Unprocessable', 'Unsupported account security action')
+            fail('Unprocessable', ec.l10n.localize('Unsupported account security action'))
         }
         if (op === 'endSession') {
             ec.user.logoutUser()
             return { authenticated: false }
         }
-        fail('NotFound', 'Account action not found')
+        fail('NotFound', ec.l10n.localize('Account action not found'))
     } finally {
         if (!was) ec.artifactExecution.enableAuthz()
     }

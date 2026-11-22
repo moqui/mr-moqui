@@ -19,7 +19,7 @@
         const millis = (value, label) => {
             if (value == null || String(value).trim() === '') return null
             const number = Number(String(value).trim())
-            if (!Number.isFinite(number) || number < 0) { queryNotices.push(label+' is not a number of milliseconds and is ignored.'); return null }
+            if (!Number.isFinite(number) || number < 0) { queryNotices.push(ec.l10n.localize(label === 'Maximum duration' ? 'Maximum duration is not a number of milliseconds and is ignored.' : 'Minimum duration is not a number of milliseconds and is ignored.')); return null }
             return Math.round(number * 1000000)
         }
         const minimum = millis(minDuration, 'Minimum duration'), maximum = millis(maxDuration, 'Maximum duration')

@@ -18,7 +18,7 @@ const SKIP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-a
             return
         }
         if (config.getInitParameter("requireElasticApi") === "true" && !ec.search.hasElasticApi()) {
-            response.sendError(404, "The search backend is not OpenSearch, so there is nothing to proxy")
+            response.sendError(404, ec.l10n.localize("The search backend is not OpenSearch, so there is nothing to proxy"))
             return
         }
         const prefix = String(config.getInitParameter("prefix") || request.servletPath || "")

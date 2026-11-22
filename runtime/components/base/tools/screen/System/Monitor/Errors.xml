@@ -12,7 +12,7 @@
         }).call()
         const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return value == null || Number.isNaN(date.getTime()) ? String(value ?? '') : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss') }
         documentList = (result.hits || []).map(hit => { const body = hit.body || {}; return Object.assign({documentId:hit.documentId || hit.id},body,{
-            messageText:String(body.message || body['exception.type'] || 'Error group').slice(0,200),exceptionType:body['exception.type'] || '',serviceName:body['service.name'] || '',firstSeenText:stamp(body.first_seen),lastSeenText:stamp(body.last_seen)}) })
+            messageText:String(body.message || body['exception.type'] || ec.l10n.localize('Error group')).slice(0,200),exceptionType:body['exception.type'] || '',serviceName:body['service.name'] || '',firstSeenText:stamp(body.first_seen),lastSeenText:stamp(body.last_seen)}) })
         documentListCount = result.total || 0
         documentListPageIndex = parseInt(pageIndex || '0', 10)
         documentListPageSize = parseInt(pageSize || '50', 10)

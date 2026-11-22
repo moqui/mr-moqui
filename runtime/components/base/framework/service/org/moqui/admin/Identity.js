@@ -163,7 +163,7 @@ const DAY = 86400000
 const accessKinds = ["sessions", "loginKeys", "appPasswords", "sshKeys", "sipDevices", "agents"]
 const text = value => String(value ?? "").trim()
 const signedInUser = () => {
-    if (!ec.user.userId) throw new Error("Sign in to see sessions")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to see sessions"))
     return ec.user.userId
 }
 // The target of a session or credential service: the caller's own account, or another one when the caller holds the
@@ -178,7 +178,7 @@ function target(p, permission) {
 // A browser and system from a user agent, as Commons Account names a device; the agent itself is not returned.
 function clientSummary(agent) {
     const value = String(agent || "")
-    if (!value) return "Unknown device"
+    if (!value) return ec.l10n.localize("Unknown device")
     const browser = /Edg\//.test(value)
         ? "Edge"
         : /Firefox\//.test(value)
@@ -188,7 +188,7 @@ function clientSummary(agent) {
             : /Safari\//.test(value)
               ? "Safari"
               : /moqui|MR Moqui/i.test(value)
-                ? "MR Moqui app"
+                ? ec.l10n.localize("MR Moqui app")
                 : "Browser"
     const system = /iPhone|iPad/.test(value)
         ? "iOS"
@@ -301,7 +301,7 @@ function revokeSessions(p) {
     const keys = Array.from(p.sessionKeyList || [])
         .map(text)
         .filter(Boolean)
-    if (!keys.length && !p.allOthers) throw new Error("Name the sessions to end")
+    if (!keys.length && !p.allOthers) throw new Error(ec.l10n.localize("Name the sessions to end"))
     const byUser = new Map()
     let refusedCount = 0
     if (p.allOthers) {
@@ -402,7 +402,7 @@ function accountCredentials(p) {
         credentials.push({
             kind,
             credentialId: row.loginKey,
-            description: row.deviceName || row.description || "Sign-in key",
+            description: row.deviceName || row.description || ec.l10n.localize("Sign-in key"),
             fromDate: ms(row.fromDate),
             lastUsedDate: ms(row.lastUsedDate),
             thruDate: ms(row.thruDate)
@@ -511,7 +511,7 @@ function revokeAccountAccess(p) {
     const userId = text(p.userId)
     if (!userId) throw new Error("userId is required")
     if (!ec.user.hasPermission(IDENTITY_MANAGE)) throw new Error(IDENTITY_MANAGE + " is required")
-    if (userId === me) throw new Error("Your own sign-ins and credentials are ended in your account settings")
+    if (userId === me) throw new Error(ec.l10n.localize("Your own sign-ins and credentials are ended in your account settings"))
     const account = one(ACCOUNT, {userId})
     if (!account) throw new Error("User " + userId + " is not available")
     const held = heldBeyond(userId)
@@ -539,7 +539,7 @@ function revokeAccountAccess(p) {
             Object.entries(counts)
                 .map(([kind, count]) => kind + ": " + count)
                 .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
-        ).slice(0, 255) || "Nothing to revoke",
+        ).slice(0, 255) || ec.l10n.localize("Nothing to revoke"),
         reason || null
     )
     ec.logger.warn(
@@ -602,8 +602,8 @@ function revokeOwnAccess(p) {
             Object.entries(counts)
                 .map(([kind, count]) => kind + ": " + count)
                 .join(", ") + (failed.length ? "; not revoked: " + failed.join(", ") : "")
-        ).slice(0, 255) || "Nothing to revoke",
-        "Signed out everywhere by the account itself"
+        ).slice(0, 255) || ec.l10n.localize("Nothing to revoke"),
+        ec.l10n.localize("Signed out everywhere by the account itself")
     )
     ec.logger.warn("Account access of " + ec.user.username + " ended by its own sign out everywhere (" + JSON.stringify(counts) + ")")
     return {revokedCounts: counts, failedKinds: failed}
@@ -611,7 +611,7 @@ function revokeOwnAccess(p) {
 
 // check#AdministrationPath: for a caller who reads access or identities; the answer is a reason, never an error.
 function checkPath(p) {
-    if (!ec.user.userId) throw new Error("Sign in to check the administration path")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to check the administration path"))
     if (!["ADMIN_ACCESS_VIEW", "ADMIN_IDENTITY_VIEW"].some(permission => ec.user.hasPermission(permission)))
         throw new Error("ADMIN_ACCESS_VIEW or ADMIN_IDENTITY_VIEW is required")
     const proposed = p.proposed && typeof p.proposed === "object" ? p.proposed : {}

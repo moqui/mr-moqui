@@ -87,15 +87,15 @@ const linkLike = value => /:\/\//.test(value) || /^\s*([/\\]|\.{1,2}\/|[a-z][a-z
 const urlTypes = ["transition", "screen", "content", "plain"]
 // What is wrong with the original as something to translate here, or null.
 function originalProblem(original) {
-    if (urlTypes.includes(original.trim()) || linkLike(original)) return "A link, a path or a link type is not translated here"
+    if (urlTypes.includes(original.trim()) || linkLike(original)) return ec.l10n.localize("A link, a path or a link type is not translated here")
     const found = placeholders(original)
     return found.problem ? "The original " + found.problem + "; an instance administrator translates it in Tools" : null
 }
 // What is wrong with a translation of original, or null: its placeholders are the original's, exactly.
 function translationProblem(original, localized) {
     if (localized.length > maxTranslation) return "The translation is longer than " + maxTranslation + " characters"
-    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(localized)) return "The translation has a control character"
-    if (linkLike(localized)) return "The translation may not be a link or a path"
+    if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(localized)) return ec.l10n.localize("The translation has a control character")
+    if (linkLike(localized)) return ec.l10n.localize("The translation may not be a link or a path")
     const expected = placeholders(original).list || []
     const found = placeholders(localized)
     if (found.problem) return "The translation " + found.problem
@@ -148,7 +148,7 @@ function checkedTarget(row) {
         entityName: row.entityName,
         fieldName: row.fieldName,
         pkField: pkNames[0],
-        title: row.title || key,
+        title: row.title ? ec.l10n.localize(row.title) : key,
         sequenceNum: Number(row.sequenceNum ?? 9999)
     }
 }
@@ -228,8 +228,8 @@ function storeLocalizedMessage(p) {
     const locale = text(p.locale)
     const localized = String(p.localized ?? "").trim()
     const reason = lib.reasonText(p)
-    if (!original.trim() || original.length > 255) throw new Error("Give the original message, at most 255 characters")
-    if (!localeOk(locale, false)) return refused("LOCALE_INVALID", "Give a locale such as es or pt_BR")
+    if (!original.trim() || original.length > 255) throw new Error(ec.l10n.localize("Give the original message, at most 255 characters"))
+    if (!localeOk(locale, false)) return refused("LOCALE_INVALID", ec.l10n.localize("Give a locale such as es or pt_BR"))
     // a translation that is there may still be removed
     const unsupported = localized ? originalProblem(original) : null
     if (unsupported) return refused("PLACEHOLDER_UNSUPPORTED", unsupported)
@@ -352,7 +352,7 @@ function storeLocalizedEntityField(p) {
     const target = targetNamed(text(p.entityName), text(p.fieldName))
     if (!target)
         return refused("NOT_REGISTERED", text(p.entityName) + "." + text(p.fieldName) + " is not a registered label to translate")
-    if (!localeOk(locale, true)) return refused("LOCALE_INVALID", "Give a locale such as es or pt_BR")
+    if (!localeOk(locale, true)) return refused("LOCALE_INVALID", ec.l10n.localize("Give a locale such as es or pt_BR"))
     const label = pkValue ? labelValue(target, pkValue) : null
     if (!label) return refused("LABEL_UNAVAILABLE", target.title + " has no " + (pkValue || "such label"))
     const key = {entityName: target.entityName, fieldName: target.fieldName, pkValue, locale}
@@ -398,9 +398,9 @@ function validateMessageTranslationRow(p) {
     lib.requireManage(MANAGE)
     const {original, locale, localized} = translationRow(p)
     const errors = []
-    if (!original.trim() || original.length > 255) errors.push("Give the original message, at most 255 characters")
-    if (!localeOk(locale, false)) errors.push("Give a locale such as es or pt_BR")
-    if (!localized) errors.push("Give the translation: an import does not remove one")
+    if (!original.trim() || original.length > 255) errors.push(ec.l10n.localize("Give the original message, at most 255 characters"))
+    if (!localeOk(locale, false)) errors.push(ec.l10n.localize("Give a locale such as es or pt_BR"))
+    if (!localized) errors.push(ec.l10n.localize("Give the translation: an import does not remove one"))
     if (!errors.length) {
         const problem = originalProblem(original) || translationProblem(original, localized)
         if (problem) errors.push(problem)
@@ -411,7 +411,7 @@ function validateMessageTranslationRow(p) {
     return {
         valid: !same,
         skip: same,
-        warnings: same ? ["Already translated so"] : existing ? ["Replaces the translation there"] : [],
+        warnings: same ? [ec.l10n.localize("Already translated so")] : existing ? [ec.l10n.localize("Replaces the translation there")] : [],
         normalizedValues: {original, locale, localized},
         sourceRevision: stamp(existing),
         displayText: locale + ": " + original.slice(0, 80)
@@ -419,13 +419,13 @@ function validateMessageTranslationRow(p) {
 }
 function applyMessageTranslationRow(p) {
     const {original, locale, localized} = translationRow(p)
-    if (!localized) return refused("TRANSLATION_REQUIRED", "Give the translation: an import does not remove one")
+    if (!localized) return refused("TRANSLATION_REQUIRED", ec.l10n.localize("Give the translation: an import does not remove one"))
     const stored = storeLocalizedMessage({
         original,
         locale,
         localized,
         expectedRevision: text(p.sourceRevision),
-        reason: "Imported translation"
+        reason: ec.l10n.localize("Imported translation")
     })
     if (!stored.applied) return {applied: false, reasonCode: stored.reasonCode, reason: stored.reason, resultRef: null}
     return {applied: true, resultRef: (locale + ": " + original).slice(0, 120), resultText: "Translation saved"}
@@ -438,7 +438,7 @@ function exportMessageTranslationRows(p) {
     lib.requireView(VIEW, MANAGE)
     const locale = text(p.selection?.locale)
     if (locale && !/^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8}){0,2}$/.test(locale))
-        return {refused: true, reasonCode: "LOCALE_INVALID", reason: "A locale is like es or pt_BR", rowCount: 0}
+        return {refused: true, reasonCode: "LOCALE_INVALID", reason: ec.l10n.localize("A locale is like es or pt_BR"), rowCount: 0}
     const fields = Array.from(p.fieldList || [])
         .map(text)
         .filter(name => ["original", "locale", "localized"].includes(name))

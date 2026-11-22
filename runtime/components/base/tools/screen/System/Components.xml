@@ -126,8 +126,8 @@ along with this software (see the LICENSE.md file). If not, see
             foundList = scanOut.components || []
             pendingList = pendingOut.changes || []
             restartAllowed = !!pendingOut.restartAllowed
-            modeOptions = [{key: 'now', text: 'Now'}, {key: 'restart', text: 'At the next start'}]
-                .concat(restartAllowed ? [{key: 'restart-now', text: 'With a restart now'}] : [])
+            modeOptions = [{key: 'now', text: ec.l10n.localize('Now')}, {key: 'restart', text: ec.l10n.localize('At the next start')}]
+                .concat(restartAllowed ? [{key: 'restart-now', text: ec.l10n.localize('With a restart now')}] : [])
             dirtyList = dirtyChanges ? String(dirtyChanges).split('\n').map((text) => ({text})) : []
             dataComponent = dataName && Array.from(loadedList).some((info) => info.name === dataName) ? dataName : null
             preview = null
@@ -159,8 +159,8 @@ along with this software (see the LICENSE.md file). If not, see
                     stagedTypes: types.filter((type) => ['seed', 'seed-initial', 'install'].includes(type)).join(',')}
             })
             deployedRows = Array.from(deployedList).filter((row) => row.status !== 'staged')
-            storageOptions = [{key: 'database', text: 'Database'}, {key: 'bare', text: 'Bare repository on disk'},
-                {key: 'clone', text: 'Working clone in a component directory'}]
+            storageOptions = [{key: 'database', text: ec.l10n.localize('Database')}, {key: 'bare', text: ec.l10n.localize('Bare repository on disk')},
+                {key: 'clone', text: ec.l10n.localize('Working clone in a component directory')}]
         ]]></script>
     </actions>
     <widgets>

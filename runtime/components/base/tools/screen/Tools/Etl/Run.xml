@@ -58,9 +58,9 @@ along with this software (see the LICENSE.md file). If not, see
             mayRerun = !!run && out.canRerun === true
             nextStartRow = run && run.nextStartRow != null ? ec.l10n.format(Number(run.nextStartRow), '#,##0') : ''
             const number = (value) => value == null ? '' : ec.l10n.format(Number(value), '#,##0')
-            countRows = !run ? [] : [{label: 'Read', value: number(run.extractCount)}, {label: 'Loaded (committed)', value: number(run.loadCount)},
-                {label: 'Skipped', value: number(run.skipCount)}, {label: 'Rows with errors', value: number(run.errorCount)},
-                {label: 'Started at row', value: number(run.startRow)}, {label: 'Last committed row', value: number(run.lastCommittedRow)}]
+            countRows = !run ? [] : [{label: 'Read', value: number(run.extractCount)}, {label: ec.l10n.localize('Loaded (committed)'), value: number(run.loadCount)},
+                {label: 'Skipped', value: number(run.skipCount)}, {label: ec.l10n.localize('Rows with errors'), value: number(run.errorCount)},
+                {label: ec.l10n.localize('Started at row'), value: number(run.startRow)}, {label: ec.l10n.localize('Last committed row'), value: number(run.lastCommittedRow)}]
         ]]></script>
     </actions>
     <widgets>

@@ -110,7 +110,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <q-btn flat dense size="sm" icon="sym_o_more_horiz" :aria-label="showQuote ? t('Hide the quoted text') : t('Show the quoted text')" @click="showQuote = !showQuote">
                             <q-tooltip>{{showQuote ? t('Hide the quoted text') : t('Show the quoted text')}}</q-tooltip></q-btn>
                         <template v-if="showQuote">
-                            <m-html-view :html="draft.quoteHtml" :collapse-quotes="false" :images-bar="false" title="Quoted text"></m-html-view>
+                            <m-html-view :html="draft.quoteHtml" :collapse-quotes="false" :images-bar="false" :title="t('Quoted text')"></m-html-view>
                             <q-btn flat dense no-caps size="sm" color="negative" :label="t('Remove the quoted text')" @click="removeQuote"></q-btn>
                         </template>
                     </div>

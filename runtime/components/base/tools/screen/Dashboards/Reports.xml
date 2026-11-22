@@ -20,7 +20,7 @@
         <actions><script><![CDATA[
             const result = ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,renderMode:renderMode || 'pdf'}).call()
             const allowed = ['application/pdf','image/png','text/csv','application/zip','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
-            if (!allowed.includes(result.contentType)) throw new Error('Unexpected report preview content type')
+            if (!allowed.includes(result.contentType)) throw new Error(ec.l10n.localize('Unexpected report preview content type'))
             const encode = value => WebUtilities.encodeHtml(String(value || ''))
             const uri = 'data:'+result.contentType+';base64,'+String(result.contentBase64 || '')
             const content = '<!doctype html><html><head><meta charset="utf-8"><title>Report preview</title></head><body><h1>Report preview</h1>'+

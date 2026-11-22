@@ -37,8 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{reason:reason, operationKey:operationKey}"/>
             <script><![CDATA[
                 if (!ec.message.hasError()) {
-                    if (result?.applied) ec.message.addMessage(result.stateText || 'A backup was started.')
-                    else ec.message.addMessage(result?.reason || 'No backup was started.', 'warning')
+                    if (result?.applied) ec.message.addMessage(result.stateText || ec.l10n.localize('A backup was started.'))
+                    else ec.message.addMessage(result?.reason || ec.l10n.localize('No backup was started.'), 'warning')
                 }
             ]]></script>
         </actions>
@@ -67,8 +67,8 @@ along with this software (see the LICENSE.md file). If not, see
                 stateText: coverage.stateText || '',
                 runningText: coverage.runningText || '',
                 scheduleText: (coverage.schedule?.text || '') + (coverage.schedule?.nextRunText ? ' · next ' + coverage.schedule.nextRunText : ''),
-                lastRunText: lastRun ? [lastRun.stateText, lastRun.startedText ? 'started ' + lastRun.startedText : '', lastRun.startedBy ? 'by ' + lastRun.startedBy.toLowerCase() : ''].filter(Boolean).join(' · ') : 'No run yet',
-                lastSuccessText: coverage.lastSuccessText || (coverage.successesKept === false ? 'Not recorded: the job keeps only its failed runs' : 'None recorded'),
+                lastRunText: lastRun ? [lastRun.stateText, lastRun.startedText ? 'started ' + lastRun.startedText : '', lastRun.startedBy ? 'by ' + lastRun.startedBy.toLowerCase() : ''].filter(Boolean).join(' · ') : ec.l10n.localize('No run yet'),
+                lastSuccessText: coverage.lastSuccessText || (coverage.successesKept === false ? ec.l10n.localize('Not recorded: the job keeps only its failed runs') : ec.l10n.localize('None recorded')),
                 archivesText: coverage.archiveProblem ? coverage.archiveProblem
                     : (coverage.archiveCount || 0) + (coverage.archiveCount === 1 ? ' archive' : ' archives') + (coverage.archiveBytesText ? ' · ' + coverage.archiveBytesText + ' of dumps' : '')
                         + (coverage.newestArchiveText ? ' · newest ' + coverage.newestArchiveText : ''),

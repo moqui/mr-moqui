@@ -5,7 +5,7 @@
 
 ${md.nav(up, rootHref)}
 
-${count} documented.
+${ec.resource.expand("${count} documented.", "", {count})}
 <#if packages.length>
 ## ${treeKind === "entity" ? "Packages" : "Directories"}
 

@@ -29,7 +29,7 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{adapterKey:'relay', values:{connectionId:(newRelayId || ''), smtpHost:(newSmtpHost || ''), smtpPort:(newSmtpPort || ''),
                         smtpSsl:(newTlsMode === 'ssl' ? 'Y' : 'N'), smtpStartTls:(newTlsMode === 'starttls' ? 'Y' : 'N')}}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(stored.applied ? 'Relay started. It sends nothing until its sign-in is entered and a test of it passes.' : stored.reason,
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Relay started. It sends nothing until its sign-in is entered and a test of it passes.') : stored.reason,
                     stored.applied ? 'success' : 'warning')</script>
                 <set field="connectionKey" from="stored.applied ? stored.connectionKey : null"/>
             </if>

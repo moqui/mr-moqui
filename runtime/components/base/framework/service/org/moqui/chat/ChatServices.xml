@@ -4508,7 +4508,7 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
             if (ec.message.hasError()) return
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
-            if (!access.canPost) { ec.message.addError(access.isArchived ? 'The room is archived' : 'Join the room to vote'); return }
+            if (!access.canPost) { ec.message.addError(access.isArchived ? ec.l10n.localize('The room is archived') : ec.l10n.localize('Join the room to vote')); return }
             const row = ec.entity.find('moqui.chat.ChatPoll').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).forUpdate(true).one()
             if (!row) { ec.message.addError(`Poll ${eventSeq} not found in the room`); return }
             const now = Number(ec.user.nowTimestamp)

@@ -18,8 +18,8 @@ const shareLib = ec.resource.script("component://tools/template/ReportShare.js")
 const {ask, offered, refuse} = ec.resource.script("component://tools/template/ReportDelivery.js")
 const R = "org.moqui.report.ReportServices."
 const itemsMax = 50
-const displayUnavailable = "This dashboard is not available to this display."
-const panelUnavailable = "This panel is not available to this display."
+const displayUnavailable = ec.l10n.localize("This dashboard is not available to this display.")
+const panelUnavailable = ec.l10n.localize("This panel is not available to this display.")
 
 const text = value => String(value ?? "").trim()
 const idList = value =>
@@ -97,15 +97,15 @@ function list() {
 function create(p) {
     return attempt(() => {
         const mount = mountLib.state()
-        if (!mount.links.definition) fail("Making a playlist is not offered to you here")
+        if (!mount.links.definition) fail(ec.l10n.localize("Making a playlist is not offered to you here"))
         const hidden = hiddenComponents(mount)
         const id = text(p.playlistId)
-        if (!id) fail("Give the playlist an ID")
+        if (!id) fail(ec.l10n.localize("Give the playlist an ID"))
         const title = text(p.playlistTitle) || id
         const ids = idList(p.playlistDashboardIds)
-        if (!ids.length || ids.length > itemsMax) fail("Choose between one and fifty dashboards")
+        if (!ids.length || ids.length > itemsMax) fail(ec.l10n.localize("Choose between one and fifty dashboards"))
         const seconds = parseInt(text(p.playlistSeconds) || "30", 10)
-        if (!Number.isFinite(seconds) || seconds < 5 || seconds > 3600) fail("Choose a duration from five to 3600 seconds")
+        if (!Number.isFinite(seconds) || seconds < 5 || seconds > 3600) fail(ec.l10n.localize("Choose a duration from five to 3600 seconds"))
         for (const dashboardId of ids) {
             const entry = ask("get#Definition", {definitionId: dashboardId}).out?.definition
             if (!entry || entry.type !== "dashboard" || hidden.includes(entry.component))
@@ -118,7 +118,7 @@ function create(p) {
                 title,
                 body: {kind: "playlist", seconds, playlist: ids.map(definitionId => ({definitionId}))}
             },
-            note: "Created dashboard playlist"
+            note: ec.l10n.localize("Created dashboard playlist")
         })
         if (saved.failure) fail(saved.failure)
         return saved.out.definition.id
@@ -146,16 +146,16 @@ function entriesOf(playlist, what) {
 // The dashboard at index of the stored playlist rendered as the viewer over a range: {id, output}, or null with why.
 function dashboardAt(definitionId, index, range) {
     const playlist = playlistOf(definitionId)
-    if (!playlist) return {failure: "Choose a dashboard playlist"}
+    if (!playlist) return {failure: ec.l10n.localize("Choose a dashboard playlist")}
     const items = itemsOf(playlist)
     const at = Number(index == null || index === "" ? 0 : index)
     const id = Number.isInteger(at) && at >= 0 && at < items.length ? text(items[at]?.definitionId) : ""
-    if (!id) return {failure: "Choose a playlist item"}
+    if (!id) return {failure: ec.l10n.localize("Choose a playlist item")}
     const dashboard = ask("get#Definition", {definitionId: id})
     if (dashboard.out?.definition?.type !== "dashboard")
-        return {failure: dashboard.failure || "This playlist dashboard is not available"}
+        return {failure: dashboard.failure || ec.l10n.localize("This playlist dashboard is not available")}
     const rendered = ask("render#Dashboard", {definitionId: id, from: range.from, thru: range.thru})
-    if (!rendered.out?.dashboard) return {failure: rendered.failure || "This playlist dashboard is not available"}
+    if (!rendered.out?.dashboard) return {failure: rendered.failure || ec.l10n.localize("This playlist dashboard is not available")}
     return {id, output: rendered.out.dashboard}
 }
 function framesOf(output) {
@@ -169,7 +169,7 @@ function player(p) {
     const mount = mountLib.state()
     const range = {from: text(p.from) || mount.policy.range.from, thru: text(p.thru) || mount.policy.range.thru}
     const playlist = playlistOf(p.definitionId)
-    if (!playlist) throw new Error("Choose a dashboard playlist")
+    if (!playlist) throw new Error(ec.l10n.localize("Choose a dashboard playlist"))
     return {
         title: playlist.title || playlist.id,
         seconds: secondsOf(playlist),

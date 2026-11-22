@@ -218,7 +218,7 @@ along with this software (see the LICENSE.md file). If not, see
             try {
                 const mappingId = String(context.mappingId || '')
                 const cronExpression = String(context.cronExpression || '').trim()
-                if (!mappingId || !cronExpression) throw new Error('A schedule needs a mapping and a cron expression')
+                if (!mappingId || !cronExpression) throw new Error(ec.l10n.localize('A schedule needs a mapping and a cron expression'))
                 // the framework's Quartz cron parser: it throws on a bad expression, and null is one that is never due
                 let nextRun = null
                 try { nextRun = ec.service.nextCronExecution(cronExpression, null) } catch (e) { throw new Error('Not a cron expression: ' + String(e.message || e)) }

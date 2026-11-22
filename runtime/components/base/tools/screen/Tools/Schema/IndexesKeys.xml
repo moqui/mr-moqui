@@ -77,9 +77,9 @@ along with this software (see the LICENSE.md file). If not, see
                 .filter((row) => !filter || (row.tableName + ' ' + row.entityName).toLowerCase().includes(filter))
             missingIndexTotal = diffList.reduce((sum, row) => sum + row.missingIndexCount, 0)
             canPlan = ec.user.hasPermission('DATABASE_ADMIN')
-            changeOptions = [{key: 'missingIndexes', text: 'Create missing indexes'}, {key: 'invalidIndexes', text: 'Rebuild invalid indexes'},
-                {key: 'missingForeignKeys', text: 'Create missing foreign keys'}, {key: 'extraIndexes', text: 'Drop extra indexes'},
-                {key: 'extraForeignKeys', text: 'Drop extra foreign keys'}, {key: 'dropForeignKeys', text: 'Drop every foreign key'}]
+            changeOptions = [{key: 'missingIndexes', text: ec.l10n.localize('Create missing indexes')}, {key: 'invalidIndexes', text: ec.l10n.localize('Rebuild invalid indexes')},
+                {key: 'missingForeignKeys', text: ec.l10n.localize('Create missing foreign keys')}, {key: 'extraIndexes', text: ec.l10n.localize('Drop extra indexes')},
+                {key: 'extraForeignKeys', text: ec.l10n.localize('Drop extra foreign keys')}, {key: 'dropForeignKeys', text: ec.l10n.localize('Drop every foreign key')}]
         ]]></script>
     </actions>
     <widgets>

@@ -71,6 +71,7 @@
 (function (root) {
     "use strict";
     const moqui = (root.moqui = root.moqui || {});
+    const L = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const reactive = (obj) => (root.Vue && root.Vue.reactive ? root.Vue.reactive(obj) : obj);
     const LIB = "/libs/matrix-sdk-crypto/index.mjs";
     const BASE = "/ChatKeys/";
@@ -94,8 +95,8 @@
     // device, so this page makes and opens none (ensureDevice, and each call that needs the device, refuse with reasonCode
     // elsewhere) and an encrypted room says it opens in Chat. Never on the web.
     const elsewhere = () => !!root.__moquiCryptoInShell;
-    const elsewhereError = () => Object.assign(new Error("Encrypted messages open in Chat, in the app's main window"),
-        { reasonCode: "elsewhere", errors: "Encrypted messages open in Chat, in the app's main window" });
+    const elsewhereError = () => Object.assign(new Error(L("Encrypted messages open in Chat, in the app's main window")),
+        { reasonCode: "elsewhere", errors: L("Encrypted messages open in Chat, in the app's main window") });
     // under the storage scope: in the desktop client every server's pages share one origin (MoquiLib scopedKey); the
     // store's databases and lock follow its prefix
     const pointerKey = (userId) => moqui.scopedKey("moqui.crypto.device." + userId);
@@ -939,7 +940,7 @@
             // verified devices stays the SDK's strict onlyTrustedDevices.
             if (!onlyVerified) {
                 const problems = await verifiedUserProblems(ids, chatRoomId);
-                if (problems.length) throw { reasonCode: "verifiedUserProblem", errors: "A verified person has a new device or identity", problems };
+                if (problems.length) throw { reasonCode: "verifiedUserProblem", errors: L("A verified person has a new device or identity"), problems };
             }
             const settings = new sdk.EncryptionSettings();
             settings.historyVisibility = sdk.HistoryVisibility.Shared;
@@ -960,7 +961,7 @@
             } catch (err) {
                 // the SDK's own words are not shown: logged, and said plainly
                 console.error("The room key was not shared", err);
-                throw { reasonCode: "shareFailed", errors: "This message could not be encrypted for the devices of this room" };
+                throw { reasonCode: "shareFailed", errors: L("This message could not be encrypted for the devices of this room") };
             }
             for (const request of requests) await sendRequest(request);
             const text = await machine.encryptRoomEvent(new sdk.RoomId(roomIdOf(chatRoomId)), eventType, JSON.stringify(content || {}));
@@ -998,12 +999,12 @@
             await sync();
         } catch (err) {
             // the sync failed: the first answer says why it could not be read
-            return { error: (failed && (failed.description || failed.errors || failed.message)) || "This message cannot be read on this device", withheld: withheldOf(failed) };
+            return { error: (failed && (failed.description || failed.errors || failed.message)) || L("This message cannot be read on this device"), withheld: withheldOf(failed) };
         }
         try {
             return await once();
         } catch (again) {
-            return { error: (again && (again.description || again.errors || again.message)) || "This message cannot be read on this device",
+            return { error: (again && (again.description || again.errors || again.message)) || L("This message cannot be read on this device"),
                 withheld: withheldOf(again) || withheldOf(failed) };
         }
     }
@@ -1085,7 +1086,7 @@
      */
     // localStorage is the browser's, so any tab writes it (no relay)
     async function acceptProblemsNow(chatRoomId, problems) {
-        if (!chatRoomId || !me) throw { reasonCode: "badRequest", errors: "No room or no device" };
+        if (!chatRoomId || !me) throw { reasonCode: "badRequest", errors: L("No room or no device") };
         const all = readAllowed();
         const list = all[chatRoomId] = Array.isArray(all[chatRoomId]) ? all[chatRoomId] : [];
         for (const problem of Array.from(problems || [])) {
@@ -1207,7 +1208,7 @@
     }
     function recoveryKeyOf(text) {
         const bytes = unbase58(String(text || "").replace(/\s+/g, ""));
-        const bad = { reasonCode: "badRecoveryKey", errors: "This is not a recovery key" };
+        const bad = { reasonCode: "badRecoveryKey", errors: L("This is not a recovery key") };
         if (!bytes || bytes.length !== 35 || bytes[0] !== 0x8b || bytes[1] !== 0x01) throw bad;
         if (bytes.reduce((parity, byte) => parity ^ byte, 0) !== 0) throw bad;
         return sdk.BackupDecryptionKey.fromBase64(toBase64(bytes.slice(2, 34)));
@@ -1277,7 +1278,7 @@
         // the version this recovery key opens: the current one, or an older one "New recovery key" left (it keeps its keys)
         const listed = await call("backupVersions", null, "GET");
         const match = (listed.versionList || []).find((v) => v.publicKey === publicKey);
-        if (!match) throw { reasonCode: "wrongRecoveryKey", errors: "This recovery key is not the one of any of your key backups" };
+        if (!match) throw { reasonCode: "wrongRecoveryKey", errors: L("This recovery key is not the one of any of your key backups") };
         return importBackup(key, String(match.version), !!match.current);
     }
     /**
@@ -1556,7 +1557,7 @@
         return serial(async () => {
             if (!machine) throw closedError();
             const device = await machine.getDevice(new sdk.UserId(matrixId(userId)), new sdk.DeviceId(String(deviceId)), 5);
-            if (!device) throw { reasonCode: "notFound", errors: "Device not found" };
+            if (!device) throw { reasonCode: "notFound", errors: L("Device not found") };
             const M = sdk.VerificationMethod;
             const [request, out] = device.requestVerification([M.SasV1, M.QrCodeShowV1, M.QrCodeScanV1, M.ReciprocateV1]);
             await sendOutgoing(out);
@@ -1587,7 +1588,7 @@
         await ensureDevice();
         return serial(async () => {
             const flow = flows.get(flowId);
-            if (!machine || !flow) throw { reasonCode: "notFound", errors: "This verification is over" };
+            if (!machine || !flow) throw { reasonCode: "notFound", errors: L("This verification is over") };
             const request = flow.request;
             if (action === "accept") await sendOutgoing(request.accept());
             else if (action === "sas") {
@@ -1600,7 +1601,7 @@
             else if (action === "cancel") await sendOutgoing((flow.sas && flow.sas.cancel()) || (flow.qr && flow.qr.cancel()) || request.cancel());
             else if (action === "showQr") {
                 const qr = await request.generateQrCode();
-                if (!qr) throw { reasonCode: "noQr", errors: "The other device cannot scan a code" };
+                if (!qr) throw { reasonCode: "noQr", errors: L("The other device cannot scan a code") };
                 flow.qr = qr;
                 flow.qrImage = qrImageOf(qr);
                 try { qr.registerChangesCallback(async () => refreshVerifications()); } catch (err) { /* polled */ }
@@ -1632,12 +1633,12 @@
         const subtle = root.crypto && root.crypto.subtle;
         const user = currentUser();
         const pointer = user ? readPointer(user) : null;
-        if (!subtle || !root.TextEncoder) throw { reasonCode: "noCrypto", errors: "This browser cannot keep a sealed message" };
-        if (!pointer) throw { reasonCode: "noDevice", errors: "This browser has no encryption device" };
+        if (!subtle || !root.TextEncoder) throw { reasonCode: "noCrypto", errors: L("This browser cannot keep a sealed message") };
+        if (!pointer) throw { reasonCode: "noDevice", errors: L("This browser has no encryption device") };
         const id = user + "/" + pointer.deviceId;
         if (localKey && localKeyOf === id) return localKey;
         const answer = await call("storeKey", { deviceId: pointer.deviceId });
-        if (!answer || !answer.storeKey) throw { reasonCode: "noDevice", errors: "This browser has no encryption device" };
+        if (!answer || !answer.storeKey) throw { reasonCode: "noDevice", errors: L("This browser has no encryption device") };
         const encoder = new root.TextEncoder();
         const base = await subtle.importKey("raw", encoder.encode(answer.storeKey), "HKDF", false, ["deriveKey"]);
         localKey = await subtle.deriveKey({ name: "HKDF", hash: "SHA-256", salt: encoder.encode("moqui-chat-held-draft"), info: encoder.encode(id) },
@@ -1654,7 +1655,7 @@
     }
     /** The text of what sealLocal made on this device; a rejection when it is not this device's or was changed. */
     async function openLocal(sealed) {
-        if (!sealed || sealed.v !== 1) throw { reasonCode: "notSealed", errors: "Not a sealed draft" };
+        if (!sealed || sealed.v !== 1) throw { reasonCode: "notSealed", errors: L("Not a sealed draft") };
         const key = await localKeyNow();
         const plain = await root.crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(sealed.iv) }, key, unb64(sealed.data));
         return new root.TextDecoder().decode(plain);

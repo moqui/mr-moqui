@@ -45,11 +45,11 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- each order the column headers give, so Find keeps the current one -->
         <script><![CDATA[
             orderOptions = []
-            for (const [field, label, numeric] of [['totalTime', 'Total time', true], ['average', 'Average time', true],
-                    ['maxTime', 'Longest time', true], ['minTime', 'Shortest time', true], ['stdDev', 'Std dev', true],
+            for (const [field, label, numeric] of [['totalTime', ec.l10n.localize('Total time'), true], ['average', 'Average time', true],
+                    ['maxTime', ec.l10n.localize('Longest time'), true], ['minTime', ec.l10n.localize('Shortest time'), true], ['stdDev', ec.l10n.localize('Std dev'), true],
                     ['hitCount', 'Hits', true], ['errorCount', 'Errors', true], ['entityName', 'Entity', false], ['sql', 'SQL', false]]) {
-                orderOptions.push({key: '-' + field, text: label + (numeric ? ', highest first' : ', Z to A')})
-                orderOptions.push({key: field, text: label + (numeric ? ', lowest first' : ', A to Z')})
+                orderOptions.push({key: '-' + field, text: ec.resource.expand(numeric ? '${label}, highest first' : '${label}, Z to A', '', {label})})
+                orderOptions.push({key: field, text: ec.resource.expand(numeric ? '${label}, lowest first' : '${label}, A to Z', '', {label})})
             }
         ]]></script>
         <set field="pageSize" from="pageSize || '40'"/>
@@ -66,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
                 found = ec.service.sync().name('org.moqui.dev.DatabaseServices.list#DatabaseStatements').parameters({db, limit: 100}).call()
             } catch (e) { databaseStatementsReason = String(e.message || e) }
             if (ec.message.hasError()) { databaseStatementsReason = ec.message.errorsString; ec.message.clearErrors() }
-            else if (found && found.available === false) databaseStatementsReason = found.reason || 'Not available on this database'
+            else if (found && found.available === false) databaseStatementsReason = found.reason || ec.l10n.localize('Not available on this database')
             const number = (value) => value == null || value === '' ? null : Number(value)
             for (const row of (found && found.statements) || []) {
                 const mysql = row.sum_timer_wait != null

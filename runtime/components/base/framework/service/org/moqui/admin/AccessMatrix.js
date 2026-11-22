@@ -93,13 +93,13 @@ function cellView(row, cell, tokens) {
               ? "From " + dateText(cell.fromDate)
               : cell.state === "advanced"
                 ? cell.advancedType + " (advanced rule)"
-                : "Not granted"
+                : ec.l10n.localize("Not granted")
     const view = Object.assign({}, cell, {
         stateText,
         scopeText:
             cell.filterSetIds.join(", ") +
             (cell.unscoped ? (cell.filterSetIds.length ? "; " : "") + "a registered row rule is missing" : ""),
-        proposedText: cell.proposed === "add" ? "Grant proposed" : cell.proposed === "end" ? "End proposed" : "",
+        proposedText: cell.proposed === "add" ? ec.l10n.localize("Grant proposed") : cell.proposed === "end" ? ec.l10n.localize("End proposed") : "",
         actionText: "",
         nextChanges: ""
     })
@@ -223,7 +223,7 @@ function matrixContext(p) {
         title: group.description || group.userGroupId,
         markerText: [
             group.privileged ? "Privileged" : "",
-            group.hasSealed ? "Sealed grants" : "",
+            group.hasSealed ? ec.l10n.localize("Sealed grants") : "",
             group.kind === "custom" ? "Custom" : ""
         ]
             .filter(Boolean)
@@ -258,7 +258,7 @@ function matrixContext(p) {
         listRows,
         unsupportedRows: Array.from(found.unsupportedList || []).map(row =>
             Object.assign({}, row, {
-                ruleText: row.ruleType === "artifact" ? "App gate" : "Permission",
+                ruleText: row.ruleType === "artifact" ? ec.l10n.localize("App gate") : "Permission",
                 scopeText: Array.from(row.filterSetIds || []).join(", ")
             })
         ),
@@ -280,7 +280,7 @@ function matrixContext(p) {
 function applyMatrixChanges(p) {
     lib.requireManage()
     const changes = parseChanges(p.changes)
-    if (!changes.length) throw new Error("There is no proposed change to apply")
+    if (!changes.length) throw new Error(ec.l10n.localize("There is no proposed change to apply"))
     let revisions = {}
     try {
         revisions = JSON.parse(text(p.revisions) || "{}") || {}
@@ -310,7 +310,7 @@ function applyMatrixChanges(p) {
             added: applied.added || 0,
             ended: applied.ended || 0,
             reasonCode: done ? null : applied.reasonCode || "FAILED",
-            reason: done ? null : applied.failure || applied.reason || "Not applied"
+            reason: done ? null : applied.failure || applied.reason || ec.l10n.localize("Not applied")
         })
     }
     return {

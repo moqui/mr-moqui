@@ -22,7 +22,7 @@ const stamp = row => String(ms(row?.lastUpdatedStamp) ?? "")
 const text = value => String(value ?? "").trim()
 
 function signedIn() {
-    if (!ec.user.userId) throw new Error("Sign in to administer the configuration")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to administer the configuration"))
 }
 // A read needs the view permission or its manage permission; a change the manage permission.
 function requireView(view, manage) {
@@ -36,7 +36,7 @@ function requireManage(manage) {
 const refused = (reasonCode, reason, extra = {}) => Object.assign({applied: false, reasonCode, reason}, extra)
 function reasonText(p) {
     const reason = text(p.reason)
-    if (reason.length > 255) throw new Error("Give a reason of at most 255 characters")
+    if (reason.length > 255) throw new Error(ec.l10n.localize("Give a reason of at most 255 characters"))
     return reason || null
 }
 // The reason the audit log records beside an audit-logged field the change writes ({field}_changeReason, as Java).

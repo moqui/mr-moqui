@@ -63,7 +63,7 @@ const directionOf = type => {
     const incoming = !!(text(type.consumeServiceName) || text(type.receiveServiceName) || text(type.receivePath))
     return out && incoming ? "both" : out ? "out" : incoming ? "in" : "none"
 }
-const directionTexts = {both: "Sent and received", out: "Sent", in: "Received", none: "Not routed"}
+const directionTexts = {both: ec.l10n.localize("Sent and received"), out: "Sent", in: "Received", none: ec.l10n.localize("Not routed")}
 const modeText = (mode, owner) =>
     mode === "native" ? "By the message service" : mode === "owner" ? "By " + owner : "Not offered"
 // A type as the list and the detail show it.
@@ -109,7 +109,7 @@ function described(type, handlers, descriptors, canManage) {
                           .join(", ")
                   )
                   .filter(Boolean)
-                  .join("; ") || "Registered, no action"
+                  .join("; ") || ec.l10n.localize("Registered, no action")
             : null,
         sendPath: text(type.sendPath) || null,
         receivePath: text(type.receivePath) || null,
@@ -120,7 +120,7 @@ function described(type, handlers, descriptors, canManage) {
         canChange: canManage && configurable,
         readOnlyReason: configurable
             ? null
-            : "Its owner registered no handler for delegated administration: it is changed by its owner's deployment, or by an instance administrator",
+            : ec.l10n.localize("Its owner registered no handler for delegated administration: it is changed by its owner's deployment, or by an instance administrator"),
         revision: stamp(type)
     }
 }
@@ -171,7 +171,7 @@ function getMessageTypeUse(p) {
                     currentHandlerKey:
                         registered[role].find(handler => text(handler.serviceName) === service)?.handlerKey || null,
                     changeable: registered[role].length > 0,
-                    note: registered[role].length ? null : "No handler is registered for this: it stays as its owner deployed it",
+                    note: registered[role].length ? null : ec.l10n.localize("No handler is registered for this: it stays as its owner deployed it"),
                     choiceList: registered[role].map(handler => ({
                         handlerKey: handler.handlerKey,
                         title: text(handler.title) || handler.handlerKey,
@@ -188,7 +188,7 @@ function getMessageTypeUse(p) {
                     currentService: text(current.receiveServiceName) || null,
                     currentHandlerKey: null,
                     changeable: false,
-                    note: "How the instance takes what a remote posts is not chosen here",
+                    note: ec.l10n.localize("How the instance takes what a remote posts is not chosen here"),
                     choiceList: []
                 }
             ]),
@@ -205,7 +205,7 @@ function getMessageTypeUse(p) {
                 return {
                     descriptorKey: descriptor.descriptorKey,
                     ownerApp: owner,
-                    title: text(descriptor.title) || descriptor.descriptorKey,
+                    title: text(descriptor.title) ? ec.l10n.localize(text(descriptor.title)) : descriptor.descriptorKey,
                     directionText:
                         text(descriptor.direction) === "in" ? "Received" : text(descriptor.direction) === "out" ? "Sent" : "Both",
                     retryText: modeText(text(descriptor.retryMode), owner),
@@ -258,7 +258,7 @@ function pathText(value, what, expanded) {
 function contentTypeText(value) {
     const found = lib.plainText(value, "The content type", 120)
     if (found && !/^[\w.+-]+\/[\w.+-]+(\s*;\s*[\w-]+=[\w.-]+)*$/.test(found))
-        throw new Error("The content type is not a media type")
+        throw new Error(ec.l10n.localize("The content type is not a media type"))
     return found
 }
 function patternText(value) {
@@ -267,7 +267,7 @@ function patternText(value) {
     try {
         new RegExp(found)
     } catch (error) {
-        throw new Error("The file pattern is not a regular expression")
+        throw new Error(ec.l10n.localize("The file pattern is not a regular expression"))
     }
     return found
 }
@@ -276,7 +276,7 @@ function patternText(value) {
 const fields = {
     description: value => {
         const found = lib.plainText(value, "The name")
-        if (!found) throw new Error("A message type has a name")
+        if (!found) throw new Error(ec.l10n.localize("A message type has a name"))
         return found
     },
     contentType: contentTypeText,
@@ -300,7 +300,7 @@ function storeMessageType(p) {
     if (!registered)
         return refused(
             "NOT_CONFIGURABLE",
-            "This message type is not changed here: its owner registered no handler for delegated administration",
+            ec.l10n.localize("This message type is not changed here: its owner registered no handler for delegated administration"),
             {revision}
         )
     if (text(p.expectedRevision) !== revision)

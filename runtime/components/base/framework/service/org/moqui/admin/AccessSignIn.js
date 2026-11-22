@@ -21,7 +21,7 @@ function previewGroupSignInRules(p) {
         return {
             allowed: false,
             reasonCode: "IP_INVALID",
-            reason: "Allowed IPs are comma separated IPv4 addresses (each part a number, * or a range like 0-31) or IPv6 addresses",
+            reason: ec.l10n.localize("Allowed IPs are comma separated IPv4 addresses (each part a number, * or a range like 0-31) or IPv6 addresses"),
             changed: false,
             revision
         }
@@ -58,9 +58,9 @@ function previewGroupSignInRules(p) {
                 (memberIds.length === 1 ? " member has" : " members have") +
                 " no confirmed factor and could not sign in until one is set up"
         )
-    else if (factorAfter) notes.push("Every member has a confirmed factor")
+    else if (factorAfter) notes.push(ec.l10n.localize("Every member has a confirmed factor"))
     if (ipAfter) notes.push(callerAdmitted ? "Members sign in only from " + ipAfter : "Your own address is not among " + ipAfter)
-    if (!factorAfter && !ipAfter) notes.push("Members sign in with no factor or address requirement of this group")
+    if (!factorAfter && !ipAfter) notes.push(ec.l10n.localize("Members sign in with no factor or address requirement of this group"))
     return {
         allowed: path.allowed,
         reasonCode: path.reasonCode,

@@ -90,12 +90,12 @@ along with this software (see the LICENSE.md file). If not, see
             healthRows = []
             const add = (check, rows, name, detail) => { for (const row of rows || []) healthRows.push({check, table: row.table_name || '',
                 name: name(row), detail: detail(row)}) }
-            add('Foreign key with no index', h.unindexedForeignKeys, (row) => row.constraint_name || '', (row) => [].concat(row.columns || []).join(', '))
+            add(ec.l10n.localize('Foreign key with no index'), h.unindexedForeignKeys, (row) => row.constraint_name || '', (row) => [].concat(row.columns || []).join(', '))
             add('Unused index', h.unusedIndexes, (row) => row.index_name || '', (row) => row.index_bytes != null ? ec.l10n.format(Number(row.index_bytes) / 1048576, '#,##0.0') + ' MiB' : '')
             add('Duplicate index', h.duplicateIndexes, (row) => row.index_name || '', (row) => row.covered_by ? 'led by ' + row.covered_by : '')
-            add('Invalid index', h.invalidIndexes, (row) => row.index_name || '', () => 'a failed online build: drop it or build it again')
+            add(ec.l10n.localize('Invalid index'), h.invalidIndexes, (row) => row.index_name || '', () => 'a failed online build: drop it or build it again')
             add('Transaction id age', h.databaseAge, (row) => row.database_name || 'database', (row) => row.xid_age != null ? ec.l10n.format(Number(row.xid_age), '#,##0') + ' of ' + ec.l10n.format(Number(row.freeze_max_age || 200000000), '#,##0') : '')
-            add('Table transaction id age', (h.tableAge || []).slice(0, 10), (row) => row.table_name || '', (row) => row.xid_age != null ? ec.l10n.format(Number(row.xid_age), '#,##0') : '')
+            add(ec.l10n.localize('Table transaction id age'), (h.tableAge || []).slice(0, 10), (row) => row.table_name || '', (row) => row.xid_age != null ? ec.l10n.format(Number(row.xid_age), '#,##0') : '')
             healthReasons = Object.entries(h.reasons || {}).map(([part, reason]) => part + ': ' + reason)
             statsSinceText = h.statsSince && Object.values(h.statsSince).find(Boolean) ? String(Object.values(h.statsSince).find(Boolean)) : ''
         ]]></script>

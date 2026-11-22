@@ -72,8 +72,8 @@ along with this software (see the LICENSE.md file). If not, see
                         operationKey:operationKey}"/>
             <if condition="!ec.message.hasError()">
                 <script>ec.message.addMessage(!done.applied ? done.reason : done.resolution === 'delivered'
-                    ? 'Settled as reported delivered. The message is not marked sent.' : done.resolution === 'notDelivered'
-                    ? 'Settled as reported not delivered. It can be sent again from the Settled list.' : 'Closed', done.applied ? 'success' : 'warning')</script>
+                    ? ec.l10n.localize('Settled as reported delivered. The message is not marked sent.') : done.resolution === 'notDelivered'
+                    ? ec.l10n.localize('Settled as reported not delivered. It can be sent again from the Settled list.') : ec.l10n.localize('Closed'), done.applied ? 'success' : 'warning')</script>
             </if>
         </actions>
         <default-response url="."/>
@@ -99,9 +99,9 @@ along with this software (see the LICENSE.md file). If not, see
             const linkFields = link => ({ownerHref: link.plain ? link.href : '', ownerUrl: link.plain ? '' : link.url || '',
                 ownerParameters: link.plain ? {} : link.parameters || {}})
             // a settlement is what a person reports, kept beside the message: neither marks it sent
-            const settleOptions = [{value: 'delivered', label: 'Reported delivered (the mail server shows it went)'},
-                {value: 'notDelivered', label: 'Reported not delivered (it may then be sent again)'}]
-            const closeOptions = [{value: 'abandon', label: 'Close it: it is not to be sent'}]
+            const settleOptions = [{value: 'delivered', label: ec.l10n.localize('Reported delivered (the mail server shows it went)')},
+                {value: 'notDelivered', label: ec.l10n.localize('Reported not delivered (it may then be sent again)')}]
+            const closeOptions = [{value: 'abandon', label: ec.l10n.localize('Close it: it is not to be sent')}]
             const templateOf = row => row.binding === 'account' ? '' : row.emailTemplateId
             outcomes = Array.from(found?.outcomeList || []).map(row => Object.assign({}, row, linkFields(ownerLink(row)), {
                 stateColor: colors[row.state] || 'grey-7',

@@ -17,7 +17,7 @@
     </transition>
     <transition name="store" method="post" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const parameters = ec.web.parameters
                 const out = ec.service.sync().name('org.moqui.ui.NotificationServices.store#WebPushSubscription')
                         .parameters({endpoint: parameters.endpoint, p256dhKey: parameters.p256dhKey,

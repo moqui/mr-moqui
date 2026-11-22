@@ -53,11 +53,11 @@ const payloadLimit = 20000
 const stateList = [
     {state: "attention", text: "Needs attention"},
     {state: "failed", text: "Failed"},
-    {state: "uncertain", text: "Outcome unknown"},
-    {state: "settled", text: "Settled by a person"},
-    {state: "waiting", text: "Waiting or in progress"},
-    {state: "done", text: "Sent or consumed"},
-    {state: "closed", text: "Cancelled or rejected"},
+    {state: "uncertain", text: ec.l10n.localize("Outcome unknown")},
+    {state: "settled", text: ec.l10n.localize("Settled by a person")},
+    {state: "waiting", text: ec.l10n.localize("Waiting or in progress")},
+    {state: "done", text: ec.l10n.localize("Sent or consumed")},
+    {state: "closed", text: ec.l10n.localize("Cancelled or rejected")},
     {state: "all", text: "All"}
 ]
 const now = () => ms(ec.user.nowTimestamp)
@@ -99,24 +99,24 @@ function stateOf(message) {
     }
 }
 const directionOf = message => (message.isOutgoing === "Y" ? "out" : "in")
-const uncertainTextOf = direction => (direction === "out" ? "May have been sent" : "May have been applied")
+const uncertainTextOf = direction => (direction === "out" ? ec.l10n.localize("May have been sent") : ec.l10n.localize("May have been applied"))
 function stateTextOf(message, state) {
     const out = directionOf(message) === "out"
     switch (state) {
         case "waiting":
-            return out ? "Waiting to be sent" : "Waiting to be consumed"
+            return out ? ec.l10n.localize("Waiting to be sent") : ec.l10n.localize("Waiting to be consumed")
         case "retrying":
-            return "Failed, will be tried again"
+            return ec.l10n.localize("Failed, will be tried again")
         case "failed":
             return "Failed"
         case "inProgress":
-            return out ? "Being sent" : "Being consumed"
+            return out ? ec.l10n.localize("Being sent") : ec.l10n.localize("Being consumed")
         case "uncertain":
             return uncertainTextOf(directionOf(message))
         case "settled":
             return "Settled: " + settlementText(message, settlementOf(message)).toLowerCase()
         case "staged":
-            return "Staged, not committed"
+            return ec.l10n.localize("Staged, not committed")
         case "rejected":
             return "Rejected"
         case "cancelled":
@@ -482,7 +482,7 @@ function messageFind(p) {
     const from = ms(p.fromDate)
     const thru = ms(p.thruDate)
     if ((p.fromDate && (from == null || Number.isNaN(from))) || (p.thruDate && (thru == null || Number.isNaN(thru))))
-        throw new Error("A date is not a date")
+        throw new Error(ec.l10n.localize("A date is not a date"))
     // one message asked for by a reference is found whatever its age
     const since = from ?? (thru == null && !reference ? now() - defaultDays * 86400000 : null)
     if (since != null) found = found.condition("initDate", "greater-equals", iso(since))

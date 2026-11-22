@@ -3241,6 +3241,7 @@
             }
         },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             changed(index, value) {
                 this.values[index] = value;
                 // the edited titles written into the change set's arguments: the first title="old" of the file's changes
@@ -3273,7 +3274,7 @@
                 '<div v-if="pending && previewSrc" class="q-mt-xs">' +
                     '<q-btn flat no-caps dense icon="sym_o_visibility" label="Preview" data-assist-action="preview-change-set" @click="previewing = !previewing"></q-btn>' +
                     '<div v-if="previewing" class="q-mt-xs">' +
-                        '<div v-if="entityChange" class="text-caption m-muted">The new field\'s data appears after Accept, when its column is added.</div>' +
+                        '<div v-if="entityChange" class="text-caption m-muted">{{t("The new field\'s data appears after Accept, when its column is added.")}}</div>' +
                         '<iframe :src="previewSrc" title="Preview" style="width:100%;min-height:24rem;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px" data-assist-change-preview></iframe>' +
                     '</div></div>' +
             '</div>'

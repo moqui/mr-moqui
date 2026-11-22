@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return {runId: String(run.runId || ''), title: String(run.label || time(run.start) || run.runId || ''),
                     caption: [String(run.script || '').replace(/^.*\//, '').replace(/\.load\.js$/, ''), time(run.start), run.status ? String(run.status) : ''].filter(Boolean).join(' · ')}
             })
-            const metrics = {requests: 'Requests', rps: 'Per second', errors: 'Errors', errorRate: 'Error rate', p50: 'p50 (ms)', p95: 'p95 (ms)',
+            const metrics = {requests: 'Requests', rps: ec.l10n.localize('Per second'), errors: 'Errors', errorRate: ec.l10n.localize('Error rate'), p50: 'p50 (ms)', p95: ec.l10n.localize('p95 (ms)'),
                 p99: 'p99 (ms)', count: 'Count'}
             const number = lib.number
             const shown = (metric, value) => {

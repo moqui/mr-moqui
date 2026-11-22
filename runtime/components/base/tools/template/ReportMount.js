@@ -79,7 +79,7 @@ const toolsPolicy = () => ({
     features: {alert: true, share: true},
     range: {from: "now-7d", thru: "now"},
     datasetIdPrefix: "",
-    datasetScopeLabel: "Scope field",
+    datasetScopeLabel: ec.l10n.localize("Scope field"),
     datasetScopeHelp: "The field that carries each row's scope; the policy's own when left empty",
     recipientPermissionId: null,
     reportEmailTemplateId: null,

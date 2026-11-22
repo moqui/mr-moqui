@@ -173,13 +173,13 @@
         { group: "Quasar", label: "Table", text: "<q-table flat :rows=\"rows\" :columns=\"columns\" row-key=\"id\"></q-table>" },
         { group: "Quasar", label: "Chip", text: "<q-chip dense square>Chip</q-chip>" },
         { group: "Moqui", label: "Form", text: "<m-form :fields-initial=\"{}\"></m-form>" },
-        { group: "Moqui", label: "Text line", text: "<m-text-line name=\"name\" label=\"Name\"></m-text-line>" },
+        { group: "Moqui", label: moqui.l10n.localize("Text line"), text: "<m-text-line name=\"name\" label=\"Name\"></m-text-line>" },
         { group: "Moqui", label: "Drop-down", text: "<m-drop-down name=\"statusId\" label=\"Status\" :options=\"[]\"></m-drop-down>" },
         { group: "Moqui", label: "Date and time", text: "<m-date-time name=\"fromDate\" label=\"From\"></m-date-time>" },
         { group: "Moqui", label: "Display", text: "<m-display :value=\"value\"></m-display>" },
         { group: "Moqui", label: "Markdown", text: "<m-markdown :text=\"text\"></m-markdown>" },
         { group: "Moqui", label: "Chart", text: "<m-chart :config=\"{}\"></m-chart>" },
-        { group: "Moqui", label: "Code editor", text: "<m-code-editor v-model=\"text\" language=\"xml\"></m-code-editor>" }
+        { group: "Moqui", label: moqui.l10n.localize("Code editor"), text: "<m-code-editor v-model=\"text\" language=\"xml\"></m-code-editor>" }
     ];
 
     // ---- the view ----
@@ -218,6 +218,7 @@
         },
         beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); if (this.offSaved) this.offSaved(); },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             load() {
                 this.ctx.get("screenView", { rootId: this.ctx.rootId, path: this.xmlPath }).then((answer) => {
                     this.view = answer.view;
@@ -233,7 +234,7 @@
                 }, () => { this.tui = { path: tuiPath, missing: true }; });
             },
             render() {
-                if (!this.view || !this.view.urlPath) { this.frameError = this.view ? "This screen is not mounted under the apps, so it has no page to show." : ""; return; }
+                if (!this.view || !this.view.urlPath) { this.frameError = this.view ? moqui.l10n.localize("This screen is not mounted under the apps, so it has no page to show.") : ""; return; }
                 this.rendering = true;
                 const files = this.tab.text !== this.tab.saved ? [{ rootId: this.ctx.rootId, path: this.tab.path, text: this.tab.text }] : [];
                 this.ctx.post("canvasBuffer", { bufferId: this.bufferId, files: JSON.stringify(files) }).then(() => {
@@ -294,7 +295,7 @@
             act(action, snippet) {
                 if (!this.canEdit) return;
                 const edit = pure.vueEdit(this.tab.text, this.elements, this.selected, action, snippet);
-                if (!edit) { this.ctx.note("That does not fit here", "warning"); return; }
+                if (!edit) { this.ctx.note(moqui.l10n.localize("That does not fit here"), "warning"); return; }
                 this.tab.text = edit.text;
                 this.$nextTick(() => { this.selected = edit.select < 0 ? -1 : this.elements.findIndex((element) => element.start === edit.select); });
             },
@@ -328,7 +329,7 @@
           <q-btn dense flat no-caps size="sm" icon="arrow_upward" aria-label="Move up" :disable="!canEdit" @click="act('up')"><q-tooltip>Move up</q-tooltip></q-btn>
           <q-btn dense flat no-caps size="sm" icon="arrow_downward" aria-label="Move down" :disable="!canEdit" @click="act('down')"><q-tooltip>Move down</q-tooltip></q-btn>
           <q-btn dense flat no-caps size="sm" label="Remove" :disable="!canEdit" @click="act('remove')" id="DevQvueRemove"></q-btn>
-          <q-btn dense flat no-caps size="sm" label="Open in Text" @click="openInText"></q-btn>
+          <q-btn dense flat no-caps size="sm" :label="t('Open in Text')" @click="openInText"></q-btn>
         </div>
         <div class="text-caption text-weight-medium q-mt-sm">Insert</div>
         <div v-for="group in ['Layout', 'Quasar', 'Moqui']" :key="group">

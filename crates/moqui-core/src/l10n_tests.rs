@@ -614,7 +614,7 @@ fn chinese_catalog_files_match_the_message_keys() {
             );
         }
     }
-    assert_eq!(files, 82, "catalog files {files}");
+    assert_eq!(files, 117, "catalog files {files}");
 
     for original in &es_originals {
         if !seen.contains_key(original) {

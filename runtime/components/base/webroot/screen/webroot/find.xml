@@ -9,7 +9,7 @@
     <transition name="rank" method="post" begin-transaction="false">
         <actions><script><![CDATA[
             const params = ec.web.parameters
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.search.SearchServices.rank#Texts').parameters({query: params.query || '',
                         texts: Array.isArray(params.texts) ? params.texts : [], limit: params.limit || 10}).call() || {}
                 if (ec.message.hasError()) {

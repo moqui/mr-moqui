@@ -47,14 +47,14 @@ const boundsOf = target => ({
 const zone = () => text(ec.factory.getConfValue("instance@default-time-zone")) || "UTC"
 const zoned = value => (value == null ? "" : ec.l10n.format(Number(value), "yyyy-MM-dd HH:mm", null, zone()))
 const refusal = (reasonCode, reason, extra = {}) => Object.assign({refused: true, reasonCode, reason}, extra)
-const notAvailable = () => new Error("This export is not available")
+const notAvailable = () => new Error(ec.l10n.localize("This export is not available"))
 const stateTexts = {
     exported: "Exported",
     running: "Running",
     complete: "Delivered",
-    partial: "Partly delivered",
+    partial: ec.l10n.localize("Partly delivered"),
     failed: "Failed",
-    uncertain: "Outcome unknown",
+    uncertain: ec.l10n.localize("Outcome unknown"),
     skipped: "Skipped",
     paused: "Paused",
     other: "Other"
@@ -113,7 +113,7 @@ function choicesOf(target) {
             byDefault: field.required || field.selected,
             selected: allowed && (field.required || field.selected),
             // why it is not offered: never the permission's name
-            note: allowed ? null : "Not included: you may not read it"
+            note: allowed ? null : ec.l10n.localize("Not included: you may not read it")
         }
     })
     return {scopes, fieldList}
@@ -150,7 +150,7 @@ function getExportFields(p) {
         fieldList,
         maxRows: bounds.maxRows,
         maxBytes: bounds.maxBytes,
-        problem: scopes.failure ? "Its scopes could not be read" : null
+        problem: scopes.failure ? ec.l10n.localize("Its scopes could not be read") : null
     })
     if (out.scoped && !out.scopeList.length) out.exportAllowed = false
     return {target: out}
@@ -164,11 +164,11 @@ function requestOf(p) {
     if (!dispatched(target)) throw new Error(lineText(target.title) + " is exported in its owner's own place")
     requireExport(target)
     const {scopes, fieldList} = choicesOf(target)
-    if (scopes.failure) throw new Error("The scopes of this export could not be read. Try again later.")
+    if (scopes.failure) throw new Error(ec.l10n.localize("The scopes of this export could not be read. Try again later."))
     const scopeKey = text(p.scopeKey)
     const scopeWord = (lineText(target.scopeLabel, 40) || "a scope").toLowerCase()
     if (scopes.unscoped) {
-        if (scopeKey) throw new Error("This export takes no scope")
+        if (scopeKey) throw new Error(ec.l10n.localize("This export takes no scope"))
     } else if (!scopeKey) return {refusal: refusal("SCOPE_REQUIRED", "Choose " + scopeWord + " to export")}
     // a scope the caller does not have reads as one that does not exist
     else if (!scopes.scopeList.some(scope => scope.scopeKey === scopeKey)) throw notAvailable()
@@ -190,7 +190,7 @@ function requestOf(p) {
     const wanted = fieldList.filter(field => field.required || (asked.length ? asked.includes(field.name) : field.byDefault))
     const included = wanted.filter(field => field.allowed)
     const omitted = wanted.filter(field => !field.allowed)
-    if (!included.length) return {refusal: refusal("NO_FIELDS", "None of the chosen fields may be read")}
+    if (!included.length) return {refusal: refusal("NO_FIELDS", ec.l10n.localize("None of the chosen fields may be read"))}
     return {
         target,
         scopeKey,
@@ -220,7 +220,7 @@ function ask(request, countOnly) {
         return {
             refusal: refusal(
                 lineText(out.reasonCode, 40).replace(/[^A-Z0-9_]/g, "") || "OWNER_REFUSED",
-                lineText(out.reason, 250) || "Its owner refused the export"
+                lineText(out.reason, 250) || ec.l10n.localize("Its owner refused the export")
             )
         }
     const rowCount = Number(out.rowCount)
@@ -296,9 +296,11 @@ function fileOf(request, out, rowCount) {
         return {
             refusal: refusal(
                 "FILE_TOO_LARGE",
-                "The file would be larger than " +
-                    Math.floor(request.bounds.maxBytes / 1024) +
-                    " KiB: narrow the selection. Nothing was exported."
+                ec.resource.expand(
+                    "The file would be larger than ${kib} KiB: narrow the selection. Nothing was exported.",
+                    "",
+                    {kib: Math.floor(request.bounds.maxBytes / 1024)}
+                )
             )
         }
     return {fileText, contentType, filename}
@@ -351,7 +353,7 @@ function runExport(p) {
             earlier.state !== "exported" ||
             earlier.inputFingerprint !== hash)
     )
-        return refusal("OPERATION_KEY_CONFLICT", "That operation key was used for another export or import")
+        return refusal("OPERATION_KEY_CONFLICT", ec.l10n.localize("That operation key was used for another export or import"))
     const asked = ask(request, false)
     if (asked.failed) return {}
     if (asked.refusal) return Object.assign(asked.refusal, fieldAnswer(request))
@@ -583,8 +585,8 @@ function alertRun(row, names) {
 }
 const kindList = [
     {kind: "export", text: "Export"},
-    {kind: "reportDelivery", text: "Scheduled report"},
-    {kind: "alertDelivery", text: "Business alert"}
+    {kind: "reportDelivery", text: ec.l10n.localize("Scheduled report")},
+    {kind: "alertDelivery", text: ec.l10n.localize("Business alert")}
 ]
 // find#Transfers with direction export: the exports of every target the caller may read and, for a holder of
 // ADMIN_TRANSFER_VIEW, the deliveries of scheduled reports and business alerts as status. Newest first, a page at a time.
@@ -595,7 +597,7 @@ function findExportTransfers(p) {
     const from = lib.ms(p.fromDate)
     const thru = lib.ms(p.thruDate)
     if ((p.fromDate && (from == null || Number.isNaN(from))) || (p.thruDate && (thru == null || Number.isNaN(thru))))
-        throw new Error("A date is not a date")
+        throw new Error(ec.l10n.localize("A date is not a date"))
     const until = thru ?? now + 60000
     const since = Math.max(from ?? until - defaultDays * 86400000, until - rangeDays * 86400000)
     const state = text(p.state)
@@ -651,7 +653,7 @@ function findExportTransfers(p) {
                 all.push(
                     Object.assign(run, {
                         targetId: null,
-                        targetTitle: source.title,
+                        targetTitle: ec.l10n.localize(source.title),
                         ownerApp: "Reports",
                         ownerRoute: source.kind
                     })
@@ -687,8 +689,9 @@ function findExportTransfers(p) {
 // showing it resolves (tools template/AdminMount.js). A wizard's export needs ADMIN_TRANSFER_RUN besides what the target
 // and its owner ask.
 // An export here is bounded (the rows and bytes of one file): what is said where a user meets the bound.
-const volumeNote =
+const volumeNote = ec.l10n.localize(
     "Larger volumes are not exported here: ask a system administrator, who has tools for volume (Tools' ETL, snapshots and data export)."
+)
 const bounded = out => ["TOO_MANY_ROWS", "FILE_TOO_LARGE"].includes(text(out?.reasonCode))
 const refusalText = out => text(out?.reason) + (bounded(out) ? " " + volumeNote : "")
 // The option slots a wizard form shows (three: no registered target has more; a further option keeps its default).

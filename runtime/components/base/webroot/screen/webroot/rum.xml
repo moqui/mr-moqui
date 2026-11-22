@@ -8,7 +8,7 @@
         require-authentication="false" track-artifact-hit="false" standalone="true" default-menu-include="false">
     <transition name="traces" method="post" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.monitor.MonitorServices.receive#BrowserTelemetry')
                         .parameters({signal: 'traces', bodyText: ec.web.parameters._requestBodyText || ''}).disableAuthz().call()
                 if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
@@ -19,7 +19,7 @@
     </transition>
     <transition name="logs" method="post" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.monitor.MonitorServices.receive#BrowserTelemetry')
                         .parameters({signal: 'logs', bodyText: ec.web.parameters._requestBodyText || ''}).disableAuthz().call()
                 if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
@@ -30,7 +30,7 @@
     </transition>
     <transition name="replay" method="post" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 ec.service.sync().name('org.moqui.monitor.MonitorServices.receive#BrowserReplay')
                         .parameters({bodyText: ec.web.parameters._requestBodyText || ''}).disableAuthz().call()
                 if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(413, errors) }

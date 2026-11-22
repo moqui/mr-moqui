@@ -136,20 +136,20 @@ function revisionOf(flow, sub, fields, roles) {
 // What a provider's row lacks before a test is worth running.
 function incomplete(flow, sub) {
     const type = flow.authFlowTypeEnumId
-    if (!types[type]) return "The provider has no supported type"
-    if (!sub) return "The provider has no configuration yet"
-    if (type === "AftSaml") return text(sub.identityProviderMetadataLocation) ? null : "Give the provider's metadata URL"
-    if (!text(sub.clientId)) return "Give the client ID the provider issued"
+    if (!types[type]) return ec.l10n.localize("The provider has no supported type")
+    if (!sub) return ec.l10n.localize("The provider has no configuration yet")
+    if (type === "AftSaml") return text(sub.identityProviderMetadataLocation) ? null : ec.l10n.localize("Give the provider's metadata URL")
+    if (!text(sub.clientId)) return ec.l10n.localize("Give the client ID the provider issued")
     return null
 }
 const readinessTexts = {
     enabled: "Enabled",
-    untested: "Enabled, not tested since its configuration changed",
-    tested: "Tested, not enabled",
-    needsTest: "Disabled until a test passes",
+    untested: ec.l10n.localize("Enabled, not tested since its configuration changed"),
+    tested: ec.l10n.localize("Tested, not enabled"),
+    needsTest: ec.l10n.localize("Disabled until a test passes"),
     incomplete: "Incomplete",
-    unavailable: "Not available in this build",
-    inbound: "Inbound flow, read only"
+    unavailable: ec.l10n.localize("Not available in this build"),
+    inbound: ec.l10n.localize("Inbound flow, read only")
 }
 function readiness(flow, sub) {
     if (flow.inbound === "Y") return "inbound"
@@ -432,7 +432,7 @@ function roleMapRows(list) {
     const found = Array.from(list || []).map(row => ({roleName: text(row?.roleName), userGroupId: text(row?.userGroupId)}))
     const seen = new Set()
     for (const row of found) {
-        if (!row.roleName || !row.userGroupId) throw new Error("A role mapping names a remote role and a group")
+        if (!row.roleName || !row.userGroupId) throw new Error(ec.l10n.localize("A role mapping names a remote role and a group"))
         plainText(row.roleName, "A remote role")
         if (seen.has(row.roleName)) throw new Error("The remote role " + row.roleName + " is mapped twice")
         seen.add(row.roleName)
@@ -486,8 +486,8 @@ function storeIdentityProvider(p) {
                     ": the types this server signs in by"
             )
         if (authFlowId && !/^[A-Za-z][A-Za-z0-9_]{2,39}$/.test(authFlowId))
-            throw new Error("A provider id is 3 to 40 letters, digits or underscores, starting with a letter")
-        if (!plainText(p.description, "The name")) throw new Error("Give the provider a name")
+            throw new Error(ec.l10n.localize("A provider id is 3 to 40 letters, digits or underscores, starting with a letter"))
+        if (!plainText(p.description, "The name")) throw new Error(ec.l10n.localize("Give the provider a name"))
         // a provider started here reaches no internal address on a production instance (the server would fetch a URL
         // its integration administrator chose from inside the network); an instance administrator allows one (Tools)
         flow = {authFlowId, authFlowTypeEnumId: typeEnumId, disabled: "Y"}
@@ -495,7 +495,7 @@ function storeIdentityProvider(p) {
     } else {
         flow = map(stored)
         if (flow.inbound === "Y")
-            return refused("UNSUPPORTED_PROVIDER", "An inbound flow is a remote system's, not a sign-in: it is changed in Tools")
+            return refused("UNSUPPORTED_PROVIDER", ec.l10n.localize("An inbound flow is a remote system's, not a sign-in: it is changed in Tools"))
         if (!types[flow.authFlowTypeEnumId])
             return refused("UNSUPPORTED_TYPE", "The provider has no supported type; it is changed in Tools")
     }
@@ -515,16 +515,16 @@ function storeIdentityProvider(p) {
     const flowChanges = {}
     if (given(p.description)) {
         const description = plainText(p.description, "The name")
-        if (!description) throw new Error("Give the provider a name")
+        if (!description) throw new Error(ec.l10n.localize("Give the provider a name"))
         if (description !== text(flow.description)) flowChanges.description = description
     }
     if (given(p.iconName)) {
         const iconName = plainText(p.iconName, "The icon", 63)
-        if (!/^[\w:-]*$/.test(iconName)) throw new Error("An icon is a name of letters, digits, _ : and -")
+        if (!/^[\w:-]*$/.test(iconName)) throw new Error(ec.l10n.localize("An icon is a name of letters, digits, _ : and -"))
         if (iconName !== text(flow.iconName)) flowChanges.iconName = iconName || null
     }
     if (given(p.sequenceNum) && text(p.sequenceNum) !== "") {
-        if (!/^\d{1,6}$/.test(text(p.sequenceNum))) throw new Error("The order is a whole number")
+        if (!/^\d{1,6}$/.test(text(p.sequenceNum))) throw new Error(ec.l10n.localize("The order is a whole number"))
         if (Number(p.sequenceNum) !== Number(flow.sequenceNum ?? NaN)) flowChanges.sequenceNum = Number(p.sequenceNum)
     }
     const subChanges = configurationChanges(p, type, sub)
@@ -533,7 +533,7 @@ function storeIdentityProvider(p) {
         if (!given(p[field]) || String(p[field]) === "") continue
         const secret = String(p[field])
         if (secret.length > 4000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(secret))
-            throw new Error("The secret is too long or holds control characters")
+            throw new Error(ec.l10n.localize("The secret is too long or holds control characters"))
         newSecrets[field] = secret
     }
     let fieldRows = null
@@ -544,7 +544,7 @@ function storeIdentityProvider(p) {
             if (storedFields.some(advancedMap))
                 return refused(
                     "ADVANCED_MAPPING",
-                    "This provider's identity mappings carry an expression or a mapping service: an instance administrator changes them in Tools",
+                    ec.l10n.localize("This provider's identity mappings carry an expression or a mapping service: an instance administrator changes them in Tools"),
                     {authFlowId, revision}
                 )
             fieldRows = wanted
@@ -583,7 +583,7 @@ function storeIdentityProvider(p) {
             roleMapList.find(row => !row.allowed) ||
             (defaultAfter && !checks.get(defaultAfter)?.allowed ? checks.get(defaultAfter) : null)
         return first
-            ? refused(first.reasonCode || "UNREGISTERED_BUNDLE", first.reason || "A mapped group is not available", {
+            ? refused(first.reasonCode || "UNREGISTERED_BUNDLE", first.reason || ec.l10n.localize("A mapped group is not available"), {
                   authFlowId,
                   revision,
                   roleMapList
@@ -612,7 +612,7 @@ function storeIdentityProvider(p) {
     const retest = endpointChanged || (!creating && type.retest.some(field => field in subChanges))
     if (retest) {
         if (yes(p.enabled))
-            return refused("TEST_REQUIRED", "The configuration changed: test the provider as it is now, then enable it", {
+            return refused("TEST_REQUIRED", ec.l10n.localize("The configuration changed: test the provider as it is now, then enable it"), {
                 authFlowId,
                 revision
             })
@@ -626,9 +626,9 @@ function storeIdentityProvider(p) {
     } else if (yes(p.enabled) && !wasEnabled) {
         needMap("enable a sign-in provider")
         if (flow.authFlowTypeEnumId === "AftSaml")
-            return refused("UNSUPPORTED_TYPE", "SAML sign-in is not available in this build", {authFlowId, revision})
+            return refused("UNSUPPORTED_TYPE", ec.l10n.localize("SAML sign-in is not available in this build"), {authFlowId, revision})
         if (creating || !flow.testedConfigHash || flow.testedConfigHash !== fingerprint(flow, subAfter))
-            return refused("TEST_REQUIRED", "Test the provider as it is configured now, then enable it", {authFlowId, revision})
+            return refused("TEST_REQUIRED", ec.l10n.localize("Test the provider as it is configured now, then enable it"), {authFlowId, revision})
         const refusal = checkGroups()
         if (refusal) return refusal
         const beyond = linkedBeyond(authFlowId)
@@ -673,7 +673,7 @@ function storeIdentityProvider(p) {
                 endpointChanged ||
                 Object.keys(newSecrets).length > 0))
     if (signInChanged && !ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent)
-        return refused("reauthRequired", "Confirm it is you: this change decides who signs in through the provider", {
+        return refused("reauthRequired", ec.l10n.localize("Confirm it is you: this change decides who signs in through the provider"), {
             authFlowId,
             revision
         })
@@ -736,9 +736,11 @@ function storeIdentityProvider(p) {
         applied: true,
         reasonCode: null,
         reason: retest
-            ? (endpointChanged ? "The endpoint changed: " : "What a sign-in is verified by changed: ") +
-              (secretCleared ? "the stored secret was cleared, and " : "") +
-              "the provider is disabled until a test of it passes and it is enabled again"
+            ? ec.l10n.localize(
+                  (endpointChanged ? "The endpoint changed: " : "What a sign-in is verified by changed: ") +
+                      (secretCleared ? "the stored secret was cleared, and " : "") +
+                      "the provider is disabled until a test of it passes and it is enabled again"
+              )
             : null,
         authFlowId,
         revision: revisionOf(after, subNow, fieldMaps(authFlowId), roleMaps(authFlowId)),
@@ -772,10 +774,10 @@ function testIdentityProvider(p) {
         throw new Error(CONNECTION_MANAGE + " or " + ACCESS_MANAGE + " is required")
     const authFlowId = text(p.authFlowId)
     const stored = authFlowId ? find(FLOW, {authFlowId}).forUpdate(true).one() : null
-    if (!stored) return refused("PROVIDER_UNAVAILABLE", "The provider is not available", {passed: false})
+    if (!stored) return refused("PROVIDER_UNAVAILABLE", ec.l10n.localize("The provider is not available"), {passed: false})
     const flow = map(stored)
     if (flow.inbound === "Y")
-        return refused("UNSUPPORTED_PROVIDER", "An inbound flow is a remote system's, not a sign-in", {passed: false})
+        return refused("UNSUPPORTED_PROVIDER", ec.l10n.localize("An inbound flow is a remote system's, not a sign-in"), {passed: false})
     const type = types[flow.authFlowTypeEnumId]
     const sub = map(subRow(flow))
     const roles = roleMaps(authFlowId)
@@ -785,14 +787,14 @@ function testIdentityProvider(p) {
         return ok
     }
     const problem = incomplete(flow, subRow(flow) ? sub : null)
-    let passed = check("Configuration", !problem, "The configuration is complete", problem)
+    let passed = check("Configuration", !problem, ec.l10n.localize("The configuration is complete"), problem)
     const groups = groupChecks(roles.map(row => row.userGroupId).concat([flow.defaultUserGroupId]))
     const refusedGroups = Array.from(groups.values()).filter(row => !row.allowed)
     passed =
         check(
-            "Role mappings",
+            ec.l10n.localize("Role mappings"),
             !refusedGroups.length,
-            roles.length ? "Every mapped group may be given by a sign-in" : "No role is mapped",
+            roles.length ? ec.l10n.localize("Every mapped group may be given by a sign-in") : ec.l10n.localize("No role is mapped"),
             refusedGroups.map(row => row.reason).join("; ")
         ) && passed
     let callbackUrl = ""
@@ -818,7 +820,7 @@ function testIdentityProvider(p) {
                 "Provider",
                 started,
                 "A sign-in can start" + (authorizeHost ? " at " + authorizeHost : ""),
-                safeMessage(failure || result.message || "The provider could not be reached", sub, type) +
+                safeMessage(failure || result.message || ec.l10n.localize("The provider could not be reached"), sub, type) +
                     (/internal address/.test(failure || result.message || "")
                         ? ": an instance administrator allows a provider on the instance's own network"
                         : "")
@@ -843,7 +845,7 @@ function testIdentityProvider(p) {
             groupName: group?.description || "",
             given: !!group?.allowed,
             text: !mapped.has(roleName)
-                ? "Not mapped: gives nothing"
+                ? ec.l10n.localize("Not mapped: gives nothing")
                 : group?.allowed
                   ? "Gives " + group.description
                   : group?.reason || ""

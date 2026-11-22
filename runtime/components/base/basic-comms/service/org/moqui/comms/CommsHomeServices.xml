@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
             const wasDisabled = ec.artifactExecution.disableAuthz()
             try {
                 if (userId !== currentUserId && !wasDisabled) {
-                    ec.message.addError("Another user's shell counts are read only with authorization disabled")
+                    ec.message.addError(ec.l10n.localize("Another user's shell counts are read only with authorization disabled"))
                     counts = null
                     return
                 }

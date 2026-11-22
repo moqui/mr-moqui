@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Options" default-menu-index="2">
 
     <transition name="saveOptions"><actions><script><![CDATA[
-        if (!countryGeoId) ec.message.addValidationError(null, 'countryGeoId', null, 'Choose a country', null)
+        if (!countryGeoId) ec.message.addValidationError(null, 'countryGeoId', null, ec.l10n.localize('Choose a country'), null)
         if (ec.message.hasError()) return
         const draft = JSON.parse(ec.web.sessionAttributes.get('galleryWizard') || '{}')
         Object.assign(draft, {countryGeoId: countryGeoId, currencyUomId: currencyUomId || '', newsletter: newsletter === 'Y' ? 'Y' : 'N'})

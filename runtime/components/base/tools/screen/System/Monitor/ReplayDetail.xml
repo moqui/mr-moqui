@@ -7,7 +7,7 @@
     <transition name="events" read-only="true" begin-transaction="false">
         <parameter name="replayId" required="true"/>
         <actions><script><![CDATA[
-            if (!ec.user.hasPermission('MONITOR_REPLAY')) { ec.web.sendJsonError(403, 'MONITOR_REPLAY permission is required') } else {
+            if (!ec.user.hasPermission('MONITOR_REPLAY')) { ec.web.sendJsonError(403, ec.l10n.localize('MONITOR_REPLAY permission is required')) } else {
                 const replay = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserReplay').parameters({replayId}).call()
                 if (ec.message.hasError()) { const errors = ec.message.errorsString; ec.message.clearErrors(); ec.web.sendJsonError(400, errors) }
                 else ec.web.sendJsonResponse({events: replay.events || []})

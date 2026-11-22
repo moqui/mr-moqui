@@ -1084,23 +1084,23 @@ const SNIPPETS = [
     {key: "link", label: "Link", xml: '<link url="." text="New link" btn-type="default"/>'},
     {
         key: "box",
-        label: "Box with header and body",
+        label: ec.l10n.localize("Box with header and body"),
         xml: '<container-box name="NewBox"><box-header title="New box"/><box-body></box-body></container-box>'
     },
     {key: "container", label: "Container", xml: '<container name="NewContainer"></container>'},
     {
         key: "row",
-        label: "Row of two columns",
+        label: ec.l10n.localize("Row of two columns"),
         xml: '<container-row name="NewRow"><row-col md="6"></row-col><row-col md="6"></row-col></container-row>'
     },
     {
         key: "section",
-        label: "Section with a condition",
+        label: ec.l10n.localize("Section with a condition"),
         xml: '<section name="NewSection" condition="true"><widgets></widgets></section>'
     },
-    {key: "dialog", label: "Dynamic dialog", xml: '<dynamic-dialog id="NewDialog" button-text="Open" transition="."/>'},
-    {key: "menu", label: "Button menu", xml: '<button-menu text="More"></button-menu>'},
-    {key: "status", label: "Status bar", xml: "<status-bar/>"}
+    {key: "dialog", label: ec.l10n.localize("Dynamic dialog"), xml: '<dynamic-dialog id="NewDialog" button-text="Open" transition="."/>'},
+    {key: "menu", label: ec.l10n.localize("Button menu"), xml: '<button-menu text="More"></button-menu>'},
+    {key: "status", label: ec.l10n.localize("Status bar"), xml: "<status-bar/>"}
 ]
 function labelOf(node) {
     const chips = []

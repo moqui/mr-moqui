@@ -96,7 +96,7 @@ out under `runtime/components/addon/`. The repository, its directory and its `co
 | [mr-boss](https://github.com/moqui/mr-boss) | IronStone BOSS, the Business OS Suite: sixteen apps in one shell, from Commons and Comms (groupware and communication) through Sales, Warehouse, Accounting and People | Built |
 | [mr-pass](https://github.com/moqui/mr-pass) | IronStone PASS, the Public Application Software Suite: Forum, Shop, Smithy (git hosting), and the customer and supplier pages of the BOSS apps | Built |
 | [mr-marble](https://github.com/moqui/mr-marble) | Marble ERP and the Simple Screens library it is built from, ported from Moqui Java | Ported |
-| [mr-l10n](https://github.com/moqui/mr-l10n) | Language packs: Spanish and Simplified Chinese | Covers the framework, Mantle, Marble and nine BOSS apps |
+| [mr-l10n](https://github.com/moqui/mr-l10n) | Language packs: Spanish and Simplified Chinese | Covers the framework, Mantle, Marble, the BOSS apps, and PASS |
 | [mr-home](https://github.com/moqui/mr-home) | IronStone HOME: BOSS's capabilities for a household | In design |
 | [mr-three](https://github.com/moqui/mr-three) | IronStone THREE: 3D in business screens, and a town to walk through to reach them | In design |
 

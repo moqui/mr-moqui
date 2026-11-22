@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
     <q-banner v-if="mode !== 'month'" dense rounded class="q-mx-sm q-mb-sm" :class="$q.dark.isActive ? 'bg-grey-9' : 'bg-grey-2'">
         <template v-slot:avatar><q-icon name="info" color="info"></q-icon></template>
         The {{mode}} view is not in this gallery; the month view is the one built.
-        <template v-slot:action><q-btn flat dense no-caps label="Back to month" @click="mode = 'month'"></q-btn></template>
+        <template v-slot:action><q-btn flat dense no-caps :label="t('Back to month')" @click="mode = 'month'"></q-btn></template>
     </q-banner>
 
     <q-card v-else flat bordered class="q-mx-sm">
@@ -138,6 +138,7 @@ module.exports = {
         }
     },
     methods: {
+        t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
         pad(n) { return String(n).padStart(2, '0'); },
         dateText(d) { return d.getFullYear() + '-' + this.pad(d.getMonth() + 1) + '-' + this.pad(d.getDate()); },
         colorClass(kind) {

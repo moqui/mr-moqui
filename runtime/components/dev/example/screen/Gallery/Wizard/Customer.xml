@@ -18,8 +18,8 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Customer" default-menu-index="1">
 
     <transition name="saveCustomer"><actions><script><![CDATA[
-        if (!customerName || !String(customerName).trim()) ec.message.addValidationError(null, 'customerName', null, 'Enter the customer name', null)
-        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(emailAddress))) ec.message.addValidationError(null, 'emailAddress', null, 'Enter an email address', null)
+        if (!customerName || !String(customerName).trim()) ec.message.addValidationError(null, 'customerName', null, ec.l10n.localize('Enter the customer name'), null)
+        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(emailAddress))) ec.message.addValidationError(null, 'emailAddress', null, ec.l10n.localize('Enter an email address'), null)
         if (ec.message.hasError()) return
         const draft = JSON.parse(ec.web.sessionAttributes.get('galleryWizard') || '{}')
         Object.assign(draft, {customerName: String(customerName).trim(), contactName: contactName || '', emailAddress: emailAddress || '', phone: phone || ''})

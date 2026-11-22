@@ -33,7 +33,7 @@ const maxGroups = 8
 const defaultGroups = 6
 const maxReviewGroups = 60
 const kindOrder = ["launcher", "view", "edit", "export", "sensitive"]
-const kindLabels = {launcher: "Launcher", view: "View", edit: "Change", export: "Export", sensitive: "Sensitive values"}
+const kindLabels = {launcher: "Launcher", view: "View", edit: "Change", export: "Export", sensitive: ec.l10n.localize("Sensitive values")}
 const kindByEnum = {CpkView: "view", CpkEdit: "edit", CpkExport: "export", CpkSensitive: "sensitive"}
 const typeText = enumId => ({AUTHZT_ALLOW: "Allow", AUTHZT_ALWAYS: "Always", AUTHZT_DENY: "Deny"})[enumId] || enumId || ""
 
@@ -226,7 +226,7 @@ function unsupportedRules(groups, context, index) {
                     label: index.artifactDescriptions.get(authz.artifactGroupId) || authz.artifactGroupId,
                     typeText: typeText(authz.authzTypeEnumId) + (authz.authzServiceName ? ", decided by a service" : ""),
                     filterSetIds: lib.filterSetIds(authz.artifactAuthzId),
-                    reason: entries.length ? "Registered with another type" : "Not a registered app gate"
+                    reason: entries.length ? ec.l10n.localize("Registered with another type") : ec.l10n.localize("Not a registered app gate")
                 })
             )
         }
@@ -237,9 +237,9 @@ function unsupportedRules(groups, context, index) {
                     ruleType: "permission",
                     id: grant.userPermissionId,
                     label: index.permissionDescriptions.get(grant.userPermissionId) || grant.userPermissionId,
-                    typeText: context.sealed.has(grant.userPermissionId) ? "Sealed permission" : "Permission",
+                    typeText: context.sealed.has(grant.userPermissionId) ? ec.l10n.localize("Sealed permission") : "Permission",
                     filterSetIds: [],
-                    reason: "Not in a registered bundle"
+                    reason: ec.l10n.localize("Not in a registered bundle")
                 })
             )
         }
@@ -322,7 +322,7 @@ function ruleSource(authz, filterSetId, entries) {
             sourceText: "As bundle " + naming[0].bundle.userGroupId + " registers it",
             sourceBundleGroupId: naming[0].bundle.userGroupId
         }
-    return {source: "configuration", sourceText: "Deployed configuration or Tools", sourceBundleGroupId: null}
+    return {source: "configuration", sourceText: ec.l10n.localize("Deployed configuration or Tools"), sourceBundleGroupId: null}
 }
 // get#ScopeRules: the row rules in effect and the registered ones a registered binding lacks.
 function getScopeRules(p) {
@@ -398,7 +398,7 @@ function getScopeRules(p) {
                     canBind: !!offering && column(authz.userGroupId).canManage,
                     grantRevision: column(authz.userGroupId).grantRevision,
                     source: "registry",
-                    sourceText: "Registered for this app gate, not bound",
+                    sourceText: ec.l10n.localize("Registered for this app gate, not bound"),
                     sourceBundleGroupId: (offering || typed[0]).bundle.userGroupId
                 })
             )
@@ -464,7 +464,7 @@ function getGrantReview(p) {
     const context = lib.listContext()
     const index = registryIndex(context)
     const at = p.asOfDate != null && p.asOfDate !== "" ? lib.ms(p.asOfDate) : context.at
-    if (!Number.isFinite(at)) throw new Error("Give the review a date and time")
+    if (!Number.isFinite(at)) throw new Error(ec.l10n.localize("Give the review a date and time"))
     const appName = lib.text(p.appName)
     let groupIds = idsOf(p.userGroupIdList)
     if (!groupIds.length && appName)
@@ -472,7 +472,7 @@ function getGrantReview(p) {
             .filter(bundle => bundle.appName === appName)
             .sort((a, b) => (a.sequenceNum ?? 0) - (b.sequenceNum ?? 0) || a.userGroupId.localeCompare(b.userGroupId))
             .map(bundle => bundle.userGroupId)
-    if (!groupIds.length) throw new Error("Name the groups or the app to review")
+    if (!groupIds.length) throw new Error(ec.l10n.localize("Name the groups or the app to review"))
     if (groupIds.length > maxReviewGroups) throw new Error("Review at most " + maxReviewGroups + " groups at a time")
     const groupList = []
     const entryList = []

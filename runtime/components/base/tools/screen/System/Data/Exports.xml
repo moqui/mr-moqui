@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
                 whatText: row.targetTitle + (row.ownerApp ? ' · ' + row.ownerApp : ''),
                 itemText: row.kind === 'export' ? (row.fileLabel || row.runId) : row.runId,
                 scopeText: row.scopeTitle || '',
-                outputText: row.kind === 'export' ? 'Not kept: it was its exporter\'s answer' : 'Not readable here: its recipients\' own'}))
+                outputText: row.kind === 'export' ? ec.l10n.localize('Not kept: it was its exporter\'s answer') : ec.l10n.localize('Not readable here: its recipients\' own')}))
             runsCount = Number(found?.transferCount || 0)
             runsPageIndex = Number(found?.pageIndex || 0)
             runsPageSize = Number(found?.pageSize || 50)

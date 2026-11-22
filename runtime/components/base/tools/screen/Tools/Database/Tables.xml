@@ -70,9 +70,9 @@ along with this software (see the LICENSE.md file). If not, see
                 .filter((table) => context.rowFilter == 'empty' ? table.estimatedRows === 0
                     : context.rowFilter == 'rows' ? table.estimatedRows > 0 : true)
             isMysql = ((found && found.tables) || []).some((table) => table.engine != null || table.free_bytes != null)
-            maintenanceOptions = isMysql ? [{key: 'analyze', text: 'Analyze (ANALYZE TABLE)'}, {key: 'optimize', text: 'Optimize (OPTIMIZE TABLE)'}]
-                : [{key: 'vacuumAnalyze', text: 'Vacuum and analyze'}, {key: 'analyze', text: 'Analyze'}, {key: 'reindex', text: 'Reindex online'},
-                    {key: 'vacuumFull', text: 'Vacuum full: rewrites the table, locked meanwhile'}, {key: 'cluster', text: 'Cluster: rewrites the table, locked meanwhile'}]
+            maintenanceOptions = isMysql ? [{key: 'analyze', text: ec.l10n.localize('Analyze (ANALYZE TABLE)')}, {key: 'optimize', text: ec.l10n.localize('Optimize (OPTIMIZE TABLE)')}]
+                : [{key: 'vacuumAnalyze', text: ec.l10n.localize('Vacuum and analyze')}, {key: 'analyze', text: 'Analyze'}, {key: 'reindex', text: ec.l10n.localize('Reindex online')},
+                    {key: 'vacuumFull', text: ec.l10n.localize('Vacuum full: rewrites the table, locked meanwhile')}, {key: 'cluster', text: ec.l10n.localize('Cluster: rewrites the table, locked meanwhile')}]
             canMaintain = ec.user.hasPermission('DATABASE_ADMIN')
         ]]></script>
     </actions>

@@ -78,7 +78,7 @@ along with this software (see the LICENSE.md file). If not, see
                         ['unindexedForeignKeys', 'Foreign keys', 'no index leads with']]) {
                     if ((tableDiff[key] || []).length) tableDiffRows.push({what, difference, names: names(tableDiff[key]).join(', ')})
                 }
-                for (const type of tableDiff.columnTypes || []) tableDiffRows.push({what: 'Column type', difference: type.column,
+                for (const type of tableDiff.columnTypes || []) tableDiffRows.push({what: ec.l10n.localize('Column type'), difference: type.column,
                     names: type.actual + ' (model ' + type.expected + ')'})
             }
             canPlan = ec.user.hasPermission('DATABASE_ADMIN')

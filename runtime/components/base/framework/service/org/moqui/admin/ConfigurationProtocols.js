@@ -42,12 +42,12 @@ const viewPermissions = [
 ]
 const MANAGE = "ADMIN_CONNECTION_MANAGE"
 const stateTexts = {
-    absent: "Not in this build",
-    disabled: "Off",
-    failing: "Failing",
-    untrusted: "Running, not trusted",
-    notStarted: "Configured",
-    ready: "Ready"
+    absent: ec.l10n.localize("Not in this build"),
+    disabled: ec.l10n.localize("Off"),
+    failing: ec.l10n.localize("Failing"),
+    untrusted: ec.l10n.localize("Running, not trusted"),
+    notStarted: ec.l10n.localize("Configured"),
+    ready: ec.l10n.localize("Ready")
 }
 
 // ===== facts =====
@@ -123,7 +123,7 @@ function smtpTrust(configured) {
             trusted: false,
             state: "direct",
             problems: [],
-            text: "It takes mail from the internet and checks it itself: no gateway's verdict is trusted"
+            text: ec.l10n.localize("It takes mail from the internet and checks it itself: no gateway's verdict is trusted")
         }
     const nets = allowed.map(allowedNet)
     if (!allowed.length) problems.push("smtp-server@allowed-addresses is empty: no gateway may deliver, and the listener does not start")
@@ -136,7 +136,7 @@ function smtpTrust(configured) {
         // with the PROXY protocol too: the proxy itself connects from an address that must be allowed
         if (loopbackHost(text(configured.listenHost)) && !nets.some(net => net.loopback))
             problems.push(
-                "The listener is bound to this machine only (smtp-server@listen-host) and no allowed address is on it: the gateway cannot connect"
+                ec.l10n.localize("The listener is bound to this machine only (smtp-server@listen-host) and no allowed address is on it: the gateway cannot connect")
             )
     }
     if (!text(configured.authservId) && !configured.edgeNode)
@@ -145,12 +145,12 @@ function smtpTrust(configured) {
         )
     if (problems.length) return {trusted: false, state: "mismatch", problems, text: problems[0]}
     if (!configured.listening)
-        return {trusted: false, state: "off", problems: [], text: "The listener is not running, so nothing is received"}
+        return {trusted: false, state: "off", problems: [], text: ec.l10n.localize("The listener is not running, so nothing is received")}
     return {
         trusted: true,
         state: "trusted",
         problems: [],
-        text: "Only the gateway's addresses may deliver, and only its Authentication-Results are kept"
+        text: ec.l10n.localize("Only the gateway's addresses may deliver, and only its Authentication-Results are kept")
     }
 }
 const smtpConfigured = (facts, listening) => ({
@@ -180,7 +180,7 @@ const protocols = [
     {
         protocolKey: "smtpOut",
         title: "Outgoing mail",
-        description: "The mail the instance sends through its relays (SMTP)",
+        description: ec.l10n.localize("The mail the instance sends through its relays (SMTP)"),
         feature: "smtp",
         ownerKey: "mailRelays",
         // on when a relay can send: the SYSTEM mail server or another relay with an SMTP host that is not disabled
@@ -189,23 +189,23 @@ const protocols = [
             if (!hosted.length)
                 return {
                     on: false,
-                    reason: "Neither the SYSTEM mail server nor a mail relay has an SMTP host, so the instance sends no mail"
+                    reason: ec.l10n.localize("Neither the SYSTEM mail server nor a mail relay has an SMTP host, so the instance sends no mail")
                 }
             if (hosted.every(relay => relay.disabled))
-                return {on: false, reason: "Every mail relay with an SMTP host is disabled, so the instance sends no mail"}
+                return {on: false, reason: ec.l10n.localize("Every mail relay with an SMTP host is disabled, so the instance sends no mail")}
             return {on: true}
         }
     },
     {
         protocolKey: "smtpIn",
-        title: "Mail reception",
-        description: "The SMTP listener that takes mail for hosted and shared accounts from the edge gateway",
+        title: ec.l10n.localize("Mail reception"),
+        description: ec.l10n.localize("The SMTP listener that takes mail for hosted and shared accounts from the edge gateway"),
         feature: "inbound-smtp",
         entry: "SMTP",
         settingGroup: "Protocols: mail reception",
         on: facts => ({
             on: !!facts.conf("smtp-server/@listen-port"),
-            reason: "smtp-server@listen-port is not set"
+            reason: ec.l10n.localize("smtp-server@listen-port is not set")
         }),
         checks: ["configuration", "listener"],
         listenerTarget: "smtp.listener"
@@ -213,7 +213,7 @@ const protocols = [
     {
         protocolKey: "mailClient",
         title: "Mail accounts",
-        description: "Personal and shared mailboxes read over IMAP and POP3, with a provider's OAuth sign-in",
+        description: ec.l10n.localize("Personal and shared mailboxes read over IMAP and POP3, with a provider's OAuth sign-in"),
         feature: "imap",
         ownerKey: "mailAccounts",
         on: () => ({on: true})
@@ -221,7 +221,7 @@ const protocols = [
     {
         protocolKey: "dav",
         title: "Calendars, contacts and files",
-        description: "CalDAV, CardDAV and WebDAV for desktop and phone apps, on the web address",
+        description: ec.l10n.localize("CalDAV, CardDAV and WebDAV for desktop and phone apps, on the web address"),
         feature: "axum",
         web: true,
         on: () => ({on: true}),
@@ -230,14 +230,14 @@ const protocols = [
     },
     {
         protocolKey: "ssh",
-        title: "SSH and SFTP",
-        description: "The built-in SSH server: SFTP, the terminal client and git over SSH",
+        title: ec.l10n.localize("SSH and SFTP"),
+        description: ec.l10n.localize("The built-in SSH server: SFTP, the terminal client and git over SSH"),
         feature: "ssh",
         entry: "SSH",
         settingGroup: "Protocols: SSH and Git",
         on: facts => ({
             on: facts.conf("ssh-server/@enabled") !== "false" && !!facts.conf("ssh-server/@port"),
-            reason: "ssh-server@port is not set, or ssh-server@enabled is false"
+            reason: ec.l10n.localize("ssh-server@port is not set, or ssh-server@enabled is false")
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "ssh.listener",
@@ -245,8 +245,8 @@ const protocols = [
     },
     {
         protocolKey: "git",
-        title: "Git hosting",
-        description: "Repositories over HTTPS on the web address (and over SSH, above)",
+        title: ec.l10n.localize("Git hosting"),
+        description: ec.l10n.localize("Repositories over HTTPS on the web address (and over SSH, above)"),
         feature: "git",
         web: true,
         settingGroup: "Protocols: SSH and Git",
@@ -255,35 +255,35 @@ const protocols = [
     {
         protocolKey: "xmpp",
         title: "Chat apps",
-        description: "XMPP for the users' own chat apps",
+        description: ec.l10n.localize("XMPP for the users' own chat apps"),
         feature: "xmpp",
         entry: "XMPP",
         settingGroup: "Protocols: chat",
-        on: facts => ({on: set(facts, "xmpp-server@domain"), reason: "xmpp-server@domain is not set"}),
+        on: facts => ({on: set(facts, "xmpp-server@domain"), reason: ec.l10n.localize("xmpp-server@domain is not set")}),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "xmpp.listener",
         publicTarget: "xmpp.public"
     },
     {
         protocolKey: "rtc",
-        title: "Call media",
-        description: "The media of audio and video calls (WebRTC)",
+        title: ec.l10n.localize("Call media"),
+        description: ec.l10n.localize("The media of audio and video calls (WebRTC)"),
         feature: "rtc",
         entry: "Call media",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: set(facts, "media-server@port"), reason: "media-server@port is not set"}),
+        on: facts => ({on: set(facts, "media-server@port"), reason: ec.l10n.localize("media-server@port is not set")}),
         checks: ["configuration"]
     },
     {
         protocolKey: "turn",
-        title: "Call relay",
-        description: "TURN, for browsers that cannot reach the call media directly",
+        title: ec.l10n.localize("Call relay"),
+        description: ec.l10n.localize("TURN, for browsers that cannot reach the call media directly"),
         feature: "rtc",
         entry: "TURN",
         settingGroup: "Protocols: calls",
         on: facts => ({
             on: set(facts, "media-server/turn-server@port") || set(facts, "media-server/turn-server@tls-port") || set(facts, "media-server/turn-server@external-urls"),
-            reason: "media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@external-urls are not set"
+            reason: ec.l10n.localize("media-server/turn-server@port, media-server/turn-server@tls-port and media-server/turn-server@external-urls are not set")
         }),
         checks: ["configuration", "listener", "publicAddress"],
         listenerTarget: "turn.listener",
@@ -299,7 +299,7 @@ const protocols = [
         ownerKey: "voice",
         on: facts => ({
             on: set(facts, "sip-server@port") || set(facts, "sip-server@tls-port"),
-            reason: "sip-server@port and sip-server@tls-port are not set"
+            reason: ec.l10n.localize("sip-server@port and sip-server@tls-port are not set")
         }),
         checks: ["configuration", "listener"],
         listenerTarget: "sip.listener"
@@ -311,28 +311,28 @@ const protocols = [
         feature: "rtc",
         entry: "Call recording",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: yes(facts.prop("calls/recording@enabled")), reason: "calls/recording@enabled is not true"})
+        on: facts => ({on: yes(facts.prop("calls/recording@enabled")), reason: ec.l10n.localize("calls/recording@enabled is not true")})
     },
     {
         protocolKey: "captions",
         title: "Live captions",
-        description: "Speech to text during a call, by the speech provider",
+        description: ec.l10n.localize("Speech to text during a call, by the speech provider"),
         feature: "rtc",
         entry: "Call captions",
         settingGroup: "Protocols: calls",
-        on: facts => ({on: yes(facts.prop("calls/captions@enabled")), reason: "calls/captions@enabled is not true"})
+        on: facts => ({on: yes(facts.prop("calls/captions@enabled")), reason: ec.l10n.localize("calls/captions@enabled is not true")})
     },
     {
         protocolKey: "speechLocal",
-        title: "Local speech to text",
-        description: "Captions without a speech provider",
+        title: ec.l10n.localize("Local speech to text"),
+        description: ec.l10n.localize("Captions without a speech provider"),
         feature: "speech-local",
         on: () => ({on: true})
     },
     {
         protocolKey: "wopi",
-        title: "Office documents",
-        description: "Editing documents in an office suite over WOPI",
+        title: ec.l10n.localize("Office documents"),
+        description: ec.l10n.localize("Editing documents in an office suite over WOPI"),
         feature: null,
         on: () => ({on: false})
     }
@@ -340,17 +340,17 @@ const protocols = [
 const checkTitles = {
     configuration: {
         title: "Configuration",
-        expected: "The protocol is built, turned on and started, and what it trusts holds",
+        expected: ec.l10n.localize("The protocol is built, turned on and started, and what it trusts holds"),
         external: false
     },
     listener: {
         title: "Listener",
-        expected: "The address the server binds accepts a connection from this server",
+        expected: ec.l10n.localize("The address the server binds accepts a connection from this server"),
         external: false
     },
     publicAddress: {
-        title: "Public address",
-        expected: "The name clients are given has an address, and its port accepts a connection from this server",
+        title: ec.l10n.localize("Public address"),
+        expected: ec.l10n.localize("The name clients are given has an address, and its port accepts a connection from this server"),
         external: true
     }
 }
@@ -359,28 +359,40 @@ const checkTitles = {
 function stateOf(definition, facts) {
     const answer = (state, reason, extra = {}) =>
         Object.assign({built: state !== "absent", enabled: false, state, reason, listener: "", source: "Configuration"}, extra)
-    if (!definition.feature) return answer("absent", "No build has it yet", {source: "Build"})
+    if (!definition.feature) return answer("absent", ec.l10n.localize("No build has it yet"), {source: "Build"})
     if (!facts.features.has(definition.feature))
-        return answer("absent", "This build leaves it out (the " + definition.feature + " feature)", {source: "Build"})
+        return answer("absent", ec.resource.expand("This build leaves it out (the ${feature} feature)", "", {feature: definition.feature}), {source: "Build"})
     const entryName = definition.web
         ? ["HTTPS", "HTTP"].find(name => facts.entries.get(name)?.state === "on") || "HTTP"
         : definition.entry
     const entry = entryName ? facts.entries.get(entryName) : null
     if (entry) {
         const source = "Startup"
-        if (entry.state === "notBuilt") return answer("absent", "This build leaves it out", {source: "Build"})
+        if (entry.state === "notBuilt") return answer("absent", ec.l10n.localize("This build leaves it out"), {source: "Build"})
         if (entry.state === "on") return answer("ready", "", {enabled: true, listener: entry.detail, source})
-        if (entry.state === "off") return answer("disabled", entry.detail || "Not turned on", {source})
+        if (entry.state === "off") return answer("disabled", entry.detail || ec.l10n.localize("Not turned on"), {source})
         if (entry.state === "skipped")
-            return answer("failing", "Not started: " + (entry.detail || "its port was busy"), {enabled: true, source})
-        return answer("failing", "Did not start: " + (entry.detail || "see the server's log"), {enabled: true, source})
+            return answer(
+                "failing",
+                entry.detail
+                    ? ec.resource.expand("Not started: ${detail}", "", {detail: entry.detail})
+                    : ec.l10n.localize("Not started: its port was busy"),
+                {enabled: true, source}
+            )
+        return answer(
+            "failing",
+            entry.detail
+                ? ec.resource.expand("Did not start: ${detail}", "", {detail: entry.detail})
+                : ec.l10n.localize("Did not start: see the server's log"),
+            {enabled: true, source}
+        )
     }
     const configured = definition.on(facts)
-    if (!configured.on) return answer("disabled", configured.reason || "Not turned on")
+    if (!configured.on) return answer("disabled", configured.reason || ec.l10n.localize("Not turned on"))
     if (!definition.entry && !definition.web) return answer("ready", "", {enabled: true})
     if (!facts.serverStarted)
         return answer("notStarted", "Turned on; this process opened no listeners, so it is not known to run", {enabled: true})
-    return answer("failing", "Turned on, and the server did not report it at startup", {enabled: true})
+    return answer("failing", ec.l10n.localize("Turned on, and the server did not report it at startup"), {enabled: true})
 }
 // The last result of each check, by protocol and check key.
 function storedChecks() {
@@ -401,9 +413,9 @@ function checksOf(definition, facts, stored, canTest) {
         }
         return {
             protocolKey: definition.protocolKey,
-            protocolTitle: definition.title,
+            protocolTitle: definition.title ? ec.l10n.localize(definition.title) : "",
             checkKey,
-            title: title.title,
+            title: title.title ? ec.l10n.localize(title.title) : "",
             expected: title.expected,
             external: title.external,
             target: text(result.target) || null,
@@ -431,12 +443,12 @@ function described(definition, facts, stored, canTest) {
     const failedCheck = checkList.find(check => check.lastCheckPassed === false)
     if (state === "ready" && failedCheck) {
         state = "failing"
-        reason = "Its last check did not pass: " + failedCheck.title.toLowerCase()
+        reason = ec.resource.expand("Its last check did not pass: ${check}", "", {check: failedCheck.title})
     }
     return {
         protocolKey: definition.protocolKey,
-        title: definition.title,
-        description: definition.description,
+        title: definition.title ? ec.l10n.localize(definition.title) : "",
+        description: definition.description ? ec.l10n.localize(definition.description) : "",
         built: found.built,
         buildFeature: definition.feature,
         enabled: found.enabled,
@@ -513,7 +525,7 @@ function runCheck(definition, checkKey, facts, confirmed) {
     }
     if (failure) {
         ec.logger.error("The protocol probe " + targetKey + " did not run: " + failure)
-        return {passed: false, target: null, text: "The check could not be run on this server"}
+        return {passed: false, target: null, text: ec.l10n.localize("The check could not be run on this server")}
     }
     const target = text(out.target) || null
     if (out.reached === true)
@@ -547,7 +559,7 @@ function testProtocol(p) {
     if (title.external && !confirmed)
         return refused(
             "CONFIRM_REQUIRED",
-            "This check looks up the public name and connects to it from this server. Confirm it to run it."
+            ec.l10n.localize("This check looks up the public name and connects to it from this server. Confirm it to run it.")
         )
     if (checkKey !== "configuration" && !found.enabled)
         return refused("NOT_ENABLED", definition.title + " is off (" + found.reason + "): nothing was sent")

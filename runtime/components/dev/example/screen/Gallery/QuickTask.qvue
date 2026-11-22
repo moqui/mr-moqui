@@ -39,10 +39,11 @@ module.exports = {
         }
     },
     methods: {
+        t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
         // the tray's refresh of its tab: in place, so what the user typed stays
         shellRefresh() { this.refreshes += 1; },
         discard() {
-            this.$q.dialog({ title: 'Discard the task?', message: 'Nothing is saved.', cancel: true, persistent: true }).onOk(() => {
+            this.$q.dialog({ title: this.t('Discard the task?'), message: this.t('Nothing is saved.'), cancel: true, persistent: true }).onOk(() => {
                 this.status = 'discarded';
                 if (this.mSubmitHide) this.mSubmitHide.hide();
             });

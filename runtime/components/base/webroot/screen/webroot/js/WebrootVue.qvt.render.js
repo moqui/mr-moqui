@@ -1513,7 +1513,7 @@
               }, 8, ["data-assist-card", "data-status", "data-approval-id", "data-question-id", "data-handoff-id"]))
             }
         } },
-        "m-assist-change-set": { hash: "f84fa101", make: function (Vue) {
+        "m-assist-change-set": { hash: "8c631062", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -1598,7 +1598,7 @@
                               ? (_openBlock(), _createElementBlock("div", {
                                   key: 0,
                                   class: "text-caption m-muted"
-                                }, "The new field's data appears after Accept, when its column is added."))
+                                }, _toDisplayString(_ctx.t("The new field's data appears after Accept, when its column is added.")), 1))
                               : _createCommentVNode("", true),
                             _createElementVNode("iframe", {
                               src: _ctx.previewSrc,
@@ -5987,7 +5987,7 @@
               }, 8, ["model-value", "onUpdate:modelValue", "onShow", "onHide", "maximized"]))
             }
         } },
-        "m-dialog": { hash: "eb16c34a", make: function (Vue) {
+        "m-dialog": { hash: "81320eff", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle, withCtx: _withCtx, renderSlot: _renderSlot, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
@@ -6026,11 +6026,11 @@
                           _withDirectives(_createVNode(_component_q_btn, {
                             icon: "close",
                             type: "button",
-                            "aria-label": "Close dialog",
+                            "aria-label": _ctx.t('Close dialog'),
                             flat: "",
                             round: "",
                             dense: ""
-                          }, null, 512), [
+                          }, null, 8, ["aria-label"]), [
                             [_directive_close_popup]
                           ])
                         ]),
@@ -6105,7 +6105,7 @@
                   ], 8, ["id"]))
             }
         } },
-        "m-drop-down": { hash: "3076a61d", make: function (Vue) {
+        "m-drop-down": { hash: "b3c92f4e", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode, renderSlot: _renderSlot, mergeProps: _mergeProps, createSlots: _createSlots } = Vue
 
             return function render(_ctx, _cache) {
@@ -6135,7 +6135,7 @@
                 "map-options": "",
                 behavior: "menu",
                 "new-value-mode": _ctx.combo ? 'add-unique' : undefined,
-                rules: [val => _ctx.allowEmpty||_ctx.multiple||_ctx.combo||val===''||(val&&val.length)||'Please select an option'],
+                rules: [val => _ctx.allowEmpty||_ctx.multiple||_ctx.combo||val===''||(val&&val.length)||_ctx.t('Please select an option')],
                 "stack-label": "",
                 "hide-bottom-space": "",
                 "no-error-icon": "",
@@ -7057,8 +7057,8 @@
               }, 8, ["onSubmit", "onReset"]))
             }
         } },
-        "m-form-column-config": { hash: "5a209068", make: function (Vue) {
-            const { createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers } = Vue
+        "m-form-column-config": { hash: "c685e8cd", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_item_label = _resolveComponent("q-item-label")
@@ -7078,7 +7078,7 @@
                 action: _ctx.action
               }, {
                 default: _withCtx(() => [
-                  _createElementVNode("p", { class: "m-muted" }, "Choose which fields appear and arrange them within each column."),
+                  _createElementVNode("p", { class: "m-muted" }, _toDisplayString(_ctx.t('Choose which fields appear and arrange them within each column.')), 1),
                   _createElementVNode("div", { class: "m-column-config-fields" }, [
                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.columns, (column, columnIdx) => {
                       return (_openBlock(), _createBlock(_component_q_list, {
@@ -7113,19 +7113,19 @@
                                           size: "sm",
                                           icon: "close",
                                           "data-action": "hide",
-                                          "aria-label": "Hide field",
+                                          "aria-label": _ctx.t('Hide field'),
                                           onClick: $event => (_ctx.hideField(columnIdx, fieldIdx))
                                         }, {
                                           default: _withCtx(() => [
                                             _createVNode(_component_q_tooltip, null, {
                                               default: _withCtx(() => [
-                                                _createTextVNode("Hide")
+                                                _createTextVNode(_toDisplayString(_ctx.t('Hide')), 1)
                                               ]),
                                               _: 1
                                             })
                                           ]),
                                           _: 1
-                                        }, 8, ["onClick"])
+                                        }, 8, ["aria-label", "onClick"])
                                       ]),
                                       _: 2
                                     }, 1024))
@@ -7151,9 +7151,9 @@
                                           dense: "",
                                           flat: "",
                                           "no-caps": "",
-                                          label: "Display",
+                                          label: _ctx.t('Display'),
                                           "data-action": "display",
-                                          "aria-label": "Display field",
+                                          "aria-label": _ctx.t('Display field'),
                                           class: "m-btn-tonal"
                                         }, {
                                           default: _withCtx(() => [
@@ -7185,7 +7185,7 @@
                                                   default: _withCtx(() => [
                                                     _createVNode(_component_q_item_section, null, {
                                                       default: _withCtx(() => [
-                                                        _createTextVNode("New Column")
+                                                        _createTextVNode(_toDisplayString(_ctx.t('New Column')), 1)
                                                       ]),
                                                       _: 1
                                                     })
@@ -7199,7 +7199,7 @@
                                             }, 1024)
                                           ]),
                                           _: 2
-                                        }, 1024)
+                                        }, 1032, ["label", "aria-label"])
                                       ]),
                                       _: 2
                                     }, 1024))
@@ -7217,19 +7217,19 @@
                                               size: "sm",
                                               icon: "west",
                                               "data-action": "previous-column",
-                                              "aria-label": "Move to previous column",
+                                              "aria-label": _ctx.t('Move to previous column'),
                                               onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx-1))
                                             }, {
                                               default: _withCtx(() => [
                                                 _createVNode(_component_q_tooltip, null, {
                                                   default: _withCtx(() => [
-                                                    _createTextVNode("Move to previous column")
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Move to previous column')), 1)
                                                   ]),
                                                   _: 1
                                                 })
                                               ]),
                                               _: 1
-                                            }, 8, ["disabled", "onClick"]),
+                                            }, 8, ["disabled", "aria-label", "onClick"]),
                                             _createVNode(_component_q_btn, {
                                               disabled: fieldIdx === 0,
                                               dense: "",
@@ -7237,19 +7237,19 @@
                                               size: "sm",
                                               icon: "expand_less",
                                               "data-action": "up",
-                                              "aria-label": "Move up within column",
+                                              "aria-label": _ctx.t('Move up within column'),
                                               onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx-1))
                                             }, {
                                               default: _withCtx(() => [
                                                 _createVNode(_component_q_tooltip, null, {
                                                   default: _withCtx(() => [
-                                                    _createTextVNode("Move up within column")
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Move up within column')), 1)
                                                   ]),
                                                   _: 1
                                                 })
                                               ]),
                                               _: 1
-                                            }, 8, ["disabled", "onClick"]),
+                                            }, 8, ["disabled", "aria-label", "onClick"]),
                                             _createVNode(_component_q_btn, {
                                               disabled: (fieldIdx + 1) === column.children.length,
                                               dense: "",
@@ -7257,38 +7257,38 @@
                                               size: "sm",
                                               icon: "expand_more",
                                               "data-action": "down",
-                                              "aria-label": "Move down within column",
+                                              "aria-label": _ctx.t('Move down within column'),
                                               onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx+1))
                                             }, {
                                               default: _withCtx(() => [
                                                 _createVNode(_component_q_tooltip, null, {
                                                   default: _withCtx(() => [
-                                                    _createTextVNode("Move down within column")
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Move down within column')), 1)
                                                   ]),
                                                   _: 1
                                                 })
                                               ]),
                                               _: 1
-                                            }, 8, ["disabled", "onClick"]),
+                                            }, 8, ["disabled", "aria-label", "onClick"]),
                                             _createVNode(_component_q_btn, {
                                               dense: "",
                                               flat: "",
                                               size: "sm",
                                               icon: "east",
                                               "data-action": "next-column",
-                                              "aria-label": "Move to next column",
+                                              "aria-label": _ctx.t('Move to next column'),
                                               onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx+1))
                                             }, {
                                               default: _withCtx(() => [
                                                 _createVNode(_component_q_tooltip, null, {
                                                   default: _withCtx(() => [
-                                                    _createTextVNode("Move to next column")
+                                                    _createTextVNode(_toDisplayString(_ctx.t('Move to next column')), 1)
                                                   ]),
                                                   _: 1
                                                 })
                                               ]),
                                               _: 1
-                                            }, 8, ["onClick"])
+                                            }, 8, ["aria-label", "onClick"])
                                           ]),
                                           _: 2
                                         }, 1024)
@@ -7311,22 +7311,22 @@
                       "no-caps": "",
                       color: "primary",
                       onClick: _withModifiers($event => (_ctx.saveColumns()), ["prevent"]),
-                      label: "Save Changes"
-                    }, null, 8, ["onClick"]),
+                      label: _ctx.t('Save Changes')
+                    }, null, 8, ["onClick", "label"]),
                     _createVNode(_component_q_btn, {
                       dense: "",
                       flat: "",
                       "no-caps": "",
                       onClick: _withModifiers($event => (_ctx.resetColumns()), ["prevent"]),
-                      label: "Undo Changes"
-                    }, null, 8, ["onClick"]),
+                      label: _ctx.t('Undo Changes')
+                    }, null, 8, ["onClick", "label"]),
                     _createVNode(_component_q_btn, {
                       dense: "",
                       flat: "",
                       "no-caps": "",
                       onClick: _withModifiers($event => (_ctx.resetToDefault()), ["prevent"]),
-                      label: "Reset to Default"
-                    }, null, 8, ["onClick"])
+                      label: _ctx.t('Reset to Default')
+                    }, null, 8, ["onClick", "label"])
                   ])
                 ]),
                 _: 1
@@ -9183,7 +9183,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "d07b0867", make: function (Vue) {
+        "m-qapps-root": { hash: "40727a7a", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -10286,7 +10286,7 @@
                         ]))
                       : (_openBlock(), _createElementBlock("div", { key: 1 }, [
                           _createElementVNode("div", { class: "text-center q-pb-sm" }, [
-                            _createTextVNode("Please sign in to continue as user "),
+                            _createTextVNode(_toDisplayString(_ctx.t('Please sign in to continue as user')) + " ", 1),
                             _createElementVNode("strong", null, _toDisplayString(_ctx.username), 1)
                           ]),
                           _createVNode(_component_q_form, {

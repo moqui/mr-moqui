@@ -67,9 +67,9 @@ along with this software (see the LICENSE.md file). If not, see
                 {label: 'Ended', value: when(run.endTime)},
                 {label: 'Took', value: duration(run.durationMs)},
                 {label: 'Ran on', value: [run.hostName, run.instanceId, run.runThread].filter(Boolean).join(' · ')},
-                {label: 'Holds the job\u2019s lock', value: run.isLockHolder ? 'Yes: the job does not start again while it does' : ''},
+                {label: ec.l10n.localize('Holds the job\u2019s lock'), value: run.isLockHolder ? ec.l10n.localize('Yes: the job does not start again while it does') : ''},
                 {label: 'Failure', value: run.errorClass},
-                {label: 'Result counts', value: Array.from(run.countList || []).map(count => count.name + ' ' + count.value).join(' · ')},
+                {label: ec.l10n.localize('Result counts'), value: Array.from(run.countList || []).map(count => count.name + ' ' + count.value).join(' · ')},
                 {label: 'Also answered', value: Array.from(run.otherResultList || []).join(', ') ? Array.from(run.otherResultList).join(', ') + ' (not shown)' : ''},
                 {label: 'Messages', value: run.messageLineCount ? run.messageLineCount + ' lines (not shown)' : ''},
                 {label: 'Trace', value: run.traceId && !traceOpen ? run.traceId + ' (in Monitor, which opens by System\u2019s own grant)' : ''}

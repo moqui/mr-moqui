@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
                         in-map="{authFlowId:authFlowId, expectedRevision:expectedRevision, fieldMapList:fieldMapList, reason:(reason || null)}"/>
             </if>
             <if condition="!ec.message.hasError() &amp;&amp; stored">
-                <script>ec.message.addMessage(stored.applied ? 'Identity mappings saved' : stored.reason, stored.applied ? 'success' : 'warning')</script>
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Identity mappings saved') : stored.reason, stored.applied ? 'success' : 'warning')</script>
             </if>
         </actions>
         <default-response url="."><parameter name="authFlowId"/></default-response>
@@ -92,7 +92,7 @@ along with this software (see the LICENSE.md file). If not, see
                         in-map="{authFlowId:authFlowId, expectedRevision:expectedRevision, roleMapList:roleMapList, reason:(reason || null)}"/>
             </if>
             <if condition="!ec.message.hasError() &amp;&amp; stored">
-                <script>ec.message.addMessage(stored.applied ? 'Role mappings saved' : stored.reason, stored.applied ? 'success' : 'warning')</script>
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Role mappings saved') : stored.reason, stored.applied ? 'success' : 'warning')</script>
             </if>
         </actions>
         <default-response url="."><parameter name="authFlowId"/></default-response>
@@ -124,8 +124,8 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.admin.ConfigurationServices.store#IdentityProvider" out-map="stored"
                     in-map="{authFlowId:authFlowId, expectedRevision:expectedRevision, enabled:(enable === 'Y'), reason:(reason || null)}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(stored.applied ? (stored.enabled ? 'The provider is enabled: people can sign in through it'
-                    : 'The provider is disabled: nobody signs in through it') : stored.reason, stored.applied ? 'success' : 'warning')</script>
+                <script>ec.message.addMessage(stored.applied ? (stored.enabled ? ec.l10n.localize('The provider is enabled: people can sign in through it')
+                    : ec.l10n.localize('The provider is disabled: nobody signs in through it')) : stored.reason, stored.applied ? 'success' : 'warning')</script>
             </if>
         </actions>
         <default-response url="."><parameter name="authFlowId"/></default-response>

@@ -101,7 +101,7 @@ along with this software (see the LICENSE.md file). If not, see
             // what a narrowing link keeps of the find: the rest, and the page, is sent empty
             clearValues = {category: category, auditProjectionId: auditProjectionId, fromDate: fromDate, thruDate: thruDate, madeBy: madeBy,
                 changedByUserId: '', recordKey: '', correlation: '', pageIndex: ''}
-            madeByOptions = [{value: 'people', label: 'People'}, {value: 'all', label: 'Anyone, data loads too'}]
+            madeByOptions = [{value: 'people', label: ec.l10n.localize('People')}, {value: 'all', label: ec.l10n.localize('Anyone, data loads too')}]
             problemText = Array.from(found?.sourceProblems || []).join(', ')
         ]]></script>
     </actions>

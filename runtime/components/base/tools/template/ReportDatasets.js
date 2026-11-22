@@ -12,7 +12,7 @@ const {ask} = ec.resource.script("component://tools/template/ReportDelivery.js")
 const minute = 60 * 1000
 const statusNames = {admitted: "Admitted", review: "Needs review", retired: "Retired", unavailable: "Unavailable"}
 const statusColors = {admitted: "positive", review: "warning", retired: "grey-8", unavailable: "negative"}
-const checkNames = {feed: "Registered feed", index: "Index built", scope: "Row filter bound", document: "Source document"}
+const checkNames = {feed: ec.l10n.localize("Registered feed"), index: ec.l10n.localize("Index built"), scope: ec.l10n.localize("Row filter bound"), document: ec.l10n.localize("Source document")}
 // Tools' own datasets, which are not business datasets
 const telemetry = ["otel_spans", "otel_logs", "otel_metrics", "otel_errors", "monitor_annotations"]
 // the most rows one export holds, its default, and a page of the view
@@ -67,7 +67,7 @@ function present(row) {
         check: check.check,
         name: checkNames[check.check] || check.check,
         passed: check.passed === true,
-        passedText: check.passed === true ? "Passed" : "Not passed",
+        passedText: check.passed === true ? "Passed" : ec.l10n.localize("Not passed"),
         message: check.message || ""
     }))
     const scopeParameter = text(row.scopeParameter)
@@ -81,7 +81,7 @@ function present(row) {
         dataFeedId: row.dataFeedId || "",
         timeField: row.timeField || "",
         scopePolicyId: row.scopePolicyId || "",
-        scopeText: row.scopePolicy ? row.scopePolicy + (scopeField ? " on " + scopeField : "") : "Not bound",
+        scopeText: row.scopePolicy ? row.scopePolicy + (scopeField ? " on " + scopeField : "") : ec.l10n.localize("Not bound"),
         scopeParameter,
         scopeField,
         component: row.component || "",
@@ -141,7 +141,7 @@ function list(p) {
         scope: scopeWords(policy),
         nameHelp: policy.datasetIdPrefix
             ? "Letters and digits; the dataset's id is " + policy.datasetIdPrefix + " and this"
-            : "Letters and digits: the dataset's id",
+            : ec.l10n.localize("Letters and digits: the dataset's id"),
         other: mount.mounted ? {datasets: [], fields: [], notice: "", timeField: ""} : others(p.otherDatasetId, all)
     }
 }
@@ -153,7 +153,7 @@ function others(datasetId, business) {
             const saved = !telemetry.includes(dataset.id) && !text(dataset.id).startsWith("index:")
             return Object.assign({}, dataset, {
                 title: dataset.title || dataset.id,
-                kind: telemetry.includes(dataset.id) ? "Telemetry" : saved ? "Saved dataset" : "Document index",
+                kind: telemetry.includes(dataset.id) ? "Telemetry" : saved ? ec.l10n.localize("Saved dataset") : "Document index",
                 saved
             })
         })
@@ -243,7 +243,7 @@ function slug(value) {
 function createRequest(p) {
     const policy = mountLib.state().policy
     const name = slug(p.name || p.title)
-    if (!name) throw new Error("Name the dataset")
+    if (!name) throw new Error(ec.l10n.localize("Name the dataset"))
     const request = {
         datasetId: policy.datasetIdPrefix + name,
         title: p.title || p.name,

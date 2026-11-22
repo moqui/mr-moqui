@@ -28,13 +28,13 @@ ${md.mermaid(diagrams.flow)}
 ${rule.description}
 <#if rule.condition>
 
-Condition:
+${ec.l10n.localize("Condition:")}
 
 ${md.fence(rule.conditionLanguage, rule.condition)}
 </#if>
 <#if rule.actions>
 
-Actions:
+${ec.l10n.localize("Actions:")}
 
 ${md.fence("xml", rule.actions)}
 </#if>

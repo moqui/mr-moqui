@@ -4,7 +4,7 @@
     <parameter name="traceId" required="true"/><parameter name="from"/><parameter name="thru"/>
     <transition name="logs"><default-response url="//apps/system/Monitor/Logs"/></transition>
     <actions><script><![CDATA[
-        if (!/^[0-9a-f]{32}$/i.test(String(traceId))) throw new Error('Invalid trace id')
+        if (!/^[0-9a-f]{32}$/i.test(String(traceId))) throw new Error(ec.l10n.localize('Invalid trace id'))
         from = from || 'now-7d'; thru = thru || 'now'
         const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({
             datasetId:'otel_spans',queryString:'trace_id:'+traceId,from,thru,pageSize:1000,sort:['start_nano','span_id']

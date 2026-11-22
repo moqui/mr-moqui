@@ -82,7 +82,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!memberUserIds) { ec.message.addValidationError(null, 'memberUserIds', null, ec.l10n.localize('Choose who to add'), null); return }
             const out = ec.service.sync().name('org.moqui.comms.MailSettingsServices.save#AccountOptions').parameters({emailAccountId: emailAccountId,
                 memberUserIds: memberUserIds, memberPermissionEnumId: memberPermissionEnumId || 'EapSend'}).call()
-            if (!ec.message.hasError() && out?.addedMemberCount) ec.message.addMessage(ec.resource.expand(out.addedMemberCount == 1 ? 'Added 1 person' : 'Added ${n} people', '',
+            if (!ec.message.hasError() && out?.addedMemberCount) ec.message.addMessage(out.addedMemberCount == 1 ? ec.l10n.localize('Added 1 person') : ec.resource.expand('Added ${n} people', '',
                 {n: out.addedMemberCount}), 'success')
         ]]></script></actions>
         <default-response url="."><parameter name="emailAccountId"/></default-response>

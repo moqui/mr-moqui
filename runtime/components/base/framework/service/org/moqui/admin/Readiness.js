@@ -25,7 +25,7 @@ const REFRESH = "moqui.server.RefreshOperation"
 const SETTINGS = "moqui.server.SettingsEntry"
 const OVERVIEW = "ADMIN_OVERVIEW_VIEW"
 const minute = 60 * 1000
-const states = {failed: "Failed", unavailable: "Unavailable", warning: "Warning", ready: "Ready"}
+const states = {failed: ec.l10n.localize("Failed"), unavailable: ec.l10n.localize("Unavailable"), warning: ec.l10n.localize("Warning"), ready: ec.l10n.localize("Ready")}
 const stateOrder = {failed: 0, unavailable: 1, warning: 2, ready: 3}
 const stateColors = {failed: "negative", unavailable: "grey-8", warning: "warning", ready: "positive"}
 // the refusals an owner answers for a caller, a scope or a record it may not read, as reason codes or wording (the
@@ -150,13 +150,13 @@ const instanceChecks = {
         const server = one("moqui.basic.email.EmailServer", {emailServerId: "SYSTEM"})
         return [
             server?.smtpHost
-                ? ready("admin.mailServer", "Outgoing mail", "The SYSTEM mail server has an SMTP host")
+                ? ready("admin.mailServer", "Outgoing mail", ec.l10n.localize("The SYSTEM mail server has an SMTP host"))
                 : check(
                       "admin.mailServer",
                       "Outgoing mail",
                       "warning",
                       "MAIL_SERVER",
-                      "The SYSTEM mail server has no SMTP host, so the instance sends no mail"
+                      ec.l10n.localize("The SYSTEM mail server has no SMTP host, so the instance sends no mail")
                   )
         ]
     },
@@ -166,30 +166,30 @@ const instanceChecks = {
         const remote = one("moqui.service.message.SystemMessageRemote", {systemMessageRemoteId: backupRemote})
         const watermark = job ? lastSuccessfulRun(backupJob) : null
         const mirrored = !!remote?.sendUrl
-        const coverage = !job || job.paused === "Y" ? "None" : mirrored ? "Mirrored off the server" : "On the server only"
+        const coverage = !job || job.paused === "Y" ? ec.l10n.localize("None") : mirrored ? ec.l10n.localize("Mirrored off the server") : ec.l10n.localize("On the server only")
         const jobCheck = !job
             ? check(
                   "admin.backup.job",
-                  "Nightly backup",
+                  ec.l10n.localize("Nightly backup"),
                   "unavailable",
                   "BACKUP_JOB_MISSING",
-                  "The nightly backup job is not set up"
+                  ec.l10n.localize("The nightly backup job is not set up")
               )
             : job.paused === "Y"
-              ? check("admin.backup.job", "Nightly backup", "warning", "BACKUP_PAUSED", "The nightly database backup is paused")
+              ? check("admin.backup.job", ec.l10n.localize("Nightly backup"), "warning", "BACKUP_PAUSED", ec.l10n.localize("The nightly database backup is paused"))
               : watermark == null
-                ? check("admin.backup.job", "Nightly backup", "warning", "BACKUP_NONE_YET", "No backup has finished yet")
-                : ready("admin.backup.job", "Nightly backup", "The nightly database backup runs")
+                ? check("admin.backup.job", ec.l10n.localize("Nightly backup"), "warning", "BACKUP_NONE_YET", ec.l10n.localize("No backup has finished yet"))
+                : ready("admin.backup.job", ec.l10n.localize("Nightly backup"), ec.l10n.localize("The nightly database backup runs"))
         return [
             Object.assign(jobCheck, {watermark, coverage}),
             mirrored
-                ? ready("admin.backup.mirror", "Off-site mirror", "Backups are mirrored off the server", {coverage})
+                ? ready("admin.backup.mirror", "Off-site mirror", ec.l10n.localize("Backups are mirrored off the server"), {coverage})
                 : check(
                       "admin.backup.mirror",
                       "Off-site mirror",
                       "warning",
                       "BACKUP_NOT_MIRRORED",
-                      "Backups are not mirrored off the server",
+                      ec.l10n.localize("Backups are not mirrored off the server"),
                       {
                           coverage,
                           fixRoute: "adminConnectionDetail",
@@ -207,7 +207,7 @@ const instanceChecks = {
                     "Report mail",
                     "unavailable",
                     "REPORT_TEMPLATE_MISSING",
-                    "The report email template is not installed"
+                    ec.l10n.localize("The report email template is not installed")
                 )
             ]
         const server = template.emailServerId
@@ -216,13 +216,13 @@ const instanceChecks = {
         // a missing mail server is fixed at the mail relays, not at the templates the provider's registration names
         return [
             server?.smtpHost
-                ? ready("admin.reportMail", "Report mail", "Report emails have a mail server")
+                ? ready("admin.reportMail", "Report mail", ec.l10n.localize("Report emails have a mail server"))
                 : check(
                       "admin.reportMail",
                       "Report mail",
                       "warning",
                       "REPORT_MAIL_SERVER",
-                      "Report emails have no mail server to send through",
+                      ec.l10n.localize("Report emails have no mail server to send through"),
                       {fixRoute: "adminMailRelay"}
                   )
         ]
@@ -236,13 +236,13 @@ const instanceChecks = {
                     "Report alerts",
                     "unavailable",
                     "TOPIC_MISSING",
-                    "The report alert topic is not installed"
+                    ec.l10n.localize("The report alert topic is not installed")
                 )
             ]
         return [
             topic.receiveNotifications === "N"
-                ? check("admin.reportAlertTopic", "Report alerts", "warning", "TOPIC_OFF", "Report alerts are not sent to anyone")
-                : ready("admin.reportAlertTopic", "Report alerts", "Report alerts are sent to their recipients")
+                ? check("admin.reportAlertTopic", "Report alerts", "warning", "TOPIC_OFF", ec.l10n.localize("Report alerts are not sent to anyone"))
+                : ready("admin.reportAlertTopic", "Report alerts", ec.l10n.localize("Report alerts are sent to their recipients"))
         ]
     },
     // a member of ADMIN or of a *_ADMIN group, enabled and not ended, with no authentication factor in date: counted
@@ -289,9 +289,15 @@ const instanceChecks = {
                       "Administrator factors",
                       "warning",
                       "ADMIN_NO_FACTOR",
-                      missing + (missing === 1 ? " administrator has" : " administrators have") + " no second sign-in factor"
+                      ec.resource.expand(
+                          missing === 1
+                              ? "${count} administrator has no second sign-in factor"
+                              : "${count} administrators have no second sign-in factor",
+                          "",
+                          {count: missing}
+                      )
                   )
-                : ready("admin.adminFactors", "Administrator factors", "Every administrator has a second sign-in factor")
+                : ready("admin.adminFactors", "Administrator factors", ec.l10n.localize("Every administrator has a second sign-in factor"))
         ]
     },
     // failing runs of the last day, with the list of them as the fix place
@@ -313,14 +319,24 @@ const instanceChecks = {
                       "Job runs",
                       "failed",
                       "JOB_RUNS_FAILED",
-                      failed.length +
-                          (failed.length === 1 ? " job run" : " job runs") +
-                          " failed in the last day: " +
-                          jobs.slice(0, 3).join(", ") +
-                          (jobs.length > 3 ? " and " + (jobs.length - 3) + " more" : ""),
+                      failed.length === 1
+                          ? ec.resource.expand("${count} job run failed in the last day: ${jobs}", "", {
+                                count: failed.length,
+                                jobs: jobs.slice(0, 3).join(", ")
+                            })
+                          : jobs.length > 3
+                            ? ec.resource.expand("${count} job runs failed in the last day: ${jobs} and ${more} more", "", {
+                                  count: failed.length,
+                                  jobs: jobs.slice(0, 3).join(", "),
+                                  more: jobs.length - 3
+                              })
+                            : ec.resource.expand("${count} job runs failed in the last day: ${jobs}", "", {
+                                  count: failed.length,
+                                  jobs: jobs.slice(0, 3).join(", ")
+                              }),
                       {fixRoute: "adminJobRuns", fixParameters: {state: "failed", fromDate: ec.l10n.format(since, "yyyy-MM-dd")}}
                   )
-                : ready("admin.jobRuns", "Job runs", "No job run failed in the last day")
+                : ready("admin.jobRuns", "Job runs", ec.l10n.localize("No job run failed in the last day"))
         ]
     },
     // a member is silent past three heartbeats (one a scheduler pass, a minute by default); its peers delete its row
@@ -335,9 +351,9 @@ const instanceChecks = {
                       "Cluster",
                       "warning",
                       "CLUSTER_STALE",
-                      silent + " of " + members.length + " cluster members have not been heard from for three minutes"
+                      ec.resource.expand("${silent} of ${members} cluster members have not been heard from for three minutes", "", {silent, members: members.length})
                   )
-                : ready("admin.cluster", "Cluster", members.length > 1 ? "Every cluster member is heard from" : "One server")
+                : ready("admin.cluster", "Cluster", members.length > 1 ? ec.l10n.localize("Every cluster member is heard from") : ec.l10n.localize("One server"))
         ]
     },
     // the telemetry pipeline's counters, the framework's own service read with authorization off so a reader without
@@ -359,7 +375,7 @@ const instanceChecks = {
                     "Telemetry",
                     "warning",
                     "TELEMETRY_LOSS",
-                    "Telemetry is being lost, so health is unknown"
+                    ec.l10n.localize("Telemetry is being lost, so health is unknown")
                 )
             ]
         if (!statuses.length || statuses.some(status => status.includes("unknown")))
@@ -369,10 +385,10 @@ const instanceChecks = {
                     "Telemetry",
                     "unavailable",
                     "TELEMETRY_UNKNOWN",
-                    "Telemetry is off or not searchable, so health is unknown"
+                    ec.l10n.localize("Telemetry is off or not searchable, so health is unknown")
                 )
             ]
-        return [ready("admin.telemetry", "Telemetry", "Telemetry is received")]
+        return [ready("admin.telemetry", "Telemetry", ec.l10n.localize("Telemetry is received"))]
     },
     // the Constitution for the instance: the sources it passed over, counted, not shown
     "constitution.global": () => {
@@ -385,7 +401,7 @@ const instanceChecks = {
                     "Instance Constitution",
                     "unavailable",
                     "CONSTITUTION_UNAVAILABLE",
-                    "The Constitution could not be read"
+                    ec.l10n.localize("The Constitution could not be read")
                 )
             ]
         return [
@@ -395,12 +411,18 @@ const instanceChecks = {
                       "Instance Constitution",
                       "warning",
                       "CONSTITUTION_SOURCES",
-                      passedOver + (passedOver === 1 ? " Constitution source was" : " Constitution sources were") + " passed over"
+                      ec.resource.expand(
+                          passedOver === 1
+                              ? "${count} Constitution source was passed over"
+                              : "${count} Constitution sources were passed over",
+                          "",
+                          {count: passedOver}
+                      )
                   )
                 : ready(
                       "constitution.global",
                       "Instance Constitution",
-                      out.customized ? "The instance's own Constitution applies" : "The shipped Constitution applies"
+                      out.customized ? ec.l10n.localize("The instance's own Constitution applies") : ec.l10n.localize("The shipped Constitution applies")
                   )
         ]
     },
@@ -424,7 +446,11 @@ const instanceChecks = {
         const running = protocols.filter(protocol => protocol.state === "ready").length
         return found.length
             ? found
-            : [ready("admin.protocols", "Protocols", running + (running === 1 ? " protocol is" : " protocols are") + " running")]
+            : [ready("admin.protocols", "Protocols", ec.resource.expand(
+                  running === 1 ? "${count} protocol is running" : "${count} protocols are running",
+                  "",
+                  {count: running}
+              ))]
     }
 }
 // the checks that ask no permission here: the service each reads checks the caller itself
@@ -445,21 +471,22 @@ function instanceSetup(p) {
 // check that is not ready), never a URL.
 function frequencyText(minutes) {
     const value = Number(minutes)
-    if (value < 120) return value + (value === 1 ? " minute" : " minutes")
-    if (value < 48 * 60) return Math.round(value / 60) + " hours"
-    return Math.round(value / (24 * 60)) + " days"
+    if (value < 120)
+        return ec.resource.expand(value === 1 ? "${count} minute" : "${count} minutes", "", {count: value})
+    if (value < 48 * 60) return ec.resource.expand("${count} hours", "", {count: Math.round(value / 60)})
+    return ec.resource.expand("${count} days", "", {count: Math.round(value / (24 * 60))})
 }
 function present(provider, row, context) {
     const state = Object.hasOwn(states, row.state) ? row.state : "unavailable"
     const refresh = context.refreshByProvider[provider.providerKey]
     const out = {
         providerKey: provider.providerKey,
-        providerTitle: provider.title,
+        providerTitle: provider.title ? ec.l10n.localize(provider.title) : "",
         ownerApp: provider.ownerApp,
         healthGroupEnumId: provider.healthGroupEnumId,
         groupName: context.groupNames[provider.healthGroupEnumId] || "",
         checkKey: row.checkKey || provider.providerKey,
-        title: row.title || provider.title,
+        title: (row.title || provider.title) ? ec.l10n.localize(row.title || provider.title) : "",
         state,
         stateName: states[state],
         reasonCode: row.state === state ? row.reasonCode || null : "STATE_UNKNOWN",
@@ -495,7 +522,7 @@ function present(provider, row, context) {
                     state: "warning",
                     stateName: states.warning,
                     reasonCode: "STALE",
-                    message: "Last refreshed " + out.lagText + " ago"
+                    message: ec.resource.expand("Last refreshed ${lag} ago", "", {lag: out.lagText})
                 })
         }
     }
@@ -563,7 +590,7 @@ function readiness(p) {
                     provider.title,
                     "unavailable",
                     "PROVIDER_FAILED",
-                    provider.title + " could not be checked"
+                    ec.resource.expand("${title} could not be checked", "", {title: ec.l10n.localize(provider.title)})
                 )
             ]
         }
@@ -575,7 +602,7 @@ function readiness(p) {
         checks.push(...presented)
         answered.push({
             providerKey: provider.providerKey,
-            title: provider.title,
+            title: provider.title ? ec.l10n.localize(provider.title) : "",
             ownerApp: provider.ownerApp,
             state: presented.reduce((worst, row) => (stateOrder[row.state] < stateOrder[worst] ? row.state : worst), "ready")
         })
@@ -588,7 +615,7 @@ function readiness(p) {
     return {
         checks: shown,
         providers: answered,
-        failedProviders,
+        failedProviders: failedProviders.map(name => (name ? ec.l10n.localize(name) : name)),
         checkedText: context.checkedText,
         ownerOptions: Array.from(new Set(offered.map(row => row.ownerApp).filter(Boolean))).sort(),
         groupOptions: groups.filter(row => offeredGroups.has(row.enumId)).map(row => ({key: row.enumId, text: row.description}))
@@ -650,7 +677,7 @@ function cardsOf(backupCoverage) {
     return [
         {
             key: "failedJobs",
-            title: "Failed job runs",
+            title: ec.l10n.localize("Failed job runs"),
             value: count("failed jobs", () =>
                 find("moqui.service.job.ServiceJobRun")
                     .condition("hasError", "Y")
@@ -664,7 +691,7 @@ function cardsOf(backupCoverage) {
         },
         {
             key: "transports",
-            title: "Unresolved transports",
+            title: ec.l10n.localize("Unresolved transports"),
             value: count("transports", () =>
                 find("moqui.service.message.SystemMessage").condition("statusId", "SmsgError").count()
             ),
@@ -675,7 +702,7 @@ function cardsOf(backupCoverage) {
         },
         {
             key: "backup",
-            title: "Backup coverage",
+            title: ec.l10n.localize("Backup coverage"),
             value: backupCoverage || "Unavailable",
             icon: "sym_o_backup",
             route: "adminJob",
@@ -684,7 +711,7 @@ function cardsOf(backupCoverage) {
         },
         {
             key: "signIn",
-            title: "Sign-in failures",
+            title: ec.l10n.localize("Sign-in failures"),
             value: count("sign-in failures", () =>
                 find("moqui.security.UserLoginHistory")
                     .condition("successfulLogin", "N")
@@ -915,12 +942,22 @@ function supportSummary(p) {
                 message: clean(row.message),
                 coverage: clean(row.coverage),
                 freshnessText: row.watermarkText
-                    ? "Last " +
-                      row.watermarkText +
-                      (row.lagText ? ", " + row.lagText + " ago" : "") +
-                      (row.expectedFrequencyText ? "; every " + row.expectedFrequencyText : "")
+                    ? row.lagText && row.expectedFrequencyText
+                        ? ec.resource.expand("Last ${when}, ${lag} ago; every ${every}", "", {
+                              when: row.watermarkText,
+                              lag: row.lagText,
+                              every: row.expectedFrequencyText
+                          })
+                        : row.lagText
+                          ? ec.resource.expand("Last ${when}, ${lag} ago", "", {when: row.watermarkText, lag: row.lagText})
+                          : row.expectedFrequencyText
+                            ? ec.resource.expand("Last ${when}; every ${every}", "", {
+                                  when: row.watermarkText,
+                                  every: row.expectedFrequencyText
+                              })
+                            : "Last " + row.watermarkText
                     : row.expectedFrequencyText
-                      ? "Every " + row.expectedFrequencyText
+                      ? ec.resource.expand("Every ${every}", "", {every: row.expectedFrequencyText})
                       : "",
                 lagMinutes: row.lagMinutes
             }))
@@ -928,7 +965,7 @@ function supportSummary(p) {
     } catch (error) {
         readinessSection = {
             available: false,
-            reason: calls.reasonOf(error?.message) || "The checks are not available to you.",
+            reason: calls.reasonOf(error?.message) || ec.l10n.localize("The checks are not available to you."),
             checks: []
         }
     }
@@ -936,7 +973,7 @@ function supportSummary(p) {
     const protocols = section(
         "org.moqui.admin.ConfigurationServices.get#ProtocolReadiness",
         {},
-        "The protocols are not available to you."
+        ec.l10n.localize("The protocols are not available to you.")
     )
     const protocolSection = protocols.out
         ? {
@@ -963,7 +1000,7 @@ function supportSummary(p) {
     const settingsFound = section(
         "org.moqui.admin.ConfigurationServices.get#EffectiveSettings",
         {},
-        "The settings are not available to you."
+        ec.l10n.localize("The settings are not available to you.")
     )
     const settingSection = settingsFound.out
         ? {
@@ -982,8 +1019,8 @@ function supportSummary(p) {
                               : "Not set"
                           : row.masked
                             ? row.valueSet
-                                ? "Hidden (set)"
-                                : "Hidden (not set)"
+                                ? ec.l10n.localize("Hidden (set)")
+                                : ec.l10n.localize("Hidden (not set)")
                             : row.value === "" || row.value == null
                               ? "Not set"
                               : clean(row.value),

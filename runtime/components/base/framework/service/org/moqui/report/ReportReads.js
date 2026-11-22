@@ -59,7 +59,7 @@ const SCREEN_SCHEDULE_MAX = 200
 const text = value => (value == null ? "" : String(value))
 const plainName = value => /^[A-Za-z0-9_]{1,64}$/.test(text(value))
 function signedIn() {
-    if (!ec.user.userId) throw new Error("The report reads need a signed-in user")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("The report reads need a signed-in user"))
 }
 // An engine operation as the caller: its own checks decide, and its refusal is the caller's.
 function asCaller(name, parameters) {

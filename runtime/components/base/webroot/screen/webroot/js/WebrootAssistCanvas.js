@@ -33,6 +33,7 @@
     "use strict";
 
     const moqui = root.moqui = root.moqui || {};
+    const L = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const canvas = {};
 
     // ---- the component library: the declarations the spec is made from ----
@@ -834,7 +835,7 @@
             data() { return { evaluated: null, problems: [], tick: 0, local: reactive({}), busy: reactive({}), periods: {}, failed: null }; },
             created() {
                 const O = root.OpenUILang;
-                if (!O) { this.failed = "OpenUI Lang is not loaded"; return; }
+                if (!O) { this.failed = L("OpenUI Lang is not loaded"); return; }
                 this.O = O;
                 this.parser = O.createStreamingParser(canvas.librarySpec(), "Stack");
                 this.store = O.createStore();
@@ -1292,7 +1293,7 @@
                 },
                 link(href) {
                     // a link opens only from the user's click in the frame, as a submit does: no navigation without a gesture
-                    if (!this.framedGesture()) { this.notice = "A link opens only when you click it."; return; }
+                    if (!this.framedGesture()) { this.notice = L("A link opens only when you click it."); return; }
                     const target = sfc.linkTarget(href, root.location.origin, this.external);
                     if (target.kind === "internal") { this.$emit("navigate", target.url); return; }
                     if (target.kind === "external") { root.open(target.url, "_blank", "noopener,noreferrer"); return; }
@@ -1313,7 +1314,7 @@
                 if (this.blocks.error) kids.push(h("div", { class: "text-negative q-pa-md" }, "The component does not read: " + this.blocks.error));
                 else if (this.killed) {
                     kids.push(h(R("q-banner"), { dense: true, rounded: true, class: "bg-red-1 text-red-10 q-my-sm", "data-assist-sfc-killed": this.killed.reason },
-                        { default: () => this.killed.message, action: () => [h(R("q-btn"), { flat: true, dense: true, noCaps: true, label: "Show again", "data-assist-sfc-reload": "", onClick: () => this.restart() })] }));
+                        { default: () => this.killed.message, action: () => [h(R("q-btn"), { flat: true, dense: true, noCaps: true, label: L("Show again"), "data-assist-sfc-reload": "", onClick: () => this.restart() })] }));
                 } else {
                     kids.push(h("iframe", { key: this.frameKey, ref: "frame", sandbox: "allow-scripts allow-same-origin", referrerpolicy: "no-referrer", allow: "", title: "Canvas",
                         class: "m-assist-sfc-frame", "data-assist-sfc-frame": "", src: this.src, onLoad: () => this.onLoad(),
@@ -1343,7 +1344,7 @@
                 kids.push(h("div", { class: "row items-center no-wrap q-mt-xs" }, [
                     this.notice ? h("div", { class: "text-caption m-muted col", "data-assist-sfc-notice": "" }, this.notice) : h("div", { class: "col" }),
                     h(R("q-toggle"), { dense: true, size: "sm", modelValue: this.external, "onUpdate:modelValue": (value) => this.setExternal(value),
-                        label: "Other sites", class: "text-caption", "data-assist-sfc-external": "" }),
+                        label: L("Other sites"), class: "text-caption", "data-assist-sfc-external": "" }),
                 ]));
                 return h("div", { class: "m-assist-vue-sfc", "data-assist-canvas-version": String(this.version || ""), "data-assist-sfc-ignored": String(this.ignored),
                     "data-assist-sfc-dropped": String(this.dropped) }, kids);
@@ -1397,21 +1398,21 @@
                 const kids = [h("div", { class: "row items-center no-wrap text-caption m-muted q-mb-xs", "data-assist-screen-xml-location": this.header.location }, [
                     h("span", { class: "col" }, "Preview of " + (this.header.location || "a screen") + " · not saved"),
                     this.header.path && this.header.location && !this.readOnly ? h(root.Vue.resolveComponent("q-btn"), { dense: true, flat: true, noCaps: true, size: "sm", icon: "sym_o_dashboard_customize",
-                        label: "Open in the builder", "data-assist-screen-xml-builder": "", onClick: () => this.openInBuilder() }) : null])];
-                if (this.src && this.shown) kids.push(h("iframe", { src: this.src, title: "Screen preview", class: "m-assist-screen-xml-frame",
+                        label: L("Open in the builder"), "data-assist-screen-xml-builder": "", onClick: () => this.openInBuilder() }) : null])];
+                if (this.src && this.shown) kids.push(h("iframe", { src: this.src, title: L("Screen preview"), class: "m-assist-screen-xml-frame",
                     style: "width:100%;min-height:28rem;border:1px solid var(--m-border,rgba(0,0,0,.12));border-radius:4px", "data-assist-screen-xml": "" }));
                 else if (this.src) kids.push(h("div", { class: "q-pa-sm row items-center q-gutter-sm" }, [
                     h("span", { class: "col m-muted" }, "The preview runs this proposed screen in the app as you, at " + this.header.path + "."),
-                    h(root.Vue.resolveComponent("q-btn"), { dense: true, outline: true, noCaps: true, size: "sm", label: "Show the preview",
+                    h(root.Vue.resolveComponent("q-btn"), { dense: true, outline: true, noCaps: true, size: "sm", label: L("Show the preview"),
                         "data-assist-screen-xml-show": "", onClick: () => { this.shown = true; } })]));
-                else kids.push(h("div", { class: "q-pa-sm m-muted" }, "The program names no page path of the apps to show it on."));
+                else kids.push(h("div", { class: "q-pa-sm m-muted" }, L("The program names no page path of the apps to show it on.")));
                 return h("div", { class: "m-assist-screen-xml" }, kids);
             }
         };
         canvas.screenXmlComponent = screenXml;
         const qvt = moqui.qvt;
         if (qvt && qvt.registerLate) qvt.registerLate("m-assist-screen-xml", screenXml);
-        if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("screen-xml", { label: "Moqui screen (dev)", component: "m-assist-screen-xml", streaming: false });
+        if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("screen-xml", { label: L("Moqui screen (dev)"), component: "m-assist-screen-xml", streaming: false });
     }
     // ---- qvue-screen (plans/design-dev-aide.md 13.5): on a dev instance, a .qvue screen as it would be saved, its XML and
     // its SFC in one program after the header <!-- qvue-screen at="component://.../X.xml" path="/qapps/..." -->. The SFC
@@ -1449,7 +1450,7 @@
         canvas.qvueScreenComponent = qvueScreen;
         const qvt = moqui.qvt;
         if (qvt && qvt.registerLate) qvt.registerLate("m-assist-qvue-screen", qvueScreen);
-        if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("qvue-screen", { label: "Moqui .qvue screen (dev)", component: "m-assist-qvue-screen", streaming: false });
+        if (moqui.assist && moqui.assist.dialects) moqui.assist.dialects.register("qvue-screen", { label: L("Moqui .qvue screen (dev)"), component: "m-assist-qvue-screen", streaming: false });
     }
     if (moqui.assist) moqui.assist.canvas = canvas;
 })(globalThis);

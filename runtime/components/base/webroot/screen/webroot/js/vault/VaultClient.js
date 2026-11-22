@@ -239,7 +239,7 @@
             return this.native.memory("state");
         }
         /** The app remembers the open personal key for minutes (at most what the server allows): {until, kind}. */
-        remember(minutes) { return this.native ? this.native.memory("remember", minutes) : Promise.reject(new Error("Only the desktop and mobile apps remember the key")); }
+        remember(minutes) { return this.native ? this.native.memory("remember", minutes) : Promise.reject(new Error((global.moqui && global.moqui.l10n && global.moqui.l10n.localize) ? global.moqui.l10n.localize("Only the desktop and mobile apps remember the key") : "Only the desktop and mobile apps remember the key")); }
         /**
          * The personal key opened from the app's memory, once the server confirms it (and, on a phone, the device's lock
          * or biometrics): {opened: true, result} as personalOpen answers, or {opened: false, reason: none, ended,

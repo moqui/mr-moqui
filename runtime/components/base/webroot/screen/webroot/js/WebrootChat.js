@@ -23,6 +23,7 @@
     "use strict";
 
     const moqui = root.moqui;
+    const L = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const reactive = (obj) => (root.Vue && root.Vue.reactive ? root.Vue.reactive(obj) : obj);
 
     // A presence as the dot draws it: online, away, dnd or offline; invisible is offline (to others and on one's own dot).
@@ -815,7 +816,7 @@
         decideCard(roomId, eventSeq, params) {
             const base = (chat.vm && chat.vm.appRootPath) || "";
             return moqui.request(base + "/chatAssistCard", { method: "POST", params: Object.assign({ chatRoomId: roomId, eventSeq }, params) })
-                .then((result) => (result && result.json) || {}, (err) => ({ error: (err && err.json && err.json.errors) || chat.labels.assistNoDecide }));
+                .then((result) => (result && result.json) || {}, (err) => ({ error: (err && err.json && err.json.errors) || L(chat.labels.assistNoDecide) }));
         },
 
         // ---- encrypted rooms (C7; moqui.crypto) ----
@@ -2073,7 +2074,7 @@
             return seal(JSON.stringify(draft)).then((sealed) => {
                 const all = chat.readHeld();
                 all[id] = sealed;
-                if (!chat.writeHeld(all)) throw { reasonCode: "noStorage", errors: "This browser cannot keep the message" };
+                if (!chat.writeHeld(all)) throw { reasonCode: "noStorage", errors: L("This browser cannot keep the message") };
                 return sealed;
             });
         },
@@ -2455,7 +2456,14 @@
 
     // ---- the components the shell writes (registered by WebrootVue.qvt.js) ----
 
-    const labelsOf = (vm) => Object.assign({}, chat.labels, vm.$root && vm.$root.labels);
+    const localizeTree = (value) => {
+        if (typeof value === "string") return L(value);
+        if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+        const out = {};
+        Object.keys(value).forEach((key) => { out[key] = localizeTree(value[key]); });
+        return out;
+    };
+    const labelsOf = (vm) => Object.assign({}, localizeTree(chat.labels), vm.$root && vm.$root.labels);
     const components = moqui.qvtComponents = moqui.qvtComponents || {};
 
     // The status part of the account menu: the current status with its text, the four statuses, and the status message.

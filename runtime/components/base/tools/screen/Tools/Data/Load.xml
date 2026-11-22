@@ -33,13 +33,13 @@ along with this software (see the LICENSE.md file). If not, see
                 source = location
             } else if (csvText) {
                 edl.csvText(csvText)
-                source = "CSV Text Box"
+                source = ec.l10n.localize("CSV Text Box")
             } else if (jsonText) {
                 edl.jsonText(jsonText)
-                source = "JSON Text Box"
+                source = ec.l10n.localize("JSON Text Box")
             } else if (xmlText) {
                 edl.xmlText(xmlText)
-                source = "XML Text Box"
+                source = ec.l10n.localize("XML Text Box")
             } else {
                 ec.message.addMessage(ec.l10n.localize("No parameters specified, not loading data"))
                 return
@@ -73,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
                     description: entityNames.length ? 'Foreign keys around a load of ' + entityNames.length + ' entities' : 'Foreign keys around a load of every entity'}).call() || {}
                 if (ec.message.hasError()) return
                 for (const warning of wrap.warnings || []) ec.message.addMessage(String(warning), 'warning')
-                if (!wrap.dropJobId || !wrap.restoreJobId) { ec.message.addError(String(wrap.jobReason || 'The foreign keys could not be planned')); return }
+                if (!wrap.dropJobId || !wrap.restoreJobId) { ec.message.addError(String(wrap.jobReason || ec.l10n.localize('The foreign keys could not be planned'))); return }
                 const parameters = {dropJobId: wrap.dropJobId, restoreJobId: wrap.restoreJobId, loadKind: 'data',
                     onlyCreate: !!onlyCreate, dummyFks: !!dummyFks, useTryInsert: !!useTryInsert}
                 for (const name of ['xmlText', 'jsonText', 'csvText', 'location', 'types', 'components']) if (context[name]) parameters[name] = String(context[name])
@@ -245,13 +245,13 @@ along with this software (see the LICENSE.md file). If not, see
                     source = location
                 } else if (csvText) {
                     edl.csvText(csvText)
-                    source = "CSV Text Box"
+                    source = ec.l10n.localize("CSV Text Box")
                 } else if (jsonText) {
                     edl.jsonText(jsonText)
-                    source = "JSON Text Box"
+                    source = ec.l10n.localize("JSON Text Box")
                 } else if (xmlText) {
                     edl.xmlText(xmlText)
-                    source = "XML Text Box"
+                    source = ec.l10n.localize("XML Text Box")
                 } else {
                     ec.message.addMessage(ec.l10n.localize("No parameters specified, not loading data"))
                     return

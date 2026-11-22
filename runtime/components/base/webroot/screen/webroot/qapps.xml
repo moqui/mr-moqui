@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="clientConfig" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) {
-                ec.web.sendJsonError(401, 'Authentication required')
+                ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             } else {
                 const qvtLib = ec.resource.script('component://webroot/screen/includes/QvtConfig.js')
                 const localeTag = String(ec.user.locale || 'en_US').replace('_', '-')
@@ -73,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         user. -->
     <transition name="clientDevices" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else ec.web.sendJsonResponse({deviceList: ec.service.sync().name('org.moqui.impl.UserServices.get#UserDeviceKeys').disableAuthz().call().deviceList ?? []})
             ]]></script></actions>
         <default-response type="none"/>
@@ -81,7 +81,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="revokeClientDevice" method="post">
         <parameter name="loginKey" required="true"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else {
                 ec.service.sync().name('org.moqui.impl.UserServices.revoke#UserDeviceKey').parameters({loginKey: loginKey}).disableAuthz().call()
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
@@ -94,7 +94,7 @@ along with this software (see the LICENSE.md file). If not, see
         its key runs out; the old key ends ten minutes later. -->
     <transition name="renewClientDevice" method="post">
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else {
                 const renewed = ec.service.sync().name('org.moqui.impl.UserServices.renew#UserDeviceKey').disableAuthz().call()
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
@@ -114,7 +114,7 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="appId"/><parameter name="platform"/>
         <parameter name="p256dhKey"/><parameter name="authSecret"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else {
                 const p = ec.web.parameters
                 const out = ec.service.sync().name('org.moqui.ui.NotificationServices.register#PushDevice').parameters({
@@ -130,7 +130,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="unregisterClientPush" method="post">
         <parameter name="token"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else {
                 const out = ec.service.sync().name('org.moqui.ui.NotificationServices.unregister#PushDevice')
                     .parameters({token: ec.web.parameters.token || null}).disableAuthz().call() || {}
@@ -145,7 +145,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="testClientPush" method="post">
         <parameter name="endpoint"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else {
                 const out = ec.service.sync().name('org.moqui.ui.NotificationServices.send#TestPush')
                     .parameters({endpoint: ec.web.parameters.endpoint || null}).disableAuthz().call() || {}
@@ -161,7 +161,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="ackClientPush" method="post" require-session-token="false">
         <parameter name="ackId"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             else {
                 const out = ec.service.sync().name('org.moqui.ui.NotificationServices.ack#Push')
                     .parameters({ackId: ec.web.parameters.ackId || null}).disableAuthz().call() || {}

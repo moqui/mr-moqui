@@ -37,11 +37,11 @@ const refused = (reasonCode, reason, extra = {}) => Object.assign({applied: fals
 const controls = /[\u0000-\u001f\u007f]/
 
 function requireView() {
-    if (!ec.user.userId) throw new Error("Sign in to administer devices")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to administer devices"))
     if (!ec.user.hasPermission(VIEW) && !ec.user.hasPermission(MANAGE)) throw new Error(VIEW + " is required")
 }
 function requireManage() {
-    if (!ec.user.userId) throw new Error("Sign in to administer devices")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to administer devices"))
     if (!ec.user.hasPermission(MANAGE)) throw new Error(MANAGE + " is required")
 }
 function plain(value, what, maxLength = 255) {
@@ -132,24 +132,24 @@ function deviceState(row, at) {
     if (row.revokedDate) return {state: "revoked", stateReason: "Revoked"}
     if (row.stoppedDate) {
         const reasons = {
-            copied: "Stopped: a copy of its cookie was used",
-            idle: "Stopped: not seen for longer than its idle timeout",
-            expired: "Stopped: its registration ended"
+            copied: ec.l10n.localize("Stopped: a copy of its cookie was used"),
+            idle: ec.l10n.localize("Stopped: not seen for longer than its idle timeout"),
+            expired: ec.l10n.localize("Stopped: its registration ended")
         }
         return {state: "stopped", stateReason: reasons[row.stopReason] || "Stopped"}
     }
     if (!row.redeemedDate && !row.registrationCodeHash)
         return at - (ms(row.registeredDate) ?? 0) <= ISSUE_MINUTES * MINUTE
-            ? {state: "pending", stateReason: "Waiting for its code to be shown"}
+            ? {state: "pending", stateReason: ec.l10n.localize("Waiting for its code to be shown")}
             : {state: "codeExpired", stateReason: "Its code was never shown; register it again"}
     if (!row.redeemedDate)
         return (ms(row.codeExpireDate) ?? 0) > at
-            ? {state: "pending", stateReason: "Waiting for its code to be entered on the device"}
+            ? {state: "pending", stateReason: ec.l10n.localize("Waiting for its code to be entered on the device")}
             : {state: "codeExpired", stateReason: "The code was not entered in time; register it again"}
-    if ((ms(row.expireDate) ?? Infinity) <= at) return {state: "stopped", stateReason: "Its registration ended"}
+    if ((ms(row.expireDate) ?? Infinity) <= at) return {state: "stopped", stateReason: ec.l10n.localize("Its registration ended")}
     const idle = Number(row.idleTimeoutMinutes || DEFAULT_IDLE_MINUTES)
     const seen = ms(row.lastSeenDate) ?? ms(row.redeemedDate) ?? at
-    if (at - seen > idle * MINUTE) return {state: "stopped", stateReason: "Not seen for longer than its idle timeout"}
+    if (at - seen > idle * MINUTE) return {state: "stopped", stateReason: ec.l10n.localize("Not seen for longer than its idle timeout")}
     return {state: "active", stateReason: at - seen > 15 * MINUTE ? "Registered; not seen lately" : "Showing"}
 }
 const names = new Map()
@@ -241,7 +241,7 @@ function findDevices(p) {
 function registerDevice(p) {
     requireManage()
     const deviceName = plain(p.deviceName, "The device's name", 100)
-    if (!deviceName) throw new Error("Name the device")
+    if (!deviceName) throw new Error(ec.l10n.localize("Name the device"))
     const operationKey = plain(p.operationKey, "The operation key", 100)
     if (operationKey) {
         // a retry answers the first registration; its code was shown once and is not kept
@@ -268,7 +268,7 @@ function registerDevice(p) {
     if (refusal) return refused(refusal.reasonCode, refusal.reason)
     const ipAllowed = plain(p.ipAllowed, "The allowed addresses")
     if (ipAllowed && !access.validIpAllowed(ipAllowed))
-        throw new Error("Allowed addresses are comma separated IPv4 patterns (numbers, * or ranges) or IPv6 addresses")
+        throw new Error(ec.l10n.localize("Allowed addresses are comma separated IPv4 patterns (numbers, * or ranges) or IPv6 addresses"))
     const summary = routeGroupSummary(group)
     const idleTimeoutMinutes = bounded(p.idleTimeoutMinutes, summary.defaultIdleMinutes, 5, 43200, "The idle timeout in minutes")
     const lifetimeDays = bounded(p.lifetimeDays, summary.defaultLifetimeDays, 1, 730, "The registration's days")
@@ -326,11 +326,11 @@ function issueDeviceCode(p) {
     const device = text(p.deviceId) ? find(DEVICE).condition("deviceId", text(p.deviceId)).forUpdate(true).one() : null
     if (!device) return refused("DEVICE_UNAVAILABLE", "Device " + text(p.deviceId) + " is not available")
     if (device.registeredByUserId !== ec.user.userId)
-        return refused("NOT_REGISTRAR", "The code is shown to the administrator who registered the device")
+        return refused("NOT_REGISTRAR", ec.l10n.localize("The code is shown to the administrator who registered the device"))
     if (device.revokedDate || device.stoppedDate || device.redeemedDate)
         return refused("CODE_UNAVAILABLE", "The device is already in use or ended; register it again for a new code")
     if (device.registrationCodeHash)
-        return refused("CODE_SHOWN", "The code is shown only once: revoke the device and register it again for a new code")
+        return refused("CODE_SHOWN", ec.l10n.localize("The code is shown only once: revoke the device and register it again for a new code"))
     const now = nowMs()
     if (now - (ms(device.registeredDate) ?? 0) > ISSUE_MINUTES * MINUTE)
         return refused("CODE_UNAVAILABLE", "The registration was not finished in time; revoke the device and register it again")
@@ -370,7 +370,7 @@ function revokeDevice(p) {
 // page says nothing of why; the reason is in the audit log (deviceRefused) and the web protection counts the attempt.
 function redeemDevice(p) {
     const out = UserSecurityChecks.redeemDeviceCode(String(p.code ?? ""))
-    if (!out.redeemed) return {redeemed: false, reason: "That code is not valid, was already used or has expired", homePath: null}
+    if (!out.redeemed) return {redeemed: false, reason: ec.l10n.localize("That code is not valid, was already used or has expired"), homePath: null}
     const group = one(ROUTE_GROUP, {routeGroupId: out.routeGroupId})
     return {redeemed: true, reason: null, homePath: group?.homePath || "/Device"}
 }

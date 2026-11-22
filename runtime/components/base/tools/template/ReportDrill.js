@@ -112,12 +112,12 @@ function view(p, options = {}) {
     const mount = mountLib.state()
     const permitted = typeof options.permitted === "function" ? options.permitted : () => true
     const selected = buckets(p)
-    if (!selected) return unavailable(p, "The chosen buckets are not readable")
+    if (!selected) return unavailable(p, ec.l10n.localize("The chosen buckets are not readable"))
     if (p.breakdownDimension && !permitted(p.breakdownDimension))
         return unavailable(p, "A breakdown by " + p.breakdownDimension + " is not available to you")
     const definition = options.definition || ask("get#Definition", {definitionId: String(p.definitionId || "")}).out?.definition
     // a definition the viewer may not read answers alike, whether or not it exists
-    if (!definition) return unavailable(p, "This value is not available to you")
+    if (!definition) return unavailable(p, ec.l10n.localize("This value is not available to you"))
     const defaults = options.range || mount.policy.range
     // the fixed variables over whatever the request carries, as the dashboard fixes them
     const fixed = options.fixedVariables || (mount.mounted ? ec.context.get("reportFixedVariables") : null) || {}
@@ -133,9 +133,9 @@ function view(p, options = {}) {
         pageSize
     })
     if (asked.failure)
-        return unavailable(p, refusalText.test(asked.failure) ? "This value is not available to you" : asked.failure)
+        return unavailable(p, refusalText.test(asked.failure) ? ec.l10n.localize("This value is not available to you") : asked.failure)
     const answer = asked.out
-    if (!answer.available) return unavailable(p, answer.reason || "This value is not available", {title: answer.title})
+    if (!answer.available) return unavailable(p, answer.reason || ec.l10n.localize("This value is not available"), {title: answer.title})
     const columns = Array.from(answer.columns || []).filter(permitted)
     // what a link back to this drill carries: the request as it was, which the drill checks again when it is opened
     const carry = {definitionId: p.definitionId}
@@ -188,7 +188,7 @@ function view(p, options = {}) {
         // the panel's own result as the engine answered it, for a caller that presents it itself
         panelFrames: selected.length ? [] : Array.from(answer.panelFrames || []),
         rowsAvailable: !!answer.rowsAvailable,
-        rowsReason: answer.rowsAvailable ? null : "You may read this total, not the records behind it.",
+        rowsReason: answer.rowsAvailable ? null : ec.l10n.localize("You may read this total, not the records behind it."),
         columns,
         rows,
         total,

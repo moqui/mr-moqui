@@ -570,10 +570,14 @@
     // ---- the components (registered by WebrootVue.qvt.js) ----
 
     const components = {};
+    const L = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const labelsOf = (vm) => {
         const shell = vm && vm.$root && vm.$root.labels ? vm.$root.labels : {};
-        const out = Object.assign({}, floats.labels);
-        Object.keys(floats.labels).forEach((key) => { if (shell["float_" + key]) out[key] = shell["float_" + key]; });
+        const out = {};
+        Object.keys(floats.labels).forEach((key) => {
+            const value = shell["float_" + key] || floats.labels[key];
+            out[key] = typeof value === "string" ? L(value) : value;
+        });
         return out;
     };
     // the drag of a bar or a grip, by mouse, touch or pen (MoquiLib.js)

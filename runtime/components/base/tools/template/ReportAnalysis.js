@@ -21,12 +21,12 @@ const shareLib = ec.resource.script("component://tools/template/ReportShare.js")
 const {ask, offered, refuse, done} = ec.resource.script("component://tools/template/ReportDelivery.js")
 
 const aggregates = [
-    {value: "count", label: "Count of records"},
+    {value: "count", label: ec.l10n.localize("Count of records")},
     {value: "sum", label: "Sum"},
     {value: "avg", label: "Average"},
     {value: "min", label: "Least"},
     {value: "max", label: "Greatest"},
-    {value: "cardinality", label: "Distinct values"}
+    {value: "cardinality", label: ec.l10n.localize("Distinct values")}
 ]
 const grains = [
     {value: "day", label: "Day"},
@@ -91,7 +91,7 @@ function sources(datasetId) {
         .map(row => ({value: row.id, label: row.title || row.id, timeField: row.timeField}))
         .sort((a, b) => a.label.localeCompare(b.label))
     const chosen = datasetId ? datasets.find(row => row.value === datasetId) : null
-    if (datasetId && !chosen) fail("Choose a dataset you may read")
+    if (datasetId && !chosen) fail(ec.l10n.localize("Choose a dataset you may read"))
     if (!chosen) return {datasets, dataset: null, fields: []}
     const found = ask("get#Dataset", {datasetId})
     if (found.failure) fail(found.failure)
@@ -135,14 +135,14 @@ function queryOf(p, found, bucketParameters, deny = failCoded) {
         return field
     }
     const aggregate = p.aggregate || "count"
-    if (!aggregates.some(row => row.value === aggregate)) deny("VALUE_INVALID", "Choose how the measure is aggregated")
+    if (!aggregates.some(row => row.value === aggregate)) deny("VALUE_INVALID", ec.l10n.localize("Choose how the measure is aggregated"))
     const measure = named(p.measureField, found.fields, "Measure")
     if (aggregate !== "count" && !measure) deny("VALUE_INVALID", "Choose the field to " + aggregate)
     if (measure && !["count", "cardinality"].includes(aggregate) && measure.type !== "number")
         deny("VALUE_INVALID", measure.value + " is not a number")
     const aggregations = []
     if (p.timeGrain) {
-        if (!grains.some(row => row.value === p.timeGrain)) deny("VALUE_INVALID", "Choose a time grain")
+        if (!grains.some(row => row.value === p.timeGrain)) deny("VALUE_INVALID", ec.l10n.localize("Choose a time grain"))
         aggregations.push({
             id: "period",
             type: "date_histogram",
@@ -362,7 +362,7 @@ function save(p) {
                 fail("Share only with a group you belong to")
         }
         const found = sources(text(p.datasetId))
-        if (!found.dataset) fail("Choose a dataset you may read")
+        if (!found.dataset) fail(ec.l10n.localize("Choose a dataset you may read"))
         // refused now, as it would be on every render (an amount across units, a ratio averaged)
         const checked = run(p, found, mount)
         if (!checked.available) fail(checked.reason)
@@ -381,7 +381,7 @@ function save(p) {
         const placed = dashboard ? placeOn(dashboard, saved.out.definition, title) : null
         if (placed?.failure)
             ec.message.addMessage("It is saved, and was not added to the dashboard: " + placed.failure, "warning")
-        done("Saved as a library panel")
+        done(ec.l10n.localize("Saved as a library panel"))
         return saved.out.definition.id
     })
 }

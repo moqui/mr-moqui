@@ -646,6 +646,7 @@
         let pending = null;
         let firstKey = 0;
         const say = (text, type) => { result.textContent = text || ""; if (type) result.dataset.type = type; else delete result.dataset.type; };
+        const scanMissed = () => (root.moqui && root.moqui.l10n && root.moqui.l10n.localize ? root.moqui.l10n.localize("The scan could not be resolved") : "The scan could not be resolved");
         const again = () => { input.focus(); input.select(); };
         const clear = () => { hidden[0].value = ""; hidden[1].value = ""; hidden[2].value = ""; };
         const submit = () => { if (input.form) input.form.requestSubmit(); };
@@ -689,7 +690,7 @@
                 .then(({ ok, data }) => {
                     if (!current()) return;
                     busy = false;
-                    if (!ok) { say((data && data.errors) || "The scan could not be resolved", "danger"); again(); return; }
+                    if (!ok) { say((data && data.errors) || scanMissed(), "danger"); again(); return; }
                     const outcome = scanOutcome(data);
                     if (outcome.kind === "none") {
                         say("No match for " + text + (box.dataset.allowed ? " (" + box.dataset.allowed.split(",").join(", ") + ")" : ""), "danger");
@@ -708,7 +709,7 @@
                         if (first) first.focus();
                     }
                 })
-                .catch(() => { if (!current()) return; busy = false; say("The scan could not be resolved", "danger"); again(); });
+                .catch(() => { if (!current()) return; busy = false; say(scanMissed(), "danger"); again(); });
         };
         input.addEventListener("input", () => { if (!input.value) firstKey = 0; else if (!firstKey) firstKey = Date.now(); });
         input.addEventListener("keydown", (event) => {

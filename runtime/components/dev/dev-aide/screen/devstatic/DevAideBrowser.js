@@ -232,7 +232,7 @@
             centerLinks(artifact) {
                 const id = encodeURIComponent(artifact.id);
                 const links = [];
-                if (artifact.url) links.push({ label: "Open in Text", href: artifact.url });
+                if (artifact.url) links.push({ label: moqui.l10n.localize("Open in Text"), href: artifact.url });
                 if (artifact.kind === "service") links.push({ label: "Try", href: "/qapps/dev/Services/Edit?artifact=" + id });
                 if (artifact.kind === "entity" || artifact.kind === "view-entity") links.push({ label: "Data", href: "/qapps/dev/Entities/Edit?artifact=" + id });
                 if (artifact.kind === "screen" && artifact.rootId) links.push({ label: "Preview", href: "/qapps/dev/Screens/Design?rootId=" + encodeURIComponent(artifact.rootId) +

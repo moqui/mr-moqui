@@ -7,7 +7,7 @@
     doFilter(request, response, chain, config) {
         if (!ec.user.userId) {
             response.setHeader("WWW-Authenticate", 'Basic realm="Moqui"')
-            response.sendError(401, "Login required")
+            response.sendError(401, ec.l10n.localize("Login required"))
             return
         }
         const permission = config.getInitParameter("permission")

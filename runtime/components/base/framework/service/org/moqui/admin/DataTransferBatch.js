@@ -41,7 +41,7 @@ const hardRows = 5000
 const maxRetry = 200
 const secretParts = ["password", "passwd", "passphrase", "secret", "token", "apikey", "privatekey", "credential", "totp"]
 const secretWords = ["pwd", "otp", "pin", "hash", "salt", "factor", "mfa"]
-const notAvailable = () => new Error("This import is not available")
+const notAvailable = () => new Error(ec.l10n.localize("This import is not available"))
 const refusal = (reasonCode, reason, extra = {}) => Object.assign({refused: true, reasonCode, reason}, extra)
 
 const boundsOf = target => ({
@@ -240,13 +240,13 @@ function stage(target, p) {
             stream.close()
         }
         // by its content, whatever its name or declared type says
-        if (!ok) return refusal("FILE_NOT_TEXT", "The file is not UTF-8 text: save it as CSV (UTF-8)")
+        if (!ok) return refusal("FILE_NOT_TEXT", ec.l10n.localize("The file is not UTF-8 text: save it as CSV (UTF-8)"))
         source = file.getString("UTF-8")
     } else source = String(p.sourceText || "")
     if (source.length > bounds.maxBytes)
         return refusal("FILE_TOO_LARGE", "The file is larger than " + Math.floor(bounds.maxBytes / 1024) + " KiB")
     const delimiter = p.delimiter === "tab" ? "\t" : text(p.delimiter) || ","
-    if (![",", ";", "\t"].includes(delimiter)) throw new Error("Choose comma, semicolon or tab")
+    if (![",", ";", "\t"].includes(delimiter)) throw new Error(ec.l10n.localize("Choose comma, semicolon or tab"))
     let parsed
     try {
         parsed = lib.parseDelimited(source, delimiter, bounds)
@@ -264,11 +264,11 @@ function stage(target, p) {
     // the scope the import is for: one the target's scope service gives the caller, or none for a target without one
     const scopeKey = text(p.organizationPartyId)
     const scopes = scopesOf(target)
-    if (scopes.failure) throw new Error("The scopes of this import could not be read. Try again later.")
+    if (scopes.failure) throw new Error(ec.l10n.localize("The scopes of this import could not be read. Try again later."))
     if (scopes.unscoped ? !!scopeKey : !scopes.scopeList.some(scope => scope.scopeKey === scopeKey))
         throw new Error(
             scopes.unscoped
-                ? "This import takes no scope"
+                ? ec.l10n.localize("This import takes no scope")
                 : "Choose " + (lineText(target.scopeLabel, 40) || "a scope").toLowerCase() + " you may import into"
         )
     const batchOptions = optionsOf(target, plain(p.batchOptions))
@@ -291,7 +291,7 @@ function stage(target, p) {
             text(earlier.scopeKey) !== scopeKey ||
             earlier.fileHash !== fileHash
         )
-            return refusal("OPERATION_KEY_CONFLICT", "The operation key was used for another import or other content")
+            return refusal("OPERATION_KEY_CONFLICT", ec.l10n.localize("The operation key was used for another import or other content"))
         return Object.assign(get(target, {operationKey: transferId}), {repeated: true})
     }
     const byKey = new Map(
@@ -350,7 +350,7 @@ function stage(target, p) {
 // ===== configure =====
 function configure(target, p) {
     const batch = batchOf(target, p.operationKey, "edit", true)
-    if (batch.row.purgedDate) return refusal("PURGED", "The staged rows of this import were removed: stage the file again")
+    if (batch.row.purgedDate) return refusal("PURGED", ec.l10n.localize("The staged rows of this import were removed: stage the file again"))
     if (!text(p.mappingRevision) || text(p.mappingRevision) !== mappingRevision(batch.row, batch.request, target))
         return refusal("STALE_MAPPING", "The mapping changed since it was read; read it again and repeat the change")
     const fields = new Set(target.columns.map(column => column.name))
@@ -360,19 +360,19 @@ function configure(target, p) {
         const mapping = {}
         for (const header of batch.request.headers) {
             const field = Object.hasOwn(given, header) ? text(given[header]) : text(batch.request.mapping[header])
-            if (field && !fields.has(field)) throw new Error("Map a column to a field of this import")
+            if (field && !fields.has(field)) throw new Error(ec.l10n.localize("Map a column to a field of this import"))
             mapping[header] = field || null
         }
         if (Object.keys(given).some(header => !batch.request.headers.includes(header)))
-            throw new Error("Map the columns of this file")
+            throw new Error(ec.l10n.localize("Map the columns of this file"))
         const targets = Object.values(mapping).filter(Boolean)
-        if (new Set(targets).size !== targets.length) throw new Error("Each field takes one column")
+        if (new Set(targets).size !== targets.length) throw new Error(ec.l10n.localize("Each field takes one column"))
         next.mapping = mapping
     }
     if (p.defaults != null) {
         const defaults = {}
         for (const [field, value] of Object.entries(plain(p.defaults))) {
-            if (!fields.has(field)) throw new Error("A default is for a field of this import")
+            if (!fields.has(field)) throw new Error(ec.l10n.localize("A default is for a field of this import"))
             if (value != null && String(value) !== "") defaults[field] = String(value).slice(0, 2000)
         }
         next.defaults = defaults
@@ -380,7 +380,7 @@ function configure(target, p) {
     if (p.valueMappings != null) {
         const valueMappings = {}
         for (const [field, values] of Object.entries(plain(p.valueMappings))) {
-            if (!fields.has(field)) throw new Error("A value mapping is for a field of this import")
+            if (!fields.has(field)) throw new Error(ec.l10n.localize("A value mapping is for a field of this import"))
             const found = {}
             for (const [from, to] of Object.entries(plain(values)))
                 found[String(from).slice(0, 2000)] = String(to ?? "").slice(0, 2000)
@@ -468,7 +468,7 @@ function previewOf(target, batch, source, operationKey = null) {
 }
 function validate(target, p) {
     const batch = batchOf(target, p.operationKey, "edit", true)
-    if (batch.row.purgedDate) return refusal("PURGED", "The staged rows of this import were removed: stage the file again")
+    if (batch.row.purgedDate) return refusal("PURGED", ec.l10n.localize("The staged rows of this import were removed: stage the file again"))
     const revision = mappingRevision(batch.row, batch.request, target)
     if (text(p.mappingRevision) !== revision)
         return refusal("STALE_MAPPING", "The mapping changed since it was read; read it again and validate")
@@ -490,8 +490,8 @@ function validate(target, p) {
             preview = previewOf(target, batch, source)
             if (preview.skip) {
                 result = "skipped"
-                reason = preview.warnings[0] || preview.errors[0] || "Nothing to change"
-            } else if (!preview.valid) reason = preview.errors.join("; ") || "The row is not valid"
+                reason = preview.warnings[0] || preview.errors[0] || ec.l10n.localize("Nothing to change")
+            } else if (!preview.valid) reason = preview.errors.join("; ") || ec.l10n.localize("The row is not valid")
             else {
                 const key = keyFields.length ? JSON.stringify(keyFields.map(field => preview.values[field] ?? "")) : null
                 if (key && seen.has(key)) reason = "Repeats row " + seen.get(key) + " of this file"
@@ -502,7 +502,7 @@ function validate(target, p) {
             }
         } catch (error) {
             ec.message.clearErrors()
-            reason = lineText(String(error?.message ?? error), 250) || "The row could not be validated"
+            reason = lineText(String(error?.message ?? error), 250) || ec.l10n.localize("The row could not be validated")
         }
         write(ITEM, {
             transferId: batch.row.transferId,
@@ -542,13 +542,13 @@ function applyItem(p) {
     const item = find(ITEM, {transferId: row.transferId, itemSeqId: Number(p.itemSeqId)})
         .forUpdate(true)
         .one()
-    if (!item) throw new Error("No such row")
+    if (!item) throw new Error(ec.l10n.localize("No such row"))
     if (item.result === "applied") return {alreadyApplied: true}
     if (item.result !== (retry ? "failed" : "valid"))
         return {
             applied: false,
             reasonCode: retry ? "NOT_FAILED" : "NOT_VALID",
-            reason: retry ? "Only a failed row is retried" : "Only a validated row is applied"
+            reason: retry ? ec.l10n.localize("Only a failed row is retried") : ec.l10n.localize("Only a validated row is applied")
         }
     const mark = fields =>
         write(
@@ -562,12 +562,12 @@ function applyItem(p) {
         mark({
             result: "failed",
             reasonCode: lineText(reasonCode, 40) || "FAILED",
-            errorMessage: lineText(reason, 250) || "The row was not applied"
+            errorMessage: lineText(reason, 250) || ec.l10n.localize("The row was not applied")
         })
         return {
             applied: false,
             reasonCode: lineText(reasonCode, 40) || "FAILED",
-            reason: lineText(reason, 250) || "The row was not applied"
+            reason: lineText(reason, 250) || ec.l10n.localize("The row was not applied")
         }
     }
     const before = lib.json(item.previewJson, null)
@@ -585,11 +585,11 @@ function applyItem(p) {
     }
     if (!now.valid && now.skip) {
         // what the row would change is already so (another's change, or this row's own apply whose result was not kept)
-        const reason = lineText(now.warnings[0] || now.errors[0], 250) || "Nothing to change"
+        const reason = lineText(now.warnings[0] || now.errors[0], 250) || ec.l10n.localize("Nothing to change")
         mark({result: "skipped", reasonCode: null, errorMessage: reason})
         return {applied: false, reasonCode: "NOTHING_TO_DO", reason}
     }
-    if (!now.valid) return failed("INVALID", now.errors.join("; ") || now.warnings[0] || "The row is no longer valid")
+    if (!now.valid) return failed("INVALID", now.errors.join("; ") || now.warnings[0] || ec.l10n.localize("The row is no longer valid"))
     // a retry too writes only what its preview showed: a row whose source changed is validated and reviewed again
     if (!before || now.sourceRevision !== before.sourceRevision || JSON.stringify(now.values) !== JSON.stringify(before.values))
         return failed("STALE_SOURCE", "What this row would change was changed since the preview; validate and review it again")
@@ -604,7 +604,7 @@ function applyItem(p) {
     })
     if (asked.failure) return Object.assign(failed("FAILED", asked.failure), {operationKey})
     if (asked.out.applied !== true)
-        return failed(text(asked.out.reasonCode) || "REFUSED", asked.out.reason || "Its owner did not take the row")
+        return failed(text(asked.out.reasonCode) || "REFUSED", asked.out.reason || ec.l10n.localize("Its owner did not take the row"))
     // a restricted column's values are cleared from what was staged of the row once it is applied
     const restricted = hiddenFields(target, true)
     const appliedFields = {}
@@ -642,7 +642,7 @@ function failItem(p) {
             itemSeqId: item.itemSeqId,
             result: "failed",
             reasonCode: "FAILED",
-            errorMessage: lineText(p.errorMessage, 250) || "The row was not applied",
+            errorMessage: lineText(p.errorMessage, 250) || ec.l10n.localize("The row was not applied"),
             attemptCount: Number(item.attemptCount || 0) + 1
         })
     return {}
@@ -668,7 +668,7 @@ function selectedIds(value) {
         .flatMap(found => String(found).split(/[\s,]+/))
         .filter(Boolean)
         .map(Number)
-    if (ids.some(id => !Number.isInteger(id) || id < 1)) throw new Error("Choose rows by their numbers")
+    if (ids.some(id => !Number.isInteger(id) || id < 1)) throw new Error(ec.l10n.localize("Choose rows by their numbers"))
     return ids.length ? new Set(ids) : null
 }
 function finish(target, batch) {
@@ -689,7 +689,7 @@ function finish(target, batch) {
 }
 function apply(target, p) {
     const batch = batchOf(target, p.operationKey, "edit")
-    if (batch.row.purgedDate) return refusal("PURGED", "The staged rows of this import were removed: stage the file again")
+    if (batch.row.purgedDate) return refusal("PURGED", ec.l10n.localize("The staged rows of this import were removed: stage the file again"))
     const current = Object.assign(get(target, p), {changedRows: 0, attemptedCount: 0})
     // the preview its caller reviewed: the same validation, mapping, options and registration
     if (
@@ -699,7 +699,7 @@ function apply(target, p) {
     )
         return Object.assign(
             current,
-            refusal("STALE_PREVIEW", "The import changed since this preview: validate and review it again")
+            refusal("STALE_PREVIEW", ec.l10n.localize("The import changed since this preview: validate and review it again"))
         )
     const selected = selectedIds(p.selectedRowIds)
     const work = itemsOf(batch.row.transferId).filter(
@@ -740,26 +740,26 @@ function apply(target, p) {
 // applied on its own; a row that is not failed is named and left as it is.
 function retry(target, p) {
     const batch = batchOf(target, p.operationKey, "edit")
-    if (batch.row.purgedDate) return refused("PURGED", "The staged rows of this import were removed: stage the file again")
+    if (batch.row.purgedDate) return refused("PURGED", ec.l10n.localize("The staged rows of this import were removed: stage the file again"))
     const selected = selectedIds(p.itemSeqIdList)
     const items = itemsOf(batch.row.transferId)
     const chosen = selected
         ? Array.from(selected).sort((a, b) => a - b)
         : items.filter(item => item.result === "failed").map(item => Number(item.itemSeqId))
-    if (!chosen.length) return refused("NONE_FAILED", "No failed row to retry")
+    if (!chosen.length) return refused("NONE_FAILED", ec.l10n.localize("No failed row to retry"))
     if (chosen.length > maxRetry) throw new Error("At most " + maxRetry + " rows at a time")
     const key = lib.operationKey({operationKey: p.retryKey})
     const run = () => {
         const resultList = chosen.map(itemSeqId => {
             const item = items.find(found => Number(found.itemSeqId) === itemSeqId)
-            if (!item) return {itemSeqId, applied: false, reasonCode: "NOT_FOUND", reason: "No such row"}
+            if (!item) return {itemSeqId, applied: false, reasonCode: "NOT_FOUND", reason: ec.l10n.localize("No such row")}
             if (item.result !== "failed")
                 return {
                     itemSeqId,
                     applied: false,
                     reasonCode: "NOT_FAILED",
                     reason:
-                        item.result === "applied" ? "Already applied: it is not applied again" : "Only a failed row is retried"
+                        item.result === "applied" ? ec.l10n.localize("Already applied: it is not applied again") : ec.l10n.localize("Only a failed row is retried")
                 }
             const done = runItem(target, batch.row.transferId, itemSeqId, {retry: true})
             return {
@@ -775,7 +775,7 @@ function retry(target, p) {
         return {
             applied: appliedCount > 0,
             reasonCode: appliedCount ? null : resultList.length === 1 ? resultList[0].reasonCode : "NONE_APPLIED",
-            reason: appliedCount ? null : resultList.length === 1 ? resultList[0].reason : "None of the rows could be applied",
+            reason: appliedCount ? null : resultList.length === 1 ? resultList[0].reason : ec.l10n.localize("None of the rows could be applied"),
             operationKey: batch.row.transferId,
             state,
             appliedCount,

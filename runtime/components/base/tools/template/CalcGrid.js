@@ -140,7 +140,7 @@ const revert = () => ask(CALC + ".revert#CalcDocument", {profileId: profileId(),
 // Save the room's document; a group is named only where the mount's policy lets the viewer share.
 function save() {
     const group = text(ec.context.get("userGroupId"))
-    if (group && mountLib.state().policy.features.share !== true) return {errors: "Sharing is not offered to you here"}
+    if (group && mountLib.state().policy.features.share !== true) return {errors: ec.l10n.localize("Sharing is not offered to you here")}
     return ask(CALC + ".save#CalcDocument", {
         profileId: profileId(),
         roomId: ec.context.get("roomId"),
@@ -177,9 +177,9 @@ function addPanel() {
     const dashboardId = text(ec.context.get("dashboardId"))
     const range = text(ec.context.get("range"))
     const visualization = text(ec.context.get("visualization")) || "table"
-    if (!definitionId) return {errors: "Save the document first: a panel reads a saved document"}
-    if (!dashboardId || !range) return {errors: "Choose a dashboard and a range"}
-    if (!VISUALIZATIONS.includes(visualization)) return {errors: "A panel of a range is a table, a bar chart, a pie chart or a number"}
+    if (!definitionId) return {errors: ec.l10n.localize("Save the document first: a panel reads a saved document")}
+    if (!dashboardId || !range) return {errors: ec.l10n.localize("Choose a dashboard and a range")}
+    if (!VISUALIZATIONS.includes(visualization)) return {errors: ec.l10n.localize("A panel of a range is a table, a bar chart, a pie chart or a number")}
     const document = ask(REPORT + ".get#Definition", {definitionId})
     if (document.errors || !document.definition || document.definition.type !== TYPE) return {errors: document.errors || "Not a CalcGrid document"}
     const found = ask(REPORT + ".get#Definition", {definitionId: dashboardId})

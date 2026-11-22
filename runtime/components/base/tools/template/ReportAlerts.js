@@ -32,7 +32,7 @@ const mountLib = ec.resource.script("component://tools/template/ReportMount.js")
 const delivery = ec.resource.script("component://tools/template/ReportDelivery.js")
 const {ask, offered, refuse, done, recipients, namesOf, groupOptions, dateText, deliveryStates} = delivery
 
-const unavailable = "This alert is not available"
+const unavailable = ec.l10n.localize("This alert is not available")
 const receivedRules = 20
 // most severe first; No data and Error say the health is not known
 const stateWords = {
@@ -44,18 +44,18 @@ const stateWords = {
     Normal: ["Normal", "positive"]
 }
 const pauseReasons = {
-    "owner-disabled": "Paused until a new owner takes it",
-    "transfer-pending": "Paused until its new owner resumes it",
-    "not-validated": "Not active yet"
+    "owner-disabled": ec.l10n.localize("Paused until a new owner takes it"),
+    "transfer-pending": ec.l10n.localize("Paused until its new owner resumes it"),
+    "not-validated": ec.l10n.localize("Not active yet")
 }
 const conditions = [
     {value: "above", label: "Above"},
     {value: "below", label: "Below"},
-    {value: "within", label: "Inside a range"},
-    {value: "outside", label: "Outside a range"}
+    {value: "within", label: ec.l10n.localize("Inside a range")},
+    {value: "outside", label: ec.l10n.localize("Outside a range")}
 ]
 const reductions = [
-    {value: "last", label: "Latest value"},
+    {value: "last", label: ec.l10n.localize("Latest value")},
     {value: "max", label: "Highest"},
     {value: "min", label: "Lowest"},
     {value: "mean", label: "Average"},
@@ -65,18 +65,18 @@ const reductions = [
     {value: "p95", label: "95th percentile"}
 ]
 const windows = [
-    {value: "now-1h", label: "The last hour"},
-    {value: "now-1d", label: "The last day"},
+    {value: "now-1h", label: ec.l10n.localize("The last hour")},
+    {value: "now-1d", label: ec.l10n.localize("The last day")},
     {value: "now-7d", label: "The last 7 days"},
     {value: "now-30d", label: "The last 30 days"}
 ]
 const intervals = [
-    {value: "300", label: "Every 5 minutes"},
+    {value: "300", label: ec.l10n.localize("Every 5 minutes")},
     {value: "900", label: "Every 15 minutes"},
     {value: "3600", label: "Hourly"},
     {value: "86400", label: "Daily"}
 ]
-const channelWords = {notification: "In the app", email: "Email"}
+const channelWords = {notification: ec.l10n.localize("In the app"), email: "Email"}
 const sharedKinds = {contactPoint: "Contact point", silence: "Silence", muteTiming: "Mute timing"}
 const sharedRefKeys = {contactPoint: "contactPointRefs", silence: "silenceRefs", muteTiming: "muteTimingRefs"}
 const weekdayNames = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -158,7 +158,7 @@ const canSet = m => m.maySet && offered("save#Definition")
 // engine's own, REPORT_ALERT), under one only where it names its template (fixedParts writes it).
 const emailOffered = m => !m.audienceOnly || !!m.fixed.emailTemplateId
 function requireSet(m = mode()) {
-    if (!m.maySet) fail("Setting an alert is not offered to you here")
+    if (!m.maySet) fail(ec.l10n.localize("Setting an alert is not offered to you here"))
     return m
 }
 
@@ -171,11 +171,11 @@ function leafQuery(query) {
 // equivalent recipient, or why not.
 function stateOf(definitionId) {
     const none = {available: false, business: null, ownerName: null, instances: [], lastEvaluated: null}
-    if (!offered("get#AlertState")) return Object.assign(none, {reason: "Its state is not shown to you"})
+    if (!offered("get#AlertState")) return Object.assign(none, {reason: ec.l10n.localize("Its state is not shown to you")})
     const got = ask("get#AlertState", {definitionId})
     if (got.failure) {
         ec.logger.error("Report alerts: state of " + definitionId + ": " + got.failure)
-        return Object.assign(none, {reason: "Its state could not be read just now"})
+        return Object.assign(none, {reason: ec.l10n.localize("Its state could not be read just now")})
     }
     return got.out
 }
@@ -220,17 +220,17 @@ function tellsText(definition, business, names) {
     const body = definition.body || {}
     if (!business) {
         const count = Array.from(body.contactPoints || []).length + Array.from(body.contactPointRefs || []).length
-        return count ? plural(count, "contact point", "contact points") : "No contact point"
+        return count ? plural(count, "contact point", "contact points") : ec.l10n.localize("No contact point")
     }
     const audience = body.audience || {}
-    if (audience.deliveryMode !== "group") return "Its owner"
-    if (!owns(definition)) return "Its audience"
+    if (audience.deliveryMode !== "group") return ec.l10n.localize("Its owner")
+    if (!owns(definition)) return ec.l10n.localize("Its audience")
     const users = Array.from(audience.recipientUserIds || [])
     const groups = Array.from(audience.recipientGroupIds || [])
     const parts = []
     if (users.length) parts.push(users.length === 1 ? pick(names.users, users[0], "1 person") : users.length + " people")
     if (groups.length) parts.push(groups.map(groupId => pick(names.groups, groupId, groupId)).join(", "))
-    return parts.join(" and ") || "Its owner"
+    return parts.join(" and ") || ec.l10n.localize("Its owner")
 }
 // The names of the people and groups the viewer's own rules tell, as find#ReportRecipients answers them under the
 // mount's permission; nothing is asked when none names anyone.
@@ -251,7 +251,7 @@ function summary(definition, state) {
     const found = Array.from(state.instances || []).map(instance => instance.state)
     for (const name of Object.keys(stateWords)) if (found.includes(name)) return stateWords[name]
     if (found.length) return ["Not known", "warning"]
-    return ["Not evaluated yet", "grey-7"]
+    return [ec.l10n.localize("Not evaluated yet"), "grey-7"]
 }
 function ruleRow(definition, state, names, sets) {
     const body = definition.body || {}
@@ -389,7 +389,7 @@ function list(p) {
             const words = definition ? summary(definition, stateOf(definition.id)) : ["Not shown to you", "grey-7"]
             out.received.push(
                 Object.assign(deliveryRow(row), {
-                    title: definition?.title || row.title || "An alert you no longer read",
+                    title: definition?.title || row.title || ec.l10n.localize("An alert you no longer read"),
                     readable: !!definition,
                     ruleStateText: words[0],
                     ruleStateColor: words[1]
@@ -415,7 +415,7 @@ function list(p) {
                 kindText: states[definition.id].business === true ? "Business" : "Operational",
                 conditionText: conditionText(definition.body || {}),
                 available: available && sets,
-                availableText: available ? "" : "Its dataset is not yours to read"
+                availableText: available ? "" : ec.l10n.localize("Its dataset is not yours to read")
             }
         })
         return out
@@ -447,7 +447,7 @@ function panelSource(dashboardId, panelId) {
             panel = library ? Object.assign({}, library.body, {title: placed.title || library.title}) : null
         } else panel = placed
     }
-    if (!panel) fail("This panel is not available")
+    if (!panel) fail(ec.l10n.localize("This panel is not available"))
     const queries = Array.from(panel.queries || [])
         .map((query, index) => ({query, index}))
         .filter(entry => Array.from(entry.query.aggregations || []).some(aggregation => aggregation.role === "metric"))
@@ -522,7 +522,7 @@ function draft(m, p, out) {
     const options = out.options
     if (m.audienceOnly) {
         const source = panelSource(p.dashboardId, p.panelId)
-        if (!source.queries.length) fail("This panel has no measure an alert could watch")
+        if (!source.queries.length) fail(ec.l10n.localize("This panel has no measure an alert could watch"))
         const chosen = source.queries.find(entry => String(entry.index) === text(p.queryIndex)) || source.queries[0]
         options.measures = measures(chosen.query)
         options.queries = source.queries.map(entry => ({
@@ -541,7 +541,7 @@ function draft(m, p, out) {
     const definition = {title: "", body: {query: clone(blankQuery), condition: {type: "above", threshold: 0}}}
     if (text(p.dashboardId) && text(p.panelId)) {
         const source = panelSource(p.dashboardId, p.panelId)
-        definition.title = source.panel.title || "Panel alert"
+        definition.title = source.panel.title || ec.l10n.localize("Panel alert")
         definition.body.query = {
             queries: source.panel.queries || [],
             transformations: source.panel.transformations || [],
@@ -549,7 +549,7 @@ function draft(m, p, out) {
             thru: "now"
         }
     }
-    return Object.assign(basisOf(definition, true), {sourceText: "A new rule", ruleId: ""})
+    return Object.assign(basisOf(definition, true), {sourceText: ec.l10n.localize("A new rule"), ruleId: ""})
 }
 // One rule, for anyone who reads it (another's unshared rule, one this mount does not show and none are not found): its
 // reading and condition, whom it tells, for its owner each recipient's result of the engine's check, the state of each
@@ -643,7 +643,7 @@ function detail(p) {
         })
         if (checked.failure) {
             ec.logger.error("Report alerts: audience of " + definition.id + ": " + checked.failure)
-            audienceNote = "The recipients could not be checked just now."
+            audienceNote = ec.l10n.localize("The recipients could not be checked just now.")
         } else {
             audienceRows = Array.from(checked.out.recipients || []).map(recipient => {
                 // the notification in the app needs no address
@@ -653,7 +653,7 @@ function detail(p) {
                     recipientName: recipient.userFullName || recipient.username || recipient.userId,
                     viaText: Array.from(recipient.viaGroupIds || []).length ? "In a group" : "Named",
                     eligible,
-                    resultText: eligible ? "May be told" : recipient.reason,
+                    resultText: eligible ? ec.l10n.localize("May be told") : recipient.reason,
                     resultColor: eligible ? "positive" : "negative",
                     reasonCode: recipient.reasonCode || ""
                 }
@@ -685,12 +685,12 @@ function detail(p) {
         audienceNote,
         states,
         stateNote: definition.readOnly
-            ? "A shipped alert is a template: copy it to set your own."
+            ? ec.l10n.localize("A shipped alert is a template: copy it to set your own.")
             : state.available
               ? states.length
                   ? ""
-                  : "Not evaluated yet."
-              : state.reason || "Its state is not shown to you.",
+                  : ec.l10n.localize("Not evaluated yet.")
+              : state.reason || ec.l10n.localize("Its state is not shown to you."),
         deliveries: Array.from(told.out?.deliveries || []).map(deliveryRow)
     })
     if (m.audienceOnly) return out
@@ -767,10 +767,10 @@ function reading(body) {
     const result = ask("run#Query", {query: body.query})
     if (result.failure) {
         ec.logger.error("Report alerts: reading: " + result.failure)
-        return {ok: false, reason: "You may not read its source, or it did not answer"}
+        return {ok: false, reason: ec.l10n.localize("You may not read its source, or it did not answer")}
     }
     if (Array.from(result.out.notices || []).some(notice => notice.complete === false))
-        return {ok: false, reason: "Its source did not answer completely just now"}
+        return {ok: false, reason: ec.l10n.localize("Its source did not answer completely just now")}
     const rows = Array.from(result.out.frames || []).reduce(
         (count, frame) => Math.max(count, Array.from(frame.fields?.[0]?.values || []).length),
         0
@@ -782,27 +782,27 @@ function basis(m, p, body) {
     const kind = conditions.some(option => option.value === p.conditionType) ? p.conditionType : "above"
     const condition = {type: kind}
     if (kind === "within" || kind === "outside") {
-        condition.min = number(p.minimum, "The range's lowest value")
-        condition.max = number(p.maximum, "The range's highest value")
-        if (condition.min > condition.max) fail("The range's highest value must be at least its lowest")
+        condition.min = number(p.minimum, ec.l10n.localize("The range's lowest value"))
+        condition.max = number(p.maximum, ec.l10n.localize("The range's highest value"))
+        if (condition.min > condition.max) fail(ec.l10n.localize("The range's highest value must be at least its lowest"))
     } else {
-        condition.threshold = number(p.threshold, "The threshold")
-        if (text(p.recoveryThreshold)) condition.recoveryThreshold = number(p.recoveryThreshold, "The recovery threshold")
+        condition.threshold = number(p.threshold, ec.l10n.localize("The threshold"))
+        if (text(p.recoveryThreshold)) condition.recoveryThreshold = number(p.recoveryThreshold, ec.l10n.localize("The recovery threshold"))
     }
     body.condition = condition
     body.reduce = reductions.some(option => option.value === p.reduce) ? p.reduce : "last"
     const field = text(p.valueField)
     if (m.audienceOnly && field && !measures(leafQuery(body.query)).some(option => option.value === field))
-        fail("Choose one of the query's measures")
+        fail(ec.l10n.localize("Choose one of the query's measures"))
     body.field = field || null
     if (m.audienceOnly) {
         // one of the intervals offered, else the one the rule has
         const interval = intervals.find(option => option.value === text(p.intervalSeconds))
         body.intervalSeconds = Number(interval?.value || plain(body.intervalSeconds) || 3600)
-    } else body.intervalSeconds = Math.max(60, Math.round(number(text(p.intervalSeconds) || 60, "The interval")))
+    } else body.intervalSeconds = Math.max(60, Math.round(number(text(p.intervalSeconds) || 60, ec.l10n.localize("The interval"))))
     for (const name of ["pendingSeconds", "keepFiringSeconds"]) {
         const seconds = text(p[name]) ? number(p[name], "A duration") : 0
-        if (seconds < 0 || seconds > 604800) fail("A duration is 0 to 604800 seconds")
+        if (seconds < 0 || seconds > 604800) fail(ec.l10n.localize("A duration is 0 to 604800 seconds"))
         body[name] = Math.round(seconds)
     }
     if (m.audienceOnly) {
@@ -816,13 +816,13 @@ function basis(m, p, body) {
 // What only a rule whose query is typed has in its form: the query, whether it is evaluated, its series labels and
 // its routing labels, and the panel it came from.
 function typedParts(p, body) {
-    body.query = object(p.queryJson, "The query")
+    body.query = object(p.queryJson, ec.l10n.localize("The query"))
     body.paused = p.paused === "Y"
     if (!body.paused) delete body.pausedReason
     const labelFields = idList(p.labelFields)
     if (labelFields.length) body.labelFields = labelFields
     else delete body.labelFields
-    body.labels = object(p.labelsJson, "The routing labels")
+    body.labels = object(p.labelsJson, ec.l10n.localize("The routing labels"))
     if (text(p.dashboardId)) body.dashboardId = text(p.dashboardId)
     if (text(p.panelId)) body.panelId = text(p.panelId)
     return body
@@ -831,7 +831,7 @@ function typedParts(p, body) {
 // inactive until they activate it.
 function panelRule(p, title) {
     const source = panelSource(p.dashboardId, p.panelId)
-    if (!source.queries.length) fail("This panel has no measure an alert could watch")
+    if (!source.queries.length) fail(ec.l10n.localize("This panel has no measure an alert could watch"))
     const chosen = source.queries.find(entry => String(entry.index) === text(p.queryIndex)) || source.queries[0]
     const query = clone(chosen.query)
     delete query.ignoreVariables
@@ -853,7 +853,7 @@ function store(p) {
         const m = requireSet()
         const creating = !text(p.definitionId)
         const title = text(p.title)
-        if (!title || title.length > 120) fail("Name the alert in at most 120 characters")
+        if (!title || title.length > 120) fail(ec.l10n.localize("Name the alert in at most 120 characters"))
         let definition
         if (!creating) {
             const existing = ownRule(m, p.definitionId).definition
@@ -871,7 +871,7 @@ function store(p) {
         fixedParts(m, basis(m, p, definition.body))
         const saved = ask("save#Definition", {definition, note: text(p.note) || (creating ? "Set" : "Changed")})
         if (saved.failure) fail(saved.failure)
-        done(saved.out.definition?.body?.paused ? "Alert saved. It is inactive until you activate it" : "Alert saved")
+        done(saved.out.definition?.body?.paused ? ec.l10n.localize("Alert saved. It is inactive until you activate it") : ec.l10n.localize("Alert saved"))
         return saved.out.definition.id
     })
 }
@@ -883,14 +883,14 @@ function unaccepted(policy, users, groups, shareGroupId) {
     const others = users.filter(userId => userId !== ec.user.userId)
     if (!groups.length && !others.length && !shareGroupId) return null
     const found = recipients(policy, {userIds: users, groupIds: shareGroupId ? groups.concat([shareGroupId]) : groups})
-    if (found.failure) return "The recipients could not be checked just now"
+    if (found.failure) return ec.l10n.localize("The recipients could not be checked just now")
     if (!found.canDeliver)
         return groups.length || others.length
-            ? "Telling other people of an alert needs the group delivery grant"
-            : "Sharing an alert with a group needs the group delivery grant"
+            ? ec.l10n.localize("Telling other people of an alert needs the group delivery grant")
+            : ec.l10n.localize("Sharing an alert with a group needs the group delivery grant")
     if (shareGroupId && found.refusedGroupIds.includes(shareGroupId)) return "Share only with a group you belong to"
-    if (found.refusedGroupIds.length) return "Tell only a group you belong to"
-    if (found.refusedUserIds.length) return "Choose recipients among the people who may be told here"
+    if (found.refusedGroupIds.length) return ec.l10n.localize("Tell only a group you belong to")
+    if (found.refusedUserIds.length) return ec.l10n.localize("Choose recipients among the people who may be told here")
     return null
 }
 // storeAudience: whom a business rule of the viewer's tells (themselves alone, or people and groups, each accepted
@@ -900,7 +900,7 @@ function storeAudience(p) {
     return attempt(() => {
         const m = requireSet()
         const {definition: existing, state} = ownRule(m, p.definitionId, true)
-        if (state.business !== true) fail("This rule tells its contact points: it has no audience")
+        if (state.business !== true) fail(ec.l10n.localize("This rule tells its contact points: it has no audience"))
         const others = p.audienceKind === "group"
         const users = others ? idList(p.recipientUserIds) : []
         const groups = others ? idList(p.recipientGroupIds) : []
@@ -932,13 +932,13 @@ function storeAudience(p) {
                 body: fixedParts(m, body),
                 version: versionOf(p.expectedVersion, existing.version)
             },
-            note: "Changed whom it tells"
+            note: ec.l10n.localize("Changed whom it tells")
         })
         if (saved.failure) fail(saved.failure)
         return done(
             saved.out.definition?.body?.audience?.deliveryMode === "group"
-                ? "Audience saved: each recipient is checked before every notification"
-                : "The alert now tells you alone"
+                ? ec.l10n.localize("Audience saved: each recipient is checked before every notification")
+                : ec.l10n.localize("The alert now tells you alone")
         )
     })
 }
@@ -1003,9 +1003,9 @@ function copy(p) {
     return attempt(() => {
         const m = requireSet()
         const source = readRule(m, p.definitionId).definition
-        if (!datasetReader()(source.body?.query)) fail("Its dataset is not yours to read")
+        if (!datasetReader()(source.body?.query)) fail(ec.l10n.localize("Its dataset is not yours to read"))
         const title = text(p.title) || source.title
-        if (title.length > 120) fail("Name the alert in at most 120 characters")
+        if (title.length > 120) fail(ec.l10n.localize("Name the alert in at most 120 characters"))
         let copied
         if (m.audienceOnly) {
             const body = clone(source.body)
@@ -1024,8 +1024,8 @@ function copy(p) {
         if (copied.failure) fail(copied.failure)
         done(
             copied.out.definition?.body?.paused
-                ? "Copied: set its threshold and whom it tells, then activate it"
-                : "Copied: it is yours to change"
+                ? ec.l10n.localize("Copied: set its threshold and whom it tells, then activate it")
+                : ec.l10n.localize("Copied: it is yours to change")
         )
         return copied.out.definition.id
     })
@@ -1037,7 +1037,7 @@ function remove(p) {
         const existing = ownRule(m, p.definitionId).definition
         const deleted = ask("delete#Definition", {definitionId: existing.id})
         if (deleted.failure) fail(deleted.failure)
-        done("Alert deleted")
+        done(ec.l10n.localize("Alert deleted"))
         return true
     })
 }
@@ -1087,7 +1087,7 @@ function evaluate(p) {
 function change(p, note, apply) {
     return attempt(() => {
         const m = requireSet()
-        if (m.audienceOnly) fail("An alert here tells an audience: it takes no contact point, silence or mute timing")
+        if (m.audienceOnly) fail(ec.l10n.localize("An alert here tells an audience: it takes no contact point, silence or mute timing"))
         const definition = ownRule(m, p.definitionId).definition
         const body = clone(definition.body)
         const said = apply(body) || note
@@ -1108,15 +1108,15 @@ function change(p, note, apply) {
 }
 const isoTime = /(Z|[+-]\d\d:\d\d)$/
 function addContact(p) {
-    return change(p, "Added contact point", body => {
+    return change(p, ec.l10n.localize("Added contact point"), body => {
         const contact = {
             id: text(p.contactId) || "contact-" + Date.now(),
             type: text(p.contactType) || "notification",
             topic: text(p.topic) || "ReportAlert",
             groupBy: idList(p.groupBy),
-            groupWaitSeconds: Math.max(0, number(text(p.groupWaitSeconds) || 30, "The group wait")),
-            repeatSeconds: Math.max(60, number(text(p.repeatSeconds) || 14400, "The repeat interval")),
-            matchers: object(p.matchersJson, "The label matchers")
+            groupWaitSeconds: Math.max(0, number(text(p.groupWaitSeconds) || 30, ec.l10n.localize("The group wait"))),
+            repeatSeconds: Math.max(60, number(text(p.repeatSeconds) || 14400, ec.l10n.localize("The repeat interval"))),
+            matchers: object(p.matchersJson, ec.l10n.localize("The label matchers"))
         }
         for (const [name, value] of [
             ["userId", p.contactUserId],
@@ -1130,7 +1130,7 @@ function addContact(p) {
     })
 }
 function addSilence(p) {
-    return change(p, "Added silence", body => {
+    return change(p, ec.l10n.localize("Added silence"), body => {
         if (!isoTime.test(text(p.silenceFrom)) || !isoTime.test(text(p.silenceThru)))
             fail("Use ISO times including Z or an explicit UTC offset")
         const from = new Date(text(p.silenceFrom))
@@ -1141,13 +1141,13 @@ function addSilence(p) {
                 from: from.toISOString(),
                 thru: thru.toISOString(),
                 comment: text(p.silenceComment),
-                matchers: object(p.silenceMatchers, "The label matchers")
+                matchers: object(p.silenceMatchers, ec.l10n.localize("The label matchers"))
             }
         ])
     })
 }
 function addMute(p) {
-    return change(p, "Added mute timing", body => {
+    return change(p, ec.l10n.localize("Added mute timing"), body => {
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(text(p.muteStart)) || !/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(text(p.muteEnd)))
             fail("Use HH:mm times")
         const days = idList(p.weekdays).map(Number)
@@ -1158,29 +1158,29 @@ function addMute(p) {
     })
 }
 function removeItem(p) {
-    return change(p, "Removed an item", body => {
-        if (!["contactPoints", "silences", "muteTimings"].includes(p.collection)) fail("Unknown rule collection")
+    return change(p, ec.l10n.localize("Removed an item"), body => {
+        if (!["contactPoints", "silences", "muteTimings"].includes(p.collection)) fail(ec.l10n.localize("Unknown rule collection"))
         const items = Array.from(body[p.collection] || [])
         const index = Number(p.itemIndex)
-        if (!Number.isInteger(index) || index < 0 || index >= items.length) fail("This item no longer exists")
+        if (!Number.isInteger(index) || index < 0 || index >= items.length) fail(ec.l10n.localize("This item no longer exists"))
         items.splice(index, 1)
         body[p.collection] = items
         return "Removed " + p.collection + " item"
     })
 }
 function addRef(p) {
-    return change(p, "Added a shared item", body => {
+    return change(p, ec.l10n.localize("Added a shared item"), body => {
         const shared = ask("get#Definition", {definitionId: text(p.sharedRef) || "_NA_"}).out?.definition
         const key = pick(sharedRefKeys, shared?.type, null)
-        if (!key) fail("Choose a shared contact point, silence or mute timing")
+        if (!key) fail(ec.l10n.localize("Choose a shared contact point, silence or mute timing"))
         const refs = Array.from(body[key] || [])
         if (!refs.includes(shared.id)) body[key] = refs.concat([shared.id])
         return "Added shared " + shared.type + " " + shared.id
     })
 }
 function removeRef(p) {
-    return change(p, "Removed a shared item", body => {
-        if (!Object.values(sharedRefKeys).includes(p.refKey)) fail("Unknown shared reference list")
+    return change(p, ec.l10n.localize("Removed a shared item"), body => {
+        if (!Object.values(sharedRefKeys).includes(p.refKey)) fail(ec.l10n.localize("Unknown shared reference list"))
         body[p.refKey] = Array.from(body[p.refKey] || []).filter(id => id !== p.refId)
         return "Removed shared reference " + text(p.refId)
     })
@@ -1190,10 +1190,10 @@ function removeShared(p) {
     return attempt(() => {
         requireSet()
         const item = ask("get#Definition", {definitionId: text(p.definitionId) || "_NA_"}).out?.definition
-        if (!item || !Object.hasOwn(sharedKinds, item.type)) fail("This shared item is not available")
+        if (!item || !Object.hasOwn(sharedKinds, item.type)) fail(ec.l10n.localize("This shared item is not available"))
         const deleted = ask("delete#Definition", {definitionId: item.id})
         if (deleted.failure) fail(deleted.failure)
-        done("Shared item deleted")
+        done(ec.l10n.localize("Shared item deleted"))
         return true
     })
 }

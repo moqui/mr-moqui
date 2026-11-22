@@ -44,7 +44,7 @@ function attempt(action) {
 // Whether the viewer may share here: the mount's policy says so (with no mount, Tools does). What a transition holds
 // first; the engine then checks the owner and the group itself.
 function requireShare(mount = mountLib.state()) {
-    if (mount.policy.features.share !== true) fail("Sharing is not offered to you here")
+    if (mount.policy.features.share !== true) fail(ec.l10n.localize("Sharing is not offered to you here"))
     return mount
 }
 // Whether sharing is offered to the viewer at all: the policy, and their own grant of the two operations it asks.

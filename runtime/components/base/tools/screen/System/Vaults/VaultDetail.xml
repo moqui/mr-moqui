@@ -34,8 +34,8 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.security.VaultServices.revoke#VaultMachineAccess" out-map="revoked"
                     in-map="{environmentId:environmentId, vaultId:vaultId, vaultItemId:vaultItemId}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage('Machine access revoked. Rotate these items at their source, since the server could have kept their keys: '
-                    + Array.from(revoked.rotateItemIds || []).join(', '), 'warning')</script>
+                <script>ec.message.addMessage(ec.l10n.localize('Machine access revoked. Rotate these items at their source, since the server could have kept their keys:')
+                    + ' ' + Array.from(revoked.rotateItemIds || []).join(', '), 'warning')</script>
             </if>
         </actions>
         <default-response url="."/>
@@ -57,7 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
             const days = (stamp) => stamp ? Math.floor((ec.user.timestampMillis(now) - ec.user.timestampMillis(stamp)) / 86400000) : null
             itemList = Array.from(call('list#VaultItems', {vaultId})?.itemList || []).map(item => Object.assign({}, item, {
                 ageDays: days(item.lastModifiedDate || item.createdDate),
-                wrapText: item.itemKeyWrapEnumId === 'VwDeposit' ? 'Deposited: a member takes it in' : ''}))
+                wrapText: item.itemKeyWrapEnumId === 'VwDeposit' ? ec.l10n.localize('Deposited: a member takes it in') : ''}))
             depositedCount = itemList.filter(item => item.itemKeyWrapEnumId === 'VwDeposit').length
             leaseList = Array.from(call('list#VaultLeases', {vaultId})?.leaseList || []).map(lease => Object.assign({}, lease, {
                 expiresText: lease.expiresAt ? ec.l10n.format(Number(lease.expiresAt), 'yyyy-MM-dd HH:mm') : '',

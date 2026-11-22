@@ -20,8 +20,8 @@ const SERVICE_SCORERS=['org.moqui.agent.AgentEvalServices.score#ExactMatch','org
 // attach one to an agent: live scoring scores every user's runs of the agent, so an attach needs AgentAudit and is
 // written to AgentAuditLog (SEC-AI-83). An error message, or null.
 function scorerRefusal(p){const audit=ec.user.hasPermission('AgentAudit')
- if(p.op==='store'){if(p.scorerTypeEnumId==='AgstService'&&!SERVICE_SCORERS.includes(p.serviceName)&&!audit)return'A scorer of a service other than the evals\' own needs the AgentAudit permission';return null}
- if(!audit)return'Live scoring reads every user\'s runs of the agent: attaching a scorer to an agent needs the AgentAudit permission'
+ if(p.op==='store'){if(p.scorerTypeEnumId==='AgstService'&&!SERVICE_SCORERS.includes(p.serviceName)&&!audit)return ec.l10n.localize('A scorer of a service other than the evals\' own needs the AgentAudit permission');return null}
+ if(!audit)return ec.l10n.localize('Live scoring reads every user\'s runs of the agent: attaching a scorer to an agent needs the AgentAudit permission')
  create('AgentAuditLog',{auditorUserId:ec.user.userId,reason:'attached scorer '+p.scorerId+' to agent '+p.agentId+' for live scoring',auditDate:now()});return null}
 function checkScorer(p){return{refusal:scorerRefusal(p)}}
 // A service an eval names by free text (an experiment's target, a scorer of another service) runs with authorization on
@@ -43,11 +43,11 @@ const otherService=s=>s.scorerTypeEnumId==='AgstService'&&!SERVICE_SCORERS.inclu
 // (its experiments' results). A scorer of another service needs AgentAudit either way. The attach keeps who made it:
 // live scoring runs a scorer of another service as them (SEC-AI-95).
 function attach(p){need('MONITOR_EVAL');const s=one('AgentScorer',{scorerId:p.scorerId});if(!s)throw new Error('Choose a scorer')
- if(!p.agentId===!p.datasetId)throw new Error('Attach a scorer to an agent or to a dataset')
+ if(!p.agentId===!p.datasetId)throw new Error(ec.l10n.localize('Attach a scorer to an agent or to a dataset'))
  const refusal=p.agentId?scorerRefusal({op:'attach',scorerId:s.scorerId,agentId:p.agentId})
-  :otherService(s)&&!ec.user.hasPermission('AgentAudit')?'A scorer of a service other than the evals\' own needs the AgentAudit permission':null
+  :otherService(s)&&!ec.user.hasPermission('AgentAudit')?ec.l10n.localize('A scorer of a service other than the evals\' own needs the AgentAudit permission'):null
  if(refusal)throw new Error(refusal)
- let rate=null;if(p.agentId){rate=num(p.samplingRate)??1;if(!(rate>0&&rate<=1))throw new Error('Sampling rate is more than 0 and at most 1')}
+ let rate=null;if(p.agentId){rate=num(p.samplingRate)??1;if(!(rate>0&&rate<=1))throw new Error(ec.l10n.localize('Sampling rate is more than 0 and at most 1'))}
  const out=create('AgentScorerAttach',{scorerId:s.scorerId,agentId:p.agentId||null,datasetId:p.datasetId||null,samplingRate:rate,fromDate:now(),lastScoredDate:p.agentId?now():null,attachedByUserId:ec.user.userId})
  return{attachId:out.attachId}}
 
@@ -55,11 +55,11 @@ function attach(p){need('MONITOR_EVAL');const s=one('AgentScorer',{scorerId:p.sc
 function dataset(id){const d=one('AgentDataset',{datasetId:id});if(!d)throw new Error('Dataset '+id+' is not available');return d}
 function bump(d){const v=(num(d.versionNum)||0)+1;update('AgentDataset',{datasetId:d.datasetId,versionNum:v});return v}
 function itemsAt(datasetId,version){return rows('AgentDatasetItem',{datasetId},'createdDate').filter(i=>(num(i.fromVersion)||0)<=version&&(i.thruVersion==null||num(i.thruVersion)>version))}
-function addItem(p){need('MONITOR_EVAL');const d=dataset(p.datasetId);if(!String(p.inputText||'').trim())throw new Error('Give the input');const v=bump(d)
+function addItem(p){need('MONITOR_EVAL');const d=dataset(p.datasetId);if(!String(p.inputText||'').trim())throw new Error(ec.l10n.localize('Give the input'));const v=bump(d)
  const out=create('AgentDatasetItem',{datasetId:d.datasetId,inputText:p.inputText,groundTruth:p.groundTruth||null,metadataJson:p.metadataJson||null,sourceRunId:p.sourceRunId||null,fromVersion:v,createdDate:now()});return{itemId:out.itemId,versionNum:v}}
-function updateItem(p){need('MONITOR_EVAL');const old=one('AgentDatasetItem',{itemId:p.itemId});if(!old||old.thruVersion!=null)throw new Error('Item is not current');const d=dataset(old.datasetId),v=bump(d)
+function updateItem(p){need('MONITOR_EVAL');const old=one('AgentDatasetItem',{itemId:p.itemId});if(!old||old.thruVersion!=null)throw new Error(ec.l10n.localize('Item is not current'));const d=dataset(old.datasetId),v=bump(d)
  update('AgentDatasetItem',{itemId:old.itemId,thruVersion:v});const out=create('AgentDatasetItem',{datasetId:d.datasetId,inputText:p.inputText??old.inputText,groundTruth:p.groundTruth??old.groundTruth,metadataJson:p.metadataJson??old.metadataJson,sourceRunId:old.sourceRunId,fromVersion:v,createdDate:now()});return{itemId:out.itemId,versionNum:v}}
-function removeItem(p){need('MONITOR_EVAL');const old=one('AgentDatasetItem',{itemId:p.itemId});if(!old||old.thruVersion!=null)throw new Error('Item is not current');const v=bump(dataset(old.datasetId));update('AgentDatasetItem',{itemId:old.itemId,thruVersion:v});return{versionNum:v}}
+function removeItem(p){need('MONITOR_EVAL');const old=one('AgentDatasetItem',{itemId:p.itemId});if(!old||old.thruVersion!=null)throw new Error(ec.l10n.localize('Item is not current'));const v=bump(dataset(old.datasetId));update('AgentDatasetItem',{itemId:old.itemId,thruVersion:v});return{versionNum:v}}
 
 // ---- runs: the user's message and the reply
 // the user message of the run, else the conversation's last user message sent by the time the run was submitted
@@ -102,7 +102,7 @@ function score(scorers,c,source){
  const out=[]
  for(const s of scorers){
   let row={scorerId:s.scorerId,sourceEnumId:source,runId:c.runId||null,experimentId:c.experimentId||null,resultId:c.resultId||null,itemId:c.itemId||null,scoredByUserId:ec.user.userId||null,scoredDate:now()}
-  try{const r=scoreOne(s,c);if(!r)continue;if(r.score==null||!Number.isFinite(r.score))throw new Error('The scorer gave no score')
+  try{const r=scoreOne(s,c);if(!r)continue;if(r.score==null||!Number.isFinite(r.score))throw new Error(ec.l10n.localize('The scorer gave no score'))
    const v=Math.max(0,Math.min(1,r.score)),pass=num(s.passThreshold)??0.5;Object.assign(row,{score:v,passed:v>=pass?'Y':'N',reason:text(r.reason).slice(0,4000)||null,judgeJson:r.judgeJson||null})
   }catch(e){ec.logger.error('Scorer '+s.scorerId+' failed on '+(c.resultId||c.runId)+': '+e);row.errorText=String(e).slice(0,4000)}
   create('AgentScore',row);out.push(row)
@@ -116,17 +116,17 @@ function scoreRun(p){need('MONITOR_EVAL');const run=one('AgentRun',{runId:p.runI
  const ids=p.scorerId?[p.scorerId]:[],scorers=ids.length?ids.map(id=>one('AgentScorer',{scorerId:id})).filter(Boolean):scorersOf({agentId:run.agentId})
  if(!scorers.length)throw new Error('Choose a scorer, or attach one to agent '+run.agentId)
  const rows_=score(scorers,{runId:run.runId,input:runInput(run.runId),output:runOutput(run),groundTruth:p.groundTruth||null},'AgssTrace');return{scoredCount:rows_.length}}
-function review(p){need('MONITOR_EVAL');const s=one('AgentScorer',{scorerId:p.scorerId});if(!s)throw new Error('Choose a scorer');const v=num(p.score);if(v==null||v<0||v>1)throw new Error('A score is from 0 to 1')
- let c={runId:p.runId||null};if(p.resultId){const r=one('AgentExperimentResult',{resultId:p.resultId});if(!r)throw new Error('Result is not available');c={runId:r.runId,experimentId:r.experimentId,resultId:r.resultId,itemId:r.itemId}}
+function review(p){need('MONITOR_EVAL');const s=one('AgentScorer',{scorerId:p.scorerId});if(!s)throw new Error('Choose a scorer');const v=num(p.score);if(v==null||v<0||v>1)throw new Error(ec.l10n.localize('A score is from 0 to 1'))
+ let c={runId:p.runId||null};if(p.resultId){const r=one('AgentExperimentResult',{resultId:p.resultId});if(!r)throw new Error(ec.l10n.localize('Result is not available'));c={runId:r.runId,experimentId:r.experimentId,resultId:r.resultId,itemId:r.itemId}}
  const out=create('AgentScore',Object.assign(c,{scorerId:s.scorerId,sourceEnumId:'AgssReview',score:v,passed:v>=(num(s.passThreshold)??0.5)?'Y':'N',reason:p.reason||null,scoredByUserId:ec.user.userId,scoredDate:now()}))
  if(c.experimentId)summarize(one('AgentExperiment',{experimentId:c.experimentId}));return{scoreId:out.scoreId}}
 
 // ---- experiments
 function start(p){
  need('MONITOR_EVAL_RUN');const d=dataset(p.datasetId),version=num(d.versionNum)||0,items=itemsAt(d.datasetId,version),trials=Math.max(1,Math.min(10,Number(p.trials)||1))
- const agentId=p.serviceName?null:(p.agentId||d.agentId);if(!agentId&&!p.serviceName)throw new Error('Choose an agent or a service to run')
+ const agentId=p.serviceName?null:(p.agentId||d.agentId);if(!agentId&&!p.serviceName)throw new Error(ec.l10n.localize('Choose an agent or a service to run'))
  if(agentId&&!one('AgentDefinition',{agentId}))throw new Error('Agent '+agentId+' is not available')
- if(!items.length)throw new Error('The dataset has no items');if(items.length*trials>200)throw new Error('An experiment runs at most 200 items × trials')
+ if(!items.length)throw new Error(ec.l10n.localize('The dataset has no items'));if(items.length*trials>200)throw new Error(ec.l10n.localize('An experiment runs at most 200 items × trials'))
  const e=create('AgentExperiment',{experimentName:p.experimentName||d.datasetName+' v'+version,datasetId:d.datasetId,datasetVersion:version,agentId,serviceName:p.serviceName||null,trials,statusId:'EvRunning',startedByUserId:ec.user.userId,startedDate:now(),resultCount:items.length*trials,doneCount:0,failedCount:0,notes:p.notes||null})
  for(const item of items)for(let t=1;t<=trials;t++){
   const r=create('AgentExperimentResult',{experimentId:e.experimentId,itemId:item.itemId,trialNum:t,statusId:'EvrPending'})
@@ -178,7 +178,7 @@ function advance(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
  for(const e of list){if(e.statusId!=='EvRunning')continue;try{asStarter(e,()=>advanceOne(e,20))}catch(err){ec.logger.error('Experiment '+e.experimentId+' could not advance: '+err)}}
  return{experimentCount:list.length}
 }
-function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{experimentId:p.experimentId});if(!e||e.statusId!=='EvRunning')throw new Error('Experiment is not running')
+function cancel(p){need('MONITOR_EVAL_RUN');const e=one('AgentExperiment',{experimentId:p.experimentId});if(!e||e.statusId!=='EvRunning')throw new Error(ec.l10n.localize('Experiment is not running'))
  for(const r of rows('AgentExperimentResult',{experimentId:e.experimentId}))if(r.statusId==='EvrPending'||r.statusId==='EvrRunning')update('AgentExperimentResult',{resultId:r.resultId,statusId:'EvrFailed',errorText:'Canceled',endedDate:now()})
  update('AgentExperiment',{experimentId:e.experimentId,statusId:'EvCanceled',endedDate:now()});return{}}
 
@@ -207,12 +207,12 @@ function live(p){if(ec.user.userId)need('MONITOR_EVAL_RUN')
 
 // ---- built-in service scorers: in input, output, groundTruth, runId, config; out score, reason
 const norm=t=>String(t??'').trim().toLowerCase().replace(/\s+/g,' ')
-function exactMatch(p){if(!p.groundTruth)return{score:0,reason:'No expected output'};const ok=norm(p.output)===norm(p.groundTruth);return{score:ok?1:0,reason:ok?'Matches the expected output':'Differs from the expected output'}}
+function exactMatch(p){if(!p.groundTruth)return{score:0,reason:ec.l10n.localize('No expected output')};const ok=norm(p.output)===norm(p.groundTruth);return{score:ok?1:0,reason:ok?ec.l10n.localize('Matches the expected output'):ec.l10n.localize('Differs from the expected output')}}
 // each line of groundTruth (or config.terms) is a phrase the output must contain; the score is the share found
-function contains(p){const terms=(p.config?.terms||String(p.groundTruth||'').split('\n')).map(norm).filter(Boolean);if(!terms.length)return{score:0,reason:'No phrases to look for'}
+function contains(p){const terms=(p.config?.terms||String(p.groundTruth||'').split('\n')).map(norm).filter(Boolean);if(!terms.length)return{score:0,reason:ec.l10n.localize('No phrases to look for')}
  const out=norm(p.output),missing=terms.filter(t=>!out.includes(t));return{score:(terms.length-missing.length)/terms.length,reason:missing.length?'Missing: '+missing.join('; '):'Contains every phrase'}}
 // config.tools (or the lines of groundTruth) are tools the run must have called
-function calledTool(p){if(!p.runId)return{score:0,reason:'No run to check'};const want=(p.config?.tools||String(p.groundTruth||'').split('\n')).map(t=>String(t).trim()).filter(Boolean)
+function calledTool(p){if(!p.runId)return{score:0,reason:ec.l10n.localize('No run to check')};const want=(p.config?.tools||String(p.groundTruth||'').split('\n')).map(t=>String(t).trim()).filter(Boolean)
  const used=new Set(rows('AgentToolCall',{runId:p.runId}).map(c=>c.toolName));if(!want.length)return{score:used.size?1:0,reason:used.size?'Called '+[...used].join(', '):'Called no tool'}
  const missing=want.filter(t=>!used.has(t));return{score:(want.length-missing.length)/want.length,reason:missing.length?'Did not call '+missing.join(', '):'Called '+want.join(', ')}}
 

@@ -60,7 +60,7 @@ along with this software (see the LICENSE.md file). If not, see
                             ownerHref: link.plain ? link.href : '',
                             ownerUrl: link.plain ? '' : link.url || '',
                             ownerParameters: link.plain ? {} : link.parameters || {},
-                            ownerText: owner ? owner.text : configured ? 'Configuration and checks' : ''
+                            ownerText: owner ? owner.text : configured ? ec.l10n.localize('Configuration and checks') : ''
                         })
                     })
                     const count = states => protocols.filter(row => states.includes(row.state)).length

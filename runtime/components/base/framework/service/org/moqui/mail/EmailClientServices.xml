@@ -249,7 +249,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const KINDS = ['EakHosted', 'EakExternal', 'EakShared']
             if (!KINDS.includes(accountKindEnumId)) {
-                ec.message.addError(accountKindEnumId === 'EakInternal' ? 'The Internal account is made by ensure#InternalAccount'
+                ec.message.addError(accountKindEnumId === 'EakInternal' ? ec.l10n.localize('The Internal account is made by ensure#InternalAccount')
                         : `Unknown account kind ${accountKindEnumId}`)
                 return
             }
@@ -413,7 +413,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (given(accountKindEnumId) && accountKindEnumId !== '' && accountKindEnumId !== account.accountKindEnumId) {
                 const KINDS = ['EakHosted', 'EakExternal', 'EakShared']
                 if (!KINDS.includes(accountKindEnumId)) {
-                    ec.message.addError(accountKindEnumId === 'EakInternal' ? 'An account does not become the Internal account'
+                    ec.message.addError(accountKindEnumId === 'EakInternal' ? ec.l10n.localize('An account does not become the Internal account')
                             : `Unknown account kind ${accountKindEnumId}`)
                     return
                 }
@@ -5104,7 +5104,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (oneClick && https.length && level >= 2) {
                 const target = https[0]
                 if (!publicHost(target)) {
-                    postError = 'The one-click address is not on a public host'
+                    postError = ec.l10n.localize('The one-click address is not on a public host')
                 } else {
                     try {
                         const response = ec.service.rest().method('POST').uri(target).contentType('application/x-www-form-urlencoded')
@@ -5168,7 +5168,7 @@ along with this software (see the LICENSE.md file). If not, see
                 return
             }
             ec.message.addError(level < 2 ? `You may not send from email account ${message.emailAccountId}`
-                    : 'This message offers no way to unsubscribe that works here')
+                    : ec.l10n.localize('This message offers no way to unsubscribe that works here'))
         ]]></script></actions>
     </service>
 

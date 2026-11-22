@@ -47,7 +47,7 @@ const valueTypes = {
 }
 const sourceTexts = {
     preference: "Instance preference",
-    configuration: "Deployment configuration",
+    configuration: ec.l10n.localize("Deployment configuration"),
     default: "Default"
 }
 const secretName = name => /pass|pw|key|secret|token|credential/i.test(String(name || ""))
@@ -244,8 +244,8 @@ function described(setting, preference, canManage) {
     const changedBy = preference?.changedByUserId ? one("moqui.security.UserAccount", {userId: preference.changedByUserId}) : null
     return {
         settingKey: setting.settingKey,
-        title: setting.title || setting.settingKey,
-        description: setting.description || "",
+        title: setting.title ? ec.l10n.localize(setting.title) : setting.settingKey,
+        description: setting.description ? ec.l10n.localize(setting.description) : "",
         settingGroup: setting.settingGroup || "",
         valueType: type,
         allowedValues:

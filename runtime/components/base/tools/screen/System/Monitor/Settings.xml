@@ -46,12 +46,12 @@
         overrideList = rows.filter((row) => row.overridden)
         const groups = [
             ['logging', 'Logging', 'rsipstack is held at WARN. DEBUG and TRACE lines go to the console and the log files, not to Monitor › Logs. A target rule has no on-disk value: reverting it removes it.'],
-            ['traces', 'Traces and sampling', 'At sample ratio 0 only request and job roots are kept, with the whole trace of an error or a slow root.'],
-            ['artifacts', 'Artifact types', 'Spans, metrics and the sample ratio of each artifact type; an empty sample ratio uses the global one.'],
-            ['metrics', 'Metrics', 'The attributes each instrument keeps, comma separated.'],
-            ['operations', 'Operations', 'Which service calls count as business operations.'],
-            ['browser', 'Browser', 'A tab picks up a change on its next page load.'],
-            ['receiver', 'Receiver', 'The OTLP receiver that takes telemetry from other services.'],
+            ['traces', ec.l10n.localize('Traces and sampling'), ec.l10n.localize('At sample ratio 0 only request and job roots are kept, with the whole trace of an error or a slow root.')],
+            ['artifacts', ec.l10n.localize('Artifact types'), ec.l10n.localize('Spans, metrics and the sample ratio of each artifact type; an empty sample ratio uses the global one.')],
+            ['metrics', ec.l10n.localize('Metrics'), ec.l10n.localize('The attributes each instrument keeps, comma separated.')],
+            ['operations', ec.l10n.localize('Operations'), ec.l10n.localize('Which service calls count as business operations.')],
+            ['browser', ec.l10n.localize('Browser'), ec.l10n.localize('A tab picks up a change on its next page load.')],
+            ['receiver', ec.l10n.localize('Receiver'), ec.l10n.localize('The OTLP receiver that takes telemetry from other services.')],
         ]
         groupList = groups.map(([groupId, title, note]) => ({groupId, title, note, rows: rows.filter((row) => row.group === groupId)}))
             .filter((group) => group.rows.length > 0)

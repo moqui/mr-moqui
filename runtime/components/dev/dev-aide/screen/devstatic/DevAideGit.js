@@ -106,6 +106,7 @@
         data() { return { local: [], remote: [], compare: null, loading: false, states: {} }; },
         mounted() { this.load(); },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             load() {
                 this.loading = true;
                 return this.ws.get("branches", { rootId: this.ws.rootId }).then((answer) => {
@@ -133,7 +134,7 @@
             },
             merge(branch, mergeCommit) {
                 this.ws.post("mergeBranch", { rootId: this.ws.rootId, branch: branch.name, mergeCommit: !!mergeCommit }).then((answer) => {
-                    if (answer.conflict) { this.ws.note("The merge stopped at conflicts: resolve them in Changes", "warning"); this.ws.afterConflict(); return; }
+                    if (answer.conflict) { this.ws.note(moqui.l10n.localize("The merge stopped at conflicts: resolve them in Changes"), "warning"); this.ws.afterConflict(); return; }
                     this.done("Merged " + branch.name); this.ws.reloadTabs();
                 }, (error) => {
                     if (mergeCommit) { this.ws.fail(error); return; }
@@ -164,7 +165,7 @@
         <q-badge v-if="states[branch.commit]" :color="pure.stateColor(states[branch.commit])" class="q-ml-xs cursor-pointer" :label="states[branch.commit]"
             @click="ws.openChecks(branch.commit)" :data-state="states[branch.commit]"></q-badge><q-space></q-space>
         <q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + branch.name"><q-menu><q-list dense style="min-width: 12rem">
-          <q-item v-if="!branch.current" clickable v-close-popup @click="ws.switchBranch(branch.name)"><q-item-section>Switch</q-item-section></q-item>
+          <q-item v-if="!branch.current" clickable v-close-popup @click="ws.switchBranch(branch.name)"><q-item-section>{{ t('Switch') }}</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="merge(branch)"><q-item-section>Merge into {{ws.status && ws.status.branch}}</q-item-section></q-item>
           <q-item v-if="!branch.current" clickable v-close-popup @click="openCompare(branch)"><q-item-section>Compare with {{ws.status && ws.status.branch}}</q-item-section></q-item>
           <q-item clickable v-close-popup @click="rename(branch)"><q-item-section>Rename</q-item-section></q-item>
@@ -466,7 +467,7 @@
                 const review = this.review, body = review.reply[thread.threadId];
                 if (!body) return;
                 this.ws.post("reviewComment", { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum, threadId: thread.threadId, body }).then((answer) => {
-                    review.reply[thread.threadId] = ""; this.ws.note(answer.held ? "Sent: it waits for a moderator" : "Replied on the server"); this.reloadThreads();
+                    review.reply[thread.threadId] = ""; this.ws.note(answer.held ? moqui.l10n.localize("Sent: it waits for a moderator") : moqui.l10n.localize("Replied on the server")); this.reloadThreads();
                 }, this.ws.fail);
             },
             comment() {
@@ -475,7 +476,7 @@
                 const params = { rootId: this.ws.rootId, mergeRequestNum: review.item.mergeRequestNum, body: review.text, commitId: review.head };
                 if (review.file) { params.path = review.file.path; if (Number(review.line) > 0) params.newLine = Number(review.line); }
                 this.ws.post("reviewComment", params).then((answer) => {
-                    review.text = ""; review.line = ""; this.ws.note(answer.held ? "Sent: it waits for a moderator" : "Commented on the server"); this.reloadThreads();
+                    review.text = ""; review.line = ""; this.ws.note(answer.held ? moqui.l10n.localize("Sent: it waits for a moderator") : moqui.l10n.localize("Commented on the server")); this.reloadThreads();
                 }, this.ws.fail);
             },
             resolve(thread, resolved) {
@@ -625,7 +626,7 @@
                 // the run's number with a job too: a repository an application keeps retries a job of a run
                 const params = { rootId: this.ws.rootId, runNum: run.runNum };
                 if (job) params.jobRunId = job.jobRunId;
-                this.ws.post("rerunCheck", params).then(() => { this.ws.note(job ? "Job re-run" : "Run re-run"); this.load(); }, this.ws.fail);
+                this.ws.post("rerunCheck", params).then(() => { this.ws.note(job ? moqui.l10n.localize("Job re-run") : moqui.l10n.localize("Run re-run")); this.load(); }, this.ws.fail);
             }
         },
         emits: ["close"],
@@ -721,7 +722,7 @@
                 }, this.ws.fail);
                 if (!item.changes) { go(false); return; }
                 this.$q.dialog({ title: "Discard the uncommitted changes?", message: item.label + " has " + item.changes + " uncommitted changes, which removing it loses. Its branch " + item.branch + " stays with its commits.",
-                    cancel: true, ok: { label: "Discard and remove", color: "negative", unelevated: true } }).onOk(() => go(true));
+                    cancel: true, ok: { label: moqui.l10n.localize("Discard and remove"), color: "negative", unelevated: true } }).onOk(() => go(true));
             }
         },
         template: `

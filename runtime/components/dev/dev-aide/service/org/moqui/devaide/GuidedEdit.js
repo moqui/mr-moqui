@@ -162,7 +162,7 @@ function serviceContext(artifact) {
     const target = "service:" + serviceName
     const answer = serviceName
         ? probe("org.moqui.devaide.ServiceWriterServices.get#ServiceView", {serviceName})
-        : {refused: "Name a service"}
+        : {refused: ec.l10n.localize("Name a service")}
     const view = answer.view || null
     const row = (view && view.artifact) || {}
     const file = row.rootId && row.relativePath ? {rootId: row.rootId, path: row.relativePath} : null
@@ -264,7 +264,7 @@ function entityContext(artifact) {
     const target = "entity:" + entityName
     const answer = entityName
         ? probe("org.moqui.devaide.EntityServices.get#EntityView", {entityName})
-        : {refused: "Name an entity"}
+        : {refused: ec.l10n.localize("Name an entity")}
     const view = answer.view || null
     const entity = view && view.entity
     const edit =
@@ -306,7 +306,7 @@ function entityContext(artifact) {
 function entityEdit(entity, build) {
     const {ops, editFile, element} = entity
     if (!entity.edit || !editFile)
-        return {ops: [], refused: "This entity is upstream and there is no site component to extend it in"}
+        return {ops: [], refused: ec.l10n.localize("This entity is upstream and there is no site component to extend it in")}
     let first = []
     let path = element ? element.path : null
     if (!path) {
@@ -344,14 +344,14 @@ function seedListNodes(artifact, tables, canEdit, url) {
                     t: "field",
                     id: id + ".seedAttrName",
                     name: "seedAttrName",
-                    title: "Another attribute",
+                    title: ec.l10n.localize("Another attribute"),
                     w: {kind: "textLine", value: ""}
                 },
                 {
                     t: "field",
                     id: id + ".seedAttrValue",
                     name: "seedAttrValue",
-                    title: "Its value",
+                    title: ec.l10n.localize("Its value"),
                     w: {kind: "textLine", value: ""}
                 },
                 {t: "field", id: id + ".submitButton", name: "submitButton", title: "", w: {kind: "submit", text: button}}
@@ -473,7 +473,7 @@ function isExtendKey(key) {
 function extendIntent(screen, key, intent, values) {
     const pure = screen.ops.pure
     const ops = screen.ops.screen
-    if (!screen.extension) return {refused: "This screen is edited in place: choose its element in the outline"}
+    if (!screen.extension) return {refused: ec.l10n.localize("This screen is edited in place: choose its element in the outline")}
     const outline = screen.editFile && screen.editFile.outline
     if (!outline)
         return {
@@ -483,22 +483,22 @@ function extendIntent(screen, key, intent, values) {
         }
     const path = nodePath(String(key).slice(2))
     const node = pure.outlineAt(outline, path)
-    if (!node) return {refused: "That element is not in the site's screen-extend as staged: choose it again"}
+    if (!node) return {refused: ec.l10n.localize("That element is not in the site's screen-extend as staged: choose it again")}
     const keyOf = at => (at.length ? "e:" + at.join(".") : "")
     const step = (delta, last) => {
-        if (!path.length) return {refused: "The screen-extend itself does not move"}
+        if (!path.length) return {refused: ec.l10n.localize("The screen-extend itself does not move")}
         const at = Math.min(last, Math.max(0, path[path.length - 1] + delta))
         return {ops: ops.stepOp(outline, path, delta), node: keyOf(path.slice(0, -1).concat([at]))}
     }
     const table = {
         setProperty() {
             return !values.attrName
-                ? {refused: "Name the attribute"}
+                ? {refused: ec.l10n.localize("Name the attribute")}
                 : {ops: pure.setAttributeOps(node, values.attrName, values.attrValue)}
         },
         remove() {
             return !path.length
-                ? {refused: "The screen-extend itself is not removed here"}
+                ? {refused: ec.l10n.localize("The screen-extend itself is not removed here")}
                 : {ops: [{op: "remove", at: path}], node: keyOf(path.slice(0, -1))}
         },
         moveUp() {
@@ -511,7 +511,7 @@ function extendIntent(screen, key, intent, values) {
     }
     return table[intent]
         ? table[intent]()
-        : {refused: "The site's own elements take Properties, Remove and Move: choose an element of the screen for the others"}
+        : {refused: ec.l10n.localize("The site's own elements take Properties, Remove and Move: choose an element of the screen for the others")}
 }
 // The operations of an intent of the screen builder (11.2) on the selected node of the base screen: in place on the
 // screen's file, or in extension mode into the site's screen-extend of it. Answers {ops, node} (the key selected
@@ -526,11 +526,11 @@ function screenIntent(screen, key, intent, values) {
                 "The screen's file does not read as XML: " + ((screen.baseFile && screen.baseFile.outlineError) || "not read")
         }
     if (!screen.edit)
-        return {refused: "This screen is upstream and there is no site component to extend it in: create one on Home"}
+        return {refused: ec.l10n.localize("This screen is upstream and there is no site component to extend it in: create one on Home")}
     if (isExtendKey(key)) return extendIntent(screen, key, intent, values || {})
     const path = nodePath(key)
     const node = pure.outlineAt(base, path)
-    if (!node) return {refused: "That element is not in the screen as staged: choose it again in the outline"}
+    if (!node) return {refused: ec.l10n.localize("That element is not in the screen as staged: choose it again in the outline")}
     const extension = screen.extension
     const extOutline = extension
         ? (screen.editFile && screen.editFile.outline) || {name: "screen-extend", path: [], attrs: [], children: []}
@@ -545,20 +545,22 @@ function screenIntent(screen, key, intent, values) {
                       " is for a screen edited in place; this one is extended in the site's screen-extend, whose own elements take it"
               }
             : null
-    const onlyExtension = what => (extension ? null : {refused: what + " is for an upstream screen in extension mode"})
-    const named = (value, what) => (NAME.test(String(value || "")) ? null : {refused: what + " is letters, digits and _"})
+    const onlyExtension = what =>
+        extension ? null : {refused: ec.l10n.localize(what + " is for an upstream screen in extension mode")}
+    const named = (value, what) =>
+        NAME.test(String(value || "")) ? null : {refused: ec.l10n.localize(what + " is letters, digits and _")}
     const keyOf = at => at.join(".")
     const table = {
         setProperty() {
             return (
                 inPlace("A property") ||
                 (!values.attrName
-                    ? {refused: "Name the attribute"}
+                    ? {refused: ec.l10n.localize("Name the attribute")}
                     : {ops: pure.setAttributeOps(node, values.attrName, values.attrValue)})
             )
         },
         addField() {
-            if (!form) return {refused: "Select a form, or an element in one, first"}
+            if (!form) return {refused: ec.l10n.localize("Select a form, or an element in one, first")}
             const field = {
                 name: values.fieldName,
                 title: values.fieldTitle,
@@ -574,11 +576,11 @@ function screenIntent(screen, key, intent, values) {
             )
         },
         addFilter() {
-            if (!form || form.name !== "form-list") return {refused: "Select a list (form-list) first"}
+            if (!form || form.name !== "form-list") return {refused: ec.l10n.localize("Select a list (form-list) first")}
             return named(values.fieldName, "A field name") || {ops: ops.filterOps(!extension, extOutline, form, values.fieldName)}
         },
         addRowAction() {
-            if (!form || form.name !== "form-list") return {refused: "Select a list (form-list) first"}
+            if (!form || form.name !== "form-list") return {refused: ec.l10n.localize("Select a list (form-list) first")}
             return (
                 named(values.fieldName, "A field name") ||
                 named(values.transitionName, "A transition name") || {
@@ -599,11 +601,11 @@ function screenIntent(screen, key, intent, values) {
         insert() {
             const snippet = ops.SNIPPETS.find(item => item.key === values.snippet)
             const xml = snippet ? snippet.xml : String(values.rawXml || "").trim()
-            if (!xml) return {refused: "Choose a widget, or write its XML"}
+            if (!xml) return {refused: ec.l10n.localize("Choose a widget, or write its XML")}
             const list = ops.placeOps(extension, base, extOutline, node, values.where || "after", xml)
             return list.length
                 ? {ops: list}
-                : {refused: "Nothing near this element has a name to anchor an extension at: choose a named element"}
+                : {refused: ec.l10n.localize("Nothing near this element has a name to anchor an extension at: choose a named element")}
         },
         addSection() {
             const spec = {
@@ -613,7 +615,7 @@ function screenIntent(screen, key, intent, values) {
                 entity: values.entityName,
                 keyField: values.keyField
             }
-            if (spec.kind === "related" && !spec.entity) return {refused: "Name the entity whose records the section lists"}
+            if (spec.kind === "related" && !spec.entity) return {refused: ec.l10n.localize("Name the entity whose records the section lists")}
             return (
                 named(spec.name, "A section name") || {
                     ops: ops.placeOps(extension, base, extOutline, node, "after", ops.sectionXml(spec))
@@ -621,7 +623,7 @@ function screenIntent(screen, key, intent, values) {
             )
         },
         addButton() {
-            if (!path.length) return {refused: "Select the element the button goes after"}
+            if (!path.length) return {refused: ec.l10n.localize("Select the element the button goes after")}
             const spec = {
                 transition: values.transitionName,
                 service: values.serviceName,
@@ -630,7 +632,7 @@ function screenIntent(screen, key, intent, values) {
             return (
                 named(spec.transition, "A transition name") ||
                 (!spec.service
-                    ? {refused: "Name the service the button calls"}
+                    ? {refused: ec.l10n.localize("Name the service the button calls")}
                     : {
                           ops: ops.buttonOps(
                               extension,
@@ -646,7 +648,7 @@ function screenIntent(screen, key, intent, values) {
             return (
                 inPlace("Remove") ||
                 (!path.length
-                    ? {refused: "The screen itself is not removed here"}
+                    ? {refused: ec.l10n.localize("The screen itself is not removed here")}
                     : {ops: [{op: "remove", at: path}], node: keyOf(path.slice(0, -1))})
             )
         },
@@ -670,11 +672,11 @@ function screenIntent(screen, key, intent, values) {
         },
         replaceSection() {
             if (!["section", "section-iterate", "form-single", "form-list"].includes(node.name) || !ops.anchorName(node))
-                return {refused: "Select a named section or form to replace"}
+                return {refused: ec.l10n.localize("Select a named section or form to replace")}
             return onlyExtension("Replace") || {ops: ops.copyInto(extOutline, screen.baseFile.text, node)}
         },
         overrideTransition() {
-            if (node.name !== "transition") return {refused: "Select a transition to override"}
+            if (node.name !== "transition") return {refused: ec.l10n.localize("Select a transition to override")}
             return onlyExtension("Override") || {ops: ops.copyInto(extOutline, screen.baseFile.text, node)}
         },
         actionsBefore() {

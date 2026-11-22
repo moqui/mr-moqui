@@ -252,7 +252,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (startHidden) compare = compare.disableAuthz()
                 const checked = compare.call()
                 if (ec.message.hasError()) return
-                if (!checked || !checked.headCommitId) { ec.message.addError('The source of the merge request names no commit'); return }
+                if (!checked || !checked.headCommitId) { ec.message.addError(ec.l10n.localize('The source of the merge request names no commit')); return }
                 mr.setFields({headCommitId: checked.headCommitId, baseCommitId: checked.mergeBaseId || null,
                     mergeableEnumId: checked.alreadyMerged ? 'GmaMerged' : (checked.mergeable ? 'GmaMergeable' : 'GmaConflict'),
                     conflictPaths: Array.from(checked.conflictPaths || []).join('\n') || null}, true, null, null)
@@ -461,8 +461,8 @@ along with this software (see the LICENSE.md file). If not, see
                 checkList = Array.from(checks.statusList || [])
                 mergeMethodEnumId = mr.mergeMethodEnumId || repo.defaultMergeMethodEnumId || 'GmmMerge'
                 missingList = []
-                if (mr.statusId === 'GmrDraft') missingList.push('It is a draft: mark it ready')
-                else if (mr.statusId !== 'GmrOpen') missingList.push('It is not open')
+                if (mr.statusId === 'GmrDraft') missingList.push(ec.l10n.localize('It is a draft: mark it ready'))
+                else if (mr.statusId !== 'GmrOpen') missingList.push(ec.l10n.localize('It is not open'))
                 if (repo.archivedDate) missingList.push('The repository is archived')
                 if (mr.mergeableEnumId === 'GmaConflict') missingList.push('Conflicts in ' + mergeRequest.conflictPathList.join(', '))
                 if (mr.mergeableEnumId === 'GmaUnchecked') missingList.push('The target moved; checking')
@@ -476,7 +476,7 @@ along with this software (see the LICENSE.md file). If not, see
                 canEdit = !!ec.user.userId && (ec.user.userId === mr.authorUserId || access.canUpdate) && ['GmrDraft', 'GmrOpen'].includes(mr.statusId)
                 if (mr.hiddenDate) missingList.push('It is hidden')
                 canMerge = !!access.canUpdate && missingList.length === 0
-                if (!access.canUpdate) missingList.push('You may not push to the target')
+                if (!access.canUpdate) missingList.push(ec.l10n.localize('You may not push to the target'))
             ]]></script>
         </actions>
     </service>

@@ -238,13 +238,13 @@
     ops.SNIPPETS = [
         { key: "label", label: "Label", xml: "<label text=\"New label\" type=\"p\"/>" },
         { key: "link", label: "Link", xml: "<link url=\".\" text=\"New link\" btn-type=\"default\"/>" },
-        { key: "box", label: "Box with header and body", xml: "<container-box name=\"NewBox\"><box-header title=\"New box\"/><box-body></box-body></container-box>" },
+        { key: "box", label: moqui.l10n.localize("Box with header and body"), xml: "<container-box name=\"NewBox\"><box-header title=\"New box\"/><box-body></box-body></container-box>" },
         { key: "container", label: "Container", xml: "<container name=\"NewContainer\"></container>" },
-        { key: "row", label: "Row of two columns", xml: "<container-row name=\"NewRow\"><row-col md=\"6\"></row-col><row-col md=\"6\"></row-col></container-row>" },
-        { key: "section", label: "Section with a condition", xml: "<section name=\"NewSection\" condition=\"true\"><widgets></widgets></section>" },
-        { key: "dialog", label: "Dynamic dialog", xml: "<dynamic-dialog id=\"NewDialog\" button-text=\"Open\" transition=\".\"/>" },
-        { key: "menu", label: "Button menu", xml: "<button-menu text=\"More\"></button-menu>" },
-        { key: "status", label: "Status bar", xml: "<status-bar/>" }
+        { key: "row", label: moqui.l10n.localize("Row of two columns"), xml: "<container-row name=\"NewRow\"><row-col md=\"6\"></row-col><row-col md=\"6\"></row-col></container-row>" },
+        { key: "section", label: moqui.l10n.localize("Section with a condition"), xml: "<section name=\"NewSection\" condition=\"true\"><widgets></widgets></section>" },
+        { key: "dialog", label: moqui.l10n.localize("Dynamic dialog"), xml: "<dynamic-dialog id=\"NewDialog\" button-text=\"Open\" transition=\".\"/>" },
+        { key: "menu", label: moqui.l10n.localize("Button menu"), xml: "<button-menu text=\"More\"></button-menu>" },
+        { key: "status", label: moqui.l10n.localize("Status bar"), xml: "<status-bar/>" }
     ];
     // An element's label for the Outline: its name with its naming attributes.
     ops.labelOf = (node) => {
@@ -348,6 +348,7 @@
         },
         beforeUnmount() { clearTimeout(this.renderTimer); root.removeEventListener("resize", this.onScroll); if (this.offSaved) this.offSaved(); },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             load() {
                 const params = this.tab.page ? { page: this.tab.page } : { rootId: this.ctx.rootId, path: this.tab.path };
                 this.ctx.get("screenView", params).then((answer) => {
@@ -368,7 +369,7 @@
             buffers() { return [this.tab].concat(this.tab.companions || []); },
             // the frame renders the buffers: the dirty ones go to the canvas buffer first
             render() {
-                if (!this.view || !this.view.urlPath) { this.frameError = this.view ? "This screen is not mounted under the apps, so it has no page to show." : ""; return; }
+                if (!this.view || !this.view.urlPath) { this.frameError = this.view ? moqui.l10n.localize("This screen is not mounted under the apps, so it has no page to show.") : ""; return; }
                 this.rendering = true;
                 const files = this.buffers().filter((buffer) => buffer.text !== buffer.saved || buffer.missing)
                     .map((buffer) => ({ rootId: buffer === this.tab ? this.ctx.rootId : buffer.rootId, path: buffer.path, text: buffer.text }));
@@ -565,8 +566,8 @@
                 const base = { kind, name: "", title: "", text: "", transition: "", service: "", entity: "", keyField: "", fieldName: intents ? intents.field : "", where: "after", sectionKind: "box" };
                 if (kind === "filter") {
                     const find = ops.listFindOf(this.baseOutline, form ? attrOf(form.node, "list") : "");
-                    base.why = !find ? "The list's find is not in this screen's actions, so its filters cannot be told apart."
-                        : !ops.hasSearchInputs(find) ? "The list's find has no search-form-inputs, so a header filter would not narrow it: add search-form-inputs to its find first." : "";
+                    base.why = !find ? moqui.l10n.localize("The list's find is not in this screen's actions, so its filters cannot be told apart.")
+                        : !ops.hasSearchInputs(find) ? moqui.l10n.localize("The list's find has no search-form-inputs, so a header filter would not narrow it: add search-form-inputs to its find first.") : "";
                 }
                 this.intent = base;
             },
@@ -670,7 +671,7 @@
   <div class="col row no-wrap m-dev-screen-body">
     <div class="m-dev-screen-side column no-wrap">
       <q-btn-toggle dense no-caps flat spread v-model="panel" @update:model-value="v => v === 'actions' && loadComposer()"
-          :options="[{ label: 'Extension points', value: 'points' }, { label: 'Outline', value: 'outline' }, { label: 'Actions', value: 'actions' }, { label: 'Doc', value: 'doc' }]" id="DevScreenPanel"></q-btn-toggle>
+          :options="[{ label: t('Extension points'), value: 'points' }, { label: 'Outline', value: 'outline' }, { label: 'Actions', value: 'actions' }, { label: 'Doc', value: 'doc' }]" id="DevScreenPanel"></q-btn-toggle>
       <div v-if="panel === 'doc' && view" class="col scroll" id="DevScreenDoc">
         <m-dev-artifact-doc :base="ctx.base" :artifact-id="'screen:' + view.location" :stamp="view"></m-dev-artifact-doc>
       </div>
@@ -742,7 +743,7 @@
             <q-btn v-if="selection.node.name === 'transition'" dense flat no-caps icon="sym_o_alt_route" label="Override transition"
                 :disable="!canEdit" @click="copyBase" id="DevOverrideTransition"></q-btn>
           </template>
-          <q-btn dense flat no-caps icon="sym_o_code" label="Open in Text" @click="openText"></q-btn>
+          <q-btn dense flat no-caps icon="sym_o_code" :label="t('Open in Text')" @click="openText"></q-btn>
         </div>
         <template v-if="elementSpec && canEdit">
           <div class="text-subtitle2 q-mt-md">Properties</div>
@@ -760,8 +761,8 @@
       <div v-else class="m-muted text-caption">Click an element on the canvas, an extension point, or a block of the Outline.</div>
       <div v-if="extensionMode" class="q-mt-md">
         <div class="text-caption text-weight-medium">The screen's actions</div>
-        <q-btn dense flat no-caps size="sm" label="Actions before" :disable="!canEdit" @click="apply(actionsExtendOps('before'))"></q-btn>
-        <q-btn dense flat no-caps size="sm" label="Actions after" :disable="!canEdit" @click="apply(actionsExtendOps('after'))"></q-btn>
+        <q-btn dense flat no-caps size="sm" :label="t('Actions before')" :disable="!canEdit" @click="apply(actionsExtendOps('before'))"></q-btn>
+        <q-btn dense flat no-caps size="sm" :label="t('Actions after')" :disable="!canEdit" @click="apply(actionsExtendOps('after'))"></q-btn>
       </div>
     </div>
   </div>
@@ -771,7 +772,7 @@
       <q-card-section class="q-pt-none q-gutter-y-sm">
         <q-input dense outlined v-model="adding.name" label="Field name" autofocus for="DevScreenFieldName"></q-input>
         <q-input dense outlined v-model="adding.title" label="Title" for="DevScreenFieldTitle"></q-input>
-        <q-select dense outlined v-model="adding.widget" :options="['display', 'text-line', 'text-area', 'date-time', 'drop-down', 'check', 'link']" label="Widget"></q-select>
+        <q-select dense outlined v-model="adding.widget" :options="['display', 'text-line', 'text-area', 'date-time', 'drop-down', 'check', 'link']" :label="t('Widget')"></q-select>
         <q-select dense outlined clearable v-model="adding.after" :options="adding.fields" label="After"></q-select>
         <div class="text-caption m-muted" v-if="extensionMode">Written to the site's screen-extend as a {{adding.kind}} merge; after= places it in the layout or its column.</div>
       </q-card-section>
@@ -788,7 +789,7 @@
           <q-input dense outlined v-model="intent.fieldName" label="The column's field" for="DevFilterField"></q-input>
         </template>
         <template v-if="intent.kind === 'section'">
-          <q-btn-toggle dense no-caps v-model="intent.sectionKind" :options="[{ label: 'A box', value: 'box' }, { label: 'A related list', value: 'related' }]"
+          <q-btn-toggle dense no-caps v-model="intent.sectionKind" :options="[{ label: t('A box'), value: 'box' }, { label: 'A related list', value: 'related' }]"
 ></q-btn-toggle>
           <q-input dense outlined v-model="intent.name" label="Name (its anchor)"></q-input>
           <q-input dense outlined v-model="intent.title" label="Title"></q-input>
@@ -812,7 +813,7 @@
     <q-card v-if="inserting" style="width: 32rem; max-width: 95vw" id="DevInsertDialog">
       <q-card-section class="text-subtitle1">Insert {{inserting.where}} {{inserting.anchor}}</q-card-section>
       <q-card-section class="q-pt-none q-gutter-y-sm">
-        <q-select dense outlined emit-value map-options v-model="inserting.snippet" :options="snippets.map(s => ({ label: s.label, value: s.key }))" label="Widget"></q-select>
+        <q-select dense outlined emit-value map-options v-model="inserting.snippet" :options="snippets.map(s => ({ label: s.label, value: s.key }))" :label="t('Widget')"></q-select>
         <q-input dense outlined type="textarea" autogrow v-model="inserting.text" label="Or the XML" class="m-dev-mono"></q-input>
       </q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="inserting = null"></q-btn>

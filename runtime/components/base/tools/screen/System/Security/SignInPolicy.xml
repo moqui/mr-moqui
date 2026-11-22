@@ -63,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
             const policy = Array.from(policyOut?.settingList || []).filter(row => ['Sign-in policy', 'Sign-in'].includes(row.settingGroup))
             policyRows = policy.map(row => Object.assign({}, row, {
                 shownValue: row.value === '' || row.value == null ? 'Not set' : row.value,
-                changedText: row.editable ? 'In Instance settings' : 'In the deployment'
+                changedText: row.editable ? ec.l10n.localize('In Instance settings') : 'In the deployment'
             }))
             policyAvailable = !!policyOut?.settingList
             rulesAvailable = !!groupsOut?.groupList
@@ -72,9 +72,9 @@ along with this software (see the LICENSE.md file). If not, see
                 .filter(row => rulesOnly !== 'Y' || row.requireAuthcFactor || row.ipLimited)
                 .map(row => Object.assign({}, row, {
                     factorText: row.requireAuthcFactor ? 'Required' : 'Not required',
-                    ipText: row.ipAllowed || 'Any address',
+                    ipText: row.ipAllowed || ec.l10n.localize('Any address'),
                     requireAuthcFactor: row.requireAuthcFactor ? 'Y' : 'N',
-                    whoText: row.privileged ? 'Privileged: changed by its members' : row.canChange ? '' : 'Changed by an instance administrator'
+                    whoText: row.privileged ? ec.l10n.localize('Privileged: changed by its members') : row.canChange ? '' : ec.l10n.localize('Changed by an instance administrator')
                 }))
             findValues = {text: text, rulesOnly: rulesOnly}
         ]]></script>

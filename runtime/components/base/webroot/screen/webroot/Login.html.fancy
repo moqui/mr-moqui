@@ -17,8 +17,8 @@
 <input type="password" name="password" required autocomplete="current-password" placeholder="${ec.l10n.localize("Password")}" aria-label="${ec.l10n.localize("Password")}">
 </#if>
 <button data-btn="primary" data-size="lg" type="submit">${ec.l10n.localize("Sign in")}</button>
-<#if expiredCredentials><p class="warning">WARNING: Your password has expired</p></#if>
-<#if passwordChangeRequired><p class="warning">WARNING: Password change required</p></#if>
+<#if expiredCredentials><p class="warning">${ec.l10n.localize("WARNING: Your password has expired")}</p></#if>
+<#if passwordChangeRequired><p class="warning">${ec.l10n.localize("WARNING: Password change required")}</p></#if>
 </form>
 </section>
 <#if showSso>
@@ -55,7 +55,7 @@
 <input type="password" name="newPassword" required autocomplete="new-password" placeholder="${ec.l10n.localize("New Password")}" aria-label="${ec.l10n.localize("New Password")}">
 <input type="password" name="newPasswordVerify" required autocomplete="new-password" placeholder="${ec.l10n.localize("New Password Verify")}" aria-label="${ec.l10n.localize("New Password Verify")}">
 <button data-btn="danger" data-size="lg" type="submit">${ec.l10n.localize("Change Password")}</button>
-<p class="muted">Password must be at least ${minLength} characters with at least <strong>${minDigits} number${minDigits > 1 ? "s" : ""}</strong><#if minOthers > 0> and at least <strong>${minOthers} punctuation character${minOthers > 1 ? "s" : ""}</strong></#if></p>
+<p class="muted"><#if (minOthers > 0)><#if (minDigits > 1)><#if (minOthers > 1)>${raw(ec.resource.expand("Password must be at least ${minLength} characters with at least <strong>${minDigits} numbers</strong> and at least <strong>${minOthers} punctuation characters</strong>", ""))}<#else>${raw(ec.resource.expand("Password must be at least ${minLength} characters with at least <strong>${minDigits} numbers</strong> and at least <strong>${minOthers} punctuation character</strong>", ""))}</#if><#else><#if (minOthers > 1)>${raw(ec.resource.expand("Password must be at least ${minLength} characters with at least <strong>${minDigits} number</strong> and at least <strong>${minOthers} punctuation characters</strong>", ""))}<#else>${raw(ec.resource.expand("Password must be at least ${minLength} characters with at least <strong>${minDigits} number</strong> and at least <strong>${minOthers} punctuation character</strong>", ""))}</#if></#if><#else><#if (minDigits > 1)>${raw(ec.resource.expand("Password must be at least ${minLength} characters with at least <strong>${minDigits} numbers</strong>", ""))}<#else>${raw(ec.resource.expand("Password must be at least ${minLength} characters with at least <strong>${minDigits} number</strong>", ""))}</#if></#if></p>
 </form>
 </section>
 </div>

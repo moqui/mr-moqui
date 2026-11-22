@@ -115,7 +115,7 @@ along with this software (see the LICENSE.md file). If not, see
             canEdit = !!(view && view.tier !== 'view' && screen.edit && !editFile.readOnly && base)
             screenName = view ? view.location.split('/').pop().replace(/\.xml$/, '') : ''
             headerText = view ? [view.location, view.urlPath || '', view.upstream ? 'upstream' : 'site'].filter((part) => part).join(' · ') : ''
-            editsGo = !view ? '' : !screen.edit ? 'This screen is upstream and there is no site component to extend it in: create one on Home'
+            editsGo = !view ? '' : !screen.edit ? ec.l10n.localize('This screen is upstream and there is no site component to extend it in: create one on Home')
                 : extension ? 'Extension mode: every edit goes to the site\'s ' + screen.edit.path : 'Edits go to ' + screen.edit.path
             readOnlyReason = view && screen.edit && editFile.readOnly ? editFile.readOnlyReason || '' : ''
             pendingText = guided.pendingText(screen.buffer)
@@ -126,7 +126,7 @@ along with this software (see the LICENSE.md file). If not, see
             const here = {rootId: rootId || null, path: path || null, page: page || null}
             const urlOf = (extra) => sri.buildUrl('../Design').addParameters(Object.assign({}, here, extra)).getUrlWithParams()
             tabItems = [['design', 'Design'], ['preview', 'Preview'], ['text', 'Text' + (screen.buffer.pending.count ? ' ' + screen.buffer.pending.count : '')],
-                ['points', 'Extension points']].map(([name, title]) => ({title, url: urlOf({tab: name, node: node || null}), active: name === tab}))
+                ['points', ec.l10n.localize('Extension points')]].map(([name, title]) => ({title, url: urlOf({tab: name, node: node || null}), active: name === tab}))
             workspaceBase = baseFile.rootId ? '/qapps/dev/Workspace?rootId=' + encodeURIComponent(baseFile.rootId) + '&path=' + encodeURIComponent(baseFile.path) : ''
 
             // the outline as the tree component's rows, each opening its element
@@ -157,7 +157,7 @@ along with this software (see the LICENSE.md file). If not, see
             const nearest = selected && !ownNode && selected.path.length && !ops.anchorName(selected) ? ops.nearestAnchor(base, selected.path) : null
             anchorNote = extension && !ownNode && selected && selected.path.length ? (ops.anchorName(selected) && ops.ANCHORABLE.includes(selected.name)
                 ? 'Inserts anchor at ' + ops.anchorName(selected) : nearest ? 'This element has no name: inserts go ' + nearest.where + ' ' + nearest.name + ', the nearest anchor'
-                : 'Nothing near this element has a name to anchor at') : ''
+                : ec.l10n.localize('Nothing near this element has a name to anchor at')) : ''
             snippetOptions = ops.SNIPPETS.map((item) => ({key: item.key, label: item.label}))
 
             // the properties of the selected element, from the schema digest: one row per attribute, its values when listed
@@ -173,7 +173,7 @@ along with this software (see the LICENSE.md file). If not, see
                     about: String(attr.doc || '').replace(/\s+/g, ' ').slice(0, 90) + (String(attr.doc || '').length > 90 ? '…' : '') +
                         (attr.default != null ? ' (default ' + attr.default + ')' : ''), node: selectedKey}))
                     .concat(Object.keys(have).filter((name) => !names.includes(name)).map((name) => ({attrName: name, attrValue: have[name],
-                        valueOptions: [], choose: false, about: 'Not in the schema', node: selectedKey})))
+                        valueOptions: [], choose: false, about: ec.l10n.localize('Not in the schema'), node: selectedKey})))
             }
 
             extensionPath = extension && screen.edit ? screen.edit.path : ''

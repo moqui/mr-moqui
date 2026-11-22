@@ -44,7 +44,7 @@ along with this software (see the LICENSE.md file). If not, see
             types = Array.from(found?.typeList || []).map(row => Object.assign({}, row, {
                 handlerText: [row.sendHandlerText ? 'Send: ' + row.sendHandlerText : '', row.consumeHandlerText ? 'Consume: ' + row.consumeHandlerText : '']
                     .filter(Boolean).join(' · ') || 'None',
-                changeText: row.configurable ? 'Changed here' : 'Its owner\'s deployment',
+                changeText: row.configurable ? ec.l10n.localize('Changed here') : ec.l10n.localize('Its owner\'s deployment'),
                 changeColor: row.configurable ? 'positive' : 'grey-7'}))
             typesCount = Number(found?.typeCount || 0)
             typesPageIndex = Number(found?.pageIndex || 0)

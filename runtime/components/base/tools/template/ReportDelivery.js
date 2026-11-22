@@ -53,17 +53,17 @@ const occurrenceStates = {
     RptOccFailed: ["Failed", "negative"]
 }
 const occurrenceReasons = {
-    empty: "The report had no data, so nothing was sent",
-    "owner-inactive": "Its owner is not active, so it was paused",
-    "source-failure": "The report could not be rendered",
-    "run-ended": "The run ended before it finished",
+    empty: ec.l10n.localize("The report had no data, so nothing was sent"),
+    "owner-inactive": ec.l10n.localize("Its owner is not active, so it was paused"),
+    "source-failure": ec.l10n.localize("The report could not be rendered"),
+    "run-ended": ec.l10n.localize("The run ended before it finished"),
     skipped: "Nothing was due"
 }
 const pauseReasons = {
-    "owner-disabled": "Paused until a new owner takes it",
-    "transfer-pending": "Paused until its new owner resumes it"
+    "owner-disabled": ec.l10n.localize("Paused until a new owner takes it"),
+    "transfer-pending": ec.l10n.localize("Paused until its new owner resumes it")
 }
-const unread = "A report you do not read"
+const unread = ec.l10n.localize("A report you do not read")
 
 const text = value => String(value ?? "").trim()
 const idList = value =>
@@ -188,10 +188,10 @@ const groupOptions = found => found.groups.map(group => ({value: group.userGroup
 function unaccepted(policy, users, groups) {
     if (!groups.length && users.every(userId => userId === ec.user.userId)) return null
     const found = recipients(policy, {userIds: users, groupIds: groups})
-    if (found.failure) return "The recipients could not be checked just now"
-    if (!found.canDeliver) return "Delivering a report to other people needs the group delivery grant"
-    if (found.refusedGroupIds.length) return "Deliver only to a group you belong to"
-    if (found.refusedUserIds.length) return "Choose recipients among the people who may receive reports here"
+    if (found.failure) return ec.l10n.localize("The recipients could not be checked just now")
+    if (!found.canDeliver) return ec.l10n.localize("Delivering a report to other people needs the group delivery grant")
+    if (found.refusedGroupIds.length) return ec.l10n.localize("Deliver only to a group you belong to")
+    if (found.refusedUserIds.length) return ec.l10n.localize("Choose recipients among the people who may receive reports here")
     return null
 }
 // recipientChoices: the people a drop-down offers as the viewer types, with the selected ones outside the page.
@@ -256,7 +256,7 @@ function scheduleRow(row, last, names) {
         title: row.emailSubject || row.definitionTitle || row.definitionId,
         definitionId: row.definitionId,
         definitionTitle: row.definitionTitle || unread,
-        modeText: modeTexts[row.deliveryMode] || "Owner mode",
+        modeText: modeTexts[row.deliveryMode] || ec.l10n.localize("Owner mode"),
         audienceText: audienceText(row, names),
         cronText: cronText(row.cronExpression),
         formatText: formatText(formats, row.renderMode),
@@ -267,7 +267,7 @@ function scheduleRow(row, last, names) {
             ? dateText(last.occurrenceDate) + " · " + lastState[0]
             : row.lastRunTime
               ? dateText(row.lastRunTime)
-              : "Not yet run",
+              : ec.l10n.localize("Not yet run"),
         lastOccurrenceId: last?.occurrenceId || null,
         revision: row.revision
     }
@@ -296,7 +296,7 @@ function screenRow(row) {
         lastOccurrenceId: null,
         // a group on a screen schedule is sent to only through a registered adapter (the framework's rule)
         groupNote:
-            row.userGroupId && !row.groupAdmitted ? "Its group is not sent to: this list is not admitted for group delivery" : ""
+            row.userGroupId && !row.groupAdmitted ? ec.l10n.localize("Its group is not sent to: this list is not admitted for group delivery") : ""
     }
 }
 function deliveryRow(delivery) {
@@ -323,7 +323,7 @@ function occurrenceRow(occurrence) {
         occurrenceId: occurrence.occurrenceId,
         screenScheduledId: occurrence.screenScheduledId,
         dateText: dateText(occurrence.occurrenceDate),
-        kindText: occurrence.occurrenceKind === "manual" ? "Sent now" : "Scheduled",
+        kindText: occurrence.occurrenceKind === "manual" ? ec.l10n.localize("Sent now") : "Scheduled",
         stateText: state[0],
         stateColor: state[1],
         reasonText: occurrenceReasons[occurrence.reasonCode] || "",
@@ -455,7 +455,7 @@ function audienceRows(checked) {
         viaText: Array.from(recipient.viaGroupIds || []).length ? "In a group" : "Named",
         eligible: recipient.eligible === true,
         blocking: recipient.blocking === true,
-        resultText: recipient.eligible ? "May receive it" : recipient.reason,
+        resultText: recipient.eligible ? ec.l10n.localize("May receive it") : recipient.reason,
         resultColor: recipient.eligible ? "positive" : recipient.blocking ? "negative" : "warning",
         reasonCode: recipient.reasonCode || ""
     }))
@@ -519,7 +519,7 @@ function detail(screenScheduledId) {
         expectedRevision: row.revision
     })
     const recipientRows = schedule.recipientUserIds
-        .map(userId => ({kind: "Person", name: names.users[userId] || "A person who may no longer receive it here"}))
+        .map(userId => ({kind: "Person", name: names.users[userId] || ec.l10n.localize("A person who may no longer receive it here")}))
         .concat(schedule.recipientGroupIds.map(groupId => ({kind: "Group", name: names.groups[groupId] || groupId})))
     // each recipient's result, for one who may deliver to others: eligibility, never the other person's grants
     let audience = []
@@ -533,7 +533,7 @@ function detail(screenScheduledId) {
         })
         if (checked.failure) {
             ec.logger.error("Report delivery: audience of " + row.screenScheduledId + ": " + checked.failure)
-            audienceNote = "The recipients could not be checked just now."
+            audienceNote = ec.l10n.localize("The recipients could not be checked just now.")
         } else {
             audience = audienceRows(checked.out)
             audienceNote =
@@ -581,7 +581,7 @@ function create(p) {
     const mount = mountLib.state()
     const definitionId = text(p.newDefinitionId)
     if (!schedulable(mount).some(definition => definition.id === definitionId))
-        return refuse("Choose a dashboard or report you may read")
+        return refuse(ec.l10n.localize("Choose a dashboard or report you may read"))
     const others = p.audienceKind === "group"
     const users = others ? idList(p.recipientUserIds) : []
     const groups = others ? idList(p.recipientGroupIds) : []
@@ -644,7 +644,7 @@ function storeAudience(p) {
     return done(
         stored.out.deliveryMode === "group"
             ? "Recipients saved: " + stored.out.recipientCount + " checked"
-            : "The schedule now goes to you alone"
+            : ec.l10n.localize("The schedule now goes to you alone")
     )
 }
 // pauseSchedules: one schedule or several paused or resumed, each with its own result; a resume the engine refuses (a
@@ -670,7 +670,7 @@ function send(p) {
     if (sent.failure) return refuse(sent.failure)
     if (sent.out.skipped === true)
         return ec.message.addMessage("Nothing was sent: " + (text(sent.out.reason) || "not due"), "warning")
-    return done("Sent: each recipient has their own message")
+    return done(ec.l10n.localize("Sent: each recipient has their own message"))
 }
 const encode = value => WebUtilities.encodeHtml(String(value ?? ""))
 const page = (title, body) =>
@@ -700,13 +700,13 @@ function previewPage(p) {
         : preview.out.empty === true
           ? "<p>The report has no data for its period.</p>"
           : fileLink(preview.out, "Download the preview") + "<p>This is your own result, as you may read it now.</p>"
-    return page("Report preview", body)
+    return page(ec.l10n.localize("Report preview"), body)
 }
 // ownReportFile: the viewer's own delivered report, rendered again as themselves by the engine, or why it is not released.
 function ownReportPage(p) {
     const report = ask("get#RecipientReport", {deliveryId: p.deliveryId})
     const body = report.failure
-        ? "<p>This delivery is not available.</p>"
+        ? "<p>" + ec.l10n.localize("This delivery is not available") + ".</p>"
         : !report.out.available
           ? "<p>Your access to this report's data changed since it was sent, so the sent report is not released. Open the report to see what you may read now.</p>"
           : fileLink(report.out, "Download " + (report.out.title || "the report")) +
@@ -761,7 +761,7 @@ function delivery(occurrenceId) {
                   ", report version " +
                   (occurrence.definitionVersion ?? "–")
                 : "",
-            modeText: modeTexts[occurrence.deliveryMode] || (whole ? "Owner mode" : ""),
+            modeText: modeTexts[occurrence.deliveryMode] || (whole ? ec.l10n.localize("Owner mode") : ""),
             rendersText:
                 whole && occurrence.renderCount
                     ? occurrence.renderCount + (occurrence.renderCount === 1 ? " render" : " renders")
@@ -793,14 +793,14 @@ function retry(p) {
 function reconcile(p) {
     const settled = ask("reconcile#ReportRecipient", {deliveryId: p.deliveryId, outcome: p.outcome, reason: text(p.reason)})
     if (settled.failure) return refuse(settled.failure)
-    return done("Delivery settled")
+    return done(ec.l10n.localize("Delivery settled"))
 }
 // exportAudit: one run's delivery status as CSV for whom the page shows it: every recipient's result with its safe
 // reason for the run's owner and the administrator, a recipient's own row alone. No report content, address or frame;
 // the export is recorded (audit#Export). Null with the refusal when the run is not the viewer's to see.
 function auditCsv(p) {
     const found = delivery(p.occurrenceId)
-    if (!found.found) return refuse("This delivery is not available")
+    if (!found.found) return refuse(ec.l10n.localize("This delivery is not available"))
     const occurrence = found.occurrence
     // a recipient's own row: named as they are, since their own delivery carries their id alone
     const account = ec.user.userAccount

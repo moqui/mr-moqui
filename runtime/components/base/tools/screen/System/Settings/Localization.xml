@@ -145,7 +145,7 @@ along with this software (see the LICENSE.md file). If not, see
             kindOptions = [{key: 'messages', text: 'Messages'}, {key: 'labels', text: 'Labels'}]
             // missing translations are listed for one locale (and for labels one kind of label)
             missingNeeds = wantMissing && (!locale || (kind === 'labels' && !targetKey))
-                ? (kind === 'labels' ? 'Choose a kind of label and a locale to list what is missing.' : 'Choose a locale to list what is missing.') : ''
+                ? (kind === 'labels' ? ec.l10n.localize('Choose a kind of label and a locale to list what is missing.') : ec.l10n.localize('Choose a locale to list what is missing.')) : ''
             filtered = !!(locale || text || wantMissing || targetKey)
             findValues = {kind, locale, text, missing: wantMissing ? 'true' : '', targetKey}
             firstRow = Number(pageIndex || 0) * pageSize

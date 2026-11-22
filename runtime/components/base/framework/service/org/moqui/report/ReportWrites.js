@@ -26,7 +26,7 @@ const flag = value => value === true || value === "true" || value === "Y"
 // (render#ScheduledScreen, ec.resource.expand), so one set here is plain text: an expression is refused, as the expander
 // would read it.
 function storeScreenSchedule(p) {
-    if (!ec.user.userId) throw new Error("A screen schedule is changed by a signed-in user")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("A screen schedule is changed by a signed-in user"))
     const screenScheduledId = text(p.screenScheduledId)
     const row = screenScheduledId
         ? ec.entity

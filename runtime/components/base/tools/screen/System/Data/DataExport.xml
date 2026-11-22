@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!ec.message.hasError()) {
                     if (exported?.refused) ec.message.addError(exported.reason || 'The export was refused')
                     else if (exported?.exported) ec.web.sendTextResponse(exported.fileText, exported.contentType, exported.filename)
-                    else ec.message.addError('Nothing was exported')
+                    else ec.message.addError(ec.l10n.localize('Nothing was exported'))
                 }
             ]]></script>
         </actions>

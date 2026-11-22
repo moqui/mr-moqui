@@ -31,7 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.admin.ConfigurationServices.store#IdentityProvider" out-map="stored"
                     in-map="{authFlowId:(newProviderId || null), authFlowTypeEnumId:newTypeEnumId, description:newDescription}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(stored.applied ? 'Provider started. It stays disabled until it is configured, tested and enabled.' : stored.reason,
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Provider started. It stays disabled until it is configured, tested and enabled.') : stored.reason,
                     stored.applied ? 'success' : 'warning')</script>
                 <set field="authFlowId" from="stored.applied ? stored.authFlowId : null"/>
             </if>

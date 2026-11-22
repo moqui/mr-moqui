@@ -135,7 +135,7 @@ along with this software (see the LICENSE.md file). If not, see
                 reference: reference, fromDate: fromDate, thruDate: thruDate, pageIndex: pageIndex}
             filterJson = JSON.stringify(filters)
             // bulk recovery: what of this page may be chosen, by the action
-            bulkActions = [{value: 'retry', label: 'Retry now', flag: 'retryEligible'}, {value: 'requeue', label: 'Queue again', flag: 'requeueEligible'},
+            bulkActions = [{value: 'retry', label: ec.l10n.localize('Retry now'), flag: 'retryEligible'}, {value: 'requeue', label: ec.l10n.localize('Queue again'), flag: 'requeueEligible'},
                 {value: 'cancel', label: 'Cancel', flag: 'cancelEligible'}]
             bulkChoices = messages.filter(row => bulkActions.some(option => row[option.flag])).map(row => ({value: row.systemMessageId,
                 label: row.systemMessageId + ' · ' + row.routeText + ' · ' + row.stateText + ' ('
@@ -150,10 +150,10 @@ along with this software (see the LICENSE.md file). If not, see
         <if condition="reviewing">
             <!-- a refusal is shown as its reason (AdminCalls.read; ignore-error would clear it, F129) -->
             <set field="called" from="ec.resource.script('component://framework/service/org/moqui/admin/AdminCalls.js').read('org.moqui.admin.OperationServices.preview#Recovery',
-                    {targetKind:'SystemMessage', targetIdList:bulkChosen.slice(0, 25)}, 'The messages could not be reviewed')"/>
+                    {targetKind:'SystemMessage', targetIdList:bulkChosen.slice(0, 25)}, ec.l10n.localize('The messages could not be reviewed'))"/>
             <set field="previewed" from="called.out"/>
             <script><![CDATA[
-                reviewFailure = previewed?.previewList ? '' : (called.failure || 'The messages could not be reviewed')
+                reviewFailure = previewed?.previewList ? '' : (called.failure || ec.l10n.localize('The messages could not be reviewed'))
                 reviewAction = bulkActions.find(option => option.value === bulkAction) || null
                 reviewRows = reviewAction ? Array.from(previewed?.previewList || []).map(row => {
                     const offered = Array.from(row.actionList || []).find(option => option.action === reviewAction.value) || {}

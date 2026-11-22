@@ -20,8 +20,8 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Contact" default-menu-include="false">
 
     <transition name="saveContact"><actions><script><![CDATA[
-        if (!contactName || !String(contactName).trim()) ec.message.addValidationError(null, 'contactName', null, 'Enter the name', null)
-        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(emailAddress))) ec.message.addValidationError(null, 'emailAddress', null, 'Enter an email address', null)
+        if (!contactName || !String(contactName).trim()) ec.message.addValidationError(null, 'contactName', null, ec.l10n.localize('Enter the name'), null)
+        if (emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(emailAddress))) ec.message.addValidationError(null, 'emailAddress', null, ec.l10n.localize('Enter an email address'), null)
         if (ec.message.hasError()) return
         ec.message.addMessage('Contact ' + String(contactName).trim() + ' saved (gallery demo: nothing is written)', 'success')
     ]]></script></actions><default-response url="."/></transition>

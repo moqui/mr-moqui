@@ -75,7 +75,7 @@
         definitionOffers={import:!!mountLinks.import,share:!mountLinks.share,panelEditor:sri.buildUrl(mountLinks.panel || '.').path}
         // a new panel starts on Tools' log dataset where the author reads it, else on the first dataset they may read
         const firstDataset=(datasetOptions.find(dataset=>dataset.id==='otel_logs') || datasetOptions[0] || {id:'otel_logs'}).id
-        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:'New panel',visualization:'table',queries:[{datasetId:firstDataset,mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',paper:'letter',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
+        definition = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition : {id:'',type:definitionType || 'dashboard',title:'',body:definitionType==='panel'?{title:ec.l10n.localize('New panel'),visualization:'table',queries:[{datasetId:firstDataset,mode:'documents'}]}:definitionType==='report'?{dashboards:[],orientation:'portrait',paper:'letter',layout:'grid',appendix:true}:{panels:{},layout:{type:'autoGrid'}},readOnly:false}
         definitionType = definition.type; definitionTitle = definition.title; definitionVersion = definition.version || 0; definitionUserGroupId = definition.userGroupId || null
         definitionJson = JSON.stringify(definition.body,null,2)
         definitionFolder=definition.body.folder || '';definitionTags=(definition.body.tags || []).join(', ')

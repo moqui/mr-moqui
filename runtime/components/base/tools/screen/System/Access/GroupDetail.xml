@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.admin.AccessServices.get#Group" out-map="found"
                     in-map="{userGroupId:userGroupId, includeOptions:true}"/>
             <set field="bundle" from="(found.bundleOptions || []).find(row => row.bundleGroupId == grantBundleGroupId)"/>
-            <script>ec.web.sendJsonResponse(bundle ? [{value: '', label: 'The whole bundle'}]
+            <script>ec.web.sendJsonResponse(bundle ? [{value: '', label: ec.l10n.localize('The whole bundle')}]
                 .concat(bundle.permissions.map(row => ({value: 'p:' + row.userPermissionId,
                     label: row.userPermissionId + (row.description ? ' · ' + row.description : '') + (row.sealed ? ' (sealed)' : '')})))
                 .concat(bundle.artifacts.map(row => ({value: 'a:' + row.artifactGroupId, label: row.description || row.artifactGroupId})))
@@ -62,7 +62,7 @@ along with this software (see the LICENSE.md file). If not, see
                         groupTypeEnumId:(groupTypeEnumId || null), requireAuthcFactor:(requireAuthcFactor || 'N'),
                         ipAllowed:(ipAllowed || ''), reason:(reason || null)}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(stored.applied ? 'Group saved' : stored.reason, stored.applied ? 'success' : 'warning')</script>
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Group saved') : stored.reason, stored.applied ? 'success' : 'warning')</script>
             </if>
         </actions>
         <default-response url="."><parameter name="userGroupId"/></default-response>
@@ -291,7 +291,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <set field="previewFailure" from="called.failure"/>
                 </if>
                 <set field="previewRows" from="(preview?.changeList || []).map(row => Object.assign({}, row, {
-                        actionText: row.action === 'end' ? 'End' : 'Add', kindText: row.kind === 'artifact' ? 'App gate' : 'Permission',
+                        actionText: row.action === 'end' ? 'End' : 'Add', kindText: row.kind === 'artifact' ? ec.l10n.localize('App gate') : 'Permission',
                         resultText: !row.allowed ? row.reason : row.noChange ? 'No change' : row.before + ' → ' + row.after}))"/>
                 <set field="applyValues" from="preview ? {userGroupId:userGroupId, grantAction:grantAction, grantBundleGroupId:grantBundleGroupId,
                         grantItem:grantItem, expectedRevision:preview.revision} : {}"/>

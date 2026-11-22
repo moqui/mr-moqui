@@ -184,7 +184,7 @@ function supportSummary() {
         ),
         settingSection,
         settings: Array.from(settingSection.settings || []).map(row =>
-            Object.assign({}, row, {restartText: row.restartRequired ? "After a restart" : ""})
+            Object.assign({}, row, {restartText: row.restartRequired ? ec.l10n.localize("After a restart") : ""})
         )
     }
 }

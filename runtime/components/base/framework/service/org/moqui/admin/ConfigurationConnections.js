@@ -196,11 +196,11 @@ function engine(def) {
     const enabledOf = parts => stateRow(parts)?.disabled !== "Y"
     const stateTexts = {
         ready: "Enabled",
-        untested: "Enabled, not tested as it is configured now",
-        needsTest: "Disabled until a test passes",
+        untested: ec.l10n.localize("Enabled, not tested as it is configured now"),
+        needsTest: ec.l10n.localize("Disabled until a test passes"),
         disabled: "Disabled",
-        incomplete: "Not configured",
-        readOnly: "Read only here"
+        incomplete: ec.l10n.localize("Not configured"),
+        readOnly: ec.l10n.localize("Read only here")
     }
     function stateOf(parts, check) {
         if (def.readOnly?.(parts)) return "readOnly"
@@ -212,11 +212,12 @@ function engine(def) {
     }
     function described(connectionKey, parts, check) {
         const state = stateOf(parts, check)
+        const providerName = text(def.providerName?.(parts))
         return {
             adapterKey: def.adapterKey,
             connectionKey,
             name: text(def.name?.(parts)) || connectionKey,
-            providerName: text(def.providerName?.(parts)),
+            providerName: providerName ? ec.l10n.localize(providerName) : "",
             endpointSummary: text(def.summary?.(parts)),
             enabled: enabledOf(parts) && state !== "incomplete",
             state,
@@ -259,11 +260,11 @@ function engine(def) {
                 .filter(entry => parts[partOf(entry)])
                 .map(entry => ({
                     name: entry.name,
-                    label: entry.label,
+                    label: ec.l10n.localize(entry.label),
                     kind: entry.kind,
                     value: shown(parts, entry),
                     endpoint: !!entry.endpoint,
-                    help: entry.help || "",
+                    help: entry.help ? ec.l10n.localize(entry.help) : "",
                     options: entry.kind === "choice" ? entry.options() : []
                 })),
             // a secret is never returned: only whether one is set
@@ -271,10 +272,10 @@ function engine(def) {
                 .filter(entry => parts[partOf(entry)])
                 .map(entry => ({
                     name: entry.name,
-                    label: entry.label,
+                    label: ec.l10n.localize(entry.label),
                     secretSet: !!text(valueOf(parts, entry)),
                     fixed: fixedOf(entry, parts),
-                    help: entry.help || ""
+                    help: entry.help ? ec.l10n.localize(entry.help) : ""
                 })),
             problem: def.incomplete?.(parts) || null,
             readOnlyReason,
@@ -299,7 +300,7 @@ function engine(def) {
         const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
         return recent
             ? null
-            : refused("reauthRequired", "Confirm it is you: this connection carries the sign-in mail", {connectionKey})
+            : refused("reauthRequired", ec.l10n.localize("Confirm it is you: this connection carries the sign-in mail"), {connectionKey})
     }
 
     // ----- store -----
@@ -316,7 +317,7 @@ function engine(def) {
         let parts = connectionKey ? load(connectionKey) : null
         const creating = !parts
         if (creating) {
-            if (!def.newParts) return refused("NOT_CREATABLE", "A connection of this kind is not started here")
+            if (!def.newParts) return refused("NOT_CREATABLE", ec.l10n.localize("A connection of this kind is not started here"))
             const made = def.newParts(values, p)
             if (made.applied === false) return made
             connectionKey = made.connectionKey
@@ -399,7 +400,7 @@ function engine(def) {
         if (!creating && !def.recentAuth?.(parts) && (endpointChanged || secretWrites.some(row => row.value !== null))) {
             const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
             if (!recent)
-                return refused("reauthRequired", "Confirm it is you: this change repoints the connection or replaces its credentials", {
+                return refused("reauthRequired", ec.l10n.localize("Confirm it is you: this change repoints the connection or replaces its credentials"), {
                     connectionKey,
                     revision
                 })
@@ -422,7 +423,7 @@ function engine(def) {
             if (yes(p.enabled))
                 return refused(
                     "TEST_REQUIRED",
-                    "The configuration changed: test the connection as it is now, and the test enables it",
+                    ec.l10n.localize("The configuration changed: test the connection as it is now, and the test enables it"),
                     {
                         connectionKey,
                         revision
@@ -441,7 +442,7 @@ function engine(def) {
             const problem = def.incomplete?.(after)
             if (problem) return refused("INCOMPLETE", problem, {connectionKey, revision})
             if (!check?.testedConfigHash || check.testedConfigHash !== fingerprint(after))
-                return refused("TEST_REQUIRED", "Test the connection as it is configured now: a passing test enables it", {
+                return refused("TEST_REQUIRED", ec.l10n.localize("Test the connection as it is configured now: a passing test enables it"), {
                     connectionKey,
                     revision
                 })
@@ -527,11 +528,13 @@ function engine(def) {
             reasonCode: null,
             reason:
                 retest && !creating
-                    ? (endpointChanged ? "The endpoint changed: " : "What the connection is tested by changed: ") +
-                      (secretCleared ? "the stored secret was cleared, and " : "") +
-                      (pendingTest
-                          ? "the connection is disabled until a test of it passes"
-                          : "the connection stays disabled: test it as it is now, then enable it")
+                    ? ec.l10n.localize(
+                          (endpointChanged ? "The endpoint changed: " : "What the connection is tested by changed: ") +
+                              (secretCleared ? "the stored secret was cleared, and " : "") +
+                              (pendingTest
+                                  ? "the connection is disabled until a test of it passes"
+                                  : "the connection stays disabled: test it as it is now, then enable it")
+                      )
                     : null,
             connectionKey,
             revision: revisionOf(now),
@@ -555,7 +558,7 @@ function engine(def) {
         lib.requireManage(MANAGE)
         const connectionKey = text(p.connectionKey)
         const parts = load(connectionKey)
-        if (!parts) return refused("CONNECTION_UNAVAILABLE", "The connection is not available", {passed: false})
+        if (!parts) return refused("CONNECTION_UNAVAILABLE", ec.l10n.localize("The connection is not available"), {passed: false})
         const hidden = def.hidden?.(parts)
         if (hidden) return Object.assign({passed: false}, hidden)
         const readOnly = def.readOnly?.(parts)
@@ -569,14 +572,14 @@ function engine(def) {
             return ok
         }
         const problem = def.incomplete?.(parts)
-        let go = add("Configuration", !problem, "The configuration is complete", problem)
+        let go = add("Configuration", !problem, ec.l10n.localize("The configuration is complete"), problem)
         // nothing is sent anywhere while a secret the endpoint change cleared has not been entered again
         if (go && check?.secretCleared === "Y")
             go = add(
                 "Credentials",
                 false,
                 "",
-                "A stored secret was cleared when the endpoint changed: enter it again, then test. Nothing was sent"
+                ec.l10n.localize("A stored secret was cleared when the endpoint changed: enter it again, then test. Nothing was sent")
             )
         if (go) {
             const state = stateRow(parts)
@@ -728,8 +731,8 @@ function remoteFields(part = "main", prefix = "", gateway = false) {
             part,
             label: prefix + (gateway ? "Webhook signature key" : "Shared secret"),
             help: gateway
-                ? "Verifies what the provider sends here"
-                : "Signs messages sent, when no other secret for sending is given",
+                ? ec.l10n.localize("Verifies what the provider sends here")
+                : ec.l10n.localize("Signs messages sent, when no other secret for sending is given"),
             // /rest/sm takes a message of any type from whoever proves a remote's secret, so the secret a remote
             // verifies RECEIVED messages by is not a delegated administrator's to set
             fixed: parts => receivesBySecret(parts[part]),
@@ -751,14 +754,14 @@ function remoteIncomplete(remote) {
     if (!remote || !text(remote.sendUrl)) return null
     const auth = authOf(remote)
     if (auth === "SmatNone") return null
-    if (auth === "SmatLogin" && !text(remote.username)) return "Give the user the remote signs in"
+    if (auth === "SmatLogin" && !text(remote.username)) return ec.l10n.localize("Give the user the remote signs in")
     if ((auth === "" || auth === "SmatLogin") && !text(remote.password))
-        return "Give the password or token the remote signs in with"
+        return ec.l10n.localize("Give the password or token the remote signs in with")
     if (
         auth.startsWith("SmatHmac") &&
         (!text(remote.authHeaderName) || !(text(remote.sendSharedSecret) || text(remote.sharedSecret)))
     )
-        return "Give the signature header and the shared secret messages are signed with"
+        return ec.l10n.localize("Give the signature header and the shared secret messages are signed with")
     return null
 }
 // A remote that is changed here posts over http(s): another transport (SFTP, a local or custom one) is Tools'. own: the
@@ -768,9 +771,9 @@ function remoteIncomplete(remote) {
 function remoteReadOnly(remote, own = false) {
     const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(text(remote?.sendUrl))
     if (text(remote?.sendUrl) && (!scheme || !["http", "https"].includes(scheme[1].toLowerCase())))
-        return "This remote does not post over https (SFTP or a transport of its own): an instance administrator changes it in Tools"
+        return ec.l10n.localize("This remote does not post over https (SFTP or a transport of its own): an instance administrator changes it in Tools")
     if (/^sftp:/i.test(text(remote?.receiveUrl)))
-        return "This remote receives over SFTP: an instance administrator changes it in Tools"
+        return ec.l10n.localize("This remote receives over SFTP: an instance administrator changes it in Tools")
     if (!own || !remote) return null
     const elsewhere = "it reads its address and credentials its own way, and an instance administrator changes it in Tools"
     if (text(remote.sendServiceName) && text(remote.sendServiceName) !== REST_SEND)
@@ -806,11 +809,11 @@ function remoteOwned(systemMessageRemoteId) {
             (text(owner.ownerName) ? " (" + text(owner.ownerName) + ")" : "") +
             ": its address and credentials are changed there"
         )
-    return asked.failed ? "Where this remote is used could not be read, so it is not changed here" : null
+    return asked.failed ? ec.l10n.localize("Where this remote is used could not be read, so it is not changed here") : null
 }
 function remoteTest(remote, context) {
     const url = text(remote?.sendUrl)
-    if (!url) return [{check: "Address", ok: true, text: "No sending address: nothing is sent to this remote"}]
+    if (!url) return [{check: "Address", ok: true, text: ec.l10n.localize("No sending address: nothing is sent to this remote")}]
     // up to the first name the sender fills in
     const target = url.split("${")[0]
     return [Object.assign({check: "Address"}, probe(target, context.denyInternal))]
@@ -833,8 +836,8 @@ const remoteDefinition = (() => {
         newParts: values => {
             const systemMessageRemoteId = text(values.connectionId)
             if (!/^[A-Za-z][A-Za-z0-9_]{2,39}$/.test(systemMessageRemoteId))
-                throw new Error("A remote's id is 3 to 40 letters, digits or underscores, starting with a letter")
-            if (!plainText(values.description, "The name")) throw new Error("Give the remote a name")
+                throw new Error(ec.l10n.localize("A remote's id is 3 to 40 letters, digits or underscores, starting with a letter"))
+            if (!plainText(values.description, "The name")) throw new Error(ec.l10n.localize("Give the remote a name"))
             // what it receives needs a signed-in user authorized to receive system messages, never a secret set here
             return {connectionKey: systemMessageRemoteId, parts: {main: {systemMessageRemoteId, messageAuthEnumId: "SmatLogin"}}}
         },
@@ -851,7 +854,7 @@ const remoteDefinition = (() => {
                     recordType: "SystemMessage",
                     recordId: null,
                     recordName: waiting + " waiting to be sent, " + failed + " in error",
-                    use: "Messages to and from this remote",
+                    use: ec.l10n.localize("Messages to and from this remote"),
                     state: failed ? "attention" : "ok"
                 }
             ]
@@ -861,7 +864,7 @@ const remoteDefinition = (() => {
                     recordType: "SystemMessageRemote",
                     recordId: row.systemMessageRemoteId,
                     recordName: row.description || row.systemMessageRemoteId,
-                    use: "Signs in through this remote first",
+                    use: ec.l10n.localize("Signs in through this remote first"),
                     state: "ok"
                 })
             return found
@@ -959,7 +962,7 @@ const relayDefinition = {
         accountOwned(parts.main.emailServerId)
             ? refused(
                   "ACCOUNT_OWNED",
-                  "This mail server belongs to a mail account: it is changed in the account's own settings, not here"
+                  ec.l10n.localize("This mail server belongs to a mail account: it is changed in the account's own settings, not here")
               )
             : null,
     readOnly: parts =>
@@ -973,15 +976,15 @@ const relayDefinition = {
     recentAuth: parts => signInRelay(parts.main.emailServerId),
     incomplete: parts => {
         const server = parts.main
-        if (!text(server.smtpHost)) return "Give the SMTP host"
+        if (!text(server.smtpHost)) return ec.l10n.localize("Give the SMTP host")
         // with an SMTP user of its own, only its own password (implementation.rs smtp_password)
         const password = text(server.smtpUsername) ? text(server.smtpPassword) : text(server.mailPassword)
-        return smtpUserOf(server) && !password ? "Give the password of the user the relay signs in" : null
+        return smtpUserOf(server) && !password ? ec.l10n.localize("Give the password of the user the relay signs in") : null
     },
     check: after => {
         const server = after.main
         if ((text(server.mailPassword) || text(server.smtpPassword)) && server.smtpSsl !== "Y" && server.smtpStartTls !== "Y")
-            return refused("INSECURE_TRANSPORT", "A relay that signs in needs TLS: choose TLS from the start or STARTTLS")
+            return refused("INSECURE_TRANSPORT", ec.l10n.localize("A relay that signs in needs TLS: choose TLS from the start or STARTTLS"))
         return null
     },
     test: (parts, context) => {
@@ -1020,21 +1023,21 @@ const relayDefinition = {
     newParts: values => {
         const emailServerId = text(values.connectionId)
         if (!/^[A-Za-z][A-Za-z0-9_]{2,39}$/.test(emailServerId))
-            throw new Error("A relay's id is 3 to 40 letters, digits or underscores, starting with a letter")
+            throw new Error(ec.l10n.localize("A relay's id is 3 to 40 letters, digits or underscores, starting with a letter"))
         // a relay the sign-in mail names before it exists is the access administrator's to start, as to change
         if (!has(ACCESS_MANAGE) && signInRelay(emailServerId))
-            return refused("READ_ONLY", "The sign-in mail goes through this relay: an access administrator starts it")
+            return refused("READ_ONLY", ec.l10n.localize("The sign-in mail goes through this relay: an access administrator starts it"))
         return {connectionKey: emailServerId, parts: {main: {emailServerId, authTypeEnumId: "EatPassword"}}}
     },
     consumers: (parts, key) => {
         const found = Array.from(
             find("moqui.basic.email.EmailTemplate", {emailServerId: key}).orderBy("emailTemplateId").limit(100).list()
         ).map(row => ({
-            ownerName: "Email templates",
+            ownerName: ec.l10n.localize("Email templates"),
             recordType: "EmailTemplate",
             recordId: row.emailTemplateId,
             recordName: row.description || row.emailTemplateId,
-            use: "Sent through this relay",
+            use: ec.l10n.localize("Sent through this relay"),
             state: "ok"
         }))
         const accounts = count(MAIL_ACCOUNT, {emailServerId: key})
@@ -1044,7 +1047,7 @@ const relayDefinition = {
                 recordType: "EmailAccount",
                 recordId: null,
                 recordName: accounts + (accounts === 1 ? " account" : " accounts"),
-                use: "Send through this relay without owning it",
+                use: ec.l10n.localize("Send through this relay without owning it"),
                 state: "ok"
             })
         return found
@@ -1056,12 +1059,12 @@ function sendTestMessage(server) {
     const account = one(ACCOUNT, {userId: ec.user.userId})
     const address = text(account?.emailAddress)
     if (!/^[^\s@<>,;]+@[^\s@<>,;]+$/.test(address))
-        return {check: "Message", ok: false, text: "Your account has no email address to send the test message to"}
+        return {check: "Message", ok: false, text: ec.l10n.localize("Your account has no email address to send the test message to")}
     if (server.disabled === "Y")
         return {
             check: "Message",
             ok: false,
-            text: "The relay is disabled: a test message is sent once the connection test has enabled it"
+            text: ec.l10n.localize("The relay is disabled: a test message is sent once the connection test has enabled it")
         }
     let failure = ""
     let sent = {}
@@ -1106,7 +1109,7 @@ function sendTestMessage(server) {
             ok: false,
             text: failureText("The relay", failure || sent.sendError) + ": the test message was not sent"
         }
-    return {check: "Message", ok: true, text: "A test message was sent to your own address"}
+    return {check: "Message", ok: true, text: ec.l10n.localize("A test message was sent to your own address")}
 }
 
 // the deployment's client in the conf (email-client/oauth-provider[confProviderId]); the secret only said to be set
@@ -1145,8 +1148,8 @@ const mailOAuthDefinition = {
             kind: "display",
             read: parts =>
                 oauthConfigured(parts.main)
-                    ? "The deployment's configuration (it wins over what is entered here)"
-                    : "As entered here"
+                    ? ec.l10n.localize("The deployment's configuration (it wins over what is entered here)")
+                    : ec.l10n.localize("As entered here")
         }
     ],
     secrets: [{name: "clientSecret", label: "Client secret"}],
@@ -1158,7 +1161,7 @@ const mailOAuthDefinition = {
     incomplete: parts =>
         oauthConfigured(parts.main) || (text(parts.main.clientId) && text(parts.main.clientSecret))
             ? null
-            : "Give the client ID and the client secret registered at the provider",
+            : ec.l10n.localize("Give the client ID and the client secret registered at the provider"),
     // no request: a token is asked for only when a person signs a mail account in
     test: () => [
         {check: "Client", ok: true, text: "The client is configured; the provider proves it when a mail account signs in"}
@@ -1171,7 +1174,7 @@ const mailOAuthDefinition = {
                 recordType: "EmailAccount",
                 recordId: null,
                 recordName: servers + (servers === 1 ? " account" : " accounts"),
-                use: "Sign in with this provider",
+                use: ec.l10n.localize("Sign in with this provider"),
                 state: "ok"
             }
         ]
@@ -1210,9 +1213,9 @@ const printerDefinition = {
     listKeys: () => allKeys(PRINTER, "networkPrinterId"),
     readOnly: parts =>
         /[:\/]/.test(text(parts.main.serverHost))
-            ? "This printer's server names a scheme or a port of its own: an instance administrator changes it in Tools"
+            ? ec.l10n.localize("This printer's server names a scheme or a port of its own: an instance administrator changes it in Tools")
             : null,
-    incomplete: parts => (text(parts.main.serverHost) ? null : "Give the print server"),
+    incomplete: parts => (text(parts.main.serverHost) ? null : ec.l10n.localize("Give the print server")),
     // a fixed page through print#Document, sent also to a printer that waits for this test
     test: parts => {
         const place = parts.main.serverHost
@@ -1231,11 +1234,12 @@ const printerDefinition = {
                         connectionTest: true,
                         storeDocument: false,
                         contentType: "text/plain",
-                        jobName: "Connection test",
-                        inputStream:
-                            "Test page\n\nThis page was printed from Admin to test the printer " +
-                            parts.main.networkPrinterId +
-                            ".\n"
+                        jobName: ec.l10n.localize("Connection test"),
+                        inputStream: ec.resource.expand(
+                            "Test page\n\nThis page was printed from Admin to test the printer ${networkPrinterId}.\n",
+                            "",
+                            {networkPrinterId: parts.main.networkPrinterId}
+                        )
                     })
                     .call() || {}
             if (ec.message.hasError()) failure = ec.message.getErrorsString()
@@ -1251,22 +1255,25 @@ const printerDefinition = {
                     check: "Test page",
                     ok: false,
                     text: /not found with name/i.test(failure)
-                        ? place + " has no printer of that name"
+                        ? ec.resource.expand("${place} has no printer of that name", "", {place})
                         : /Could not reach|internal address|not installed|sim session/i.test(failure)
                           ? failureText(place, failure)
-                          : place + " did not take the test page"
+                          : ec.resource.expand("${place} did not take the test page", "", {place})
                 }
             ]
         return [
             {
                 check: "Test page",
                 ok: true,
-                text: place + " took the test page" + (result.jobId != null ? " (job " + Number(result.jobId) + ")" : "")
+                text:
+                    result.jobId != null
+                        ? ec.resource.expand("${place} took the test page (job ${jobId})", "", {place, jobId: Number(result.jobId)})
+                        : ec.resource.expand("${place} took the test page", "", {place})
             }
         ]
     },
     newParts: values => {
-        if (!plainText(values.description, "The name")) throw new Error("Give the printer a name")
+        if (!plainText(values.description, "The name")) throw new Error(ec.l10n.localize("Give the printer a name"))
         let networkPrinterId = text(values.connectionId)
         if (!networkPrinterId) {
             const value = ec.entity.makeValue(PRINTER)
@@ -1274,7 +1281,7 @@ const printerDefinition = {
             networkPrinterId = String(value.networkPrinterId)
         }
         if (!/^[A-Za-z0-9][A-Za-z0-9_]{0,39}$/.test(networkPrinterId))
-            throw new Error("A printer's id is up to 40 letters, digits or underscores")
+            throw new Error(ec.l10n.localize("A printer's id is up to 40 letters, digits or underscores"))
         return {connectionKey: networkPrinterId, parts: {main: {networkPrinterId}}}
     },
     consumers: (parts, key) => {
@@ -1286,7 +1293,7 @@ const printerDefinition = {
                 recordType: "PrintJob",
                 recordId: null,
                 recordName: jobs + (jobs === 1 ? " job" : " jobs") + ", " + failed + " not sent",
-                use: "Documents sent to this printer",
+                use: ec.l10n.localize("Documents sent to this printer"),
                 state: failed ? "attention" : "ok"
             }
         ]
@@ -1315,8 +1322,8 @@ function adapters() {
         }
         found.push({
             adapterKey: row.adapterKey,
-            title: row.title || row.adapterKey,
-            description: row.description || "",
+            title: row.title ? ec.l10n.localize(row.title) : row.adapterKey,
+            description: row.description ? ec.l10n.localize(row.description) : "",
             adapterGroup: row.adapterGroup || "integration",
             adapterServiceName: serviceName,
             creatable: row.creatable === "Y",

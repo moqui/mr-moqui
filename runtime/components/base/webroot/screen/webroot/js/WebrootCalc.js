@@ -30,6 +30,7 @@
     "use strict";
 
     const moqui = root.moqui || (root.moqui = {});
+    const L = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const calc = moqui.calc = moqui.calc || {};
 
     /** How many rows beyond the ones in view are asked for, each way. */
@@ -434,7 +435,7 @@
             },
             discard() {
                 if (!this.revertUrl) return;
-                this.$q.dialog({ title: "Discard the unsaved edits", message: "Every edit since the document was saved, everyone's, is discarded.", cancel: true, persistent: true })
+                this.$q.dialog({ title: L("Discard the unsaved edits"), message: L("Every edit since the document was saved, everyone's, is discarded."), cancel: true, persistent: true })
                     .onOk(() => moqui.request(this.revertUrl, { method: "POST", params: Object.assign({}, this.params, { roomId: this.room.roomId }) }).then((result) => {
                         const json = result.json || {};
                         if (json.errors) { moqui.notifyMessages(null, json.errors); return; }
@@ -718,7 +719,7 @@
             // ---- sheets and charts ----
             addSheet() { return this.edit([{ op: "addSheet" }]).then((state) => { if (state && state.sheets && state.sheets.length) this.showSheet(state.sheets[state.sheets.length - 1].index); }); },
             renameSheet(sheet) {
-                this.$q.dialog({ title: "Rename the sheet", prompt: { model: sheet.name, type: "text" }, cancel: true })
+                this.$q.dialog({ title: L("Rename the sheet"), prompt: { model: sheet.name, type: "text" }, cancel: true })
                     .onOk((name) => { if (name && name !== sheet.name) this.edit([{ op: "renameSheet", sheet: sheet.index, name }]); });
             },
             deleteSheet(sheet) {

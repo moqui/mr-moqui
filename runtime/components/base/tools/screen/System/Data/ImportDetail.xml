@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const rows = Array.from(result?.resultList || [])
                     const refused = rows.filter(row => !row.applied)
                     if (result?.appliedCount) ec.message.addMessage(result.appliedCount + ' rows applied', 'success')
-                    if (!rows.length) ec.message.addMessage(result?.reason || 'Nothing was retried', 'warning')
+                    if (!rows.length) ec.message.addMessage(result?.reason || ec.l10n.localize('Nothing was retried'), 'warning')
                     for (const row of refused.slice(0, 5)) ec.message.addMessage('Row ID ' + row.itemSeqId + ': ' + (row.reason || 'not applied'), 'warning')
                     if (refused.length > 5) ec.message.addMessage((refused.length - 5) + ' more rows were not applied', 'warning')
                 }
@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
                     // in the server's time zone, as the Imports list
                     const zone = detail.timeZone || 'UTC'
                     const when = value => value == null ? '' : ec.l10n.format(Number(value), 'yyyy-MM-dd HH:mm', null, zone)
-                    const stateTexts = {staged: 'Staged', mapped: 'Mapped', validated: 'Validated', applying: 'Applying', complete: 'Complete', partial: 'Partly applied'}
+                    const stateTexts = {staged: 'Staged', mapped: 'Mapped', validated: 'Validated', applying: 'Applying', complete: 'Complete', partial: ec.l10n.localize('Partly applied')}
                     importTarget = detail.importTarget || {}
                     scopeLabel = detail.scopeLabel || importTarget.scopeLabel || 'For'
                     summary = {

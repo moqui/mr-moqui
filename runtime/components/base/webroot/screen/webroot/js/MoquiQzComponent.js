@@ -17,6 +17,7 @@
     "use strict";
 
     const moqui = root.moqui;
+    const L = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
     const qz = root.qz;
     if (!qz || !moqui || !moqui.qvt) {
         console.info("Not creating the QZ component, qz: " + qz + ", moqui: " + moqui);
@@ -29,7 +30,7 @@
     const options = (key, title) =>
         '<div class="col-xs-12 col-sm-6 q-pa-sm"><h6>' + title + '</h6>' +
             '<q-select dense outlined emit-value map-options stack-label label="Orientation" v-model="' + key + '.orientation" :options="orientations" class="q-my-sm"></q-select>' +
-            '<q-select dense outlined emit-value map-options stack-label label="Color Type" v-model="' + key + '.colorType" :options="colorTypes" class="q-my-sm"></q-select>' +
+            '<q-select dense outlined emit-value map-options stack-label :label="t(\'Color Type\')" v-model="' + key + '.colorType" :options="colorTypes" class="q-my-sm"></q-select>' +
             '<q-checkbox dense v-model="' + key + '.scaleContent" label="Scale Content"></q-checkbox><br>' +
             '<q-checkbox dense v-model="' + key + '.rasterize" label="Rasterize"></q-checkbox>' +
         '</div>';
@@ -40,7 +41,8 @@
             return {
                 show: false, connectionState: "Inactive", connectionClass: "text-grey", qzVersion: null, currentPrinter: null, currentLabelPrinter: null, printerList: [],
                 mainOptions: { orientation: "", colorType: "color", scaleContent: true, rasterize: false },
-                labelOptions: { orientation: "", colorType: "blackwhite", scaleContent: false, rasterize: false }, orientations, colorTypes
+                labelOptions: { orientation: "", colorType: "blackwhite", scaleContent: false, rasterize: false }, orientations,
+                colorTypes: colorTypes.map((item) => Object.assign({}, item, { label: L(item.label) }))
             };
         },
         template:
@@ -78,6 +80,7 @@
             }
         },
         methods: {
+            t(text) { return L(text); },
             findPrinters() {
                 qz.printers.find().then((data) => {
                     if (!Array.isArray(data)) return;
@@ -100,9 +103,9 @@
                 this.connectionState = "Error";
                 this.connectionClass = "text-negative";
                 if (err && err.target !== undefined) {
-                    if (err.target.readyState >= 2) moqui.notifyGrowl({ type: "info", title: "Connection to QZ Tray was closed" });
+                    if (err.target.readyState >= 2) moqui.notifyGrowl({ type: "info", title: L("Connection to QZ Tray was closed") });
                     else {
-                        moqui.notifyGrowl({ type: "danger", title: "A QZ Tray connection error occurred, check log for details" });
+                        moqui.notifyGrowl({ type: "danger", title: L("A QZ Tray connection error occurred, check log for details") });
                         console.error(err);
                     }
                 } else moqui.notifyGrowl({ type: "danger", title: String(err) });
@@ -190,7 +193,7 @@
     moqui.printUrlFile = (config, url, type) => {
         if (!url || !url.length) { console.warn("Called printUrlFile with no url array or string, printing nothing"); return; }
         if (!moqui.isQzActive()) {
-            moqui.notifyGrowl({ type: "warning", title: "Cannot print, QZ is not active" });
+            moqui.notifyGrowl({ type: "warning", title: L("Cannot print, QZ is not active") });
             return;
         }
         moqui.internalChainPrintFile(config, type && type.length ? type : "pdf", Array.isArray(url) ? url : [url], 0);

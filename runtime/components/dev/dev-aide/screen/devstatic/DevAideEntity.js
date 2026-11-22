@@ -383,8 +383,8 @@
                 const table = this.view && this.view.table;
                 if (!table || this.isView) return "";
                 if (table.error) return table.error;
-                if (!table.exists) return "No table yet: Save makes it.";
-                if (!table.missingColumns.length && !table.extraColumns.length) return "The table matches the fields.";
+                if (!table.exists) return moqui.l10n.localize("No table yet: Save makes it.");
+                if (!table.missingColumns.length && !table.extraColumns.length) return moqui.l10n.localize("The table matches the fields.");
                 return "";
             },
             seedTables() { return this.isData ? ops.recordTables(this.outline) : (this.seed && this.seed.outline ? ops.recordTables(this.seed.outline) : []); },
@@ -414,6 +414,7 @@
         },
         beforeUnmount() { if (this.offSaved) this.offSaved(); },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             pickEntity() {
                 if (this.isData) return;
                 const asked = String(this.tab.artifact || "").replace(/^(entity|view-entity):/, "");
@@ -448,12 +449,12 @@
             seedBuffer() {
                 if (this.seed) return Promise.resolve(this.seed);
                 const file = this.view && this.view.seedFile;
-                if (!file) return Promise.reject(new Error("No site component to write the seed data in: create one on Home"));
+                if (!file) return Promise.reject(new Error(moqui.l10n.localize("No site component to write the seed data in: create one on Home")));
                 return this.ctx.companion(file.rootId, file.path, SEED_TEXT).then((buffer) => { this.seed = buffer; return buffer; });
             },
             // Apply operations to the target element, made first when the site has no extend-entity of the entity yet.
             edit(build) {
-                if (!this.target) { this.ctx.note("This entity is upstream and there is no site component to extend it in", "warning"); return Promise.resolve(); }
+                if (!this.target) { this.ctx.note(moqui.l10n.localize("This entity is upstream and there is no site component to extend it in"), "warning"); return Promise.resolve(); }
                 const buffer = this.buffer;
                 let path = this.element ? this.element.path : null;
                 let first = [];
@@ -507,7 +508,7 @@
             },
             addField() {
                 const add = this.adding;
-                if (!add.name) { this.ctx.note("A field needs a name", "warning"); return; }
+                if (!add.name) { this.ctx.note(moqui.l10n.localize("A field needs a name"), "warning"); return; }
                 // a primary key only where the site defines the entity: on an upstream entity's extension it would change its table's key
                 const field = { name: add.name, type: add.type, isPk: add.isPk && this.inPlace, notNull: add.notNull, description: add.description };
                 const label = add.locale && add.localized ? ops.localizedXml(add.title || ops.titleOf(add.name), add.locale, add.localized) : "";
@@ -718,7 +719,7 @@
       <q-btn dense flat no-caps icon="sym_o_fact_check" label="Check against the database" @click="checkData" id="DevCheckData"></q-btn>
       <q-btn dense flat no-caps icon="sym_o_difference" label="Load the changed records" :disable="!ctx.canWrite || tab.text !== tab.saved" @click="loadChanged" id="DevLoadChanged"></q-btn>
       <q-btn dense flat no-caps icon="sym_o_download" label="Export records…" :disable="!ctx.canWrite" @click="startExport" id="DevExportRecords"></q-btn>
-      <q-btn dense flat no-caps icon="sym_o_upload" label="Load this file" :disable="!ctx.canWrite || tab.text !== tab.saved" @click="loadThis" id="DevLoadDataFile">
+      <q-btn dense flat no-caps icon="sym_o_upload" :label="t('Load this file')" :disable="!ctx.canWrite || tab.text !== tab.saved" @click="loadThis" id="DevLoadDataFile">
         <q-tooltip>Save first; loads its records into the database</q-tooltip></q-btn></div>
     <div v-for="table in seedTables" :key="table.entity" class="q-mb-md">
       <div class="row items-center no-wrap"><span class="text-weight-medium">{{table.entity}}</span><span class="m-muted q-ml-sm text-caption">{{table.rows.length}}</span>
@@ -730,7 +731,7 @@
           <td><q-btn dense flat round size="xs" icon="delete" aria-label="Remove row" :disable="!ctx.canWrite" @click="removeRecord(tab, row)"><q-tooltip>Remove row</q-tooltip></q-btn></td>
         </tr></tbody></table></div>
     </div>
-    <div v-if="!seedTables.length" class="m-muted">No records yet.</div>
+    <div v-if="!seedTables.length" class="m-muted">{{ t('No records yet.') }}</div>
     <div v-if="dataCheck" class="q-mt-md" id="DevDataCheck">
       <div class="text-subtitle2">Against the database <q-spinner v-if="dataCheck.running" size="14px"></q-spinner></div>
       <template v-if="!dataCheck.running">
@@ -782,7 +783,7 @@
         <q-tab name="indexes" :label="'Indexes ' + (entity.indexes || []).length"></q-tab>
         <q-tab name="rules" :label="'EECA rules ' + view.eecas.length"></q-tab>
         <q-tab name="table" :label="isView ? 'Data' : 'Table'" @click="isView && runView()"></q-tab>
-        <q-tab v-if="seed || (view.seedFile && view.seedFile.exists)" name="seed" label="Seed data"></q-tab>
+        <q-tab v-if="seed || (view.seedFile && view.seedFile.exists)" name="seed" :label="t('Seed data')"></q-tab>
         <q-tab name="doc" label="Doc" id="DevEntityDocTab"></q-tab>
       </q-tabs>
       <q-separator class="q-mb-sm"></q-separator>
@@ -795,7 +796,7 @@
           <span class="text-caption m-muted">Used by {{view.usedByCount}}</span>
         </div>
         <div class="m-dev-grid-wrap"><table class="m-dev-grid">
-          <thead><tr><th></th><th>Name</th><th>Type</th><th>PK</th><th>Not null</th><th>Default</th><th>Encrypt</th><th>Audit</th><th>L10n</th><th>Create only</th><th>Description</th><th>Origin</th><th></th></tr></thead>
+          <thead><tr><th></th><th>Name</th><th>Type</th><th>PK</th><th>{{ t('Not null') }}</th><th>Default</th><th>Encrypt</th><th>Audit</th><th>L10n</th><th>Create only</th><th>Description</th><th>Origin</th><th></th></tr></thead>
           <tbody>
             <tr v-for="field in fields" :key="field.name" :data-field="field.name" draggable="true" @dragstart="dragStart(field, $event)" @dragover.prevent @drop.prevent="dropOn(field, $event)">
               <td class="m-dev-drag"><q-icon name="drag_indicator" size="14px"></q-icon></td>
@@ -914,21 +915,21 @@
           <div v-for="column in view.table.missingColumns" :key="'m' + column" class="text-caption">Missing column {{column}}: Save adds it.</div>
           <div v-for="column in view.table.extraColumns" :key="'x' + column" class="row items-center text-caption q-gutter-x-sm">
             <span>Column {{column}} has no field (a removed or renamed field keeps its column).</span>
-            <template v-if="full"><q-btn dense flat no-caps size="sm" label="Drop it…" @click="planDdl('drop-column', '', column)"></q-btn>
+            <template v-if="full"><q-btn dense flat no-caps size="sm" :label="t('Drop it…')" @click="planDdl('drop-column', '', column)"></q-btn>
               <q-btn-dropdown dense flat no-caps size="sm" label="Copy into a field…"><q-list dense>
                 <q-item v-for="field in entity.fields" :key="field.name" clickable v-close-popup @click="planDdl('copy-column', field.name, column)"><q-item-section>{{field.name}}</q-item-section></q-item></q-list></q-btn-dropdown></template>
           </div>
           <div v-if="full && view.table.exists" class="q-mt-sm row q-gutter-x-sm">
             <q-btn-dropdown dense flat no-caps size="sm" label="Change a column's type…"><q-list dense>
               <q-item v-for="field in entity.fields" :key="field.name" clickable v-close-popup @click="planDdl('change-type', field.name, '')"><q-item-section>{{field.name}} → {{(entity.sqlTypes || {})[field.name]}}</q-item-section></q-item></q-list></q-btn-dropdown>
-            <q-btn dense flat no-caps size="sm" color="negative" label="Drop and create the table…" @click="planDdl('recreate-table', '', '')"></q-btn>
+            <q-btn dense flat no-caps size="sm" color="negative" :label="t('Drop and create the table…')" @click="planDdl('recreate-table', '', '')"></q-btn>
           </div>
           <div class="m-dev-grid-wrap q-mt-sm" v-if="view.table.columns.length"><table class="m-dev-grid"><thead><tr><th>Column</th><th>SQL type</th></tr></thead>
             <tbody><tr v-for="column in view.table.columns" :key="column.name"><td class="m-dev-mono">{{column.name}}</td><td>{{column.sqlType}}</td></tr></tbody></table></div>
         </template>
         <pre v-if="isView && viewSql" class="m-dev-mono q-pa-sm m-dev-sql" id="DevViewSql">{{viewSql}}</pre>
         <div class="text-subtitle2 q-mt-md">Data <span class="m-muted text-caption" v-if="view.data.count !== undefined">{{view.data.count}} rows</span>
-          <a class="text-caption q-ml-sm" :href="dataEditUrl" id="DevDataEdit">Open in Data Grid</a></div>
+          <a class="text-caption q-ml-sm" :href="dataEditUrl" id="DevDataEdit">{{ t('Open in Data Grid') }}</a></div>
         <div v-if="view.data.error" class="text-caption text-negative">{{view.data.error}}</div>
         <div class="m-dev-grid-wrap" v-if="(view.data.rows || []).length"><table class="m-dev-grid"><thead><tr><th v-for="name in Object.keys(view.data.rows[0])" :key="name">{{name}}</th></tr></thead>
           <tbody><tr v-for="(row, i) in view.data.rows" :key="i"><td v-for="name in Object.keys(view.data.rows[0])" :key="name" class="ellipsis" style="max-width: 14rem">{{row[name]}}</td></tr></tbody></table></div>
@@ -971,7 +972,7 @@
           <q-input class="col-3" dense outlined v-model="adding.locale" label="Locale" placeholder="es"></q-input>
           <q-input class="col" dense outlined v-model="adding.localized" :label="'Its label in that language (' + (adding.title || titleOf(adding.name)) + ')'"></q-input>
         </div>
-        <div class="row q-gutter-x-md"><q-checkbox v-if="inPlace" dense v-model="adding.isPk" label="Primary key"></q-checkbox><q-checkbox dense v-model="adding.notNull" label="Not null"></q-checkbox></div>
+        <div class="row q-gutter-x-md"><q-checkbox v-if="inPlace" dense v-model="adding.isPk" :label="t('Primary key')"></q-checkbox><q-checkbox dense v-model="adding.notNull" :label="t('Not null')"></q-checkbox></div>
       </q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="adding = null"></q-btn>
         <q-btn unelevated no-caps color="primary" label="Add" @click="addField" id="DevFieldAdd"></q-btn></q-card-actions>
@@ -987,7 +988,7 @@
     <q-card v-if="relAdding" style="width: 30rem"><q-card-section class="text-subtitle1">Add a relationship</q-card-section>
       <q-card-section class="q-pt-none q-gutter-y-sm">
         <q-btn-toggle dense no-caps v-model="relAdding.type" :options="['one', 'many', 'one-nofk'].map(t => ({ label: t, value: t }))"></q-btn-toggle>
-        <q-select dense outlined use-input fill-input hide-selected v-model="relAdding.related" :options="entityOptions" @filter="searchEntities" label="Related entity"></q-select>
+        <q-select dense outlined use-input fill-input hide-selected v-model="relAdding.related" :options="entityOptions" @filter="searchEntities" :label="t('Related entity')"></q-select>
         <q-input dense outlined v-model="relAdding.title" label="Title"></q-input>
         <div class="row q-gutter-x-sm"><q-input class="col" dense outlined v-model="relAdding.fieldName" label="Field here"></q-input><q-input class="col" dense outlined v-model="relAdding.relatedField" label="Related field (its key when empty)"></q-input></div>
       </q-card-section>
@@ -997,7 +998,7 @@
     <q-card v-if="indexAdding" style="width: 26rem"><q-card-section class="text-subtitle1">Add an index</q-card-section>
       <q-card-section class="q-pt-none q-gutter-y-sm"><q-input dense outlined v-model="indexAdding.name" label="Name"></q-input>
         <q-select dense outlined multiple use-chips v-model="indexAdding.fields" :options="entity.fields.map(f => f.name)" label="Fields"></q-select>
-        <q-checkbox dense v-model="indexAdding.unique" label="Unique"></q-checkbox></q-card-section>
+        <q-checkbox dense v-model="indexAdding.unique" :label="t('Unique')"></q-checkbox></q-card-section>
       <q-card-actions align="right"><q-btn flat no-caps label="Cancel" @click="indexAdding = null"></q-btn><q-btn unelevated no-caps color="primary" label="Add" @click="addIndex"></q-btn></q-card-actions></q-card>
   </q-dialog>
   <q-dialog :model-value="!!memberAdding" @update:model-value="v => { if (!v) memberAdding = null; }">

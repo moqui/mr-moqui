@@ -16,6 +16,7 @@
     const moqui = root.moqui;
     const qvt = { components: {}, config: null };
     moqui.qvt = qvt;
+    const locText = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
 
     const markRaw = (obj) => (root.Vue && root.Vue.markRaw ? root.Vue.markRaw(obj) : obj);
     const component = (name, definition) => { qvt.components[name] = definition; return definition; };
@@ -556,7 +557,7 @@
         const respObj = err.json && moqui.isPlainObject(err.json) ? err.json : null;
         console.warn("request failed, status " + err.status + (err.statusText ? " " + err.statusText : ""));
         let notified = false;
-        if (err.status === 401) notified = moqui.notifyMessages(null, "No user authenticated");
+        if (err.status === 401) notified = moqui.notifyMessages(null, locText("No user authenticated"));
         else if (respObj) notified = moqui.notifyMessages(respObj.messageInfos, respObj.errors, respObj.validationErrors);
         else if (err.text && moqui.isString(err.text) && err.text.length && !/^\s*</.test(err.text)) notified = moqui.notifyMessages(err.text);
         if (err.status === 401) {
@@ -564,7 +565,7 @@
             if (rootVm() && rootVm().reLoginCheckShow) rootVm().reLoginCheckShow();
             else root.location.reload();
         } else if (err.status === 0) {
-            const msg = "Could not connect to server";
+            const msg = locText("Could not connect to server");
             notify(Object.assign({}, moqui.notifyOptsError, { message: msg }));
             addNotify(msg, "negative");
         } else if (!notified && !(respObj && respObj.fieldErrorsPlaced)) {
@@ -1681,12 +1682,13 @@
                 '<q-card ref="dialogCard" flat bordered :style="{width:((width||760)+\'px\'),\'max-width\':($q.screen.lt.sm?\'100vw\':\'90vw\')}">' +
                     '<q-card-section ref="dialogHeader" class="row items-center no-wrap q-py-xs q-pr-xs non-selectable" :style="{cursor:(draggable?\'move\':\'default\')}">' +
                         '<div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div><q-space></q-space>' +
-                        '<q-btn icon="close" type="button" aria-label="Close dialog" flat round dense v-close-popup></q-btn>' +
+                        '<q-btn icon="close" type="button" :aria-label="t(\'Close dialog\')" flat round dense v-close-popup></q-btn>' +
                     '</q-card-section><q-separator></q-separator>' +
                     '<q-card-section ref="dialogBody" class="scroll m-dialog-body" style="max-height:80vh;"><slot></slot></q-card-section>' +
                 '</q-card>' +
             '</q-dialog>',
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             onShow() {
                 const header = this.dragHeader();
                 if (header) {
@@ -2545,34 +2547,35 @@
         props: { id: String, action: String, columnsInitial: { type: Array, required: true }, formLocation: { type: String, required: true }, findParameters: Object },
         data() { return { columns: moqui.deepCopy(this.columnsInitial) }; },
         template:
-            '<m-form ref="mForm" :id="id" :action="action"><p class="m-muted">Choose which fields appear and arrange them within each column.</p><div class="m-column-config-fields">' +
+            '<m-form ref="mForm" :id="id" :action="action"><p class="m-muted">{{t(\'Choose which fields appear and arrange them within each column.\')}}</p><div class="m-column-config-fields">' +
                 '<q-list v-for="(column, columnIdx) in columns" :key="column.id" bordered dense class="q-mb-sm rounded-borders">' +
                     '<q-item-label header>{{column.label}}</q-item-label>' +
                     '<q-item v-for="(field, fieldIdx) in column.children" :key="field.id" :data-column-field="field.id">' +
-                        '<q-item-section side v-if="columnIdx !== 0"><q-btn flat round dense size="sm" icon="close" data-action="hide" aria-label="Hide field" @click="hideField(columnIdx, fieldIdx)"><q-tooltip>Hide</q-tooltip></q-btn></q-item-section>' +
+                        '<q-item-section side v-if="columnIdx !== 0"><q-btn flat round dense size="sm" icon="close" data-action="hide" :aria-label="t(\'Hide field\')" @click="hideField(columnIdx, fieldIdx)"><q-tooltip>{{t(\'Hide\')}}</q-tooltip></q-btn></q-item-section>' +
                         '<q-item-section><q-item-label>{{field.label}}</q-item-label></q-item-section>' +
                         '<q-item-section v-if="columnIdx === 0" side>' +
-                            '<q-btn-dropdown dense flat no-caps label="Display" data-action="display" aria-label="Display field" class="m-btn-tonal"><q-list dense>' +
+                            '<q-btn-dropdown dense flat no-caps :label="t(\'Display\')" data-action="display" :aria-label="t(\'Display field\')" class="m-btn-tonal"><q-list dense>' +
                                 '<q-item v-for="(toColumn, toColumnIdx) in columns.slice(1)" :key="toColumn.id" clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, toColumnIdx+1)">' +
                                     '<q-item-section>{{toColumn.label}}</q-item-section></q-item>' +
-                                '<q-item clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, columns.length+1)"><q-item-section>New Column</q-item-section></q-item>' +
+                                '<q-item clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, columns.length+1)"><q-item-section>{{t(\'New Column\')}}</q-item-section></q-item>' +
                             '</q-list></q-btn-dropdown>' +
                         '</q-item-section>' +
                         '<q-item-section v-else side><q-btn-group flat>' +
-                            '<q-btn :disabled="columnIdx <= 1" dense flat size="sm" icon="west" data-action="previous-column" aria-label="Move to previous column" @click="moveToCol(columnIdx, fieldIdx, columnIdx-1)"><q-tooltip>Move to previous column</q-tooltip></q-btn>' +
-                            '<q-btn :disabled="fieldIdx === 0" dense flat size="sm" icon="expand_less" data-action="up" aria-label="Move up within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx-1)"><q-tooltip>Move up within column</q-tooltip></q-btn>' +
-                            '<q-btn :disabled="(fieldIdx + 1) === column.children.length" dense flat size="sm" icon="expand_more" data-action="down" aria-label="Move down within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx+1)"><q-tooltip>Move down within column</q-tooltip></q-btn>' +
-                            '<q-btn dense flat size="sm" icon="east" data-action="next-column" aria-label="Move to next column" @click="moveToCol(columnIdx, fieldIdx, columnIdx+1)"><q-tooltip>Move to next column</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="columnIdx <= 1" dense flat size="sm" icon="west" data-action="previous-column" :aria-label="t(\'Move to previous column\')" @click="moveToCol(columnIdx, fieldIdx, columnIdx-1)"><q-tooltip>{{t(\'Move to previous column\')}}</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="fieldIdx === 0" dense flat size="sm" icon="expand_less" data-action="up" :aria-label="t(\'Move up within column\')" @click="moveInCol(columnIdx, fieldIdx, fieldIdx-1)"><q-tooltip>{{t(\'Move up within column\')}}</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="(fieldIdx + 1) === column.children.length" dense flat size="sm" icon="expand_more" data-action="down" :aria-label="t(\'Move down within column\')" @click="moveInCol(columnIdx, fieldIdx, fieldIdx+1)"><q-tooltip>{{t(\'Move down within column\')}}</q-tooltip></q-btn>' +
+                            '<q-btn dense flat size="sm" icon="east" data-action="next-column" :aria-label="t(\'Move to next column\')" @click="moveToCol(columnIdx, fieldIdx, columnIdx+1)"><q-tooltip>{{t(\'Move to next column\')}}</q-tooltip></q-btn>' +
                         '</q-btn-group></q-item-section>' +
                     '</q-item>' +
                 '</q-list>' +
                 '</div><div class="m-dialog-actions q-mt-md">' +
-                    '<q-btn dense unelevated no-caps color="primary" @click.prevent="saveColumns()" label="Save Changes"></q-btn>' +
-                    '<q-btn dense flat no-caps @click.prevent="resetColumns()" label="Undo Changes"></q-btn>' +
-                    '<q-btn dense flat no-caps @click.prevent="resetToDefault()" label="Reset to Default"></q-btn>' +
+                    '<q-btn dense unelevated no-caps color="primary" @click.prevent="saveColumns()" :label="t(\'Save Changes\')"></q-btn>' +
+                    '<q-btn dense flat no-caps @click.prevent="resetColumns()" :label="t(\'Undo Changes\')"></q-btn>' +
+                    '<q-btn dense flat no-caps @click.prevent="resetToDefault()" :label="t(\'Reset to Default\')"></q-btn>' +
                 '</div>' +
             '</m-form>',
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             focusField(fieldId, action, fallbackAction) {
                 this.$nextTick(() => {
                     const row = Array.from(this.$el.querySelectorAll("[data-column-field]"))
@@ -3106,7 +3109,7 @@
                     ' dense outlined options-dense use-input :use-chips="multiple" :name="name" :for="id" :form="form"' +
                     ' :input-debounce="serverSearch ? serverDelay : 100" @filter="filterFn" :clearable="allowEmpty||multiple" :disable="disable"' +
                     ' :multiple="multiple" :emit-value="!onSelectGoTo" map-options behavior="menu" :new-value-mode="combo ? \'add-unique\' : undefined"' +
-                    ' :rules="[val => allowEmpty||multiple||combo||val===\'\'||(val&&val.length)||\'Please select an option\']"' +
+                    ' :rules="[val => allowEmpty||multiple||combo||val===\'\'||(val&&val.length)||t(\'Please select an option\')]"' +
                     ' stack-label hide-bottom-space no-error-icon :label="label || undefined" :loading="loading" :bg-color="bg" :options="curOptions" v-bind="errorAttrs">' +
                 '<q-tooltip v-if="tooltip">{{tooltip}}</q-tooltip>' +
                 '<template v-slot:no-option><q-item><q-item-section class="text-grey">No results</q-item-section></q-item></template>' +
@@ -3120,6 +3123,7 @@
             } else { this.curOptions = list; this.allOptions = list; }
         } },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             handleInput(value) {
                 if (this.onSelectGoTo && this.onSelectGoTo.length) {
                     if (value && value[this.onSelectGoTo]) this.$root.setUrl(value[this.onSelectGoTo]);
@@ -3675,7 +3679,7 @@
             maxlength: String, form: String, tooltip: String, hideOptions: { type: String, default: "false" } },
         data() {
             return { operators: [{ value: "equals", label: "Equals" }, { value: "like", label: "Like" }, { value: "contains", label: "Contains" },
-                { value: "begins", label: "Begins With" }, { value: "empty", label: "Empty" }] };
+                { value: "begins", label: locText("Begins With") }, { value: "empty", label: "Empty" }] };
         },
         computed: {
             optionsActive() { const op = this.fields[this.name + "_op"]; return this.fields[this.name + "_not"] === "Y" || (!!op && op !== "contains"); },
@@ -9861,7 +9865,7 @@
         "        </div>\n" +
         "    </div>\n" +
         "    <div v-else>\n" +
-        "        <div class=\"text-center q-pb-sm\">Please sign in to continue as user <strong>{{username}}</strong></div>\n" +
+        "        <div class=\"text-center q-pb-sm\">{{t('Please sign in to continue as user')}} <strong>{{username}}</strong></div>\n" +
         "        <q-form @submit.prevent=\"reLoginSubmit\" autocapitalize=\"off\" autocomplete=\"off\" class=\"q-gutter-y-sm\">\n" +
         "            <m-text-line v-model=\"reLoginPassword\" name=\"password\" type=\"password\" :label=\"labels.password\"></m-text-line>\n" +
         "            <div><q-btn unelevated no-caps color=\"primary\" type=\"submit\" :label=\"labels.signIn\"></q-btn>\n" +
@@ -10790,6 +10794,7 @@
 
     // QZ Tray printing, when the user turned it on: qz-tray.js and the print component are loaded now and not before.
     qvt.rootMethods = {
+        t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
         loadQz() {
             Promise.all([moqui.loadScript("/libs/qz-tray/qz-tray.js", null, () => !!root.qz), moqui.loadScript("/js/MoquiQzComponent.js")]).then(() => {
                 if (moqui.qzComponent) this.qzVue = markRaw(moqui.qzComponent);

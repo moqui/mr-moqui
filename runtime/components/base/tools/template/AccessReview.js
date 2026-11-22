@@ -17,7 +17,7 @@ function view(found, memberIds, outsideNote) {
         for (const entry of Array.from(found.entryList || []).filter(row => row.userGroupId === group.userGroupId))
             reviewRows.push(
                 Object.assign({}, base, {
-                    entryText: entry.entryType === "appGate" ? "App gate" : "Permission",
+                    entryText: entry.entryType === "appGate" ? ec.l10n.localize("App gate") : "Permission",
                     name: entry.id,
                     detail: entry.label && entry.label !== entry.id ? entry.label : "",
                     kindLabel: entry.kindLabel || "",
@@ -48,7 +48,7 @@ function view(found, memberIds, outsideNote) {
                 outsideCount,
                 sealedOmitted: group.sealedOmitted || 0,
                 noteText: [
-                    group.privileged ? "Privileged group" : "",
+                    group.privileged ? ec.l10n.localize("Privileged group") : "",
                     group.sealedOmitted ? group.sealedOmitted + " sealed grant(s) not listed" : "",
                     outsideCount ? outsideCount + (outsideNote || " member(s) not listed") : ""
                 ]

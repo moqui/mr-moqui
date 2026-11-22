@@ -39,23 +39,23 @@
     const S = (parts) => parts;
     ops.SENTENCES = {
         "set": S(["Set", { attr: "field", kind: "name" }, "=", { attr: "from", kind: "expr", or: "value" }]),
-        "entity-find-one": S(["Find one", { attr: "entity-name", kind: "entity" }, "→", { attr: "value-field", kind: "name" }]),
+        "entity-find-one": S([moqui.l10n.localize("Find one"), { attr: "entity-name", kind: "entity" }, "→", { attr: "value-field", kind: "name" }]),
         "entity-find": S(["Find", { attr: "entity-name", kind: "entity" }, "→", { attr: "list", kind: "name" }]),
         "entity-find-count": S(["Count", { attr: "entity-name", kind: "entity" }, "→", { attr: "count-field", kind: "name" }]),
-        "entity-find-related": S(["Find related", { attr: "relationship-name", kind: "text" }, "of", { attr: "value-field", kind: "expr" }, "→", { attr: "list", kind: "name" }]),
-        "entity-find-related-one": S(["Find related one", { attr: "relationship-name", kind: "text" }, "of", { attr: "value-field", kind: "expr" }, "→", { attr: "to-value-field", kind: "name" }]),
+        "entity-find-related": S([moqui.l10n.localize("Find related"), { attr: "relationship-name", kind: "text" }, moqui.l10n.localize("of"), { attr: "value-field", kind: "expr" }, "→", { attr: "list", kind: "name" }]),
+        "entity-find-related-one": S([moqui.l10n.localize("Find related one"), { attr: "relationship-name", kind: "text" }, moqui.l10n.localize("of"), { attr: "value-field", kind: "expr" }, "→", { attr: "to-value-field", kind: "name" }]),
         "econdition": S(["where", { attr: "field-name", kind: "text" }, { attr: "operator", kind: "text", fallback: "equals" }, { attr: "from", kind: "expr", or: "value" }]),
         "service-call": S(["Call", { attr: "name", kind: "service" }, "with", { attr: "in-map", kind: "expr", fallback: "its fields" }, "→", { attr: "out-map", kind: "name" }]),
         "if": S(["If", { attr: "condition", kind: "expr" }]),
         "else-if": S(["Else if", { attr: "condition", kind: "expr" }]),
         "else": S(["Else"]),
         "while": S(["While", { attr: "condition", kind: "expr" }]),
-        "iterate": S(["For each", { attr: "entry", kind: "name" }, "in", { attr: "list", kind: "expr" }]),
+        "iterate": S([moqui.l10n.localize("For each"), { attr: "entry", kind: "name" }, moqui.l10n.localize("in"), { attr: "list", kind: "expr" }]),
         "return": S(["Return", { attr: "error", kind: "text", flag: "error" }, { attr: "message", kind: "text" }]),
         "message": S(["Message", { attr: "error", kind: "text", flag: "error" }, { text: true, kind: "text" }]),
         "log": S(["Log", { attr: "level", kind: "text", fallback: "info" }, { attr: "message", kind: "text" }]),
         "script": S(["Script", { text: true, kind: "code" }]),
-        "check-errors": S(["Check errors"]),
+        "check-errors": S([moqui.l10n.localize("Check errors")]),
         "break": S(["Break"]),
         "continue": S(["Continue"]),
         "assert": S(["Assert", { attr: "title", kind: "text" }]),
@@ -63,7 +63,7 @@
         "entity-create": S(["Create", { attr: "value-field", kind: "expr" }]),
         "entity-update": S(["Update", { attr: "value-field", kind: "expr" }]),
         "entity-delete": S(["Delete", { attr: "value-field", kind: "expr" }]),
-        "entity-set": S(["Set fields of", { attr: "value-field", kind: "expr" }, "from", { attr: "map", kind: "expr", fallback: "the context" }]),
+        "entity-set": S([moqui.l10n.localize("Set fields of"), { attr: "value-field", kind: "expr" }, moqui.l10n.localize("from"), { attr: "map", kind: "expr", fallback: moqui.l10n.localize("the context") }]),
         "entity-sequenced-id-primary": S(["Sequenced id of", { attr: "value-field", kind: "expr" }]),
         "entity-delete-by-condition": S(["Delete", { attr: "entity-name", kind: "entity" }, "where its conditions"]),
         "filter-map-list": S(["Filter", { attr: "list", kind: "expr" }]),
@@ -146,21 +146,21 @@
     // The palette (9.2), by the XSD's groups, each with what it inserts.
     ops.PALETTE = [
         { group: "Control", items: [
-            ["If", "<if condition=\"true\"></if>"], ["For each", "<iterate list=\"list\" entry=\"item\"></iterate>"], ["While", "<while condition=\"false\"></while>"],
-            ["Message", "<message>Done</message>"], ["Return", "<return/>"], ["Return error", "<return error=\"true\" message=\"Not found\"/>"],
-            ["Check errors", "<check-errors/>"], ["Break", "<break/>"], ["Continue", "<continue/>"]] },
-        { group: "Environment", items: [["Set", "<set field=\"name\" from=\"null\"/>"], ["Filter a list", "<filter-map-list list=\"list\"/>"],
-            ["Order a list", "<order-map-list list=\"list\"><order-by field-name=\"name\"/></order-map-list>"]] },
-        { group: "Calls", items: [["Call a service", "<service-call name=\"\" out-map=\"result\"/>"], ["Script", "<script><![CDATA[\n]]></script>"],
+            ["If", "<if condition=\"true\"></if>"], [moqui.l10n.localize("For each"), "<iterate list=\"list\" entry=\"item\"></iterate>"], ["While", "<while condition=\"false\"></while>"],
+            ["Message", "<message>Done</message>"], ["Return", "<return/>"], [moqui.l10n.localize("Return error"), "<return error=\"true\" message=\"Not found\"/>"],
+            [moqui.l10n.localize("Check errors"), "<check-errors/>"], ["Break", "<break/>"], ["Continue", "<continue/>"]] },
+        { group: "Environment", items: [["Set", "<set field=\"name\" from=\"null\"/>"], [moqui.l10n.localize("Filter a list"), "<filter-map-list list=\"list\"/>"],
+            [moqui.l10n.localize("Order a list"), "<order-map-list list=\"list\"><order-by field-name=\"name\"/></order-map-list>"]] },
+        { group: "Calls", items: [[moqui.l10n.localize("Call a service"), "<service-call name=\"\" out-map=\"result\"/>"], ["Script", "<script><![CDATA[\n]]></script>"],
             ["Log", "<log level=\"info\" message=\"\"/>"]] },
-        { group: "Entity find", items: [["Find one by its key", "<entity-find-one entity-name=\"\" value-field=\"value\"/>"],
+        { group: moqui.l10n.localize("Entity find"), items: [[moqui.l10n.localize("Find one by its key"), "<entity-find-one entity-name=\"\" value-field=\"value\"/>"],
             ["Find", "<entity-find entity-name=\"\" list=\"valueList\"><econdition field-name=\"\" from=\"\"/></entity-find>"],
             ["Count", "<entity-find-count entity-name=\"\" count-field=\"count\"/>"],
-            ["Loop over a find", "<entity-find entity-name=\"\" list=\"valueList\"/><iterate list=\"valueList\" entry=\"value\"></iterate>"]] },
-        { group: "Entity values", items: [["Create from the parameters", "<service-call name=\"create#\" in-map=\"context\" out-map=\"context\"/>"],
-            ["Make a value", "<entity-make-value entity-name=\"\" value-field=\"value\"/>"], ["Create", "<entity-create value-field=\"value\"/>"],
+            [moqui.l10n.localize("Loop over a find"), "<entity-find entity-name=\"\" list=\"valueList\"/><iterate list=\"valueList\" entry=\"value\"></iterate>"]] },
+        { group: moqui.l10n.localize("Entity values"), items: [[moqui.l10n.localize("Create from the parameters"), "<service-call name=\"create#\" in-map=\"context\" out-map=\"context\"/>"],
+            [moqui.l10n.localize("Make a value"), "<entity-make-value entity-name=\"\" value-field=\"value\"/>"], ["Create", "<entity-create value-field=\"value\"/>"],
             ["Update", "<entity-update value-field=\"value\"/>"], ["Delete", "<entity-delete value-field=\"value\"/>"],
-            ["Set fields", "<entity-set value-field=\"value\"/>"]] }
+            [moqui.l10n.localize("Set fields"), "<entity-set value-field=\"value\"/>"]] }
     ];
     // The containers among the blocks: what holds blocks, and the children shown as blocks (a condition element is part
     // of its block's sentence).
@@ -364,6 +364,7 @@
         beforeUnmount() { if (this.offSaved) this.offSaved(); },
         watch: { outline() { if (!this.name) this.pick(); } },
         methods: {
+            t(text) { return moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text; },
             prefixOf() {
                 const path = String(this.tab.path || "").replace(/\\/g, "/");
                 const at = path.indexOf("service/");
@@ -403,7 +404,7 @@
             // ---- SECA rules: Add writes into the site's secas file (D17) ----
             addSeca() {
                 const file = this.view && this.view.secasFile;
-                if (!file) { this.ctx.note("Create a site component on Home first", "warning"); return; }
+                if (!file) { this.ctx.note(moqui.l10n.localize("Create a site component on Home first"), "warning"); return; }
                 this.ctx.companion(file.rootId, file.path, ops.SECAS_TEXT).then((buffer) => {
                     this.secas = buffer;
                     return this.ctx.apply(ops.addRule(buffer.outline, ops.secaXml(this.name, "post-service")), buffer);
@@ -479,7 +480,7 @@
         <option value="">use or begin</option><option>ignore</option><option>force-new</option><option>cache</option><option>force-cache</option></select></label>
       <label>timeout <input class="m-dev-cell" style="width: 4rem" :disabled="!canEdit" :value="serviceNode ? (pure.attr(serviceNode, 'transaction-timeout') || '') : ''" @change="setAttr('transaction-timeout', $event.target.value)"></label>
       <span v-if="service.implements.length">implements {{service.implements.join(', ')}}</span>
-      <a class="text-caption" :href="'/qapps/tools/Service/ServiceDetail?serviceName=' + encodeURIComponent(name)" id="DevServiceTools">Open in Tools</a>
+      <a class="text-caption" :href="'/qapps/tools/Service/ServiceDetail?serviceName=' + encodeURIComponent(name)" id="DevServiceTools">{{ t('Open in Tools') }}</a>
     </div>
     <q-tabs dense align="left" no-caps v-model="section" class="m-dev-tabs">
       <q-tab name="implementation" label="Implementation"></q-tab>
@@ -512,17 +513,17 @@
       </div>
     </div>
     <div v-show="section === 'try'" id="DevTryPanel">
-      <div v-if="!view.sim" class="text-caption text-warning q-mb-xs">This server has no sim (it needs embedded Postgres): only Run for real.</div>
+      <div v-if="!view.sim" class="text-caption text-warning q-mb-xs">{{ t('This server has no sim (it needs embedded Postgres): only Run for real.') }}</div>
       <div class="row q-col-gutter-sm">
         <div v-for="parameter in inParameters" :key="parameter.name" class="col-12 col-sm-6 col-md-4">
           <q-input dense outlined v-model="values[parameter.name]" :label="parameter.name + (parameter.required === 'true' ? ' *' : '')" :hint="parameter.type" :for="'DevTry_' + parameter.name"></q-input>
         </div>
       </div>
       <div class="row q-gutter-x-sm q-mt-sm">
-        <q-btn unelevated no-caps color="primary" icon="sym_o_science" label="Run in sim" :disable="!view.sim" :loading="trying" @click="runTry(false)" id="DevRunInSim"></q-btn>
-        <q-btn flat no-caps color="negative" label="Run for real" :disable="!canEdit" @click="runTry(true)"></q-btn>
+        <q-btn unelevated no-caps color="primary" icon="sym_o_science" :label="t('Run in sim')" :disable="!view.sim" :loading="trying" @click="runTry(false)" id="DevRunInSim"></q-btn>
+        <q-btn flat no-caps color="negative" :label="t('Run for real')" :disable="!canEdit" @click="runTry(true)"></q-btn>
         <q-space></q-space>
-        <q-btn v-if="result && result.sim && !result.failed" flat no-caps icon="sym_o_note_add" label="Save as spec" :disable="!canEdit" @click="saveSpec" id="DevSaveSpec"></q-btn>
+        <q-btn v-if="result && result.sim && !result.failed" flat no-caps icon="sym_o_note_add" :label="t('Save as spec')" :disable="!canEdit" @click="saveSpec" id="DevSaveSpec"></q-btn>
         <q-btn v-if="spec" flat no-caps icon="sym_o_play_arrow" :label="'Run spec ' + spec.name" :loading="specRun && specRun.running" @click="runSpec" id="DevRunSpec"></q-btn>
       </div>
       <div v-if="result" class="q-mt-sm" id="DevTryResult">
@@ -548,7 +549,7 @@
       <q-expansion-item dense dense-toggle label="Snippet" class="q-mt-md" header-class="text-caption">
         <q-btn-toggle dense no-caps flat v-model="snippet.language" :options="[{ label: 'XML Actions', value: 'xml' }, { label: 'JavaScript', value: 'javascript' }]"></q-btn-toggle>
         <m-code-editor v-model="snippet.body" :language="snippet.language === 'xml' ? 'xml' : 'javascript'" height="8rem"></m-code-editor>
-        <q-btn dense flat no-caps icon="sym_o_science" label="Run in sim" :disable="!view.sim || !canEdit" @click="runSnippet"></q-btn>
+        <q-btn dense flat no-caps icon="sym_o_science" :label="t('Run in sim')" :disable="!view.sim || !canEdit" @click="runSnippet"></q-btn>
         <div v-if="snippet.result && !snippet.result.running">
           <div v-if="snippet.result.failed" class="text-negative text-caption">{{snippet.result.failed}}</div>
           <div v-for="(text, i) in (snippet.result.messages || [])" :key="i" class="text-caption">{{text}}</div>

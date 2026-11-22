@@ -91,7 +91,7 @@ function holdersOf(permission) {
         everyone = true
     return {everyone, has: userId => everyone || ids.has(userId)}
 }
-const flagText = value => (value === "Y" ? "Yes" : value === "N" ? "No" : "")
+const flagText = value => (value === "Y" ? ec.l10n.localize("Yes") : value === "N" ? ec.l10n.localize("No") : "")
 // A topic as the list and the detail show it.
 function described(topic, registration, subscriptions) {
     const updates = topic.inboxEnumId === "NinUpdates"
@@ -107,10 +107,10 @@ function described(topic, registration, subscriptions) {
         inboxText: updates && !actionable ? "Updates" : "Notifications",
         actionable,
         // as a notification is resolved: with no value a topic's notifications are received
-        receiveText: flagText(topic.receiveNotifications) || "Yes (not set)",
-        emailText: text(topic.emailTemplateId) ? flagText(topic.emailNotifications) || "No (not set)" : "No email template",
-        pushText: flagText(topic.pushNotifications) || (updates ? "No (by its inbox)" : "Yes (by its inbox)"),
-        digestText: flagText(topic.digestDefault) || "No (not set)",
+        receiveText: flagText(topic.receiveNotifications) || ec.l10n.localize("Yes (not set)"),
+        emailText: text(topic.emailTemplateId) ? flagText(topic.emailNotifications) || ec.l10n.localize("No (not set)") : ec.l10n.localize("No email template"),
+        pushText: flagText(topic.pushNotifications) || (updates ? ec.l10n.localize("No (by its inbox)") : ec.l10n.localize("Yes (by its inbox)")),
+        digestText: flagText(topic.digestDefault) || ec.l10n.localize("No (not set)"),
         showAlert: topic.showAlert === "Y",
         persistOnSend: topic.persistOnSend === "Y",
         hasEmailTemplate: !!text(topic.emailTemplateId),
@@ -191,10 +191,10 @@ function getTopic(p) {
                 username: text(account.username),
                 name: jobs.accountName(account),
                 open: jobs.accountOpen(account),
-                receiveText: flagText(found.receiveNotifications) || "Default",
-                emailText: flagText(found.emailNotifications) || "Default",
-                pushText: flagText(found.pushNotifications) || "Default",
-                digestText: flagText(found.digest) || "Default",
+                receiveText: flagText(found.receiveNotifications) || ec.l10n.localize("Default"),
+                emailText: flagText(found.emailNotifications) || ec.l10n.localize("Default"),
+                pushText: flagText(found.pushNotifications) || ec.l10n.localize("Default"),
+                digestText: flagText(found.digest) || ec.l10n.localize("Default"),
                 receiveNotifications: found.receiveNotifications || "default",
                 emailNotifications: found.emailNotifications || "default",
                 pushNotifications: found.pushNotifications || "default",
@@ -212,23 +212,23 @@ function getTopic(p) {
         topic: Object.assign(described(topic, registration, subscriptions), {
             audiencePermission: audience || null,
             defaultsReadOnlyReason: !registration
-                ? "Its owner registered nothing an administrator changes here"
+                ? ec.l10n.localize("Its owner registered nothing an administrator changes here")
                 : !editable.length
-                  ? "Its owner registered no delivery setting as changed here"
+                  ? ec.l10n.localize("Its owner registered no delivery setting as changed here")
                   : !canManageDefaults
                     ? SETTINGS_MANAGE + " is required to change its defaults"
                     : null,
             subscriptionsReadOnlyReason: !audience
-                ? "Its owner registered no audience an administrator subscribes here: each user sets their own in their notification settings"
+                ? ec.l10n.localize("Its owner registered no audience an administrator subscribes here: each user sets their own in their notification settings")
                 : !canManageSubscriptions
                   ? lib.MANAGE + " is required to set a subscription"
                   : null
         }),
         fieldList: Object.keys(fieldTitles).map(field => ({
             field,
-            title: fieldTitles[field],
+            title: ec.l10n.localize(fieldTitles[field]),
             value: field === "description" ? text(topic.description) : topic[field] || "",
-            valueText: field === "description" ? text(topic.description) : flagText(topic[field]) || "Not set",
+            valueText: field === "description" ? text(topic.description) : flagText(topic[field]) || ec.l10n.localize("Not set"),
             editable: canManageDefaults && editable.includes(field)
         })),
         subscriptionList: listed,
@@ -254,7 +254,7 @@ function storeTopicDefaults(p) {
     const revision = stamp(topic)
     const no = (reasonCode, problem) => refused(reasonCode, problem, {revision})
     const registration = registrationOf(name)
-    if (!registration) return no("NOT_REGISTERED", "Its owner registered nothing an administrator changes here")
+    if (!registration) return no("NOT_REGISTERED", ec.l10n.localize("Its owner registered nothing an administrator changes here"))
     if (text(p.expectedRevision) !== revision)
         return no("STALE_REVISION", "It changed since it was read; read it again and repeat")
     const fields = {}
@@ -277,9 +277,9 @@ function storeTopicDefaults(p) {
         if (!registration.fields.includes(field))
             return no("NOT_EDITABLE", fieldTitles[field] + " is its owner's and is not changed here")
         if (field === "persistOnSend" && wanted !== "Y" && text(topic.approveServiceName))
-            return no("APPROVAL_KEPT", "This topic asks for a decision: its notifications are always kept")
+            return no("APPROVAL_KEPT", ec.l10n.localize("This topic asks for a decision: its notifications are always kept"))
         if (field === "emailNotifications" && wanted === "Y" && !text(topic.emailTemplateId))
-            return no("NO_EMAIL_TEMPLATE", "Its owner gave it no email template, so nothing is sent by email")
+            return no("NO_EMAIL_TEMPLATE", ec.l10n.localize("Its owner gave it no email template, so nothing is sent by email"))
         fields[field] = wanted
         audits.push([field, topic[field] ?? null, wanted])
     }
@@ -303,10 +303,10 @@ function storeTopicSubscription(p) {
     if (!audience)
         return refused(
             "NOT_REGISTERED",
-            "Its owner registered no audience an administrator subscribes here: each user sets their own in their notification settings"
+            ec.l10n.localize("Its owner registered no audience an administrator subscribes here: each user sets their own in their notification settings")
         )
     const username = text(p.username)
-    if (!username) throw new Error("Name the user")
+    if (!username) throw new Error(ec.l10n.localize("Name the user"))
     const account = map(one(ACCOUNT, {username: username.toLowerCase()}) || one(ACCOUNT, {username}) || null)
     // one answer for an unknown name and for a user outside the audience, so names are not found out here
     if (!jobs.accountOpen(account) || !jobs.userHolds(account.userId, audience))
@@ -322,7 +322,7 @@ function storeTopicSubscription(p) {
         return refused("STALE_REVISION", "It changed since it was read; read it again and repeat", {revision})
     const remove = p.remove === true || p.remove === "true"
     if (remove) {
-        if (!row) return refused("NOT_SUBSCRIBED", "That user has no setting for this topic", {revision})
+        if (!row) return refused("NOT_SUBSCRIBED", ec.l10n.localize("That user has no setting for this topic"), {revision})
         row.delete()
         lib.auditRow(TOPIC_USER, "subscription", name, userId, "set", null, reason)
         return {applied: true, changedList: ["removed"], revision: ""}
@@ -332,7 +332,7 @@ function storeTopicSubscription(p) {
     for (const field of subscriptionFields) {
         const value = text(p[field])
         if (!value) continue
-        if (!["Y", "N", "default"].includes(value)) throw new Error("A choice is Y, N or default")
+        if (!["Y", "N", "default"].includes(value)) throw new Error(ec.l10n.localize("A choice is Y, N or default"))
         const wanted = value === "default" ? null : value
         if ((current?.[field] ?? null) === wanted) continue
         fields[field] = wanted

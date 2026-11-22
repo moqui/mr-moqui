@@ -209,21 +209,21 @@ function scheduleOf(job, lock, run, nowMs) {
 function stateTextOf(state, schedule, run) {
     switch (state) {
         case "manual":
-            return "No schedule: started by its owner"
+            return ec.l10n.localize("No schedule: started by its owner")
         case "invalid":
-            return "Its schedule cannot be read"
+            return ec.l10n.localize("Its schedule cannot be read")
         case "running":
             return "Running" + (schedule.lastRunMs != null ? " since " + zoned(schedule.lastRunMs) : "")
         case "ended":
-            return "Outside its dates"
+            return ec.l10n.localize("Outside its dates")
         case "paused":
             return "Paused"
         case "requested":
-            return "A run was asked for: starts at the scheduler's next pass"
+            return ec.l10n.localize("A run was asked for: starts at the scheduler's next pass")
         case "late":
             return "Late: due since " + zoned(schedule.lateSince)
         case "due":
-            return "Due: starts at the scheduler's next pass"
+            return ec.l10n.localize("Due: starts at the scheduler's next pass")
         case "failing":
             return "Failing" + (run?.startTime ? ": its last run, " + zoned(ms(run.startTime)) + ", failed" : "")
         default:
@@ -232,7 +232,7 @@ function stateTextOf(state, schedule, run) {
 }
 const stateList = [
     {state: "all", text: "All"},
-    {state: "attention", text: "Failing or late"},
+    {state: "attention", text: ec.l10n.localize("Failing or late")},
     {state: "failing", text: "Failing"},
     {state: "late", text: "Late"},
     {state: "paused", text: "Paused"},
@@ -250,11 +250,11 @@ const runRevision = (job, lock) => [stamp(job), text(lock?.jobRunId) || "-", ms(
 function errorClassOf(value) {
     const found = text(value)
     if (!found) return ""
-    if (/server instance stopped|pool stopped before/i.test(found)) return "Its server stopped"
-    if (/panicked/i.test(found)) return "The job's code failed unexpectedly"
-    if (/cannot sign in; the job did not run/i.test(found)) return "The user it runs as cannot sign in"
-    if (/queue is full/i.test(found)) return "The job queue was full"
-    if (/interrupted|timed? ?out|time limit/i.test(found)) return "Time limit"
+    if (/server instance stopped|pool stopped before/i.test(found)) return ec.l10n.localize("Its server stopped")
+    if (/panicked/i.test(found)) return ec.l10n.localize("The job's code failed unexpectedly")
+    if (/cannot sign in; the job did not run/i.test(found)) return ec.l10n.localize("The user it runs as cannot sign in")
+    if (/queue is full/i.test(found)) return ec.l10n.localize("The job queue was full")
+    if (/interrupted|timed? ?out|time limit/i.test(found)) return ec.l10n.localize("Time limit")
     if (/not authorized|requires login|permission|authz/i.test(found)) return "Authorization"
     if (/connect|resolve|unreachable|certificate|handshake|\btls\b|\bdns\b/i.test(found)) return "Connection"
     return "Processing"
@@ -266,9 +266,11 @@ function described(job, lock, run, registration, descriptor, nowMs, runKnown = t
     const schedule = scheduleOf(job, lock, run, nowMs)
     return {
         jobName: job.jobName,
-        title: text(registration?.title) || text(job.description) || job.jobName,
+        title: text(registration?.title)
+            ? ec.l10n.localize(text(registration.title))
+            : text(job.description) || job.jobName,
         description: text(job.description) || null,
-        purpose: text(registration?.description) || null,
+        purpose: text(registration?.description) ? ec.l10n.localize(text(registration.description)) : null,
         registered: !!registration,
         ownerApp: text(registration?.ownerApp) || null,
         ownerText: registration ? text(registration.ownerApp) || "Registered" : "Not registered",
@@ -407,16 +409,16 @@ function parameterRows(loaded) {
         const value = stored.get(definition.parameterName)?.parameterValue
         return {
             parameterName: definition.parameterName,
-            title: text(definition.title) || definition.parameterName,
-            description: text(definition.description) || null,
+            title: text(definition.title) ? ec.l10n.localize(text(definition.title)) : definition.parameterName,
+            description: text(definition.description) ? ec.l10n.localize(text(definition.description)) : null,
             valueType: definition.valueType,
             value: value == null ? null : String(value),
-            valueText: value == null ? "The service's default" : String(value),
+            valueText: value == null ? ec.l10n.localize("The service's default") : String(value),
             boundsText: boundsText(definition),
             optionList: definition.valueType === "option" ? optionsOf(definition) : [],
             required: yes(definition.required),
             editable: true,
-            sourceText: value == null ? "Default" : "Set for this job"
+            sourceText: value == null ? "Default" : ec.l10n.localize("Set for this job")
         }
     })
     const names = new Set(loaded.definitions.map(definition => definition.parameterName))
@@ -433,7 +435,7 @@ function parameterRows(loaded) {
             optionList: [],
             required: false,
             editable: false,
-            sourceText: "Its owner's deployment"
+            sourceText: ec.l10n.localize("Its owner's deployment")
         }))
     return registered.concat(others.sort((a, b) => a.parameterName.localeCompare(b.parameterName)))
 }
@@ -523,7 +525,7 @@ function getJob(p) {
             recipientPermission: recipientPermission || null,
             ownerPermission: ownerPermission || null,
             readOnlyReason: !registration
-                ? "Its owner registered nothing an administrator changes here: it is its owner's deployment, or an instance administrator's in Tools"
+                ? ec.l10n.localize("Its owner registered nothing an administrator changes here: it is its owner's deployment, or an instance administrator's in Tools")
                 : !ownerHeld
                   ? "Changing it also needs its owner's own permission (" + ownerPermission + ")"
                   : !canManage
@@ -554,15 +556,15 @@ function getJob(p) {
 // its next occurrences.
 function checkedCron(value, minMinutes) {
     const cron = lib.plainText(value, "The schedule", 60)
-    if (!/^[\w*?,\/#\- ]+$/.test(cron)) return {problem: "The schedule is not a cron expression"}
+    if (!/^[\w*?,\/#\- ]+$/.test(cron)) return {problem: ec.l10n.localize("The schedule is not a cron expression")}
     let next
     try {
         ec.service.getCronDescription(cron)
         next = ec.service.nextCronExecution(cron, now())
     } catch (error) {
-        return {problem: "The schedule is not a cron expression the scheduler reads"}
+        return {problem: ec.l10n.localize("The schedule is not a cron expression the scheduler reads")}
     }
-    if (next == null) return {problem: "That schedule never comes due again"}
+    if (next == null) return {problem: ec.l10n.localize("That schedule never comes due again")}
     let shortest = null
     let moment = next
     for (let count = 0; count < 30; count++) {
@@ -623,7 +625,7 @@ function storeJob(p) {
     if (!registration)
         return refused(
             "NOT_REGISTERED",
-            "Its owner registered nothing an administrator changes here: it is its owner's deployment, or an instance administrator's in Tools",
+            ec.l10n.localize("Its owner registered nothing an administrator changes here: it is its owner's deployment, or an instance administrator's in Tools"),
             {revision}
         )
     const ownerPermission = text(registration.managePermission)
@@ -638,10 +640,10 @@ function storeJob(p) {
 
     // --- the scheduling controls ---
     if (given(p.cronExpression) && text(p.cronExpression) !== text(job.cronExpression)) {
-        if (!yes(registration.scheduleEditable)) return no("NOT_EDITABLE", "Its schedule is its owner's and is not changed here")
+        if (!yes(registration.scheduleEditable)) return no("NOT_EDITABLE", ec.l10n.localize("Its schedule is its owner's and is not changed here"))
         // a job its owner runs by hand is not given a schedule here, and a schedule is never taken away: pause it instead
-        if (!text(job.cronExpression)) return no("NOT_EDITABLE", "It has no schedule: its owner starts it")
-        if (!text(p.cronExpression)) return no("INVALID_SCHEDULE", "A schedule is not cleared: pause the job instead")
+        if (!text(job.cronExpression)) return no("NOT_EDITABLE", ec.l10n.localize("It has no schedule: its owner starts it"))
+        if (!text(p.cronExpression)) return no("INVALID_SCHEDULE", ec.l10n.localize("A schedule is not cleared: pause the job instead"))
         const checked = checkedCron(p.cronExpression, Math.max(Number(registration.minIntervalMinutes) || 1, 1))
         if (checked.problem) return no("INVALID_SCHEDULE", checked.problem)
         jobFields.cronExpression = checked.cron
@@ -653,7 +655,7 @@ function storeJob(p) {
         if (!["Y", "N"].includes(wanted)) throw new Error("Paused is Y or N")
         const paused = !(job.paused == null || job.paused === "N")
         if ((wanted === "Y") !== paused) {
-            if (!yes(registration.pauseEditable)) return no("NOT_EDITABLE", "Its owner does not let it be paused or resumed here")
+            if (!yes(registration.pauseEditable)) return no("NOT_EDITABLE", ec.l10n.localize("Its owner does not let it be paused or resumed here"))
             jobFields.paused = wanted
             changed.push(wanted === "Y" ? "paused" : "resumed")
         }
@@ -710,14 +712,14 @@ function storeJob(p) {
     const username = text(p.recipientUsername)
     if (username) {
         const permission = text(registration.recipientPermission)
-        if (!permission) return no("NOT_EDITABLE", "Its owner registered nobody as its recipients here")
+        if (!permission) return no("NOT_EDITABLE", ec.l10n.localize("Its owner registered nobody as its recipients here"))
         const action = text(p.recipientAction) || "add"
-        if (!["add", "mute", "remove"].includes(action)) throw new Error("A recipient is added, muted or removed")
+        if (!["add", "mute", "remove"].includes(action)) throw new Error(ec.l10n.localize("A recipient is added, muted or removed"))
         const account = map(one(ACCOUNT, {username: username.toLowerCase()}) || one(ACCOUNT, {username}) || null)
         const current = account.userId ? loaded.recipients.find(row => row.userId === account.userId) : null
         if (action === "remove" || action === "mute") {
             // taking someone off narrows who is told: anyone listed, whatever they hold now
-            if (!current) return no("NOT_A_RECIPIENT", "That user is not one of its recipients")
+            if (!current) return no("NOT_A_RECIPIENT", ec.l10n.localize("That user is not one of its recipients"))
             recipientWrite = {userId: account.userId, action}
         } else {
             // one answer for an unknown name and for a user outside the audience, so names are not found out here
@@ -728,7 +730,7 @@ function storeJob(p) {
                         permission
                 )
             if (current && current.receiveNotifications !== "N")
-                return no("ALREADY_A_RECIPIENT", "That user is one of its recipients already")
+                return no("ALREADY_A_RECIPIENT", ec.l10n.localize("That user is one of its recipients already"))
             recipientWrite = {userId: account.userId, action, create: !current}
         }
         audits.push([
@@ -818,7 +820,7 @@ function baseline(target, action, descriptor) {
     if (target.uncertain)
         return hold(
             "OWNER_RECONCILES",
-            "Its owner says the outcome of its last run is unknown: that is settled in the owner's own place first"
+            ec.l10n.localize("Its owner says the outcome of its last run is unknown: that is settled in the owner's own place first")
         )
     if (target.state === "running")
         return hold(
@@ -829,20 +831,20 @@ function baseline(target, action, descriptor) {
     if (text(descriptor?.retryMode) !== "native") return null
     switch (target.state) {
         case "manual":
-            return hold("NOT_SCHEDULED", "It has no schedule the scheduler starts it by: its owner starts it")
+            return hold("NOT_SCHEDULED", ec.l10n.localize("It has no schedule the scheduler starts it by: its owner starts it"))
         case "invalid":
-            return hold("NOT_SCHEDULED", "Its schedule cannot be read, so the scheduler does not start it")
+            return hold("NOT_SCHEDULED", ec.l10n.localize("Its schedule cannot be read, so the scheduler does not start it"))
         case "paused":
-            return hold("PAUSED", "It is paused: resume it first")
+            return hold("PAUSED", ec.l10n.localize("It is paused: resume it first"))
         case "ended":
-            return hold("NOT_ACTIVE", "It is outside the dates it runs in")
+            return hold("NOT_ACTIVE", ec.l10n.localize("It is outside the dates it runs in"))
         case "requested":
-            return hold("ALREADY_DUE", "A run was asked for already: the scheduler starts it at its next pass")
+            return hold("ALREADY_DUE", ec.l10n.localize("A run was asked for already: the scheduler starts it at its next pass"))
         case "due":
         case "late":
-            return hold("ALREADY_DUE", "It is due already: the scheduler starts it at its next pass")
+            return hold("ALREADY_DUE", ec.l10n.localize("It is due already: the scheduler starts it at its next pass"))
         default:
-            return target.hasLock ? null : hold("ALREADY_DUE", "It has not run yet and is due at the scheduler's next pass")
+            return target.hasLock ? null : hold("ALREADY_DUE", ec.l10n.localize("It has not run yet and is due at the scheduler's next pass"))
     }
 }
 // One step on a job in a transaction of its own (apply#JobRecovery): whether it was taken.
@@ -880,7 +882,7 @@ const recoveryKind = {
     after,
     consequence,
     resolutionOf: (target, resolution) => ({resolution, label: resolution}),
-    uncertainText: () => "Outcome unknown at its owner",
+    uncertainText: () => ec.l10n.localize("Outcome unknown at its owner"),
     safeText,
     audit: (target, afterwards, reasonText) =>
         lib.auditRow(
@@ -932,8 +934,8 @@ function applyJobRecovery(p) {
 const runStateList = [
     {state: "all", text: "All"},
     {state: "failed", text: "Failed"},
-    {state: "running", text: "Running or not ended"},
-    {state: "ended", text: "Ended without an error"}
+    {state: "running", text: ec.l10n.localize("Running or not ended")},
+    {state: "ended", text: ec.l10n.localize("Ended without an error")}
 ]
 // The numbers and yes-or-noes of a run's results, by name; and the names of what else it answered.
 function resultCounts(run) {
@@ -977,8 +979,8 @@ const runStateText = (state, failedItems) =>
     ({
         failed: "Failed",
         running: "Running",
-        waiting: "Waiting for a worker",
-        stopped: "Not ended: its server stopped, or it was started by hand and never finished",
+        waiting: ec.l10n.localize("Waiting for a worker"),
+        stopped: ec.l10n.localize("Not ended: its server stopped, or it was started by hand and never finished"),
         itemsFailed: "Ended with " + failedItems + " failed " + (failedItems === 1 ? "item" : "items"),
         succeeded: "Succeeded"
     })[state] || state
@@ -989,7 +991,7 @@ function describedRun(run, lock, registration, failedItems, counts) {
     return {
         jobRunId: run.jobRunId,
         jobName: run.jobName,
-        title: text(registration?.title) || run.jobName,
+        title: text(registration?.title) ? ec.l10n.localize(text(registration.title)) : run.jobName,
         ownerApp: text(registration?.ownerApp) || null,
         state,
         stateText: runStateText(state, failedItems),
@@ -1002,7 +1004,7 @@ function describedRun(run, lock, registration, failedItems, counts) {
         failedItemCount: failedItems,
         countList: counts,
         traceId: /^[0-9a-f]{16,64}$/i.test(text(run.traceId)) ? text(run.traceId) : null,
-        startedBy: run.userId ? "A person" : "The scheduler",
+        startedBy: run.userId ? "A person" : ec.l10n.localize("The scheduler"),
         timeZone: zone()
     }
 }
@@ -1017,7 +1019,7 @@ function findJobRuns(p) {
     const from = ms(p.fromDate)
     const thru = ms(p.thruDate)
     if ((p.fromDate && (from == null || Number.isNaN(from))) || (p.thruDate && (thru == null || Number.isNaN(thru))))
-        throw new Error("A date is not a date")
+        throw new Error(ec.l10n.localize("A date is not a date"))
     const until = thru ?? nowMs + 60000
     const since = Math.max(from ?? until - defaultDays * 86400000, until - rangeDays * 86400000)
     const factory = ec.entity.conditionFactory
@@ -1120,7 +1122,7 @@ function loadRun(jobRunId) {
 }
 // The independent items of a run, by what its job's owner registered (RecoveryDescriptor itemsService): each answer read as
 // data, its texts cut and masked, its states of a fixed set.
-const itemStates = {done: "Done", failed: "Failed", skipped: "Skipped", uncertain: "Outcome unknown", waiting: "Waiting"}
+const itemStates = {done: "Done", failed: "Failed", skipped: "Skipped", uncertain: ec.l10n.localize("Outcome unknown"), waiting: "Waiting"}
 function runItems(run) {
     const descriptor = engine.descriptorFor(engine.descriptorsOf(recoveryKind.targetKind), {targetKey: run.jobName})
     const service = text(descriptor?.itemsService)
@@ -1131,10 +1133,10 @@ function runItems(run) {
         failedItemCount: 0,
         itemCount: 0
     })
-    if (!descriptor || !service) return none(false, "Its owner registered no detail of what each run did")
+    if (!descriptor || !service) return none(false, ec.l10n.localize("Its owner registered no detail of what each run did"))
     if (!ec.service.getServiceDefinition(service)) {
         ec.logger.error("Recovery descriptor " + descriptor.descriptorKey + " names an items service that is not defined")
-        return none(false, "Its owner's detail of the run is not available")
+        return none(false, ec.l10n.localize("Its owner's detail of the run is not available"))
     }
     const asked = lib.callOwner(service, {
         jobName: run.jobName,
@@ -1208,7 +1210,7 @@ function getJobRun(p) {
         ec.logger.error("The items of job run " + run.jobRunId + " could not be read: " + String(error?.message ?? error))
         items = {
             itemsAvailable: false,
-            itemsReason: "The run's items could not be read",
+            itemsReason: ec.l10n.localize("The run's items could not be read"),
             itemList: [],
             failedItemCount: 0,
             itemCount: 0

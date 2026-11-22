@@ -336,8 +336,8 @@ const hasStep = (target, stepName) => !!text(target[contracts[stepName].field])
 // sourceValues, sourceError}]}; a problem with the whole file is an Error whose message a person can act on.
 function parseDelimited(source, delimiter, bounds) {
     const content = String(source || "").replace(/^﻿/, "")
-    if (!content.trim()) throw new Error("The file is empty")
-    if (content.includes("\0")) throw new Error("The file is not text: save it as UTF-8 CSV")
+    if (!content.trim()) throw new Error(ec.l10n.localize("The file is empty"))
+    if (content.includes("\0")) throw new Error(ec.l10n.localize("The file is not text: save it as UTF-8 CSV"))
     const records = []
     let row = []
     let value = ""
@@ -381,16 +381,16 @@ function parseDelimited(source, delimiter, bounds) {
             if (!closed) value += character
         }
     }
-    if (quoted) throw new Error("A quoted cell is not closed")
+    if (quoted) throw new Error(ec.l10n.localize("A quoted cell is not closed"))
     if (value || row.length || closed) line()
-    if (records.length < 2) throw new Error("Include a header line and at least one row")
+    if (records.length < 2) throw new Error(ec.l10n.localize("Include a header line and at least one row"))
     const headers = records.shift().map(text)
     if (headers.length > bounds.maxColumns) throw new Error("Use at most " + bounds.maxColumns + " columns")
     if (
         headers.some(header => !header || header.length > 100 || /[\u0000-\u001f\u007f]/.test(header)) ||
         new Set(headers).size !== headers.length
     )
-        throw new Error("Give each column a distinct header of 1 to 100 characters")
+        throw new Error(ec.l10n.localize("Give each column a distinct header of 1 to 100 characters"))
     return {
         headers,
         rows: records.map((cells, index) => ({
@@ -398,7 +398,7 @@ function parseDelimited(source, delimiter, bounds) {
             sourceValues: Object.fromEntries(headers.map((header, column) => [header, cells[column] ?? ""])),
             sourceError:
                 cells.length > headers.length
-                    ? "This row has more cells than the header"
+                    ? ec.l10n.localize("This row has more cells than the header")
                     : cells.some(found => found.length > bounds.maxCell)
                       ? "A cell is longer than " + bounds.maxCell + " characters"
                       : null
@@ -456,10 +456,12 @@ function writeDelimited(headers, records) {
 // ===== what a target is, for a reader =====
 // A registration as data: never a service name.
 function described(target) {
+    const title = text(target.title)
+    const description = text(target.description)
     return {
         targetId: target.targetId,
-        title: lineText(target.title) || target.targetId,
-        description: lineText(target.description) || null,
+        title: title ? lineText(ec.l10n.localize(title)) : target.targetId,
+        description: description ? lineText(ec.l10n.localize(description)) : null,
         effectsNote: lineText(target.effectsNote) || null,
         ownerApp: lineText(target.ownerApp, 60) || null,
         targetVersion: lineText(target.targetVersion, 20) || null,

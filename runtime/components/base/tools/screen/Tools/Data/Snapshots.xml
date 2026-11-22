@@ -91,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
                     description: 'Foreign keys around the import of ' + zipFilename}).call() || {}
                 if (ec.message.hasError()) return
                 for (const warning of wrap.warnings || []) ec.message.addMessage(String(warning), 'warning')
-                if (!wrap.dropJobId || !wrap.restoreJobId) { ec.message.addError(String(wrap.jobReason || 'The foreign keys could not be planned')); return }
+                if (!wrap.dropJobId || !wrap.restoreJobId) { ec.message.addError(String(wrap.jobReason || ec.l10n.localize('The foreign keys could not be planned'))); return }
                 jobRunId = ec.service.job('DatabaseLoadWrap').parameters(Object.assign({dropJobId: wrap.dropJobId, restoreJobId: wrap.restoreJobId,
                     loadKind: 'snapshot'}, importParameters)).run()
                 ec.message.addMessage(`Started the import of ${zipFilename} on a worker (job run ${jobRunId}): database job ${wrap.dropJobId} drops ${(wrap.dropStatements || []).length} foreign keys, then the snapshot is imported, then database job ${wrap.restoreJobId} makes them again. A notification says how it ended; Database › Jobs shows both jobs.`, 'info')

@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="setPreference">
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 // refused when the theme's appearance policy locks the key (STRT_APPEARANCE_POLICY)
                 try { ec.user.setPreference(preferenceKey, preferenceValue) } catch (e) { ec.web.sendJsonError(403, String(e.message || e)) }
             }
@@ -32,7 +32,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="setScreenTheme">
         <parameter name="screenThemeId" required="true"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 let out = null, refused = null
                 try {
                     out = ec.service.sync().name('org.moqui.ui.ShellServices.set#UserScreenTheme')
@@ -49,7 +49,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="setPrefGoLast" method="post">
         <parameter name="preferenceKey"/><parameter name="preferenceValue"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 // refused when the theme's appearance policy locks the key (STRT_APPEARANCE_POLICY)
                 try { ec.user.setPreference(preferenceKey, preferenceValue) } catch (e) { ec.web.sendJsonError(403, String(e.message || e)) }
             }
@@ -59,7 +59,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="getPreferences" read-only="true">
         <parameter name="keyRegexp"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 ec.web.sendJsonResponse(ec.user.getPreferences(keyRegexp))
             }
             ]]></script></actions>
@@ -84,7 +84,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="l10nCatalog" read-only="true">
         <parameter name="locale"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const localeText = String(locale || ec.user.locale || 'en_US').replace('-', '_')
                 const messages = {}
                 for (const key of ['default', localeText.split('_')[0], localeText]) {
@@ -99,7 +99,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="qzSign" read-only="true">
         <parameter name="message"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 ec.web.sendQzSignedResponse(message)
             }
             ]]></script></actions>

@@ -58,21 +58,21 @@ const now = () => ms(ec.user.nowTimestamp)
 
 // What an archive does not hold, and the warning shown with every coverage: fixed text, not a setting.
 const notIncluded = [
-    {key: "env", title: "The .env file", text: "The instance's settings and secrets (.env) are not in an archive."},
+    {key: "env", title: ec.l10n.localize("The .env file"), text: ec.l10n.localize("The instance's settings and secrets (.env) are not in an archive.")},
     {
         key: "encryptionKey",
-        title: "The field-encryption key",
-        text: "Encrypted fields in an archive cannot be read without the key they were encrypted under, and the key is not in the archive."
+        title: ec.l10n.localize("The field-encryption key"),
+        text: ec.l10n.localize("Encrypted fields in an archive cannot be read without the key they were encrypted under, and the key is not in the archive.")
     },
     {
         key: "resourceFiles",
-        title: "Resource files",
-        text: "Files kept outside the database (the runtime directory's resources and components, an object store) are not in an archive."
+        title: ec.l10n.localize("Resource files"),
+        text: ec.l10n.localize("Files kept outside the database (the runtime directory's resources and components, an object store) are not in an archive.")
     },
     {
         key: "externalStores",
-        title: "External databases and search servers",
-        text: "A database or a search server this process does not run itself is backed up by its own provider, not here."
+        title: ec.l10n.localize("External databases and search servers"),
+        text: ec.l10n.localize("A database or a search server this process does not run itself is backed up by its own provider, not here.")
     }
 ]
 const warning =
@@ -107,10 +107,10 @@ function databaseOf() {
     return {
         kind,
         text: {
-            embedded: "Embedded database, run by this server",
-            external: "External database, not run by this server",
-            mixed: "An embedded database and an external one",
-            unknown: "The database could not be read"
+            embedded: ec.l10n.localize("Embedded database, run by this server"),
+            external: ec.l10n.localize("External database, not run by this server"),
+            mixed: ec.l10n.localize("An embedded database and an external one"),
+            unknown: ec.l10n.localize("The database could not be read")
         }[kind]
     }
 }
@@ -143,12 +143,12 @@ function lockHolder(lockRow) {
 // ===== runs =====
 const outcomeTexts = {
     success: "Succeeded",
-    skipped: "Skipped: this server runs no embedded database, so nothing was backed up",
+    skipped: ec.l10n.localize("Skipped: this server runs no embedded database, so nothing was backed up"),
     failed: "Failed",
-    partial: "Archive written, with a failure after it",
+    partial: ec.l10n.localize("Archive written, with a failure after it"),
     running: "Running",
-    notEnded: "Not ended: its server stopped, or the run was lost",
-    unknown: "Ended without naming an archive"
+    notEnded: ec.l10n.localize("Not ended: its server stopped, or the run was lost"),
+    unknown: ec.l10n.localize("Ended without naming an archive")
 }
 // The outcome of one run of the backup job, from what the run recorded.
 function outcomeOf(run, job, nowMs) {
@@ -215,11 +215,11 @@ function archivesOf() {
     try {
         const reference = ec.resource.getLocationReference(directory)
         if (!reference?.exists) return {archives: [], directoryExists: false}
-        if (!reference.directory) return {archives: [], problem: "The backup directory is not a directory"}
+        if (!reference.directory) return {archives: [], problem: ec.l10n.localize("The backup directory is not a directory")}
         entries = reference.getDirectoryEntries()
     } catch (error) {
         ec.logger.error("Backup archives could not be listed: " + String(error?.message ?? error))
-        return {archives: [], problem: "The backup directory could not be read"}
+        return {archives: [], problem: ec.l10n.localize("The backup directory could not be read")}
     }
     const archives = []
     for (const entry of entries) {
@@ -234,7 +234,7 @@ function archivesOf() {
             database: parsed[1],
             databaseText: databaseText(parsed[1]),
             kind: parsed[9] ? "dump" : "physical",
-            kindText: parsed[9] ? "Dump (one file)" : "Physical backup (a directory)",
+            kindText: parsed[9] ? ec.l10n.localize("Dump (one file)") : ec.l10n.localize("Physical backup (a directory)"),
             tier: parsed[8],
             tierText: tierTexts[parsed[8]],
             createdDate: created,
@@ -270,15 +270,15 @@ function mirrorOf(parameters, lastWritten) {
     const remoteId = text(parameters.systemMessageRemoteId)
     const remote = remoteId ? one(REMOTE, {systemMessageRemoteId: remoteId}) : null
     if (!remote || !text(remote.sendUrl))
-        return {state: "none", text: "No off-site mirror: the archives are kept on this server only", lastMirrored: null}
+        return {state: "none", text: ec.l10n.localize("No off-site mirror: the archives are kept on this server only"), lastMirrored: null}
     const lastMirrored = lastWritten ? lastWritten.mirrored === true : null
     return {
         state: lastMirrored === false ? "notMirrored" : "configured",
         text:
             lastMirrored === false
-                ? "An off-site mirror is set, and the last archive written was not copied to it"
+                ? ec.l10n.localize("An off-site mirror is set, and the last archive written was not copied to it")
                 : lastMirrored
-                  ? "An off-site mirror is set, and the last archive written was copied to it"
+                  ? ec.l10n.localize("An off-site mirror is set, and the last archive written was copied to it")
                   : "An off-site mirror is set; no archive has been written since",
         lastMirrored
     }
@@ -291,16 +291,16 @@ function runHold(database, job, lockRow, runs, requests, nowMs) {
     if (database.kind === "external")
         return hold(
             "EXTERNAL_DATABASE",
-            "This instance's database is not run by this server: it is backed up by its provider's own means"
+            ec.l10n.localize("This instance's database is not run by this server: it is backed up by its provider's own means")
         )
-    if (database.kind === "unknown") return hold("DATABASE_UNKNOWN", "The database could not be read, so no backup is started")
+    if (database.kind === "unknown") return hold("DATABASE_UNKNOWN", ec.l10n.localize("The database could not be read, so no backup is started"))
     if (!job)
         return hold(
             "NO_BACKUP_JOB",
             "This instance has no backup job (" + BACKUP_JOB + "): an instance administrator restores it"
         )
     if (lockHolder(lockRow) || runs.some(run => run.state === "running"))
-        return hold("IN_PROGRESS", "A backup is running: a second one is not started beside it")
+        return hold("IN_PROGRESS", ec.l10n.localize("A backup is running: a second one is not started beside it"))
     const last = Math.max(runs.find(run => run.startedDate != null)?.startedDate ?? 0, requests[0] ?? 0)
     if (last && nowMs - last < minMinutes * 60000)
         return hold(
@@ -336,7 +336,7 @@ function getCoverage() {
     const listed = database.kind === "external" || database.kind === "unknown" ? {archives: []} : archivesOf()
     const dumps = listed.archives.filter(archive => archive.sizeBytes != null)
     const newest = listed.archives[0] || null
-    let schedule = {scheduled: false, text: "No backup job", nextRunText: ""}
+    let schedule = {scheduled: false, text: ec.l10n.localize("No backup job"), nextRunText: ""}
     if (job) {
         const cron = text(job.cronExpression)
         let description = ""
@@ -350,9 +350,9 @@ function getCoverage() {
         schedule = {
             scheduled: !!cron && !paused(job),
             text: !cron
-                ? "No schedule: it runs only when asked for"
+                ? ec.l10n.localize("No schedule: it runs only when asked for")
                 : paused(job)
-                  ? "Paused: no backup is made on a schedule until an instance administrator resumes the job"
+                  ? ec.l10n.localize("Paused: no backup is made on a schedule until an instance administrator resumes the job")
                   : "Scheduled" + (description ? ": " + description : ""),
             nextRunText: next == null ? "" : zoned(next)
         }
@@ -363,21 +363,21 @@ function getCoverage() {
     if (database.kind === "external") {
         state = "external"
         stateText =
-            "Unknown: this instance's database is not run by this server. Its backups are its provider's, and nothing here knows whether they are made."
+            ec.l10n.localize("Unknown: this instance's database is not run by this server. Its backups are its provider's, and nothing here knows whether they are made.")
     } else if (database.kind === "unknown") {
         state = "unknown"
-        stateText = "Unknown: the database could not be read"
+        stateText = ec.l10n.localize("Unknown: the database could not be read")
     } else if (!job) {
         state = "none"
-        stateText = "Not backed up: this instance has no backup job"
+        stateText = ec.l10n.localize("Not backed up: this instance has no backup job")
     } else if (!lastEnded) {
         // a first run under way is said so: nothing has been backed up yet, and "never" would not be all of it
         state = running ? "running" : successesKept ? "never" : "unknown"
         stateText = running
-            ? "The first backup is running: nothing has been backed up yet"
+            ? ec.l10n.localize("The first backup is running: nothing has been backed up yet")
             : successesKept
-              ? "No backup has run yet"
-              : "Unknown: the backup job keeps only its failed runs, so a run that succeeded left no record"
+              ? ec.l10n.localize("No backup has run yet")
+              : ec.l10n.localize("Unknown: the backup job keeps only its failed runs, so a run that succeeded left no record")
     } else {
         state = lastEnded.state
         stateText = "The last backup: " + lastEnded.stateText + (lastEnded.startedText ? ", " + lastEnded.startedText : "")
@@ -400,7 +400,7 @@ function getCoverage() {
     return {
         coverage: {
             database,
-            provider: database.kind === "external" ? "The database's own provider" : "Embedded database backup",
+            provider: database.kind === "external" ? ec.l10n.localize("The database's own provider") : ec.l10n.localize("Embedded database backup"),
             state,
             stateText,
             running: !!running,
@@ -417,9 +417,9 @@ function getCoverage() {
             newestArchiveText: newest ? newest.createdText : "",
             archiveProblem: listed.problem || null,
             retentionText: job ? retentionText(parameters) : "",
-            mirror: job ? mirrorOf(parameters, lastWritten) : {state: "none", text: "No off-site mirror", lastMirrored: null},
+            mirror: job ? mirrorOf(parameters, lastWritten) : {state: "none", text: ec.l10n.localize("No off-site mirror"), lastMirrored: null},
             // no restore of an archive is made or recorded here
-            verificationText: "No archive has been verified by a restore here: test a restore on another machine",
+            verificationText: ec.l10n.localize("No archive has been verified by a restore here: test a restore on another machine"),
             notIncluded,
             warning,
             timeZone: zone()
@@ -478,7 +478,7 @@ function runBackup(p) {
         // thread of its own with no transaction, so the run's row is committed before the job runner writes to it
         const started = ec.service.async().name(START).disableAuthz().callFuture().get(60000) || {}
         const jobRunId = text(started.jobRunId)
-        if (!jobRunId) throw new Error("The backup could not be started")
+        if (!jobRunId) throw new Error(ec.l10n.localize("The backup could not be started"))
         lib.write(
             lib.RESULT,
             {
@@ -496,7 +496,7 @@ function runBackup(p) {
             jobRunId,
             reasonCode: null,
             reason: null,
-            stateText: "A backup was started. Its outcome shows here when it ends."
+            stateText: ec.l10n.localize("A backup was started. Its outcome shows here when it ends.")
         }
     })
 }
@@ -504,7 +504,7 @@ function runBackup(p) {
 function startBackupRun() {
     lib.signedIn()
     if (!ec.user.hasPermission(RUN)) throw new Error(RUN + " is required")
-    if (ec.transaction.isTransactionInPlace()) throw new Error("A backup run is started outside a transaction")
+    if (ec.transaction.isTransactionInPlace()) throw new Error(ec.l10n.localize("A backup run is started outside a transaction"))
     if (!backupJob()) throw new Error("This instance has no backup job")
     const wasDisabled = ec.artifactExecution.disableAuthz()
     try {
@@ -541,10 +541,10 @@ function holdBackupLock(p) {
     lib.signedIn()
     if (!ec.user.hasPermission(RUN)) throw new Error(RUN + " is required")
     const jobRunId = text(p.jobRunId)
-    if (!jobRunId) throw new Error("A run is required")
+    if (!jobRunId) throw new Error(ec.l10n.localize("A run is required"))
     const lockRow = find(LOCK, {jobName: BACKUP_JOB}).forUpdate(true).one()
     const run = find(JOB_RUN, {jobRunId}).forUpdate(true).one()
-    if (run && text(run.jobName) !== BACKUP_JOB) throw new Error("Not a run of the backup job")
+    if (run && text(run.jobName) !== BACKUP_JOB) throw new Error(ec.l10n.localize("Not a run of the backup job"))
     const ended = !run || run.endTime != null
     if (p.settle === true) {
         if (ended && lockRow && text(lockRow.jobRunId) === jobRunId)

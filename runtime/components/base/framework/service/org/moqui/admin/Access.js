@@ -61,7 +61,7 @@ const text = value => String(value ?? "").trim()
 
 // ===== permission, refusal and reason =====
 function signedIn() {
-    if (!ec.user.userId) throw new Error("Sign in to administer access")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to administer access"))
 }
 function requireView() {
     signedIn()
@@ -74,7 +74,7 @@ function requireManage() {
 const refused = (reasonCode, reason, extra = {}) => Object.assign({applied: false, reasonCode, reason}, extra)
 function reasonText(p) {
     const reason = text(p.reason)
-    if (reason.length > 255) throw new Error("Give a reason of at most 255 characters")
+    if (reason.length > 255) throw new Error(ec.l10n.localize("Give a reason of at most 255 characters"))
     return reason || null
 }
 // The reason the audit log records beside each audit-logged field the change writes ({field}_changeReason, as Java).
@@ -209,7 +209,7 @@ function ownAuditReason(reason) {
 // What the actor may change of a group: a registered bundle or a custom group, and for a privileged group only a member. The
 // reason code when not.
 function groupRefusal(group, registry = bundles(), privileged = privilegedIds()) {
-    if (!group) return {reasonCode: "GROUP_UNAVAILABLE", reason: "The group is not available"}
+    if (!group) return {reasonCode: "GROUP_UNAVAILABLE", reason: ec.l10n.localize("The group is not available")}
     const groupId = group.userGroupId
     if (privileged.has(groupId) && !ec.user.isInGroup(groupId))
         return {
@@ -500,10 +500,10 @@ function createGroup(p) {
     requireManage()
     const groupId = text(p.userGroupId).toUpperCase()
     if (!groupIdPattern.test(groupId))
-        throw new Error("Give a group ID of 3 to 60 capital letters, digits or underscores, starting with a letter")
+        throw new Error(ec.l10n.localize("Give a group ID of 3 to 60 capital letters, digits or underscores, starting with a letter"))
     const description = text(p.description)
-    if (!description || description.length > 255) throw new Error("Give the group a description of 1–255 characters")
-    if (!purposes().some(row => row.enumId === p.groupTypeEnumId)) throw new Error("Choose the group's purpose")
+    if (!description || description.length > 255) throw new Error(ec.l10n.localize("Give the group a description of 1–255 characters"))
+    if (!purposes().some(row => row.enumId === p.groupTypeEnumId)) throw new Error(ec.l10n.localize("Choose the group's purpose"))
     if (privilegedIds().has(groupId) || reservedGroups.includes(groupId))
         return refused("PRIVILEGED_GROUP", groupId + " is reserved: a custom group is never privileged")
     if (one(GROUP, {userGroupId: groupId})) return refused("GROUP_EXISTS", "A group " + groupId + " already exists")
@@ -540,12 +540,12 @@ function storeGroup(p) {
     const changes = {}
     if (p.description != null) {
         const description = text(p.description)
-        if (!description || description.length > 255) throw new Error("Give the group a description of 1–255 characters")
+        if (!description || description.length > 255) throw new Error(ec.l10n.localize("Give the group a description of 1–255 characters"))
         changes.description = description
     }
     if (p.groupTypeEnumId != null && p.groupTypeEnumId !== group.groupTypeEnumId) {
         if (!isCustom(group) || !purposes().some(row => row.enumId === p.groupTypeEnumId))
-            throw new Error("Only a custom group's purpose changes, to another registered purpose")
+            throw new Error(ec.l10n.localize("Only a custom group's purpose changes, to another registered purpose"))
         changes.groupTypeEnumId = p.groupTypeEnumId
     }
     if (p.requireAuthcFactor != null) {
@@ -556,7 +556,7 @@ function storeGroup(p) {
         const ipAllowed = text(p.ipAllowed)
         if (!validIpAllowed(ipAllowed))
             throw new Error(
-                "Allowed IPs are comma separated IPv4 addresses (each part a number, * or a range like 0-31) or IPv6 addresses"
+                ec.l10n.localize("Allowed IPs are comma separated IPv4 addresses (each part a number, * or a range like 0-31) or IPv6 addresses")
             )
         if (ipAllowed !== text(group.ipAllowed)) changes.ipAllowed = ipAllowed || null
     }
@@ -628,14 +628,14 @@ function storeMembership(p) {
     const fromDate = existing ? ms(existing.fromDate) : p.fromDate != null && p.fromDate !== "" ? ms(p.fromDate) : now
     const thruDate = p.thruDate != null && p.thruDate !== "" ? ms(p.thruDate) : null
     if (!Number.isFinite(fromDate) || (thruDate != null && (!Number.isFinite(thruDate) || thruDate <= fromDate)))
-        throw new Error("The membership must end after it starts")
+        throw new Error(ec.l10n.localize("The membership must end after it starts"))
     if (existing) {
         if (!p.expectedRevision || p.expectedRevision !== stamp(existing))
             return refused("REVISION_CHANGED", "The membership changed since you read it; reload it", {revision: stamp(existing)})
         if (existing.thruDate && ms(existing.thruDate) <= now)
             return refused("MEMBERSHIP_ENDED", "An ended membership is kept as it was; add a new one")
     } else {
-        if (fromDate < now - 60000) throw new Error("A new membership starts now or later")
+        if (fromDate < now - 60000) throw new Error(ec.l10n.localize("A new membership starts now or later"))
         const overlapping = rows(MEMBER, {userGroupId: group.userGroupId, userId: account.userId}).some(
             row => (ms(row.fromDate) ?? -Infinity) < (thruDate ?? Infinity) && (ms(row.thruDate) ?? Infinity) > fromDate
         )
@@ -675,14 +675,14 @@ function endMembership(p) {
     requireManage()
     const reason = reasonText(p)
     const group = one(GROUP, {userGroupId: p.userGroupId})
-    if (!group) return refused("GROUP_UNAVAILABLE", "The group is not available")
+    if (!group) return refused("GROUP_UNAVAILABLE", ec.l10n.localize("The group is not available"))
     if (privilegedIds().has(group.userGroupId) && !ec.user.isInGroup(group.userGroupId))
         return refused(
             "PRIVILEGED_GROUP",
             group.userGroupId + " is a privileged group: only a member of it may change its members"
         )
     const existing = memberRow(group.userGroupId, p.userId, p.fromDate)
-    if (!existing) return refused("MEMBERSHIP_UNAVAILABLE", "The membership is not available")
+    if (!existing) return refused("MEMBERSHIP_UNAVAILABLE", ec.l10n.localize("The membership is not available"))
     if (!p.expectedRevision || p.expectedRevision !== stamp(existing))
         return refused("REVISION_CHANGED", "The membership changed since you read it; reload it", {revision: stamp(existing)})
     const now = nowMs()
@@ -690,8 +690,8 @@ function endMembership(p) {
     // Ended now, it ends a millisecond before now: the session's group check takes a thru date as still open (inclusive, as
     // Java's filterByDate), so one stored as now would be seen for the rest of this millisecond.
     const thruDate = given ? ms(p.thruDate) : now - 1
-    if (!Number.isFinite(thruDate) || thruDate < now - 60000) throw new Error("A membership ends now or later")
-    if (existing.thruDate && ms(existing.thruDate) <= now) return refused("MEMBERSHIP_ENDED", "The membership has already ended")
+    if (!Number.isFinite(thruDate) || thruDate < now - 60000) throw new Error(ec.l10n.localize("A membership ends now or later"))
+    if (existing.thruDate && ms(existing.thruDate) <= now) return refused("MEMBERSHIP_ENDED", ec.l10n.localize("The membership has already ended"))
     const fromDate = ms(existing.fromDate)
     // A date given is not before the start; ended now, a membership that started this millisecond ends before it and is not
     // seen at all.
@@ -730,7 +730,7 @@ function requested(p) {
         const base = {action, bundleGroupId: item.bundleGroupId || null, fromDate: item.fromDate, thruDate: item.thruDate}
         if (item.userPermissionId) changes.push(Object.assign({kind: "permission", id: item.userPermissionId}, base))
         else if (item.entityFilterSetId) {
-            if (!item.artifactGroupId) throw new Error("A row rule names the artifact group it is bound to")
+            if (!item.artifactGroupId) throw new Error(ec.l10n.localize("A row rule names the artifact group it is bound to"))
             changes.push(Object.assign({kind: "scope", id: item.artifactGroupId, filterSetId: item.entityFilterSetId}, base))
         } else if (item.artifactGroupId) changes.push(Object.assign({kind: "artifact", id: item.artifactGroupId}, base))
         else if (item.bundleGroupId && registry.has(item.bundleGroupId)) {
@@ -739,7 +739,7 @@ function requested(p) {
             for (const row of rows(BUNDLE_ARTIFACT, {userGroupId: item.bundleGroupId}))
                 changes.push(Object.assign({kind: "artifact", id: row.artifactGroupId}, base))
         } else if (item.bundleGroupId) changes.push(Object.assign({kind: "bundle", id: item.bundleGroupId}, base))
-        else throw new Error("Each grant names a permission, an artifact group or a bundle")
+        else throw new Error(ec.l10n.localize("Each grant names a permission, an artifact group or a bundle"))
     }
     const seen = new Set()
     return changes.filter(change => {
@@ -923,7 +923,7 @@ function previewGrants(p) {
         revision: preview.revision,
         summary:
             effective.length === 0
-                ? "Nothing changes"
+                ? ec.l10n.localize("Nothing changes")
                 : effective.filter(change => change.action === "add").length +
                   " grant(s) added and " +
                   effective.filter(change => change.action === "end").length +
@@ -1097,11 +1097,11 @@ function storeGroupPreference(p) {
         if (type === "indicator" && !["Y", "N"].includes(valueText)) throw new Error(key.enumId + " takes Y or N")
         if (type === "boolean" && !["true", "false"].includes(valueText)) throw new Error(key.enumId + " takes true or false")
         if (type === "number" && !Number.isFinite(Number(valueText))) throw new Error(key.enumId + " takes a number")
-        if (valueText.length > 4000) throw new Error("A preference value is at most 4000 characters")
+        if (valueText.length > 4000) throw new Error(ec.l10n.localize("A preference value is at most 4000 characters"))
     }
     const priority =
         p.groupPriority != null && p.groupPriority !== "" ? Number(p.groupPriority) : (existing?.groupPriority ?? null)
-    if (priority != null && !Number.isInteger(priority)) throw new Error("The priority is a whole number")
+    if (priority != null && !Number.isInteger(priority)) throw new Error(ec.l10n.localize("The priority is a whole number"))
     auditReason(reason, ["preferenceValue"])
     const fields = {userGroupId: group.userGroupId, preferenceKey: key.enumId}
     if (!valueText) {
@@ -1152,7 +1152,7 @@ function proposalBundles(p) {
                 .filter(Boolean)
         )
     )
-    if (!ids.length) throw new Error("Name the bundles to propose")
+    if (!ids.length) throw new Error(ec.l10n.localize("Name the bundles to propose"))
     const registry = bundles()
     const privileged = privilegedIds()
     const sealed = sealedIds()
@@ -1221,7 +1221,7 @@ function applyGrantProposal(p) {
     }
     const now = nowMs()
     const fromDate = p.fromDate != null && p.fromDate !== "" ? ms(p.fromDate) : now
-    if (!Number.isFinite(fromDate) || fromDate < now - 60000) throw new Error("A proposal's memberships start now or later")
+    if (!Number.isFinite(fromDate) || fromDate < now - 60000) throw new Error(ec.l10n.localize("A proposal's memberships start now or later"))
     const added = []
     auditReason(account.userId === ec.user.userId && adminMember() ? ownAuditReason(reason) : reason, ["fromDate", "thruDate"])
     for (const row of bundleList) {

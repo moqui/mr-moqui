@@ -27,7 +27,7 @@ const stateTexts = {
     validated: "Validated",
     applying: "Applying",
     complete: "Complete",
-    partial: "Partly applied",
+    partial: ec.l10n.localize("Partly applied"),
     failed: "Failed",
     open: "In review",
     running: "Running"
@@ -106,7 +106,7 @@ function getImportTarget(p) {
             maxRows: bounds.maxRows,
             scoped: !scopes.unscoped,
             scopeList: out.importAllowed ? scopes.scopeList : [],
-            problem: scopes.failure ? "Its scopes could not be read" : null
+            problem: scopes.failure ? ec.l10n.localize("Its scopes could not be read") : null
         })
         if (out.scoped && !out.scopeList.length) out.importAllowed = false
     } else if (target.targetMode === "steps" && out.features.kinds) {
@@ -219,19 +219,19 @@ function retryImportItems(p) {
         .flatMap(found => String(found).split(/[\s,]+/))
         .filter(Boolean)
         .map(Number)
-    if (given.some(id => !Number.isInteger(id) || id < 1)) throw new Error("Choose rows by their numbers")
+    if (given.some(id => !Number.isInteger(id) || id < 1)) throw new Error(ec.l10n.localize("Choose rows by their numbers"))
     const failedStates = ["failed", "stale"]
     const chosen = given.length
         ? Array.from(new Set(given))
         : Array.from(results.entries())
               .filter(([, result]) => failedStates.includes(result))
               .map(([id]) => id)
-    if (!chosen.length) return refused("NONE_FAILED", "No failed row to retry")
-    if (chosen.length > 200) throw new Error("At most 200 rows at a time")
+    if (!chosen.length) return refused("NONE_FAILED", ec.l10n.localize("No failed row to retry"))
+    if (chosen.length > 200) throw new Error(ec.l10n.localize("At most 200 rows at a time"))
     const retried = chosen.filter(id => failedStates.includes(results.get(id)))
     const resultOf = (id, after) =>
         !results.has(id)
-            ? {itemSeqId: id, applied: false, reasonCode: "NOT_FOUND", reason: "No such row"}
+            ? {itemSeqId: id, applied: false, reasonCode: "NOT_FOUND", reason: ec.l10n.localize("No such row")}
             : !failedStates.includes(results.get(id))
               ? {
                     itemSeqId: id,
@@ -239,8 +239,8 @@ function retryImportItems(p) {
                     reasonCode: "NOT_FAILED",
                     reason:
                         results.get(id) === "applied"
-                            ? "Already applied: it is not applied again"
-                            : "Only a failed row is retried"
+                            ? ec.l10n.localize("Already applied: it is not applied again")
+                            : ec.l10n.localize("Only a failed row is retried")
                 }
               : after.get(id)?.result === "applied"
                 ? {itemSeqId: id, applied: true, reasonCode: null, reason: null}
@@ -248,7 +248,7 @@ function retryImportItems(p) {
                       itemSeqId: id,
                       applied: false,
                       reasonCode: "FAILED",
-                      reason: lineText(after.get(id)?.errorMessage, 250) || "The row was not applied"
+                      reason: lineText(after.get(id)?.errorMessage, 250) || ec.l10n.localize("The row was not applied")
                   }
     const after = new Map()
     let state = text(first.state)
@@ -273,7 +273,7 @@ function retryImportItems(p) {
     return {
         applied: appliedCount > 0,
         reasonCode: appliedCount ? null : resultList.length === 1 ? resultList[0].reasonCode : "NONE_APPLIED",
-        reason: appliedCount ? null : resultList.length === 1 ? resultList[0].reason : "None of the rows could be applied",
+        reason: appliedCount ? null : resultList.length === 1 ? resultList[0].reason : ec.l10n.localize("None of the rows could be applied"),
         operationKey,
         state,
         appliedCount,
@@ -325,7 +325,7 @@ function findTransfers(p) {
     const from = lib.ms(p.fromDate)
     const thru = lib.ms(p.thruDate)
     if ((p.fromDate && (from == null || Number.isNaN(from))) || (p.thruDate && (thru == null || Number.isNaN(thru))))
-        throw new Error("A date is not a date")
+        throw new Error(ec.l10n.localize("A date is not a date"))
     const until = thru ?? now + 60000
     const since = Math.max(from ?? until - defaultDays * 86400000, until - rangeDays * 86400000)
     const state = text(p.state)

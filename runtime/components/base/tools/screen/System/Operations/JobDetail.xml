@@ -57,8 +57,8 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!ec.message.hasError()">
                 <script><![CDATA[
                     const result = Array.from(done.resultList || [])[0] || {}
-                    ec.message.addMessage(done.applied ? (done.repeated ? 'Already asked for. ' : 'Asked for. ') + (result.stateText || '')
-                        : (result.reason || done.reason || 'Not done'), done.applied ? 'success' : 'warning')
+                    ec.message.addMessage(done.applied ? (done.repeated ? ec.l10n.localize('Already asked for.') + ' ' : ec.l10n.localize('Asked for.') + ' ') + (result.stateText || '')
+                        : (result.reason || done.reason || ec.l10n.localize('Not done')), done.applied ? 'success' : 'warning')
                 ]]></script>
             </if>
         </actions>
@@ -134,11 +134,11 @@ along with this software (see the LICENSE.md file). If not, see
                 {label: 'Service', value: job.serviceName ? job.serviceName + ' (its owner\u2019s: not changed here)' : ''},
                 {label: 'Schedule', value: job.cronExpression ? job.scheduleText + ' (' + job.cronExpression + ', in ' + job.timeZone + ')' : 'None: started by its owner'},
                 {label: 'Next run', value: job.nextRunText ? job.nextRunText + ' (' + job.timeZone + ')' : ''},
-                {label: 'Last run', value: job.lastRunText ? job.lastRunText + (job.lastRunFailed ? ' · failed' + (job.lastErrorClass ? ' (' + job.lastErrorClass + ')' : '') : '') : ''},
+                {label: ec.l10n.localize('Last run'), value: job.lastRunText ? job.lastRunText + (job.lastRunFailed ? ' · ' + ec.l10n.localize('failed') + (job.lastErrorClass ? ' (' + job.lastErrorClass + ')' : '') : '') : ''},
                 {label: 'Priority', value: job.priority == null ? '' : String(job.priority)},
                 {label: 'Wait after an error', value: job.minRetryTime + ' minutes'},
                 {label: 'Lock expiry', value: job.expireLockTime + ' minutes: only then, or when its server is gone, does the scheduler take over the lock of a run that never ended'},
-                {label: 'Time limit', value: job.transactionTimeout ? job.transactionTimeout + ' seconds' : ''},
+                {label: ec.l10n.localize('Time limit'), value: job.transactionTimeout ? job.transactionTimeout + ' seconds' : ''},
                 {label: 'Notification topic', value: job.topic}
             ].filter(row => row.value) : []
             configurable = recordFound && (job.scheduleEditable || job.pauseEditable || job.priorityEditable || job.retryEditable)

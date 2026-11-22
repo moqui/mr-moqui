@@ -141,7 +141,7 @@ along with this software (see the LICENSE.md file). If not, see
                     diffTitle = 'Compare ' + short(diff.fromName) + ' with ' + short(diff.toName) + ': ' + diff.stats.insertions +
                             ' added, ' + diff.stats.deletions + ' removed'
                 } catch (err) {
-                    diffError = 'One or both versions could not be read. Choose versions from History, or close this comparison to continue with the current page.'
+                    diffError = ec.l10n.localize('One or both versions could not be read. Choose versions from History, or close this comparison to continue with the current page.')
                     ec.logger.log(200, 'Cannot compare wiki page ' + wikiSpaceId + '/' + (pagePath || '') + ': ' + err.message)
                 }
             }

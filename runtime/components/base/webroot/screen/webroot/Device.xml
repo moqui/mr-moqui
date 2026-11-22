@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.admin.DeviceServices.redeem#Device" in-map="{code:code}" out-map="redeemOut"/>
             <set field="redeemed" from="!!redeemOut?.redeemed"/>
             <set field="homePath" from="redeemOut?.homePath || '/Device'"/>
-            <if condition="!redeemed"><script>ec.message.addError(redeemOut?.reason || 'That code is not valid')</script></if>
+            <if condition="!redeemed"><script>ec.message.addError(redeemOut?.reason || ec.l10n.localize('That code is not valid'))</script></if>
         </actions>
         <conditional-response url="${homePath}" url-type="plain"><condition><expression>redeemed</expression></condition></conditional-response>
         <default-response url="."/>

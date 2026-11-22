@@ -317,7 +317,7 @@ along with this software (see the LICENSE.md file). If not, see
             editFile = entity.editFile || {}
             canEdit = !!(view && view.tier !== 'view' && entity.editFile && !entity.editFile.readOnly)
             full = !!(view && view.tier === 'full')
-            editsGo = !view ? '' : !entity.edit ? 'This entity is upstream and there is no site component to extend it in: create one on Home'
+            editsGo = !view ? '' : !entity.edit ? ec.l10n.localize('This entity is upstream and there is no site component to extend it in: create one on Home')
                 : inPlace ? 'Edits go to ' + entity.edit.path : 'Extending in site ' + (entity.edit.component || '') + ': ' + entity.edit.path
             readOnlyReason = view && entity.editFile && entity.editFile.readOnly ? entity.editFile.readOnlyReason || '' : ''
             pendingText = guided.pendingText(entity.buffer)
@@ -334,7 +334,7 @@ along with this software (see the LICENSE.md file). If not, see
             const relationships = (definition.relationships || []).filter((rel) => !rel.isAutoReverse)
             tabItems = [['fields', 'Fields ' + (definition.fields || []).length], ['relationships', 'Relationships ' + relationships.length],
                 ['indexes', 'Indexes'], ['incoming', 'Incoming'], ['eeca', 'EECA rules ' + ((view && view.eecas) || []).length], ['table', 'Table'],
-                ['seed', 'Seed data'], ['doc', 'Doc'], ['text', 'Text' + (entity.buffer.pending.count ? ' ' + entity.buffer.pending.count : '')]]
+                ['seed', ec.l10n.localize('Seed data')], ['doc', 'Doc'], ['text', 'Text' + (entity.buffer.pending.count ? ' ' + entity.buffer.pending.count : '')]]
                 .map(([name, title]) => ({title, url: tabUrl(name), active: name === tab}))
 
             // Fields: the server's with the buffer's element over them, each with where it is defined
@@ -391,8 +391,8 @@ along with this software (see the LICENSE.md file). If not, see
 
             // the table and its first rows
             const table = (view && view.table) || {}
-            tableNote = definition.isViewEntity ? 'A view entity has no table of its own.' : table.error ? table.error : !table.exists ? 'No table yet: Save makes it.'
-                : !(table.missingColumns || []).length && !(table.extraColumns || []).length ? 'The table matches the fields.' : ''
+            tableNote = definition.isViewEntity ? ec.l10n.localize('A view entity has no table of its own.') : table.error ? table.error : !table.exists ? ec.l10n.localize('No table yet: Save makes it.')
+                : !(table.missingColumns || []).length && !(table.extraColumns || []).length ? ec.l10n.localize('The table matches the fields.') : ''
             missingColumns = (table.missingColumns || []).join(', ')
             extraColumns = (table.extraColumns || []).map((column) => ({column}))
             dataRows = ((view && view.data && view.data.rows) || [])

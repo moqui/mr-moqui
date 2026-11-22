@@ -16,14 +16,14 @@ const requireManage = () => lib.requireManage(MANAGE)
 // A reason is required for an action that settles something by a person's word.
 function requiredReason(p) {
     const reason = lib.reasonText(p)
-    if (!reason) throw new Error("Give a reason")
+    if (!reason) throw new Error(ec.l10n.localize("Give a reason"))
     return lib.plainText(reason, "The reason")
 }
 // An operation key as its caller gave it: letters, digits and . _ : -, at most 64; "" for none.
 function operationKey(p) {
     const key = text(p.operationKey)
     if (key && !/^[A-Za-z0-9_.:-]{1,64}$/.test(key))
-        throw new Error("An operation key is 1 to 64 letters, digits, dots, underscores, colons or hyphens")
+        throw new Error(ec.l10n.localize("An operation key is 1 to 64 letters, digits, dots, underscores, colons or hyphens"))
     return key
 }
 // Run an action once for its operation key: a repeat by the same user for the same kind and target answers the first

@@ -36,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="constitution" method="get" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             let out = {}
-            if (!ec.user.userId) out = {errors: 'Sign in to read the Constitution'}
+            if (!ec.user.userId) out = {errors: ec.l10n.localize('Sign in to read the Constitution')}
             else {
                 const service = context.runId ? 'get#ConstitutionSnapshot' : 'get#Constitution'
                 const params = context.runId ? {runId: context.runId, locale: context.locale || null}
@@ -54,7 +54,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="constitutionReference" method="get" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             let out = {}
-            if (!ec.user.userId) out = {allowed: 'N', message: 'Sign in to read the Constitution'}
+            if (!ec.user.userId) out = {allowed: 'N', message: ec.l10n.localize('Sign in to read the Constitution')}
             else {
                 out = ec.service.sync().name('org.moqui.admin.ConstitutionServices.resolve#ConstitutionReference').parameters({
                     referenceId: context.referenceId || '', runId: context.runId || null,
@@ -127,7 +127,7 @@ along with this software (see the LICENSE.md file). If not, see
             const params = ec.web.parameters
             if (String(params.kind || '') === 'records') {
                 // records come from the palette's sources (the apps' palette-source providers), as the palette shows them
-                if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+                if (!ec.user.userId) ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
                 else if (!ec.user.hasPermission('AgentUse')) ec.web.sendJsonError(403, 'this needs the AgentUse permission')
                 else {
                     const found = sri.getShellSearch(String(params.q || ''), String(params.groups || ''), String(params.limit || ''))

@@ -66,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="found" from="called.out"/>
         <set field="failure" from="called.failure"/>
         <script><![CDATA[
-            const shownValue = row => row.masked ? (row.valueSet ? 'Hidden (set)' : 'Hidden (not set)') : (row.value === '' || row.value == null ? 'Not set' : row.value)
+            const shownValue = row => row.masked ? (row.valueSet ? ec.l10n.localize('Hidden (set)') : ec.l10n.localize('Hidden (not set)')) : (row.value === '' || row.value == null ? 'Not set' : row.value)
             const settings = Array.from(found?.settingList || []).map(row => Object.assign({}, row, {
                 shownValue: shownValue(row),
                 limitText: row.valueType === 'integer' && (row.minValue != null || row.maxValue != null)
@@ -75,7 +75,7 @@ along with this software (see the LICENSE.md file). If not, see
                 pickValue: ['choice', 'boolean', 'locale', 'timeZone'].includes(row.valueType),
                 changedText: row.changedDate ? [row.changedByName, ec.l10n.format(Date.parse(row.changedDate), 'yyyy-MM-dd HH:mm'), row.changeReason].filter(Boolean).join(' · ') : '',
                 editText: row.editable ? 'Here' : 'In the deployment',
-                restartText: row.editable ? 'At once' : row.restartRequired ? 'After a restart' : '',
+                restartText: row.editable ? ec.l10n.localize('At once') : row.restartRequired ? ec.l10n.localize('After a restart') : '',
                 // the value the change form starts from: the preference when one is set, else empty (the default applies)
                 storedValue: row.source === 'preference' ? row.value : ''
             }))

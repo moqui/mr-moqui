@@ -85,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="values"/><parameter name="statusTypeId"/><parameter name="statusFlowId"/><parameter name="status"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) {
-                ec.web.sendJsonError(401, 'Authentication required')
+                ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             } else {
                 const params = ec.web.parameters
                 const values = params.values == null || params.values === '' ? [] : String(params.values).split(',').map((value) => value.trim()).filter((value) => value)
@@ -112,7 +112,7 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="allowedStatusIds"/><parameter name="readOnly"/>
         <actions><script><![CDATA[
             if (!ec.user.userId) {
-                ec.web.sendJsonError(401, 'Authentication required')
+                ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             } else {
                 const params = ec.web.parameters
                 const list = (value) => value == null || value === '' ? null : String(value).split(',').map((id) => id.trim()).filter((id) => id).slice(0, 500)
@@ -132,7 +132,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="shellCounts" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) {
-                ec.web.sendJsonError(401, 'Authentication required')
+                ec.web.sendJsonError(401, ec.l10n.localize('Authentication required'))
             } else {
                 // the current user's own counts (no userId is passed): no app's authorization covers this or the counts
                 // service the theme names, so it runs without authorization, as shellData does
@@ -148,7 +148,7 @@ along with this software (see the LICENSE.md file). If not, see
         that serves another user for internal work never does here. 401 without a user. -->
     <transition name="userStatus" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserStatuses').parameter('userIdList', [ec.user.userId])
                         .disableAuthz().call()
                 ec.web.sendJsonResponse({myStatus: out ? out.myStatus ?? null : null})
@@ -160,7 +160,7 @@ along with this software (see the LICENSE.md file). If not, see
         <parameter name="status"/><parameter name="statusText"/><parameter name="emoji"/><parameter name="clearAtDate"/>
         <parameter name="clearAfterMinutes"/><parameter name="clearStatus"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const params = ec.web.parameters
                 const call = {}
                 for (const name of ['status', 'statusText', 'emoji']) if (params[name] != null) call[name] = String(params[name])
@@ -177,7 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="userStatusHeartbeat" method="post">
         <parameter name="idleSeconds"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const idle = Number(ec.web.parameters.idleSeconds)
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.heartbeat#UserStatus')
                         .parameters(Number.isFinite(idle) ? {idleSeconds: Math.max(0, Math.floor(idle))} : {active: true}).disableAuthz().call()
@@ -189,7 +189,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="userStatuses" read-only="true" begin-transaction="false">
         <parameter name="userIds"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const ids = String(ec.web.parameters.userIds || '').split(',').map((id) => id.trim()).filter((id) => id).slice(0, 500)
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UserStatuses').parameter('userIdList', ids)
                         .disableAuthz().call()
@@ -201,7 +201,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="chatTyping" method="post">
         <parameter name="chatRoomId" required="true"/><parameter name="typing"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const params = ec.web.parameters
                 ec.service.sync().name('org.moqui.chat.ChatServices.signal#Typing').parameters({chatRoomId: String(params.chatRoomId),
                     typing: String(params.typing) !== 'false'}).disableAuthz().call()
@@ -215,7 +215,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="chatAssistCard" method="post" begin-transaction="false">
         <parameter name="chatRoomId" required="true"/><parameter name="eventSeq" required="true"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const params = ec.web.parameters
                 const call = {chatRoomId: String(params.chatRoomId), eventSeq: Number(params.eventSeq)}
                 for (const name of ['decision', 'feedback', 'choice', 'text']) if (params[name] != null && params[name] !== '') call[name] = String(params[name])
@@ -228,7 +228,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="chatUnread" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.chat.ChatServices.get#UnreadCounts').disableAuthz().call() || {}
                 ec.web.sendJsonResponse({total: out.total ?? 0, unread: out.unread ?? 0, mentions: out.mentions ?? 0, roomCounts: out.roomCounts ?? {},
                     levelMap: out.levelMap ?? {}, roomNameMap: out.roomNameMap ?? {}})
@@ -238,7 +238,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="richTextImage" method="post">
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.resource.ResourceServices.upload#RichTextImage')
                     .parameter('contentFile', ec.web.multiPartParameters.contentFile).disableAuthz().call()
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
@@ -250,7 +250,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="richTextImage" method="get" read-only="true">
         <path-parameter name="imageId"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const out = ec.service.sync().name('org.moqui.resource.ResourceServices.get#RichTextImage')
                     .parameter('imageId', String(imageId || '')).disableAuthz().call()
                 if (ec.message.hasError() || !out || !out.location) ec.web.sendJsonError(404, 'No image')
@@ -268,7 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="resources" read-only="true">
         <parameter name="resourceRoot"/>
         <actions><script><![CDATA[
-            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+            if (!ec.user.userId) { ec.web.sendJsonError(401, ec.l10n.localize('Authentication required')) } else {
                 const root = resourceRoot || ec.factory.getConfValue('mantle@content-root') || 'dbresource://mantle/content'
                 const out = ec.service.sync().name('org.moqui.resource.ElFinderServices.run#Command')
                     .parameters(Object.assign({}, context, {resourceRoot: root, otherParameters: ec.web.parameters})).call()

@@ -21,8 +21,8 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- where the global document comes from, its hash and what was passed over -->
         <section name="ConstitutionSource"><actions><script><![CDATA[
             sourceText = cons.available != 'Y' ? 'No Constitution is available.'
-                : cons.customized == 'Y' ? 'This instance has its own Constitution (runtime/conf/Constitution.json).'
-                : 'This instance uses the shipped Constitution (framework/docs/Constitution.json).'
+                : cons.customized == 'Y' ? ec.l10n.localize('This instance has its own Constitution (runtime/conf/Constitution.json).')
+                : ec.l10n.localize('This instance uses the shipped Constitution (framework/docs/Constitution.json).')
             hashText = cons.contentHash ? String(cons.contentHash).substring(0, 12) : ''
             diagnosticList = (cons.diagnosticList || []).map((text) => ({text}))
         ]]></script></actions><widgets>

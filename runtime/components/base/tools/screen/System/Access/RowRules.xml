@@ -50,7 +50,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- ignore-error clears a refusal's message -->
         <set field="failure" from="found?.ruleList ? null : 'Row rules are not available'"/>
         <set field="rules" from="(found?.ruleList || []).map(row => Object.assign({}, row, {
-                stateText: row.state === 'missing' ? 'Not bound' : row.conditional ? 'Bound, by condition' : 'Bound',
+                stateText: row.state === 'missing' ? ec.l10n.localize('Not bound') : row.conditional ? ec.l10n.localize('Bound, by condition') : ec.l10n.localize('Bound'),
                 bindKey: [row.artifactAuthzId, row.entityFilterSetId].join('_')}))"/>
         <set field="filterSets" from="(found?.filterSetList || []).map(row => Object.assign({}, row, {
                 recordsText: row.entityNames.map(name => name.split('.').pop()).join(', '),

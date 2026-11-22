@@ -3,6 +3,6 @@
 <#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
 # Artifacts
 
-Generated from the Moqui artifact definitions by Autodoc.
+${ec.l10n.localize("Generated from the Moqui artifact definitions by Autodoc.")}
 
 ${md.table(["Artifacts", "Docs"], trees.map((tree) => [md.link(tree.title, tree.href), String(tree.count)]))}

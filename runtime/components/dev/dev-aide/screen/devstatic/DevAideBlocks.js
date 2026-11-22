@@ -129,7 +129,7 @@
                 "data-block": this.node.path.join("."), onClick: (event) => { event.stopPropagation(); this.tree.select(this.node); },
                 onDblclick: (event) => { event.stopPropagation(); this.tree.$emit("open", this.node); }
             }, [
-                this.tree.readOnly ? null : h("span", { class: "m-dev-block-handle", title: "Drag to move" }, "⋮⋮"),
+                this.tree.readOnly ? null : h("span", { class: "m-dev-block-handle", title: moqui.l10n.localize("Drag to move") }, "⋮⋮"),
                 h("span", { class: "m-dev-block-name" }, label.text),
                 (label.chips || []).map((chip, index) => chip.word ? h("span", { class: "m-dev-block-word", key: index }, chip.text) : h("span", { class: "m-dev-block-chip" + (chip.warn ? " warn" : ""), key: index,
                     title: chip.title || "", onClick: chip.edit ? (event) => { event.stopPropagation(); this.tree.$emit("chip", { node: this.node, chip }); } : undefined }, chip.text)),

@@ -38,7 +38,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.admin.ConfigurationServices.store#Connection" out-map="stored"
                     in-map="{adapterKey:newAdapterKey, values:{connectionId:(newConnectionId || ''), description:newDescription, gatewayTypeEnumId:newTypeEnumId}}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(stored.applied ? 'Connection started. It stays disabled until it is configured and a test of it passes.' : stored.reason,
+                <script>ec.message.addMessage(stored.applied ? ec.l10n.localize('Connection started. It stays disabled until it is configured and a test of it passes.') : stored.reason,
                     stored.applied ? 'success' : 'warning')</script>
                 <set field="connectionKey" from="stored.applied ? stored.connectionKey : null"/>
                 <set field="adapterKey" from="newAdapterKey"/>

@@ -2,4 +2,4 @@
      has its own id, so WebrootVue.qvt.js, loaded for its components, does not start the /qapps shell here. -->
 <script type="application/json" id="moqui-public-config">${raw(JSON.stringify(publicConfig).split("<").join("\\u003c"))}</script>
 <div id="public-root" style="display:none;"></div>
-<noscript><p style="padding:1rem;">This page needs JavaScript.</p></noscript>
+<noscript><p style="padding:1rem;">${ec.l10n.localize("This page needs JavaScript.")}</p></noscript>

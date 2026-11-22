@@ -23,7 +23,7 @@ function reasonOf(text) {
 }
 
 function read(name, parameters, fallback) {
-    const unavailable = fallback || "This is not available to you."
+    const unavailable = fallback || ec.l10n.localize("This is not available to you.")
     ec.message.pushErrors()
     try {
         const out =

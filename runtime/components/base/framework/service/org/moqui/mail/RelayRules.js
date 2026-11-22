@@ -66,10 +66,10 @@ function signInRelayRefusal(emailServerId) {
     if (!ec.user.hasPermission("ADMIN_ACCESS_MANAGE"))
         return {
             reasonCode: "READ_ONLY",
-            reason: "This relay sends the sign-in mail (password resets, sign-in codes): an access administrator changes it"
+            reason: ec.l10n.localize("This relay sends the sign-in mail (password resets, sign-in codes): an access administrator changes it")
         }
     const recent = ec.service.sync().name("org.moqui.sso.RecentAuthServices.require#RecentAuth").call()?.recent
-    return recent ? null : {reasonCode: "reauthRequired", reason: "Confirm it is you: this relay carries the sign-in mail"}
+    return recent ? null : {reasonCode: "reauthRequired", reason: ec.l10n.localize("Confirm it is you: this relay carries the sign-in mail")}
 }
 
 ;({SIGN_IN_TEMPLATES, signInTemplates, signInRelay, hostOf, ownHosts, linkBaseRefusal, signInRelayRefusal})

@@ -34,7 +34,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.admin.ConfigurationServices.test#Protocol" out-map="tested"
                     in-map="{protocolKey:checkProtocolKey, checkKey:checkKey, confirmed:(confirmed === 'Y')}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(tested.applied === false ? tested.reason : (tested.passed ? 'Passed: ' : 'Did not pass: ') + tested.resultText,
+                <script>ec.message.addMessage(tested.applied === false ? tested.reason : (tested.passed ? ec.l10n.localize('Passed:') + ' ' : ec.l10n.localize('Did not pass:') + ' ') + tested.resultText,
                     tested.applied !== false &amp;&amp; tested.passed ? 'success' : 'warning')</script>
             </if>
         </actions>
@@ -56,17 +56,17 @@ along with this software (see the LICENSE.md file). If not, see
             protocolOptions = all.filter(row => row.settingGroup || row.checkList.length).map(row => ({value: row.protocolKey, label: row.title}))
             chosenTitle = chosen ? chosen.title : ''
             chosenState = chosen ? Object.assign({}, chosen, {stateColor: colors[chosen.state] || 'grey-7'}) : null
-            const shownValue = row => row.masked ? (row.valueSet ? 'Hidden (set)' : 'Hidden (not set)') : (row.value === '' || row.value == null ? 'Not set' : row.value)
+            const shownValue = row => row.masked ? (row.valueSet ? ec.l10n.localize('Hidden (set)') : ec.l10n.localize('Hidden (not set)')) : (row.value === '' || row.value == null ? 'Not set' : row.value)
             settings = Array.from(effective?.settingList || [])
                 .filter(row => String(row.settingGroup || '').startsWith('Protocols: ') && (!chosen || row.settingGroup === chosen.settingGroup))
                 .map(row => Object.assign({}, row, {
                     groupText: row.settingGroup.charAt(11).toUpperCase() + row.settingGroup.slice(12),
                     shownValue: shownValue(row),
-                    restartText: row.restartRequired ? 'After a restart' : ''}))
+                    restartText: row.restartRequired ? ec.l10n.localize('After a restart') : ''}))
             const states = Object.fromEntries(all.map(row => [row.protocolKey, row]))
             checks = Array.from(found?.checkList || []).filter(row => !chosen || row.protocolKey === chosen.protocolKey).map(row => Object.assign({}, row, {
                 resultColor: row.lastCheckPassed == null ? 'grey-7' : row.lastCheckPassed ? 'positive' : 'negative',
-                resultState: row.lastCheckPassed == null ? 'Not run' : row.lastCheckPassed ? 'Passed' : 'Did not pass',
+                resultState: row.lastCheckPassed == null ? ec.l10n.localize('Not run') : row.lastCheckPassed ? ec.l10n.localize('Passed') : ec.l10n.localize('Did not pass'),
                 resultText: [row.lastResultText, row.lastCheckDate ? ec.l10n.format(Date.parse(row.lastCheckDate), 'yyyy-MM-dd HH:mm') : ''].filter(Boolean).join(' · '),
                 protocolStateText: states[row.protocolKey]?.stateText || '',
                 dialogKey: (row.protocolKey + '_' + row.checkKey).replace(/\W/g, '_')}))

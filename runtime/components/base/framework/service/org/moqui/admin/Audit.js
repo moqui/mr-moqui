@@ -36,13 +36,13 @@ const maxDepth = 2000
 const exportRows = 1000
 const valueLength = 500
 const categories = {
-    access: "Access and grants",
-    identity: "Users and memberships",
+    access: ec.l10n.localize("Access and grants"),
+    identity: ec.l10n.localize("Users and memberships"),
     signIn: "Sign-in",
     configuration: "Configuration",
     connection: "Connections",
     operation: "Operations",
-    transfer: "Imports and exports",
+    transfer: ec.l10n.localize("Imports and exports"),
     backup: "Backups"
 }
 const keyKinds = ["user", "group", "plain", "hidden"]
@@ -64,7 +64,7 @@ const secretName = name => secretWords(name) && !aboutOne(name)
 const serviceMarker = value => /^\((set|replaced|cleared[^()]{0,60})\)$/.test(text(value))
 
 function requireView() {
-    if (!ec.user.userId) throw new Error("Sign in to read the audit log")
+    if (!ec.user.userId) throw new Error(ec.l10n.localize("Sign in to read the audit log"))
     if (!ec.user.hasPermission(VIEW)) throw new Error(VIEW + " is required")
 }
 
@@ -207,7 +207,7 @@ function filtersOf(p) {
         actorOnly: p.actorOnly === true || p.actorOnly === "true"
     }
     if (filters.fromDate != null && filters.thruDate != null && filters.fromDate >= filters.thruDate)
-        throw new Error("The dates must end after they start")
+        throw new Error(ec.l10n.localize("The dates must end after they start"))
     return filters
 }
 // The audit log narrowed by a request's filters (not by what is registered: each caller adds that).

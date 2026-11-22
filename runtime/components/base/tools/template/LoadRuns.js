@@ -306,7 +306,7 @@ function startParameters(form) {
         try {
             names = JSON.parse(text(form.scenarioNames) || '[]')
         } catch (e) {
-            throw new Error('Not JSON: scenarioNames')
+            throw new Error(ec.l10n.localize('Not JSON: scenarioNames'))
         }
         for (const name of Array.isArray(names) ? names.map(String) : []) {
             scenarios[name] = {}
@@ -346,7 +346,7 @@ function updateUsers(runId, scenario, users, rate) {
     const parameters = { runId: text(runId), scenario: text(scenario) }
     if (users != null && users !== '') parameters.users = users
     if (rate != null && rate !== '') parameters.rate = rate
-    if (parameters.users == null && parameters.rate == null) return 'Give the users or the rate'
+    if (parameters.users == null && parameters.rate == null) return ec.l10n.localize('Give the users or the rate')
     return call('update#LoadRunUsers', parameters).error
 }
 
