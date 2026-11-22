@@ -105,12 +105,13 @@
     qvt.screenAnchorPath = (anchor, vm, location) => {
         if (!anchor || !vm || !vm.basePath || typeof vm.getLinkPath !== "function" || !location) return null;
         const target = anchor.getAttribute("target");
-        if (anchor.hasAttribute("download") || (target && target !== "_self")) return null;
+        if (anchor.hasAttribute("data-browser-navigation") || anchor.hasAttribute("download") || (target && target !== "_self")) return null;
         const raw = anchor.getAttribute("href") || "";
         if (!raw || raw.charAt(0) === "#") return null;
         let url;
         try { url = new URL(raw, location.href); } catch (err) { return null; }
-        if (url.origin !== location.origin) return null;
+        if (url.origin !== location.origin || url.searchParams.has("saveFilename") ||
+                ["csv", "xlsx", "text", "xsl-fo"].includes(url.searchParams.get("renderMode"))) return null;
         const base = (vm.appRootPath || "") + vm.basePath;
         if (url.pathname !== base && url.pathname.indexOf(base + "/") !== 0) return null;
         return vm.getLinkPath(url.pathname + url.search + url.hash);
@@ -2661,7 +2662,7 @@
                         '<q-space></q-space>' +
                         '<m-form-paginate :paginate="paginate" :form-list="this"></m-form-paginate>' +
                         '<m-form-go-page :id-val="idVal" :form-list="this"></m-form-go-page>' +
-                        '<q-btn v-if="csvButton" dense flat no-caps icon="download" type="a" :href="csvUrl" label="CSV"></q-btn>' +
+                        '<q-btn v-if="csvButton" dense flat no-caps icon="download" type="a" download :href="csvUrl" label="CSV"></q-btn>' +
                         '<slot name="nav"></slot>' +
                     '</div>' +
                     '<div class="table q-table" :id="idVal+\'_table\'">' +

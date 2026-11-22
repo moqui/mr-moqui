@@ -572,8 +572,12 @@ fn menu_items_take_the_image_of_the_named_screen_not_its_default_subscreen() {
         </screen>"#,
     );
     write(
+        "Root/Apps/Restricted.xml",
+        r#"<screen require-authentication="true"><widgets/></screen>"#,
+    );
+    write(
         "Root/Apps/List.xml",
-        r#"<screen require-authentication="false"><widgets><render-mode><text type="html"><![CDATA[<#list sri.getMenuItems("/Apps") as item>[${item.name}:${item.image}:${item.imageType}]</#list>]]></text></render-mode></widgets></screen>"#,
+        r#"<screen require-authentication="false"><widgets><render-mode><text type="html"><![CDATA[<#list sri.getMenuItems("/Apps") as item>[${item.name}:${item.image}:${item.imageType}]</#list><#list sri.getMenuItems("/Apps", true) as item>[all:${item.name}]</#list>]]></text></render-mode></widgets></screen>"#,
     );
     write(
         "Root/Apps/App.xml",
@@ -594,6 +598,8 @@ fn menu_items_take_the_image_of_the_named_screen_not_its_default_subscreen() {
     let body = response.body_text();
     assert_eq!(response.status, 200, "{body}");
     assert!(body.contains("[App:fa fa-cogs:icon]"), "{body}");
+    assert!(body.contains("[all:List]") && !body.contains("[List:"), "{body}");
+    assert!(!body.contains("[all:Restricted]"), "{body}");
     // A standalone request renders only its last screen, but a built URL resolves with `lastStandalone` 0,
     // so the image is the same.
     let mut standalone = request("GET", "/Apps/List");

@@ -139,11 +139,11 @@ const $formList = (name, cols) => {
         `;
     });
 
-    // A link in a field shows its text when it is an anchor or a hidden form link.
+    // A field link contributes its caption to the text column. A hidden-form button is an action.
     const linkMacro = stmt((node) => {
         const inField = node.parent && node.parent.name.endsWith("-field");
         const type = attr(node, "link-type");
-        if (!inField || (type !== "anchor" && type !== "hidden-form-link")) return "";
+        if (!inField || (type && !["auto", "anchor", "anchor-button", "hidden-form-link"].includes(type))) return "";
         const condition = attr(node, "condition");
         const text = S.linkTextExpr(node);
         const body = js`

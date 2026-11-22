@@ -21,6 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createCustomer"><actions><script><![CDATA[
         const draft = JSON.parse(ec.web.sessionAttributes.get('galleryWizard') || '{}')
         if (!draft.customerName) { ec.message.addError(ec.l10n.localize('Start with the customer')); return }
+        if (!draft.countryGeoId) { ec.message.addError(ec.l10n.localize('Choose a country in Options before creating the customer')); return }
         ec.web.sessionAttributes.remove('galleryWizard')
         ec.message.addMessage(`Customer ${draft.customerName} created (gallery demo: nothing is written)`, 'success')
     ]]></script></actions><default-response url="../Customer"/></transition>

@@ -7412,7 +7412,7 @@
               }, 8, ["onSubmit", "onReset"]))
             }
         } },
-        "m-form-list": { hash: "ae8730d0", make: function (Vue) {
+        "m-form-list": { hash: "7553f3aa", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, renderSlot: _renderSlot, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, createVNode: _createVNode, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -7495,6 +7495,7 @@
                           "no-caps": "",
                           icon: "download",
                           type: "a",
+                          download: "",
                           href: _ctx.csvUrl,
                           label: "CSV"
                         }, null, 8, ["href"]))

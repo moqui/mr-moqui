@@ -1514,7 +1514,7 @@
             }
             // the exports in one menu: csv, xlsx, the text dialog (its button is the item), and print
             const exportUrl = (mode, filename) => sri.getScreenUrlInstance().cloneUrlInstance().addParameter("renderMode", mode).addParameter("pageNoLimit", "true").addParameter("lastStandalone", "true").addParameter("saveFilename", filename).getUrlWithParams();
-            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ href, target: target || null }) + "><q-item-section>" + t(text) + "</q-item-section></q-item>";
+            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + (target ? "" : " download") + A({ href, target: target || null }) + "><q-item-section>" + t(text) + "</q-item-section></q-item>";
             const csv = at(n, "show-csv-button") === "true";
             const xlsx = at(n, "show-xlsx-button") === "true" && ec.screen.isRenderModeValid("xlsx");
             const text = at(n, "show-text-button") === "true";

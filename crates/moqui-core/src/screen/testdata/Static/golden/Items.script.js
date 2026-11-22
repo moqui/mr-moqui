@@ -271,6 +271,7 @@ return function render(_ctx, _cache) {
                       _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                         clickable: "",
                         tag: "a",
+                        download: "",
                         href: nv.exportUrl('csv')
                       }, {
                         default: _withCtx(() => [

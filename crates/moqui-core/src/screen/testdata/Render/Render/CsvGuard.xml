@@ -7,7 +7,10 @@
     </actions>
     <widgets>
         <form-list name="RowList" list="rowList">
-            <field name="text"><default-field><display/></default-field></field>
+            <field name="text">
+                <conditional-field condition="amount &lt; 0"><link url="." text="${text}" link-type="anchor-button"/></conditional-field>
+                <default-field><link url="." text="${text}"/></default-field>
+            </field>
             <field name="amount"><default-field><display format="#,##0.00"/></default-field></field>
         </form-list>
     </widgets>

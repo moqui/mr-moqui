@@ -285,7 +285,7 @@ test("a multi form-list is one form with each row's fields under name_rowIndex, 
     assert.equal(fields.name_1, "changed");
     // the csv item of the export menu of ItemList goes to the screen in csv with the find parameters
     // (v-close-popup compiles to a directive, so it does not show in this props-only render)
-    assert.match(text, /<q-item clickable='' tag='a' href='\/Items\?itemGroup=G1&renderMode=csv&pageNoLimit=true&lastStandalone=true&saveFilename=ItemList.csv'/);
+    assert.match(text, /<q-item clickable='' tag='a' download='' href='\/Items\?itemGroup=G1&renderMode=csv&pageNoLimit=true&lastStandalone=true&saveFilename=ItemList.csv'/);
 });
 
 test("the column picker lays out the user's columns from the package, and its dialog tree lists the rest as not shown", async () => {

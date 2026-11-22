@@ -21,6 +21,7 @@ along with this software (see the LICENSE.md file). If not, see
         <p class="q-mb-none">The .qvue path of style-guide 4.8, for a calendar an XML form-list cannot be (a component file served as the screen, data from the events transition); only the month view is built here, the day and week buttons show a banner. A form-list with <code>view-calendar</code> (section 8.2: month, week, day and list, drag to move and resize, quick create) is the Views screen.</p>
     </m-container-box>
 
+    <q-banner v-if="invalidMonth" dense role="status">Invalid month. Showing the current month.</q-banner>
     <div class="row items-center q-col-gutter-sm q-mb-sm q-px-sm">
         <div class="col-auto row items-center no-wrap">
             <q-btn flat dense round icon="chevron_left" aria-label="Previous month" @click="go(-1)"><q-tooltip>Previous month</q-tooltip></q-btn>
@@ -98,7 +99,7 @@ along with this software (see the LICENSE.md file). If not, see
 module.exports = {
     data() {
         return {
-            month: '', mode: 'month', events: [], createShown: false, newEvent: { title: '', start: '', end: '' },
+            month: '', invalidMonth: false, mode: 'month', events: [], createShown: false, newEvent: { title: '', start: '', end: '' },
             screenPath: '', active: false, eventsRequest: 0,
             dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
             modeOptions: [{ label: 'Day', value: 'day' }, { label: 'Week', value: 'week' }, { label: 'Month', value: 'month' }],
@@ -176,7 +177,8 @@ module.exports = {
         readMonth() {
             const param = this.$root.currentParameters && this.$root.currentParameters.month;
             const now = new Date();
-            this.month = param && /^\d{4}-\d{2}$/.test(String(param)) ? String(param) : now.getFullYear() + '-' + this.pad(now.getMonth() + 1);
+            this.invalidMonth = param != null && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(param));
+            this.month = param && !this.invalidMonth ? String(param) : now.getFullYear() + '-' + this.pad(now.getMonth() + 1);
         }
     },
     watch: {

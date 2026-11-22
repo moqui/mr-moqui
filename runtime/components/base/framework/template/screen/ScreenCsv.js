@@ -73,7 +73,7 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
     const linkMacro = stmt((node) => {
         const inField = node.parent && node.parent.name.endsWith("-field");
         const type = attr(node, "link-type");
-        if (!inField || (type !== "anchor" && type !== "hidden-form-link")) return "";
+        if (!inField || (type && !["auto", "anchor", "anchor-button", "hidden-form-link"].includes(type))) return "";
         const condition = attr(node, "condition");
         const body = js`
             {

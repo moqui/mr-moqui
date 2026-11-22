@@ -358,7 +358,7 @@ static SRI: &[Method] = &[
         Keep,
         get_field_transition_value
     ),
-    method!("sri", "getMenuItems", [OptText], Keep, get_menu_items),
+    method!("sri", "getMenuItems", [OptText, OptBool], Keep, get_menu_items),
     method!("sri", "getMenuData", [Texts], Keep, get_menu_data),
     method!("sri", "getExtItems", [Texts], Keep, get_ext_items),
     method!("sri", "getShellData", [], Keep, get_shell_data),
@@ -1083,13 +1083,14 @@ fn get_field_transition_value(call: &mut Call<'_>) -> Result<Ret, HostError> {
 // ---- menus and the shell ----
 
 fn get_menu_items(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let items = in_render(|state| logic::menu_items(state, call.text(0)))?;
+    let items = in_render(|state| logic::menu_items(state, call.text(0), call.bool(1).unwrap_or(false)))?;
     let out = items
         .into_iter()
         .map(|item| {
             map([
                 ("name", Value::String(item.name)),
                 ("hasParameters", Value::Bool(item.has_parameters)),
+                ("hasRequiredParameters", Value::Bool(item.has_required_parameters)),
                 ("title", Value::String(item.title)),
                 ("url", Value::String(item.url)),
                 ("disabled", Value::Bool(item.disabled)),
