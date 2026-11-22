@@ -335,10 +335,10 @@ impl Peer {
                 self.key.leg.clone(),
                 self.sources.get(&mid).copied().unwrap_or_else(|| {
                     // A second track of a kind is a presentation even while the
-                    // publisher's explicit MID declaration is still in flight.
-                    if (self.guest_screen_only && self.screen_leg.as_ref() == Some(&self.key.leg))
-                        || self.tracks_in.iter().any(|t| t.track.kind == kind)
-                    {
+                    // publisher's explicit MID declaration is still in flight. A
+                    // follow presenter's first tracks are its camera and microphone
+                    // (a page joining again): its tab is declared before it is offered.
+                    if self.tracks_in.iter().any(|t| t.track.kind == kind) {
                         match kind {
                             MediaKind::Video => Source::Screen,
                             MediaKind::Audio => Source::ScreenAudio,
@@ -589,6 +589,9 @@ impl Peer {
             return;
         }
         let estimate = self.estimate_kbps.unwrap_or(config.initial_kbps);
+        // In a follow stage only the guests get the presenter's screen (`Sfu::propagate`): no
+        // one else holds its bandwidth back from the cameras.
+        let screen_withheld = self.guest_screen_only && !self.guest_video_recipient;
         let mut audio = 0u64;
         let mut cameras = 0u64;
         let mut screen_rate = 0;
@@ -596,7 +599,7 @@ impl Peer {
             match track.kind {
                 MediaKind::Audio => audio += 1,
                 MediaKind::Video if track.source() == Source::Screen => {
-                    if self.screen_leg.as_ref() == Some(&track.leg) {
+                    if self.screen_leg.as_ref() == Some(&track.leg) && !screen_withheld {
                         if let Some(layer) = self.wanted.get(&track.leg).copied().unwrap_or(Some(Layer::High)) {
                             screen_rate = config.layer_kbps[layer.index()];
                         }
@@ -619,7 +622,7 @@ impl Peer {
             let share = if screen { video_budget } else { camera_share };
             let target = match wanted {
                 None => None,
-                Some(_) if screen && self.screen_leg.as_ref() != Some(&t.leg) => None,
+                Some(_) if screen && (screen_withheld || self.screen_leg.as_ref() != Some(&t.leg)) => None,
                 Some(_) if !screen && screen_rate > 0 && camera_share < config.layer_kbps[0] => None,
                 Some(_) if audio_only => None,
                 Some(w) if o.simulcast() => {

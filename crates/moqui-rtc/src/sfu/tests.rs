@@ -882,3 +882,27 @@ fn following_a_screen_forwards_its_video_only_to_a_guest() {
         "member must navigate using own session"
     );
 }
+
+#[test]
+fn a_follow_screen_a_member_does_not_receive_leaves_the_cameras_their_bandwidth() {
+    let mut net = Net::new();
+    net.join("A", true);
+    net.join("B", false);
+    net.run(secs(1));
+    net.sfu.set_presentation(ROOM, Some("A"), true);
+    net.share_screen("A");
+    net.client_mut("B").down.bps = Some(900_000);
+    net.run(secs(8));
+    let since = net.now;
+    net.run(secs(3));
+    assert!(
+        net.client("B")
+            .video_after("A", since, |n| LAYER_BYTES.contains(&n))
+            .is_some(),
+        "the member still sees the presenter's camera"
+    );
+    assert!(
+        net.client("B").video_after("A", since, |n| n == SCREEN_BYTES).is_none(),
+        "and never the screen"
+    );
+}
