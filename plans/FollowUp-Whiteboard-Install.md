@@ -98,3 +98,53 @@ Decisions:
   the render-once rule.
 - **Acceptance `MeetingBoards`:** run it once, since meeting-board access now answers from memory and is rechecked on
   call changes.
+
+## Opus 5.5 medium Cost Calibration
+
+This plan costs:
+- review and agent plan completed with overage at $1.91 (meter reading at start)
+- cost of the commits included is from agent plan to completed tests, including writing this file (FollowUp-Whiteboard-Install.md)
+- a smaller amount of work in main agent, 3 subagents running ~30m, ~37m, ~38m (the last with 306k tokens reported for bg agent); total time after all tests around 1 hour
+- meter reading at end following lint, test-framework, test-apps: $46.60
+- cost of the following commits with token pricing instead of plan pricing is 46.60 - 1.91 = $44.69
+
+Overall costs:
+- most of the original work being reviewed and adjusted in this plan was done by Astra 6.2 medium (not including the l10n follow ups, most had been done before this but a few remained) for ~46% of 1 week of $100/mo plan (so for around $11 at plan pricing, not token pricing)
+- bulk of work done so far has been with Opus 5.5, with a fair amount over the last 2 weeks on Fable 5.2 because of the free Fable week reset; using one personal and one work Claude $200/mo accounts, plus ChatGPT $100/mo, plus Grok $30/mo; 6 weeks in on 20 Nov 2026, not all plans active the whole time, so high estimate of cost from plans completed to date is 1.5 months by $530/mo so ~$795; this is also a high cost because I've worked on a few side projects here and there as well on these plans (grok-the-rock, home-scale, ghigs-tdg), but compared to the mr-moqui, mr-mantle, mr-boss, mr-pass, mr-marble, mr-l10n, mr-home, and mr-three repos the changes in those are quite small; this is low because each Claude $200/mo account has had 1 free full week reset and 1 free Fable week reset, and the ChatGPT $100/mo account has had something like 3 week resets (though GPT models, even Astra, are inferior to Claude 5.5 medium for writing code and even thoroughly maintaining docs; GPT most useful so far for planning/design, testing, and reviews... with each vetted by Opus or Fable to fill in technical gaps and details, fix issues found, etc)
+
+This plan commits so far:
+```
+== .  master -> origin/master [ahead 12, behind 0]
+  unpushed:
+    d425fcc71 Record the follow-up to the whiteboard, stage and follow, and per-user install commits: what is built and what remains.
+    e83f07978 Merge branch 'worktree-agent-a4779338cbb1137ee'
+    9b42a3955 Merge branch 'worktree-agent-ae38cc2c2c528617c'
+    fa5f4468b Keep a host's stage from a non-host, publish each stage change once, and make follow cheap, member-only and safe for unsaved work.
+    9552aefdd Leave a follow stage's cameras the bandwidth of the screen that only guests get, and label a follow presenter's undeclared tracks camera and mic.
+    81f8e95a1 Keep boards open past one bad piece and bounded as they grow: a tolerant seed, compaction on close, a total image limit with pruning, per-socket collab rate limits, and page deletion that takes a board's rows with it.
+    e29766ee1 Merge branch 'worktree-agent-adb9f94bc578760a8'
+    2f0295f61 Move the tab capture media test to the webroot acceptance client suite.
+    4911dacd8 Dev certificates: isolate tests, replace and rotate, trust only own roots.
+    ff4e29182 Refuse the renamed gRPC listener attributes, naming their replacements.
+    df964d23a Read ~/.mr-moqui only for files the runtime and binary lack, and prune installs.
+    237ed8218 Answer a meeting board's frames from the room's grant in memory, and ask the grant again when the call changes, instead of calling get#MeetingBoardGrant for every update, awareness and outgoing frame.
+  clean
+== runtime/components/addon/mr-boss  master -> origin/master [ahead 1, behind 0]
+  unpushed:
+    14305d1f Point the quick start at the dev server's HTTPS address.
+  clean
+== runtime/components/addon/mr-home  master -> origin/master
+  clean
+== runtime/components/addon/mr-l10n  master -> origin/master
+  clean
+== runtime/components/addon/mr-mantle  master -> origin/master
+  clean
+== runtime/components/addon/mr-marble  master -> origin/master [ahead 1, behind 0]
+  unpushed:
+    c719ffc Point the quick start at the dev server's HTTPS address.
+  clean
+== runtime/components/addon/mr-pass  master -> origin/master
+  clean
+== runtime/components/addon/mr-three  master -> origin/master
+  clean
+```
