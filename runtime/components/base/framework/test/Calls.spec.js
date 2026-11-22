@@ -200,12 +200,14 @@ feature("the session arbitrates presentation grants, takeover, host stop and app
         const queued = act(B, member, "ask")
         const approved = act(A, host, "approve", {targetLegId:member.callLegId})
         const view = as(A, "get#Call", {callSessionId:direct}).call
+        const follow = act(A, host, "take", {kind:"follow"})
         act(A, host, "stop")
         setMode("CsmAnyone")
-        return {first, untrustedInk, inkMode, embedded, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, host, member}
+        return {first, untrustedInk, inkMode, embedded, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, follow, host, member}
     },
     then(r) {
         r.first.stage.callLegId === r.host.callLegId && r.confirm.reasonCode === "takeoverRequired"
+        r.follow.stage.kind === "follow" && r.follow.stage.followEpoch > 0
         r.untrustedInk.reasonCode === "notAllowed" && r.inkMode.stage.inkMode === "hosts" && r.embedded.stage.inkEmbedded === true
         !r.takeover.stage.inkEmbedded && !r.takeover.stage.inkMode
         r.takeover.stage.callLegId === r.member.callLegId && r.impostor.reasonCode === "notAllowed"
@@ -598,12 +600,14 @@ feature("a call link takes a guest by name into its meeting's lobby, and only so
         const admitted = as(A, "admit#Guest", {callSessionId: guest.callSessionId, callParticipantId: waitingParticipant.callParticipantId})
         const inState = anon("get#GuestState", {credential: guest.credential})
         const bound = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: guest.callSessionId, callLegId: guest.callLegId})
+        const guestFollow = internal("org.moqui.call.StageServices.change#CallStage", {credential:guest.credential,
+            callSessionId:guest.callSessionId,callLegId:guest.callLegId,generation:bound.generation,action:"take",kind:"follow"})
         const wrongCall = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: direct, callLegId: guest.callLegId})
         ec.message.clearErrors()
         const links = as(A, "find#CallLinks")
-        return {bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, wrongCall, links}
+        return {bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, guestFollow, wrongCall, links}
     },
-    then({bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, wrongCall, links}) {
+    then({bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, guestFollow, wrongCall, links}) {
         link.path == "/call/" + link.token
         bad.valid == false
         good.valid == true
@@ -623,6 +627,7 @@ feature("a call link takes a guest by name into its meeting's lobby, and only so
         inState.admission == "admitted"
         inState.people.some(p => p.displayName == "Visitor")
         bound.generation == 1
+        guestFollow.reasonCode == "notAllowed" && bound.memberScreen === false
         wrongCall.reasonCode == "notFound"
         links.linkList.some(l => l.callLinkId == link.callLinkId && l.callSessionId == guest.callSessionId)
     }

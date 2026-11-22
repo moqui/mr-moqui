@@ -178,7 +178,39 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
                 );
                 return true;
             }
-            if op == "stage" {
+            if op == "follow" && frame["action"] == "navigate" {
+                static NAV: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
+                if !super::take(NAV.get_or_init(Default::default), &slot.id, 600) {
+                    error(
+                        slot,
+                        &call,
+                        &leg,
+                        &id,
+                        "rateLimited",
+                        "Navigation updates are arriving too quickly",
+                    );
+                    return true;
+                }
+                // Screen resolution runs off the socket task; later navigation
+                // wins even if an earlier definition takes longer to load.
+                static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (factory, slot) = (Arc::clone(factory), Arc::clone(slot));
+                tokio::spawn(async move {
+                    let screen_factory = Arc::clone(&factory);
+                    let clean = as_user(&factory, slot.user_id.clone(), move || {
+                        Ok(crate::rtc::follow::navigate(&screen_factory, &frame))
+                    })
+                    .await;
+                    if let Ok(Some(mut clean)) = clean {
+                        clean["sequence"] = json!(sequence);
+                        clean["id"] = id.clone();
+                        forward(&factory, &slot, &binding, &id, clean);
+                    } else {
+                        error(&slot, &call, &leg, &id, "invalidScreen", "Choose an application screen");
+                    }
+                });
+            } else if op == "stage" {
                 change_stage(factory, slot, Who::User(slot.user_id.clone()), binding, id, frame);
             } else {
                 forward(factory, slot, &binding, &id, frame);
@@ -339,6 +371,10 @@ fn join(
         // The bound session is the sole source of stage state. Never trust a join's copy.
         if let Some(obj) = frame.as_object_mut() {
             obj.remove("boundStage");
+            obj.insert(
+                "boundMemberScreen".into(),
+                Json::Bool(matches!(out.get("memberScreen"), Some(Value::Bool(true)))),
+            );
             obj.insert("boundGuest".into(), Json::Bool(matches!(&who, Who::Guest(_))));
             obj.insert(
                 "boundHost".to_string(),

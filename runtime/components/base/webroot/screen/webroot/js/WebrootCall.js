@@ -86,7 +86,7 @@
         speaker: null,
         layout: "grid", // grid, speaker
         sharing: false,
-        stage: {kind:null,callLegId:null,requests:[]}, stageRevision:-1, inkStrokes:[], shareMode:"CsmAnyone", picking:false, capture:null,
+        stage: {kind:null,callLegId:null,requests:[]}, stageRevision:-1, following:false,followDenied:false, inkStrokes:[], shareMode:"CsmAnyone", picking:false, capture:null,
         hand: false,
         participantsOpen: false,
         // a guest waiting in the lobby of a call link's meeting: {callSessionId, guestName}, for the dock
@@ -300,6 +300,7 @@
             if (call.started || !vm || !vm.userId || !(moqui.config || {}).calls) return;
             call.started = true;
             call.vm = vm;
+            vm.addUrlListener?.(call.followLocalNav);
             call.me = vm.userId;
             const client = vm.notificationClient;
             if (client) {
@@ -1264,6 +1265,9 @@
             const pc = call.pc;
             if (!pc || frame.callSessionId !== state.current) return null;
             switch (frame.rtc) {
+                case "follow":
+                    call.followFrame(frame);
+                    break;
                 case "ink":
                     call.inkFrame(frame);
                     break;
@@ -1432,7 +1436,7 @@
             const legs = Object.keys(state.remotes);
             // the direct path has no layers to choose: the other page sends one
             if (!state.current || !legs.length || call.direct) return;
-            const sharing = state.stage.kind === "screen" && state.stage.callLegId;
+            const sharing = (state.stage.kind === "screen" || (state.stage.kind==="follow" && call.guest)) && state.stage.callLegId;
             const main = sharing || state.speaker || legs[0];
             const layers = {};
             for (const leg of legs) {
@@ -1464,6 +1468,170 @@
             if (!call.pc || !state.current) return;
             call.send(Object.assign({rtc:"stage", action, kind:"screen", id:call.nextId++,
                 callSessionId:state.current, callLegId:state.legId}, options));
+        },
+        followPath(value) {
+            try {
+                const url=new URL(value,root.location.href);
+                if(url.origin!==root.location.origin || !/^\/(qapps|apps)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(url.pathname) ||
+                    moqui.isVaultPath?.(url.pathname))return null;
+                const params={};
+                for(const [name,value] of url.searchParams) {
+                    if(Object.keys(params).length>=32)break;
+                    if(/^(?:id|[a-zA-Z][a-zA-Z0-9_]*(?:Id|Name))$/.test(name) &&
+                        (name==="callSessionId" || !/token|password|secret|credential|session|apikey|csrf|cookie/i.test(name)) && /^[\w.:-]{1,100}$/.test(value))params[name]=value;
+                }
+                return {path:url.pathname,params};
+            } catch(_){return null;}
+        },
+        followSend(action,fields) {
+            if(!call.guest && state.current && state.stage.kind==="follow")
+                call.send({rtc:"follow",action,callSessionId:state.current,callLegId:state.legId,...fields});
+        },
+        followLocalNav() {
+            if(state.stage.kind!=="follow")return;
+            if(state.stage.callLegId===state.legId){
+                call.followPointer=null;call.queueFollow(0);
+            } else if(!call.applyingFollow)call.setFollowing(false);
+        },
+        followPage(){return root.document.querySelector("#m-canvas .q-page:not([style*='display: none'])");},
+        visibleSection(page) {
+            const header=root.document.querySelector(".q-layout .q-header"), top=Math.max(page.getBoundingClientRect().top,0,
+                header?.getBoundingClientRect().bottom || 0);
+            const selector="section[id],article[id],h1[id],h2[id],h3[id],[role=region][id],.m-box[id],.m-container-box[id]";
+            let nearest=null,y=-Infinity;
+            for(const el of page.querySelectorAll(selector)) {
+                const edge=el.getBoundingClientRect().top;
+                if(edge<=top+10 && edge>=y && el.getClientRects().length && /^[\w.:-]{1,100}$/.test(el.id)){
+                    nearest=el.id;y=edge;
+                }
+            }
+            return nearest;
+        },
+        queueFollow(delay=160) {
+            if(call.followTimer && delay)return;
+            clearTimeout(call.followTimer);call.followTimer=setTimeout(()=>{
+                call.followTimer=null;
+                if(state.stage.kind!=="follow" || state.stage.callLegId!==state.legId || call.guest)return;
+                const target=call.followPath(root.location.href);
+                if(!target)return;
+                const page=call.followPage();
+                if(page){
+                    const section=call.visibleSection(page);
+                    if(section)target.section=section;
+                    const dialog=Object.entries(call.vm?.activeContainers || {}).find(([,c])=>c?.isShown && ["mContainerDialog","mDynamicDialog"].includes(c.$options?.name));
+                    if(dialog)target.dialog=dialog[0];
+                    if(call.followPointer)target.pointer=call.followPointer;
+                }
+                const wire=JSON.stringify(target);
+                if(wire!==call.lastFollowSent){call.lastFollowSent=wire;call.followSend("navigate",target);}
+            },delay);
+        },
+        followStart(stage) {
+            call.followReset();
+            if(stage.kind!=="follow" || call.guest)return;
+            if(stage.callLegId!==state.legId){
+                state.following=true;
+                // A shell screen can mount its data-driven sections after the route itself has loaded.
+                const observer=new MutationObserver(()=>{
+                    if(!state.following || state.followDenied || call.followPending || !call.followLatest?.section || call.followSection?.isConnected)return;
+                    clearTimeout(call.followLocateTimer);call.followLocateTimer=setTimeout(()=>call.followLocate(),0);
+                });
+                observer.observe(root.document.querySelector("#m-canvas") || root.document.body,{childList:true,subtree:true});
+                call.followCleanup=()=>observer.disconnect();
+                call.followSend("catchUp");return;
+            }
+            const pointer=e=>{
+                const el=e.target.closest?.("[id]");
+                if(!el || !call.followPage()?.contains(el) || !/^[\w.:-]{1,100}$/.test(el.id))return;
+                const r=el.getBoundingClientRect();
+                if(!r.width || !r.height)return;
+                const unit=n=>Math.max(0,Math.min(1,Math.round(n*1000)/1000));
+                call.followPointer={id:el.id,x:unit((e.clientX-r.left)/r.width),y:unit((e.clientY-r.top)/r.height)};call.queueFollow();
+            };
+            const scroll=()=>call.queueFollow();
+            root.document.addEventListener("pointermove",pointer,{passive:true});
+            root.document.addEventListener("scroll",scroll,true);
+            const dialogs=new MutationObserver(records=>{
+                if(records.some(r=>[...r.addedNodes,...r.removedNodes].some(n=>n.nodeType===1 && (n.matches?.(".q-dialog,[role=dialog]") || n.querySelector?.(".q-dialog,[role=dialog]")))))call.queueFollow();
+            });
+            dialogs.observe(root.document.body,{childList:true,subtree:true});
+            call.followCleanup=()=>{root.document.removeEventListener("pointermove",pointer);root.document.removeEventListener("scroll",scroll,true);dialogs.disconnect();};
+            call.queueFollow(0);
+        },
+        followReset(){
+            clearTimeout(call.followTimer);clearTimeout(call.followLocateTimer);call.followCleanup?.();call.followCleanup=null;
+            call.followPointer=null;call.lastFollowSent=null;call.followKey=null;call.followLatest=null;call.followPending=null;
+            call.followMarker?.remove();call.followMarker=null;call.followSection=null;call.followOpenDialog=null;
+            state.following=false;state.followDenied=false;call.followSequence=(call.followSequence || 0)+1;
+        },
+        setFollowing(on){
+            state.following=on;state.followDenied=false;call.followSequence++;call.followPending=null;call.followKey=null;
+            if(on)call.followSend("catchUp");
+            else {call.followMarker?.remove();call.followMarker=null;clearTimeout(call.followLocateTimer);}
+        },
+        followLocate(retry=0){
+            if(!state.following || state.followDenied || !call.followLatest)return;
+            const f=call.followLatest, page=call.followPage(), named=id=>{const el=id && root.document.getElementById(id);return el && page?.contains(el)?el:null;};
+            const section=named(f.section);
+            if(section && call.followSection!==section){
+                section.scrollIntoView({block:"start"});call.followSection=section;
+            }else if(!f.section && call.followSection){
+                page?.scrollIntoView({block:"start"});call.followSection=null;
+            }
+            const dialogs=call.vm?.activeContainers || {},dialog=f.dialog && dialogs[f.dialog];
+            if(call.followOpenDialog && call.followOpenDialog!==f.dialog)dialogs[call.followOpenDialog]?.hide?.();
+            if(dialog && ["mContainerDialog","mDynamicDialog"].includes(dialog.$options?.name)){dialog.isShown=true;call.followOpenDialog=f.dialog;}
+            const el=named(f.pointer?.id);
+            if(el){
+                if(!call.followMarker){call.followMarker=root.document.createElement("i");call.followMarker.className="m-follow-pointer";
+                    call.followMarker.setAttribute("aria-hidden","true");Object.assign(call.followMarker.style,{position:"fixed",zIndex:5000,pointerEvents:"none",
+                        width:"12px",height:"12px",borderRadius:"50%",background:"#c62828",border:"2px solid white",boxShadow:"0 0 2px black",transform:"translate(-50%,-50%)"});
+                    root.document.body.append(call.followMarker);}
+                const r=el.getBoundingClientRect();Object.assign(call.followMarker.style,{left:r.left+r.width*f.pointer.x+"px",top:r.top+r.height*f.pointer.y+"px"});
+            }else{call.followMarker?.remove();call.followMarker=null;}
+            if(retry<12 && ((!section && f.section) || (!el && f.pointer) || (!dialog && f.dialog))){
+                clearTimeout(call.followLocateTimer);call.followLocateTimer=setTimeout(()=>call.followLocate(retry+1),100);
+            }
+        },
+        async followFrame(frame) {
+            if(call.guest || (frame.followEpoch && frame.followEpoch!==state.stage.followEpoch) || frame.action!=="navigate" || state.stage.kind!=="follow" || frame.from!==state.stage.callLegId ||
+                frame.from===state.legId || !state.following || !call.vm)return;
+            const target=call.followPath(frame.path);
+            if(!target || target.path!==frame.path)return;
+            const filtered=call.followPath(target.path+"?"+new URLSearchParams(frame.params || {}));
+            const query=new URLSearchParams(Object.entries(filtered.params).sort()).toString(), suffix=query?"?"+query:"", key=target.path+suffix;
+            call.followLatest=frame;
+            if(call.followKey===key){if(!state.followDenied)call.followLocate();return;}
+            if(call.followPending===key)return;
+            const sequence=++call.followSequence;call.followPending=key;
+            try {
+                const path=target.path.replace(/^\/qapps\//,"/apps/");
+                // A follower's own authenticated request must succeed before data or identifiers can enter the shell.
+                const reads=[path+".qvt"+suffix];
+                const commsPath=call.appRoot().replace(/^\/qapps\//,"/apps/");
+                const app=[commsPath,"/apps/BasicComms"].find(prefix=>path.startsWith(prefix+"/"));
+                const screen=app && path.slice(app.length);
+                const board=screen==="/Boards/Board" && filtered.params.wikiPageId;
+                const room=screen==="/Chat" && filtered.params.chatRoomId;
+                const meeting=screen==="/Calls/Call" && filtered.params.callSessionId;
+                if(board)reads.push(path+"/board"+suffix);
+                if(room)reads.push(path+"/room"+suffix);
+                if(meeting)reads.push(app+"/Calls/callState"+suffix);
+                const replies=await Promise.all(reads.map(url=>root.fetch(url,{credentials:"same-origin",redirect:"error",
+                    headers:{"X-Moqui-Client-Modes":"qvue,qjs","Accept":"text/html,application/json"}})));
+                if(sequence!==call.followSequence || !state.following)return;
+                if(replies.some(r=>!r.ok || r.status===205 || r.headers.has("X-Redirect-To")))throw new Error();
+                const record=replies[1] && await replies[1].json();
+                if(sequence!==call.followSequence || !state.following)return;
+                if(record?.errors || (meeting && !record?.call) || (room && (!record?.room || record?.access?.canRead===false)))throw new Error();
+                call.followKey=key;state.followDenied=false;call.followSection=null;call.followOpenDialog=null;
+                call.applyingFollow=true;
+                if(call.wide())state.panel=state.current;
+                try{call.vm.setUrl(key,null,()=>call.followLocate());}finally{call.applyingFollow=false;}
+                call.followLocate();
+            }catch(_){
+                if(sequence===call.followSequence && state.following){state.followDenied=true;call.followKey=key;call.followMarker?.remove();call.followMarker=null;}
+            }finally{if(sequence===call.followSequence)call.followPending=null;}
         },
         inkTimers:new Map(),
         clearInk() {
@@ -1526,19 +1694,29 @@
             if (state.stage.callLegId!==frame.stage.callLegId || state.stage.kind!==frame.stage.kind || state.stage.inkEpoch!==frame.stage.inkEpoch ||
                 (state.stage.inkMode && frame.stage.inkMode==="off")) call.clearInk();
             state.stageRevision = frame.revision;
+            const old=state.stage;
             state.stage = frame.stage;
+            if(old.kind!==frame.stage.kind || old.callLegId!==frame.stage.callLegId || old.followEpoch!==frame.stage.followEpoch){
+                call.followStart(frame.stage);
+                if(old.kind==="follow" || frame.stage.kind==="follow"){
+                    // A picker opened on the earlier stage cannot become guest video after its consent returns.
+                    if(state.picking)++call.captureEpoch;
+                    if(state.sharing)call.stopShare(false);
+                }
+            }
             state.shareMode = frame.shareModeEnumId || state.shareMode;
             if (state.stage.callLegId === state.legId && state.sharing && call.screenStream) {
-                const onStage = state.stage.kind === "screen";
+                const onStage = ["screen","follow"].includes(state.stage.kind);
                 call.screenStream.getTracks().forEach(track=>{ track.enabled=onStage; });
             }
-            if (state.stage.callLegId !== state.legId || !["screen","board"].includes(state.stage.kind)) {
+            if (state.stage.callLegId !== state.legId || !["screen","board","follow"].includes(state.stage.kind)) {
                 call.captureEpoch++;
                 if (state.sharing || call.screenStream) call.stopShare(false);
             }
             call.chooseLayers();
         },
         async requestPresentation(kind = "screen", wikiPageId) {
+            if(kind==="follow" && (call.guest || !call.followPath(root.location.href)))return;
             const prev = state.stage.callLegId;
             const view = state.calls[state.current];
             const host = !!view && view.participants.some(p => p.userId && p.userId === call.me && p.role === "host");
@@ -1585,14 +1763,18 @@
         },
         async shareScreen(surface, motion) {
             const media = root.navigator && root.navigator.mediaDevices, pc = call.pc;
+            const follow=state.stage.kind==="follow";
+            if (follow && (surface!=="tab" || call.direct || call.guest))return false;
             if (!pc || !media || !media.getDisplayMedia || state.sharing || state.picking ||
-                state.stage.callLegId !== state.legId || state.stage.kind !== "screen") return false;
+                state.stage.callLegId !== state.legId || (!follow && state.stage.kind !== "screen")) return false;
             const epoch = ++call.captureEpoch;
             let stream;
             state.picking = true;
             try {
                 const controller = root.CaptureController ? new root.CaptureController() : null;
-                stream = await media.getDisplayMedia(call.captureOptions(surface, motion, controller));
+                const opts=call.captureOptions(surface,motion,controller);
+                if(follow){opts.audio=false;opts.surfaceSwitching="exclude";}
+                stream = await media.getDisplayMedia(opts);
                 if (controller && surface !== "tab" && controller.setFocusBehavior) {
                     try { controller.setFocusBehavior("no-focus-change"); } catch (_) { /* optional */ }
                 }
@@ -1611,8 +1793,9 @@
                 call.screenStream = stream;
                 call.captureController = controller;
                 state.capture = {surface:tab ? "tab" : "window", crop, audio:!!audio,
-                    ownTab:!!crop || !!(tab && video.getCaptureHandle && video.getCaptureHandle()?.handle === call.captureHandle)};
-                for (const [track, name] of [[video,"screenTx"],[audio,"screenAudioTx"]]) {
+                    ownTab:!!crop || !!(tab && call.captureHandle && video.getCaptureHandle?.()?.handle === call.captureHandle)};
+                if(follow && !state.capture.ownTab)throw new Error(t("Choose this tab to show it to guests"));
+                for (const [track, name] of [[video,"screenTx"],[follow?null:audio,"screenAudioTx"]]) {
                     if (!track) continue;
                     const reuse = call[name];
                     if (reuse && reuse.currentDirection !== "stopped") {
@@ -1631,16 +1814,16 @@
                     try { await sender.setParameters(params); } catch (_) { /* Browser has no degradation preference. */ }
                 }
                 if (epoch !== call.captureEpoch || pc !== call.pc) return false;
-                video.onended = () => call.stopShare();
+                video.onended = () => call.stopShare(!follow);
                 state.sharing = true;
-                if (state.capture.ownTab) {
+                if (!follow && state.capture.ownTab) {
                     await moqui.loadScript("/js/WebrootInk.js",null,()=>!!moqui.ink);
                     call.syncEmbeddedInk();call.stageCommand("inkSurface",{embedded:true});
                 }
                 return await call.renegotiate("screen");
             } catch (error) {
                 if (error.name !== "NotAllowedError" && epoch === call.captureEpoch) state.error = String(error.message || error);
-                if (epoch === call.captureEpoch) call.stopShare();
+                if (epoch === call.captureEpoch) call.stopShare(!follow);
                 return false;
             } finally {
                 if (!state.sharing || stream !== call.screenStream) stream?.getTracks().forEach(track => track.stop());
@@ -1741,7 +1924,7 @@
             }
             call.endDirect();
             ++call.captureEpoch;
-            call.clearInk();
+            call.followReset();call.clearInk();
             state.stage = {kind:null,callLegId:null,requests:[]};
             state.stageRevision = -1;
             state.capture = call.captureController = call.afterRelayStage = call.screenAudioTx = null;
@@ -2287,6 +2470,8 @@
             inkAllowed() {return this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
             boardId() { return this.call.stage.kind === "board" ? this.call.stage.wikiPageId : null; },
             guest() { return call.guest; },
+            followStage(){return this.call.stage.kind==="follow";},
+            eligible(){return !call.guest && !!call.followPath(this.$root.currentLinkUrl || root.location.href);},
             stream() { return this.mine ? (this.call.sharing && call.screenStream) : (this.owner && this.call.remotes[this.owner]?.screen); },
             supported() { return !!root.navigator?.mediaDevices?.getDisplayMedia; },
             tabControls() { return this.mine && this.call.capture?.surface === "tab" && !!call.captureController?.forwardWheel; },
@@ -2296,6 +2481,7 @@
         watch:{owner() { this.fit(); this.forward=false; this.notice=""; this.followBoard=true; }, boardId(){this.followBoard=true;}},
         methods:{
             t, name:call.nameOf, command:call.stageCommand, ask:call.requestPresentation, capture:call.shareScreen, stop:call.stopShare,
+            setFollowing:call.setFollowing,
             drawInk:call.drawInk,
             async snapshot(){try{await call.snapshotBoard(this.$refs.viewport?.querySelector("video"));}catch(e){this.notice=String(e.message || e);}},
             async boardPicker() {
@@ -2387,12 +2573,22 @@
             <div class="row items-center q-gutter-xs">
                 <span v-if="sharing && (!mine || call.sharing)" role="status" class="text-subtitle2">{{presenter}}</span>
                 <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop')"/>
+                <q-btn v-if="eligible && !(mine && followStage)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Present this screen')" @click="ask('follow')"/>
                 <q-btn v-if="!guest" flat dense icon="sym_o_draw" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Whiteboard')" @click="boardPicker"/>
                 <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !pending.includes(call.legId)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode === 'CsmHosts'" :label="t('Share the screen')" @click="ask()"/>
                 <q-btn v-if="pending.includes(call.legId)" flat dense :label="t('Cancel presentation request')" @click="command('lower')"/>
                 <q-btn-dropdown v-if="host" flat dense :label="t('Who can present')"><q-list dense>
                     <q-item v-for="mode in modes" :key="mode.value" clickable v-close-popup :active="call.shareMode===mode.value" @click="setMode(mode.value)">
                         <q-item-section>{{mode.label}}</q-item-section></q-item></q-list></q-btn-dropdown>
+            </div>
+            <div v-if="followStage" class="m-screen-follow row items-center q-gutter-xs">
+                <span role="status">{{call.followDenied ? t('{name} is on a screen you cannot open').replace('{name}',name(owner)) : presenter}}</span>
+                <q-btn v-if="host || mine" dense flat :label="t('End screen presentation')" @click="command('stop')"/>
+                <q-btn v-if="!guest && !mine" dense flat :label="call.following?t('Stop following'):t('Follow again')" @click="setFollowing(!call.following)"/>
+                <q-btn v-if="mine && supported && !call.sharing" dense flat :disable="call.picking" :label="t('Share this tab with guests')" @click="capture('tab',false)"/>
+                <q-btn v-if="mine && call.sharing" dense flat :label="t('Stop guest video')" @click="stop(false)"/>
+                <m-call-video v-if="guest && stream" :stream="stream" muted class="full-width" style="max-height:52dvh;object-fit:contain"/>
+                <span v-else-if="guest">{{t('Waiting for the presenter to share this tab')}}</span>
             </div>
             <div v-if="boardId" class="m-meeting-board">
                 <div class="row items-center q-gutter-xs">
@@ -2737,6 +2933,8 @@
             '<m-call-video v-if="speaker" :stream="speaker.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white text-subtitle1">{{current ? (current.participants || []).filter(p => p.inCall).map(p => p.displayName).join(\', \') : \'\'}}</div>' +
             "</div>" +
+            '<div v-if="call.stage.kind===\'follow\'" class="q-px-sm"><m-call-presentation :view="current"></m-call-presentation></div>' +
+            '<q-btn v-else-if="moquiCall().followPath($root.currentLinkUrl)" flat dense icon="sym_o_present_to_all" :label="t(\'Present this screen\')" @click="moquiCall().requestPresentation(\'follow\')"/>' +
             '<q-card-actions class="q-py-xs"><span class="text-caption q-ml-sm">{{elapsed}}</span><q-space></q-space>' +
             '<q-btn flat round dense :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="$event.stopPropagation(); moquiCall().toggleMute()"></q-btn>' +
             '<q-btn flat round dense :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"></q-btn>' +

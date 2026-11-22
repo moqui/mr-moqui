@@ -3259,7 +3259,7 @@ const isImage = (file) => /^image\/(png|jpe?g|gif|webp)$/i.test((file && file.co
 const isVideo = (file) => /^video\//i.test((file && file.contentType) || '');
 const isAudio = (file) => /^audio\//i.test((file && file.contentType) || '');
 // the details view (Comms-Messaging §5.1): one pane with tabs, each a side value, so Back and Esc close it as any pane
-const DETAIL_TABS = ['members', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'];
+const DETAIL_TABS = ['members', 'boards', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'];
 // the tabs of the room's files: the types each keeps on the server (files) and here (an encrypted room's, sorted here)
 const FILE_TABS = {
     media: { params: { contentTypePrefixes: 'image/,video/' }, keeps: (file) => /^(image|video)\//i.test(file.contentType || '') },
@@ -3464,14 +3464,14 @@ const messageTemplate = `
             <div v-if="item.attachments.length && !item.event.rich && !item.event.sticker" class="row q-gutter-xs q-mt-none">
                 <template v-for="file in item.attachments" :key="file.chatAttachmentId">
                     <img v-if="room.isImage(file)" :src="room.fileUrl(file, true)" :alt="file.fileName" class="rounded-borders cursor-pointer q-mt-xs"
-                            style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
+                            style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments, item.eventSeq)">
                     <!-- a voice note or other sound plays here (an encrypted room's once decrypted) -->
                     <div v-else-if="room.isAudio(file)" class="row items-center no-wrap q-mt-xs m-chat-audio" :data-file="file.chatAttachmentId" @click.stop>
                         <audio v-if="room.mediaUrl(file)" :src="room.mediaUrl(file)" controls preload="metadata" :aria-label="file.fileName" style="max-width:min(300px, 100%);height:40px"></audio>
                         <q-btn v-else flat dense no-caps icon="sym_o_play_arrow" class="m-tonal" :label="room.t('Play the voice note')" @click="room.openMedia(file)"></q-btn>
                     </div>
                     <q-chip v-else dense square clickable :icon="room.fileIcon(file)" class="m-tonal q-ml-none"
-                            @click.stop="room.isVideo(file) ? room.preview(file, item.attachments) : room.download(file)">
+                            @click.stop="room.isVideo(file) ? room.preview(file, item.attachments, item.eventSeq) : room.download(file)">
                         <span class="ellipsis" style="max-width:220px">{{file.fileName}}</span><span class="m-muted q-ml-xs">{{room.sizeText(file.fileSize)}}</span>
                         <q-tooltip>{{room.isVideo(file) ? room.t('Play') : room.t('Download')}} {{file.fileName}}</q-tooltip></q-chip>
                 </template>
@@ -3910,7 +3910,7 @@ const chatStickerPicker = {
 const stickerTemplate = `
 <div class="q-mt-xs m-chat-sticker" :data-sticker="sticker.chatStickerId || ''">
     <img v-if="src" :src="src" :alt="sticker.altText || sticker.emoji || room.t('Sticker')" :title="sticker.altText || ''" class="cursor-pointer"
-            :style="'max-width:' + side + 'px;max-height:' + side + 'px;object-fit:contain;display:block'" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
+            :style="'max-width:' + side + 'px;max-height:' + side + 'px;object-fit:contain;display:block'" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments, item.eventSeq)">
     <div v-else class="text-body2 m-muted">{{room.t('Sticker')}} {{sticker.emoji || ''}}</div>
 </div>`;
 const chatSticker = {
@@ -4835,6 +4835,14 @@ const roomTemplate = `
                                 <q-separator class="col"></q-separator><span class="text-caption text-weight-medium m-muted q-px-sm">{{item.label}}</span><q-separator class="col"></q-separator></div>
                             <div v-else-if="item.kind === 'unread'" :id="domId('unread', false)" class="row items-center no-wrap q-my-xs q-px-sm text-negative">
                                 <q-separator class="col" color="negative"></q-separator><span class="text-caption text-weight-medium q-px-sm">{{t('New messages')}}</span></div>
+                            <div v-else-if="item.kind === 'board'" class="q-px-md q-py-xs">
+                                <q-card flat bordered style="max-width:22rem" class="m-chat-board-card">
+                                    <img v-if="item.hasPreview" :src="boardPreview(item.wikiPageId)" alt="" style="width:100%;height:8rem;object-fit:contain"/>
+                                    <q-card-section class="q-py-sm"><div class="text-subtitle2">{{item.title}}</div>
+                                        <small v-if="sealed">{{t('Not end-to-end encrypted: the server stores this board')}}</small></q-card-section>
+                                    <q-card-actions><q-btn flat dense icon="sym_o_draw" :label="t('Open board')" @click="openBoard(item.wikiPageId)"/></q-card-actions>
+                                </q-card>
+                            </div>
                             <div v-else-if="item.kind === 'system'" class="text-center text-caption m-muted q-py-xs q-px-md" :class="item.target ? 'cursor-pointer' : ''"
                                     :id="domId(item.eventSeq, false)" @click="item.target ? jumpTo(item.target) : null">
                                 <q-icon :name="item.icon" size="14px" class="q-mr-xs"></q-icon>{{item.text}} · {{item.time}}</div>
@@ -5044,6 +5052,19 @@ const roomTemplate = `
                 </div>
             </div>
 
+            <div v-else-if="side === 'boards'" class="col scroll q-pa-sm" data-pane="boards">
+                <p v-if="sealed" class="text-caption">{{t('Not end-to-end encrypted: the server stores this board')}}</p>
+                <form v-if="boardsPane.canCreate" class="row items-center q-gutter-xs q-mb-sm" @submit.prevent="newBoard">
+                    <q-input dense outlined class="col" v-model="boardsPane.name" :label="t('Board name')"/>
+                    <q-btn unelevated color="primary" type="submit" :loading="boardsPane.busy" :disable="!boardsPane.name.trim()" :label="t('New board')"/>
+                </form>
+                <q-linear-progress v-if="boardsPane.loading" indeterminate/>
+                <p v-else-if="!boardsPane.list.length" class="m-muted">{{t('No boards yet.')}}</p>
+                <q-list dense><q-item clickable v-for="b in boardsPane.list" :key="b.wikiPageId" @click="openBoard(b.wikiPageId)">
+                    <q-item-section avatar><img v-if="b.hasPreview" :src="boardPreview(b.wikiPageId)" alt="" width="56" height="40" style="object-fit:contain"/>
+                        <q-icon v-else name="sym_o_draw"/></q-item-section><q-item-section>{{b.title}}</q-item-section>
+                </q-item></q-list>
+            </div>
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0" data-pane="members">
                 <!-- the room's person across networks: their ways, mail line, merge and split (Comms-Messaging §11.1) -->
                 <m-chat-person v-if="person" :person="person" :room-id="roomId" :mail="personMail" :direct-encrypted="personEncrypted" :others="peopleList"
@@ -5299,10 +5320,12 @@ const roomTemplate = `
                     <div class="ellipsis">{{viewerFile.fileName}}</div>
                     <div class="text-caption ellipsis m-chat-viewer-where">{{[nameOf(viewerFile.senderUserId, viewerFile.senderName), shortWhen(viewerFile.sentDate)].filter((part) => part).join(' · ')}}<span v-if="viewer.list.length > 1"> · {{viewer.index + 1}} / {{viewer.list.length}}</span></div>
                 </div>
+                <q-btn v-if="canPost && isImage(viewerFile) && mediaUrl(viewerFile)" flat round dense icon="sym_o_draw" :aria-label="t('Mark up')" @click="markingImage=true"><q-tooltip>{{t('Mark up')}}</q-tooltip></q-btn>
                 <q-btn v-if="viewerFile.eventSeq" flat round dense icon="sym_o_chat" :aria-label="t('Show in chat')" @click="viewer.open = false; showFileInChat(viewerFile)"><q-tooltip>{{t('Show in chat')}}</q-tooltip></q-btn>
                 <q-btn flat round dense icon="sym_o_download" :aria-label="t('Download')" @click="download(viewerFile)"><q-tooltip>{{t('Download')}}</q-tooltip></q-btn>
             </div>
             <div class="col relative-position row items-center justify-center" style="min-height:0">
+                <m-image-markup v-if="markingImage" :key="viewerFile.chatAttachmentId" :src="mediaUrl(viewerFile)" :name="viewerFile.fileName" :busy="markupBusy" @save="saveMarkup" @close="markingImage=false"/>
                 <img v-if="isImage(viewerFile) && mediaUrl(viewerFile)" :src="mediaUrl(viewerFile)" :alt="viewerFile.fileName" style="max-width:100%;max-height:100%;object-fit:contain">
                 <video v-else-if="isVideo(viewerFile) && mediaUrl(viewerFile)" :key="viewerFile.chatAttachmentId" :src="mediaUrl(viewerFile)" controls playsinline style="max-width:100%;max-height:100%"></video>
                 <q-spinner v-else size="40px"></q-spinner>
@@ -5522,6 +5545,7 @@ const chatRoom = {
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false }, editing: null, replyTo: null, side: null,
             swipeKey: null, swipeDx: 0,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
+            boardsPane:{list:[],canCreate:false,loading:false,busy:false,name:""},
             threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null },
             tabs: { media: emptyTab(), files: emptyTab(), voice: emptyTab(), links: emptyTab(), reactions: emptyTab() },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -5534,7 +5558,7 @@ const chatRoom = {
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
-            bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
+            markingImage:false, markupBusy:false, bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
             // the room's person across networks (Comms-Messaging §11.1): their ways, a new direct chat's label, their mail line
@@ -5717,7 +5741,7 @@ const chatRoom = {
         detailsOpen() { return DETAIL_TABS.includes(this.side); },
         detailTabs() {
             const labels = { members: fill(t('People ({count})'), { count: this.members.length }), media: t('Media'), files: t('Files'), voice: t('Voice'),
-                links: t('Links'), reactions: t('Reactions'), pinned: t('Pinned') };
+                boards: t('Boards'), links: t('Links'), reactions: t('Reactions'), pinned: t('Pinned') };
             return DETAIL_TABS.map((name) => ({ name, label: labels[name] }));
         },
         reactionChips() { return [{ value: false, label: t('All') }, { value: true, label: t('To my messages') }]; },
@@ -6122,6 +6146,13 @@ const chatRoom = {
                 }
                 // a message of someone the user blocked: one quiet line for a run of them (Comms-Messaging §18.3 phase 11)
                 if (moqui.chat.hiddenLine(out, event)) { prev = null; continue; }
+                if (event.type === 'board' && event.content && event.content.wikiPageId) {
+                    out.push({kind:'board', key:'e'+event.eventSeq, eventSeq:event.eventSeq, wikiPageId:event.content.wikiPageId,
+                        title:event.content.title || t('Whiteboard'), hasPreview:!!event.content.hasPreview ||
+                            this.boardsPane.list.some(b => b.wikiPageId === event.content.wikiPageId && b.hasPreview)});
+                    prev = null;
+                    continue;
+                }
                 if (event.type !== 'message') {
                     const words = systemText(event, (id) => this.nameOf(id));
                     out.push({ kind: 'system', key: 'e' + event.eventSeq, eventSeq: event.eventSeq, text: words[0], icon: words[1], time: timeText(sent),
@@ -6407,7 +6438,7 @@ const chatRoom = {
             const seq = Number(event.eventSeq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
             if (event.senderUserId && event.senderName && !this.names[event.senderUserId]) this.names[event.senderUserId] = event.senderName;
-            const isRow = ['message', 'membership', 'system', 'pin', 'call', 'poll'].includes(event.type);
+            const isRow = ['message', 'membership', 'system', 'pin', 'call', 'poll', 'board'].includes(event.type);
             const mainTimeline = event.threadRootEventSeq == null;
             if (this.hasMoreAfter && isRow && mainTimeline) {
                 if (event.type === 'pin') {
@@ -6447,6 +6478,7 @@ const chatRoom = {
             if (event.type === 'system' && event.content && event.content.action === 'timer' && this.sealed && moqui.crypto && moqui.crypto.rotateRoom)
                 moqui.crypto.rotateRoom(this.roomId).catch(() => null);
             if (event.type === 'membership' || event.type === 'system') { this.reloadMeta(); this.$emit('changed'); }
+            if (event.type === 'board' && this.side === 'boards') this.loadBoards();
             if (this.side === 'pinned' && (event.type === 'pin' || event.type === 'redaction')) this.loadPinned();
             if (this.tabs[this.side] && this.tabTouched(this.side, event)) {
                 clearTimeout(this.tabTimer);
@@ -6479,15 +6511,15 @@ const chatRoom = {
         // outbox's until the answer or its push (onSent). Rejects when the outbox cannot keep it; resolves otherwise.
         sendMessage(message) {
             const threadRoot = message.threadRoot ? Number(message.threadRoot) : null;
-            const replyTo = threadRoot ? null : this.replyTo;
+            const replyTo = threadRoot ? null : (message.replyTo || this.replyTo);
             const params = { body: message.body || '', replyToEventSeq: replyTo ? replyTo.eventSeq : '', threadRootEventSeq: threadRoot || '',
                 chatAttachmentIds: (message.attachmentIds || []).join(',') };
             if (message.viewOnce) params.viewOnce = 'true';
             if (!threadRoot) {
-                this.replyTo = null;
+                if (!message.replyTo) this.replyTo = null;
                 if (!this.hasMoreAfter) this.$nextTick(() => this.scrollToBottom());
             }
-            const restore = (err) => { if (replyTo) this.replyTo = replyTo; throw err; };
+            const restore = (err) => { if (replyTo && !message.replyTo) this.replyTo = replyTo; throw err; };
             // an encrypted room: the message is encrypted before the outbox keeps it, which then holds only ciphertext (C7)
             if (this.sealed) {
                 const clientRef = moqui.chat.newClientRef();
@@ -7228,10 +7260,11 @@ const chatRoom = {
             setTimeout(() => document.body.removeChild(a), 0);
         },
         // the viewer, at file among the pictures and videos of list (the Media tab's, or a message's files): a swipe goes on
-        preview(file, list) {
+        preview(file, list, eventSeq) {
             const shown = (list || [file]).filter((one) => isImage(one) || isVideo(one));
             const index = Math.max(0, shown.indexOf(file));
-            this.viewer = { open: true, list: shown.length ? shown : [file], index };
+            const files = shown.length ? shown : [file];
+            this.viewer = { open:true, list:eventSeq ? files.map(one => ({...one, eventSeq})) : files, index };
             this.openMedia(this.viewer.list[index]);
         },
         viewerStep(by) {
@@ -7251,7 +7284,35 @@ const chatRoom = {
             const dx = point.clientX - from.x;
             if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(point.clientY - from.y)) this.viewerStep(dx < 0 ? 1 : -1);
         },
-        viewerClosed() { this.viewer = { open: false, list: [], index: 0 }; },
+        async saveMarkup(blob) {
+            if (this.markupBusy || !this.viewerFile) return;
+            const roomId = this.roomId, original = this.viewerFile;
+            this.markupBusy = true;
+            try {
+                const form = new FormData();
+                form.append('chatRoomId', roomId);
+                if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+                if (this.sealed) {
+                    const copy = new File([blob], 'markup.png', {type:'image/png'});
+                    const sealed = await moqui.chat.sealFile(copy);
+                    form.append('file', sealed.blob, 'encrypted');
+                    const response = await moqui.request(this.url('upload'), {method:'POST', params:form});
+                    const stored = response.json?.uploadList?.[0];
+                    if (!stored || this.roomId !== roomId) throw new Error(t('The marked-up image could not be sent'));
+                    const file = {chatAttachmentId:stored.chatAttachmentId, fileName:copy.name, contentType:copy.type, fileSize:copy.size, info:sealed.info};
+                    const sent = await this.sendMessage({body:'', replyTo:original, attachmentIds:[file.chatAttachmentId], files:[file]});
+                    if (sent?.failed) throw new Error(sent.error || t('The marked-up image could not be sent'));
+                } else {
+                    form.append('chatAttachmentId', original.chatAttachmentId);
+                    form.append('file', blob, 'markup.png');
+                    const response = await moqui.request(this.url('markup'), {method:'POST', params:form});
+                    if (!response.json?.chatAttachmentId) throw new Error(response.json?.errors || t('The marked-up image could not be sent'));
+                }
+                this.markingImage = false;
+            } catch (error) { moqui.handleAjaxError(error); }
+            finally { this.markupBusy = false; }
+        },
+        viewerClosed() { this.markingImage=false; this.viewer = { open: false, list: [], index: 0 }; },
         // where a picture, video or sound plays from: the server's file, or an encrypted room's decrypted blob (once opened)
         mediaUrl(file) {
             if (!file) return '';
@@ -7280,11 +7341,35 @@ const chatRoom = {
         },
 
         // ---- the side pane ----
+        boardPreview(id) {
+            return moqui.call.base().replace(/Calls$/, 'Boards/Board/image') + '?wikiPageId=' + encodeURIComponent(id) + '&filename=_board.svg';
+        },
+        openBoard(id) { this.$root.setUrl(moqui.call.appRoot() + '/Boards/Board?wikiPageId=' + encodeURIComponent(id)); },
+        async loadBoards() {
+            const roomId=this.roomId;
+            this.boardsPane.loading=true;
+            try {
+                const result=await this.get('roomBoards',{chatRoomId:roomId});
+                if (roomId === this.roomId) Object.assign(this.boardsPane,{list:result.boards || [],canCreate:!!result.canCreate});
+            } finally {if (roomId===this.roomId) this.boardsPane.loading=false;}
+        },
+        async newBoard() {
+            const roomId=this.roomId, name=this.boardsPane.name.trim();
+            if (!name || this.boardsPane.busy || !this.boardsPane.canCreate) return;
+            if (this.sealed && !this.boardsPane.list.length &&
+                !await moqui.confirmAction(t('Not end-to-end encrypted: the server stores this board. Create the first board in this room?'))) return;
+            this.boardsPane.busy=true;
+            try {
+                const result=await this.post('createRoomBoard',{chatRoomId:roomId,pageName:name});
+                if (result.wikiPageId && roomId===this.roomId) {this.boardsPane.name=''; await this.loadBoards(); this.openBoard(result.wikiPageId);}
+            } finally {this.boardsPane.busy=false;}
+        },
         openSide(name) {
             if (name === 'thread') return;
             // the panes the desktop client does not keep offline
-            if (['search', 'threads', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'].includes(name) && needsConnection()) return;
+            if (['search', 'threads', 'media', 'files', 'voice', 'links', 'reactions', 'pinned', 'boards'].includes(name) && needsConnection()) return;
             this.side = name;
+            if (name === 'boards') this.loadBoards();
             if (name === 'pinned') this.loadPinned();
             if (name === 'threads') this.loadThreads(false);
             if (this.tabs[name]) this.loadTab(name, false);
@@ -10311,16 +10396,19 @@ module.exports = {
                   const _component_q_list = _resolveComponent("q-list")
                   const _component_q_menu = _resolveComponent("q-menu")
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
+                  const _component_q_card_section = _resolveComponent("q-card-section")
+                  const _component_q_card_actions = _resolveComponent("q-card-actions")
+                  const _component_q_card = _resolveComponent("q-card")
                   const _component_chat_message = _resolveComponent("chat-message")
                   const _component_chat_pending = _resolveComponent("chat-pending")
                   const _component_q_badge = _resolveComponent("q-badge")
-                  const _component_q_card = _resolveComponent("q-card")
                   const _component_q_banner = _resolveComponent("q-banner")
                   const _component_chat_composer = _resolveComponent("chat-composer")
                   const _component_q_tab = _resolveComponent("q-tab")
                   const _component_q_tabs = _resolveComponent("q-tabs")
                   const _component_q_linear_progress = _resolveComponent("q-linear-progress")
                   const _component_q_img = _resolveComponent("q-img")
+                  const _component_q_input = _resolveComponent("q-input")
                   const _component_m_chat_person = _resolveComponent("m-chat-person")
                   const _component_m_drop_down = _resolveComponent("m-drop-down")
                   const _component_m_chat_text_members = _resolveComponent("m-chat-text-members")
@@ -10337,13 +10425,13 @@ module.exports = {
                   const _component_q_dialog = _resolveComponent("q-dialog")
                   const _component_m_chat_verification = _resolveComponent("m-chat-verification")
                   const _component_m_chat_device_setup = _resolveComponent("m-chat-device-setup")
+                  const _component_m_image_markup = _resolveComponent("m-image-markup")
                   const _component_chat_card_box = _resolveComponent("chat-card-box")
                   const _component_chat_cal_box = _resolveComponent("chat-cal-box")
                   const _component_chat_location_box = _resolveComponent("chat-location-box")
                   const _component_m_check = _resolveComponent("m-check")
                   const _component_m_date_time = _resolveComponent("m-date-time")
                   const _component_chat_message_menu = _resolveComponent("chat-message-menu")
-                  const _component_q_card_section = _resolveComponent("q-card-section")
                   const _component_q_inner_loading = _resolveComponent("q-inner-loading")
                   const _component_chat_when = _resolveComponent("chat-when")
                   const _component_chat_scheduled = _resolveComponent("chat-scheduled")
@@ -11747,37 +11835,82 @@ module.exports = {
                                                     }),
                                                     _createElementVNode("span", { class: "text-caption text-weight-medium q-px-sm" }, _toDisplayString(_ctx.t('New messages')), 1)
                                                   ], 8, ["id"]))
-                                                : (item.kind === 'system')
+                                                : (item.kind === 'board')
                                                   ? (_openBlock(), _createElementBlock("div", {
                                                       key: 2,
-                                                      class: _normalizeClass(["text-center text-caption m-muted q-py-xs q-px-md", item.target ? 'cursor-pointer' : '']),
-                                                      id: _ctx.domId(item.eventSeq, false),
-                                                      onClick: $event => (item.target ? _ctx.jumpTo(item.target) : null)
+                                                      class: "q-px-md q-py-xs"
                                                     }, [
-                                                      _createVNode(_component_q_icon, {
-                                                        name: item.icon,
-                                                        size: "14px",
-                                                        class: "q-mr-xs"
-                                                      }, null, 8, ["name"]),
-                                                      _createTextVNode(_toDisplayString(item.text) + " · " + _toDisplayString(item.time), 1)
-                                                    ], 10, ["id", "onClick"]))
-                                                  : (item.kind === 'hidden')
+                                                      _createVNode(_component_q_card, {
+                                                        flat: "",
+                                                        bordered: "",
+                                                        style: {"max-width":"22rem"},
+                                                        class: "m-chat-board-card"
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          (item.hasPreview)
+                                                            ? (_openBlock(), _createElementBlock("img", {
+                                                                key: 0,
+                                                                src: _ctx.boardPreview(item.wikiPageId),
+                                                                alt: "",
+                                                                style: {"width":"100%","height":"8rem","object-fit":"contain"}
+                                                              }, null, 8, ["src"]))
+                                                            : _createCommentVNode("", true),
+                                                          _createVNode(_component_q_card_section, { class: "q-py-sm" }, {
+                                                            default: _withCtx(() => [
+                                                              _createElementVNode("div", { class: "text-subtitle2" }, _toDisplayString(item.title), 1),
+                                                              (_ctx.sealed)
+                                                                ? (_openBlock(), _createElementBlock("small", { key: 0 }, _toDisplayString(_ctx.t('Not end-to-end encrypted: the server stores this board')), 1))
+                                                                : _createCommentVNode("", true)
+                                                            ]),
+                                                            _: 2
+                                                          }, 1024),
+                                                          _createVNode(_component_q_card_actions, null, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_btn, {
+                                                                flat: "",
+                                                                dense: "",
+                                                                icon: "sym_o_draw",
+                                                                label: _ctx.t('Open board'),
+                                                                onClick: $event => (_ctx.openBoard(item.wikiPageId))
+                                                              }, null, 8, ["label", "onClick"])
+                                                            ]),
+                                                            _: 2
+                                                          }, 1024)
+                                                        ]),
+                                                        _: 2
+                                                      }, 1024)
+                                                    ]))
+                                                  : (item.kind === 'system')
                                                     ? (_openBlock(), _createElementBlock("div", {
                                                         key: 3,
-                                                        class: "text-center text-caption m-muted q-py-xs q-px-md m-chat-hidden"
+                                                        class: _normalizeClass(["text-center text-caption m-muted q-py-xs q-px-md", item.target ? 'cursor-pointer' : '']),
+                                                        id: _ctx.domId(item.eventSeq, false),
+                                                        onClick: $event => (item.target ? _ctx.jumpTo(item.target) : null)
                                                       }, [
                                                         _createVNode(_component_q_icon, {
-                                                          name: "sym_o_block",
+                                                          name: item.icon,
                                                           size: "14px",
                                                           class: "q-mr-xs"
-                                                        }),
-                                                        _createTextVNode(_toDisplayString(_ctx.t('Hidden: a message from someone you blocked')), 1)
-                                                      ]))
-                                                    : (_openBlock(), _createBlock(_component_chat_message, {
-                                                        key: 4,
-                                                        item: item,
-                                                        room: _ctx.self
-                                                      }, null, 8, ["item", "room"]))
+                                                        }, null, 8, ["name"]),
+                                                        _createTextVNode(_toDisplayString(item.text) + " · " + _toDisplayString(item.time), 1)
+                                                      ], 10, ["id", "onClick"]))
+                                                    : (item.kind === 'hidden')
+                                                      ? (_openBlock(), _createElementBlock("div", {
+                                                          key: 4,
+                                                          class: "text-center text-caption m-muted q-py-xs q-px-md m-chat-hidden"
+                                                        }, [
+                                                          _createVNode(_component_q_icon, {
+                                                            name: "sym_o_block",
+                                                            size: "14px",
+                                                            class: "q-mr-xs"
+                                                          }),
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Hidden: a message from someone you blocked')), 1)
+                                                        ]))
+                                                      : (_openBlock(), _createBlock(_component_chat_message, {
+                                                          key: 5,
+                                                          item: item,
+                                                          room: _ctx.self
+                                                        }, null, 8, ["item", "room"]))
                                           ], 64))
                                         }), 128)),
                                         (_ctx.gapAfter && !_ctx.hasMoreAfter)
@@ -12902,580 +13035,668 @@ module.exports = {
                                                 : _createCommentVNode("", true)
                                             ], 40, ["onScroll"])
                                           ]))
-                                        : (_ctx.side === 'members')
+                                        : (_ctx.side === 'boards')
                                           ? (_openBlock(), _createElementBlock("div", {
                                               key: 7,
-                                              class: "col scroll",
-                                              style: {"min-height":"0"},
-                                              "data-pane": "members"
+                                              class: "col scroll q-pa-sm",
+                                              "data-pane": "boards"
                                             }, [
-                                              (_ctx.person)
-                                                ? (_openBlock(), _createBlock(_component_m_chat_person, {
+                                              (_ctx.sealed)
+                                                ? (_openBlock(), _createElementBlock("p", {
                                                     key: 0,
-                                                    person: _ctx.person,
-                                                    "room-id": _ctx.roomId,
-                                                    mail: _ctx.personMail,
-                                                    "direct-encrypted": _ctx.personEncrypted,
-                                                    others: _ctx.peopleList,
-                                                    onOpen: $event => (_ctx.chooseWay($event, '')),
-                                                    onMail: $event => (_ctx.go($event.url)),
-                                                    onMerge: _ctx.mergePerson,
-                                                    onSeparate: $event => (_ctx.personChange('separatePerson', { addressKey: $event })),
-                                                    onRename: $event => (_ctx.personChange('renamePerson', { personKey: _ctx.person.personKey, displayName: $event })),
-                                                    onReset: $event => (_ctx.personChange('resetPerson', { personKey: _ctx.person.personKey }))
-                                                  }, null, 8, ["person", "room-id", "mail", "direct-encrypted", "others", "onOpen", "onMail", "onMerge", "onSeparate", "onRename", "onReset"]))
+                                                    class: "text-caption"
+                                                  }, _toDisplayString(_ctx.t('Not end-to-end encrypted: the server stores this board')), 1))
                                                 : _createCommentVNode("", true),
-                                              _createElementVNode("div", {
-                                                class: "q-pa-sm text-caption row no-wrap items-start m-chat-room-label",
-                                                "data-e2ee": _ctx.label.state
-                                              }, [
-                                                _createVNode(_component_q_icon, {
-                                                  name: _ctx.label.icon,
-                                                  size: "16px",
-                                                  class: _normalizeClass(["q-mr-xs", _ctx.label.lock ? 'text-positive' : 'm-muted'])
-                                                }, null, 8, ["name", "class"]),
-                                                _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.label.banner || _ctx.label.text), 1)
-                                              ], 8, ["data-e2ee"]),
-                                              (_ctx.isMember && !_ctx.isDirect && !_ctx.access.isArchived)
-                                                ? (_openBlock(), _createElementBlock("div", {
+                                              (_ctx.boardsPane.canCreate)
+                                                ? (_openBlock(), _createElementBlock("form", {
                                                     key: 1,
-                                                    class: "q-pa-sm row no-wrap items-end q-gutter-x-xs"
+                                                    class: "row items-center q-gutter-xs q-mb-sm",
+                                                    onSubmit: _withModifiers(_ctx.newBoard, ["prevent"])
                                                   }, [
-                                                    _createElementVNode("div", { class: "col" }, [
-                                                      _createVNode(_component_m_drop_down, {
-                                                        modelValue: _ctx.addPeople.userIds,
-                                                        "onUpdate:modelValue": $event => ((_ctx.addPeople.userIds) = $event),
-                                                        name: "addUserIds",
-                                                        multiple: "",
-                                                        "server-search": "",
-                                                        "options-url": _ctx.url('searchUsers'),
-                                                        label: _ctx.t('Add people')
-                                                      }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "label"])
-                                                    ]),
-                                                    _createVNode(_component_q_btn, {
+                                                    _createVNode(_component_q_input, {
                                                       dense: "",
+                                                      outlined: "",
+                                                      class: "col",
+                                                      modelValue: _ctx.boardsPane.name,
+                                                      "onUpdate:modelValue": $event => ((_ctx.boardsPane.name) = $event),
+                                                      label: _ctx.t('Board name')
+                                                    }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                                    _createVNode(_component_q_btn, {
                                                       unelevated: "",
-                                                      "no-caps": "",
                                                       color: "primary",
-                                                      label: _ctx.t('Add'),
-                                                      loading: _ctx.addPeople.busy,
-                                                      disable: !(_ctx.addPeople.userIds || []).length,
-                                                      onClick: _ctx.addMembers
-                                                    }, null, 8, ["label", "loading", "disable", "onClick"])
-                                                  ]))
+                                                      type: "submit",
+                                                      loading: _ctx.boardsPane.busy,
+                                                      disable: !_ctx.boardsPane.name.trim(),
+                                                      label: _ctx.t('New board')
+                                                    }, null, 8, ["loading", "disable", "label"])
+                                                  ], 40, ["onSubmit"]))
                                                 : _createCommentVNode("", true),
-                                              (!_ctx.isDirect)
-                                                ? (_openBlock(), _createBlock(_component_m_chat_text_members, {
+                                              (_ctx.boardsPane.loading)
+                                                ? (_openBlock(), _createBlock(_component_q_linear_progress, {
                                                     key: 2,
-                                                    base: _ctx.base,
-                                                    "room-id": _ctx.roomId,
-                                                    "can-moderate": _ctx.canModerate,
-                                                    onChanged: _ctx.reloadMeta
-                                                  }, null, 8, ["base", "room-id", "can-moderate", "onChanged"]))
-                                                : _createCommentVNode("", true),
+                                                    indeterminate: ""
+                                                  }))
+                                                : (!_ctx.boardsPane.list.length)
+                                                  ? (_openBlock(), _createElementBlock("p", {
+                                                      key: 3,
+                                                      class: "m-muted"
+                                                    }, _toDisplayString(_ctx.t('No boards yet.')), 1))
+                                                  : _createCommentVNode("", true),
                                               _createVNode(_component_q_list, { dense: "" }, {
                                                 default: _withCtx(() => [
-                                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.members.filter((one) => !one.textMember), (person) => {
+                                                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.boardsPane.list, (b) => {
                                                     return (_openBlock(), _createBlock(_component_q_item, {
-                                                      key: person.userId || person.chatActorId
+                                                      clickable: "",
+                                                      key: b.wikiPageId,
+                                                      onClick: $event => (_ctx.openBoard(b.wikiPageId))
                                                     }, {
                                                       default: _withCtx(() => [
                                                         _createVNode(_component_q_item_section, { avatar: "" }, {
                                                           default: _withCtx(() => [
-                                                            _createVNode(_component_m_avatar, {
-                                                              name: person.name,
-                                                              "user-id": person.userId || undefined,
-                                                              size: "32px"
-                                                            }, null, 8, ["name", "user-id"])
+                                                            (b.hasPreview)
+                                                              ? (_openBlock(), _createElementBlock("img", {
+                                                                  key: 0,
+                                                                  src: _ctx.boardPreview(b.wikiPageId),
+                                                                  alt: "",
+                                                                  width: "56",
+                                                                  height: "40",
+                                                                  style: {"object-fit":"contain"}
+                                                                }, null, 8, ["src"]))
+                                                              : (_openBlock(), _createBlock(_component_q_icon, {
+                                                                  key: 1,
+                                                                  name: "sym_o_draw"
+                                                                }))
                                                           ]),
                                                           _: 2
                                                         }, 1024),
                                                         _createVNode(_component_q_item_section, null, {
                                                           default: _withCtx(() => [
-                                                            _createVNode(_component_q_item_label, null, {
-                                                              default: _withCtx(() => [
-                                                                _createTextVNode(_toDisplayString(person.name), 1),
-                                                                (person.userId && person.userId === _ctx.me.userId)
-                                                                  ? (_openBlock(), _createElementBlock("span", {
-                                                                      key: 0,
-                                                                      class: "m-muted"
-                                                                    }, " (" + _toDisplayString(_ctx.t('you')) + ")", 1))
-                                                                  : _createCommentVNode("", true),
-                                                                (_ctx.personVerified(person.userId))
-                                                                  ? (_openBlock(), _createBlock(_component_q_icon, {
-                                                                      key: 1,
-                                                                      name: "sym_o_verified",
-                                                                      size: "14px",
-                                                                      class: "text-positive q-ml-xs m-chat-person-verified",
-                                                                      "aria-label": _ctx.t('Verified')
-                                                                    }, null, 8, ["aria-label"]))
-                                                                  : _createCommentVNode("", true)
-                                                              ]),
-                                                              _: 2
-                                                            }, 1024),
-                                                            _createVNode(_component_q_item_label, { caption: "" }, {
-                                                              default: _withCtx(() => [
-                                                                _createTextVNode(_toDisplayString(person.external ? _ctx.externalText(person) : _ctx.presenceText(person.userId)), 1),
-                                                                (_ctx.personChanged(person.userId))
-                                                                  ? (_openBlock(), _createElementBlock("span", {
-                                                                      key: 0,
-                                                                      class: "text-warning"
-                                                                    }, " · " + _toDisplayString(_ctx.t('new identity: verify them again')), 1))
-                                                                  : _createCommentVNode("", true)
-                                                              ]),
-                                                              _: 2
-                                                            }, 1024)
-                                                          ]),
-                                                          _: 2
-                                                        }, 1024),
-                                                        _createVNode(_component_q_item_section, {
-                                                          side: "",
-                                                          class: "row no-wrap items-center"
-                                                        }, {
-                                                          default: _withCtx(() => [
-                                                            (_ctx.canVerify(person))
-                                                              ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                                  key: 0,
-                                                                  flat: "",
-                                                                  dense: "",
-                                                                  "no-caps": "",
-                                                                  size: "sm",
-                                                                  color: "primary",
-                                                                  icon: "sym_o_verified_user",
-                                                                  label: _ctx.t('Verify'),
-                                                                  class: "m-chat-member-verify",
-                                                                  "data-user": person.userId,
-                                                                  onClick: $event => (_ctx.openVerify(person.userId))
-                                                                }, null, 8, ["label", "data-user", "onClick"]))
-                                                              : _createCommentVNode("", true),
-                                                            (person.external)
-                                                              ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                                  key: 1,
-                                                                  dense: "",
-                                                                  square: "",
-                                                                  icon: "sym_o_hub",
-                                                                  class: "m-tonal text-info m-chat-external"
-                                                                }, {
-                                                                  default: _withCtx(() => [
-                                                                    _createTextVNode(_toDisplayString(person.networkName || _ctx.t('Outside')), 1)
-                                                                  ]),
-                                                                  _: 2
-                                                                }, 1024))
-                                                              : _createCommentVNode("", true),
-                                                            (person.roleEnumId === 'CmrOwner' && !_ctx.isDirect)
-                                                              ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                                  key: 2,
-                                                                  dense: "",
-                                                                  square: "",
-                                                                  class: "m-tonal"
-                                                                }, {
-                                                                  default: _withCtx(() => [
-                                                                    _createTextVNode(_toDisplayString(_ctx.t('Owner')), 1)
-                                                                  ]),
-                                                                  _: 1
-                                                                }))
-                                                              : (person.roleEnumId === 'CmrModerator')
-                                                                ? (_openBlock(), _createBlock(_component_q_chip, {
-                                                                    key: 3,
-                                                                    dense: "",
-                                                                    square: "",
-                                                                    class: "m-tonal text-info"
-                                                                  }, {
-                                                                    default: _withCtx(() => [
-                                                                      _createTextVNode(_toDisplayString(_ctx.t('Moderator')), 1)
-                                                                    ]),
-                                                                    _: 1
-                                                                  }))
-                                                                : _createCommentVNode("", true),
-                                                            (person.userId !== _ctx.me.userId && (_ctx.canModerate && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner') || (person.userId && !person.isAgent)))
-                                                              ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                                  key: 4,
-                                                                  flat: "",
-                                                                  round: "",
-                                                                  dense: "",
-                                                                  size: "sm",
-                                                                  icon: "sym_o_more_vert",
-                                                                  "aria-label": _ctx.t('Member')
-                                                                }, {
-                                                                  default: _withCtx(() => [
-                                                                    _createVNode(_component_q_menu, {
-                                                                      anchor: "bottom right",
-                                                                      self: "top right"
-                                                                    }, {
-                                                                      default: _withCtx(() => [
-                                                                        _createVNode(_component_q_list, {
-                                                                          dense: "",
-                                                                          style: {"min-width":"200px"}
-                                                                        }, {
-                                                                          default: _withCtx(() => [
-                                                                            (_ctx.canModerate && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner'))
-                                                                              ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                                                                                  (!person.external)
-                                                                                    ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                                                                                        (person.roleEnumId !== 'CmrModerator')
-                                                                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                              key: 0,
-                                                                                              clickable: "",
-                                                                                              onClick: $event => (_ctx.setRole(person, 'CmrModerator'))
-                                                                                            }, {
-                                                                                              default: _withCtx(() => [
-                                                                                                _createVNode(_component_q_item_section, null, {
-                                                                                                  default: _withCtx(() => [
-                                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Make a moderator')), 1)
-                                                                                                  ]),
-                                                                                                  _: 1
-                                                                                                })
-                                                                                              ]),
-                                                                                              _: 1
-                                                                                            }, 8, ["onClick"])), [
-                                                                                              [_directive_close_popup]
-                                                                                            ])
-                                                                                          : _createCommentVNode("", true),
-                                                                                        (person.roleEnumId !== 'CmrMember')
-                                                                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                              key: 1,
-                                                                                              clickable: "",
-                                                                                              onClick: $event => (_ctx.setRole(person, 'CmrMember'))
-                                                                                            }, {
-                                                                                              default: _withCtx(() => [
-                                                                                                _createVNode(_component_q_item_section, null, {
-                                                                                                  default: _withCtx(() => [
-                                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Make a member')), 1)
-                                                                                                  ]),
-                                                                                                  _: 1
-                                                                                                })
-                                                                                              ]),
-                                                                                              _: 1
-                                                                                            }, 8, ["onClick"])), [
-                                                                                              [_directive_close_popup]
-                                                                                            ])
-                                                                                          : _createCommentVNode("", true),
-                                                                                        (_ctx.isOwner && person.roleEnumId !== 'CmrOwner')
-                                                                                          ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                              key: 2,
-                                                                                              clickable: "",
-                                                                                              onClick: $event => (_ctx.setRole(person, 'CmrOwner'))
-                                                                                            }, {
-                                                                                              default: _withCtx(() => [
-                                                                                                _createVNode(_component_q_item_section, null, {
-                                                                                                  default: _withCtx(() => [
-                                                                                                    _createTextVNode(_toDisplayString(_ctx.t('Make an owner')), 1)
-                                                                                                  ]),
-                                                                                                  _: 1
-                                                                                                })
-                                                                                              ]),
-                                                                                              _: 1
-                                                                                            }, 8, ["onClick"])), [
-                                                                                              [_directive_close_popup]
-                                                                                            ])
-                                                                                          : _createCommentVNode("", true),
-                                                                                        _createVNode(_component_q_separator)
-                                                                                      ], 64))
-                                                                                    : _createCommentVNode("", true),
-                                                                                  _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                    clickable: "",
-                                                                                    onClick: $event => (_ctx.removeMember(person))
-                                                                                  }, {
-                                                                                    default: _withCtx(() => [
-                                                                                      _createVNode(_component_q_item_section, { class: "text-negative" }, {
-                                                                                        default: _withCtx(() => [
-                                                                                          _createTextVNode(_toDisplayString(_ctx.t('Take out of the room')), 1)
-                                                                                        ]),
-                                                                                        _: 1
-                                                                                      })
-                                                                                    ]),
-                                                                                    _: 1
-                                                                                  }, 8, ["onClick"])), [
-                                                                                    [_directive_close_popup]
-                                                                                  ])
-                                                                                ], 64))
-                                                                              : _createCommentVNode("", true),
-                                                                            (person.userId && !person.isAgent)
-                                                                              ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                  key: 1,
-                                                                                  clickable: "",
-                                                                                  class: "m-chat-block-person",
-                                                                                  onClick: $event => (_ctx.blockPerson(person))
-                                                                                }, {
-                                                                                  default: _withCtx(() => [
-                                                                                    _createVNode(_component_q_item_section, null, {
-                                                                                      default: _withCtx(() => [
-                                                                                        _createTextVNode(_toDisplayString(_ctx.fill(_ctx.t('Block {name}'), { name: person.name || person.userId })), 1)
-                                                                                      ]),
-                                                                                      _: 2
-                                                                                    }, 1024)
-                                                                                  ]),
-                                                                                  _: 2
-                                                                                }, 1032, ["onClick"])), [
-                                                                                  [_directive_close_popup]
-                                                                                ])
-                                                                              : _createCommentVNode("", true)
-                                                                          ]),
-                                                                          _: 2
-                                                                        }, 1024)
-                                                                      ]),
-                                                                      _: 2
-                                                                    }, 1024)
-                                                                  ]),
-                                                                  _: 2
-                                                                }, 1032, ["aria-label"]))
-                                                              : _createCommentVNode("", true)
+                                                            _createTextVNode(_toDisplayString(b.title), 1)
                                                           ]),
                                                           _: 2
                                                         }, 1024)
                                                       ]),
                                                       _: 2
-                                                    }, 1024))
+                                                    }, 1032, ["onClick"]))
                                                   }), 128))
                                                 ]),
                                                 _: 1
                                               })
                                             ]))
-                                          : (_ctx.side === 'pinned')
+                                          : (_ctx.side === 'members')
                                             ? (_openBlock(), _createElementBlock("div", {
                                                 key: 8,
                                                 class: "col scroll",
                                                 style: {"min-height":"0"},
-                                                "data-pane": "pinned"
+                                                "data-pane": "members"
                                               }, [
-                                                (_ctx.pinned.loading)
-                                                  ? (_openBlock(), _createBlock(_component_q_linear_progress, {
+                                                (_ctx.person)
+                                                  ? (_openBlock(), _createBlock(_component_m_chat_person, {
                                                       key: 0,
-                                                      indeterminate: "",
-                                                      color: "primary"
-                                                    }))
+                                                      person: _ctx.person,
+                                                      "room-id": _ctx.roomId,
+                                                      mail: _ctx.personMail,
+                                                      "direct-encrypted": _ctx.personEncrypted,
+                                                      others: _ctx.peopleList,
+                                                      onOpen: $event => (_ctx.chooseWay($event, '')),
+                                                      onMail: $event => (_ctx.go($event.url)),
+                                                      onMerge: _ctx.mergePerson,
+                                                      onSeparate: $event => (_ctx.personChange('separatePerson', { addressKey: $event })),
+                                                      onRename: $event => (_ctx.personChange('renamePerson', { personKey: _ctx.person.personKey, displayName: $event })),
+                                                      onReset: $event => (_ctx.personChange('resetPerson', { personKey: _ctx.person.personKey }))
+                                                    }, null, 8, ["person", "room-id", "mail", "direct-encrypted", "others", "onOpen", "onMail", "onMerge", "onSeparate", "onRename", "onReset"]))
                                                   : _createCommentVNode("", true),
-                                                _createVNode(_component_q_list, {
-                                                  dense: "",
-                                                  separator: ""
-                                                }, {
+                                                _createElementVNode("div", {
+                                                  class: "q-pa-sm text-caption row no-wrap items-start m-chat-room-label",
+                                                  "data-e2ee": _ctx.label.state
+                                                }, [
+                                                  _createVNode(_component_q_icon, {
+                                                    name: _ctx.label.icon,
+                                                    size: "16px",
+                                                    class: _normalizeClass(["q-mr-xs", _ctx.label.lock ? 'text-positive' : 'm-muted'])
+                                                  }, null, 8, ["name", "class"]),
+                                                  _createElementVNode("span", { class: "col" }, _toDisplayString(_ctx.label.banner || _ctx.label.text), 1)
+                                                ], 8, ["data-e2ee"]),
+                                                (_ctx.isMember && !_ctx.isDirect && !_ctx.access.isArchived)
+                                                  ? (_openBlock(), _createElementBlock("div", {
+                                                      key: 1,
+                                                      class: "q-pa-sm row no-wrap items-end q-gutter-x-xs"
+                                                    }, [
+                                                      _createElementVNode("div", { class: "col" }, [
+                                                        _createVNode(_component_m_drop_down, {
+                                                          modelValue: _ctx.addPeople.userIds,
+                                                          "onUpdate:modelValue": $event => ((_ctx.addPeople.userIds) = $event),
+                                                          name: "addUserIds",
+                                                          multiple: "",
+                                                          "server-search": "",
+                                                          "options-url": _ctx.url('searchUsers'),
+                                                          label: _ctx.t('Add people')
+                                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options-url", "label"])
+                                                      ]),
+                                                      _createVNode(_component_q_btn, {
+                                                        dense: "",
+                                                        unelevated: "",
+                                                        "no-caps": "",
+                                                        color: "primary",
+                                                        label: _ctx.t('Add'),
+                                                        loading: _ctx.addPeople.busy,
+                                                        disable: !(_ctx.addPeople.userIds || []).length,
+                                                        onClick: _ctx.addMembers
+                                                      }, null, 8, ["label", "loading", "disable", "onClick"])
+                                                    ]))
+                                                  : _createCommentVNode("", true),
+                                                (!_ctx.isDirect)
+                                                  ? (_openBlock(), _createBlock(_component_m_chat_text_members, {
+                                                      key: 2,
+                                                      base: _ctx.base,
+                                                      "room-id": _ctx.roomId,
+                                                      "can-moderate": _ctx.canModerate,
+                                                      onChanged: _ctx.reloadMeta
+                                                    }, null, 8, ["base", "room-id", "can-moderate", "onChanged"]))
+                                                  : _createCommentVNode("", true),
+                                                _createVNode(_component_q_list, { dense: "" }, {
                                                   default: _withCtx(() => [
-                                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.pinned.list, (event) => {
+                                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.members.filter((one) => !one.textMember), (person) => {
                                                       return (_openBlock(), _createBlock(_component_q_item, {
-                                                        key: event.eventSeq,
-                                                        clickable: "",
-                                                        onClick: $event => (_ctx.jumpTo(event.eventSeq))
+                                                        key: person.userId || person.chatActorId
                                                       }, {
                                                         default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, {
-                                                            avatar: "",
-                                                            top: ""
-                                                          }, {
+                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_m_avatar, {
-                                                                name: _ctx.nameOf(event.senderUserId, event.senderName),
-                                                                "user-id": event.senderUserId || undefined,
-                                                                size: "28px"
+                                                                name: person.name,
+                                                                "user-id": person.userId || undefined,
+                                                                size: "32px"
                                                               }, null, 8, ["name", "user-id"])
                                                             ]),
                                                             _: 2
                                                           }, 1024),
                                                           _createVNode(_component_q_item_section, null, {
                                                             default: _withCtx(() => [
-                                                              _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
+                                                              _createVNode(_component_q_item_label, null, {
                                                                 default: _withCtx(() => [
-                                                                  _createTextVNode(_toDisplayString(_ctx.nameOf(event.senderUserId, event.senderName)) + " ", 1),
-                                                                  _createElementVNode("span", { class: "text-caption m-muted" }, " · " + _toDisplayString(_ctx.shortWhen(event.sentDate)), 1)
+                                                                  _createTextVNode(_toDisplayString(person.name), 1),
+                                                                  (person.userId && person.userId === _ctx.me.userId)
+                                                                    ? (_openBlock(), _createElementBlock("span", {
+                                                                        key: 0,
+                                                                        class: "m-muted"
+                                                                      }, " (" + _toDisplayString(_ctx.t('you')) + ")", 1))
+                                                                    : _createCommentVNode("", true),
+                                                                  (_ctx.personVerified(person.userId))
+                                                                    ? (_openBlock(), _createBlock(_component_q_icon, {
+                                                                        key: 1,
+                                                                        name: "sym_o_verified",
+                                                                        size: "14px",
+                                                                        class: "text-positive q-ml-xs m-chat-person-verified",
+                                                                        "aria-label": _ctx.t('Verified')
+                                                                      }, null, 8, ["aria-label"]))
+                                                                    : _createCommentVNode("", true)
                                                                 ]),
                                                                 _: 2
                                                               }, 1024),
-                                                              _createVNode(_component_q_item_label, {
-                                                                caption: "",
-                                                                class: "ellipsis-3-lines"
-                                                              }, {
+                                                              _createVNode(_component_q_item_label, { caption: "" }, {
                                                                 default: _withCtx(() => [
-                                                                  _createTextVNode(_toDisplayString(event.bodyText || _ctx.filesText(event)), 1)
+                                                                  _createTextVNode(_toDisplayString(person.external ? _ctx.externalText(person) : _ctx.presenceText(person.userId)), 1),
+                                                                  (_ctx.personChanged(person.userId))
+                                                                    ? (_openBlock(), _createElementBlock("span", {
+                                                                        key: 0,
+                                                                        class: "text-warning"
+                                                                      }, " · " + _toDisplayString(_ctx.t('new identity: verify them again')), 1))
+                                                                    : _createCommentVNode("", true)
                                                                 ]),
                                                                 _: 2
                                                               }, 1024)
                                                             ]),
                                                             _: 2
                                                           }, 1024),
-                                                          (_ctx.canPost)
-                                                            ? (_openBlock(), _createBlock(_component_q_item_section, {
-                                                                key: 0,
-                                                                side: "",
-                                                                top: ""
-                                                              }, {
-                                                                default: _withCtx(() => [
-                                                                  _createVNode(_component_q_btn, {
+                                                          _createVNode(_component_q_item_section, {
+                                                            side: "",
+                                                            class: "row no-wrap items-center"
+                                                          }, {
+                                                            default: _withCtx(() => [
+                                                              (_ctx.canVerify(person))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 0,
+                                                                    flat: "",
+                                                                    dense: "",
+                                                                    "no-caps": "",
+                                                                    size: "sm",
+                                                                    color: "primary",
+                                                                    icon: "sym_o_verified_user",
+                                                                    label: _ctx.t('Verify'),
+                                                                    class: "m-chat-member-verify",
+                                                                    "data-user": person.userId,
+                                                                    onClick: $event => (_ctx.openVerify(person.userId))
+                                                                  }, null, 8, ["label", "data-user", "onClick"]))
+                                                                : _createCommentVNode("", true),
+                                                              (person.external)
+                                                                ? (_openBlock(), _createBlock(_component_q_chip, {
+                                                                    key: 1,
+                                                                    dense: "",
+                                                                    square: "",
+                                                                    icon: "sym_o_hub",
+                                                                    class: "m-tonal text-info m-chat-external"
+                                                                  }, {
+                                                                    default: _withCtx(() => [
+                                                                      _createTextVNode(_toDisplayString(person.networkName || _ctx.t('Outside')), 1)
+                                                                    ]),
+                                                                    _: 2
+                                                                  }, 1024))
+                                                                : _createCommentVNode("", true),
+                                                              (person.roleEnumId === 'CmrOwner' && !_ctx.isDirect)
+                                                                ? (_openBlock(), _createBlock(_component_q_chip, {
+                                                                    key: 2,
+                                                                    dense: "",
+                                                                    square: "",
+                                                                    class: "m-tonal"
+                                                                  }, {
+                                                                    default: _withCtx(() => [
+                                                                      _createTextVNode(_toDisplayString(_ctx.t('Owner')), 1)
+                                                                    ]),
+                                                                    _: 1
+                                                                  }))
+                                                                : (person.roleEnumId === 'CmrModerator')
+                                                                  ? (_openBlock(), _createBlock(_component_q_chip, {
+                                                                      key: 3,
+                                                                      dense: "",
+                                                                      square: "",
+                                                                      class: "m-tonal text-info"
+                                                                    }, {
+                                                                      default: _withCtx(() => [
+                                                                        _createTextVNode(_toDisplayString(_ctx.t('Moderator')), 1)
+                                                                      ]),
+                                                                      _: 1
+                                                                    }))
+                                                                  : _createCommentVNode("", true),
+                                                              (person.userId !== _ctx.me.userId && (_ctx.canModerate && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner') || (person.userId && !person.isAgent)))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 4,
                                                                     flat: "",
                                                                     round: "",
                                                                     dense: "",
                                                                     size: "sm",
-                                                                    icon: "sym_o_keep_off",
-                                                                    "aria-label": _ctx.t('Unpin'),
-                                                                    onClick: _withModifiers($event => (_ctx.pin({eventSeq: event.eventSeq, event: event}, false)), ["stop"])
+                                                                    icon: "sym_o_more_vert",
+                                                                    "aria-label": _ctx.t('Member')
                                                                   }, {
                                                                     default: _withCtx(() => [
-                                                                      _createVNode(_component_q_tooltip, null, {
+                                                                      _createVNode(_component_q_menu, {
+                                                                        anchor: "bottom right",
+                                                                        self: "top right"
+                                                                      }, {
                                                                         default: _withCtx(() => [
-                                                                          _createTextVNode(_toDisplayString(_ctx.t('Unpin')), 1)
+                                                                          _createVNode(_component_q_list, {
+                                                                            dense: "",
+                                                                            style: {"min-width":"200px"}
+                                                                          }, {
+                                                                            default: _withCtx(() => [
+                                                                              (_ctx.canModerate && (_ctx.isOwner || person.roleEnumId !== 'CmrOwner'))
+                                                                                ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                                                    (!person.external)
+                                                                                      ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                                                                                          (person.roleEnumId !== 'CmrModerator')
+                                                                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                                key: 0,
+                                                                                                clickable: "",
+                                                                                                onClick: $event => (_ctx.setRole(person, 'CmrModerator'))
+                                                                                              }, {
+                                                                                                default: _withCtx(() => [
+                                                                                                  _createVNode(_component_q_item_section, null, {
+                                                                                                    default: _withCtx(() => [
+                                                                                                      _createTextVNode(_toDisplayString(_ctx.t('Make a moderator')), 1)
+                                                                                                    ]),
+                                                                                                    _: 1
+                                                                                                  })
+                                                                                                ]),
+                                                                                                _: 1
+                                                                                              }, 8, ["onClick"])), [
+                                                                                                [_directive_close_popup]
+                                                                                              ])
+                                                                                            : _createCommentVNode("", true),
+                                                                                          (person.roleEnumId !== 'CmrMember')
+                                                                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                                key: 1,
+                                                                                                clickable: "",
+                                                                                                onClick: $event => (_ctx.setRole(person, 'CmrMember'))
+                                                                                              }, {
+                                                                                                default: _withCtx(() => [
+                                                                                                  _createVNode(_component_q_item_section, null, {
+                                                                                                    default: _withCtx(() => [
+                                                                                                      _createTextVNode(_toDisplayString(_ctx.t('Make a member')), 1)
+                                                                                                    ]),
+                                                                                                    _: 1
+                                                                                                  })
+                                                                                                ]),
+                                                                                                _: 1
+                                                                                              }, 8, ["onClick"])), [
+                                                                                                [_directive_close_popup]
+                                                                                              ])
+                                                                                            : _createCommentVNode("", true),
+                                                                                          (_ctx.isOwner && person.roleEnumId !== 'CmrOwner')
+                                                                                            ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                                key: 2,
+                                                                                                clickable: "",
+                                                                                                onClick: $event => (_ctx.setRole(person, 'CmrOwner'))
+                                                                                              }, {
+                                                                                                default: _withCtx(() => [
+                                                                                                  _createVNode(_component_q_item_section, null, {
+                                                                                                    default: _withCtx(() => [
+                                                                                                      _createTextVNode(_toDisplayString(_ctx.t('Make an owner')), 1)
+                                                                                                    ]),
+                                                                                                    _: 1
+                                                                                                  })
+                                                                                                ]),
+                                                                                                _: 1
+                                                                                              }, 8, ["onClick"])), [
+                                                                                                [_directive_close_popup]
+                                                                                              ])
+                                                                                            : _createCommentVNode("", true),
+                                                                                          _createVNode(_component_q_separator)
+                                                                                        ], 64))
+                                                                                      : _createCommentVNode("", true),
+                                                                                    _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                      clickable: "",
+                                                                                      onClick: $event => (_ctx.removeMember(person))
+                                                                                    }, {
+                                                                                      default: _withCtx(() => [
+                                                                                        _createVNode(_component_q_item_section, { class: "text-negative" }, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createTextVNode(_toDisplayString(_ctx.t('Take out of the room')), 1)
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        })
+                                                                                      ]),
+                                                                                      _: 1
+                                                                                    }, 8, ["onClick"])), [
+                                                                                      [_directive_close_popup]
+                                                                                    ])
+                                                                                  ], 64))
+                                                                                : _createCommentVNode("", true),
+                                                                              (person.userId && !person.isAgent)
+                                                                                ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                    key: 1,
+                                                                                    clickable: "",
+                                                                                    class: "m-chat-block-person",
+                                                                                    onClick: $event => (_ctx.blockPerson(person))
+                                                                                  }, {
+                                                                                    default: _withCtx(() => [
+                                                                                      _createVNode(_component_q_item_section, null, {
+                                                                                        default: _withCtx(() => [
+                                                                                          _createTextVNode(_toDisplayString(_ctx.fill(_ctx.t('Block {name}'), { name: person.name || person.userId })), 1)
+                                                                                        ]),
+                                                                                        _: 2
+                                                                                      }, 1024)
+                                                                                    ]),
+                                                                                    _: 2
+                                                                                  }, 1032, ["onClick"])), [
+                                                                                    [_directive_close_popup]
+                                                                                  ])
+                                                                                : _createCommentVNode("", true)
+                                                                            ]),
+                                                                            _: 2
+                                                                          }, 1024)
                                                                         ]),
-                                                                        _: 1
-                                                                      })
+                                                                        _: 2
+                                                                      }, 1024)
                                                                     ]),
-                                                                    _: 1
-                                                                  }, 8, ["aria-label", "onClick"])
-                                                                ]),
-                                                                _: 2
-                                                              }, 1024))
-                                                            : _createCommentVNode("", true)
+                                                                    _: 2
+                                                                  }, 1032, ["aria-label"]))
+                                                                : _createCommentVNode("", true)
+                                                            ]),
+                                                            _: 2
+                                                          }, 1024)
                                                         ]),
                                                         _: 2
-                                                      }, 1032, ["onClick"]))
-                                                    }), 128)),
-                                                    (!_ctx.pinned.loading && !_ctx.pinned.list.length)
-                                                      ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
-                                                          default: _withCtx(() => [
-                                                            _createVNode(_component_q_item_section, { class: "m-muted text-caption" }, {
-                                                              default: _withCtx(() => [
-                                                                _createTextVNode(_toDisplayString(_ctx.t('No pinned messages. Pin one from its menu to keep it here.')), 1)
-                                                              ]),
-                                                              _: 1
-                                                            })
-                                                          ]),
-                                                          _: 1
-                                                        }))
-                                                      : _createCommentVNode("", true)
+                                                      }, 1024))
+                                                    }), 128))
                                                   ]),
                                                   _: 1
                                                 })
                                               ]))
-                                            : (_ctx.side === 'search')
+                                            : (_ctx.side === 'pinned')
                                               ? (_openBlock(), _createElementBlock("div", {
                                                   key: 9,
-                                                  class: "col column no-wrap",
-                                                  style: {"min-height":"0"}
+                                                  class: "col scroll",
+                                                  style: {"min-height":"0"},
+                                                  "data-pane": "pinned"
                                                 }, [
-                                                  (_ctx.sealed)
-                                                    ? (_openBlock(), _createElementBlock("div", {
+                                                  (_ctx.pinned.loading)
+                                                    ? (_openBlock(), _createBlock(_component_q_linear_progress, {
                                                         key: 0,
-                                                        class: "q-pa-sm m-muted text-caption m-chat-search-sealed",
-                                                        role: "note"
-                                                      }, [
-                                                        _createVNode(_component_q_icon, {
-                                                          name: "sym_o_lock",
-                                                          class: "q-mr-xs"
-                                                        }),
-                                                        _createTextVNode(_toDisplayString(_ctx.t('An encrypted room is not searched: the server keeps only ciphertext, and this app has no search on your device yet.')), 1)
-                                                      ]))
+                                                        indeterminate: "",
+                                                        color: "primary"
+                                                      }))
                                                     : _createCommentVNode("", true),
-                                                  _createElementVNode("div", {
-                                                    class: "q-pa-sm row no-wrap items-center",
-                                                    onKeydown: _withKeys(_withModifiers(_ctx.runSearch, ["prevent"]), ["enter"])
-                                                  }, [
-                                                    _createElementVNode("div", { class: "col" }, [
-                                                      _createVNode(_component_m_text_line, {
-                                                        modelValue: _ctx.searchPane.text,
-                                                        "onUpdate:modelValue": $event => ((_ctx.searchPane.text) = $event),
-                                                        name: 'roomSearch' + _ctx.uid,
-                                                        label: _ctx.t('Search this room'),
-                                                        disable: _ctx.sealed
-                                                      }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label", "disable"])
-                                                    ]),
-                                                    _createVNode(_component_q_btn, {
-                                                      flat: "",
-                                                      round: "",
-                                                      dense: "",
-                                                      icon: "sym_o_search",
-                                                      "aria-label": _ctx.t('Search'),
-                                                      disable: _ctx.sealed,
-                                                      onClick: _ctx.runSearch
-                                                    }, null, 8, ["aria-label", "disable", "onClick"])
-                                                  ], 40, ["onKeydown"]),
-                                                  _createElementVNode("div", {
-                                                    class: "col scroll",
-                                                    style: {"min-height":"0"}
-                                                  }, [
-                                                    (_ctx.searchPane.loading)
-                                                      ? (_openBlock(), _createBlock(_component_q_linear_progress, {
-                                                          key: 0,
-                                                          indeterminate: "",
-                                                          color: "primary"
-                                                        }))
-                                                      : _createCommentVNode("", true),
-                                                    _createVNode(_component_q_list, {
-                                                      dense: "",
-                                                      separator: ""
-                                                    }, {
-                                                      default: _withCtx(() => [
-                                                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.searchPane.results, (hit) => {
-                                                          return (_openBlock(), _createBlock(_component_q_item, {
-                                                            key: hit.eventSeq,
-                                                            clickable: "",
-                                                            onClick: $event => (_ctx.jumpTo(hit.eventSeq))
-                                                          }, {
-                                                            default: _withCtx(() => [
-                                                              _createVNode(_component_q_item_section, null, {
-                                                                default: _withCtx(() => [
-                                                                  _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
-                                                                    default: _withCtx(() => [
-                                                                      _createTextVNode(_toDisplayString(hit.senderName) + " ", 1),
-                                                                      _createElementVNode("span", { class: "text-caption m-muted" }, " · " + _toDisplayString(_ctx.shortWhen(hit.sentDate)), 1)
-                                                                    ]),
-                                                                    _: 2
-                                                                  }, 1024),
-                                                                  _createVNode(_component_q_item_label, {
-                                                                    caption: "",
-                                                                    class: "ellipsis-3-lines"
-                                                                  }, {
-                                                                    default: _withCtx(() => [
-                                                                      _createTextVNode(_toDisplayString(hit.snippet), 1)
-                                                                    ]),
-                                                                    _: 2
-                                                                  }, 1024)
-                                                                ]),
-                                                                _: 2
-                                                              }, 1024)
-                                                            ]),
-                                                            _: 2
-                                                          }, 1032, ["onClick"]))
-                                                        }), 128)),
-                                                        (_ctx.searchPane.searched && !_ctx.searchPane.loading && !_ctx.searchPane.results.length)
-                                                          ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                                  _createVNode(_component_q_list, {
+                                                    dense: "",
+                                                    separator: ""
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.pinned.list, (event) => {
+                                                        return (_openBlock(), _createBlock(_component_q_item, {
+                                                          key: event.eventSeq,
+                                                          clickable: "",
+                                                          onClick: $event => (_ctx.jumpTo(event.eventSeq))
+                                                        }, {
+                                                          default: _withCtx(() => [
+                                                            _createVNode(_component_q_item_section, {
+                                                              avatar: "",
+                                                              top: ""
+                                                            }, {
                                                               default: _withCtx(() => [
-                                                                _createVNode(_component_q_item_section, { class: "m-muted text-caption" }, {
-                                                                  default: _withCtx(() => [
-                                                                    _createTextVNode(_toDisplayString(_ctx.t('No messages match')), 1)
-                                                                  ]),
-                                                                  _: 1
-                                                                })
+                                                                _createVNode(_component_m_avatar, {
+                                                                  name: _ctx.nameOf(event.senderUserId, event.senderName),
+                                                                  "user-id": event.senderUserId || undefined,
+                                                                  size: "28px"
+                                                                }, null, 8, ["name", "user-id"])
                                                               ]),
-                                                              _: 1
-                                                            }))
-                                                          : _createCommentVNode("", true)
-                                                      ]),
-                                                      _: 1
-                                                    })
-                                                  ])
+                                                              _: 2
+                                                            }, 1024),
+                                                            _createVNode(_component_q_item_section, null, {
+                                                              default: _withCtx(() => [
+                                                                _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
+                                                                  default: _withCtx(() => [
+                                                                    _createTextVNode(_toDisplayString(_ctx.nameOf(event.senderUserId, event.senderName)) + " ", 1),
+                                                                    _createElementVNode("span", { class: "text-caption m-muted" }, " · " + _toDisplayString(_ctx.shortWhen(event.sentDate)), 1)
+                                                                  ]),
+                                                                  _: 2
+                                                                }, 1024),
+                                                                _createVNode(_component_q_item_label, {
+                                                                  caption: "",
+                                                                  class: "ellipsis-3-lines"
+                                                                }, {
+                                                                  default: _withCtx(() => [
+                                                                    _createTextVNode(_toDisplayString(event.bodyText || _ctx.filesText(event)), 1)
+                                                                  ]),
+                                                                  _: 2
+                                                                }, 1024)
+                                                              ]),
+                                                              _: 2
+                                                            }, 1024),
+                                                            (_ctx.canPost)
+                                                              ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                                                  key: 0,
+                                                                  side: "",
+                                                                  top: ""
+                                                                }, {
+                                                                  default: _withCtx(() => [
+                                                                    _createVNode(_component_q_btn, {
+                                                                      flat: "",
+                                                                      round: "",
+                                                                      dense: "",
+                                                                      size: "sm",
+                                                                      icon: "sym_o_keep_off",
+                                                                      "aria-label": _ctx.t('Unpin'),
+                                                                      onClick: _withModifiers($event => (_ctx.pin({eventSeq: event.eventSeq, event: event}, false)), ["stop"])
+                                                                    }, {
+                                                                      default: _withCtx(() => [
+                                                                        _createVNode(_component_q_tooltip, null, {
+                                                                          default: _withCtx(() => [
+                                                                            _createTextVNode(_toDisplayString(_ctx.t('Unpin')), 1)
+                                                                          ]),
+                                                                          _: 1
+                                                                        })
+                                                                      ]),
+                                                                      _: 1
+                                                                    }, 8, ["aria-label", "onClick"])
+                                                                  ]),
+                                                                  _: 2
+                                                                }, 1024))
+                                                              : _createCommentVNode("", true)
+                                                          ]),
+                                                          _: 2
+                                                        }, 1032, ["onClick"]))
+                                                      }), 128)),
+                                                      (!_ctx.pinned.loading && !_ctx.pinned.list.length)
+                                                        ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                                            default: _withCtx(() => [
+                                                              _createVNode(_component_q_item_section, { class: "m-muted text-caption" }, {
+                                                                default: _withCtx(() => [
+                                                                  _createTextVNode(_toDisplayString(_ctx.t('No pinned messages. Pin one from its menu to keep it here.')), 1)
+                                                                ]),
+                                                                _: 1
+                                                              })
+                                                            ]),
+                                                            _: 1
+                                                          }))
+                                                        : _createCommentVNode("", true)
+                                                    ]),
+                                                    _: 1
+                                                  })
                                                 ]))
-                                              : (_ctx.side === 'record' && _ctx.room && _ctx.room.record)
+                                              : (_ctx.side === 'search')
                                                 ? (_openBlock(), _createElementBlock("div", {
                                                     key: 10,
-                                                    class: "col scroll q-pa-sm",
+                                                    class: "col column no-wrap",
                                                     style: {"min-height":"0"}
                                                   }, [
-                                                    _createVNode(_component_m_record_card, {
-                                                      "record-entity": _ctx.room.record.entity,
-                                                      "record-id": _ctx.room.record.id,
-                                                      "card-url": _ctx.url('recordCard')
-                                                    }, null, 8, ["record-entity", "record-id", "card-url"]),
-                                                    (_ctx.room.record.url)
-                                                      ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                    (_ctx.sealed)
+                                                      ? (_openBlock(), _createElementBlock("div", {
                                                           key: 0,
-                                                          unelevated: "",
-                                                          "no-caps": "",
-                                                          color: "primary",
-                                                          icon: "sym_o_open_in_new",
-                                                          label: _ctx.t('Open the record'),
-                                                          class: "q-mt-sm",
-                                                          onClick: $event => (_ctx.go(_ctx.room.record.url))
-                                                        }, null, 8, ["label", "onClick"]))
+                                                          class: "q-pa-sm m-muted text-caption m-chat-search-sealed",
+                                                          role: "note"
+                                                        }, [
+                                                          _createVNode(_component_q_icon, {
+                                                            name: "sym_o_lock",
+                                                            class: "q-mr-xs"
+                                                          }),
+                                                          _createTextVNode(_toDisplayString(_ctx.t('An encrypted room is not searched: the server keeps only ciphertext, and this app has no search on your device yet.')), 1)
+                                                        ]))
                                                       : _createCommentVNode("", true),
-                                                    _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.t('Everyone who can see this record can read this room and join it.')), 1)
+                                                    _createElementVNode("div", {
+                                                      class: "q-pa-sm row no-wrap items-center",
+                                                      onKeydown: _withKeys(_withModifiers(_ctx.runSearch, ["prevent"]), ["enter"])
+                                                    }, [
+                                                      _createElementVNode("div", { class: "col" }, [
+                                                        _createVNode(_component_m_text_line, {
+                                                          modelValue: _ctx.searchPane.text,
+                                                          "onUpdate:modelValue": $event => ((_ctx.searchPane.text) = $event),
+                                                          name: 'roomSearch' + _ctx.uid,
+                                                          label: _ctx.t('Search this room'),
+                                                          disable: _ctx.sealed
+                                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label", "disable"])
+                                                      ]),
+                                                      _createVNode(_component_q_btn, {
+                                                        flat: "",
+                                                        round: "",
+                                                        dense: "",
+                                                        icon: "sym_o_search",
+                                                        "aria-label": _ctx.t('Search'),
+                                                        disable: _ctx.sealed,
+                                                        onClick: _ctx.runSearch
+                                                      }, null, 8, ["aria-label", "disable", "onClick"])
+                                                    ], 40, ["onKeydown"]),
+                                                    _createElementVNode("div", {
+                                                      class: "col scroll",
+                                                      style: {"min-height":"0"}
+                                                    }, [
+                                                      (_ctx.searchPane.loading)
+                                                        ? (_openBlock(), _createBlock(_component_q_linear_progress, {
+                                                            key: 0,
+                                                            indeterminate: "",
+                                                            color: "primary"
+                                                          }))
+                                                        : _createCommentVNode("", true),
+                                                      _createVNode(_component_q_list, {
+                                                        dense: "",
+                                                        separator: ""
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.searchPane.results, (hit) => {
+                                                            return (_openBlock(), _createBlock(_component_q_item, {
+                                                              key: hit.eventSeq,
+                                                              clickable: "",
+                                                              onClick: $event => (_ctx.jumpTo(hit.eventSeq))
+                                                            }, {
+                                                              default: _withCtx(() => [
+                                                                _createVNode(_component_q_item_section, null, {
+                                                                  default: _withCtx(() => [
+                                                                    _createVNode(_component_q_item_label, { class: "text-weight-medium" }, {
+                                                                      default: _withCtx(() => [
+                                                                        _createTextVNode(_toDisplayString(hit.senderName) + " ", 1),
+                                                                        _createElementVNode("span", { class: "text-caption m-muted" }, " · " + _toDisplayString(_ctx.shortWhen(hit.sentDate)), 1)
+                                                                      ]),
+                                                                      _: 2
+                                                                    }, 1024),
+                                                                    _createVNode(_component_q_item_label, {
+                                                                      caption: "",
+                                                                      class: "ellipsis-3-lines"
+                                                                    }, {
+                                                                      default: _withCtx(() => [
+                                                                        _createTextVNode(_toDisplayString(hit.snippet), 1)
+                                                                      ]),
+                                                                      _: 2
+                                                                    }, 1024)
+                                                                  ]),
+                                                                  _: 2
+                                                                }, 1024)
+                                                              ]),
+                                                              _: 2
+                                                            }, 1032, ["onClick"]))
+                                                          }), 128)),
+                                                          (_ctx.searchPane.searched && !_ctx.searchPane.loading && !_ctx.searchPane.results.length)
+                                                            ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_item_section, { class: "m-muted text-caption" }, {
+                                                                    default: _withCtx(() => [
+                                                                      _createTextVNode(_toDisplayString(_ctx.t('No messages match')), 1)
+                                                                    ]),
+                                                                    _: 1
+                                                                  })
+                                                                ]),
+                                                                _: 1
+                                                              }))
+                                                            : _createCommentVNode("", true)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ])
                                                   ]))
-                                                : _createCommentVNode("", true)
+                                                : (_ctx.side === 'record' && _ctx.room && _ctx.room.record)
+                                                  ? (_openBlock(), _createElementBlock("div", {
+                                                      key: 11,
+                                                      class: "col scroll q-pa-sm",
+                                                      style: {"min-height":"0"}
+                                                    }, [
+                                                      _createVNode(_component_m_record_card, {
+                                                        "record-entity": _ctx.room.record.entity,
+                                                        "record-id": _ctx.room.record.id,
+                                                        "card-url": _ctx.url('recordCard')
+                                                      }, null, 8, ["record-entity", "record-id", "card-url"]),
+                                                      (_ctx.room.record.url)
+                                                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                            key: 0,
+                                                            unelevated: "",
+                                                            "no-caps": "",
+                                                            color: "primary",
+                                                            icon: "sym_o_open_in_new",
+                                                            label: _ctx.t('Open the record'),
+                                                            class: "q-mt-sm",
+                                                            onClick: $event => (_ctx.go(_ctx.room.record.url))
+                                                          }, null, 8, ["label", "onClick"]))
+                                                        : _createCommentVNode("", true),
+                                                      _createElementVNode("div", { class: "text-caption m-muted q-mt-sm" }, _toDisplayString(_ctx.t('Everyone who can see this record can read this room and join it.')), 1)
+                                                    ]))
+                                                  : _createCommentVNode("", true)
                           ], 6))
                         : _createCommentVNode("", true)
                     ]),
@@ -14257,9 +14478,30 @@ module.exports = {
                                       : _createCommentVNode("", true)
                                   ])
                                 ]),
-                                (_ctx.viewerFile.eventSeq)
+                                (_ctx.canPost && _ctx.isImage(_ctx.viewerFile) && _ctx.mediaUrl(_ctx.viewerFile))
                                   ? (_openBlock(), _createBlock(_component_q_btn, {
                                       key: 0,
+                                      flat: "",
+                                      round: "",
+                                      dense: "",
+                                      icon: "sym_o_draw",
+                                      "aria-label": _ctx.t('Mark up'),
+                                      onClick: $event => (_ctx.markingImage=true)
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_tooltip, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t('Mark up')), 1)
+                                          ]),
+                                          _: 1
+                                        })
+                                      ]),
+                                      _: 1
+                                    }, 8, ["aria-label", "onClick"]))
+                                  : _createCommentVNode("", true),
+                                (_ctx.viewerFile.eventSeq)
+                                  ? (_openBlock(), _createBlock(_component_q_btn, {
+                                      key: 1,
                                       flat: "",
                                       round: "",
                                       dense: "",
@@ -14301,9 +14543,19 @@ module.exports = {
                                 class: "col relative-position row items-center justify-center",
                                 style: {"min-height":"0"}
                               }, [
+                                (_ctx.markingImage)
+                                  ? (_openBlock(), _createBlock(_component_m_image_markup, {
+                                      key: _ctx.viewerFile.chatAttachmentId,
+                                      src: _ctx.mediaUrl(_ctx.viewerFile),
+                                      name: _ctx.viewerFile.fileName,
+                                      busy: _ctx.markupBusy,
+                                      onSave: _ctx.saveMarkup,
+                                      onClose: $event => (_ctx.markingImage=false)
+                                    }, null, 8, ["src", "name", "busy", "onSave", "onClose"]))
+                                  : _createCommentVNode("", true),
                                 (_ctx.isImage(_ctx.viewerFile) && _ctx.mediaUrl(_ctx.viewerFile))
                                   ? (_openBlock(), _createElementBlock("img", {
-                                      key: 0,
+                                      key: 1,
                                       src: _ctx.mediaUrl(_ctx.viewerFile),
                                       alt: _ctx.viewerFile.fileName,
                                       style: {"max-width":"100%","max-height":"100%","object-fit":"contain"}
@@ -14317,12 +14569,12 @@ module.exports = {
                                         style: {"max-width":"100%","max-height":"100%"}
                                       }, null, 8, ["src"]))
                                     : (_openBlock(), _createBlock(_component_q_spinner, {
-                                        key: 2,
+                                        key: 3,
                                         size: "40px"
                                       })),
                                 (_ctx.viewer.index > 0)
                                   ? (_openBlock(), _createBlock(_component_q_btn, {
-                                      key: 3,
+                                      key: 4,
                                       round: "",
                                       flat: "",
                                       icon: "sym_o_chevron_left",
@@ -14335,7 +14587,7 @@ module.exports = {
                                   : _createCommentVNode("", true),
                                 (_ctx.viewer.index < _ctx.viewer.list.length - 1)
                                   ? (_openBlock(), _createBlock(_component_q_btn, {
-                                      key: 4,
+                                      key: 5,
                                       round: "",
                                       flat: "",
                                       icon: "sym_o_chevron_right",
@@ -16634,7 +16886,7 @@ module.exports = {
                                               class: "rounded-borders cursor-pointer q-mt-xs",
                                               style: {"max-width":"min(280px, 100%)","max-height":"200px"},
                                               onLoad: $event => (_ctx.room.imageLoaded()),
-                                              onClick: _withModifiers($event => (_ctx.room.preview(file, _ctx.item.attachments)), ["stop"])
+                                              onClick: _withModifiers($event => (_ctx.room.preview(file, _ctx.item.attachments, _ctx.item.eventSeq)), ["stop"])
                                             }, null, 40, ["src", "alt", "onLoad", "onClick"]))
                                           : (_ctx.room.isAudio(file))
                                             ? (_openBlock(), _createElementBlock("div", {
@@ -16670,7 +16922,7 @@ module.exports = {
                                                 clickable: "",
                                                 icon: _ctx.room.fileIcon(file),
                                                 class: "m-tonal q-ml-none",
-                                                onClick: _withModifiers($event => (_ctx.room.isVideo(file) ? _ctx.room.preview(file, _ctx.item.attachments) : _ctx.room.download(file)), ["stop"])
+                                                onClick: _withModifiers($event => (_ctx.room.isVideo(file) ? _ctx.room.preview(file, _ctx.item.attachments, _ctx.item.eventSeq) : _ctx.room.download(file)), ["stop"])
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createElementVNode("span", {
@@ -17963,7 +18215,7 @@ module.exports = {
                           class: "cursor-pointer",
                           style: _normalizeStyle('max-width:' + _ctx.side + 'px;max-height:' + _ctx.side + 'px;object-fit:contain;display:block'),
                           onLoad: $event => (_ctx.room.imageLoaded()),
-                          onClick: _withModifiers($event => (_ctx.room.preview(_ctx.file, _ctx.item.attachments)), ["stop"])
+                          onClick: _withModifiers($event => (_ctx.room.preview(_ctx.file, _ctx.item.attachments, _ctx.item.eventSeq)), ["stop"])
                         }, null, 44, ["src", "alt", "title", "onLoad", "onClick"]))
                       : (_openBlock(), _createElementBlock("div", {
                           key: 1,

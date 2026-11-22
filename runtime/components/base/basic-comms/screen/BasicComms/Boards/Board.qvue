@@ -44,15 +44,22 @@
 <script>
 module.exports = {
     name:'CommsBoard',
+    inject:{mScreen:{default:null}},
     data() { return {board:null,boards:[],name:'',version:'',history:false,saveDialog:false,note:'',busy:false,error:'',requestNumber:0}; },
     computed:{
-        pageId() { return (this.$root.currentParameters || {}).wikiPageId || ''; },
-        base() { return this.$root.basePath + '/' + (this.$root.currentPathList || ['BasicComms','Boards','Board']).join('/'); },
+        pageId() {
+            if (this.mScreen?.path && !this.mScreen.path.endsWith('/Boards/Board')) return null;
+            return (this.mScreen?.parameters || this.$root.currentParameters || {}).wikiPageId || '';
+        },
+        base() {
+            const path=this.mScreen?.path;
+            return path?.endsWith('/Boards/Board') ? path : (moqui.config?.calls?.appRoot || '/apps/BasicComms').replace(/^\/qapps\//,'/apps/') + '/Boards/Board';
+        },
         fileBase() { return this.url('image') + '?wikiPageId=' + encodeURIComponent(this.pageId) + '&filename='; },
         preview() { return this.board.previewName ? this.fileBase + encodeURIComponent(this.board.previewName) : ''; },
         parsedScene() { return this.board.scene ? JSON.parse(this.board.scene) : null; }
     },
-    watch:{pageId:{immediate:true,handler() { this.version=''; this.board=null; this.load(); }}},
+    watch:{pageId:{immediate:true,handler(id) { this.version=''; this.board=null; if(id===null)++this.requestNumber;else this.load(); }}},
     methods:{
         t(text) { return moqui.l10n.localize(text); },
         versionDate(value) { return value ? new Date(Number(value)).toLocaleString() : ''; },

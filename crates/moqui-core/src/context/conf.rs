@@ -453,6 +453,7 @@ fn merge_config_nodes(base: &MNode, over: &MNode) {
         "smtp-server",
         "logging",
         "report",
+        "board",
         // the thresholds of the resource readings (plans/archive/Tools-Fancy.md B2)
         "resource-watch",
         // the dev tools (plans/design-dev-aide.md 16): the file watcher, and the dev-aide component's settings

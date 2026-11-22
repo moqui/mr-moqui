@@ -88,6 +88,21 @@ impl TrackIn {
         }
     }
 
+    pub fn description(&self, mid: Mid) -> RelayTrack {
+        RelayTrack {
+            mid: mid.to_string(),
+            leg: self.leg.to_string(),
+            kind: if self.kind == MediaKind::Audio {
+                "audio"
+            } else {
+                "video"
+            }
+            .to_string(),
+            source: self.source().as_str().to_string(),
+            simulcast: self.simulcast && self.kind == MediaKind::Video,
+        }
+    }
+
     pub fn kind(&self) -> Kind {
         match self.kind {
             MediaKind::Audio => Kind::Audio,
@@ -210,6 +225,8 @@ pub(super) struct Peer {
     next_offer_id: u64,
     tracks_in: Vec<TrackInEntry>,
     tracks_out: Vec<TrackOut>,
+    pub(super) guest_video_recipient: bool,
+    pub(super) guest_screen_only: bool,
     pub(super) screen_leg: Option<Arc<str>>,
     sources: HashMap<Mid, Source>,
     wanted: HashMap<Arc<str>, Option<Layer>>,
@@ -235,6 +252,8 @@ impl Peer {
             next_offer_id: 1,
             tracks_in: Vec::new(),
             tracks_out: Vec::new(),
+            guest_video_recipient: false,
+            guest_screen_only: false,
             screen_leg: None,
             sources: HashMap::new(),
             wanted: HashMap::new(),
@@ -291,6 +310,9 @@ impl Peer {
         let (leg, source) = match &self.relay {
             Some(relay) => {
                 let named = relay.remote.get(&mid.to_string());
+                if self.guest_screen_only && named.is_none() {
+                    return;
+                }
                 let leg = named.map(|t| t.leg.clone()).or_else(|| {
                     self.rtc
                         .media(mid)
@@ -314,7 +336,9 @@ impl Peer {
                 self.sources.get(&mid).copied().unwrap_or_else(|| {
                     // A second track of a kind is a presentation even while the
                     // publisher's explicit MID declaration is still in flight.
-                    if self.tracks_in.iter().any(|t| t.track.kind == kind) {
+                    if (self.guest_screen_only && self.screen_leg.as_ref() == Some(&self.key.leg))
+                        || self.tracks_in.iter().any(|t| t.track.kind == kind)
+                    {
                         match kind {
                             MediaKind::Video => Source::Screen,
                             MediaKind::Audio => Source::ScreenAudio,
@@ -1018,13 +1042,7 @@ impl Peer {
             .filter(|o| matches!(o.state, OutState::Negotiating(_) | OutState::Open(_)))
             .filter_map(|o| {
                 let t = o.track_in.upgrade()?;
-                Some(RelayTrack {
-                    mid: o.mid()?.to_string(),
-                    leg: t.leg.to_string(),
-                    kind: if t.kind == MediaKind::Audio { "audio" } else { "video" }.to_string(),
-                    source: t.source().as_str().to_string(),
-                    simulcast: t.simulcast && t.kind == MediaKind::Video,
-                })
+                Some(t.description(o.mid()?))
             })
             .collect()
     }

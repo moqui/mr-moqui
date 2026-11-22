@@ -555,3 +555,5 @@ Two layers (plans/Comms-Messaging.md §8.4, where the results are kept):
 One participant holds the presentation stage. Hosts choose Anyone, Hosts, or Ask in the call controls. In Ask mode a host approves a request. Taking over prompts the new presenter and stops the previous capture. Hosts can stop a presentation, and leaving releases the stage.
 
 The browser's picker controls the tab, window or display that is captured. Tab audio, surface switching and cropping appear where the browser supports them. Viewers can pan, zoom or enter fullscreen. The media server checks stage ownership before forwarding screen video or mixing share audio into a phone leg.
+
+**Present this screen** lets signed-in participants follow the presenter's application screens. Each follower loads the screen with their own account. If the account cannot read a record, the call shows an access message without its parameters. **Stop following** lets the viewer browse independently. **Follow again** opens the current presentation. A guest can watch only when the presenter shares this tab through the browser picker. Phone legs receive no screen-navigation messages.

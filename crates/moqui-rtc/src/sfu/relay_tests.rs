@@ -407,3 +407,41 @@ fn a_link_that_never_connects_is_dropped_as_unreachable() {
     assert!(net.leg_node().sfu.relays(ROOM).is_empty());
     assert!(net.sfu.relays(ROOM).is_empty());
 }
+
+#[test]
+fn a_remote_follow_share_is_private_to_remote_guests_even_with_a_recorder() {
+    let mut net = leg_node_net();
+    net.join("A", false);
+    net.join_leg_node("B", false);
+    net.run(secs(1));
+    net.sfu.set_presentation(ROOM, Some("A"), true);
+    net.leg_node_sfu().set_presentation(ROOM, Some("A"), true);
+    let seen: Seen = Arc::default();
+    net.leg_node_sfu()
+        .add_tap(ROOM, Box::new(Collect(seen.clone())))
+        .unwrap();
+    net.share_screen("A");
+    net.run(secs(1));
+    net.join_leg_node("G", false);
+    net.leg_node_sfu()
+        .set_guest_video_recipient(&LegKey::new(ROOM, "G"), true);
+    let replay = net.leg_node_sfu().published_tracks(&LegKey::new(ROOM, "G"));
+    assert!(
+        replay.iter().any(|t| t.leg == "A" && t.source == "screen"),
+        "a late browser learns which MID carries the stage"
+    );
+    assert!(!net
+        .leg_node_sfu()
+        .published_tracks(&LegKey::new(ROOM, "B"))
+        .iter()
+        .any(|t| t.source == "screen"));
+    net.run(secs(2));
+    let screen = |n| n == super::testnet::SCREEN_BYTES;
+    assert!(net.client("G").video_after("A", net.now - secs(1), screen).is_some());
+    assert!(net.client("B").video_after("A", net.now - secs(3), screen).is_none());
+    assert!(!seen.lock().unwrap().iter().any(|(_, _, _, s)| s.is_screen()));
+    // Revocation on the origin fences the far guest even before it gets the new stage.
+    net.sfu.set_presentation(ROOM, None, false);
+    net.run(secs(2));
+    assert!(net.client("G").video_after("A", net.now - secs(1), screen).is_none());
+}

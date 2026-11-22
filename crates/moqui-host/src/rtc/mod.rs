@@ -43,6 +43,7 @@
 
 pub(crate) mod captions;
 mod driver;
+pub(crate) mod follow;
 mod ink;
 pub(crate) mod media;
 pub(crate) mod recorder;

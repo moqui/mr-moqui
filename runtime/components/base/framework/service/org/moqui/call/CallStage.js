@@ -22,6 +22,8 @@ function leave(session, legId) {
 }
 function present(session,stage,leg,kind,pageId) {
     if (stage.kind !== kind || stage.callLegId !== leg) {
+        if (kind === 'follow') stage.followEpoch = Number(session.revision || 0) + 1
+        else delete stage.followEpoch
         delete stage.inkMode
         delete stage.inkEmbedded
         if (kind === 'screen') stage.inkEpoch = Number(session.revision || 0) + 1
@@ -73,11 +75,12 @@ function change(p, engine) {
     if (p.action === 'ask' || p.action === 'take') {
         if (p.kind === 'board' && (!actor.userId || !boards.readable(p.wikiPageId,actor.userId)))
             return engine.refuse('notFound','Board not found')
-        if (!['board','screen'].includes(p.kind || 'screen')) return engine.refuse('badRequest', 'Unknown presentation type')
+        if (p.kind === 'follow' && (p.credential || !actor.userId || one('CallLeg',{callLegId:leg})?.legTypeEnumId !== 'CltWeb')) return engine.refuse('notAllowed','Only a member can present an application screen')
+        if (!['board','screen','follow'].includes(p.kind || 'screen')) return engine.refuse('badRequest', 'Unknown presentation type')
         if (mode === 'CsmHosts' && !host) return engine.refuse('notAllowed', 'Only hosts may present')
         if (mode === 'CsmAsk' && !host && stage.callLegId !== leg) {
             if (!stage.requests.includes(leg)) stage.requests.push(leg)
-            stage.requested = Object.assign(stage.requested || {},{[leg]:{kind:p.kind || 'screen',wikiPageId:p.wikiPageId || null}})
+            stage.requested = Object.assign(stage.requested || {},{[leg]:{kind:p.kind || 'screen',wikiPageId:p.kind === 'board' ? p.wikiPageId : null}})
         } else {
             if (stage.callLegId && stage.callLegId !== leg && !host) {
                 if (p.action !== 'take') return engine.refuse('takeoverRequired', 'Confirm who you want to take over from')

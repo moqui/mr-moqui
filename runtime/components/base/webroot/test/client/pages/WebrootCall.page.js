@@ -391,3 +391,72 @@ test("the stage owner alone can capture, and takeover ends both share tracks", a
         reset();
     }
 });
+
+test("screen followers confirm their own access before navigation and can pause and catch up", async()=>{
+    const prior={vm:call.vm,send:call.send,fetch:window.fetch,guest:call.guest};
+    const sent=[],navigations=[],reads=[];
+    try {
+        call.followReset();
+        Object.assign(state,{current:"FOLLOW",legId:"ME",stage:{kind:"follow",callLegId:"OWNER",followEpoch:"F"}});
+        call.guest=null;call.vm={setUrl(url){navigations.push(url);call.followLocalNav();},activeContainers:{}};
+        call.send=f=>sent.push(f);
+        window.fetch=async(url,opts)=>{
+            reads.push([url,opts.credentials]);
+            return new Response("{}",{
+                status:url.includes("wikiPageId=SECRET") && url.includes("/board?")?404:200});
+        };
+        const next=(path,params)=>call.followFrame({rtc:"follow",action:"navigate",from:"OWNER",path,params,followEpoch:"F"});
+        call.followStart(state.stage);
+        assert.equal(sent.at(-1).action,"catchUp");
+        await next("/qapps/BasicComms/Home",{formValue:"hidden",sessionId:"discard"});
+        assert.deepEqual(navigations,["/qapps/BasicComms/Home"]);
+        await next("/qapps/BasicComms/Boards/Board",{wikiPageId:"SECRET"});
+        assert.equal(state.followDenied,true);assert.equal(navigations.length,1);
+        assert.deepEqual(reads.at(-1),["/apps/BasicComms/Boards/Board/board?wikiPageId=SECRET","same-origin"]);
+        await next("/qapps/BasicComms/Chat",{chatRoomId:"private"});
+        assert.equal(state.followDenied,true);assert.equal(navigations.length,1);
+        assert.deepEqual(reads.at(-1),["/apps/BasicComms/Chat/room?chatRoomId=private","same-origin"]);
+        call.followLocalNav();assert.equal(state.following,false);
+        await next("/qapps/BasicComms/Calls",{});assert.equal(navigations.length,1);
+        call.setFollowing(true);assert.equal(sent.at(-1).action,"catchUp");
+        await next("/qapps/BasicComms/Calls",{});assert.equal(navigations.at(-1),"/qapps/BasicComms/Calls");
+        await next("/apps/BasicComms/Home",{});
+        assert.equal(navigations.at(-1),"/apps/BasicComms/Home");
+        assert.deepEqual(reads.at(-1),["/apps/BasicComms/Home.qvt","same-origin"]);
+        await next("/apps/BasicComms/Calls/Call",{callSessionId:"secret-record",sessionId:"drop"});
+        assert.equal(state.followDenied,true);assert.equal(navigations.length,3);
+        assert.deepEqual(reads.at(-1),["/apps/BasicComms/Calls/callState?callSessionId=secret-record","same-origin"]);
+        const mount=document.createElement("div");mount.id="m-canvas";document.body.append(mount);
+        try {
+            mount.innerHTML='<main class="q-page"><div class="m-container-box" id="HomeRooms"></div><div class="m-container-box" id="HomeShortcuts"></div></main>';
+            const section=mount.querySelector("#HomeShortcuts");
+            for(const [el,y] of [[mount.firstChild,0],[mount.querySelector("#HomeRooms"),-60],[section,0]]){
+                el.getBoundingClientRect=()=>({top:y,bottom:y+20});el.getClientRects=()=>[el.getBoundingClientRect()];
+            }
+            assert.equal(call.visibleSection(mount.firstChild),"HomeShortcuts");
+            state.followDenied=false;let applied=0;
+            section.scrollIntoView=()=>++applied;
+            call.followLatest={section:"HomeShortcuts"};call.followLocate();call.followLocate();
+            assert.equal(applied,1);
+            const replacement=section.cloneNode(true);replacement.scrollIntoView=()=>++applied;section.replaceWith(replacement);
+            await new Promise(r=>setTimeout(r,30));assert.equal(applied,2);
+        }finally{mount.remove();}
+        call.guest={};await next("/qapps/BasicComms/Chat",{chatRoomId:"room"});assert.equal(navigations.length,3);
+        // On late admission the SFU can replay a MID either before or after Chrome fires ontrack.
+        const canvas=document.createElement("canvas"), video=canvas.captureStream().getVideoTracks()[0],pc=call.pc;
+        try {
+            call.pc={};call.tracks={};call.trackSources={};state.remotes={};
+            Object.defineProperty(video,"id",{value:"OWNER2"});
+            const replay=()=>call.handleFrame({rtc:"track",callSessionId:"FOLLOW",callLegId:"OWNER",mid:"2",kind:"video",source:"screen",open:true});
+            const track=()=>call.onTrack({track:video,streams:[{id:"OWNER"}]});
+            replay();track();assert.equal(state.remotes.OWNER.screen.getVideoTracks()[0],video);
+            call.tracks={};call.trackSources={};state.remotes={};
+            track();assert.equal(state.remotes.OWNER.screen,null);replay();
+            assert.equal(state.remotes.OWNER.screen.getVideoTracks()[0],video);
+        }finally{video.stop();call.pc=pc;}
+
+    } finally {
+        call.followReset();reset();state.stage={kind:null,callLegId:null,requests:[]};
+        call.vm=prior.vm;call.send=prior.send;call.guest=prior.guest;window.fetch=prior.fetch;
+    }
+});

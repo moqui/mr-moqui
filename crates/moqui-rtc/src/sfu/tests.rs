@@ -855,3 +855,30 @@ fn browser_mdns_host_candidates_do_not_drop_renegotiation() {
         "generations remain fenced"
     );
 }
+
+#[test]
+fn following_a_screen_forwards_its_video_only_to_a_guest() {
+    let mut net = Net::new();
+    for leg in ["A", "B", "G"] {
+        net.join(leg, false);
+    }
+    net.run(secs(1));
+    net.sfu.set_presentation(ROOM, Some("A"), true);
+    net.sfu.set_guest_video_recipient(&LegKey::new(ROOM, "G"), true);
+    assert_eq!(
+        net.sfu
+            .set_source(&LegKey::new(ROOM, "A"), 1, "123", Source::ScreenAudio),
+        Err(SfuError::StageRequired)
+    );
+    let since = net.now;
+    net.share_screen("A");
+    net.run(secs(3));
+    assert!(
+        net.client("G").video_after("A", since, |n| n == SCREEN_BYTES).is_some(),
+        "guest saw a screen frame"
+    );
+    assert!(
+        net.client("B").video_after("A", since, |n| n == SCREEN_BYTES).is_none(),
+        "member must navigate using own session"
+    );
+}

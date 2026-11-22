@@ -360,6 +360,7 @@ pub type TapId = u64;
 
 #[derive(Default)]
 struct Room {
+    guest_screen_only: bool,
     screen_leg: Option<Arc<str>>,
     peers: Vec<PeerId>,
     injected: Vec<Injected>,
@@ -518,6 +519,33 @@ impl Sfu {
         legs
     }
 
+    /// The publisher MIDs that identify the tracks negotiated to a newly joined
+    /// browser. It missed the original track-open events and cannot distinguish
+    /// two video tracks by their WebRTC kinds alone.
+    pub fn published_tracks(&self, subscriber: &LegKey) -> Vec<RelayTrack> {
+        let Some(room) = self.rooms.get(&subscriber.room) else {
+            return Vec::new();
+        };
+        let guest = self
+            .by_leg
+            .get(subscriber)
+            .and_then(|id| self.peers.get(id))
+            .is_some_and(|p| p.guest_video_recipient);
+        room.peers
+            .iter()
+            .filter_map(|id| self.peers.get(id))
+            .flat_map(Peer::tracks_in)
+            .chain(room.injected.iter().map(|source| &source.track))
+            .filter(|track| {
+                track.leg != subscriber.leg
+                    && (!track.source().is_screen()
+                        || (room.screen_leg.as_ref() == Some(&track.leg)
+                            && (!room.guest_screen_only || (guest && track.source() == Source::Screen))))
+            })
+            .map(|track| track.description(track.mid))
+            .collect()
+    }
+
     pub fn room_count(&self) -> usize {
         self.rooms.len()
     }
@@ -590,6 +618,7 @@ impl Sfu {
         self.next_id += 1;
         let mut peer = Peer::new(id, key.clone(), generation, rtc, now);
         let room = self.rooms.entry(key.room.clone()).or_default();
+        peer.guest_screen_only = room.guest_screen_only;
         peer.screen_leg.clone_from(&room.screen_leg);
         for other in room.peers.iter().filter_map(|pid| self.peers.get(pid)) {
             for t in other.tracks_in() {
@@ -659,13 +688,27 @@ impl Sfu {
     /// The only leg whose screen and captured audio may reach the room's subscribers,
     /// phone mix, and recording taps. The call engine grants this after arbitration.
     pub fn set_screen_stage(&mut self, room: &str, leg: Option<&str>) {
+        self.set_presentation(room, leg, false);
+    }
+
+    /// In a screen-follow stage only the admitted guests receive the presenter's video.
+    pub fn set_presentation(&mut self, room: &str, leg: Option<&str>, guest_screen_only: bool) {
         if let Some(room) = self.rooms.get_mut(room) {
+            room.guest_screen_only = guest_screen_only;
             room.screen_leg = leg.map(Arc::from);
             for id in &room.peers {
                 if let Some(peer) = self.peers.get_mut(id) {
+                    peer.guest_screen_only = room.guest_screen_only;
                     peer.screen_leg.clone_from(&room.screen_leg);
                 }
             }
+        }
+    }
+
+    /// Mark a just-bound leg for guest pixel delivery using its socket identity.
+    pub fn set_guest_video_recipient(&mut self, key: &LegKey, guest: bool) {
+        if let Some(peer) = self.by_leg.get(key).and_then(|id| self.peers.get_mut(id)) {
+            peer.guest_video_recipient = guest;
         }
     }
 
@@ -676,7 +719,11 @@ impl Sfu {
         // Remember the declaration even on refusal. Otherwise that MID could continue
         // to be forwarded under its earlier default camera or microphone label.
         self.peer_mut(key, generation)?.set_source(mid, source);
-        if source.is_screen() && self.rooms.get(&key.room).and_then(|r| r.screen_leg.as_ref()) != Some(&key.leg) {
+        if source.is_screen()
+            && self.rooms.get(&key.room).is_none_or(|room| {
+                room.screen_leg.as_ref() != Some(&key.leg) || (room.guest_screen_only && source == Source::ScreenAudio)
+            })
+        {
             return Err(SfuError::StageRequired);
         }
         Ok(())
@@ -1120,10 +1167,13 @@ impl Sfu {
             return;
         };
         if let Propagated::MediaData(_, ref data, ref track) = item {
-            if track.source().is_screen() && room.screen_leg.as_ref() != Some(&track.leg) {
+            if track.source().is_screen()
+                && (room.screen_leg.as_ref() != Some(&track.leg)
+                    || (room.guest_screen_only && track.source() != Source::Screen))
+            {
                 return;
             }
-            if !room.taps.is_empty() {
+            if !room.taps.is_empty() && !(room.guest_screen_only && track.source().is_screen()) {
                 let codec = data.params.spec().codec;
                 let rid = data.rid.as_ref().map(|r| r.to_string());
                 room.tap(&TapFrame {
@@ -1143,6 +1193,13 @@ impl Sfu {
         let config = &self.config;
         for &pid in &room.peers {
             let Some(p) = self.peers.get_mut(&pid) else { continue };
+            if room.guest_screen_only
+                && !p.guest_video_recipient
+                && p.relay.is_none()
+                && matches!(&item,Propagated::MediaData(_,_,t) if t.source().is_screen())
+            {
+                continue;
+            }
             let reaches = match &item {
                 Propagated::TrackOpen(..) | Propagated::MediaData(..) => pid != origin,
                 Propagated::KeyframeRequest { to, .. } => pid == *to,

@@ -495,7 +495,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="signalingNodeId"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
+            <parameter name="memberScreen" type="Boolean"/><parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
@@ -565,7 +565,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="direct" type="Boolean"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
+            <parameter name="memberScreen" type="Boolean"/><parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>

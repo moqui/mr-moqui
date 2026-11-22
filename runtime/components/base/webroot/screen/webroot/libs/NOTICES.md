@@ -3175,7 +3175,7 @@ The package is Apache-2.0. Its WebAssembly module has 240 Rust crates inside (a 
 
 ## Excalidraw editor and Mermaid converter 0.18.0
 
-License: MIT (editor and converter); bundled notices in excalidraw/NOTICES.txt; font notices embedded in the font files. Source: npm `@excalidraw/excalidraw@0.18.0`.
+License: MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1. Source: npm `@excalidraw/excalidraw@0.18.0`.
 
 ```text
 Excalidraw, React, the converter and their dependencies are credited in excalidraw/NOTICES.txt. Fonts carry their own notices.

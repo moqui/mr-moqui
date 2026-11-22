@@ -1388,6 +1388,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
   }
   return {
     isHost: participant.roleEnumId === 'CprHost',
+    memberScreen: !!forUserId && leg.legTypeEnumId === 'CltWeb' && participant.identityKindEnumId === 'CikLocal',
     ...stageInfo(session),
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: node, originNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,

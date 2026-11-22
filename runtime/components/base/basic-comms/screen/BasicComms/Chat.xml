@@ -35,6 +35,8 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Chat" default-menu-index="3" menu-image="sym_o_chat" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 
+    <parameter name="chatRoomId"/>
+
     <!-- ========== Reads ========== -->
 
     <!-- the rail: me, the chat preferences, my rooms and the totals -->

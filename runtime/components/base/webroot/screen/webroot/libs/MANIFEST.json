@@ -115,7 +115,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "b6c4ea495c38a69fe2d2c441d90b3f205bffc39d243641f37acb2627e3b61a7d"
+    "sha256": "5293919d187d871e695d1b374877418d981ac91d9d163f5cfc74f428235b0eb3"
   },
   "libraries": [
     {
@@ -934,11 +934,59 @@
       "name": "Excalidraw editor and Mermaid converter",
       "npm": "@excalidraw/excalidraw",
       "version": "0.18.0",
-      "license": "MIT (editor and converter); bundled notices in excalidraw/NOTICES.txt; font notices embedded in the font files",
+      "license": "MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1",
       "source": "https://registry.npmjs.org/@excalidraw/excalidraw/-/excalidraw-0.18.0.tgz",
       "tarballIntegrity": "sha512-QkIiS+5qdy8lmDWTKsuy0sK/fen/LRDtbhm2lc2xcFcqhv2/zdg95bYnl+wnwwXGHo7kEmP65BSiMHE7PJ3Zpw==",
-      "build": "whiteboard-build/build.mjs, isolated npm ci from whiteboard-build/package-lock.json",
+      "build": "webroot/build/whiteboard/build.mjs, isolated npm ci from its package-lock.json",
       "files": [
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-cyrillic-ext-400-normal.woff2",
+          "from": "build",
+          "size": 20128,
+          "sha256": "1764e464c54804897e353645a277e3513b309a7f4dc18265fa0f1caccbda4f6a"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-cyrillic-400-normal.woff2",
+          "from": "build",
+          "size": 7328,
+          "sha256": "88f37d27f1d9544d18ecd1439cbfce2fde3c47503dcb5c0937ed40245c69c018"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-greek-ext-400-normal.woff2",
+          "from": "build",
+          "size": 4568,
+          "sha256": "183757d239bbeddfe92eee1732283e9456123ceeb3f15f2a1c177cb71dabddc9"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-greek-400-normal.woff2",
+          "from": "build",
+          "size": 9092,
+          "sha256": "4754a2265adc3b539670d996a1b5d19d7e5168b10bd6803ccac03d7a0b982da7"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-hebrew-400-normal.woff2",
+          "from": "build",
+          "size": 7720,
+          "sha256": "2ba360f7455a399d8e97fc817750c702855dfa6c0a4e67512264226d63769141"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-vietnamese-400-normal.woff2",
+          "from": "build",
+          "size": 4892,
+          "sha256": "7f52fa1841709b6222681698f237b206191ed21a189e3ace67a06b61d407ab7f"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-latin-ext-400-normal.woff2",
+          "from": "build",
+          "size": 52128,
+          "sha256": "3aa939fa388033f207a6c594115ec80f5aceba5c8a071606480293a3e4969332"
+        },
+        {
+          "path": "excalidraw/fonts/Arimo/arimo-latin-400-normal.woff2",
+          "from": "build",
+          "size": 11456,
+          "sha256": "c1f056f51c99a65aca53a0a80e71e67916dd7a8ed2423cd11f52193241440b20"
+        },
         {
           "path": "excalidraw/subset-worker.js",
           "from": "build",
@@ -948,8 +996,8 @@
         {
           "path": "excalidraw/editor.js",
           "from": "build",
-          "size": 4877910,
-          "sha256": "f22ed0e0637cbda69517aebfa11668e27b284f49034c4c3801b87ed5c308b8f2"
+          "size": 4879249,
+          "sha256": "3212834e25f378aa54ec658ec50018d99baea59a679035dc65fdd4daf4868c65"
         },
         {
           "path": "excalidraw/converter.js",
@@ -1052,12 +1100,6 @@
           "from": "build",
           "size": 12220,
           "sha256": "4fb8ad69be9aeac5664d99e5aa3a68a27ea40c98943b80387f7cd55c034fcc93"
-        },
-        {
-          "path": "excalidraw/fonts/Liberation/LiberationSans-Regular.woff2",
-          "from": "build",
-          "size": 70668,
-          "sha256": "006a2b28cbbeeaec937d1b367d0949f5f48ef4b2e7b4e1d8dc7a799d2d639be8"
         },
         {
           "path": "excalidraw/fonts/Lilita/Lilita-Regular-i7dPIFZ9Zz-WBtRtedDbYE98RXi4EwSsbg.woff2",
@@ -2368,10 +2410,22 @@
           "sha256": "e72092760bae272ebe075bdadaff7f82909d318c5d819313185b19e99be31e49"
         },
         {
+          "path": "excalidraw/library/flowchart.excalidrawlib",
+          "from": "build",
+          "size": 7584,
+          "sha256": "61061a6d5690ddd1570931c78226a11c1781109d2efdcec5a895ca9d900fe980"
+        },
+        {
+          "path": "excalidraw/library/wireframe.excalidrawlib",
+          "from": "build",
+          "size": 27999,
+          "sha256": "8cecf5bb3ed14b2fa77ce270a35cd89fd68a976399e7dc94c09bd3f93a79d1ca"
+        },
+        {
           "path": "excalidraw/NOTICES.txt",
           "from": "build",
-          "size": 59410,
-          "sha256": "a727ccbde86e80baced93bc622d5d0ff26573c8ad41522a93aa3b1cab8d6017f"
+          "size": 72200,
+          "sha256": "83b24958f20ef6bfb8ef86f27791e414c7bf5716b877e0c1c4ca3fc7f6e2f855"
         }
       ]
     }
