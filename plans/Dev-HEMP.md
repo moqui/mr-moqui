@@ -7,6 +7,12 @@ design's. The storage, the Coarchy scope, the overview and the place of agents w
 day (H3, §5, H8, H9, H13), and the book in the component after the first draft, also that day (H14, §9). The
 first draft's eight open questions were answered that day too (H15 to H22).
 
+It depends on the whiteboard of [Comms-Whiteboard](Comms-Whiteboard.md), which is built first (its phase MW1): the
+Boards are an optional tool here (H23 to H26, §7.6): layout sketches beside a Screen Outline, design and interview
+boards, a story or the Screen Flow Diagram opened on a board, and the book's figures; nothing here starts before MW1
+is done. Workflow-like editing of a story on a board is later, with the process editing of
+[Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board).
+
 Sources. HEMP: "HEMP: An agile approach to analysis and design", David E. Jones, revision 1.0, 2013
 (`~/Dropbox/Business/MyBooks/hemp/HempTheBookv1.0.pdf`; "p." is its printed page) and its back-cover artifact diagram
 (`diagrams/NewHempArtifactDiagram.pdf` there). Coarchy: `~/work/moquiwork/3p_moqui/coarchy`, a Moqui Java component
@@ -43,6 +49,10 @@ Coarchy clone, and `my-site` stands for a site's own component (D17). Every othe
 | H20 | A Functional Wireframe is a prototype: a draft screen made from its outline in the screen builder, with sample data, reviewed by role playing before it is finished. An image may also be attached to an outline, kept beside it and named for it (`outline/Pack.png` with `outline/Pack.xml`, `Pack-2.png` for a second state). | Answered question 6. The book lets a partly functional prototype stand in for a wireframe (p. 50), and here a real screen is quick to make. The image is for a layout sketched elsewhere. |
 | H21 | A commit names the activities it delivers in a trailer (`Activity: FulfilOrder#a3`), which Publish offers from the files changed. A story row lists its commits from the root's git history, whoever made them: Publish, an agent or a terminal. The dev agent's skill and the contributor notes say to add the trailer. Nothing is recorded outside git, and nothing changes on a task source. | Answered question 7. Tasks often live on another server; git is in every root. |
 | H22 | Dev AIDE's own `hemp/` set is the first real one: the book's chapter 2 as its summary story, its screens as the design. Other existing plans stay as prose; HEMP sets are for new work. | Answered question 8. Chapter 2 is already a process story, and the tool is tested on itself. |
+| H23 | A drawn HEMP artifact is a board: an Excalidraw `.excalidraw` file in `hemp/`, its images in a directory named for it beside it, edited with `m-whiteboard` in file mode ([Comms-Whiteboard §4.2](Comms-Whiteboard.md#42-m-whiteboard)) and saved whole through the save pipeline like any file, so the audit, the lock and the git diff are the ones every save has. No co-editing on a dev instance (D19); the Boards screen lists a component's boards | Asked for, 2026-11-21: the whiteboard is built first and HEMP uses it. A board in git is a readable diff by element, and the same file opens in a wiki space |
+| H24 | A board's element may link to a HEMP artifact or an implementation artifact with a `hemp:` link (`hemp:FulfilOrder#a3`, `hemp:outline/Pack#e4`, `hemp:entity/mantle.order.OrderHeader`). The index reads a board's links as references of the type `drawn`, so the Trace and References show the boards an item is on, and a link to something gone is an unresolved reference | Proposed, 2026-11-21. One store of links (H5); a board is part of the design, not a picture beside it |
+| H25 | A Board is an optional tool for prototyping and talking about layouts: a **layout sketch** beside the outline (`outline/Pack.excalidraw`, `Pack-2.excalidraw` for a second state), drawn freehand with the wireframe library or started by Draw sketch from the outline's sections and elements, each shape linked to its element. Once the general idea of a screen is known, the Functional Wireframe, the prototype screen of H20, is the recommended form. A sketch is not the Functional Wireframe and does not count in its coverage; it stays as the record of how the layout was worked out | Asked for, 2026-11-21. A sketch is quicker while a layout is still open, and easier to show others; a prototype with sample data is what role playing walks through (p. 55) |
+| H26 | A derived diagram stays derived: the Screen Flow Diagram and a story's flow are Mermaid made from the files. Open as board puts one on a board as a Mermaid frame that keeps its source ([Comms-Whiteboard §4.5](Comms-Whiteboard.md#45-mermaid-on-a-board)) for a session to mark up, saved under `board/`; Regenerate replaces the frame from the files. Editing a story's activities on a board, workflow-like, waits for process editing ([Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board)), which needs a plan of its own; until then a story is edited in its rows, and a board of it is a copy. The Overview stays as H8 decided | Asked for, 2026-11-21. The files are the truth; process editing is a significant piece of work that the BOSS editors share |
 
 ---
 
@@ -111,6 +121,9 @@ The primary roles colour the cards: Analyst, UI Designer, System Architect, Deve
 - For a diagram: `m-pan-zoom` (`runtime/components/base/webroot/screen/webroot/js/WebrootCode.js:609`) with a slot
   for an SVG layer, and the card layout the Browser and the entity member diagram share
   (`DA/screen/devstatic/DevAide.js:137`). Mermaid is vendored and drawn by `markdown-view`.
+- No drawing tool exists. The whiteboard (`m-whiteboard` on Excalidraw, the `excalidraw` file type, file mode,
+  skeletons, element links, the wireframe and flowchart libraries, Mermaid frames) is planned in
+  [Comms-Whiteboard](Comms-Whiteboard.md) MW1, to be built before this plan's P0.
 - A new site component is made from `DA/template/site/`. The agent's skills and recipes are in `DA/skill/`.
 - The regression budget is 30 seconds of server specs and 2 of client specs (`DA/test/budget`).
 
@@ -153,12 +166,14 @@ A component's HEMP set is its `hemp/` directory. One schema, `mr-hemp.xsd`, in t
 | `story/<Name>.xml` | Process Story | Activities (id, actors, optional condition, action, optional phase), breaks, alternate flows, supporting documents. One story of the kind `time-flow` groups its activities under periods (H17) | activity to actors; high-level activity to its detailed story |
 | `experience/<Actor>.xml` | Experience Story | Prose in paragraphs | paragraph to activities |
 | `analysis/<Story>.xml` | Overlap Description, Gap Description | For an activity or a run of them: overlap, partial overlap, gap or no system interaction, and the instructions or the gap | to activities; to the upstream screens and services |
-| `outline/<Screen>.xml` | Screen Outline, Functional Wireframe, Data Mapping | Sections, elements, what each shows, the interaction and the response; the prototype screen and any attached image (H20) | element to activities; field to entity field; outline to the Screen it became |
+| `outline/<Screen>.xml` | Screen Outline, Functional Wireframe, Data Mapping | Sections, elements, what each shows, the interaction and the response; the prototype screen (the Functional Wireframe), any layout sketch and any attached image (H20, H25) | element to activities; field to entity field; outline to the Screen it became |
+| `outline/<Screen>.excalidraw` | layout sketch (optional) | A board for working out and showing a layout (H25), `<Screen>-2.excalidraw` for a second state; images in `outline/<Screen>/` | shape to outline element (`drawn`, H24) |
 | `data/<Concept>.xml` | Data Statement | Statements of one data concept | to activities; to the entity or field |
 | `process/<Name>.xml` | Process Outline | Trigger and steps | to activities; to the Service it became |
 | `interface/<Name>.xml` | System Interface | Format, transport, fields and their mapping | to activities; to entity fields; to the Service |
 | `test/<Story>.xml` | High Level Test Scenario | Steps in the story's order | to activities; to the spec it became |
 | `review/<Story>.xml` | Implementation Review | Per activity: functionally supported and accepted, by whom and when; the commit the review started from | to activities |
+| `board/<Name>.excalidraw` | Board | An interview or design session's board, a story or the screen flow opened as a board (H26); images in `board/<Name>/` | element to any artifact (`drawn`, H24) |
 | `supporting/` | supporting documents | Forms, example reports, field lists | |
 
 A story file:
@@ -188,8 +203,9 @@ A story file:
   those make, from the site component's summary story (H18).
 - The index (H5) gets the file kind `hemp` and the kinds `story`, `activity`, `actor`, `objective`, `requirement`,
   `idea`, `experience`, `overlap`, `gap`, `outline`, `outline-element`, `data-statement`, `process-outline`,
-  `interface`, `test-scenario` and `review`. A link's reference type says what it is (actor, detail, objective,
-  incorporates, analysed, existing, designs, maps, implements, tests, reviews). A link to an artifact that is gone is
+  `interface`, `test-scenario`, `review` and `board`. A link's reference type says what it is (actor, detail, objective,
+  incorporates, analysed, existing, designs, maps, implements, tests, reviews, drawn). A board's references are its
+  elements' `hemp:` links (H24); its text elements are its searchable text. A link to an artifact that is gone is
   an unresolved reference, as an extension's is today.
 - Upstream components' `hemp/` files are read as theirs are: shown, searchable and locked (D17). A site story may
   link to an upstream activity.
@@ -208,7 +224,7 @@ A story file:
 | | `Requirements/Experience` | new: Experience Stories | XML |
 | **Existing System** | `ExistingSystem` | new: overlaps and gaps (§7.1) | XML |
 | **User Interface Design** | `UiDesign/Outlines` | new: Screen Outlines (§7.2) | XML |
-| | `UiDesign/Flow` | new: Screen Flow Diagram, derived | XML, Mermaid |
+| | `UiDesign/Flow` | new: Screen Flow Diagram, derived; Open as board (H26) | XML, Mermaid |
 | **Technical Design** | `TechnicalDesign/DataStatements` | new (§7.3) | XML |
 | | `TechnicalDesign/DataModel` | Dev AIDE Entities | as today |
 | | `TechnicalDesign/DataMapping` | new: the outlines' and interfaces' mappings by entity | XML |
@@ -220,6 +236,7 @@ A story file:
 | | `Implementation/Customizations` | Home's "Your customizations" and Artifacts › Customizations | as today |
 | **Review** | `Review/Implementation` | Coarchy FindChecklist, Checklist (§7.5) | XML |
 | | `Review/TestScenarios` | new (§7.5) | XML |
+| **Boards** | `Boards` | new: the component's boards (§7.6) | XML list; the board in `m-whiteboard` |
 | Workspace, Repositories, Artifacts, Tasks, Settings | unchanged paths | Home's create-component dialogs move to Repositories and its reload log to the Workspace; Home is removed (H16) | as today |
 | **Book** | `Book` | new: the HEMP book (§9) | XML, `markdown-view` |
 
@@ -277,7 +294,7 @@ screen.
 | Actor Definition | actors | |
 | Overlap Description, Gap Description | activities of each | activities not analysed |
 | Screen Outline | outlines | gap activities that an outline element names |
-| Functional Wireframe | outlines with a prototype or an image | |
+| Functional Wireframe | outlines with a prototype or an image | outlines with only a layout sketch |
 | Screen Flow Diagram | derived | |
 | Data Statement | statements | statements mapped to the model |
 | Data Model | the component's entities and extensions | |
@@ -303,8 +320,8 @@ screen.
 
 **The trace.** From a story row, an outline element or a card's list, Trace opens the Artifact Browser on that
 item. For an activity: its story, objectives and actors on one side; its overlap or gap, outline elements, data
-statements, and through them the screens, entities and services on the other. The Browser's kind filter gains the
-HEMP kinds. Its terminal form, Miller columns, needs nothing new.
+statements, and through them the screens, entities and services on the other, and the boards it is drawn on (H24).
+The Browser's kind filter gains the HEMP kinds. Its terminal form, Miller columns, needs nothing new.
 
 ---
 
@@ -324,10 +341,20 @@ it shows, the interaction and the system's response with its target screen (p. 4
 it is based on. A field names its entity field: the Data Mapping. "Create screen" hands the outline to the screen
 builder as a new subscreen and records the screen on the outline; from then the outline shows whether its screen
 still exists. That screen is first the Functional Wireframe (H20): a draft from a gallery archetype with sample
-data, walked through by role playing, the Expert User as each actor (p. 55), and then finished in place. An image
-can be attached to an outline for a layout drawn elsewhere. Shared sections have outlines of their
-own. The Screen Flow Diagram is drawn from the outlines'
-targets, one per component.
+data, walked through by role playing, the Expert User as each actor (p. 55), and then finished in place.
+
+Before that, while a layout is still open, a **layout sketch** can help work it out and show it to others (H25).
+It is optional. **Draw sketch** on an outline makes `outline/<Screen>.excalidraw` from a skeleton the service builds
+from the outline: a frame per section in the outline's order, a shape from the wireframe library per element (a
+button, a field, a form, a table) labelled with the element's label, and each shape linked to its element
+(`hemp:outline/Pack#e4`); or the UI Designer starts a blank one and links shapes as they go. The outline row shows
+the sketch's preview and opens it. Draw sketch on an outline that has one offers to add the elements it lacks, never
+to redraw it. Once the general idea is settled, Create screen makes the Functional Wireframe, the recommended form,
+and the sketch stays beside it as the record of the discussion. An image can still be attached to an outline for a
+layout drawn elsewhere. Shared sections have outlines of their own.
+
+The Screen Flow Diagram is drawn from the outlines' targets, one per component, as Mermaid; Open as board puts it on
+a board for a design review (H26).
 
 ### 7.3 Data Statements, Data Model, Data Mapping
 
@@ -357,6 +384,33 @@ are its Low Level (Task) Test Scenarios.
 
 ---
 
+### 7.6 Boards
+
+The Boards screen lists the component's boards, `board/` and the outlines' wireframes, with their previews and the
+artifacts their elements link to; New board, and Open in each row. A board opens in `m-whiteboard` in file mode
+(H23) with the wireframe and flowchart libraries, and with `hemp:` links (H24): selecting a linked element shows the
+artifact's name and Open, and Link to on an element picks an artifact by the index's search.
+
+- **Interview boards.** A requirements session with the Expert User is drawn on a board; the analyst writes the
+  activities in the story editor and links the board's notes to them (Link to).
+- **A story as a board.** Open as board on a story makes a Mermaid frame of its activities in order, a lane per
+  actor, each node's id its activity's id, and each node's shapes linked to its activity after the conversion (H26).
+  Regenerate replaces the frame after the story changes; marks outside the frame stay. It is a copy for discussion:
+  editing the story on the board is the later process editing, below.
+- **Later: a story edited on a board.** Workflow-like editing, a lane per actor, activities moved between lanes and
+  in order, alternate flows as branches, a detailed story as a frame that opens it, and a note made into an activity,
+  each change an operation on the story file as the rows' are (H7). It is designed with the BOSS process editors in
+  [Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board), and the story editor gains it after P2 once
+  that plan is done.
+- **In a meeting.** A session over a Comms call shares the board's area of the tab ([Comms-Whiteboard
+  §3.2](Comms-Whiteboard.md#32-browser-upgrades), Element Capture). The Expert User drawing on it too needs the
+  board co-edited, which on a dev instance waits for the group server ([design-dev-aide](design-dev-aide.md) §21).
+- **The terminal.** A board has no drawing there: the terminal shows its name, its text elements and its links, with
+  the board's browser link. Everything a board links to is reachable from the terminal's own screens.
+- **Checks** (§8): a `hemp:` link to an artifact that is gone, as any other link.
+
+---
+
 ## 8. Story checks
 
 Checks of a HEMP file run in the save pipeline and show in Problems, as an XML file's do:
@@ -365,7 +419,7 @@ Checks of a HEMP file run in the save pipeline and show in Problems, as an XML f
 - "System" as an actor, and an activity with no actor;
 - an action that starts with a verb the book replaces (submit, enter, display);
 - a detailed story that does not exist, or a loop;
-- a link to an activity, screen, entity or service that is gone;
+- a link to an activity, screen, entity or service that is gone, from a HEMP file or a board's element (H24);
 - an idea marked incorporated that names no activity.
 
 They are warnings, except the loop, which refuses the save. What needs judgement (a passive sentence, a "why" in a
@@ -415,8 +469,10 @@ story, a design idea in a requirement) is the agents' (§10).
   MR Moqui and points to the repository's version (`Cargo.toml`, `[workspace.package]`, 0.1.0 now), and the Book
   screen shows the running version, as the component does (`DA/component.xml:20`). What changed between releases is
   the repository's history of `DA/book/`.
-- The figures are the wireframe (`diagrams/GroupMilestoneWireframe1.png`) and the artifact diagram redrawn as an
-  SVG; the cover image is left out.
+- The figures are the wireframe (`diagrams/GroupMilestoneWireframe1.png`) and the artifact diagram, both redrawn as
+  boards (`DA/book/figures/*.excalidraw`, with the SVG each exports beside it, which the chapters show); the cover
+  image is left out. The wireframe figure's board is also the example set's layout sketch beside its outline, linked to the
+  outline's elements (H25), with the prototype screen as its Functional Wireframe.
 - Section headings keep the book's names, so a link to a section is stable: `Gathering-Requirements.md#business-case`.
 - Chapter 8 names the products of 2013. It is rewritten first: what a tool should offer stays, and the tool it
   describes is Dev AIDE over a component in git, with the Workspace, the Artifact Browser, Tasks and the group
@@ -469,7 +525,7 @@ section with its `source` tool when it needs the detail or an example. Every wri
 | --- | --- | --- |
 | Interview | Business Analyst | Asks the Expert User what the organization does, writes the activities, parks crosscutting ideas as Ideas to Incorporate, proposes splits into detailed stories |
 | Analysis | Business Analyst | For each activity, searches the upstream components through the index and proposes an overlap or a gap |
-| Outline | UI Designer | Drafts Screen Outlines from the gap activities, each element linked |
+| Outline | UI Designer | Drafts Screen Outlines from the gap activities, each element linked, and a layout sketch through Draw sketch when asked for one; it never writes a board's JSON by hand |
 | Data | System Architect | Writes Data Statements from activities and outline fields, proposes their mapping and the model's extensions |
 | Review | each role | Compares an implementation with the artifact it came from and lists the differences |
 
@@ -482,19 +538,23 @@ element. The Assist prompts on HEMP screens name the artifact open, as the artif
 
 | Phase | Delivers | Check |
 | --- | --- | --- |
-| P0 | The `hemp/` layout and schema; the index's file kind, kinds and references; an empty first story in `DA/template/site/`; the book in `DA/book/` with the Book screen (§9); the appendix's examples as a `hemp/` set in the example component | An index spec on the example set: a story file's activities are found, and a link is answered from both ends. The book's first commit matches the PDF's text, and every link from `README.md` resolves |
+| P0 | The `hemp/` layout and schema; the index's file kind, kinds and references, `board` and `drawn` included; an empty first story in `DA/template/site/`; the book in `DA/book/` with the Book screen (§9) and its figures as boards; the appendix's examples as a `hemp/` set in the example component | An index spec on the example set: a story file's activities are found, and a link is answered from both ends. The book's first commit matches the PDF's text, and every link from `README.md` resolves |
 | P1 | The menu by process with the existing tools under their phases; the Overview with its counts and its list twin | One render of the Overview in each mode; the layout's client check merged into an existing spec; old paths gone from specs, skills and docs |
 | P2 | Requirements: Actors, Stories (Find, Edit, View, detailed stories across components, the time flow, clipboard), Statements, Business Case, Experience; the story checks | Specs of the operations (insert, move, detail, paste, delete) against a fixture file; one render of the editor |
 | P3 | Existing System; the derived state on story rows and the Overview | A spec of the derived state |
-| P4 | Screen Outlines with Create screen, the prototype as the Functional Wireframe and attached images; Data Statements with Add to data model; Data Mapping; Process Outlines; System Interfaces; Screen Flow | Links indexed; the two hand-offs open the right tool on the right artifact |
+| P4 | Screen Outlines with Create screen, the prototype as the Functional Wireframe and attached images; Draw sketch and layout sketches; the Boards screen with links and Open as board for a story and the Screen Flow (§7.6); Data Statements with Add to data model; Data Mapping; Process Outlines; System Interfaces; Screen Flow | Links indexed, a board's `hemp:` links among them; the two hand-offs open the right tool on the right artifact; Draw sketch's skeleton from the example outline, checked as data, not as a render |
 | P5 | Implementation Review; High Level Test Scenario and its spec skeleton; the `Activity` trailer in Publish and commits on story rows | A review file written and read back; a generated spec that parses |
 | P6 | The trace: HEMP kinds in the Artifact Browser | The Browser spec extended, not a second render |
 | P7 | The role skills | Agent evals with replays, as `DA/test/agent/` has |
-| Later | Graphic Design, End User Documentation, Deployment and Migration Plan; a design pinned to the story revision it was made from, with the differences since | |
+| Later | Stories edited on a board, after the process editing plan ([Comms-Whiteboard §7](Comms-Whiteboard.md#7-process-editing-on-a-board)); Graphic Design, End User Documentation, Deployment and Migration Plan; a design pinned to the story revision it was made from, with the differences since | |
+
+Every phase comes after [Comms-Whiteboard](Comms-Whiteboard.md) MW1; P0 uses its file type for the figures, and P4
+its file mode, skeletons, links and libraries.
 
 **Rules for every phase.**
 
-- Every screen works in the browser and the terminal; a `.qvue` only for the Overview.
+- Every screen works in the browser and the terminal; a `.qvue` only for the Overview. A board is drawn only in the
+  browser; its terminal form is §7.6's.
 - Run the specs of what was touched. The component stays inside its budget (`DA/test/budget`); a screen is rendered
   at most once in each mode across the regression suite, and no spec walks the HEMP menu.
 - New routes go in `docs/security/Attack-Surface-Dev.md`. `DA/README.md` and the design's menu description follow
@@ -508,6 +568,9 @@ element. The Assist prompts on HEMP screens name the artifact open, as the artif
 
 ## 12. Open questions
 
-None are open. The first draft's eight were answered as H15 to H22, and the four those left (a time flow's periods,
+None of the first draft's are open. Its eight were answered as H15 to H22, and the four those left (a time flow's periods,
 what the site's Overview shows of other components, where a wireframe image is kept, and commits made outside
 Dev AIDE) are in H17, H18, H20 and H21.
+
+H24's `hemp:` links on boards are proposed (2026-11-21) and open to change. Editing stories on a board waits for the
+process editing plan (H26).
