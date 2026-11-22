@@ -121,6 +121,8 @@ fn joins_are_a_bucket_per_socket_and_per_user_and_places_are_held_in_flight() {
         awareness_bytes: 4096,
         joins_per_minute: 3,
         user_joins_per_minute: 4,
+        updates_per_minute: 1200,
+        awareness_per_minute: 600,
     };
     let socket = NEXT_SOCKET.fetch_add(1, Ordering::Relaxed);
     let other = NEXT_SOCKET.fetch_add(1, Ordering::Relaxed);

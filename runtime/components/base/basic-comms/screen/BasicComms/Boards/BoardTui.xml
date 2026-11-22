@@ -6,8 +6,15 @@
             <service-call name="org.moqui.comms.BoardServices.get#Board" in-map="{wikiPageId}" out-map="board"/>
             <if condition="!ec.message.hasError()">
                 <service-call name="org.moqui.resource.CollabServices.get#CollabDocument" in-map="{documentKey:'WikiPage:'+wikiPageId}" out-map="doc"/>
-                <set field="editorText" from="(doc.activeEditorIdList || []).join(', ')"/>
-                <set field="boardUrl" from="'/qapps/BasicComms/Boards/Board?wikiPageId='+encodeURIComponent(wikiPageId)"/>
+                <!-- the editors by name, as the board's presence shows them -->
+                <script><![CDATA[
+                    editorText = Array.from(doc.activeEditorIdList || []).map(id => {
+                        const user = ec.entity.find('moqui.security.UserAccount').condition('userId', id).disableAuthz().one()
+                        return user?.userFullName || user?.username || id
+                    }).join(', ')
+                    boardUrl = (ec.factory.getConfValue('comms@app-root') || '/qapps/BasicComms').replace(/\/+$/, '') +
+                        '/Boards/Board?wikiPageId=' + encodeURIComponent(wikiPageId)
+                ]]></script>
             </if>
         </if>
     </actions>

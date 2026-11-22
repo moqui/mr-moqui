@@ -35,6 +35,8 @@
             <service-call name="org.moqui.resource.CollabServices.save#CollabDocument" out-map="saved" in-map="{documentKey:'WikiPage:'+wikiPageId,versionNote:note}"/>
             <if condition="ec.message.hasError()"><return/></if>
             <set field="versionName" from="saved.versionName || info.currentVersionName"/>
+            <if condition="saved.versionName">
+                <script>ec.resource.script('component://framework/service/org/moqui/resource/WikiBoard.js').pruneFiles(wikiPageId, saved.versionName)</script></if>
             <!-- An intervening remote edit can land after the browser exported its SVG. Keep the codec's preview
                  when that happens. Object keys are unordered across JavaScript and the Rust serializer. -->
             <script><![CDATA[

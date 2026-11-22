@@ -318,6 +318,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount" short-alias="owner">
             <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one-nofk" related="moqui.resource.wiki.WikiPage" short-alias="board"/>
         <relationship type="one" title="CallLinkPolicy" related="moqui.basic.Enumeration" short-alias="policy">
             <key-map field-name="policyEnumId"/></relationship>
         <index name="CALL_LINK_TOKEN" unique="true"><index-field name="tokenHash"/></index>

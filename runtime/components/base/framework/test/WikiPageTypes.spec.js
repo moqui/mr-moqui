@@ -255,6 +255,32 @@ feature("script pages run only from a space's own place in the database; a copy 
     }
 })
 
+feature("deleting a board page takes its co-editing, meeting boards and recurring link with it", {
+    when() {
+        const scene = JSON.stringify({type:"excalidraw", version:2, elements:[], files:{}})
+        const page = invokeAs("spec.wt.user", "update#WikiPage", {wikiSpaceId:"SPWTYP", pageName:"Retired board", wikiType:"excalidraw", pageText:scene})
+        const wikiPageId = page.wikiPageId
+        const wasDisabled = ec.artifactExecution.disableAuthz()
+        try {
+            make("moqui.call.CallSession", {callSessionId:"SPWT_CALL", statusId:"CssEnded"})
+            make("moqui.call.CallBoard", {callSessionId:"SPWT_CALL", wikiPageId, openedByUserId:writerId})
+            make("moqui.call.CallLink", {callLinkId:"SPWT_LINK", name:"Weekly", ownerUserId:writerId, wikiPageId})
+            make("moqui.resource.CollabDocument", {documentKey:"WikiPage:" + wikiPageId})
+        } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+        const deleted = invokeAs("spec.wt.user", "delete#WikiPage", {wikiPageId, deleteAttachments:true})
+        const count = (entity, keys) => ec.entity.find(entity).condition(keys).disableAuthz().count()
+        return {page, deleted, boards:count("moqui.call.CallBoard", {wikiPageId}),
+            documents:count("moqui.resource.CollabDocument", {documentKey:"WikiPage:" + wikiPageId}),
+            link:ec.entity.find("moqui.call.CallLink").condition({callLinkId:"SPWT_LINK"}).disableAuthz().one(),
+            pages:count("moqui.resource.wiki.WikiPage", {wikiPageId})}
+    },
+    then(r) {
+        r.page.error === "" && r.deleted.error === ""
+        r.boards === 0 && r.documents === 0 && r.pages === 0
+        r.link != null && r.link.wikiPageId == null
+    }
+})
+
 feature("an Excalidraw page versions its previews and enforces its image limits", {
     when() {
         const asWriter = (verb, params) => invokeAs("spec.wt.user", verb, params)
@@ -268,6 +294,7 @@ feature("an Excalidraw page versions its previews and enforces its image limits"
         ])
         return {page, files, type:upload("art.html", "text/html", "x"),
             size:withConf("board@max-image-bytes", "10", () => upload("art.svg", "image/svg+xml", svg)),
+            total:withConf("board@max-total-image-bytes", "60", () => upload("art.svg", "image/svg+xml", svg)),
             info:asWriter("get#WikiPageInfoById", {wikiPageId:page.wikiPageId}),
             malformed:asWriter("update#WikiPage", {wikiSpaceId:"SPWTYP", pageName:"Design", pageText:"{}"}).error}
     },
@@ -275,6 +302,7 @@ feature("an Excalidraw page versions its previews and enforces its image limits"
         r.page.error === "" && r.page.wikiPageId
         r.files[0].error === "" && r.files[2].error === ""
         r.files[1].error.includes("image limit") && r.type.error.includes("attachment must") && r.size.error.includes("size limit")
+        r.total.error.includes("total size limit")
         r.info.attachmentList.some(a => a.filename === "_board.svg")
         r.info.attachmentList.some(a => a.filename === "_board-" + encodeURIComponent(r.page.versionName) + ".svg")
         r.malformed.includes("Excalidraw scene")

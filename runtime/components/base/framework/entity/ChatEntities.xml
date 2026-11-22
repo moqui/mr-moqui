@@ -77,6 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
             name, topic and member count, where a user may ask to join it (ChatInviteServices request#Join,
             plans/Comms-Messaging.md §18.3 phase 17). Its messages stay its members'.</description></field>
         <index name="CHAT_ROOM_WIKI_SPACE" unique="true"><index-field name="wikiSpaceId"/></index>
+        <relationship type="one-nofk" related="moqui.resource.wiki.WikiSpace" short-alias="boardSpace"/>
         <relationship type="one" title="ChatRoomType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="roomTypeEnumId"/></relationship>
         <relationship type="one" title="ChatRoomVisibility" related="moqui.basic.Enumeration" short-alias="visibility">

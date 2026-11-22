@@ -48,4 +48,12 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="callSessionId" required="true"/><parameter name="wikiPageId" required="true"/></in-parameters>
         <out-parameters><parameter name="versionName"/></out-parameters>
     </service>
+    <service verb="recheck" noun="MeetingBoards" type="rust" location="moqui_collab::service::recheck_meeting_boards" allow-remote="false">
+        <description>A call changed in a way that may change its members' meeting-board grants (a leg left, a board closed
+            or its drawing changed, a guest removed, a room member left): once the transaction commits, every server asks
+            those grants again at its next co-editing tick (cluster topic collab-recheck), dropping a member who lost the
+            board within about a second. With chatRoomId, each call of the room not ended. Between changes a member's
+            frames are answered from the grant in memory, asked again every 10 seconds.</description>
+        <in-parameters><parameter name="callSessionId"/><parameter name="chatRoomId"/></in-parameters>
+    </service>
 </services>

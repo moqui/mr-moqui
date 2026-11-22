@@ -810,6 +810,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="socket-user-joins-per-minute" type="xs:positiveInteger" default="240"><xs:annotation><xs:documentation>
                 The joins one user's notification sockets may make a minute together, given back evenly over the
                 minute; more are refused (429). Read on each join (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-updates-per-minute" type="xs:positiveInteger" default="1200"><xs:annotation><xs:documentation>
+                The co-editing updates one notification socket may send a minute, given back evenly over the minute;
+                more are refused (429), and after five refused in a row the socket's clients leave the page. Read on
+                each update (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="socket-awareness-per-minute" type="xs:positiveInteger" default="600"><xs:annotation><xs:documentation>
+                The co-editing awareness frames (cursors, selections) one notification socket may send a minute, given
+                back evenly over the minute; more are dropped. Read on each frame (webroot webapp).</xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
 
@@ -2272,6 +2279,9 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="max-image-bytes" type="xs:positiveInteger" default="10485760"/>
             <xs:attribute name="max-images" type="xs:positiveInteger" default="200"/>
+            <xs:attribute name="max-total-image-bytes" type="xs:positiveInteger" default="209715200"><xs:annotation><xs:documentation>
+                The bytes of all of one board's files together (its images, previews and capture); an upload past it is
+                refused (upload#WikiPageAttachment).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="max-update-bytes" type="xs:positiveInteger" default="1048576"/>
             <xs:attribute name="max-document-bytes" type="xs:positiveInteger" default="20971520"/>
         </xs:complexType>

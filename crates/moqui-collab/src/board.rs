@@ -26,6 +26,11 @@ fn board_setting(key: &str) -> bool {
     matches!(key, "viewBackgroundColor" | "gridSize" | "gridStep" | "gridModeEnabled")
 }
 
+/// Seed `doc` from a saved scene. A scene that is not one (no JSON, no elements, past the size limit) is refused; within
+/// one, an element with no id, an image entry that is not a page attachment, and the images past the limit are
+/// logged and left out, so one bad piece does not close the whole board. A deleted element's tombstone (the scene's
+/// `deleted`, written by [`render`]) goes in as deleted, so a client that still holds an older revision of it does not
+/// bring it back.
 pub(crate) fn seed(doc: &Doc, text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
         return Ok(());
@@ -42,23 +47,32 @@ pub(crate) fn seed(doc: &Doc, text: &str) -> Result<(), String> {
     let files = doc.get_or_insert_map("files");
     let app = doc.get_or_insert_map("app");
     let mut tx = doc.transact_mut();
-    for el in elements {
-        let id = el["id"]
-            .as_str()
-            .filter(|s| !s.is_empty())
-            .ok_or("board element needs an id")?;
-        let (v, Reverse(nonce)) = rank(el);
+    let tombstones = scene["deleted"].as_array().into_iter().flatten().map(|el| {
+        json!({"id": el["id"], "type": el["type"], "version": el["version"], "versionNonce": el["versionNonce"],
+            "isDeleted": true})
+    });
+    for el in elements.iter().cloned().chain(tombstones) {
+        let Some(id) = el["id"].as_str().filter(|s| !s.is_empty()) else {
+            tracing::warn!("board: an element with no id was left out of the board");
+            continue;
+        };
+        let (v, Reverse(nonce)) = rank(&el);
         let key = json!([id, v, nonce]).to_string();
-        element_map.insert(&mut tx, key, any(el));
+        element_map.insert(&mut tx, key, any(&el));
     }
     if let Some(entries) = scene["files"].as_object() {
-        if entries.len() > limit("board@max-images", 200) {
-            return Err("board exceeds its image limit".into());
+        let most = limit("board@max-images", 200);
+        if entries.len() > most {
+            tracing::warn!(
+                "board: {} images are past the limit of {most}; those after it are left out",
+                entries.len()
+            );
         }
-        for (id, file) in entries {
+        for (id, file) in entries.iter().take(most) {
             let file = any(file);
             if !attachment(&file) {
-                return Err("board images must be stored as attachments".into());
+                tracing::warn!("board: image {id} is not a page attachment and was left out");
+                continue;
             }
             files.insert(&mut tx, id.as_str(), file);
         }
@@ -149,7 +163,8 @@ fn entries(tx: &impl ReadTxn, name: &str) -> BTreeMap<String, Value> {
         .collect()
 }
 
-fn elements(tx: &impl ReadTxn) -> Vec<Value> {
+/// Each element's winning revision, deleted ones too.
+fn winners(tx: &impl ReadTxn) -> BTreeMap<String, Value> {
     let mut winners: BTreeMap<String, Value> = BTreeMap::new();
     for el in entries(tx, "elements").into_values() {
         let Some(id) = el["id"].as_str() else { continue };
@@ -157,7 +172,11 @@ fn elements(tx: &impl ReadTxn) -> Vec<Value> {
             winners.insert(id.to_string(), el);
         }
     }
-    let mut elements: Vec<_> = winners.into_values().filter(|e| e["isDeleted"] != true).collect();
+    winners
+}
+
+fn elements(tx: &impl ReadTxn) -> Vec<Value> {
+    let mut elements: Vec<_> = winners(tx).into_values().filter(|e| e["isDeleted"] != true).collect();
     elements.sort_by(|a, b| {
         a["index"]
             .as_str()
@@ -167,6 +186,8 @@ fn elements(tx: &impl ReadTxn) -> Vec<Value> {
     elements
 }
 
+/// The scene a version saves: its elements, settings and image entries, and a tombstone of each deleted element
+/// (`deleted`: its id, type and revision), which [`seed`] reads back as deleted.
 pub(crate) fn render(doc: &Doc) -> String {
     let tx = doc.transact();
     let elements = elements(&tx)
@@ -174,11 +195,16 @@ pub(crate) fn render(doc: &Doc) -> String {
         .map(|e| e.to_string())
         .collect::<Vec<_>>()
         .join(",\n");
+    let deleted: Vec<Value> = winners(&tx)
+        .into_values()
+        .filter(|e| e["isDeleted"] == true)
+        .map(|e| json!({"id": e["id"], "type": e["type"], "version": e["version"], "versionNonce": e["versionNonce"]}))
+        .collect();
     let app = entries(&tx, "app")
         .into_iter()
         .filter(|(key, _)| board_setting(key))
         .collect::<BTreeMap<_, _>>();
-    format!("{{\"type\":\"excalidraw\",\"version\":2,\n\"elements\":[\n{elements}\n],\n\"appState\":{},\n\"files\":{}\n}}\n", json!(app), json!(entries(&tx, "files")))
+    format!("{{\"type\":\"excalidraw\",\"version\":2,\n\"elements\":[\n{elements}\n],\n\"appState\":{},\n\"files\":{},\n\"deleted\":{}\n}}\n", json!(app), json!(entries(&tx, "files")), json!(deleted))
 }
 
 pub(crate) fn search_text(doc: &Doc) -> String {
@@ -229,10 +255,46 @@ mod tests {
         };
         let first = merged([&a, &b]);
         assert_eq!(first, merged([&b, &a]));
-        assert!(first.contains("Heading") && !first.contains("gone"));
+        let scene: Value = serde_json::from_str(&first).unwrap();
+        assert!(first.contains("Heading"));
+        assert!(scene["elements"].as_array().unwrap().iter().all(|e| e["id"] != "gone"));
+        assert_eq!(
+            scene["deleted"],
+            json!([{"id":"gone","type":null,"version":5,"versionNonce":99}])
+        );
         assert!(first.find("Heading").unwrap() < first.find("New").unwrap());
         let restored = Doc::new();
         seed(&restored, &first).unwrap();
         assert_eq!(render(&restored), first);
+        // a client still holding the element before its deletion does not bring it back into the seeded board
+        restored
+            .transact_mut()
+            .apply_update(Update::decode_v1(&a).unwrap())
+            .unwrap();
+        assert!(!render(&restored).contains("\"id\":\"gone\",\"index\""));
+        assert_eq!(search_text(&restored), "New\nHeading");
+    }
+
+    /// One bad piece of a saved scene is left out, not the whole board: an element with no id and an image entry that
+    /// is not a page attachment. A scene that is not one is still refused.
+    #[test]
+    fn a_seed_leaves_out_a_bad_element_or_image_and_keeps_the_rest() {
+        let doc = Doc::new();
+        let scene = json!({"type":"excalidraw","elements":[
+            {"type":"text","text":"No id"},
+            {"id":"kept","type":"text","text":"Kept","index":"a0","version":1}
+        ],"files":{
+            "inline":{"dataURL":"data:image/png;base64,AA=="},
+            "photo":{"attachmentName":"photo.png","mimeType":"image/png"}
+        }});
+        seed(&doc, &scene.to_string()).unwrap();
+        assert_eq!(search_text(&doc), "Kept");
+        let saved: Value = serde_json::from_str(&render(&doc)).unwrap();
+        assert_eq!(
+            saved["files"],
+            json!({"photo":{"attachmentName":"photo.png","mimeType":"image/png"}})
+        );
+        assert!(seed(&Doc::new(), "{not json").is_err());
+        assert!(seed(&Doc::new(), r#"{"type":"other","elements":[]}"#).is_err());
     }
 }

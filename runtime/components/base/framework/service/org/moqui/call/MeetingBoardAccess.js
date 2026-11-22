@@ -58,8 +58,10 @@ function file(p) {
         const prefix = 'org.moqui.resource.WikiServices.'
         const wikiPageId = p.wikiPageId
         if (upload) {
-            call(prefix + 'upload#WikiPageAttachment', {wikiPageId, attachmentFile:upload})
-            return {filename}
+            // the system uploads it, so its version says for whom
+            const versionNote = ec.l10n.localize('Uploaded in a meeting by ${name}').replace('${name}', access.displayName || '')
+            call(prefix + 'upload#WikiPageAttachment', {wikiPageId, attachmentFile:upload, versionNote})
+            return ec.message.hasError() ? {} : {filename}
         }
         const ref = call(prefix + 'get#WikiPageAttachment', {wikiPageId, filename}).attachmentReference
         if (!ref?.exists || ref.getSize() > Number(ec.factory.getConfValue('board@max-image-bytes'))) {

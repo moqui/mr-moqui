@@ -13,12 +13,30 @@
     const revision = e => JSON.stringify([e.id, e.version, e.versionNonce]);
     const clean = value => JSON.parse(JSON.stringify(value));
     const settings = app => Object.fromEntries(appKeys.filter(k => app[k] !== undefined).map(k => [k, app[k]]));
+    // Excalidraw's languages, each with its region; the first of a language is the one a page's bare code gets
+    const boardLanguages = ["ar-SA","az-AZ","bg-BG","bn-BD","ca-ES","cs-CZ","da-DK","de-DE","el-GR","es-ES","eu-ES",
+        "fa-IR","fi-FI","fr-FR","gl-ES","he-IL","hi-IN","hu-HU","id-ID","it-IT","ja-JP","kab-KAB","kk-KZ","km-KH","ko-KR",
+        "ku-TR","lt-LT","lv-LV","mr-IN","my-MM","nb-NO","nl-NL","nn-NO","oc-FR","pa-IN","pl-PL","pt-BR","pt-PT","ro-RO",
+        "ru-RU","si-LK","sk-SK","sl-SI","sv-SE","ta-IN","th-TH","tr-TR","uk-UA","vi-VN","zh-CN","zh-HK","zh-TW"];
+    /** The Excalidraw language closest to a page's (es → es-ES, zh_TW → zh-TW, es-MX → es-ES), else English. */
+    board.language = lang => {
+        const [language, region] = String(lang || "en").replace("_", "-").split("-");
+        const code = language.toLowerCase() + (region ? "-" + region.toUpperCase() : "");
+        return boardLanguages.includes(code) ? code : boardLanguages.find(c => c.split("-")[0] === language.toLowerCase()) || "en";
+    };
     function winners(map) {
         const found = new Map();
         for (const e of map.values()) if (!found.has(e.id) || newer(e, found.get(e.id))) found.set(e.id, e);
         return found;
     }
     board.read = doc => [...winners(doc.getMap("elements")).values()].sort(sortElements);
+    // A tombstone a reseeded board keeps of a deleted element (its id and revision, no shape): the editor's own copy of
+    // the element, deleted at that revision, or nothing when the editor never had it.
+    board.shown = (elements, local) => elements.flatMap(e => {
+        if (!e.isDeleted || e.x !== undefined) return [e];
+        const mine = local && local.get(e.id);
+        return mine ? [{...mine, isDeleted: true, version: e.version, versionNonce: e.versionNonce}] : [];
+    });
     board.write = (doc, elements, appState, origin) => {
         const map = doc.getMap("elements"), app = doc.getMap("app"), latest = winners(map);
         const changed = elements.filter(e => !latest.has(e.id) || newer(e, latest.get(e.id)));
@@ -153,13 +171,13 @@
                 const E = root.MoquiBoardEditor;
                 if (!this.startData) {
                     const scene = this.initial();
-                    const elems = this.doc ? board.read(this.doc) : scene.elements || [];
+                    const elems = this.doc ? board.shown(board.read(this.doc)) : scene.elements || [];
                     this.startData = { elements: elems.length || !this.skeleton || this.doc ? elems : E.convertToExcalidrawElements(this.skeleton),
                         appState: settings(this.doc ? this.doc.getMap("app").toJSON() : scene.appState || {}), libraryItems: this.libItems };
                 }
                 const options = {
                     initialData: this.startData, viewModeEnabled: this.readOnly || !this.canEdit, theme: this.dark ? "dark" : "light",
-                    langCode: (document.documentElement.lang || "en").replace("_", "-"), aiEnabled: false, validateEmbeddable: false,
+                    langCode: board.language(document.documentElement.lang), aiEnabled: false, validateEmbeddable: false,
                     handleKeyboardGlobally: false, isCollaborating: !!this.doc, zenModeEnabled: this.stage || undefined,
                     UIOptions: { canvasActions: { loadScene: false, saveToActiveFile: false, export: false, saveAsImage: false } },
                     excalidrawAPI: api => {
@@ -183,7 +201,8 @@
             remote() {
                 if (!this.api || this.closed) return;
                 this.flushChanges();
-                const elems = board.read(this.doc);
+                const local = new Map(this.api.getSceneElementsIncludingDeleted().map(e => [e.id, e]));
+                const elems = board.shown(board.read(this.doc), local);
                 this.api.updateScene({elements: elems, appState: this.doc.getMap("app").toJSON(), captureUpdate: "NEVER"});
                 this.metaFiles = this.doc.getMap("files").toJSON();
                 this.loadFiles(this.metaFiles);
