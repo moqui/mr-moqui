@@ -17,7 +17,7 @@ along with this software (see the LICENSE.md file). If not, see
     restart a change needs, "No site component yet. Create one", and New component from the component template. Plain
     forms and lists, so the terminal reaches it. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
-        default-menu-title="Home" default-menu-index="1">
+        default-menu-title="Home" default-menu-index="1" menu-image="sym_o_home" menu-image-type="icon">
 
     <transition name="publish"><service-call name="org.moqui.devaide.VcsServices.publish#Site" in-map="{rootId: rootId}"/>
         <actions><message type="${published ? 'success' : 'warning'}">${(message || 'Published')}</message></actions>
