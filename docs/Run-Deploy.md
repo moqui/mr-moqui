@@ -408,6 +408,14 @@ the old secrets to their new names before the first start, or a new one is gener
 `./moq load` for a dev runtime), the session cookie key, `ssh_host_key` (else the SSH host key changes) and the edge link
 key (else each local node must pair again).
 
+The gRPC listener's port and address moved to the webroot webapp, beside the HTTP and HTTPS ports, since the OTLP
+receiver and the PASS authority share one listener: `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` are
+now `webapp-list/webapp[webroot]@grpc-listen-bind`, and `pass-authority@grpc-port` and `telemetry/receiver@grpc-port`
+are `webapp-list/webapp[webroot]@grpc-listen-port` (`moqui_conf__webapp_list__webapp__WEBROOT__grpc_listen_port`). The
+boot refuses a conf file or an environment name that still sets an old one, naming its replacement. The listener
+ports are separate from the ports of generated URLs: `http-listen-port` and `https-listen-port` are what the server
+binds, `http-port` and `https-port` what its URLs say.
+
 The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
 | Setting | Default | What it does |
@@ -421,6 +429,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `webapp-list/webapp[webroot]@https-listen-port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
 | `webapp-list/webapp[webroot]@https-port` | empty: 443 | The HTTPS port in generated URLs and redirects |
 | `webapp-list/webapp[webroot]@https-enabled` | `false` | `true` makes generated URLs https |
+| `webapp-list/webapp[webroot]@grpc-listen-port` | `4317` (`off` in the dev conf) | The dedicated gRPC listener for the OTLP receiver and the PASS authority, opened only when one is on, or `off`; gRPC over HTTP/2 on the HTTPS listener works either way. Was `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` |
+| `webapp-list/webapp[webroot]@grpc-listen-bind` | empty: `http-bind`'s | The address the gRPC listener binds. Was `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` |
 | `webapp-list/webapp[webroot]@allow-origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
 | `webapp-list/webapp[webroot]@trusted-proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
 | `webapp-list/webapp[webroot]@client-ip-header` | empty | The header those proxies put the client address in |
@@ -433,6 +443,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
 | `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
+| `board@max-document-bytes`, `board@max-update-bytes` | 20 MB, 1 MB | Boards (wiki and meeting whiteboards): the largest scene a board holds, and the largest single co-editing update a client sends |
+| `board@max-images`, `board@max-image-bytes` | `200`, 10 MB | The images one board may hold, and the largest one |
 | `calls@guest-joins-per-minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
 | `chat@server-name`, `chat@to-device-retention-days` | `localhost`, `30` | The server name in the Matrix user IDs of browsers' crypto devices (set it before the first device: a change makes every device new), and how long a to-device message waits for a device that does not take it ([Chat keys](interfaces/Chat-Keys.md)) |
 | `chat@store-key-secret` | generated | The platform secret each crypto device's browser-store key is derived under (HMAC of user, device and revision), so no table holds the keys. A new value makes every browser's store unreadable: each makes a new device and reads older messages from the key backup ([Chat keys](interfaces/Chat-Keys.md)) |
