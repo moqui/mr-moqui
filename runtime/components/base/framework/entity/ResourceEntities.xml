@@ -892,6 +892,7 @@ along with this software (see the LICENSE.md file). If not, see
             or last saved as; a text that no longer has it was changed outside co-editing</description></field>
         <field name="baseVersionName" type="text-medium"/>
         <field name="editorUserIds" type="text-medium"/>
+        <field name="meetingEditorNames" type="text-medium"/>
         <field name="lastChangeDate" type="date-time"/>
         <field name="lastChangeUserId" type="id"/>
         <field name="lastSaveDate" type="date-time"/>

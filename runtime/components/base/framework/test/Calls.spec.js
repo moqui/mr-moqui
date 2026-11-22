@@ -499,6 +499,29 @@ feature("a room's group call: members join, a non-member cannot, the host's leav
     }
 })
 
+feature("an active room board grants drawing until the host restricts it and becomes call history at hangup", {
+    when() {
+        const {callSessionId} = as(A,"start#Call",{chatRoomId:room})
+        const hostLeg = as(A,"get#Call",{callSessionId}).call.myLegId
+        const {generation} = as(A,"bind#Connection",{callSessionId,callLegId:hostLeg})
+        as(B,"join#Call",{callSessionId})
+        const {wikiPageId,errors} = as(A,"create#MeetingBoard",{callSessionId,pageName:"Call history sketch"})
+        if (errors) throw Error(errors)
+        const shown = as(A,"org.moqui.call.StageServices.change#CallStage",{callSessionId,callLegId:hostLeg,generation,action:"ask",kind:"board",wikiPageId})
+        const restrict = who => as(who,"set#BoardDrawing",{callSessionId,wikiPageId,memberCanEdit:false,guestCanEdit:false})
+        const refused = restrict(B), changed = restrict(A)
+        as(A,"end#Call",{callSessionId})
+        const history = as(A,"find#MeetingBoards",{callSessionId})
+        return {shown,refused,changed,history,wikiPageId}
+    },
+    then(r) {
+        r.shown.stage.wikiPageId === r.wikiPageId && r.shown.stage.guestCanEdit === true
+        r.refused.errors.includes("host")
+        !r.changed.errors && r.changed.guestCanEdit === false
+        r.history.shown.some(b=>b.wikiPageId===r.wikiPageId && b.closedDate)
+    }
+})
+
 feature("each user's history has their outcome of each call, and missed calls count until seen", {
     when() {
         const missedBefore = as(C, "count#MissedCalls")

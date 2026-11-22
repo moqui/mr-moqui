@@ -5079,11 +5079,12 @@
               }, 8, ["data-flow", "data-user"]))
             }
         } },
-        "m-chatter": { hash: "8482661e", make: function (Vue) {
+        "m-chatter": { hash: "394b2802", make: function (Vue) {
             const { resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeClass: _normalizeClass, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode } = Vue
 
             return function render(_ctx, _cache) {
               const _component_m_dynamic_container = _resolveComponent("m-dynamic-container")
+              const _component_m_record_boards = _resolveComponent("m-record-boards")
 
               return (_ctx.loadUrl)
                 ? (_openBlock(), _createElementBlock("div", {
@@ -5094,7 +5095,8 @@
                       ref: "container",
                       id: _ctx.containerId,
                       url: _ctx.loadUrl
-                    }, null, 8, ["id", "url"])
+                    }, null, 8, ["id", "url"]),
+                    _createVNode(_component_m_record_boards, { record: _ctx.record }, null, 8, ["record"])
                   ], 2))
                 : _createCommentVNode("", true)
             }
@@ -10408,6 +10410,31 @@
                   "onUpdate:modelValue": $event => ((_ctx.fields[_ctx.name + '_thru']) = $event)
                 }, null, 8, ["label", "name", "id", "size", "maxlength", "form", "tooltip", "modelValue", "onUpdate:modelValue"])
               ]))
+            }
+        } },
+        "m-record-boards": { hash: "354cbfda", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_btn = _resolveComponent("q-btn")
+
+              return (_ctx.boards.length)
+                ? (_openBlock(), _createElementBlock("div", {
+                    key: 0,
+                    class: "row items-center q-gutter-xs m-record-boards"
+                  }, [
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.boards, (b) => {
+                      return (_openBlock(), _createBlock(_component_q_btn, {
+                        key: b.wikiPageId,
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_draw",
+                        label: b.title,
+                        onClick: $event => (_ctx.open(b.wikiPageId))
+                      }, null, 8, ["label", "onClick"]))
+                    }), 128))
+                  ]))
+                : _createCommentVNode("", true)
             }
         } },
         "m-record-card": { hash: "a6c7966d", make: function (Vue) {

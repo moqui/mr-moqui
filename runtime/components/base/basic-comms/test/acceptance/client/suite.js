@@ -5,7 +5,7 @@
 // groups and the mail line, ChatDesktop; offline: server: false). ChatPalette is the palette's walk on the web. CallDirect
 // is the direct path (peer to peer); CallNetwork, the calls on shaped networks, runs only under sudo
 // scripts/call-network.sh and skips here, saying why.
-suite(["CallFlow", "CallGuestFlow", "ChatLabels", "EncryptedCallFlow", "EncryptedChatFlow", "PhoneChat", "PhoneReactions", "ChatDetails", "ChatDesktop",
+suite(["CallFlow", "CallGuestFlow", "MeetingBoards", "ChatLabels", "EncryptedCallFlow", "EncryptedChatFlow", "PhoneChat", "PhoneReactions", "ChatDetails", "ChatDesktop",
     "ChatPalette", "CallDirect", "CallNetwork"], {
     server: { components: ["basic-comms"], specs: ["CallClientFixtures", "CryptoClientFixtures"] },
 })

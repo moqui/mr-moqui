@@ -100,6 +100,21 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
 
+    <transition name="boardFile" method="post" require-session-token="false"><actions><script><![CDATA[
+        const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
+            .parameters({wikiPageId,token,credential,filename}).call()
+        if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+        else if (ec.message.hasError()) ec.web.sendJsonResponse({errors:ec.message.errorsString})
+        else ec.web.sendJsonResponse(result)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="uploadBoardFile" method="post" require-session-token="false"><actions><script><![CDATA[
+        const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
+            .parameters({wikiPageId,token,credential,attachmentFile}).call()
+        if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+        else if (ec.message.hasError()) ec.web.sendJsonResponse({errors:ec.message.errorsString})
+        else ec.web.sendJsonResponse(result)
+    ]]></script></actions><default-response type="none"/></transition>
+
     <widgets>
         <render-mode><text type="qvue" location="component://basic-comms/screen/CallGuest.qvue" template="false"/>
             <text type="tui" template="false"><![CDATA[[{"t": "text", "id": "CallGuest", "text": "A call link: open it in a browser to join the call."}]]]></text></render-mode>

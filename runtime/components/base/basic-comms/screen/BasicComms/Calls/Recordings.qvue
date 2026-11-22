@@ -49,6 +49,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-chip dense square :color="stateColor(selected)" text-color="white">{{stateText(selected)}}</q-chip>
                 <span class="text-caption m-muted">{{t('Recorded by')}} {{selected.ownerName}}</span>
             </div>
+            <div v-if="boardLinks.length" class="row items-center q-gutter-xs q-mb-sm">
+                <span>{{t('Meeting boards')}}</span><q-btn v-for="b in boardLinks" :key="b.wikiPageId" flat dense icon="sym_o_draw"
+                    :label="b.title" @click="$root.setUrl(moqui.call.appRoot()+'/Boards/Board?wikiPageId='+encodeURIComponent(b.wikiPageId))"/>
+            </div>
             <div v-if="!selected.periods.length" class="m-muted">{{t('Nothing was stored for this recording.')}}</div>
             <q-tabs v-if="selected.periods.length > 1" v-model="periodNum" dense no-caps align="left" class="q-mb-sm">
                 <q-tab v-for="(p, i) in selected.periods" :key="p.period" :name="p.period" :label="t('Part') + ' ' + (i + 1)"></q-tab>
@@ -90,7 +94,7 @@ const DRIFT = 0.3;
 module.exports = {
     name: 'Recordings',
     data() {
-        return { recordings: [], count: 0, page: 0, loaded: false, selectedId: null, periodNum: null, playing: false, position: 0, timer: null };
+        return { recordings: [], boardLinks: [], count: 0, page: 0, loaded: false, selectedId: null, periodNum: null, playing: false, position: 0, timer: null };
     },
     computed: {
         selected() { return this.recordings.find((r) => r.callRecordingId === this.selectedId) || null; },
@@ -160,6 +164,10 @@ module.exports = {
         choose(r) {
             this.stop();
             this.selectedId = r.callRecordingId;
+            this.boardLinks = [];
+            if (r.callSessionId) moqui.call.request('meetingBoards',{callSessionId:r.callSessionId},'GET',true).then(out => {
+                if (this.selectedId === r.callRecordingId) this.boardLinks = [...new Map((out.shown || []).map(b => [b.wikiPageId,b])).values()];
+            }, () => {});
             this.periodNum = r.periods.length ? r.periods[0].period : null;
             this.$nextTick(() => this.place(0));
         },

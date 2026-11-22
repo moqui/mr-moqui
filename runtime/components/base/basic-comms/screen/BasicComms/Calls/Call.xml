@@ -23,6 +23,21 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="callSessionId"/>
 
+    <transition name="boardFile" method="post"><actions><script><![CDATA[
+        const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
+            .parameters({wikiPageId,callSessionId,callLegId,filename}).call()
+        if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+        else if (ec.message.hasError()) ec.web.sendJsonResponse({errors:ec.message.errorsString})
+        else ec.web.sendJsonResponse(result)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="uploadBoardFile" method="post"><actions><script><![CDATA[
+        const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
+            .parameters({wikiPageId,callSessionId,callLegId,attachmentFile}).call()
+        if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+        else if (ec.message.hasError()) ec.web.sendJsonResponse({errors:ec.message.errorsString})
+        else ec.web.sendJsonResponse(result)
+    ]]></script></actions><default-response type="none"/></transition>
+
     <widgets>
         <render-mode><text type="qvue" location="component://basic-comms/screen/BasicComms/Calls/Call.qvue" template="false"/>
             <text type="tui" location="component://basic-comms/screen/BasicComms/Calls/Call.tui.json" template="fancy"/></render-mode>

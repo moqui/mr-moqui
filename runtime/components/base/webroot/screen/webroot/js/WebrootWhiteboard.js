@@ -67,7 +67,7 @@
         props: {
             wikiPageId: String, scene: [Object, String], readOnly: Boolean, filesUrl: String, uploadUrl: String,
             saveUrl: String, previewUrl: String, linkSchemes: Array, libraries: Array, skeleton: Array,
-            stage: Boolean, follow: String, socketClient: Object, legId: String
+            stage: Boolean, follow: String, socketClient: Object, legId: String, meetingId:String, guestFiles:Object, userName:String
         },
         emits: ["editors", "saved", "open-link", "unfollow", "error"],
         data() {
@@ -124,9 +124,12 @@
                 const T = root.Tiptap;
                 this.doc = root.Vue.markRaw(new T.Y.Doc());
                 this.awareness = root.Vue.markRaw(new T.Awareness(this.doc));
-                const name = this.$root.userFullName || this.$root.username || this.$root.userId || this.t("Guest");
+                const name = this.userName || this.$root.userFullName || this.$root.username || this.$root.userId || this.t("Guest");
                 this.awareness.setLocalStateField("user", { name, color: moqui.coedit.userColor(this.$root.userId || name), legId: this.legId });
-                this.provider = root.Vue.markRaw(new moqui.coedit.Provider({ client, lib: T, doc: this.doc, awareness: this.awareness,
+                this.provider = root.Vue.markRaw(new moqui.coedit.Provider({ client:this.meetingId ? {
+                    isOpen:()=>client.isOpen(), onState:fn=>client.onState(fn), registerListener:(topic,fn)=>client.registerListener(topic,fn),
+                    send:frame=>client.send({...frame,callSessionId:this.meetingId,callLegId:this.legId})
+                }:client, lib: T, doc: this.doc, awareness: this.awareness,
                     docKey: "WikiPage:" + this.wikiPageId,
                     onStatus: status => this.$emit("editors", status.peers.map(p => p.name)),
                     onAccess: allowed => { clearTimeout(this.connectTimer); this.canEdit = allowed; this.draw(); this.remote(); },
@@ -250,7 +253,8 @@
                 const ext = {"image/svg+xml":"svg", "image/jpeg":"jpg"}[file.mimeType] || file.mimeType.slice(6);
                 form.append("file", blob, file.id + "." + ext);
                 if (this.wikiPageId) form.append("wikiPageId", this.wikiPageId);
-                const reply = await fetchJson(this.uploadUrl, { method: "POST", body: form, headers: this.token() });
+                const reply = this.guestFiles ? await this.guestFiles.upload(this.wikiPageId,blob,file.id + "." + ext) : await fetchJson(this.uploadUrl, { method: "POST", body: form, headers: this.token() });
+                if (this.guestFiles && reply.filename) reply.attachmentName=reply.filename;
                 if (!reply.attachmentName) throw Error(this.t("The image attachment was not saved"));
                 if (this.closed) return;
                 const ref = {attachmentName: reply.attachmentName, mimeType: file.mimeType};
@@ -266,6 +270,12 @@
             async fetchImage(id, ref) {
                 const name = typeof ref === "string" ? ref : ref.attachmentName;
                 if (!this.filesUrl || !name || /[\\/]/.test(name) || name === "." || name === "..") throw Error(this.t("Invalid image attachment"));
+                if (this.guestFiles) {
+                    const data=await this.guestFiles.read(this.wikiPageId,name);
+                    if (!imageTypes.includes(data.mimeType) || !data.base64 || data.errors) throw Error(this.t("Image attachment unavailable"));
+                    if (!this.closed) this.api.addFiles([{id,mimeType:data.mimeType,dataURL:"data:"+data.mimeType+";base64,"+data.base64,created:1}]);
+                    return;
+                }
                 const target = this.filesUrl.includes("{name}") ? this.filesUrl.replace("{name}", encodeURIComponent(name)) :
                     this.filesUrl + encodeURIComponent(name);
                 const response = await fetch(localUrl(target), {redirect: "error"});
@@ -391,7 +401,7 @@
                 this.error ? h("p",{role:"alert",class:"text-negative"},this.error) : null,
                 this.failed && this.previewUrl ? h("img",{src:this.previewUrl,alt:this.t("Board preview"),style:"max-width:100%"}) : null,
                 this.failed ? btn("Download board",()=>this.download("excalidraw").catch(this.report)) : null,
-                h("div",{ref:"canvas",style:{height:this.stage?"100%":"min(72vh,56rem)",minHeight:"16rem",display:this.failed?"none":"block"},
+                h("div",{ref:"canvas",style:{height:this.stage?"min(62dvh,44rem)":"min(72vh,56rem)",minHeight:"16rem",display:this.failed?"none":"block"},
                     onWheel:()=>{if(this.follow)this.$emit("unfollow");},onPointerdown:()=>{if(this.follow)this.$emit("unfollow");}}), dialog
             ]);
         }

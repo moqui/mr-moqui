@@ -123,6 +123,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="createLink">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.call.CallServices.create#CallLink').parameters({name: name || '',
+                wikiPageId: typeof wikiPageId !== 'undefined' ? wikiPageId || null : null,
                 policy: policy === 'link' ? 'link' : 'lobby', video: video !== 'N', expiryHours: Math.max(1, Number(expiryDays) || 7) * 24,
                 requireE2ee: String(encrypted) === 'Y'})
                 .requireNewTransaction(true).disableAuthz().call() || {}
@@ -386,6 +387,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box><box-header title="Call links"/><box-body>
                     <label type="p" style="m-muted" text="A link to a meeting for people with no account: they open it in a browser and give their name. With a lobby, someone in the call lets each one in."/>
                     <form-single name="NewCallLink" transition="createLink" map="newLink">
+                        <field name="wikiPageId"><default-field title="Recurring board ID"><text-line size="32"/></default-field></field>
                         <field name="name"><default-field title="Name"><text-line size="40"/></default-field></field>
                         <field name="policy"><default-field title="Guests"><radio><option key="lobby" text="Wait in a lobby"/><option key="link" text="Come straight in"/></radio></default-field></field>
                         <field name="video"><default-field title="With video"><radio><option key="Y" text="Video"/><option key="N" text="Audio only"/></radio></default-field></field>

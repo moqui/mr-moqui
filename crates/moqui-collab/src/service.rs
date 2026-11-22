@@ -27,6 +27,7 @@ use moqui_core::rust_service;
 
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, save_document)?;
+    rust_service!(map, save_meeting_board)?;
     rust_service!(map, get_document)?;
     Ok(())
 }
@@ -58,6 +59,62 @@ fn save_document(
         }
     }
     Ok(out)
+}
+
+/// The call engine finalizes an open board before it closes the call's board rows.
+fn save_meeting_board(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let call = text(parameters, "callSessionId").unwrap_or_default();
+    let page = text(parameters, "wikiPageId").unwrap_or_default();
+    let key = format!("WikiPage:{page}");
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let board = facade
+        .find("moqui.call.CallBoard")?
+        .eq("callSessionId", Value::string(&call))
+        .eq("wikiPageId", Value::string(&page))
+        .one()?;
+    if board.is_none() {
+        return Err(LibError::new("board does not belong to this call"));
+    }
+    let session = facade
+        .find("moqui.call.CallSession")?
+        .eq("callSessionId", Value::string(&call))
+        .one()?;
+    let writer = session
+        .as_ref()
+        .and_then(|s| s.get("startedByUserId"))
+        .map(to_plain_string)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| LibError::new("no host to save the meeting board"))?;
+    let result = (|| -> Result<Option<String>, crate::Refusal> {
+        let room = match crate::room_of(&key) {
+            Some(room) => room,
+            None => {
+                let Some(state) = crate::stored(&key)? else {
+                    return Ok(None);
+                };
+                if state.get("editorUserIds").is_none_or(is_empty) {
+                    return Ok(None);
+                }
+                let access = crate::access(&page, &writer)?;
+                if !access.can_edit {
+                    return Err(crate::Refusal::new(403, "host cannot save this board"));
+                }
+                crate::load(&key, &page, access.on_database)?
+            }
+        };
+        if crate::lock(&room).unsaved.is_empty() {
+            return Ok(None);
+        }
+        crate::save_room(&key, &room, &writer, Some(&format!("Meeting {call} ended"))).map_err(Into::into)
+    })();
+    let version = result.map_err(|err| LibError::new(err.message))?;
+    Ok(BTreeMap::from([(
+        "versionName".into(),
+        version.map_or(Value::Null, Value::string),
+    )]))
 }
 
 /// `get#CollabDocument`: the stored state of a document the current user may view: its markdown, who changed it last

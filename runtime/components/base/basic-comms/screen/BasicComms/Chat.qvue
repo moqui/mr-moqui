@@ -406,7 +406,7 @@ const isImage = (file) => /^image\/(png|jpe?g|gif|webp)$/i.test((file && file.co
 const isVideo = (file) => /^video\//i.test((file && file.contentType) || '');
 const isAudio = (file) => /^audio\//i.test((file && file.contentType) || '');
 // the details view (Comms-Messaging §5.1): one pane with tabs, each a side value, so Back and Esc close it as any pane
-const DETAIL_TABS = ['members', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'];
+const DETAIL_TABS = ['members', 'boards', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'];
 // the tabs of the room's files: the types each keeps on the server (files) and here (an encrypted room's, sorted here)
 const FILE_TABS = {
     media: { params: { contentTypePrefixes: 'image/,video/' }, keeps: (file) => /^(image|video)\//i.test(file.contentType || '') },
@@ -1982,6 +1982,14 @@ const roomTemplate = `
                                 <q-separator class="col"></q-separator><span class="text-caption text-weight-medium m-muted q-px-sm">{{item.label}}</span><q-separator class="col"></q-separator></div>
                             <div v-else-if="item.kind === 'unread'" :id="domId('unread', false)" class="row items-center no-wrap q-my-xs q-px-sm text-negative">
                                 <q-separator class="col" color="negative"></q-separator><span class="text-caption text-weight-medium q-px-sm">{{t('New messages')}}</span></div>
+                            <div v-else-if="item.kind === 'board'" class="q-px-md q-py-xs">
+                                <q-card flat bordered style="max-width:22rem" class="m-chat-board-card">
+                                    <img v-if="item.hasPreview" :src="boardPreview(item.wikiPageId)" alt="" style="width:100%;height:8rem;object-fit:contain"/>
+                                    <q-card-section class="q-py-sm"><div class="text-subtitle2">{{item.title}}</div>
+                                        <small v-if="sealed">{{t('Not end-to-end encrypted: the server stores this board')}}</small></q-card-section>
+                                    <q-card-actions><q-btn flat dense icon="sym_o_draw" :label="t('Open board')" @click="openBoard(item.wikiPageId)"/></q-card-actions>
+                                </q-card>
+                            </div>
                             <div v-else-if="item.kind === 'system'" class="text-center text-caption m-muted q-py-xs q-px-md" :class="item.target ? 'cursor-pointer' : ''"
                                     :id="domId(item.eventSeq, false)" @click="item.target ? jumpTo(item.target) : null">
                                 <q-icon :name="item.icon" size="14px" class="q-mr-xs"></q-icon>{{item.text}} · {{item.time}}</div>
@@ -2191,6 +2199,19 @@ const roomTemplate = `
                 </div>
             </div>
 
+            <div v-else-if="side === 'boards'" class="col scroll q-pa-sm" data-pane="boards">
+                <p v-if="sealed" class="text-caption">{{t('Not end-to-end encrypted: the server stores this board')}}</p>
+                <form v-if="boardsPane.canCreate" class="row items-center q-gutter-xs q-mb-sm" @submit.prevent="newBoard">
+                    <q-input dense outlined class="col" v-model="boardsPane.name" :label="t('Board name')"/>
+                    <q-btn unelevated color="primary" type="submit" :loading="boardsPane.busy" :disable="!boardsPane.name.trim()" :label="t('New board')"/>
+                </form>
+                <q-linear-progress v-if="boardsPane.loading" indeterminate/>
+                <p v-else-if="!boardsPane.list.length" class="m-muted">{{t('No boards yet.')}}</p>
+                <q-list dense><q-item clickable v-for="b in boardsPane.list" :key="b.wikiPageId" @click="openBoard(b.wikiPageId)">
+                    <q-item-section avatar><img v-if="b.hasPreview" :src="boardPreview(b.wikiPageId)" alt="" width="56" height="40" style="object-fit:contain"/>
+                        <q-icon v-else name="sym_o_draw"/></q-item-section><q-item-section>{{b.title}}</q-item-section>
+                </q-item></q-list>
+            </div>
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0" data-pane="members">
                 <!-- the room's person across networks: their ways, mail line, merge and split (Comms-Messaging §11.1) -->
                 <m-chat-person v-if="person" :person="person" :room-id="roomId" :mail="personMail" :direct-encrypted="personEncrypted" :others="peopleList"
@@ -2669,6 +2690,7 @@ const chatRoom = {
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false }, editing: null, replyTo: null, side: null,
             swipeKey: null, swipeDx: 0,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
+            boardsPane:{list:[],canCreate:false,loading:false,busy:false,name:""},
             threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null },
             tabs: { media: emptyTab(), files: emptyTab(), voice: emptyTab(), links: emptyTab(), reactions: emptyTab() },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -2864,7 +2886,7 @@ const chatRoom = {
         detailsOpen() { return DETAIL_TABS.includes(this.side); },
         detailTabs() {
             const labels = { members: fill(t('People ({count})'), { count: this.members.length }), media: t('Media'), files: t('Files'), voice: t('Voice'),
-                links: t('Links'), reactions: t('Reactions'), pinned: t('Pinned') };
+                boards: t('Boards'), links: t('Links'), reactions: t('Reactions'), pinned: t('Pinned') };
             return DETAIL_TABS.map((name) => ({ name, label: labels[name] }));
         },
         reactionChips() { return [{ value: false, label: t('All') }, { value: true, label: t('To my messages') }]; },
@@ -3269,6 +3291,13 @@ const chatRoom = {
                 }
                 // a message of someone the user blocked: one quiet line for a run of them (Comms-Messaging §18.3 phase 11)
                 if (moqui.chat.hiddenLine(out, event)) { prev = null; continue; }
+                if (event.type === 'board' && event.content && event.content.wikiPageId) {
+                    out.push({kind:'board', key:'e'+event.eventSeq, eventSeq:event.eventSeq, wikiPageId:event.content.wikiPageId,
+                        title:event.content.title || t('Whiteboard'), hasPreview:!!event.content.hasPreview ||
+                            this.boardsPane.list.some(b => b.wikiPageId === event.content.wikiPageId && b.hasPreview)});
+                    prev = null;
+                    continue;
+                }
                 if (event.type !== 'message') {
                     const words = systemText(event, (id) => this.nameOf(id));
                     out.push({ kind: 'system', key: 'e' + event.eventSeq, eventSeq: event.eventSeq, text: words[0], icon: words[1], time: timeText(sent),
@@ -3554,7 +3583,7 @@ const chatRoom = {
             const seq = Number(event.eventSeq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
             if (event.senderUserId && event.senderName && !this.names[event.senderUserId]) this.names[event.senderUserId] = event.senderName;
-            const isRow = ['message', 'membership', 'system', 'pin', 'call', 'poll'].includes(event.type);
+            const isRow = ['message', 'membership', 'system', 'pin', 'call', 'poll', 'board'].includes(event.type);
             const mainTimeline = event.threadRootEventSeq == null;
             if (this.hasMoreAfter && isRow && mainTimeline) {
                 if (event.type === 'pin') {
@@ -3594,6 +3623,7 @@ const chatRoom = {
             if (event.type === 'system' && event.content && event.content.action === 'timer' && this.sealed && moqui.crypto && moqui.crypto.rotateRoom)
                 moqui.crypto.rotateRoom(this.roomId).catch(() => null);
             if (event.type === 'membership' || event.type === 'system') { this.reloadMeta(); this.$emit('changed'); }
+            if (event.type === 'board' && this.side === 'boards') this.loadBoards();
             if (this.side === 'pinned' && (event.type === 'pin' || event.type === 'redaction')) this.loadPinned();
             if (this.tabs[this.side] && this.tabTouched(this.side, event)) {
                 clearTimeout(this.tabTimer);
@@ -4427,11 +4457,35 @@ const chatRoom = {
         },
 
         // ---- the side pane ----
+        boardPreview(id) {
+            return moqui.call.base().replace(/Calls$/, 'Boards/Board/image') + '?wikiPageId=' + encodeURIComponent(id) + '&filename=_board.svg';
+        },
+        openBoard(id) { this.$root.setUrl(moqui.call.appRoot() + '/Boards/Board?wikiPageId=' + encodeURIComponent(id)); },
+        async loadBoards() {
+            const roomId=this.roomId;
+            this.boardsPane.loading=true;
+            try {
+                const result=await this.get('roomBoards',{chatRoomId:roomId});
+                if (roomId === this.roomId) Object.assign(this.boardsPane,{list:result.boards || [],canCreate:!!result.canCreate});
+            } finally {if (roomId===this.roomId) this.boardsPane.loading=false;}
+        },
+        async newBoard() {
+            const roomId=this.roomId, name=this.boardsPane.name.trim();
+            if (!name || this.boardsPane.busy || !this.boardsPane.canCreate) return;
+            if (this.sealed && !this.boardsPane.list.length &&
+                !await moqui.confirmAction(t('Not end-to-end encrypted: the server stores this board. Create the first board in this room?'))) return;
+            this.boardsPane.busy=true;
+            try {
+                const result=await this.post('createRoomBoard',{chatRoomId:roomId,pageName:name});
+                if (result.wikiPageId && roomId===this.roomId) {this.boardsPane.name=''; await this.loadBoards(); this.openBoard(result.wikiPageId);}
+            } finally {this.boardsPane.busy=false;}
+        },
         openSide(name) {
             if (name === 'thread') return;
             // the panes the desktop client does not keep offline
-            if (['search', 'threads', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'].includes(name) && needsConnection()) return;
+            if (['search', 'threads', 'media', 'files', 'voice', 'links', 'reactions', 'pinned', 'boards'].includes(name) && needsConnection()) return;
             this.side = name;
+            if (name === 'boards') this.loadBoards();
             if (name === 'pinned') this.loadPinned();
             if (name === 'threads') this.loadThreads(false);
             if (this.tabs[name]) this.loadTab(name, false);

@@ -196,6 +196,10 @@ fn bound(slot_id: u64, call: &str, leg: &str) -> Option<Binding> {
         .cloned()
 }
 
+pub(super) fn has_binding(slot_id: u64, call: &str, leg: &str) -> bool {
+    bound(slot_id, call, leg).is_some()
+}
+
 /// Who a socket binds a leg as: its signed-in user, or a guest by their credential.
 #[derive(Clone)]
 enum Who {
@@ -469,7 +473,7 @@ fn change_stage(
             ("callLegId".to_string(), Value::string(&binding.leg)),
             ("generation".to_string(), Value::string(binding.generation.to_string())),
         ]);
-        for field in ["action", "kind", "previousLegId", "targetLegId"] {
+        for field in ["action", "kind", "previousLegId", "targetLegId", "wikiPageId"] {
             if let Some(value) = frame
                 .get(field)
                 .and_then(Json::as_str)
@@ -847,8 +851,12 @@ pub(crate) async fn guest_upgrade(
             guard.record(client, crate::guard::Event::AuthFailure);
         }
     };
-    ws.max_message_size(MAX_FRAME)
-        .max_frame_size(MAX_FRAME)
+    let board_limit = moqui_core::context::conf_env::setting_on(&state.factory, "board@max-update-bytes")
+        .parse::<usize>()
+        .unwrap_or(1 << 20);
+    let frame_limit = MAX_FRAME.max(board_limit.saturating_mul(4) / 3 + 4096);
+    ws.max_message_size(frame_limit)
+        .max_frame_size(frame_limit)
         .on_upgrade(move |socket| run_guest(socket, factory, shutdown, waiting, failed))
 }
 
@@ -887,7 +895,7 @@ async fn run_guest(
     use axum::extract::ws::Message;
     let first = tokio::time::timeout(GUEST_AUTH_WAIT, socket.recv()).await;
     let credential = match first {
-        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Json>(&text)
+        Ok(Some(Ok(Message::Text(text)))) if text.len() <= 4096 => serde_json::from_str::<Json>(&text)
             .ok()
             .filter(|f| f.get("rtc").and_then(Json::as_str) == Some("guestAuth"))
             .and_then(|f| f.get("credential").and_then(Json::as_str).map(str::to_string))
@@ -923,6 +931,12 @@ async fn run_guest(
         leg: leg.clone(),
         credential: credential.clone(),
     };
+    let meeting = moqui_collab::Meeting {
+        call_id: call.clone(),
+        leg_id: leg.clone(),
+        credential: Some(credential.clone()),
+        user_id: String::new(),
+    };
     let authed = json!({"topic": format!("rtc:{call}"), "rtc": "guestAuthed", "callSessionId": call, "callLegId": leg,
         "admission": admission});
     let mut open = super::send_within(&mut socket, Message::Text(authed.to_string().into())).await;
@@ -949,18 +963,25 @@ async fn run_guest(
                 }
             }
             incoming = socket.recv() => match incoming {
-                Some(Ok(Message::Text(text))) => guest_frame(&factory, &slot, &scope, &text),
+                Some(Ok(Message::Text(text))) => {
+                    if !super::collab::handle(&factory, &slot, &text, Some(&meeting)).await {
+                        guest_frame(&factory, &slot, &scope, &text);
+                    }
+                }
                 Some(Ok(Message::Ping(payload))) => open = super::send_within(&mut socket, Message::Pong(payload)).await,
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
             push = rx.recv() => {
                 let Some(push) = push else { break };
-                open = super::send_within(&mut socket, Message::Text(push.text.into())).await;
+                if super::collab::may_deliver(&factory, &slot, &push.text, true).await {
+                    open = super::send_within(&mut socket, Message::Text(push.text.into())).await;
+                }
             }
             _ = ping.tick() => open = super::send_within(&mut socket, Message::Ping(Vec::new().into())).await,
         }
     }
+    super::collab::socket_closed(&factory, id);
     super::unregister(id);
     socket_closed(&factory, id);
 }
@@ -982,6 +1003,9 @@ async fn refuse_guest(mut socket: axum::extract::ws::WebSocket, code: &str) {
 
 /// A guest's frame: only `rtc` frames of its own call and leg.
 fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: &GuestScope, text: &str) {
+    if text.len() > MAX_FRAME {
+        return;
+    }
     let Ok(frame) = serde_json::from_str::<Json>(text) else {
         return;
     };

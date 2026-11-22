@@ -1,24 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="create" noun="Board">
-        <description>Create a blank board in the chosen writable wiki space, or in the current user's notes.</description>
-        <in-parameters><parameter name="wikiSpaceId"/><parameter name="pageName" required="true"/></in-parameters>
-        <out-parameters><parameter name="wikiPageId"/></out-parameters>
-        <actions>
-            <if condition="!wikiSpaceId"><service-call name="org.moqui.resource.WikiServices.ensure#UserNotesSpace" in-map="{}" out-map="space"/>
-                <set field="wikiSpaceId" from="space.wikiSpaceId"/></if>
-            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" in-map="{wikiSpaceId}" out-map="access"/>
-            <if condition="!access.canUpdate || access.readOnly"><return error="true" message="You may not create a board here"/></if>
-            <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="spaceRow" for-update="true"/>
-            <set field="pageName" from="String(pageName).trim().normalize('NFC')"/>
-            <if condition="!pageName || pageName === wikiSpaceId"><return error="true" message="Choose a board name"/></if>
-            <service-call name="org.moqui.resource.WikiServices.get#WikiPageFile" out-map="existing"
-                    in-map="{rootPageLocation:spaceRow.rootPageLocation, pagePath:pageName}"/>
-            <if condition="existing.pageReference?.exists"><return error="true" message="A page with this name already exists"/></if>
-            <service-call name="org.moqui.resource.WikiServices.update#WikiPage" out-map="saved"
-                    in-map="{wikiSpaceId, pageName, wikiType:'excalidraw', pageText:JSON.stringify({type:'excalidraw',version:2,elements:[],appState:{},files:{}})}"/>
-            <set field="wikiPageId" from="saved.wikiPageId"/>
-        </actions>
+        <implements service="org.moqui.resource.WikiServices.create#WikiBoard"/>
+        <actions><service-call name="org.moqui.resource.WikiServices.create#WikiBoard" in-map="context" out-map="context"/></actions>
     </service>
     <service verb="get" noun="Board">
         <in-parameters><parameter name="wikiPageId" required="true"/><parameter name="versionName"/></in-parameters>

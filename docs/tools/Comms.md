@@ -549,6 +549,12 @@ to export the drawing as Excalidraw JSON, SVG or PNG.
 to revise its source. Replacing the diagram replaces hand edits to shapes inside that frame. The wireframe
 and flowchart shapes in **Library** and the editor’s fonts load from the server.
 
+In a room, open **Room → Boards** to list or create boards. Room boards follow current membership. Archiving
+the room keeps its drawings available to read. In a call, **Whiteboard** opens a board on the stage. Viewers
+can follow the presenter’s viewport or pan independently and choose **Follow again**. Hosts can change who draws.
+Admitted guests draw by default and lose access when removed or when the board closes. The recording’s details
+link to boards shown during the meeting. For a recurring meeting, choose a board on the call link.
+
 ## For app authors
 
 An app adds to BasicComms through four seams. None needs a copy of a BasicComms screen.

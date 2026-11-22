@@ -13,6 +13,26 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="create" noun="WikiBoard">
+        <description>Create a blank board in the chosen writable wiki space, or in the current user's notes.</description>
+        <in-parameters><parameter name="wikiSpaceId"/><parameter name="pageName" required="true"/></in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions>
+            <if condition="!wikiSpaceId"><service-call name="org.moqui.resource.WikiServices.ensure#UserNotesSpace" in-map="{}" out-map="space"/>
+                <set field="wikiSpaceId" from="space.wikiSpaceId"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" in-map="{wikiSpaceId}" out-map="access"/>
+            <if condition="!access.canUpdate || access.readOnly"><return error="true" message="You may not create a board here"/></if>
+            <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="spaceRow" for-update="true"/>
+            <set field="pageName" from="String(pageName).trim().normalize('NFC')"/>
+            <if condition="!pageName || pageName === wikiSpaceId"><return error="true" message="Choose a board name"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageFile" out-map="existing"
+                    in-map="{rootPageLocation:spaceRow.rootPageLocation, pagePath:pageName}"/>
+            <if condition="existing.pageReference?.exists"><return error="true" message="A page with this name already exists"/></if>
+            <service-call name="org.moqui.resource.WikiServices.update#WikiPage" out-map="saved"
+                    in-map="{wikiSpaceId, pageName, wikiType:'excalidraw', pageText:JSON.stringify({type:'excalidraw',version:2,elements:[],appState:{},files:{}})}"/>
+            <set field="wikiPageId" from="saved.wikiPageId"/>
+        </actions>
+    </service>
     <service verb="get" noun="WikiPageInfoById">
         <in-parameters><parameter name="wikiPageId"/></in-parameters>
         <out-parameters>
@@ -892,7 +912,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- a page by its id is in its own space, which is the one read, checked and written -->
             <if condition="wikiPageId">
-                <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="wikiPage" cache="false"/>
+                <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="wikiPage" for-update="true" cache="false"/>
                 <if condition="wikiPage == null"><return error="true" message="Page not found"/></if>
                 <set field="wikiSpaceId" from="wikiPage.wikiSpaceId"/>
             </if>
@@ -922,7 +942,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <if condition="pagePath.split('/').some((part) => part == '.' || part == '..')">
                     <return error="true" message="A page path has no . or .. in it"/></if>
                 <!-- by the exact path: a path that is only an alias of a moved page is a new page here, which takes the path -->
-                <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList">
+                <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList" for-update="true">
                     <econdition field-name="wikiSpaceId"/><econdition field-name="pagePath" from="pagePath || null"/></entity-find>
                 <set field="wikiPage" from="wikiPageList?.length ? wikiPageList[0] : null"/>
                 <!-- no page at the path yet: a lock on a missing row locks nothing, so two first saves at once (two tabs, an
@@ -2142,6 +2162,16 @@ along with this software (see the LICENSE.md file). If not, see
                     canAdmin = true
                     return
                 }
+                const room = ec.entity.find('moqui.chat.ChatRoom').condition('wikiSpaceId',wikiSpaceId).one()
+                if (room) {
+                    const rights = userId && ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess')
+                        .parameters({chatRoomId:room.chatRoomId,userId}).call()
+                    canView = !!rights?.isMember && !rights.member?.leftDate
+                    readOnly = !!room.archivedDate
+                    canUpdate = canView && !!rights.canPost && !readOnly
+                    canAdmin = canUpdate && !!rights.canModerate
+                    return
+                }
                 const spaceUser = userId ? ec.entity.find('moqui.resource.wiki.WikiSpaceUser').condition({wikiSpaceId: wikiSpaceId, userId: userId}).one() : null
                 const pageUser = page && userId ? ec.entity.find('moqui.resource.wiki.WikiPageUser').condition({wikiPageId: page.wikiPageId, userId: userId}).one() : null
                 const adminGroup = !!userId && (current ? ec.user.isInGroup('ADMIN') : ec.entity.find('moqui.security.UserGroupMember')
@@ -2181,14 +2211,24 @@ along with this software (see the LICENSE.md file). If not, see
                 const adminGroup = !!userId && (current ? ec.user.isInGroup('ADMIN') : ec.entity.find('moqui.security.UserGroupMember')
                         .condition({userGroupId: 'ADMIN', userId: userId})
                         .condition(ec.entity.conditionFactory.makeConditionDate('fromDate', 'thruDate', null)).count() > 0)
-                if ((!userId && authzOff) || adminGroup) {
+                if (!userId && authzOff) {
                     viewSpaceIdList = spaces.map((space) => space.wikiSpaceId)
                     return
                 }
                 const memberSpaces = new Set(userId ? Array.from(ec.entity.find('moqui.resource.wiki.WikiSpaceUser').condition('userId', userId).list())
                         .filter((row) => row.allowView === 'Y' || row.allowAdmin === 'Y').map((row) => row.wikiSpaceId) : [])
-                viewSpaceIdList = spaces.filter((space) => space.restrictView !== 'Y' || memberSpaces.has(space.wikiSpaceId))
+                const roomSpaces = new Map(Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('wikiSpaceId','is-not-null',null)
+                    .selectField('chatRoomId').selectField('wikiSpaceId').list(), r => [r.wikiSpaceId,r.chatRoomId]))
+                const memberships = new Set(userId ? Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition({userId,leftDate:null})
+                    .selectField('chatRoomId').list(),r => r.chatRoomId) : [])
+                viewSpaceIdList = spaces.filter(space => {
+                    const roomId = roomSpaces.get(space.wikiSpaceId)
+                    if (!roomId) return adminGroup || space.restrictView !== 'Y' || memberSpaces.has(space.wikiSpaceId)
+                    return memberships.has(roomId) && ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess')
+                        .parameters({chatRoomId:roomId,userId}).call().isMember
+                })
                         .map((space) => space.wikiSpaceId)
+                if (adminGroup) return
                 const viewPages = new Set(userId ? Array.from(ec.entity.find('moqui.resource.wiki.WikiPageUser')
                         .condition({userId: userId, allowView: 'Y'}).list()).map((row) => row.wikiPageId) : [])
                 hiddenPageIdList = Array.from(ec.entity.find('moqui.resource.wiki.WikiPage').condition('restrictView', 'Y')

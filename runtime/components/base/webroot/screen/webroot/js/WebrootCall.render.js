@@ -1472,7 +1472,7 @@
               }, null, 512))
             }
         } },
-        "m-call-compact": { hash: "49b58584", make: function (Vue) {
+        "m-call-compact": { hash: "15bde4b7", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, vShow: _vShow, withDirectives: _withDirectives, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective } = Vue
 
             return function render(_ctx, _cache) {
@@ -1632,7 +1632,7 @@
                   [_vShow, !_ctx.call.hostPip]
                 ]),
                 _createVNode(_component_m_call_presentation, { view: _ctx.view }, null, 8, ["view"]),
-                (!(_ctx.call.stage.kind === 'screen' && _ctx.call.stage.callLegId !== _ctx.call.legId))
+                (_ctx.call.stage.kind !== 'board' && !(_ctx.call.stage.kind === 'screen' && _ctx.call.stage.callLegId !== _ctx.call.legId))
                   ? (_openBlock(), _createElementBlock("div", {
                       key: 1,
                       class: "col relative-position m-call-stage",
@@ -3087,8 +3087,8 @@
               ]))
             }
         } },
-        "m-call-presentation": { hash: "8a638e0d", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
+        "m-call-presentation": { hash: "a458602f", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_btn = _resolveComponent("q-btn")
@@ -3097,6 +3097,13 @@
               const _component_q_list = _resolveComponent("q-list")
               const _component_q_btn_dropdown = _resolveComponent("q-btn-dropdown")
               const _component_q_toggle = _resolveComponent("q-toggle")
+              const _component_m_whiteboard = _resolveComponent("m-whiteboard")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_card_actions = _resolveComponent("q-card-actions")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
               const _component_m_call_video = _resolveComponent("m-call-video")
               const _directive_close_popup = _resolveDirective("close-popup")
 
@@ -3119,9 +3126,20 @@
                         onClick: $event => (_ctx.mine ? _ctx.stop() : _ctx.command('stop'))
                       }, null, 8, ["label", "onClick"]))
                     : _createCommentVNode("", true),
-                  (_ctx.supported && !_ctx.mine && !_ctx.pending.includes(_ctx.call.legId))
+                  (!_ctx.guest)
                     ? (_openBlock(), _createBlock(_component_q_btn, {
                         key: 2,
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_draw",
+                        disable: !_ctx.host && _ctx.call.shareMode==='CsmHosts',
+                        label: _ctx.t('Whiteboard'),
+                        onClick: _ctx.boardPicker
+                      }, null, 8, ["disable", "label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.supported && (!_ctx.mine || (_ctx.boardId && !_ctx.call.sharing)) && !_ctx.pending.includes(_ctx.call.legId))
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 3,
                         flat: "",
                         dense: "",
                         icon: "sym_o_present_to_all",
@@ -3132,7 +3150,7 @@
                     : _createCommentVNode("", true),
                   (_ctx.pending.includes(_ctx.call.legId))
                     ? (_openBlock(), _createBlock(_component_q_btn, {
-                        key: 3,
+                        key: 4,
                         flat: "",
                         dense: "",
                         label: _ctx.t('Cancel presentation request'),
@@ -3141,7 +3159,7 @@
                     : _createCommentVNode("", true),
                   (_ctx.host)
                     ? (_openBlock(), _createBlock(_component_q_btn_dropdown, {
-                        key: 4,
+                        key: 5,
                         flat: "",
                         dense: "",
                         label: _ctx.t('Who can present')
@@ -3177,8 +3195,210 @@
                       }, 8, ["label"]))
                     : _createCommentVNode("", true)
                 ]),
+                (_ctx.boardId)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 0,
+                      class: "m-meeting-board"
+                    }, [
+                      _createElementVNode("div", { class: "row items-center q-gutter-xs" }, [
+                        _createElementVNode("span", { class: "text-subtitle2" }, _toDisplayString(_ctx.t('Whiteboard')), 1),
+                        (!_ctx.mine)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 0,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.followBoard?_ctx.t('Stop following'):_ctx.t('Follow again'),
+                              onClick: $event => (_ctx.followBoard=!_ctx.followBoard)
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.mine && _ctx.call.sharing)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 1,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.t('Switch to screen'),
+                              onClick: $event => (_ctx.ask('screen'))
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.mine || _ctx.host)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 2,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.t('Close board'),
+                              onClick: $event => (_ctx.command('stop'))
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.host)
+                          ? (_openBlock(), _createBlock(_component_q_btn_dropdown, {
+                              key: 3,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.t('Who can draw')
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_list, { dense: "" }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item, null, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_toggle, {
+                                          label: _ctx.t('Members'),
+                                          "model-value": _ctx.call.stage.memberCanEdit!==false,
+                                          "onUpdate:modelValue": v=>_ctx.drawing('memberCanEdit',v)
+                                        }, null, 8, ["label", "model-value", "onUpdate:modelValue"])
+                                      ]),
+                                      _: 1
+                                    }),
+                                    _createVNode(_component_q_item, null, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_toggle, {
+                                          label: _ctx.t('Guests'),
+                                          "model-value": _ctx.call.stage.guestCanEdit!==false,
+                                          "onUpdate:modelValue": v=>_ctx.drawing('guestCanEdit',v)
+                                        }, null, 8, ["label", "model-value", "onUpdate:modelValue"])
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                })
+                              ]),
+                              _: 1
+                            }, 8, ["label"]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      (_ctx.view && _ctx.view.e2ee)
+                        ? (_openBlock(), _createElementBlock("p", {
+                            key: 0,
+                            class: "text-caption"
+                          }, _toDisplayString(_ctx.t('Not end-to-end encrypted: the server stores this board')), 1))
+                        : _createCommentVNode("", true),
+                      (_openBlock(), _createBlock(_component_m_whiteboard, {
+                        key: _ctx.boardId,
+                        ref: "stageBoard",
+                        stage: "",
+                        "wiki-page-id": _ctx.boardId,
+                        "leg-id": _ctx.call.legId,
+                        "meeting-id": _ctx.call.current,
+                        "read-only": _ctx.guest ? _ctx.call.stage.guestCanEdit===false : _ctx.call.stage.memberCanEdit===false,
+                        "socket-client": _ctx.boardClient(),
+                        "guest-files": _ctx.guest ? _ctx.guest.files : null,
+                        "user-name": _ctx.guest ? _ctx.guest.name : undefined,
+                        "files-url": _ctx.boardFileUrl(),
+                        "upload-url": _ctx.boardUploadUrl(),
+                        follow: !_ctx.mine && _ctx.followBoard ? _ctx.owner : undefined,
+                        onUnfollow: $event => (_ctx.followBoard=false)
+                      }, null, 8, ["wiki-page-id", "leg-id", "meeting-id", "read-only", "socket-client", "guest-files", "user-name", "files-url", "upload-url", "follow", "onUnfollow"]))
+                    ]))
+                  : _createCommentVNode("", true),
+                _createVNode(_component_q_dialog, {
+                  modelValue: _ctx.picker,
+                  "onUpdate:modelValue": $event => ((_ctx.picker) = $event)
+                }, {
+                  default: _withCtx(() => [
+                    _createVNode(_component_q_card, { style: {"width":"min(30rem,95vw)"} }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_card_section, null, {
+                          default: _withCtx(() => [
+                            _createElementVNode("h2", { class: "text-h6 q-my-none" }, _toDisplayString(_ctx.t('Meeting boards')), 1),
+                            (_ctx.view && _ctx.view.e2ee)
+                              ? (_openBlock(), _createElementBlock("p", {
+                                  key: 0,
+                                  class: "text-caption"
+                                }, _toDisplayString(_ctx.t('Not end-to-end encrypted: the server stores this board')), 1))
+                              : _createCommentVNode("", true),
+                            _createVNode(_component_q_list, { dense: "" }, {
+                              default: _withCtx(() => [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.boardList, (b) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: b.wikiPageId,
+                                    clickable: "",
+                                    onClick: $event => {_ctx.selectedBoard=b.wikiPageId;_ctx.showBoard(false)}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, { name: "sym_o_draw" })
+                                        ]),
+                                        _: 1
+                                      }),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(b.title), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["onClick"]))
+                                }), 128))
+                              ]),
+                              _: 1
+                            }),
+                            _createElementVNode("form", {
+                              class: "row q-gutter-xs q-mt-sm",
+                              onSubmit: _withModifiers($event => (_ctx.showBoard(false)), ["prevent"])
+                            }, [
+                              _createVNode(_component_q_input, {
+                                dense: "",
+                                outlined: "",
+                                class: "col",
+                                modelValue: _ctx.selectedBoard,
+                                "onUpdate:modelValue": $event => ((_ctx.selectedBoard) = $event),
+                                label: _ctx.t('Existing board ID')
+                              }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                label: _ctx.t('Present board'),
+                                type: "submit",
+                                disable: !_ctx.selectedBoard.trim() || _ctx.boardBusy
+                              }, null, 8, ["label", "disable"])
+                            ], 40, ["onSubmit"]),
+                            (_ctx.boardCanCreate)
+                              ? (_openBlock(), _createElementBlock("form", {
+                                  key: 1,
+                                  class: "row q-gutter-xs q-mt-sm",
+                                  onSubmit: _withModifiers($event => (_ctx.showBoard(true)), ["prevent"])
+                                }, [
+                                  _createVNode(_component_q_input, {
+                                    dense: "",
+                                    outlined: "",
+                                    class: "col",
+                                    modelValue: _ctx.boardName,
+                                    "onUpdate:modelValue": $event => ((_ctx.boardName) = $event),
+                                    label: _ctx.t('Board name')
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                  _createVNode(_component_q_btn, {
+                                    color: "primary",
+                                    unelevated: "",
+                                    type: "submit",
+                                    label: _ctx.t('New board'),
+                                    disable: !_ctx.boardName.trim() || _ctx.boardBusy
+                                  }, null, 8, ["label", "disable"])
+                                ], 40, ["onSubmit"]))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _: 1
+                        }),
+                        _createVNode(_component_q_card_actions, { align: "right" }, {
+                          default: _withCtx(() => [
+                            _withDirectives(_createVNode(_component_q_btn, {
+                              flat: "",
+                              label: _ctx.t('Close')
+                            }, null, 8, ["label"]), [
+                              [_directive_close_popup]
+                            ])
+                          ]),
+                          _: 1
+                        })
+                      ]),
+                      _: 1
+                    })
+                  ]),
+                  _: 1
+                }, 8, ["modelValue", "onUpdate:modelValue"]),
                 (_ctx.host)
-                  ? (_openBlock(true), _createElementBlock(_Fragment, { key: 0 }, _renderList(_ctx.pending, (leg) => {
+                  ? (_openBlock(true), _createElementBlock(_Fragment, { key: 1 }, _renderList(_ctx.pending, (leg) => {
                       return (_openBlock(), _createElementBlock("div", {
                         key: leg,
                         class: "row items-center q-gutter-xs"
@@ -3201,7 +3421,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.mine && !_ctx.call.sharing)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 1,
+                      key: 2,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_toggle, {
@@ -3226,7 +3446,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.stream)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 2,
+                      key: 3,
                       ref: "viewport",
                       class: _normalizeClass(["m-present-viewport relative-position", {'m-present-preview':_ctx.mine}]),
                       style: _normalizeStyle({height:_ctx.mine?'8rem':'min(58dvh,48rem)',maxWidth:_ctx.mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}),
@@ -3245,7 +3465,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.stream && !_ctx.mine)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 3,
+                      key: 4,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -3271,7 +3491,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.tabControls)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 4,
+                      key: 5,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -3298,7 +3518,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.notice)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 5,
+                      key: 6,
                       role: "status",
                       class: "text-caption"
                     }, _toDisplayString(_ctx.notice), 1))

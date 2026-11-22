@@ -25,6 +25,21 @@ along with this software (see the LICENSE.md file). If not, see
 
     <subscreens default-item="History"/>
 
+    <transition name="boardDrawing" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.call.CallServices.set#BoardDrawing').parameters({callSessionId,wikiPageId,memberCanEdit,guestCanEdit}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="createMeetingBoard" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.call.CallServices.create#MeetingBoard').parameters({callSessionId,pageName}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="meetingBoards" method="get" read-only="true"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.call.CallServices.find#MeetingBoards').parameters({callSessionId}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
     <transition name="startCall">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.call.CallServices.start#Call').parameters({calleeUserIdList: calleeUserIdList ? (Array.isArray(calleeUserIdList) ? calleeUserIdList : String(calleeUserIdList).split(',')) : null,
@@ -148,7 +163,7 @@ along with this software (see the LICENSE.md file). If not, see
     ]]></script></actions><default-response type="none"/></transition>
     <transition name="createCallLink">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.call.CallServices.create#CallLink').parameters({name: name || '', chatRoomId: chatRoomId || null, policy: policy === 'link' ? 'link' : 'lobby', shareModeEnumId:shareModeEnumId || null,
+            const out = ec.service.sync().name('org.moqui.call.CallServices.create#CallLink').parameters({name: name || '', chatRoomId: chatRoomId || null, policy: policy === 'link' ? 'link' : 'lobby', wikiPageId:wikiPageId || null, shareModeEnumId:shareModeEnumId || null,
                 video: String(video) !== 'false', expiryHours: expiryHours ? Number(expiryHours) : null,
                 requireE2ee: typeof requireE2ee !== 'undefined' && String(requireE2ee) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null

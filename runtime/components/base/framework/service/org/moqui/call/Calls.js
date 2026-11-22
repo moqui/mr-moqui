@@ -610,6 +610,7 @@ function endSession(session, reason, keepRoom) {
   const now = ec.user.nowTimestamp
   // a recording stops first, so the legs closing below do not resume it
   recordingChange(session.callSessionId, 'ended')
+  ec.resource.script('component://framework/service/org/moqui/call/CallBoards.js').finish(session)
   for (const leg of legsOf(session.callSessionId)) {
     if (leg.statusId === 'ClsAnswered') {
       closeLeg(leg, 'ClsLeft', reason)
@@ -1669,11 +1670,13 @@ function createLink(p) {
     if (!access?.canPost) return refuse('notFound', 'Chat room not found')
   }
   const hours = Math.min(Math.max(Number(p.expiryHours) || LINK_HOURS, 1), LINK_MAX_HOURS)
+  if (p.wikiPageId && !ec.resource.script('component://framework/service/org/moqui/call/CallBoards.js').readable(p.wikiPageId))
+    return refuse('notFound','Board not found')
   const token = ec.user.randomString(32)
   const link = ec.entity.makeValue(LINK)
   link.setSequencedIdPrimary()
   link.setFields({
-    tokenHash: ec.user.singleUseCodeHash(token), name, ownerUserId: me, chatRoomId, shareModeEnumId:p.shareModeEnumId || 'CsmAnyone',
+    wikiPageId:p.wikiPageId || null, tokenHash: ec.user.singleUseCodeHash(token), name, ownerUserId: me, chatRoomId, shareModeEnumId:p.shareModeEnumId || 'CsmAnyone',
     policyEnumId: p.policy === 'link' ? 'ClpLink' : 'ClpLobby', video: p.video === false || p.video === 'false' ? 'N' : 'Y',
     createdDate: ec.user.nowTimestamp, expiryDate: new Date(nowMs() + hours * 3600000),
     e2eeRequired: truthy(p.requireE2ee) || roomRequiresE2ee(chatRoomId) ? 'Y' : 'N',
@@ -1688,7 +1691,7 @@ function linkView(link) {
   const waiting = active ? find(PARTICIPANT).condition('callSessionId', active.callSessionId)
     .condition('admissionStatusId', 'CasWaiting').count() : 0
   return {
-    callLinkId: link.callLinkId, name: link.name, shareModeEnumId:link.shareModeEnumId || 'CsmAnyone', policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby',
+    callLinkId: link.callLinkId, name: link.name, wikiPageId:link.wikiPageId || null, shareModeEnumId:link.shareModeEnumId || 'CsmAnyone', policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby',
     video: link.video !== 'N', chatRoomId: link.chatRoomId || null, createdDate: ms(link.createdDate),
     expiryDate: ms(link.expiryDate), lastUsedDate: ms(link.lastUsedDate), callSessionId: active ? active.callSessionId : null,
     waitingCount: waiting, e2ee: link.e2eeRequired === 'Y',
@@ -1706,18 +1709,20 @@ function findLinks() {
 
 /** A guest leaves the call: their credential ends and their legs close. Removed (CerRemoved), they cannot come back. */
 function revokeGuest(guest, reason) {
+  // Every exit holds the session before changing a guest or their participant.
+  // The last member and guest may leave the same call at the same time.
+  const participant = one(PARTICIPANT, { callGuestId: guest.callGuestId })
+  const session = participant ? lockSession(participant.callSessionId) : null
   const now = ec.user.nowTimestamp
   if (!guest.revokedDate) {
     guest.set('revokedDate', now)
     guest.update()
   }
-  const participant = one(PARTICIPANT, { callGuestId: guest.callGuestId })
   if (!participant) return
   if (reason === 'CerRemoved' && !['CasRevoked', 'CasDenied'].includes(participant.admissionStatusId)) {
     participant.setFields({ admissionStatusId: 'CasRevoked', revokedDate: now }, true, null, null)
     participant.update()
   }
-  const session = lockSession(participant.callSessionId)
   if (!session || session.statusId === 'CssEnded') return
   for (const leg of rows(LEG, { callParticipantId: participant.callParticipantId })) {
     if (leg.statusId === 'ClsAnswered') {
@@ -1801,6 +1806,15 @@ function openLink(p) {
   if (!session) return refuse('mediaUnavailable', 'Calls are not available: no media server is running')
   const joined = join({ callSessionId: session.callSessionId, cryptoDeviceId: p.cryptoDeviceId || null,
     scriptTransform: p.scriptTransform != null ? p.scriptTransform : null, deferDevice: true })
+  if (joined.callLegId && link.wikiPageId && !stageRules.read(session).kind &&
+      !one('moqui.call.CallBoard',{callSessionId:session.callSessionId,wikiPageId:link.wikiPageId})) {
+    if (stageRules.recurring(session, joined.callLegId, link.wikiPageId)) {
+      bump(session)
+      session.update()
+      publishStage(session)
+      joined.call = view(session,me)
+    }
+  }
   return Object.assign({ callSessionId: session.callSessionId }, joined)
 }
 
@@ -2850,6 +2864,13 @@ function setPreferences(p) {
 }
 
 const operations = {
+  meetingBoards: p => ec.resource.script('component://framework/service/org/moqui/call/CallBoards.js').list(p),
+  createMeetingBoard: p => ec.resource.script('component://framework/service/org/moqui/call/CallBoards.js').create(p),
+  boardDrawing: p => ec.resource.script('component://framework/service/org/moqui/call/CallBoards.js').drawing(p,{bump,publishStage}),
+  guestBoardIdentity: p => {
+    const g = guestOf(p.credential)
+    return g ? {callGuestId:g.guest.callGuestId,callSessionId:g.participant.callSessionId,callLinkId:g.guest.callLinkId} : {}
+  },
   changeStage: p => stageRules.change(p, { lockSession, guestOf, mediaControl, bump, refuse, linkOwner }),
   preferences, setPreferences, setShareMode,
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,

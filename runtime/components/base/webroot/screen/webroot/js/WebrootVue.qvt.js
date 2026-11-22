@@ -8256,7 +8256,26 @@
             }
         }
     });
-    component("m-chatter", recordPanel("chatter", "mChatter"));
+    component("m-record-boards", {
+        name:"mRecordBoards",
+        props:{record:Object},
+        data() {return {boards:[],load:0};},
+        watch:{record:{immediate:true, async handler(record) {
+            const serial=++this.load;
+            this.boards=[];
+            if (!moqui.call || !record.recordEntity || !record.recordId) return;
+            try {
+                const response=await moqui.request(moqui.call.base().replace(/Calls$/,"Chat/recordBoards"),
+                    {method:"GET",params:{recordEntityName:record.recordEntity,recordId:record.recordId}});
+                if (serial===this.load) this.boards=response.json.boards || [];
+            } catch (_) { /* The chatter's other entries remain usable if the room is unavailable. */ }
+        }}},
+        methods:{open(id) {moqui.openLink(moqui.call.appRoot()+"/Boards/Board?wikiPageId="+encodeURIComponent(id));}},
+        template:'<div v-if="boards.length" class="row items-center q-gutter-xs m-record-boards"><q-btn v-for="b in boards" :key="b.wikiPageId" flat dense icon="sym_o_draw" :label="b.title" @click="open(b.wikiPageId)"/></div>'
+    });
+    const chatterPanel=recordPanel("chatter", "mChatter");
+    chatterPanel.template=chatterPanel.template.replace("</div>", '<m-record-boards :record="record"></m-record-boards></div>');
+    component("m-chatter", chatterPanel);
     component("m-record-files", recordPanel("recordFiles", "mRecordFiles"));
 
     // An avatar (design §19): the face image, else the initials of the name on a color of the name, else a person icon. The

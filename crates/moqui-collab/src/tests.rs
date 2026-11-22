@@ -777,3 +777,46 @@ fn board_versions_keep_the_scene_while_the_search_snapshot_has_its_words() {
     super::leave_as(&key, Some("artist"));
     super::tick();
 }
+
+#[test]
+fn a_dirty_room_cannot_recreate_a_deleted_document() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "retired");
+    login("retired");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("REMOVE")),
+            ("description", Value::string("Removed room")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("REMOVE")),
+            ("pageName", Value::string("Sketch")),
+            ("pageText", Value::string("Before")),
+        ],
+    );
+    let page_id = to_plain_string(&page["wikiPageId"]);
+    let key = format!("WikiPage:{page_id}");
+    let joined = super::join(&key, "retired", &[]).unwrap();
+    super::apply(&key, "retired", &type_paragraph(&client(&joined), "Unflushed")).unwrap();
+    let room = super::room_of(&key).unwrap();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    facade
+        .find(super::COLLAB_DOCUMENT)
+        .unwrap()
+        .eq("documentKey", Value::string(&key))
+        .delete_all()
+        .unwrap();
+    // The deleting transaction has dropped the document. A worker that had
+    // retained the room before the next tick must not insert its snapshot again.
+    assert!(super::flush(&key, &room).is_err());
+    super::tick();
+    assert!(super::room_of(&key).is_none());
+    assert!(super::stored(&key).unwrap().is_none());
+    assert!(super::take_events().iter().any(|event| matches!(event, super::Event::Revoked {document_key,user_id} if document_key == &key && user_id == "retired")));
+}

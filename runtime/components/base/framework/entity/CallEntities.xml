@@ -287,6 +287,14 @@ along with this software (see the LICENSE.md file). If not, see
         </seed-data>
     </entity>
 
+    <entity entity-name="CallBoard" package="moqui.call" use="transactional" cache="never">
+        <field name="callSessionId" type="id" is-pk="true"/><field name="wikiPageId" type="id" is-pk="true"/>
+        <field name="openedByUserId" type="id"/><field name="openedDate" type="date-time"/><field name="closedDate" type="date-time"/>
+        <field name="memberCanEdit" type="text-indicator"/><field name="guestCanEdit" type="text-indicator"/>
+        <relationship type="one" related="moqui.call.CallSession"/>
+        <relationship type="one-nofk" related="moqui.resource.wiki.WikiPage"/>
+        <index name="CALL_BOARD_PAGE"><index-field name="wikiPageId"/><index-field name="closedDate"/></index>
+    </entity>
     <entity entity-name="CallLink" package="moqui.call" use="transactional" cache="never">
         <description>A link to a meeting, for people with no account (W3): /call/&lt;token&gt;. Only the token's hash is kept
             (the token is shown once, when the link is made). policyEnumId: ClpLobby, a guest waits until someone in the call
@@ -298,6 +306,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="ownerUserId" type="id"/>
         <field name="chatRoomId" type="id"/>
         <field name="shareModeEnumId" type="id" default="CsmAnyone"/>
+        <field name="wikiPageId" type="id"><description>The recurring board of this meeting link</description></field>
         <field name="policyEnumId" type="id"/>
         <field name="video" type="text-indicator"/>
         <field name="createdDate" type="date-time"/>

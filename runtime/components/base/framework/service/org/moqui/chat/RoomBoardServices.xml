@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="ensure" noun="ChatRoomSpace">
+        <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
+        <out-parameters><parameter name="wikiSpaceId"/></out-parameters>
+        <actions>
+            <entity-find-one entity-name="moqui.chat.ChatRoom" value-field="room" for-update="true" cache="false"/>
+            <service-call name="org.moqui.chat.ChatServices.get#RoomAccess" in-map="{chatRoomId}" out-map="access"/>
+            <if condition="!access.isMember || !access.canPost || access.member?.leftDate"><return error="true" message="Join an active room to add boards"/></if>
+            <set field="wikiSpaceId" from="room.wikiSpaceId"/>
+            <if condition="!wikiSpaceId">
+                <script>wikiSpaceId = 'R' + Number(ec.entity.sequencedIdPrimary('ChatRoomWikiSpace',0,1)).toString(36).toUpperCase().padStart(2,'0')</script>
+                <service-call name="org.moqui.resource.WikiServices.create#WikiSpace" in-map="{wikiSpaceId,description:room.roomName || 'Room boards',restrictView:'Y',restrictUpdate:'Y',addCreator:false}"/>
+                <if condition="ec.message.hasError()"><return/></if>
+                <set field="room.wikiSpaceId" from="wikiSpaceId"/><entity-update value-field="room"/>
+            </if>
+        </actions>
+    </service>
+    <service verb="find" noun="RoomBoards">
+        <in-parameters><parameter name="chatRoomId" required="true"/></in-parameters>
+        <out-parameters><parameter name="boards" type="List"/><parameter name="canCreate" type="Boolean"/></out-parameters>
+        <actions>
+            <set field="boards" from="[]"/>
+            <service-call name="org.moqui.chat.ChatServices.get#RoomAccess" in-map="{chatRoomId}" out-map="access"/>
+            <if condition="!access.isMember || access.member?.leftDate"><return/></if>
+            <set field="canCreate" from="access.canPost"/>
+            <entity-find-one entity-name="moqui.chat.ChatRoom" value-field="room"/>
+            <if condition="!room.wikiSpaceId"><return/></if>
+            <entity-find entity-name="moqui.resource.wiki.WikiPage" list="pages">
+                <econdition field-name="wikiSpaceId" from="room.wikiSpaceId"/><order-by field-name="-lastUpdatedStamp"/>
+            </entity-find>
+            <script><![CDATA[
+                for (const page of pages) {
+                    const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo').parameter('wikiPageId',page.wikiPageId).call()
+                    if (!ec.message.hasError() && info.wikiType === 'excalidraw') boards.push({wikiPageId:page.wikiPageId,title:info.pageName,
+                        hasPreview:(info.attachmentList || []).some(a => a.filename === '_board.svg')})
+                    else if (ec.message.hasError()) {
+                        ec.logger.warn('Cannot list board '+page.wikiPageId+': '+ec.message.errorsString)
+                        ec.message.clearErrors()
+                    }
+                }
+            ]]></script>
+        </actions>
+    </service>
+    <service verb="post" noun="RoomBoard" allow-remote="false">
+        <in-parameters><parameter name="chatRoomId" required="true"/><parameter name="wikiPageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="eventSeq" type="Integer"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.chat.ChatServices.get#RoomAccess" in-map="{chatRoomId}" out-map="access"/>
+            <if condition="!access.isMember || !access.canPost || access.member?.leftDate"><return error="true" message="You may not post here"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageInfo" in-map="{wikiPageId}" out-map="page"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="page.wikiType !== 'excalidraw'"><return error="true" message="Board not found"/></if>
+            <!-- Creating a meeting board and putting it on stage immediately describe the same board. -->
+            <entity-find-one entity-name="moqui.chat.ChatRoom" value-field="lockedRoom" for-update="true"/>
+            <script><![CDATA[
+                const latest = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId',chatRoomId).orderBy('-eventSeq').limit(1).list()[0]
+                if (latest?.eventTypeEnumId === 'CetBoard' && latest.senderUserId === ec.user.userId &&
+                        JSON.parse(latest.contentJson || '{}').wikiPageId === wikiPageId) eventSeq = latest.eventSeq
+            ]]></script>
+            <if condition="eventSeq"><return/></if>
+            <service-call name="org.moqui.chat.ChatServices.append#Event" in-map="{chatRoomId,eventTypeEnumId:'CetBoard',
+                senderUserId:ec.user.userId,content:{wikiPageId,title:page.pageName}}" out-map="eventOut"/>
+            <set field="eventSeq" from="eventOut.eventSeq"/>
+        </actions>
+    </service>
+    <service verb="create" noun="RoomBoard">
+        <in-parameters><parameter name="chatRoomId" required="true"/><parameter name="pageName" required="true"/></in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.chat.RoomBoardServices.ensure#ChatRoomSpace" in-map="{chatRoomId}" out-map="space"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <service-call name="org.moqui.resource.WikiServices.create#WikiBoard" in-map="{wikiSpaceId:space.wikiSpaceId,pageName}" out-map="created"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <set field="wikiPageId" from="created.wikiPageId"/>
+            <service-call name="org.moqui.chat.RoomBoardServices.post#RoomBoard" in-map="{chatRoomId,wikiPageId}"/>
+        </actions>
+    </service>
+</services>

@@ -1274,15 +1274,16 @@
                     // the answer to an earlier join of this page (its pc is closed): not this pc's
                     if (frame.id != null && call.joinId != null && frame.id !== call.joinId) return null;
                     call.generation = frame.generation;
+                    call.stageFrame(frame);
                     if (frame.direct) return call.onDirectJoined(frame);
                     return pc.setRemoteDescription({ type: "answer", sdp: call.withDtx(frame.sdp) }).then(() => {
                         call.pendingOffer = false;
                         (call.early || []).forEach((early) => call.send(early));
                         call.early = null;
                         if (call.afterRelayStage?.callSessionId === state.current) {
-                            const prev = call.afterRelayStage.previous;
+                            const {previous:prev,kind,wikiPageId} = call.afterRelayStage;
                             call.afterRelayStage = null;
-                            call.stageCommand(prev && state.shareMode !== "CsmAsk" ? "take" : "ask", {previousLegId:prev || undefined});
+                            call.stageCommand(prev && state.shareMode !== "CsmAsk" ? "take" : "ask", {previousLegId:prev || undefined,kind,wikiPageId});
                         }
                         (call.publish || []).forEach((p) =>
                             call.send({ rtc: "publish", callSessionId: state.current, callLegId: state.legId, mid: p.mid, source: p.source }));
@@ -1466,13 +1467,17 @@
             state.stageRevision = frame.revision;
             state.stage = frame.stage;
             state.shareMode = frame.shareModeEnumId || state.shareMode;
-            if (state.stage.callLegId !== state.legId || state.stage.kind !== "screen") {
+            if (state.stage.callLegId === state.legId && state.sharing && call.screenStream) {
+                const onStage = state.stage.kind === "screen";
+                call.screenStream.getTracks().forEach(track=>{ track.enabled=onStage; });
+            }
+            if (state.stage.callLegId !== state.legId || !["screen","board"].includes(state.stage.kind)) {
                 call.captureEpoch++;
                 if (state.sharing || call.screenStream) call.stopShare(false);
             }
             call.chooseLayers();
         },
-        async requestPresentation() {
+        async requestPresentation(kind = "screen", wikiPageId) {
             const prev = state.stage.callLegId;
             const view = state.calls[state.current];
             const host = !!view && view.participants.some(p => p.userId && p.userId === call.me && p.role === "host");
@@ -1482,11 +1487,11 @@
                 if (!ok || prev !== state.stage.callLegId) return;
             }
             if (call.direct) {
-                call.afterRelayStage = {callSessionId:state.current, previous:prev};
+                call.afterRelayStage = {callSessionId:state.current, previous:prev,kind,wikiPageId};
                 await call.toRelay("share");
                 return;
             }
-            call.stageCommand(prev && (host || state.shareMode !== "CsmAsk") ? "take" : "ask", {previousLegId:prev || undefined});
+            call.stageCommand(prev && (host || state.shareMode !== "CsmAsk") ? "take" : "ask", {previousLegId:prev || undefined,kind,wikiPageId});
         },
         captureOptions(surface, motion, controller) {
             const tab = surface === "tab";
@@ -1694,12 +1699,21 @@
             const guest = call.openGuestSocket(options.credential);
             guest.iceServers = options.iceServers || null;
             guest.recording = options.recording || null;
+            guest.files = options.files; guest.name = options.name;
             call.guest = guest;
             return guest.ready.then(() => call.join(options.callSessionId, options.callLegId, { video: options.video, stream: options.stream }));
         },
         openGuestSocket(credential) {
             const scheme = root.location.protocol === "https:" ? "wss://" : "ws://";
             const guest = { socket: null, queue: [], open: false, closed: false, tries: 0 };
+            const listeners = new Map(), stateListeners = new Set();
+            guest.registerListener = (topic, fn) => {
+                if (!listeners.has(topic)) listeners.set(topic,new Set());
+                listeners.get(topic).add(fn);
+                return () => listeners.get(topic)?.delete(fn);
+            };
+            guest.onState = fn => {stateListeners.add(fn);return () => stateListeners.delete(fn);};
+            guest.isOpen = () => guest.open;
             let readyResolve = null;
             let readyReject = null;
             guest.ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
@@ -1710,10 +1724,15 @@
                 socket.onmessage = (event) => {
                     let frame = null;
                     try { frame = JSON.parse(event.data); } catch (err) { return; }
+                    if (guest.open && frame && typeof frame.topic === "string" && frame.topic.startsWith("collab:")) {
+                        listeners.get(frame.topic)?.forEach(fn=>fn(frame));
+                        return;
+                    }
                     if (!frame || !frame.rtc) return;
                     if (frame.rtc === "guestAuthed") {
                         const reconnect = guest.open === false && guest.tries > 0;
                         guest.open = true;
+                        stateListeners.forEach(fn=>fn("open"));
                         guest.queue.splice(0).forEach((text) => socket.send(text));
                         readyResolve();
                         if (reconnect && state.current) call.rejoin();
@@ -1729,6 +1748,7 @@
                 };
                 socket.onclose = () => {
                     guest.open = false;
+                    stateListeners.forEach(fn=>fn("closed"));
                     // a dropped socket comes back while the page is in the call: tried for a little over the minute the
                     // leg is kept (Calls.js RECONNECT_GRACE_MS), at most 5 s apart
                     if (!guest.closed && state.current && guest.tries < 15) {
@@ -1739,6 +1759,7 @@
                 };
             };
             guest.send = (frame) => {
+                if (frame.collab && !guest.open) return false;
                 const text = JSON.stringify(frame);
                 if (guest.open && guest.socket.readyState === 1) guest.socket.send(text);
                 else guest.queue.push(text);
@@ -2187,22 +2208,69 @@
     components["m-call-presentation"] = {
         name:"mCallPresentation",
         props:{view:Object},
-        data() { return {call:state,motion:false,scale:1,x:0,y:0,forward:false,notice:""}; },
+        data() { return {call:state,motion:false,scale:1,x:0,y:0,forward:false,notice:"",
+            picker:false,boardList:[],boardCanCreate:false,boardName:"",selectedBoard:"",boardBusy:false,followBoard:true}; },
         computed:{
             owner() { return this.call.stage.callLegId; },
             mine() { return !!this.owner && this.owner === this.call.legId; },
             pending() { return this.call.stage.requests || []; },
             host() { return !!this.view?.participants?.some(p => p.userId && p.userId === call.me && p.role === "host"); },
             sharing() { return this.call.stage.kind === "screen"; },
+            boardId() { return this.call.stage.kind === "board" ? this.call.stage.wikiPageId : null; },
+            guest() { return call.guest; },
             stream() { return this.mine ? (this.call.sharing && call.screenStream) : (this.owner && this.call.remotes[this.owner]?.screen); },
             supported() { return !!root.navigator?.mediaDevices?.getDisplayMedia; },
             tabControls() { return this.mine && this.call.capture?.surface === "tab" && !!call.captureController?.forwardWheel; },
             modes() { return [{value:"CsmAnyone",label:t("Anyone")},{value:"CsmHosts",label:t("Hosts only")},{value:"CsmAsk",label:t("Ask a host")}]; },
             presenter() { return this.mine ? t("You are presenting") : t("{name} is presenting").replace("{name}",call.nameOf(this.owner)); }
         },
-        watch:{owner() { this.fit(); this.forward=false; this.notice=""; }},
+        watch:{owner() { this.fit(); this.forward=false; this.notice=""; this.followBoard=true; }, boardId(){this.followBoard=true;}},
         methods:{
             t, name:call.nameOf, command:call.stageCommand, ask:call.requestPresentation, capture:call.shareScreen, stop:call.stopShare,
+            async boardPicker() {
+                const id=this.call.current;
+                try {
+                    const result=await call.request("meetingBoards",{callSessionId:id},"GET");
+                    if (this.call.current!==id || result.errors) return;
+                    this.boardList=result.boards || []; this.boardCanCreate=!!result.canCreate;
+                    this.selectedBoard="";this.boardName="";this.picker=true;
+                } catch (err) {this.notice=String(err.message || err);}
+            },
+            async showBoard(create) {
+                let id=this.selectedBoard.trim();
+                if (this.boardBusy || (create ? !this.boardName.trim() : !id)) return;
+                this.boardBusy=true;
+                try {
+                    if (this.view?.e2ee && !this.boardList.length && !await moqui.confirmAction(t("Not end-to-end encrypted: the server stores this board. Continue?"))) return;
+                    if (create) {
+                        const reply=await call.request("createMeetingBoard",{callSessionId:this.call.current,pageName:this.boardName.trim()});
+                        if (!reply.wikiPageId || reply.errors) return;
+                        id=reply.wikiPageId;
+                    }
+                    this.picker=false;
+                    await call.requestPresentation("board",id);
+                } catch(err) {this.notice=String(err.message || err);}
+                finally {this.boardBusy=false;}
+            },
+            drawing(key, enabled) {
+                call.request("boardDrawing",{callSessionId:this.call.current,wikiPageId:this.boardId,
+                    memberCanEdit:key==="memberCanEdit"?enabled:this.call.stage.memberCanEdit!==false,
+                    guestCanEdit:key==="guestCanEdit"?enabled:this.call.stage.guestCanEdit!==false});
+            },
+            boardFileUrl() {
+                return call.base().replace(/Calls$/, "Boards/Board/image")+"?wikiPageId="+encodeURIComponent(this.boardId)+
+                    "&callSessionId="+encodeURIComponent(this.call.current)+"&callLegId="+encodeURIComponent(this.call.legId)+"&filename={name}";
+            },
+            boardUploadUrl() {
+                return call.base().replace(/Calls$/, "Boards/Board/uploadImage")+"?callSessionId="+
+                    encodeURIComponent(this.call.current)+"&callLegId="+encodeURIComponent(this.call.legId);
+            },
+            boardClient() {
+                const source=call.guest || call.vm?.notificationClient;
+                if (!source) return null;
+                if (!call.guest) return source;
+                return call.guest;
+            },
             setMode(value) { call.request("setCallShareMode",{callSessionId:this.call.current,shareModeEnumId:value}); },
             fit() { this.scale=1;this.x=0;this.y=0; },
             actual() {
@@ -2248,12 +2316,43 @@
             <div class="row items-center q-gutter-xs">
                 <span v-if="sharing && (!mine || call.sharing)" role="status" class="text-subtitle2">{{presenter}}</span>
                 <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop')"/>
-                <q-btn v-if="supported && !mine && !pending.includes(call.legId)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode === 'CsmHosts'" :label="t('Share the screen')" @click="ask()"/>
+                <q-btn v-if="!guest" flat dense icon="sym_o_draw" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Whiteboard')" @click="boardPicker"/>
+                <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !pending.includes(call.legId)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode === 'CsmHosts'" :label="t('Share the screen')" @click="ask()"/>
                 <q-btn v-if="pending.includes(call.legId)" flat dense :label="t('Cancel presentation request')" @click="command('lower')"/>
                 <q-btn-dropdown v-if="host" flat dense :label="t('Who can present')"><q-list dense>
                     <q-item v-for="mode in modes" :key="mode.value" clickable v-close-popup :active="call.shareMode===mode.value" @click="setMode(mode.value)">
                         <q-item-section>{{mode.label}}</q-item-section></q-item></q-list></q-btn-dropdown>
             </div>
+            <div v-if="boardId" class="m-meeting-board">
+                <div class="row items-center q-gutter-xs">
+                    <span class="text-subtitle2">{{t('Whiteboard')}}</span>
+                    <q-btn v-if="!mine" dense flat :label="followBoard?t('Stop following'):t('Follow again')" @click="followBoard=!followBoard"/>
+                    <q-btn v-if="mine && call.sharing" dense flat :label="t('Switch to screen')" @click="ask('screen')"/>
+                    <q-btn v-if="mine || host" dense flat :label="t('Close board')" @click="command('stop')"/>
+                    <q-btn-dropdown v-if="host" dense flat :label="t('Who can draw')"><q-list dense>
+                        <q-item><q-toggle :label="t('Members')" :model-value="call.stage.memberCanEdit!==false" @update:model-value="v=>drawing('memberCanEdit',v)"/></q-item>
+                        <q-item><q-toggle :label="t('Guests')" :model-value="call.stage.guestCanEdit!==false" @update:model-value="v=>drawing('guestCanEdit',v)"/></q-item>
+                    </q-list></q-btn-dropdown>
+                </div>
+                <p v-if="view && view.e2ee" class="text-caption">{{t('Not end-to-end encrypted: the server stores this board')}}</p>
+                <m-whiteboard :key="boardId" ref="stageBoard" stage :wiki-page-id="boardId" :leg-id="call.legId" :meeting-id="call.current"
+                    :read-only="guest ? call.stage.guestCanEdit===false : call.stage.memberCanEdit===false"
+                    :socket-client="boardClient()" :guest-files="guest ? guest.files : null" :user-name="guest ? guest.name : undefined"
+                    :files-url="boardFileUrl()" :upload-url="boardUploadUrl()" :follow="!mine && followBoard ? owner : undefined" @unfollow="followBoard=false"/>
+            </div>
+            <q-dialog v-model="picker"><q-card style="width:min(30rem,95vw)">
+                <q-card-section><h2 class="text-h6 q-my-none">{{t('Meeting boards')}}</h2>
+                    <p v-if="view && view.e2ee" class="text-caption">{{t('Not end-to-end encrypted: the server stores this board')}}</p>
+                    <q-list dense><q-item v-for="b in boardList" :key="b.wikiPageId" clickable @click="selectedBoard=b.wikiPageId;showBoard(false)">
+                        <q-item-section avatar><q-icon name="sym_o_draw"/></q-item-section><q-item-section>{{b.title}}</q-item-section></q-item></q-list>
+                    <form class="row q-gutter-xs q-mt-sm" @submit.prevent="showBoard(false)">
+                        <q-input dense outlined class="col" v-model="selectedBoard" :label="t('Existing board ID')"/>
+                        <q-btn flat :label="t('Present board')" type="submit" :disable="!selectedBoard.trim() || boardBusy"/></form>
+                    <form v-if="boardCanCreate" class="row q-gutter-xs q-mt-sm" @submit.prevent="showBoard(true)">
+                        <q-input dense outlined class="col" v-model="boardName" :label="t('Board name')"/>
+                        <q-btn color="primary" unelevated type="submit" :label="t('New board')" :disable="!boardName.trim() || boardBusy"/></form>
+                </q-card-section><q-card-actions align="right"><q-btn flat v-close-popup :label="t('Close')"/></q-card-actions>
+            </q-card></q-dialog>
             <div v-if="host" v-for="leg in pending" :key="leg" class="row items-center q-gutter-xs">
                 <span>{{name(leg)}} {{t('wants to present')}}</span><q-btn flat dense :label="t('Allow')" @click="command('approve',{targetLegId:leg})"/>
                 <q-btn flat dense :label="t('Decline')" @click="command('lower',{targetLegId:leg})"/></div>
@@ -3002,7 +3101,7 @@
             '<div v-show="!call.hostPip" class="row q-mb-xs"><q-chip dense square :icon="label.icon" class="m-call-encryption m-tonal" :class="label.lock ? \'m-call-e2ee text-positive\' : \'\'" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}}</q-tooltip></q-chip></div>' +
             '<m-call-presentation :view="view"></m-call-presentation>' +
             // the stage
-            '<div v-if="!(call.stage.kind === \'screen\' && call.stage.callLegId !== call.legId)" class="col relative-position m-call-stage" style="min-height:240px;background:#000;border-radius:12px;overflow:hidden">' +
+            '<div v-if="call.stage.kind !== \'board\' && !(call.stage.kind === \'screen\' && call.stage.callLegId !== call.legId)" class="col relative-position m-call-stage" style="min-height:240px;background:#000;border-radius:12px;overflow:hidden">' +
             '<div v-if="main" :key="main.key" class="m-call-tile absolute-full"><m-call-video :stream="main.stream" muted :style="main.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
             '<div class="absolute-bottom-left q-pa-sm text-white text-caption">{{main.name}}</div></div>' +
             '<div v-else class="absolute-full column flex-center text-white m-call-voice">' +
@@ -3247,7 +3346,17 @@
             enter() {
                 this.phase = "in";
                 const stream = this.preview;
-                call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, video: this.video, stream,
+                call.joinAsGuest({ callSessionId: this.callSessionId, callLegId: this.callLegId, credential: this.credential, name:this.name, video: this.video, stream,
+                    files:{
+                        read:(wikiPageId,filename)=>this.post("boardFile",{credential:this.credential,wikiPageId,filename}),
+                        upload:async (wikiPageId,blob,filename)=>{
+                            const form=new FormData();
+                            form.append("credential",this.credential);form.append("wikiPageId",wikiPageId);form.append("attachmentFile",blob,filename);
+                            const response=await fetch(this.base+"/uploadBoardFile",{method:"POST",body:form,redirect:"error"});
+                            if(!response.ok)throw Error(t("Could not attach image"));
+                            return response.json();
+                        }
+                    },
                     iceServers: () => this.post("iceServers", { credential: this.credential }),
                     recording: (name) => this.post(name, { credential: this.credential }) })
                     .catch(() => { this.phase = "ended"; });

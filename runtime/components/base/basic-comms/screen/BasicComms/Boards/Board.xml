@@ -26,6 +26,14 @@
             ec.web.sendError(400,'Invalid board image name')
             return
         }
+        if (callSessionId && callLegId) {
+            const result = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
+                    .parameters({wikiPageId,callSessionId,callLegId,attachmentFile:file}).disableAuthz().call()
+            if (result.denied) ec.web.sendJsonError(404,'Board file not available')
+            else if (ec.message.hasError()) ec.web.sendError(403,ec.message.errorsString)
+            else ec.web.sendJsonResponse({attachmentName:result.filename})
+            return
+        }
         const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo').parameter('wikiPageId',wikiPageId).disableAuthz().call()
         if (ec.message.hasError() || info.wikiType !== 'excalidraw') { ec.web.sendError(404,'Board not found'); return }
         ec.service.sync().name('org.moqui.resource.WikiServices.upload#WikiPageAttachment')
@@ -34,15 +42,23 @@
         else ec.web.sendJsonResponse({attachmentName:name})
     ]]></script></actions><default-response type="none"/></transition>
     <transition name="image" method="get" read-only="true"><actions><script><![CDATA[
-        const out = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageAttachment')
-            .parameters({wikiPageId, filename}).disableAuthz().call()
-        if (ec.message.hasError() || !out.attachmentReference?.exists || !/\.(?:png|jpe?g|webp|gif|svg)$/i.test(filename)) {
+        let location
+        if (callSessionId && callLegId) {
+            const out = ec.service.sync().name('org.moqui.call.MeetingBoardServices.access#MeetingBoardImage')
+                    .parameters({wikiPageId,callSessionId,callLegId,filename,locationOnly:true}).disableAuthz().call()
+            location = out?.imageLocation
+        } else {
+            const out = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageAttachment')
+                    .parameters({wikiPageId, filename}).disableAuthz().call()
+            if (out.attachmentReference?.exists) location = out.attachmentReference.location
+        }
+        if (ec.message.hasError() || !location || !/\.(?:png|jpe?g|webp|gif|svg)$/i.test(filename)) {
             ec.web.sendError(404,'Image not found')
             return
         }
         ec.web.response.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
         ec.web.response.setHeader('X-Content-Type-Options','nosniff')
-        ec.web.sendResourceResponse(out.attachmentReference.location, ec.web.request.getHeader('Sec-Fetch-Dest') === 'image',filename)
+        ec.web.sendResourceResponse(location, ec.web.request.getHeader('Sec-Fetch-Dest') === 'image',filename)
     ]]></script></actions><default-response type="none"/></transition>
     <transition name="notesBoards" method="get" read-only="true"><actions><script><![CDATA[
         const id = 'NOTES_' + ec.user.userId

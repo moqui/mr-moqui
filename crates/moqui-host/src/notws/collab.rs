@@ -43,6 +43,15 @@ struct Member {
     user_id: String,
     name: String,
     awareness: Json,
+    meeting: Option<moqui_collab::Meeting>,
+}
+
+impl Member {
+    fn actor_key(&self) -> String {
+        self.meeting
+            .as_ref()
+            .map_or_else(|| self.user_id.clone(), moqui_collab::Meeting::key)
+    }
 }
 
 fn members() -> &'static Mutex<HashMap<String, Vec<Member>>> {
@@ -106,7 +115,12 @@ fn publish_message(factory: &ExecutionContextFactory, message: &TopicMessage) {
 }
 
 /// A frame from a client: true when it was a co-editing message (handled), false for anything else.
-pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, text: &str) -> bool {
+pub(super) async fn handle(
+    factory: &Arc<ExecutionContextFactory>,
+    slot: &Arc<Slot>,
+    text: &str,
+    guest: Option<&moqui_collab::Meeting>,
+) -> bool {
     if !text.trim_start().starts_with('{') {
         return false;
     }
@@ -129,8 +143,45 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
     if doc.is_empty() || client.is_empty() || doc.len() > 200 || client.len() > 100 {
         return true;
     }
+    let scope = if kind == "join" {
+        if let Some(guest) = guest {
+            Some(guest.clone())
+        } else if let Some(call) = message.get("callSessionId").and_then(Json::as_str) {
+            let leg = message.get("callLegId").and_then(Json::as_str).unwrap_or_default();
+            if !super::rtc::has_binding(slot.id, call, leg) {
+                error(slot, &doc, &client, 403, "join the call first");
+                return true;
+            }
+            Some(moqui_collab::Meeting {
+                call_id: call.to_string(),
+                leg_id: leg.to_string(),
+                user_id: slot.user_id.clone(),
+                credential: None,
+            })
+        } else {
+            None
+        }
+    } else {
+        member(&doc, &client, slot.id).and_then(|m| m.meeting)
+    };
+    if matches!(kind, "awareness" | "update") {
+        if let Some(scope) = scope.clone() {
+            let checked_doc = doc.clone();
+            let write = kind == "update";
+            if !matches!(
+                super::on_pool(factory, move || Ok(scope.check(&checked_doc, write))).await,
+                Ok(Ok(_))
+            ) {
+                error(slot, &doc, &client, 403, "the call no longer grants this action");
+                return true;
+            }
+        } else if guest.is_some() {
+            error(slot, &doc, &client, 403, "join the meeting board first");
+            return true;
+        }
+    }
     match kind {
-        "join" => join(factory, slot, doc, client, &message),
+        "join" => join(factory, slot, doc, client, &message, scope),
         "update" => update(factory, slot, &doc, &client, &message),
         "awareness" => awareness(factory, slot, &doc, &client, &message),
         "leave" => leave(factory, slot.id, &doc, Some(&client)),
@@ -139,7 +190,14 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
     true
 }
 
-fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, client: String, message: &Json) {
+fn join(
+    factory: &Arc<ExecutionContextFactory>,
+    slot: &Arc<Slot>,
+    doc: String,
+    client: String,
+    message: &Json,
+    meeting: Option<moqui_collab::Meeting>,
+) {
     let vector = match b64().decode(message.get("sv").and_then(Json::as_str).unwrap_or_default()) {
         Ok(vector) => vector,
         Err(_) => return error(slot, &doc, &client, 400, "sv is not base64"),
@@ -174,7 +232,11 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
         let _reserved = reserved;
         let user_id = slot.user_id.clone();
         let job_doc = doc.clone();
-        let joined = super::on_pool(&factory, move || Ok(moqui_collab::join(&job_doc, &user_id, &vector))).await;
+        let scope = meeting.clone();
+        let joined = super::on_pool(&factory, move || {
+            Ok(moqui_collab::join_scoped(&job_doc, &user_id, &vector, scope))
+        })
+        .await;
         let joined = match joined {
             Ok(Ok(joined)) => joined,
             Ok(Err(refusal)) => return error(&slot, &doc, &client, refusal.code, &refusal.message),
@@ -187,6 +249,7 @@ fn join(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, doc: String, c
             user_id: slot.user_id.clone(),
             name: joined.user_name.clone(),
             awareness: awareness.clone(),
+            meeting,
         };
         let Some(peers) = admit(&factory, &slot, &doc, member) else {
             return;
@@ -217,7 +280,7 @@ fn admit(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, member: Memb
             .position(|known| known.client == client && known.slot_id == slot.id);
         if let Some(index) = had {
             let replaced = list.remove(index);
-            moqui_collab::leave_as(doc, Some(&replaced.user_id));
+            moqui_collab::leave_as(doc, Some(&replaced.actor_key()));
         }
         let peers = list
             .iter()
@@ -233,17 +296,53 @@ fn admit(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, member: Memb
     Some(peers)
 }
 
-fn is_member(doc: &str, client: &str, slot_id: u64) -> bool {
-    lock(members()).get(doc).is_some_and(|list| {
-        list.iter()
-            .any(|member| member.client == client && member.slot_id == slot_id)
-    })
+fn member(doc: &str, client: &str, slot_id: u64) -> Option<Member> {
+    lock(members())
+        .get(doc)?
+        .iter()
+        .find(|m| m.client == client && m.slot_id == slot_id)
+        .cloned()
+}
+
+/// Credentials and room membership may change after a frame was queued. Recheck
+/// meeting deliveries on a request worker before any board data leaves the socket.
+pub(super) async fn may_deliver(factory: &Arc<ExecutionContextFactory>, slot: &Slot, text: &str, guest: bool) -> bool {
+    if !text.contains("collab:") {
+        return true;
+    }
+    let Ok(frame) = serde_json::from_str::<Json>(text) else {
+        return true;
+    };
+    let Some(doc) = frame
+        .get("topic")
+        .and_then(Json::as_str)
+        .and_then(|topic| topic.strip_prefix("collab:"))
+    else {
+        return true;
+    };
+    if frame["type"] == "error" {
+        return true;
+    }
+    let registered = lock(members())
+        .get(doc)
+        .and_then(|members| members.iter().find(|m| m.slot_id == slot.id).map(|m| m.meeting.clone()));
+    let Some(registered) = registered else {
+        return false;
+    };
+    let Some(scope) = registered else {
+        return !guest;
+    };
+    let doc = doc.to_string();
+    matches!(
+        super::on_pool(factory, move || Ok(scope.check(&doc, false))).await,
+        Ok(Ok(_))
+    )
 }
 
 fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
-    if !is_member(doc, client, slot.id) {
+    let Some(member) = member(doc, client, slot.id) else {
         return error(slot, doc, client, 409, "join the document first");
-    }
+    };
     let encoded = message.get("update").and_then(Json::as_str).unwrap_or_default();
     let frame = json!({"topic": topic(doc), "type": "update", "client": client, "update": encoded});
     let remote = match remote_message(json!({"doc": doc, "frame": frame})) {
@@ -253,7 +352,7 @@ fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &st
     let Ok(update) = b64().decode(encoded) else {
         return error(slot, doc, client, 400, "update is not base64");
     };
-    if let Err(refusal) = moqui_collab::apply(doc, &slot.user_id, &update) {
+    if let Err(refusal) = moqui_collab::apply(doc, &member.actor_key(), &update) {
         return error(slot, doc, client, refusal.code, &refusal.message);
     }
     if let Some(id) = message.get("id") {
@@ -267,7 +366,7 @@ fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &st
 }
 
 fn awareness(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
-    if !is_member(doc, client, slot.id) {
+    if member(doc, client, slot.id).is_none() {
         return;
     }
     // an awareness goes to every editor: held to its size (SEC-TLS-113)
@@ -298,7 +397,7 @@ fn leave(factory: &ExecutionContextFactory, slot_id: u64, doc: &str, client: Opt
         gone
     };
     for member in left {
-        moqui_collab::leave_as(doc, Some(&member.user_id));
+        moqui_collab::leave_as(doc, Some(&member.actor_key()));
         let frame = json!({"topic": topic(doc), "type": "peer", "client": member.client, "userId": member.user_id, "name": member.name,
             "awareness": member.awareness, "joined": false});
         broadcast(doc, None, &frame);
@@ -369,7 +468,7 @@ pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqu
                     .get(&document_key)
                     .map(|list| {
                         list.iter()
-                            .filter(|member| member.user_id == user_id)
+                            .filter(|member| member.actor_key() == user_id)
                             .map(|member| (member.slot_id, member.client.clone(), member.slot.clone()))
                             .collect()
                     })
@@ -391,7 +490,7 @@ pub(crate) fn deliver_events(factory: &ExecutionContextFactory, events: Vec<moqu
                     .get(&document_key)
                     .map(|list| {
                         list.iter()
-                            .filter(|member| member.user_id == user_id)
+                            .filter(|member| member.actor_key() == user_id)
                             .map(|member| (member.client.clone(), member.slot.clone()))
                             .collect()
                     })
@@ -475,6 +574,7 @@ mod tests {
                 user_id: "editor".into(),
                 name: "Editor".into(),
                 awareness: Json::Null,
+                meeting: None,
             }],
         );
         update(
@@ -517,9 +617,10 @@ mod tests {
             user_id: "editor".into(),
             name: "Editor".into(),
             awareness: Json::Null,
+            meeting: None,
         };
         lock(members()).insert(doc.into(), ["a", "b", "c", "d"].map(member).into());
-        join(&factory, &slot, doc.into(), "e".into(), &json!({"sv": ""}));
+        join(&factory, &slot, doc.into(), "e".into(), &json!({"sv": ""}), None);
         let refused: Json = serde_json::from_str(&rx.try_recv().unwrap().text).unwrap();
         assert_eq!(refused["code"], 429);
         awareness(
@@ -559,6 +660,7 @@ mod tests {
                 user_id: "lost".into(),
                 name: "Lost".into(),
                 awareness: Json::Null,
+                meeting: None,
             }],
         );
         deliver_events(
@@ -607,6 +709,7 @@ mod tests {
             user_id: "closer".into(),
             name: "Closer".into(),
             awareness: Json::Null,
+            meeting: None,
         };
         assert!(admit(&factory, &slot, doc, member).is_none());
         assert!(
@@ -639,6 +742,7 @@ mod tests {
             user_id: "ender".into(),
             name: "Ender".into(),
             awareness: Json::Null,
+            meeting: None,
         };
         assert!(admit(&factory, &slot, doc, member).is_none());
         assert!(

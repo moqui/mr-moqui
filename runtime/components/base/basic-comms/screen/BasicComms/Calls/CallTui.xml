@@ -63,6 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
         ec.message.clearErrors()
         call = out.call || null
         const presenter = call?.stage?.callLegId && (call.participants || []).find(p => (p.legs || []).some(l => l.callLegId === call.stage.callLegId))
+        boardUrl = call?.stage?.kind === 'board' ? '/qapps/BasicComms/Boards/Board?wikiPageId=' + encodeURIComponent(call.stage.wikiPageId) : ''
         presentingText = presenter ? presenter.displayName + ' ' + L('is presenting') : ''
         const STATES = {ringing: L('Ringing'), active: L('In progress'), ended: L('Ended')}
         stateText = call ? (STATES[call.status] || call.status) + (call.endReason ? ' (' + call.endReason + ')' : '') : ''
@@ -107,6 +108,7 @@ along with this software (see the LICENSE.md file). If not, see
             <label type="p" text="${stateText} · ${startedText}"/>
             <label type="p" text="${encryptionText}"/>
             <label type="p" text="${presentingText}" condition="presentingText"/>
+            <label type="p" text="${boardUrl}" condition="boardUrl"/>
             <label type="p" text="A call is not live in the terminal; open it in the browser to talk." style="m-muted"/>
             <section name="UseBrowser" condition="mustUseBrowser"><widgets>
                 <label type="p" text="This call is end-to-end encrypted: answer it in a browser that can encrypt call media." style="text-warning"/>
