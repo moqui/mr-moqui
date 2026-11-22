@@ -392,6 +392,47 @@ test("the stage owner alone can capture, and takeover ends both share tracks", a
     }
 });
 
+test("a presenter's page sends what the server keeps, a follower with unsaved work pauses, and refused follow frames stay quiet", async()=>{
+    // the vectors rtc/follow.rs tests too: one rule on both sides
+    const vectors=await (await fetch("/files/component/webroot/test/client/pages/follow-vectors.json")).json();
+    for(const {path,ok} of vectors.paths)assert.equal(call.followPath(path)!==null,ok,"path "+path);
+    for(const {name,ok} of vectors.names)
+        assert.equal(call.followPath("/qapps/A?"+encodeURIComponent(name)+"=v")?.params[name]==="v",ok,"parameter "+name);
+    for(const {value,ok} of vectors.values)
+        assert.equal(call.followPath("/qapps/A?xId="+encodeURIComponent(value))?.params.xId===value,ok,"value "+value);
+
+    const prior={vm:call.vm,send:call.send,fetch:window.fetch,guest:call.guest,forms:moqui.screenForms,pc:call.pc};
+    const navigations=[];
+    try {
+        call.followReset();
+        Object.assign(state,{current:"FOLLOW",legId:"ME",stage:{kind:"follow",callLegId:"OWNER",followEpoch:"F"},error:null});
+        call.guest=null;call.send=()=>{};call.vm={setUrl(url){navigations.push(url);},activeContainers:{}};
+        window.fetch=async()=>new Response("{}",{status:200});
+        call.followStart(state.stage);
+        const next=path=>call.followFrame({rtc:"follow",action:"navigate",from:"OWNER",path,params:{},followEpoch:"F"});
+        const form={hasFieldsChanged:true,$el:{isConnected:true}};
+        moqui.screenForms=[form];
+        await next("/qapps/BasicComms/Home");
+        assert.deepEqual(navigations,[],"unsaved changes stay");
+        assert.equal(state.following,false,"following is paused: Follow again");
+        form.hasFieldsChanged=false;
+        call.vm.activeContainers={Mine:{isShown:true,$options:{name:"mContainerDialog"}}};
+        call.setFollowing(true);
+        await next("/qapps/BasicComms/Home");
+        assert.equal(state.following,false,"a dialog the follower opened stays too");
+        call.vm.activeContainers={};
+        call.setFollowing(true);
+        await next("/qapps/BasicComms/Home");
+        assert.deepEqual(navigations,["/qapps/BasicComms/Home"]);
+        call.pc={};
+        call.handleFrame({rtc:"error",callSessionId:"FOLLOW",code:"followRate",message:"Screen updates are arriving too quickly",follow:true});
+        assert.equal(state.error,null,"no raw follow refusal for the person");
+    } finally {
+        call.followReset();reset();state.stage={kind:null,callLegId:null,requests:[]};state.error=null;
+        call.vm=prior.vm;call.send=prior.send;call.guest=prior.guest;window.fetch=prior.fetch;moqui.screenForms=prior.forms;call.pc=prior.pc;
+    }
+});
+
 test("screen followers confirm their own access before navigation and can pause and catch up", async()=>{
     const prior={vm:call.vm,send:call.send,fetch:window.fetch,guest:call.guest};
     const sent=[],navigations=[],reads=[];

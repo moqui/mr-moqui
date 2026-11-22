@@ -64,7 +64,7 @@ along with this software (see the LICENSE.md file). If not, see
         call = out.call || null
         const presenter = call?.stage?.callLegId && (call.participants || []).find(p => (p.legs || []).some(l => l.callLegId === call.stage.callLegId))
         boardUrl = call?.stage?.kind === 'board' ? '/qapps/BasicComms/Boards/Board?wikiPageId=' + encodeURIComponent(call.stage.wikiPageId) : ''
-        presentingText = presenter ? presenter.displayName + ' ' + L('is presenting') : ''
+        presentingText = presenter ? L('{name} is presenting').replace('{name}', () => presenter.displayName || '') : ''
         const STATES = {ringing: L('Ringing'), active: L('In progress'), ended: L('Ended')}
         stateText = call ? (STATES[call.status] || call.status) + (call.endReason ? ' (' + call.endReason + ')' : '') : ''
         startedText = call && call.startedDate ? ec.l10n.format(new Date(Number(call.startedDate)), 'MMM d, h:mm a') : ''

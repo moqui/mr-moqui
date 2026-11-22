@@ -266,9 +266,9 @@ function setShareMode(p) {
   if (p.shareModeEnumId !== (session.shareModeEnumId || 'CsmAnyone')) {
     stageRules.setMode(session, p.shareModeEnumId)
     session.set('shareModeEnumId', p.shareModeEnumId)
-    bump(session)
+    const published = bump(session)
     session.update()
-    publishStage(session)
+    if (!published) publishStage(session)
     pushState(session, 'shareMode')
   }
   return { call: view(session, me) }
@@ -395,11 +395,12 @@ function ringEnded(session, action, extra) {
   }).registerOnCommit()
 }
 
+/** The session's next revision; a stage left by legs no longer in the call is changed and published (true then). */
 function bump(session) {
   session.set('revision', Number(session.revision || 1) + 1)
+  let changed = false
   if (session.stageState) {
     const stage = stageRules.read(session)
-    let changed = false
     if (session.statusId === 'CssEnded') changed = stageRules.end(session)
     else {
       const ids = new Set([stage.callLegId, ...(stage.requests || []).map(r => r.callLegId || r)].filter(Boolean))
@@ -411,6 +412,7 @@ function bump(session) {
     }
     if (changed) publishStage(session)
   }
+  return changed
 }
 
 /** A CetCall event in the call's room: its start and its end, so the room's timeline shows the call. */
@@ -1364,12 +1366,20 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
   }
   const now = ec.user.nowTimestamp
   let generation = 0
+  let replaced = false
   for (const conn of rows(CONNECTION, { callLegId: leg.callLegId })) {
     generation = Math.max(generation, Number(conn.generation || 0))
     if (conn.statusId === 'CcsActive') {
       conn.setFields({ statusId: 'CcsReplaced', closedDate: now }, true, null, null)
       conn.update()
+      replaced = true
     }
+  }
+  // the old page's screen share went with it (its release finds its connection replaced): the stage is free again
+  if (replaced && stageRules.rebound(session, leg.callLegId)) {
+    const published = bump(session)
+    session.update()
+    if (!published) publishStage(session)
   }
   generation += 1
   const conn = ec.entity.makeValue(CONNECTION)
@@ -1419,9 +1429,9 @@ function release(p) {
   const current = session && one(CONNECTION, {callConnectionId:conn.callConnectionId})
   if (!current || current.statusId !== 'CcsActive') return { released: false }
   if (stageRules.leave(session,p.callLegId)) {
-    bump(session)
+    const published = bump(session)
     session.update()
-    publishStage(session)
+    if (!published) publishStage(session)
   }
   conn.setFields({ statusId: 'CcsClosed', closedDate: ec.user.nowTimestamp }, true, null, null)
   conn.update()
@@ -1811,9 +1821,9 @@ function openLink(p) {
   if (joined.callLegId && link.wikiPageId && !stageRules.read(session).kind &&
       !one('moqui.call.CallBoard',{callSessionId:session.callSessionId,wikiPageId:link.wikiPageId})) {
     if (stageRules.recurring(session, joined.callLegId, link.wikiPageId)) {
-      bump(session)
+      const published = bump(session)
       session.update()
-      publishStage(session)
+      if (!published) publishStage(session)
       joined.call = view(session,me)
     }
   }

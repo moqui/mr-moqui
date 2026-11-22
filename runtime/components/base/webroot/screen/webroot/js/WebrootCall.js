@@ -1359,7 +1359,8 @@
                     call.hangUp(frame.reason || "ended");
                     break;
                 case "error":
-                    if (frame.code === "staleGeneration") return null;
+                    // a refused follow frame (a pointer move too many, the stage just changed) needs nothing of the person
+                    if (frame.code === "staleGeneration" || frame.follow) return null;
                     // the server keeps this call on the media server (a third person, Always relay): there it goes
                     if (frame.code === "notDirect" && call.direct) return call.toRelay("refused");
                     state.error = frame.message || frame.code;
@@ -1469,16 +1470,21 @@
             call.send(Object.assign({rtc:"stage", action, kind:"screen", id:call.nextId++,
                 callSessionId:state.current, callLegId:state.legId}, options));
         },
+        // The screen and record parameters a presenter sends, by the server's rules (rtc/follow.rs): both are checked
+        // against the same vectors (test/client/pages/follow-vectors.json).
         followPath(value) {
             try {
                 const url=new URL(value,root.location.href);
-                if(url.origin!==root.location.origin || !/^\/(qapps|apps)\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/.test(url.pathname) ||
-                    moqui.isVaultPath?.(url.pathname))return null;
+                const app=url.pathname.replace(/^\/(qapps|apps)\//,"");
+                if(url.origin!==root.location.origin || app===url.pathname || app.length>1024 ||
+                    !app.split("/").every(s=>/^[A-Za-z0-9_-]{1,100}$/.test(s)) || moqui.isVaultPath?.(url.pathname))return null;
                 const params={};
                 for(const [name,value] of url.searchParams) {
                     if(Object.keys(params).length>=32)break;
-                    if(/^(?:id|[a-zA-Z][a-zA-Z0-9_]*(?:Id|Name))$/.test(name) &&
-                        (name==="callSessionId" || !/token|password|secret|credential|session|apikey|csrf|cookie/i.test(name)) && /^[\w.:-]{1,100}$/.test(value))params[name]=value;
+                    if(/^[\w.:-]{1,100}$/.test(name) && (name==="id" || /(?:Id|Name)$/.test(name)) &&
+                        (name==="callSessionId" || !/session/i.test(name)) &&
+                        !/token|password|secret|credential|apikey|accesskey|privatekey|signingkey|authorization|csrf|cookie/i.test(name) &&
+                        /^[\w.:-]{1,100}$/.test(value))params[name]=value;
                 }
                 return {path:url.pathname,params};
             } catch(_){return null;}
@@ -1522,8 +1528,12 @@
                     if(dialog)target.dialog=dialog[0];
                     if(call.followPointer)target.pointer=call.followPointer;
                 }
-                const wire=JSON.stringify(target);
-                if(wire!==call.lastFollowSent){call.lastFollowSent=wire;call.followSend("navigate",target);}
+                const wire=JSON.stringify(target), screen=JSON.stringify([target.path,target.params]);
+                if(wire!==call.lastFollowSent){
+                    // the same screen with only the pointer, section or dialog moved: the server needs not resolve it again
+                    const action=screen===call.lastFollowScreen?"locate":"navigate";
+                    call.lastFollowSent=wire;call.lastFollowScreen=screen;call.followSend(action,target);
+                }
             },delay);
         },
         followStart(stage) {
@@ -1560,7 +1570,7 @@
         },
         followReset(){
             clearTimeout(call.followTimer);clearTimeout(call.followLocateTimer);call.followCleanup?.();call.followCleanup=null;
-            call.followPointer=null;call.lastFollowSent=null;call.followKey=null;call.followLatest=null;call.followPending=null;
+            call.followPointer=null;call.lastFollowSent=null;call.lastFollowScreen=null;call.followKey=null;call.followLatest=null;call.followPending=null;
             call.followMarker?.remove();call.followMarker=null;call.followSection=null;call.followOpenDialog=null;
             state.following=false;state.followDenied=false;call.followSequence=(call.followSequence || 0)+1;
         },
@@ -1593,6 +1603,15 @@
                 clearTimeout(call.followLocateTimer);call.followLocateTimer=setTimeout(()=>call.followLocate(retry+1),100);
             }
         },
+        // A form on the follower's page with changes not saved, or a dialog it opened itself (not the presenter's,
+        // which following opened): taking the follower to another screen would lose them.
+        followBusy() {
+            if((moqui.screenForms || []).some(form=>form?.hasFieldsChanged && form.$el?.isConnected !== false))return true;
+            const containers=call.vm?.activeContainers || {};
+            if(Object.entries(containers).some(([id,c])=>c?.isShown && id!==call.followOpenDialog))return true;
+            const followShown=call.followOpenDialog && containers[call.followOpenDialog]?.isShown ? 1 : 0;
+            return root.document.querySelectorAll(".q-dialog").length>followShown;
+        },
         async followFrame(frame) {
             if(call.guest || (frame.followEpoch && frame.followEpoch!==state.stage.followEpoch) || frame.action!=="navigate" || state.stage.kind!=="follow" || frame.from!==state.stage.callLegId ||
                 frame.from===state.legId || !state.following || !call.vm)return;
@@ -1603,6 +1622,8 @@
             call.followLatest=frame;
             if(call.followKey===key){if(!state.followDenied)call.followLocate();return;}
             if(call.followPending===key)return;
+            // the follower's own unsaved work or dialog stays: following pauses, and Follow again catches up
+            if(call.followBusy())return call.setFollowing(false);
             const sequence=++call.followSequence;call.followPending=key;
             try {
                 const path=target.path.replace(/^\/qapps\//,"/apps/");
@@ -1624,6 +1645,7 @@
                 const record=replies[1] && await replies[1].json();
                 if(sequence!==call.followSequence || !state.following)return;
                 if(record?.errors || (meeting && !record?.call) || (room && (!record?.room || record?.access?.canRead===false)))throw new Error();
+                if(call.followBusy()){call.followPending=null;return call.setFollowing(false);}
                 call.followKey=key;state.followDenied=false;call.followSection=null;call.followOpenDialog=null;
                 call.applyingFollow=true;
                 if(call.wide())state.panel=state.current;
@@ -1720,6 +1742,12 @@
             const prev = state.stage.callLegId;
             const view = state.calls[state.current];
             const host = !!view && view.participants.some(p => p.userId && p.userId === call.me && p.role === "host");
+            // only a host takes over from a host (CallStage.js): no confirmation that would be refused
+            const hostPresents = !!view && view.participants.some(p => p.role === "host" && (p.legs || []).some(l => l.callLegId === prev));
+            if (prev && prev !== state.legId && !host && hostPresents && state.shareMode !== "CsmAsk") {
+                state.error = t("Only a host may take over from a host");
+                return;
+            }
             if (prev && prev !== state.legId && !host && state.shareMode !== "CsmAsk") {
                 const text = t("Take over from {name}?").replace("{name}",call.nameOf(prev));
                 const ok = moqui.confirmAction ? await moqui.confirmAction(text) : root.confirm(text);
@@ -2621,7 +2649,7 @@
                 </q-card-section><q-card-actions align="right"><q-btn flat v-close-popup :label="t('Close')"/></q-card-actions>
             </q-card></q-dialog>
             <div v-if="host" v-for="leg in pending" :key="leg" class="row items-center q-gutter-xs">
-                <span>{{name(leg)}} {{t('wants to present')}}</span><q-btn flat dense :label="t('Allow')" @click="command('approve',{targetLegId:leg})"/>
+                <span>{{t('{name} wants to present').replace('{name}',name(leg))}}</span><q-btn flat dense :label="t('Allow')" @click="command('approve',{targetLegId:leg})"/>
                 <q-btn flat dense :label="t('Decline')" @click="command('lower',{targetLegId:leg})"/></div>
             <div v-if="sharing && mine && !call.sharing" class="row items-center q-gutter-xs">
                 <q-toggle v-model="motion" :label="motion?t('Optimize for video'):t('Optimize for text')"/>
