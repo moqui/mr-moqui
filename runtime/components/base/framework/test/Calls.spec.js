@@ -191,9 +191,15 @@ feature("the session arbitrates presentation grants, takeover, host stop and app
         const inkMode = act(A, host, "inkMode", {mode:"hosts"})
         const embedded = act(A, host, "inkSurface", {embedded:true})
         const confirm = act(B, member, "ask")
-        const takeover = act(B, member, "take", {previousLegId:host.callLegId})
+        const fromHost = act(B, member, "take", {previousLegId:host.callLegId})
         const impostor = act(A, member, "stop")
         const stop = act(A, host, "stop")
+        // a host takes over from a member, and the member's share annotation goes with their share
+        act(B, member, "ask")
+        act(B, member, "inkMode", {mode:"everyone"})
+        act(B, member, "inkSurface", {embedded:true})
+        const takeover = act(A, host, "take")
+        act(A, host, "stop")
         const hosts = setMode("CsmHosts")
         const barred = act(B, member, "ask")
         setMode("CsmAsk")
@@ -203,14 +209,15 @@ feature("the session arbitrates presentation grants, takeover, host stop and app
         const follow = act(A, host, "take", {kind:"follow"})
         act(A, host, "stop")
         setMode("CsmAnyone")
-        return {first, untrustedInk, inkMode, embedded, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, follow, host, member}
+        return {first, untrustedInk, inkMode, embedded, confirm, fromHost, takeover, impostor, stop, hosts, barred, queued, approved, view, follow, host, member}
     },
     then(r) {
-        r.first.stage.callLegId === r.host.callLegId && r.confirm.reasonCode === "takeoverRequired"
+        r.first.stage.callLegId === r.host.callLegId
+        r.confirm.reasonCode === "notAllowed" && r.fromHost.reasonCode === "notAllowed"
         r.follow.stage.kind === "follow" && r.follow.stage.followEpoch > 0
         r.untrustedInk.reasonCode === "notAllowed" && r.inkMode.stage.inkMode === "hosts" && r.embedded.stage.inkEmbedded === true
         !r.takeover.stage.inkEmbedded && !r.takeover.stage.inkMode
-        r.takeover.stage.callLegId === r.member.callLegId && r.impostor.reasonCode === "notAllowed"
+        r.takeover.stage.callLegId === r.host.callLegId && r.impostor.reasonCode === "notAllowed"
         r.stop.stage.kind == null && r.hosts.call.shareModeEnumId === "CsmHosts" && r.barred.reasonCode === "notAllowed"
         r.queued.stage.kind == null && r.queued.stage.requests.includes(r.member.callLegId)
         r.approved.stage.callLegId === r.member.callLegId && r.view.stage.callLegId === r.member.callLegId
@@ -526,6 +533,62 @@ feature("an active room board grants drawing until the host restricts it and bec
         r.refused.errors.includes("host")
         !r.changed.errors && r.changed.guestCanEdit === false
         r.history.shown.some(b=>b.wikiPageId===r.wikiPageId && b.closedDate)
+    }
+})
+
+feature("a non-host cannot take the stage from a host; a leg that rebinds, releases or is removed gives up its share", {
+    when() {
+        const {callSessionId} = as(A, "start#Call", {chatRoomId: room})
+        as(B, "join#Call", {callSessionId})
+        as(C, "join#Call", {callSessionId})
+        const binding = user => {
+            const callLegId = as(user, "get#Call", {callSessionId}).call.myLegId
+            return {callLegId, generation: as(user, "bind#Connection", {callSessionId, callLegId}).generation}
+        }
+        const host = binding(A), b = binding(B), c = binding(C)
+        const act = (who, leg, action, extra = {}) => as(who, "org.moqui.call.StageServices.change#CallStage",
+                {callSessionId, ...leg, action, ...extra})
+        const setStage = value => sys(() => { const row = session(callSessionId); row.set("stageState", value); row.update() })
+        const stageOf = () => as(A, "get#Call", {callSessionId}).call.stage
+        act(A, host, "ask")
+        const fromHost = act(B, b, "take", {previousLegId: host.callLegId})
+        act(A, host, "stop")
+        const memberShows = act(B, b, "ask")
+        const confirm = act(C, c, "ask")
+        const fromMember = act(C, c, "take", {previousLegId: b.callLegId})
+        const hostTakes = act(A, host, "take")
+        act(A, host, "stop")
+        // a request of a leg that is gone: the answer is the stage as stored, without it
+        setStage(JSON.stringify({kind: null, callLegId: null, requests: ["GONE_LEG"]}))
+        const reread = act(B, b, "ask")
+        // an unreadable stage is nobody presenting, and the next change replaces it
+        setStage("{not json")
+        const badView = stageOf()
+        const afterBad = act(C, c, "ask")
+        // C's page reloads: its new connection ends its screen share
+        c.generation = as(C, "bind#Connection", {callSessionId, callLegId: c.callLegId}).generation
+        const rebound = stageOf()
+        act(B, b, "ask")
+        sys(() => call("org.moqui.call.CallServices.release#Connection", {callLegId: b.callLegId, generation: b.generation}))
+        const released = stageOf()
+        act(C, c, "ask")
+        const cParticipant = as(A, "get#Call", {callSessionId}).call.participants.find(p => p.userId === C).callParticipantId
+        as(A, "remove#Participant", {callSessionId, callParticipantId: cParticipant})
+        const removed = stageOf()
+        as(A, "end#Call", {callSessionId})
+        return {host, b, c, fromHost, memberShows, confirm, fromMember, hostTakes, reread, badView, afterBad, rebound, released, removed}
+    },
+    then(r) {
+        r.fromHost.reasonCode === "notAllowed" && r.fromHost.errors.includes("host")
+        r.memberShows.stage.callLegId === r.b.callLegId && r.confirm.reasonCode === "takeoverRequired"
+        r.fromMember.stage.callLegId === r.c.callLegId
+        r.hostTakes.stage.callLegId === r.host.callLegId
+        r.reread.stage.callLegId === r.b.callLegId && !r.reread.stage.requests.includes("GONE_LEG")
+        r.badView.kind == null && r.badView.callLegId == null
+        r.afterBad.stage.callLegId === r.c.callLegId
+        r.c.generation === 2 && r.rebound.callLegId == null
+        r.released.callLegId == null
+        r.removed.callLegId == null
     }
 })
 

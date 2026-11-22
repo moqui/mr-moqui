@@ -1,0 +1,193 @@
+{
+ "about": "Which screen paths, parameter names and parameter values a follow presenter's page sends (WebrootCall.js followPath) and the server keeps (crates/moqui-host/src/rtc/follow.rs). Both test suites read this file, so the two rules cannot drift apart.",
+ "paths": [
+  {
+   "path": "/qapps/BasicComms/Calls/History",
+   "ok": true
+  },
+  {
+   "path": "/apps/BasicComms/Home",
+   "ok": true
+  },
+  {
+   "path": "/qapps/A_b-c/D9",
+   "ok": true
+  },
+  {
+   "path": "/qapps/../login",
+   "ok": false
+  },
+  {
+   "path": "//other/qapps/Foo",
+   "ok": false
+  },
+  {
+   "path": "/qapps/A/%2e",
+   "ok": false
+  },
+  {
+   "path": "/qapps/",
+   "ok": false
+  },
+  {
+   "path": "/qapps",
+   "ok": false
+  },
+  {
+   "path": "/other/A",
+   "ok": false
+  },
+  {
+   "path": "/qapps/A//B",
+   "ok": false
+  },
+  {
+   "path": "/qapps/A.b",
+   "ok": false
+  },
+  {
+   "path": "/qapps/A/",
+   "ok": false
+  },
+  {
+   "path": "/qapps/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "ok": true
+  },
+  {
+   "path": "/qapps/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "ok": false
+  },
+  {
+   "path": "/qapps/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghi",
+   "ok": true
+  },
+  {
+   "path": "/qapps/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij/abcdefghij",
+   "ok": false
+  }
+ ],
+ "names": [
+  {
+   "name": "wikiPageId",
+   "ok": true
+  },
+  {
+   "name": "callSessionId",
+   "ok": true
+  },
+  {
+   "name": "id",
+   "ok": true
+  },
+  {
+   "name": "partyName",
+   "ok": true
+  },
+  {
+   "name": "Id",
+   "ok": true
+  },
+  {
+   "name": "work-effortId",
+   "ok": true
+  },
+  {
+   "name": "apiKeyId",
+   "ok": false
+  },
+  {
+   "name": "sessionId",
+   "ok": false
+  },
+  {
+   "name": "userSessionId",
+   "ok": false
+  },
+  {
+   "name": "tokenName",
+   "ok": false
+  },
+  {
+   "name": "password",
+   "ok": false
+  },
+  {
+   "name": "description",
+   "ok": false
+  },
+  {
+   "name": "credentialId",
+   "ok": false
+  },
+  {
+   "name": "accessKeyId",
+   "ok": false
+  },
+  {
+   "name": "privateKeyId",
+   "ok": false
+  },
+  {
+   "name": "signingKeyName",
+   "ok": false
+  },
+  {
+   "name": "authorizationId",
+   "ok": false
+  },
+  {
+   "name": "csrfId",
+   "ok": false
+  },
+  {
+   "name": "cookieName",
+   "ok": false
+  },
+  {
+   "name": "secretId",
+   "ok": false
+  },
+  {
+   "name": "a bId",
+   "ok": false
+  },
+  {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxId",
+   "ok": true
+  },
+  {
+   "name": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxId",
+   "ok": false
+  }
+ ],
+ "values": [
+  {
+   "value": "100123",
+   "ok": true
+  },
+  {
+   "value": "a_b-c:d.e",
+   "ok": true
+  },
+  {
+   "value": "a b",
+   "ok": false
+  },
+  {
+   "value": "a/b",
+   "ok": false
+  },
+  {
+   "value": "",
+   "ok": false
+  },
+  {
+   "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "ok": true
+  },
+  {
+   "value": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "ok": false
+  }
+ ]
+}

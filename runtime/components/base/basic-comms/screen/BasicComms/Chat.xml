@@ -35,8 +35,6 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Chat" default-menu-index="3" menu-image="sym_o_chat" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 
-    <parameter name="chatRoomId"/>
-
     <!-- ========== Reads ========== -->
 
     <!-- the rail: me, the chat preferences, my rooms and the totals -->
@@ -89,7 +87,10 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- the room alone, after a change of its members or settings -->
+    <!-- its chatRoomId is the room a follow presenter's followers open (rtc/follow.rs): declared here, not on the
+        screen, so a link to Chat from a room (All rooms) does not carry the room with it -->
     <transition name="room" method="get" read-only="true">
+        <parameter name="chatRoomId"/>
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#RoomView').parameters({chatRoomId: chatRoomId || '', limit: 1}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {room: out.room, member: out.member, access: out.access, memberList: out.memberList})

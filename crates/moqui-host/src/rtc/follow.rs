@@ -1,5 +1,7 @@
 //! A presenter's screen location, resolved against installed application screens on the
 //! request worker. Followers fetch it with their own browser session and record permissions.
+//! The page's own rules (WebrootCall.js `followPath`) match these: both are checked against the
+//! vectors in webroot's test/client/pages/follow-vectors.json.
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::screen::{info, ScreenUrlInfo};
 use serde_json::{json, Value as Json};
@@ -44,22 +46,31 @@ fn screen_path(path: &str) -> Option<String> {
     Some(format!("/apps/{app}"))
 }
 
-pub(crate) fn navigate(factory: &ExecutionContextFactory, frame: &Json) -> Option<Json> {
-    let path = frame["path"].as_str()?;
+/// The record parameters of a presenter's screen that followers get: those the screen at `path`
+/// (or one above it) takes, or one of its read-only transitions does (Chat's `room` takes the
+/// room, kept off the screen so its links do not carry it), under the rules of [`record_param`];
+/// `None` when `path` is no plain application screen. This loads the screen definitions, so the
+/// socket keeps its last answer.
+pub(crate) fn resolve(factory: &ExecutionContextFactory, path: &str, given: &Json) -> Option<Json> {
     let target = screen_path(path)?;
     let info = ScreenUrlInfo::parse(factory, &info::default_root(factory), &target, 0).ok()?;
     if info.target_transition_name.is_some() || info.file_resource.is_some() || !info.extra_path.is_empty() {
         return None;
     }
     let mut params = serde_json::Map::new();
-    if let Some(fields) = frame["params"].as_object() {
+    if let Some(fields) = given.as_object() {
         if fields.len() > 32 {
             return None;
         }
         for (key, value) in fields {
             if record_param(key)
                 && (info.parameter_items.contains_key(key)
-                    || info.target_screen.parameters.iter().any(|p| p.name == *key))
+                    || info.target_screen.parameters.iter().any(|p| p.name == *key)
+                    || info
+                        .target_screen
+                        .transitions
+                        .iter()
+                        .any(|t| t.read_only && t.parameters.iter().any(|p| p.name == *key)))
             {
                 if let Some(text) = value.as_str().filter(|v| identifier(v)) {
                     params.insert(key.clone(), json!(text));
@@ -69,6 +80,13 @@ pub(crate) fn navigate(factory: &ExecutionContextFactory, frame: &Json) -> Optio
             }
         }
     }
+    Some(Json::Object(params))
+}
+
+/// The follow frame of a screen already resolved: its path and parameters, with the place on it
+/// that the presenter's frame names (its section, open dialog and pointer), each checked here. A
+/// `locate` frame changes only these, so it needs no resolution.
+pub(crate) fn located(path: &str, params: &Json, frame: &Json) -> Json {
     let mut out = json!({"rtc":"follow","action":"navigate","path":path,"params":params});
     for key in ["section", "dialog"] {
         if let Some(value) = frame[key].as_str().filter(|x| identifier(x)) {
@@ -85,65 +103,9 @@ pub(crate) fn navigate(factory: &ExecutionContextFactory, frame: &Json) -> Optio
             out["pointer"] = json!({"id":id,"x":x,"y":y});
         }
     }
-    Some(out)
+    out
 }
 
-#[test]
-fn accepts_application_paths_and_record_keys_only() {
-    assert!(screen_path("/qapps/BasicComms/Calls/History").is_some());
-    for path in [
-        "/qapps/../login",
-        "//other/qapps/Foo",
-        "/apps/BasicComms/Call?token=a",
-        "/qapps/A/%2e",
-    ] {
-        assert!(screen_path(path).is_none());
-    }
-    assert!(record_param("wikiPageId"));
-    assert!(record_param("callSessionId"));
-    for key in [
-        "apiKeyId",
-        "sessionId",
-        "tokenName",
-        "password",
-        "description",
-        "credentialId",
-    ] {
-        assert!(!record_param(key));
-    }
-}
-
-#[test]
-fn the_board_record_id_survives_but_its_write_transition_cannot_be_presented() {
-    let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/components/base/framework");
-    let conf = std::fs::read_to_string(framework.parent().unwrap().join("basic-comms/MoquiConf.xml")).unwrap();
-    let components = ["webroot", "basic-comms", "tools"]
-        .iter()
-        .map(|name| moqui_core::context::ComponentInfo {
-            name: name.to_string(),
-            version: String::new(),
-            location: framework.parent().unwrap().join(name),
-            depends_on: Vec::new(),
-            purposes: Vec::new(),
-        })
-        .collect();
-    let ctx = ExecutionContextFactory::test_context_with_components(
-        &conf,
-        moqui_core::service::ServicePools::idle(),
-        framework,
-        components,
-    );
-    let _entered = ctx.enter();
-    let valid = navigate(
-        ctx.factory(),
-        &json!({"path":"/qapps/BasicComms/Boards/Board",
-        "params":{"wikiPageId":"100123","tokenName":"hidden","junkId":"ignored"}}),
-    )
-    .unwrap();
-    assert_eq!(valid["params"], json!({"wikiPageId":"100123"}));
-    assert!(navigate(
-        ctx.factory(),
-        &json!({"path":"/apps/BasicComms/Boards/Board/saveBoard"})
-    )
-    .is_none());
-}
+#[cfg(test)]
+#[path = "follow_tests.rs"]
+mod tests;

@@ -3,7 +3,14 @@
 const boards = ec.resource.script('component://framework/service/org/moqui/call/CallBoards.js')
 const empty = () => ({kind:null, callLegId:null, requests:[]})
 function read(session) {
-    return session.stageState ? JSON.parse(session.stageState) : empty()
+    if (!session.stageState) return empty()
+    try {
+        const stage = JSON.parse(session.stageState)
+        if (stage && typeof stage === 'object' && Array.isArray(stage.requests)) return stage
+    } catch (_) { /* logged below */ }
+    // one unreadable stage must not stop the call: it is logged and treated as nobody presenting
+    ec.logger.error(`Call ${session.callSessionId} has an unreadable stage, treated as empty: ${String(session.stageState).slice(0, 200)}`)
+    return empty()
 }
 function store(session, stage) {
     if (stage.requested) for (const key of Object.keys(stage.requested)) if (!stage.requests.includes(key)) delete stage.requested[key]
@@ -43,6 +50,12 @@ function recurring(session,leg,pageId) {
     return present(session,stage,leg,'board',pageId) && store(session,stage)
 }
 function end(session) { return store(session, empty()) }
+/** A leg's page connected again (a reload, a new socket): its screen share is gone with the old page, so its screen stage ends. */
+function rebound(session, legId) {
+    const stage = read(session)
+    if (stage.kind !== 'screen' || stage.callLegId !== legId) return false
+    return store(session, Object.assign(empty(), {requests:stage.requests, requested:stage.requested}))
+}
 
 const one = (entity, fields) => ec.entity.find('moqui.call.' + entity).condition(fields).disableAuthz().one()
 function personOf(legId) {
@@ -75,7 +88,9 @@ function change(p, engine) {
     if (p.action === 'ask' || p.action === 'take') {
         if (p.kind === 'board' && (!actor.userId || !boards.readable(p.wikiPageId,actor.userId)))
             return engine.refuse('notFound','Board not found')
-        if (p.kind === 'follow' && (p.credential || !actor.userId || one('CallLeg',{callLegId:leg})?.legTypeEnumId !== 'CltWeb')) return engine.refuse('notAllowed','Only a member can present an application screen')
+        // the same members whose pages may follow (Calls.js bindLeg memberScreen)
+        if (p.kind === 'follow' && (p.credential || !actor.userId || actor.identityKindEnumId !== 'CikLocal' ||
+                one('CallLeg',{callLegId:leg})?.legTypeEnumId !== 'CltWeb')) return engine.refuse('notAllowed','Only a member can present an application screen')
         if (!['board','screen','follow'].includes(p.kind || 'screen')) return engine.refuse('badRequest', 'Unknown presentation type')
         if (mode === 'CsmHosts' && !host) return engine.refuse('notAllowed', 'Only hosts may present')
         if (mode === 'CsmAsk' && !host && stage.callLegId !== leg) {
@@ -83,6 +98,7 @@ function change(p, engine) {
             stage.requested = Object.assign(stage.requested || {},{[leg]:{kind:p.kind || 'screen',wikiPageId:p.kind === 'board' ? p.wikiPageId : null}})
         } else {
             if (stage.callLegId && stage.callLegId !== leg && !host) {
+                if (personOf(stage.callLegId)?.roleEnumId === 'CprHost') return engine.refuse('notAllowed', 'Only a host may take over from a host')
                 if (p.action !== 'take') return engine.refuse('takeoverRequired', 'Confirm who you want to take over from')
                 if (p.previousLegId !== stage.callLegId) return engine.refuse('stageChanged', 'The presenter changed')
             }
@@ -116,11 +132,14 @@ function change(p, engine) {
     } else {
         return engine.refuse('badRequest', 'Unknown stage action')
     }
+    let current = stage
     if (store(session, stage)) {
-        engine.bump(session)
+        // bump drops the legs that left, and publishes the stage itself when that changed it
+        const published = engine.bump(session)
         session.update()
-        engine.mediaControl(session, {action:'stage', stage, revision:Number(session.revision), shareModeEnumId:mode})
+        current = read(session)
+        if (!published) engine.mediaControl(session, {action:'stage', stage:current, revision:Number(session.revision), shareModeEnumId:mode})
     }
-    return {stage, stageRevision:Number(session.revision), shareModeEnumId:mode}
+    return {stage:current, stageRevision:Number(session.revision), shareModeEnumId:mode}
 }
-;({read, end, leave, setMode, change, recurring})
+;({read, end, leave, rebound, setMode, change, recurring})

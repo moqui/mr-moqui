@@ -477,7 +477,9 @@ impl Driver<'_> {
                 }
             }
             Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
-            Command::Stage { room, frame } => self.stage(&room, &frame),
+            Command::Stage { room, frame } => {
+                self.stage(&room, &frame);
+            }
             Command::ToRoom { room, frame } => self.spread(&room, None, frame, None, None),
             Command::RoomNotice {
                 room,
@@ -625,11 +627,14 @@ impl Driver<'_> {
                     .get_mut(&key)
                     .filter(|r| r.generation == generation && r.member_screen)
                 else {
-                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
+                    return self.reply(&route, room, follow_refusal(&id, "notAllowed"));
                 };
                 let stage = self.stages.get(room).map_or(&Json::Null, |f| &f["stage"]);
-                if stage["kind"] != "follow" || !sender.peer.take(now) {
-                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"stageUnavailable"}));
+                if stage["kind"] != "follow" {
+                    return self.reply(&route, room, follow_refusal(&id, "stageUnavailable"));
+                }
+                if !sender.peer.take(now) {
+                    return self.reply(&route, room, follow_refusal(&id, "followRate"));
                 }
                 if frame["action"] == "catchUp" {
                     self.follow_catchup(&key, generation);
@@ -651,7 +656,7 @@ impl Driver<'_> {
                     self.follows.insert(room.to_string(), relay.clone());
                     self.spread(room, Some(leg), relay, None, None);
                 } else {
-                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
+                    return self.reply(&route, room, follow_refusal(&id, "notAllowed"));
                 }
                 Ok(None)
             }
@@ -726,15 +731,17 @@ impl Driver<'_> {
         // a leg that joins gets the room's notices (recording, captions) right after its answer, before any media:
         // late joiners and guests too
         if joined {
-            if let Some(stage) = frame.get("boundStage") {
-                self.stage(room, stage);
-            }
+            // before any stage: a guest that joins first still gets a follow stage's screen later
+            self.sfu.set_guest_video_recipient(&key, frame["boundGuest"] == true);
+            // a newer stage of the join goes to the whole room, this leg with it
+            let sent = frame.get("boundStage").is_some_and(|stage| self.stage(room, stage));
             if let Some(stage) = self.stages.get(room) {
                 // Joining can create or replace the SFU room after the grant arrived.
-                self.sfu.set_guest_video_recipient(&key, frame["boundGuest"] == true);
                 self.sfu
                     .set_presentation(room, screen_leg(stage), stage["stage"]["kind"] == "follow");
-                self.to_leg(&key, generation, stage.clone());
+                if !sent {
+                    self.to_leg(&key, generation, stage.clone());
+                }
             }
             for track in self.sfu.published_tracks(&key) {
                 self.reply(
@@ -775,9 +782,10 @@ impl Driver<'_> {
         }
     }
 
-    fn stage(&mut self, room: &str, frame: &Json) {
+    /// A stage of the call services: kept and sent to the room's legs when it is newer than the one here (true).
+    fn stage(&mut self, room: &str, frame: &Json) -> bool {
         let Some(revision) = frame["revision"].as_u64().filter(|n| *n > 0) else {
-            return;
+            return false;
         };
         if self
             .stages
@@ -785,7 +793,7 @@ impl Driver<'_> {
             .and_then(|f| f["revision"].as_u64())
             .is_some_and(|current| current >= revision)
         {
-            return;
+            return false;
         }
         if self.stages.get(room).is_none_or(|previous| {
             previous["stage"]["inkEpoch"] != frame["stage"]["inkEpoch"]
@@ -808,6 +816,7 @@ impl Driver<'_> {
         self.stages.insert(room.to_string(), frame.clone());
         // The service sends to each participating media node after commit.
         self.to_room(room, None, frame.clone());
+        true
     }
 
     /// The generation of a leg here: its SFU peer's, or a direct leg's route's.
@@ -1124,6 +1133,9 @@ impl Driver<'_> {
             o.insert("callSessionId".to_string(), Json::String(call.to_string()));
         }
         if route.node == self.own {
+            #[cfg(test)]
+            tests::sent(route.socket_id, &frame);
+            crate::notws::rtc::note_stage(route.socket_id, &frame);
             crate::notws::push_to_socket(route.socket_id, frame.to_string());
             return;
         }
@@ -1275,6 +1287,11 @@ fn call_of(room: &str) -> &str {
     moqui_core::edge::media::split_room(room).1
 }
 
+/// A refused follow frame (`follow`): the page drops it quietly.
+fn follow_refusal(id: &Json, code: &str) -> Json {
+    json!({"rtc":"error","id":id,"code":code,"follow":true})
+}
+
 fn follow_order(frame: &Json) -> (u64, u64) {
     (
         frame["generation"].as_u64().unwrap_or(0),
@@ -1297,3 +1314,7 @@ fn with_id(mut frame: Json, id: &Json) -> Json {
     }
     frame
 }
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod tests;

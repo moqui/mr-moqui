@@ -3105,7 +3105,7 @@
               ]))
             }
         } },
-        "m-call-presentation": { hash: "6ef7dfa4", make: function (Vue) {
+        "m-call-presentation": { hash: "81e07857", make: function (Vue) {
             const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, vModelSelect: _vModelSelect, vModelText: _vModelText, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -3489,7 +3489,7 @@
                         key: leg,
                         class: "row items-center q-gutter-xs"
                       }, [
-                        _createElementVNode("span", null, _toDisplayString(_ctx.name(leg)) + " " + _toDisplayString(_ctx.t('wants to present')), 1),
+                        _createElementVNode("span", null, _toDisplayString(_ctx.t('{name} wants to present').replace('{name}',_ctx.name(leg))), 1),
                         _createVNode(_component_q_btn, {
                           flat: "",
                           dense: "",

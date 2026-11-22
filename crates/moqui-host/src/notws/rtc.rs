@@ -81,6 +81,11 @@ struct Binding {
     /// Bound for the direct path (`join` with `direct`): the page's media goes to the other page, and this socket
     /// carries their `peer` frames, which no other binding may send.
     direct: bool,
+    /// A member's page, which may follow and present a screen (`bind#Connection` `memberScreen`).
+    member_screen: bool,
+    /// The leg holds a follow stage, as of the newest stage frame this socket was sent ([`note_stage`]).
+    follow_presenter: bool,
+    stage_revision: u64,
 }
 
 /// Whether the socket is in a call now: it pings its client more often then ([`super::PING_IN_CALL`]), so a mobile
@@ -178,38 +183,8 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
                 );
                 return true;
             }
-            if op == "follow" && frame["action"] == "navigate" {
-                static NAV: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
-                if !super::take(NAV.get_or_init(Default::default), &slot.id, 600) {
-                    error(
-                        slot,
-                        &call,
-                        &leg,
-                        &id,
-                        "rateLimited",
-                        "Navigation updates are arriving too quickly",
-                    );
-                    return true;
-                }
-                // Screen resolution runs off the socket task; later navigation
-                // wins even if an earlier definition takes longer to load.
-                static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-                let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let (factory, slot) = (Arc::clone(factory), Arc::clone(slot));
-                tokio::spawn(async move {
-                    let screen_factory = Arc::clone(&factory);
-                    let clean = as_user(&factory, slot.user_id.clone(), move || {
-                        Ok(crate::rtc::follow::navigate(&screen_factory, &frame))
-                    })
-                    .await;
-                    if let Ok(Some(mut clean)) = clean {
-                        clean["sequence"] = json!(sequence);
-                        clean["id"] = id.clone();
-                        forward(&factory, &slot, &binding, &id, clean);
-                    } else {
-                        error(&slot, &call, &leg, &id, "invalidScreen", "Choose an application screen");
-                    }
-                });
+            if op == "follow" && matches!(frame["action"].as_str(), Some("navigate" | "locate")) {
+                presenter_frame(factory, slot, binding, id, frame);
             } else if op == "stage" {
                 change_stage(factory, slot, Who::User(slot.user_id.clone()), binding, id, frame);
             } else {
@@ -218,6 +193,167 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
         }
     }
     true
+}
+
+/// A refused follow frame: the page drops these quietly (WebrootCall.js), as a presenter's pointer moves on anyway.
+fn follow_error(slot: &Slot, call: &str, leg: &str, id: &Json, code: &str, message: &str) {
+    send(
+        slot,
+        json!({"topic": format!("rtc:{call}"), "rtc": "error", "callSessionId": call, "callLegId": leg, "id": id,
+            "code": code, "message": message, "follow": true}),
+    );
+}
+
+/// The screen a socket's follow presenter resolved last ([`presenter_frame`]): its path, the parameters the page
+/// sent, and those kept (`None` while it is being resolved, so a `locate` never names the screen before).
+struct Resolved {
+    call: String,
+    leg: String,
+    path: String,
+    given: String,
+    params: Option<Json>,
+}
+
+fn resolved() -> &'static Mutex<HashMap<u64, Resolved>> {
+    static RESOLVED: OnceLock<Mutex<HashMap<u64, Resolved>>> = OnceLock::new();
+    RESOLVED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Whether a socket's binding may send the screen it shows to its followers: a member's page holding a follow
+/// stage, from the stage frames this socket was sent. A guest's page never may.
+fn may_present(guest: bool, binding: &Binding) -> bool {
+    !guest && binding.member_screen && binding.follow_presenter
+}
+
+/// The follow presenter's `navigate` (its screen) and `locate` (only its pointer, section or open dialog). Who may
+/// send them is checked before any work; a screen is resolved once for its path and parameters, off the socket task,
+/// and a `locate` reuses that resolution. Each gets its sequence as it comes: a later frame wins at the media node.
+fn presenter_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, binding: Binding, id: Json, frame: Json) {
+    let (call, leg) = (binding.call.clone(), binding.leg.clone());
+    if !may_present(false, &binding) {
+        return follow_error(
+            slot,
+            &call,
+            &leg,
+            &id,
+            "notAllowed",
+            "Only the presenter's page sends its screen",
+        );
+    }
+    static NAV: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
+    if !super::take(NAV.get_or_init(Default::default), &slot.id, 600) {
+        return follow_error(
+            slot,
+            &call,
+            &leg,
+            &id,
+            "followRate",
+            "Screen updates are arriving too quickly",
+        );
+    }
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let locate = frame["action"] == "locate";
+    let path = frame["path"].as_str().unwrap_or_default().to_string();
+    let given = frame["params"].to_string();
+    let known = lock(resolved())
+        .get(&slot.id)
+        .filter(|r| r.call == call && r.leg == leg && (locate || (r.path == path && r.given == given)))
+        .and_then(|r| Some((r.path.clone(), r.params.clone()?)));
+    let send_located = |path: &str, params: &Json| {
+        let mut clean = crate::rtc::follow::located(path, params, &frame);
+        clean["sequence"] = json!(sequence);
+        clean["id"] = id.clone();
+        forward(factory, slot, &binding, &id, clean);
+    };
+    if let Some((path, params)) = known {
+        return send_located(&path, &params);
+    }
+    if locate {
+        // no screen resolved yet, or one still resolving: the next pointer move or navigate says where
+        return;
+    }
+    lock(resolved()).insert(
+        slot.id,
+        Resolved {
+            call: call.clone(),
+            leg: leg.clone(),
+            path: path.clone(),
+            given: given.clone(),
+            params: None,
+        },
+    );
+    let (factory, slot) = (Arc::clone(factory), Arc::clone(slot));
+    tokio::spawn(async move {
+        let (screen_factory, screen_path, asked) = (Arc::clone(&factory), path.clone(), frame["params"].clone());
+        // resolving reads screen definitions only: as internal work, with no login
+        let params = super::on_pool(&factory, move || {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            Ok(crate::rtc::follow::resolve(&screen_factory, &screen_path, &asked))
+        })
+        .await
+        .ok()
+        .flatten();
+        {
+            let mut cache = lock(resolved());
+            let own = cache
+                .get(&slot.id)
+                .is_some_and(|r| r.call == call && r.leg == leg && r.path == path && r.given == given);
+            match (&params, own) {
+                (Some(kept), true) => {
+                    if let Some(r) = cache.get_mut(&slot.id) {
+                        r.params = Some(kept.clone());
+                    }
+                }
+                (None, true) => {
+                    cache.remove(&slot.id);
+                }
+                _ => {}
+            }
+        }
+        match params {
+            Some(params) => {
+                let mut clean = crate::rtc::follow::located(&path, &params, &frame);
+                clean["sequence"] = json!(sequence);
+                clean["id"] = id.clone();
+                forward(&factory, &slot, &binding, &id, clean);
+            }
+            None => follow_error(&slot, &call, &leg, &id, "invalidScreen", "Choose an application screen"),
+        }
+    });
+}
+
+/// Notes a stage frame on its way to a socket here (from the media node, or the answer to its own stage change):
+/// whether the socket's leg is now the follow presenter, for [`may_present`]. An older revision changes nothing.
+pub(crate) fn note_stage(slot_id: u64, frame: &Json) {
+    if !matches!(frame["rtc"].as_str(), Some("stage" | "ack")) {
+        return;
+    }
+    let (Some(stage), Some(revision)) = (frame.get("stage"), frame["revision"].as_u64()) else {
+        return;
+    };
+    let call = frame["callSessionId"].as_str().unwrap_or_default();
+    let Some(leg) = frame
+        .get("to")
+        .or_else(|| frame.get("callLegId"))
+        .and_then(Json::as_str)
+    else {
+        return;
+    };
+    if let Some(list) = lock(bindings()).get_mut(&slot_id) {
+        for b in list
+            .iter_mut()
+            .filter(|b| b.call == call && b.leg == leg && b.stage_revision <= revision)
+        {
+            b.stage_revision = revision;
+            b.follow_presenter = presents(stage, leg);
+        }
+    }
+}
+
+/// Whether `stage` is a follow stage that `leg` holds.
+fn presents(stage: &Json, leg: &str) -> bool {
+    stage["kind"] == "follow" && stage["callLegId"].as_str() == Some(leg)
 }
 
 fn bound(slot_id: u64, call: &str, leg: &str) -> Option<Binding> {
@@ -358,6 +494,7 @@ fn join(
             .map(to_plain_string)
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| media_node.clone());
+        let bound_stage = stage_of(&out);
         let binding = Binding {
             call: call.clone(),
             leg: leg.clone(),
@@ -365,6 +502,9 @@ fn join(
             media_node,
             origin_node,
             direct,
+            member_screen: !matches!(&who, Who::Guest(_)) && matches!(out.get("memberScreen"), Some(Value::Bool(true))),
+            follow_presenter: bound_stage.as_ref().is_some_and(|s| presents(&s["stage"], &leg)),
+            stage_revision: bound_stage.as_ref().and_then(|s| s["revision"].as_u64()).unwrap_or(0),
         };
         // a guest's frame never asks the driver for the direct path
         let mut frame = frame;
@@ -380,7 +520,7 @@ fn join(
                 "boundHost".to_string(),
                 Json::Bool(matches!(out.get("isHost"), Some(Value::Bool(true)))),
             );
-            if let Some(stage) = stage_of(&out) {
+            if let Some(stage) = bound_stage {
                 obj.insert("boundStage".into(), stage);
             }
         }
@@ -541,6 +681,7 @@ fn change_stage(
                 reply["topic"] = json!(format!("rtc:{}", binding.call));
                 reply["callSessionId"] = json!(binding.call);
                 reply["callLegId"] = json!(binding.leg);
+                note_stage(slot.id, &reply);
                 send(&slot, reply);
             }
             Ok(Err((code, message))) => error(&slot, &binding.call, &binding.leg, &id, &code, &message),
@@ -608,6 +749,7 @@ fn forward(factory: &Arc<ExecutionContextFactory>, slot: &Slot, binding: &Bindin
 
 /// The socket closed: its bindings are released, and the legs leave after the reconnect grace.
 pub(super) fn socket_closed(factory: &Arc<ExecutionContextFactory>, slot_id: u64) {
+    lock(resolved()).remove(&slot_id);
     let Some(list) = lock(bindings()).remove(&slot_id) else {
         return;
     };
@@ -680,6 +822,7 @@ pub(crate) fn deliver_edge_reply(edge: &str, message: &TopicMessage) -> Result<(
             "no socket here bound leg {leg} of call {call} with its media on the edge node"
         ));
     }
+    note_stage(socket, frame);
     super::push_to_socket(socket, frame.to_string());
     Ok(())
 }
@@ -702,6 +845,7 @@ fn deliver_signal(message: &TopicMessage) {
     match body.get("kind").and_then(Json::as_str) {
         Some("reply") => {
             if let (Some(socket), Some(frame)) = (body.get("socketId").and_then(Json::as_u64), body.get("frame")) {
+                note_stage(socket, frame);
                 super::push_to_socket(socket, frame.to_string());
             }
         }
@@ -1076,6 +1220,15 @@ fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: 
         "leave" => leave(factory, slot, who, scope.call.clone(), scope.leg.clone(), id, frame),
         _ => match bound(slot.id, &scope.call, &scope.leg) {
             Some(binding) if op == "stage" => change_stage(factory, slot, who, binding, id, frame),
+            // a guest's page sees the presenter's screen as video: it never follows nor presents one
+            Some(binding) if op == "follow" && !may_present(true, &binding) => follow_error(
+                slot,
+                &scope.call,
+                &scope.leg,
+                &id,
+                "notAllowed",
+                "A guest's page does not follow screens",
+            ),
             Some(binding) => forward(factory, slot, &binding, &id, frame),
             None => error(
                 slot,
@@ -1101,6 +1254,9 @@ mod tests {
             media_node: "n1".to_string(),
             origin_node: "n1".to_string(),
             direct: false,
+            member_screen: false,
+            follow_presenter: false,
+            stage_revision: 0,
         }
     }
 
@@ -1126,5 +1282,39 @@ mod tests {
         assert_eq!(list.last().map(|b| b.call.as_str()), Some("c9"));
         let next = keep(&mut list, binding("c8", "l8", 1), &[]).expect("with nothing kept, the oldest");
         assert_eq!(next.call, "c0");
+    }
+
+    /// Only the member page whose leg holds the follow stage sends its screen, learnt from the stage frames the
+    /// socket is sent (an older revision changes nothing); a guest's page never does.
+    #[test]
+    fn only_the_follow_presenters_member_page_sends_its_screen() {
+        use serde_json::json;
+        const SLOT: u64 = u64::MAX - 7;
+        let mut mine = binding("fc", "me", 1);
+        mine.member_screen = true;
+        super::lock(super::bindings()).insert(SLOT, vec![mine]);
+        let now = || super::bound(SLOT, "fc", "me").unwrap();
+        let stage = |revision: u64, leg: &str| {
+            json!({"rtc":"stage","callSessionId":"fc","to":"me","revision":revision,
+                "stage":{"kind":"follow","callLegId":leg}})
+        };
+        assert!(!super::may_present(false, &now()), "no stage yet");
+        super::note_stage(SLOT, &stage(3, "me"));
+        assert!(super::may_present(false, &now()));
+        assert!(!super::may_present(true, &now()), "never a guest's page");
+        super::note_stage(SLOT, &stage(2, "other"));
+        assert!(super::may_present(false, &now()), "an older stage frame is ignored");
+        super::note_stage(SLOT, &stage(4, "other"));
+        assert!(!super::may_present(false, &now()), "another leg presents now");
+        super::note_stage(
+            SLOT,
+            &json!({"rtc":"ack","callSessionId":"fc","callLegId":"me","revision":5,
+                "stage":{"kind":"follow","callLegId":"me"}}),
+        );
+        assert!(super::may_present(false, &now()), "the answer to its own take");
+        let mut other = now();
+        other.member_screen = false;
+        assert!(!super::may_present(false, &other), "not a member's page");
+        super::lock(super::bindings()).remove(&SLOT);
     }
 }
