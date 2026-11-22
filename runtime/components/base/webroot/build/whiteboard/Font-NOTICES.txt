@@ -1,0 +1,17 @@
+Font copyrights and licenses
+
+The WOFF2 files under fonts/ retain the upstream name tables and notices. The
+SIL Open Font License, Version 1.1 accompanies this distribution in
+/libs/licenses/OFL-1.1.txt. Font descriptors for the Excalidraw 0.18.0 release
+are at https://github.com/excalidraw/excalidraw/tree/v0.18.0/packages/excalidraw/fonts.
+
+Assistant — Copyright 2020 The Assistant Project Authors and 2010 The Source Sans Pro Authors. SIL OFL-1.1.
+Cascadia Code — Copyright 2020 Microsoft Corporation. SIL OFL-1.1.
+Comic Shanns — Copyright 2018 Shannon Miwa, 2023 Jesus Gonzalez and Rodrigo Batista de Moraes, and 2024 Fini Jastrow and Kyle Beechly. MIT.
+Excalifont — Copyright 2024 Excalidraw. SIL OFL-1.1.
+Lilita One — Copyright 2011 Juan Montoreano. SIL OFL-1.1, reserved font name Lilita One.
+Nunito — Copyright 2014 The Nunito Project Authors. SIL OFL-1.1.
+Virgil — Copyright 2011 Your Own Font Foundry. SIL OFL-1.1.
+Xiaolai — Copyright 2020 LXGW. SIL OFL-1.1.
+Arimo — The Arimo Project Authors. SIL OFL-1.1. The complete notice from
+@fontsource/arimo accompanies the other package licenses above.

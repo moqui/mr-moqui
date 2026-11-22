@@ -43,12 +43,12 @@ mod stream;
 pub(crate) mod test_peer;
 pub(crate) mod upload;
 
-pub(crate) use upload::read_to_spool;
-use upload::{read_multipart, upload_has_user};
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
 pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Serving};
 pub(crate) use serve::{DownServe, Forward, Peer, WebApp};
+pub(crate) use upload::read_to_spool;
+use upload::{read_multipart, upload_has_user};
 // the edge link's down connection and its tunnels use these, and the tests
 #[cfg_attr(not(feature = "edge"), allow(unused_imports))]
 pub(crate) use serve::{serve_request, serve_tunneled, ExtendedConnect};
@@ -196,7 +196,8 @@ fn record_web_listeners(
     use moqui_core::startup::{listener, State};
     match http {
         Some(http) => listener(factory, "HTTP", State::On(format!("tcp {http}"))),
-        None => listener(factory, "HTTP", State::off("no port, reached in process only")),
+        None if cluster.port() == 0 => listener(factory, "HTTP", State::off("no port, reached in process only")),
+        None => listener(factory, "HTTP", State::off("http-listen-port")),
     }
     match https {
         Some(https) => listener(
@@ -209,7 +210,7 @@ fn record_web_listeners(
                     .unwrap_or_default()
             )),
         ),
-        None if http.is_none() => listener(factory, "HTTPS", State::off("no port, reached in process only")),
+        None if cluster.port() == 0 => listener(factory, "HTTPS", State::off("no port, reached in process only")),
         None if https_standby => listener(factory, "HTTPS", State::off(STANDBY)),
         None => listener(
             factory,
@@ -273,7 +274,7 @@ type TokenRoutes = Arc<dyn Fn() -> Arc<moqui_core::screen::token_route::Redactio
 /// ([`crate::in_process::InProcess`], which every server has); `http` is then reported as port 0.
 pub(crate) async fn listen(
     factory: Arc<ExecutionContextFactory>,
-    bind: Option<SocketAddr>,
+    bind: Option<crate::WebBind>,
     https: Option<crate::tls::HttpsListen>,
     cluster: SocketAddr,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
@@ -284,7 +285,7 @@ pub(crate) async fn listen(
         let _ = ready.send(Err(message.clone()));
         Error::new(message)
     };
-    let listener = match bind {
+    let listener = match bind.and_then(|web| web.http_port.map(|port| SocketAddr::new(web.ip, port))) {
         Some(bind) => Some(
             TcpListener::bind(bind)
                 .await
@@ -302,9 +303,7 @@ pub(crate) async fn listen(
     #[cfg(feature = "grpc")]
     let grpc = {
         let bound = https.as_ref().filter(|https| !https.standby);
-        listener
-            .as_ref()
-            .and_then(|_| crate::grpc_listen::bind_address(&factory, address, bound.is_some()))
+        bind.and_then(|web| crate::grpc_listen::bind_address(&factory, web.ip, bound.is_some()))
             .map(|bind| (bind, bound.map(|https| Arc::clone(&https.config))))
     };
     let mut certs: Option<Arc<dyn rustls::server::ResolvesServerCert>> = None;
@@ -529,9 +528,7 @@ pub(crate) async fn listen(
             moqui_core::startup::listener(
                 &link_factory,
                 crate::grpc_listen::LISTENER,
-                moqui_core::startup::State::off(
-                    "the telemetry receiver's grpc-enabled and pass-authority@grpc-enabled are not true",
-                ),
+                moqui_core::startup::State::off("grpc-listen-port is off or no dedicated gRPC service is enabled"),
             );
             None
         }
@@ -1782,7 +1779,11 @@ pub(crate) fn secure_request(
     peer: IpAddr,
     addressing: &moqui_core::web::address::ClientAddressing,
 ) -> bool {
-    let via = parts.extensions.get::<moqui_core::web::RequestVia>().copied().unwrap_or_default();
+    let via = parts
+        .extensions
+        .get::<moqui_core::web::RequestVia>()
+        .copied()
+        .unwrap_or_default();
     if via == moqui_core::web::RequestVia::Edge {
         return over_tls || forwarded_https(&parts.headers, peer, addressing);
     }

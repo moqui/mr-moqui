@@ -43,6 +43,8 @@
 
 pub(crate) mod captions;
 mod driver;
+pub(crate) mod follow;
+mod ink;
 pub(crate) mod media;
 pub(crate) mod recorder;
 mod tcp;
@@ -129,6 +131,11 @@ pub(crate) enum Command {
     Media(media::MediaCommand),
     /// A frame for every leg of a room, from the room's own work on this node (captions).
     ToRoom {
+        room: String,
+        frame: Json,
+    },
+    /// The call engine's committed stage, for every local leg and the SFU forwarding gate.
+    Stage {
         room: String,
         frame: Json,
     },

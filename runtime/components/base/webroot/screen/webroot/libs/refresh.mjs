@@ -21,6 +21,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildBoard } from '../../../build/whiteboard/build.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const write = args.includes('--write');
@@ -30,6 +32,8 @@ const workArg = args.includes('--work') ? args[args.indexOf('--work') + 1] : nul
 // packages are pinned so the bundle is the same bytes next time. Each version was published at least two weeks
 // before it was pinned (npm install --before), so a just-released, possibly compromised version is never taken.
 const BUILD_DEPS = {
+  'perfect-freehand': '1.2.2',
+  nanoevents: '9.1.0',
   esbuild: '0.28.2',
   '@vue/compiler-dom': '3.5.44',
   '@vue/compiler-core': '3.5.44',
@@ -250,6 +254,11 @@ const UNICODE_URL = 'https://www.unicode.org/license.txt';
 // Each entry: npm package and exact version, SPDX license, files copied from the package
 // ([path in package, path under libs/]), the license files to print in NOTICES.md, and an optional build.
 const LIBS = [
+  {
+    id: 'drauu', name: 'drauu', npm: '@drauu/core', version: '1.0.0', license: 'MIT',
+    copy: [['dist/index.mjs', 'drauu/drauu.js']],
+    licenseFiles: ['LICENSE'], noticePackages: ['perfect-freehand', 'nanoevents'],
+  },
   {
     id: 'fontawesome', name: 'Font Awesome', npm: 'font-awesome', version: '4.7.0',
     license: 'OFL-1.1 AND MIT', licenseNote: 'Fonts: SIL OFL 1.1. CSS: MIT. The documentation (CC-BY-3.0) is not shipped.',
@@ -780,6 +789,10 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   libMeta.push({ id: 'license-texts', name: 'License texts', version: '-', license: 'n/a',
     source: 'see each file', files: lt });
 
+  const board = buildBoard(join(work, "whiteboard"));
+  for (const [path, data] of board.outputs) outputs.set(path, data);
+  libMeta.push(board.lib);
+  notices.push(board);
   const noticesMd = renderNotices(notices);
   outputs.set('NOTICES.md', Buffer.from(noticesMd, 'utf8'));
   const manifest = {

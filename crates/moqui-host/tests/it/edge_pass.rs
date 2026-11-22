@@ -468,7 +468,7 @@ fn pass_authority_calls_round_trip_direct_and_on_the_edge_link() {
     let big = big_file();
     let properties = [
         ("moqui_conf__pass_authority__grpc_enabled", "true"),
-        ("moqui_conf__pass_authority__grpc_port", "0"),
+        ("moqui_conf__webapp_list__webapp__WEBROOT__grpc_listen_port", "0"),
         (
             "moqui_conf__pass_authority__service",
             "passtest.PassTestServices.handle#Call",

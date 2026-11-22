@@ -35,6 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
             users who may see the record (CrvRecord, asked of the service the theme value STRT_RECORD_VISIBLE_SERVICE
             names). lastEventSeq is the number of the room's last event; the next event takes the next number.</description>
         <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="wikiSpaceId" type="id"><description>Private board space owned by this room and governed by its membership</description></field>
         <field name="roomTypeEnumId" type="id"/>
         <field name="roomName" type="text-medium"><description>Empty for a direct room, which shows the other members' names</description></field>
         <field name="topic" type="text-long"/>
@@ -75,6 +76,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="directoryListed" type="text-indicator"><description>Y: a private room its owner lists in Browse, by its
             name, topic and member count, where a user may ask to join it (ChatInviteServices request#Join,
             plans/Comms-Messaging.md §18.3 phase 17). Its messages stay its members'.</description></field>
+        <index name="CHAT_ROOM_WIKI_SPACE" unique="true"><index-field name="wikiSpaceId"/></index>
         <relationship type="one" title="ChatRoomType" related="moqui.basic.Enumeration" short-alias="type">
             <key-map field-name="roomTypeEnumId"/></relationship>
         <relationship type="one" title="ChatRoomVisibility" related="moqui.basic.Enumeration" short-alias="visibility">
@@ -236,6 +238,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Redaction" enumId="CetRedaction" enumCode="redaction" enumTypeId="ChatEventType" sequenceNum="4"/>
             <moqui.basic.Enumeration description="Membership" enumId="CetMembership" enumCode="membership" enumTypeId="ChatEventType" sequenceNum="5"/>
             <moqui.basic.Enumeration description="Pin" enumId="CetPin" enumCode="pin" enumTypeId="ChatEventType" sequenceNum="6"/>
+            <moqui.basic.Enumeration description="Board" enumId="CetBoard" enumCode="board" enumTypeId="ChatEventType" sequenceNum="10"/>
             <moqui.basic.Enumeration description="Call" enumId="CetCall" enumCode="call" enumTypeId="ChatEventType" sequenceNum="7"/>
             <moqui.basic.Enumeration description="Poll" enumId="CetPoll" enumCode="poll" enumTypeId="ChatEventType" sequenceNum="8"/>
             <moqui.basic.Enumeration description="System" enumId="CetSystem" enumCode="system" enumTypeId="ChatEventType" sequenceNum="9"/>

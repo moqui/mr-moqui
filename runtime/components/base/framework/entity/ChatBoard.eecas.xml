@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-eca.xsd">
+    <!-- Only deleting the room removes its space. Event expiry and archiving leave it intact. -->
+    <eeca id="ChatRoomRemoveBoardSpace" entity="moqui.chat.ChatRoom" on-delete="true" get-original-value="true">
+        <actions><script><![CDATA[
+            const id = originalValue?.wikiSpaceId
+            if (!id) return
+            const find = (name, keys) => ec.entity.find(name).condition(keys).disableAuthz()
+            const space = find('moqui.resource.wiki.WikiSpace',{wikiSpaceId:id}).one()
+            if (!space) return
+            const prefix = 'dbresource://WikiSpace/' + id
+            if (space.rootPageLocation !== prefix + '.md')
+                throw new Error('Cannot remove a room space with a different storage root')
+            const wiki = 'moqui.resource.wiki.'
+            for (const page of find(wiki+'WikiPage',{wikiSpaceId:id}).forUpdate(true).list()) {
+                const wikiPageId = page.wikiPageId
+                find('moqui.call.CallBoard',{wikiPageId}).deleteAll()
+                find('moqui.call.CallLink',{wikiPageId}).updateAll({wikiPageId:null})
+                find('moqui.resource.CollabDocument',{documentKey:'WikiPage:'+wikiPageId}).deleteAll()
+                find(wiki+'WikiPageLink',{toWikiPageId:wikiPageId}).updateAll({toWikiPageId:null})
+                for (const blog of find(wiki+'WikiBlog',{wikiPageId}).list()) {
+                    find(wiki+'WikiBlogCategory',{wikiBlogId:blog.wikiBlogId}).deleteAll()
+                    blog.delete()
+                }
+                for (const name of ['WikiPageAlias','WikiPageCategoryMember','WikiPageHistory','WikiPageUser','WikiPageLink','WikiPageReview'])
+                    find(wiki+name,{wikiPageId}).deleteAll()
+                page.delete()
+            }
+            find(wiki+'WikiPageAlias',{wikiSpaceId:id}).deleteAll()
+            find(wiki+'WikiSpaceUser',{wikiSpaceId:id}).deleteAll()
+            function remove(ref) {
+                if (!ref.exists) return
+                if (ref.isDirectory()) for (const child of ref.getDirectoryEntries()) remove(child)
+                ref.delete()
+            }
+            remove(ec.resource.getLocationReference(prefix))
+            remove(ec.resource.getLocationReference(space.rootPageLocation))
+            space.delete()
+        ]]></script></actions>
+    </eeca>
+</eecas>

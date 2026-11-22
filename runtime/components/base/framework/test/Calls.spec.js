@@ -28,7 +28,7 @@ function as(userId, name, parameters) {
     let thrown = ""
     try {
         // as the Calls screens' transitions call them: the services check the signed-in user's part in each call
-        out = sys(() => ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -173,6 +173,47 @@ feature("binding a socket claims the next generation and fences the older one", 
         stale.released == false
         conns[0].statusId == "CcsReplaced"
         conns[1].statusId == "CcsActive"
+    }
+})
+
+feature("the session arbitrates presentation grants, takeover, host stop and approval", {
+    when() {
+        const binding = user => {
+            const callLegId = as(user, "get#Call", {callSessionId:direct}).call.myLegId
+            return {callLegId, generation:as(user, "bind#Connection", {callSessionId:direct, callLegId}).generation}
+        }
+        const host = binding(A), member = binding(B)
+        const act = (who, leg, action, extra = {}) => as(who, "org.moqui.call.StageServices.change#CallStage",
+                {callSessionId:direct, ...leg, action, ...extra})
+        const setMode = shareModeEnumId => as(A, "set#CallShareMode", {callSessionId:direct, shareModeEnumId})
+        const first = act(A, host, "ask")
+        const untrustedInk = act(B, member, "inkMode", {mode:"everyone"})
+        const inkMode = act(A, host, "inkMode", {mode:"hosts"})
+        const embedded = act(A, host, "inkSurface", {embedded:true})
+        const confirm = act(B, member, "ask")
+        const takeover = act(B, member, "take", {previousLegId:host.callLegId})
+        const impostor = act(A, member, "stop")
+        const stop = act(A, host, "stop")
+        const hosts = setMode("CsmHosts")
+        const barred = act(B, member, "ask")
+        setMode("CsmAsk")
+        const queued = act(B, member, "ask")
+        const approved = act(A, host, "approve", {targetLegId:member.callLegId})
+        const view = as(A, "get#Call", {callSessionId:direct}).call
+        const follow = act(A, host, "take", {kind:"follow"})
+        act(A, host, "stop")
+        setMode("CsmAnyone")
+        return {first, untrustedInk, inkMode, embedded, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, follow, host, member}
+    },
+    then(r) {
+        r.first.stage.callLegId === r.host.callLegId && r.confirm.reasonCode === "takeoverRequired"
+        r.follow.stage.kind === "follow" && r.follow.stage.followEpoch > 0
+        r.untrustedInk.reasonCode === "notAllowed" && r.inkMode.stage.inkMode === "hosts" && r.embedded.stage.inkEmbedded === true
+        !r.takeover.stage.inkEmbedded && !r.takeover.stage.inkMode
+        r.takeover.stage.callLegId === r.member.callLegId && r.impostor.reasonCode === "notAllowed"
+        r.stop.stage.kind == null && r.hosts.call.shareModeEnumId === "CsmHosts" && r.barred.reasonCode === "notAllowed"
+        r.queued.stage.kind == null && r.queued.stage.requests.includes(r.member.callLegId)
+        r.approved.stage.callLegId === r.member.callLegId && r.view.stage.callLegId === r.member.callLegId
     }
 })
 
@@ -465,6 +506,29 @@ feature("a room's group call: members join, a non-member cannot, the host's leav
     }
 })
 
+feature("an active room board grants drawing until the host restricts it and becomes call history at hangup", {
+    when() {
+        const {callSessionId} = as(A,"start#Call",{chatRoomId:room})
+        const hostLeg = as(A,"get#Call",{callSessionId}).call.myLegId
+        const {generation} = as(A,"bind#Connection",{callSessionId,callLegId:hostLeg})
+        as(B,"join#Call",{callSessionId})
+        const {wikiPageId,errors} = as(A,"create#MeetingBoard",{callSessionId,pageName:"Call history sketch"})
+        if (errors) throw Error(errors)
+        const shown = as(A,"org.moqui.call.StageServices.change#CallStage",{callSessionId,callLegId:hostLeg,generation,action:"ask",kind:"board",wikiPageId})
+        const restrict = who => as(who,"set#BoardDrawing",{callSessionId,wikiPageId,memberCanEdit:false,guestCanEdit:false})
+        const refused = restrict(B), changed = restrict(A)
+        as(A,"end#Call",{callSessionId})
+        const history = as(A,"find#MeetingBoards",{callSessionId})
+        return {shown,refused,changed,history,wikiPageId}
+    },
+    then(r) {
+        r.shown.stage.wikiPageId === r.wikiPageId && r.shown.stage.guestCanEdit === true
+        r.refused.errors.includes("host")
+        !r.changed.errors && r.changed.guestCanEdit === false
+        r.history.shown.some(b=>b.wikiPageId===r.wikiPageId && b.closedDate)
+    }
+})
+
 feature("each user's history has their outcome of each call, and missed calls count until seen", {
     when() {
         const missedBefore = as(C, "count#MissedCalls")
@@ -495,7 +559,7 @@ function anon(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call() || {}
+        out = ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name).parameters(parameters || {}).call() || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -508,7 +572,7 @@ function internal(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -536,12 +600,14 @@ feature("a call link takes a guest by name into its meeting's lobby, and only so
         const admitted = as(A, "admit#Guest", {callSessionId: guest.callSessionId, callParticipantId: waitingParticipant.callParticipantId})
         const inState = anon("get#GuestState", {credential: guest.credential})
         const bound = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: guest.callSessionId, callLegId: guest.callLegId})
+        const guestFollow = internal("org.moqui.call.StageServices.change#CallStage", {credential:guest.credential,
+            callSessionId:guest.callSessionId,callLegId:guest.callLegId,generation:bound.generation,action:"take",kind:"follow"})
         const wrongCall = internal("bind#GuestConnection", {credential: guest.credential, callSessionId: direct, callLegId: guest.callLegId})
         ec.message.clearErrors()
         const links = as(A, "find#CallLinks")
-        return {bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, wrongCall, links}
+        return {bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, guestFollow, wrongCall, links}
     },
-    then({bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, wrongCall, links}) {
+    then({bad, good, noName, waiting, earlyBind, stranger, opened, admitted, inState, bound, guestFollow, wrongCall, links}) {
         link.path == "/call/" + link.token
         bad.valid == false
         good.valid == true
@@ -561,6 +627,7 @@ feature("a call link takes a guest by name into its meeting's lobby, and only so
         inState.admission == "admitted"
         inState.people.some(p => p.displayName == "Visitor")
         bound.generation == 1
+        guestFollow.reasonCode == "notAllowed" && bound.memberScreen === false
         wrongCall.reasonCode == "notFound"
         links.linkList.some(l => l.callLinkId == link.callLinkId && l.callSessionId == guest.callSessionId)
     }

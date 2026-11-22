@@ -6,7 +6,7 @@
 (function (moqui) {
     "use strict";
     moqui.qvtRenders = Object.assign(moqui.qvtRenders || {}, {
-        "m-call": { hash: "f758de98", make: function (Vue) {
+        "m-call": { hash: "7e37d92", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, normalizeClass: _normalizeClass, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 
             return function render(_ctx, _cache) {
@@ -22,6 +22,7 @@
               const _component_q_linear_progress = _resolveComponent("q-linear-progress")
               const _component_q_select = _resolveComponent("q-select")
               const _component_q_toggle = _resolveComponent("q-toggle")
+              const _component_m_call_presentation = _resolveComponent("m-call-presentation")
               const _component_m_call_compact = _resolveComponent("m-call-compact")
               const _component_q_menu = _resolveComponent("q-menu")
               const _component_q_badge = _resolveComponent("q-badge")
@@ -471,17 +472,23 @@
                       ], 2)
                     ]))
                   : _createCommentVNode("", true),
+                (_ctx.inThis && !_ctx.compactLayout)
+                  ? (_openBlock(), _createBlock(_component_m_call_presentation, {
+                      key: 14,
+                      view: _ctx.known
+                    }, null, 8, ["view"]))
+                  : _createCommentVNode("", true),
                 (_ctx.inThis && _ctx.compactLayout && _ctx.known)
                   ? (_openBlock(), _createBlock(_component_m_call_compact, {
-                      key: 14,
+                      key: 15,
                       view: _ctx.known,
                       panel: _ctx.panel,
                       label: _ctx.label
                     }, null, 8, ["view", "panel", "label"]))
                   : _createCommentVNode("", true),
-                (_ctx.inThis && !_ctx.compactLayout && _ctx.mainTile)
+                (_ctx.inThis && !_ctx.compactLayout && _ctx.mainTile && !(_ctx.call.stage.kind === 'screen' && _ctx.call.stage.callLegId !== _ctx.call.legId))
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 15,
+                      key: 16,
                       style: {"height":"60vh"},
                       class: "q-mb-sm"
                     }, [
@@ -562,7 +569,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.inThis && !_ctx.compactLayout)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 16,
+                      key: 17,
                       style: _normalizeStyle(_ctx.gridStyle)
                     }, [
                       (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.stripTiles, (tile) => {
@@ -641,13 +648,13 @@
                   : _createCommentVNode("", true),
                 (_ctx.inThis && !_ctx.compactLayout && !_ctx.remotes.length)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 17,
+                      key: 18,
                       class: "m-muted"
                     }, _toDisplayString(_ctx.call.phase === 'connected' ? _ctx.t('Waiting for the others') : _ctx.t('Connecting')), 1))
                   : _createCommentVNode("", true),
                 (_ctx.inThis && !_ctx.compactLayout && (_ctx.call.captions.on || _ctx.call.captions.unavailable))
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 18,
+                      key: 19,
                       class: "m-call-captions q-pa-sm rounded-borders",
                       style: {"background":"rgba(0,0,0,.78)","color":"#fff"},
                       "aria-live": "polite"
@@ -690,7 +697,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.inThis && !_ctx.compactLayout)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 19,
+                      key: 20,
                       class: "row justify-center q-gutter-sm q-mt-sm"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -730,27 +737,6 @@
                         ]),
                         _: 1
                       }, 8, ["color", "icon", "aria-label", "onClick"]),
-                      (_ctx.canShare)
-                        ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 0,
-                            round: "",
-                            unelevated: "",
-                            color: _ctx.call.sharing ? 'primary' : 'grey-8',
-                            icon: _ctx.call.sharing ? 'sym_o_stop_screen_share' : 'sym_o_present_to_all',
-                            "aria-label": _ctx.call.sharing ? _ctx.t('Stop sharing') : _ctx.t('Share the screen'),
-                            onClick: $event => (_ctx.call.sharing ? _ctx.moquiCall().stopShare() : _ctx.moquiCall().shareScreen())
-                          }, {
-                            default: _withCtx(() => [
-                              _createVNode(_component_q_tooltip, null, {
-                                default: _withCtx(() => [
-                                  _createTextVNode(_toDisplayString(_ctx.call.sharing ? _ctx.t('Stop sharing') : _ctx.t('Share the screen')), 1)
-                                ]),
-                                _: 1
-                              })
-                            ]),
-                            _: 1
-                          }, 8, ["color", "icon", "aria-label", "onClick"]))
-                        : _createCommentVNode("", true),
                       _createVNode(_component_q_btn, {
                         round: "",
                         unelevated: "",
@@ -771,7 +757,7 @@
                       }, 8, ["color", "aria-label", "onClick"]),
                       (_ctx.call.captions.allowed || _ctx.call.captions.on)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 1,
+                            key: 0,
                             round: "",
                             unelevated: "",
                             color: _ctx.call.captions.on ? 'primary' : 'grey-8',
@@ -874,7 +860,7 @@
                       }, 8, ["aria-label", "onClick"]),
                       (_ctx.canRecord && !_ctx.recording)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 2,
+                            key: 1,
                             round: "",
                             unelevated: "",
                             color: "grey-8",
@@ -895,7 +881,7 @@
                         : _createCommentVNode("", true),
                       (_ctx.canRecord && _ctx.recording)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 3,
+                            key: 2,
                             round: "",
                             unelevated: "",
                             color: "negative",
@@ -959,7 +945,7 @@
                         : _createCommentVNode("", true),
                       (_ctx.hasPhone)
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 4,
+                            key: 3,
                             round: "",
                             unelevated: "",
                             color: "grey-8",
@@ -1003,7 +989,7 @@
                         : _createCommentVNode("", true),
                       (_ctx.inThis && _ctx.known && _ctx.known.status !== 'ended')
                         ? (_openBlock(), _createBlock(_component_m_call_actions, {
-                            key: 5,
+                            key: 4,
                             view: _ctx.known
                           }, null, 8, ["view"]))
                         : _createCommentVNode("", true),
@@ -1027,7 +1013,7 @@
                       }, 8, ["aria-label", "onClick"]),
                       (_ctx.isHost && _ctx.known && _ctx.known.kind !== 'direct')
                         ? (_openBlock(), _createBlock(_component_q_btn, {
-                            key: 6,
+                            key: 5,
                             flat: "",
                             "no-caps": "",
                             color: "negative",
@@ -1037,7 +1023,7 @@
                         : _createCommentVNode("", true),
                       (_ctx.known)
                         ? (_openBlock(), _createBlock(_component_m_ext_actions, {
-                            key: 7,
+                            key: 6,
                             slot: "call-actions",
                             item: {callSessionId: _ctx.callSessionId}
                           }, null, 8, ["item"]))
@@ -1046,7 +1032,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.inThis && !_ctx.compactLayout && _ctx.call.participantsOpen && _ctx.known)
                   ? (_openBlock(), _createBlock(_component_q_list, {
-                      key: 20,
+                      key: 21,
                       bordered: "",
                       separator: "",
                       dense: "",
@@ -1486,7 +1472,7 @@
               }, null, 512))
             }
         } },
-        "m-call-compact": { hash: "429d5d1b", make: function (Vue) {
+        "m-call-compact": { hash: "15bde4b7", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, vShow: _vShow, withDirectives: _withDirectives, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle, createElementBlock: _createElementBlock, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective } = Vue
 
             return function render(_ctx, _cache) {
@@ -1497,6 +1483,7 @@
               const _component_q_icon = _resolveComponent("q-icon")
               const _component_q_banner = _resolveComponent("q-banner")
               const _component_q_chip = _resolveComponent("q-chip")
+              const _component_m_call_presentation = _resolveComponent("m-call-presentation")
               const _component_m_call_video = _resolveComponent("m-call-video")
               const _component_m_avatar = _resolveComponent("m-avatar")
               const _component_q_item_section = _resolveComponent("q-item-section")
@@ -1644,81 +1631,85 @@
                 ], 512), [
                   [_vShow, !_ctx.call.hostPip]
                 ]),
-                _createElementVNode("div", {
-                  class: "col relative-position m-call-stage",
-                  style: {"min-height":"240px","background":"#000","border-radius":"12px","overflow":"hidden"}
-                }, [
-                  (_ctx.main)
-                    ? (_openBlock(), _createElementBlock("div", {
-                        key: _ctx.main.key,
-                        class: "m-call-tile absolute-full"
-                      }, [
-                        _createVNode(_component_m_call_video, {
-                          stream: _ctx.main.stream,
-                          muted: "",
-                          style: _normalizeStyle(_ctx.main.screen ? 'width:100%;height:100%;object-fit:contain' : 'width:100%;height:100%;object-fit:cover')
-                        }, null, 8, ["stream", "style"]),
-                        _createElementVNode("div", { class: "absolute-bottom-left q-pa-sm text-white text-caption" }, _toDisplayString(_ctx.main.name), 1)
-                      ]))
-                    : (_openBlock(), _createElementBlock("div", {
-                        key: 1,
-                        class: "absolute-full column flex-center text-white m-call-voice"
-                      }, [
-                        _createVNode(_component_m_avatar, {
-                          name: _ctx.person.displayName,
-                          "user-id": _ctx.person.userId || undefined,
-                          size: "120px"
-                        }, null, 8, ["name", "user-id"]),
-                        _createElementVNode("div", { class: "text-h6 q-mt-md text-center q-px-md" }, _toDisplayString(_ctx.person.displayName), 1),
-                        _createElementVNode("div", {
-                          class: "text-caption",
-                          style: {"opacity":".8"}
-                        }, _toDisplayString(_ctx.view.video ? _ctx.t('Video call') : _ctx.t('Voice call')), 1)
-                      ])),
-                  (_ctx.strip.length)
-                    ? (_openBlock(), _createElementBlock("div", {
-                        key: 2,
-                        class: "absolute-top-left row no-wrap q-gutter-xs q-pa-xs"
-                      }, [
-                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.strip, (r) => {
-                          return (_openBlock(), _createElementBlock("div", {
-                            key: r.legId,
-                            class: "m-call-tile",
-                            style: {"width":"72px","height":"96px","border-radius":"8px","overflow":"hidden","background":"#222"}
+                _createVNode(_component_m_call_presentation, { view: _ctx.view }, null, 8, ["view"]),
+                (_ctx.call.stage.kind !== 'board' && !(_ctx.call.stage.kind === 'screen' && _ctx.call.stage.callLegId !== _ctx.call.legId))
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 1,
+                      class: "col relative-position m-call-stage",
+                      style: {"min-height":"240px","background":"#000","border-radius":"12px","overflow":"hidden"}
+                    }, [
+                      (_ctx.main)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: _ctx.main.key,
+                            class: "m-call-tile absolute-full"
                           }, [
                             _createVNode(_component_m_call_video, {
-                              stream: r.stream,
+                              stream: _ctx.main.stream,
                               muted: "",
+                              style: _normalizeStyle(_ctx.main.screen ? 'width:100%;height:100%;object-fit:contain' : 'width:100%;height:100%;object-fit:cover')
+                            }, null, 8, ["stream", "style"]),
+                            _createElementVNode("div", { class: "absolute-bottom-left q-pa-sm text-white text-caption" }, _toDisplayString(_ctx.main.name), 1)
+                          ]))
+                        : (_openBlock(), _createElementBlock("div", {
+                            key: 1,
+                            class: "absolute-full column flex-center text-white m-call-voice"
+                          }, [
+                            _createVNode(_component_m_avatar, {
+                              name: _ctx.person.displayName,
+                              "user-id": _ctx.person.userId || undefined,
+                              size: "120px"
+                            }, null, 8, ["name", "user-id"]),
+                            _createElementVNode("div", { class: "text-h6 q-mt-md text-center q-px-md" }, _toDisplayString(_ctx.person.displayName), 1),
+                            _createElementVNode("div", {
+                              class: "text-caption",
+                              style: {"opacity":".8"}
+                            }, _toDisplayString(_ctx.view.video ? _ctx.t('Video call') : _ctx.t('Voice call')), 1)
+                          ])),
+                      (_ctx.strip.length)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 2,
+                            class: "absolute-top-left row no-wrap q-gutter-xs q-pa-xs"
+                          }, [
+                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.strip, (r) => {
+                              return (_openBlock(), _createElementBlock("div", {
+                                key: r.legId,
+                                class: "m-call-tile",
+                                style: {"width":"72px","height":"96px","border-radius":"8px","overflow":"hidden","background":"#222"}
+                              }, [
+                                _createVNode(_component_m_call_video, {
+                                  stream: r.stream,
+                                  muted: "",
+                                  style: {"width":"100%","height":"100%","object-fit":"cover"}
+                                }, null, 8, ["stream"])
+                              ]))
+                            }), 128))
+                          ]))
+                        : _createCommentVNode("", true),
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.remotes.filter((x) => x.reaction), (r) => {
+                        return (_openBlock(), _createElementBlock("div", {
+                          key: 'r' + r.legId,
+                          class: "absolute-center text-h3"
+                        }, _toDisplayString(r.reaction), 1))
+                      }), 128)),
+                      (_ctx.selfVideo)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 3,
+                            class: "absolute-bottom-right q-ma-sm m-call-self",
+                            style: {"width":"96px","height":"128px","border-radius":"8px","overflow":"hidden","background":"#222","box-shadow":"0 2px 8px rgba(0,0,0,.5)"}
+                          }, [
+                            _createVNode(_component_m_call_video, {
+                              stream: _ctx.selfVideo,
+                              muted: "",
+                              mirror: "",
                               style: {"width":"100%","height":"100%","object-fit":"cover"}
                             }, null, 8, ["stream"])
                           ]))
-                        }), 128))
-                      ]))
-                    : _createCommentVNode("", true),
-                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.remotes.filter((x) => x.reaction), (r) => {
-                    return (_openBlock(), _createElementBlock("div", {
-                      key: 'r' + r.legId,
-                      class: "absolute-center text-h3"
-                    }, _toDisplayString(r.reaction), 1))
-                  }), 128)),
-                  (_ctx.selfVideo)
-                    ? (_openBlock(), _createElementBlock("div", {
-                        key: 3,
-                        class: "absolute-bottom-right q-ma-sm m-call-self",
-                        style: {"width":"96px","height":"128px","border-radius":"8px","overflow":"hidden","background":"#222","box-shadow":"0 2px 8px rgba(0,0,0,.5)"}
-                      }, [
-                        _createVNode(_component_m_call_video, {
-                          stream: _ctx.selfVideo,
-                          muted: "",
-                          mirror: "",
-                          style: {"width":"100%","height":"100%","object-fit":"cover"}
-                        }, null, 8, ["stream"])
-                      ]))
-                    : _createCommentVNode("", true)
-                ]),
+                        : _createCommentVNode("", true)
+                    ]))
+                  : _createCommentVNode("", true),
                 (true && (_ctx.call.captions.on || _ctx.call.captions.unavailable))
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 1,
+                      key: 2,
                       class: "m-call-captions q-pa-sm rounded-borders",
                       style: {"background":"rgba(0,0,0,.78)","color":"#fff"},
                       "aria-live": "polite"
@@ -2178,7 +2169,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-call-dock": { hash: "9331be0", make: function (Vue) {
+        "m-call-dock": { hash: "915a7160", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, createCommentVNode: _createCommentVNode, withCtx: _withCtx, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -2201,6 +2192,7 @@
               const _component_q_banner = _resolveComponent("q-banner")
               const _component_m_call = _resolveComponent("m-call")
               const _component_m_call_video = _resolveComponent("m-call-video")
+              const _component_m_call_presentation = _resolveComponent("m-call-presentation")
               const _component_q_space = _resolveComponent("q-space")
               const _directive_close_popup = _resolveDirective("close-popup")
 
@@ -2209,6 +2201,13 @@
                   return (_openBlock(), _createBlock(_component_m_call_audio, {
                     key: 'a' + r.legId,
                     stream: r.stream,
+                    "sink-id": _ctx.call.settings.audioOut
+                  }, null, 8, ["stream", "sink-id"]))
+                }), 128)),
+                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.remotes, (r) => {
+                  return (_openBlock(), _createBlock(_component_m_call_audio, {
+                    key: 's' + r.legId,
+                    stream: r.screen,
                     "sink-id": _ctx.call.settings.audioOut
                   }, null, 8, ["stream", "sink-id"]))
                 }), 128)),
@@ -2684,6 +2683,23 @@
                                     class: "fit flex flex-center text-white text-subtitle1"
                                   }, _toDisplayString(_ctx.current ? (_ctx.current.participants || []).filter(p => p.inCall).map(p => p.displayName).join(', ') : ''), 1))
                             ], 8, ["onClick"]),
+                            (_ctx.call.stage.kind==='follow')
+                              ? (_openBlock(), _createElementBlock("div", {
+                                  key: 0,
+                                  class: "q-px-sm"
+                                }, [
+                                  _createVNode(_component_m_call_presentation, { view: _ctx.current }, null, 8, ["view"])
+                                ]))
+                              : (_ctx.moquiCall().followPath(_ctx.$root.currentLinkUrl))
+                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                    key: 1,
+                                    flat: "",
+                                    dense: "",
+                                    icon: "sym_o_present_to_all",
+                                    label: _ctx.t('Present this screen'),
+                                    onClick: $event => (_ctx.moquiCall().requestPresentation('follow'))
+                                  }, null, 8, ["label", "onClick"]))
+                                : _createCommentVNode("", true),
                             _createVNode(_component_q_card_actions, { class: "q-py-xs" }, {
                               default: _withCtx(() => [
                                 _createElementVNode("span", { class: "text-caption q-ml-sm" }, _toDisplayString(_ctx.elapsed), 1),
@@ -2737,7 +2753,7 @@
               ]))
             }
         } },
-        "m-call-guest": { hash: "61f2b793", make: function (Vue) {
+        "m-call-guest": { hash: "f71dda0d", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createBlock: _createBlock, createVNode: _createVNode, createSlots: _createSlots, withKeys: _withKeys, renderList: _renderList, Fragment: _Fragment, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
@@ -2747,6 +2763,7 @@
               const _component_m_call_video = _resolveComponent("m-call-video")
               const _component_q_input = _resolveComponent("q-input")
               const _component_q_spinner = _resolveComponent("q-spinner")
+              const _component_m_call_presentation = _resolveComponent("m-call-presentation")
               const _component_m_call_audio = _resolveComponent("m-call-audio")
 
               return (_openBlock(), _createElementBlock("div", {
@@ -2897,7 +2914,13 @@
                     ]))
                   : _createCommentVNode("", true),
                 (_ctx.phase === 'in')
-                  ? (_openBlock(), _createElementBlock("div", { key: 3 }, [
+                  ? (_openBlock(), _createBlock(_component_m_call_presentation, {
+                      key: 3,
+                      view: _ctx.call.calls[_ctx.callSessionId]
+                    }, null, 8, ["view"]))
+                  : _createCommentVNode("", true),
+                (_ctx.phase === 'in')
+                  ? (_openBlock(), _createElementBlock("div", { key: 4 }, [
                       _createElementVNode("div", {
                         style: _normalizeStyle(_ctx.gridStyle)
                       }, [
@@ -2921,10 +2944,10 @@
                             key: r.legId,
                             style: {"position":"relative","background":"#000","aspect-ratio":"16/9","border-radius":"8px","overflow":"hidden"}
                           }, [
-                            ((r.screen || r.stream) && (r.screen || r.stream).getVideoTracks().length && !r.cameraOff)
+                            (r.stream && r.stream.getVideoTracks().length && !r.cameraOff)
                               ? (_openBlock(), _createBlock(_component_m_call_video, {
                                   key: 0,
-                                  stream: r.screen || r.stream,
+                                  stream: r.stream,
                                   muted: "",
                                   style: {"width":"100%","height":"100%","object-fit":"cover"}
                                 }, null, 8, ["stream"]))
@@ -2934,6 +2957,10 @@
                                 }, _toDisplayString(r.name), 1)),
                             _createVNode(_component_m_call_audio, {
                               stream: r.stream,
+                              "sink-id": _ctx.call.settings.audioOut
+                            }, null, 8, ["stream", "sink-id"]),
+                            _createVNode(_component_m_call_audio, {
+                              stream: r.screen,
                               "sink-id": _ctx.call.settings.audioOut
                             }, null, 8, ["stream", "sink-id"]),
                             _createElementVNode("div", { class: "absolute-bottom-left q-pa-xs text-white text-caption" }, _toDisplayString(r.name), 1)
@@ -3022,19 +3049,19 @@
                   : _createCommentVNode("", true),
                 (_ctx.phase === 'denied')
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 4,
+                      key: 5,
                       class: "text-subtitle1"
                     }, _toDisplayString(_ctx.t('You were not let in to this call.')), 1))
                   : _createCommentVNode("", true),
                 (_ctx.phase === 'ended')
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 5,
+                      key: 6,
                       class: "text-subtitle1"
                     }, _toDisplayString(_ctx.t('The call has ended for you.')), 1))
                   : _createCommentVNode("", true),
                 (_ctx.phase === 'left')
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 6,
+                      key: 7,
                       class: "text-subtitle1"
                     }, _toDisplayString(_ctx.t('You left the call.')), 1))
                   : _createCommentVNode("", true)
@@ -3074,6 +3101,638 @@
                       key: 0,
                       class: _normalizeClass(["text-caption", _ctx.net.weak && !_ctx.reconnecting ? 'text-negative' : 'text-warning'])
                     }, _toDisplayString(_ctx.label), 3))
+                  : _createCommentVNode("", true)
+              ]))
+            }
+        } },
+        "m-call-presentation": { hash: "6ef7dfa4", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, vModelSelect: _vModelSelect, vModelText: _vModelText, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_item_section = _resolveComponent("q-item-section")
+              const _component_q_item = _resolveComponent("q-item")
+              const _component_q_list = _resolveComponent("q-list")
+              const _component_q_btn_dropdown = _resolveComponent("q-btn-dropdown")
+              const _component_m_call_video = _resolveComponent("m-call-video")
+              const _component_q_toggle = _resolveComponent("q-toggle")
+              const _component_m_whiteboard = _resolveComponent("m-whiteboard")
+              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_input = _resolveComponent("q-input")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_card_actions = _resolveComponent("q-card-actions")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
+              const _component_m_ink_layer = _resolveComponent("m-ink-layer")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_openBlock(), _createElementBlock("section", { class: "m-call-presentation q-mb-xs" }, [
+                _createElementVNode("div", { class: "row items-center q-gutter-xs" }, [
+                  (_ctx.sharing && (!_ctx.mine || _ctx.call.sharing))
+                    ? (_openBlock(), _createElementBlock("span", {
+                        key: 0,
+                        role: "status",
+                        class: "text-subtitle2"
+                      }, _toDisplayString(_ctx.presenter), 1))
+                    : _createCommentVNode("", true),
+                  (_ctx.sharing && (_ctx.host || _ctx.mine))
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 1,
+                        flat: "",
+                        dense: "",
+                        color: "negative",
+                        label: _ctx.mine && !_ctx.call.sharing ? _ctx.t('Cancel') : _ctx.t('Stop sharing'),
+                        onClick: $event => (_ctx.mine ? _ctx.stop() : _ctx.command('stop'))
+                      }, null, 8, ["label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.eligible && !(_ctx.mine && _ctx.followStage))
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 2,
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_present_to_all",
+                        disable: !_ctx.host && _ctx.call.shareMode==='CsmHosts',
+                        label: _ctx.t('Present this screen'),
+                        onClick: $event => (_ctx.ask('follow'))
+                      }, null, 8, ["disable", "label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (!_ctx.guest)
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 3,
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_draw",
+                        disable: !_ctx.host && _ctx.call.shareMode==='CsmHosts',
+                        label: _ctx.t('Whiteboard'),
+                        onClick: _ctx.boardPicker
+                      }, null, 8, ["disable", "label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.supported && (!_ctx.mine || (_ctx.boardId && !_ctx.call.sharing)) && !_ctx.pending.includes(_ctx.call.legId))
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 4,
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_present_to_all",
+                        disable: !_ctx.host && _ctx.call.shareMode === 'CsmHosts',
+                        label: _ctx.t('Share the screen'),
+                        onClick: $event => (_ctx.ask())
+                      }, null, 8, ["disable", "label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.pending.includes(_ctx.call.legId))
+                    ? (_openBlock(), _createBlock(_component_q_btn, {
+                        key: 5,
+                        flat: "",
+                        dense: "",
+                        label: _ctx.t('Cancel presentation request'),
+                        onClick: $event => (_ctx.command('lower'))
+                      }, null, 8, ["label", "onClick"]))
+                    : _createCommentVNode("", true),
+                  (_ctx.host)
+                    ? (_openBlock(), _createBlock(_component_q_btn_dropdown, {
+                        key: 6,
+                        flat: "",
+                        dense: "",
+                        label: _ctx.t('Who can present')
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_list, { dense: "" }, {
+                            default: _withCtx(() => [
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.modes, (mode) => {
+                                return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                  key: mode.value,
+                                  clickable: "",
+                                  active: _ctx.call.shareMode===mode.value,
+                                  onClick: $event => (_ctx.setMode(mode.value))
+                                }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_section, null, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(mode.label), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024)
+                                  ]),
+                                  _: 2
+                                }, 1032, ["active", "onClick"])), [
+                                  [_directive_close_popup]
+                                ])
+                              }), 128))
+                            ]),
+                            _: 1
+                          })
+                        ]),
+                        _: 1
+                      }, 8, ["label"]))
+                    : _createCommentVNode("", true)
+                ]),
+                (_ctx.followStage)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 0,
+                      class: "m-screen-follow row items-center q-gutter-xs"
+                    }, [
+                      _createElementVNode("span", { role: "status" }, _toDisplayString(_ctx.call.followDenied ? _ctx.t('{name} is on a screen you cannot open').replace('{name}',_ctx.name(_ctx.owner)) : _ctx.presenter), 1),
+                      (_ctx.host || _ctx.mine)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 0,
+                            dense: "",
+                            flat: "",
+                            label: _ctx.t('End screen presentation'),
+                            onClick: $event => (_ctx.command('stop'))
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (!_ctx.guest && !_ctx.mine)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 1,
+                            dense: "",
+                            flat: "",
+                            label: _ctx.call.following?_ctx.t('Stop following'):_ctx.t('Follow again'),
+                            onClick: $event => (_ctx.setFollowing(!_ctx.call.following))
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.mine && _ctx.supported && !_ctx.call.sharing)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 2,
+                            dense: "",
+                            flat: "",
+                            disable: _ctx.call.picking,
+                            label: _ctx.t('Share this tab with guests'),
+                            onClick: $event => (_ctx.capture('tab',false))
+                          }, null, 8, ["disable", "label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.mine && _ctx.call.sharing)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 3,
+                            dense: "",
+                            flat: "",
+                            label: _ctx.t('Stop guest video'),
+                            onClick: $event => (_ctx.stop(false))
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.guest && _ctx.stream)
+                        ? (_openBlock(), _createBlock(_component_m_call_video, {
+                            key: 4,
+                            stream: _ctx.stream,
+                            muted: "",
+                            class: "full-width",
+                            style: {"max-height":"52dvh","object-fit":"contain"}
+                          }, null, 8, ["stream"]))
+                        : (_ctx.guest)
+                          ? (_openBlock(), _createElementBlock("span", { key: 5 }, _toDisplayString(_ctx.t('Waiting for the presenter to share this tab')), 1))
+                          : _createCommentVNode("", true)
+                    ]))
+                  : _createCommentVNode("", true),
+                (_ctx.boardId)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 1,
+                      class: "m-meeting-board"
+                    }, [
+                      _createElementVNode("div", { class: "row items-center q-gutter-xs" }, [
+                        _createElementVNode("span", { class: "text-subtitle2" }, _toDisplayString(_ctx.t('Whiteboard')), 1),
+                        (!_ctx.mine)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 0,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.followBoard?_ctx.t('Stop following'):_ctx.t('Follow again'),
+                              onClick: $event => (_ctx.followBoard=!_ctx.followBoard)
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.mine && _ctx.call.sharing)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 1,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.t('Switch to screen'),
+                              onClick: $event => (_ctx.ask('screen'))
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.mine || _ctx.host)
+                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                              key: 2,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.t('Close board'),
+                              onClick: $event => (_ctx.command('stop'))
+                            }, null, 8, ["label", "onClick"]))
+                          : _createCommentVNode("", true),
+                        (_ctx.host)
+                          ? (_openBlock(), _createBlock(_component_q_btn_dropdown, {
+                              key: 3,
+                              dense: "",
+                              flat: "",
+                              label: _ctx.t('Who can draw')
+                            }, {
+                              default: _withCtx(() => [
+                                _createVNode(_component_q_list, { dense: "" }, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item, null, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_toggle, {
+                                          label: _ctx.t('Members'),
+                                          "model-value": _ctx.call.stage.memberCanEdit!==false,
+                                          "onUpdate:modelValue": v=>_ctx.drawing('memberCanEdit',v)
+                                        }, null, 8, ["label", "model-value", "onUpdate:modelValue"])
+                                      ]),
+                                      _: 1
+                                    }),
+                                    _createVNode(_component_q_item, null, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_toggle, {
+                                          label: _ctx.t('Guests'),
+                                          "model-value": _ctx.call.stage.guestCanEdit!==false,
+                                          "onUpdate:modelValue": v=>_ctx.drawing('guestCanEdit',v)
+                                        }, null, 8, ["label", "model-value", "onUpdate:modelValue"])
+                                      ]),
+                                      _: 1
+                                    })
+                                  ]),
+                                  _: 1
+                                })
+                              ]),
+                              _: 1
+                            }, 8, ["label"]))
+                          : _createCommentVNode("", true)
+                      ]),
+                      (_ctx.view && _ctx.view.e2ee)
+                        ? (_openBlock(), _createElementBlock("p", {
+                            key: 0,
+                            class: "text-caption"
+                          }, _toDisplayString(_ctx.t('Not end-to-end encrypted: the server stores this board')), 1))
+                        : _createCommentVNode("", true),
+                      (_openBlock(), _createBlock(_component_m_whiteboard, {
+                        key: _ctx.boardId,
+                        ref: "stageBoard",
+                        stage: "",
+                        "wiki-page-id": _ctx.boardId,
+                        "leg-id": _ctx.call.legId,
+                        "meeting-id": _ctx.call.current,
+                        "read-only": _ctx.guest ? _ctx.call.stage.guestCanEdit===false : _ctx.call.stage.memberCanEdit===false,
+                        "socket-client": _ctx.boardClient(),
+                        "guest-files": _ctx.guest ? _ctx.guest.files : null,
+                        "user-name": _ctx.guest ? _ctx.guest.name : undefined,
+                        "files-url": _ctx.boardFileUrl(),
+                        "upload-url": _ctx.boardUploadUrl(),
+                        follow: !_ctx.mine && _ctx.followBoard ? _ctx.owner : undefined,
+                        onUnfollow: $event => (_ctx.followBoard=false)
+                      }, null, 8, ["wiki-page-id", "leg-id", "meeting-id", "read-only", "socket-client", "guest-files", "user-name", "files-url", "upload-url", "follow", "onUnfollow"]))
+                    ]))
+                  : _createCommentVNode("", true),
+                _createVNode(_component_q_dialog, {
+                  modelValue: _ctx.picker,
+                  "onUpdate:modelValue": $event => ((_ctx.picker) = $event)
+                }, {
+                  default: _withCtx(() => [
+                    _createVNode(_component_q_card, { style: {"width":"min(30rem,95vw)"} }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_q_card_section, null, {
+                          default: _withCtx(() => [
+                            _createElementVNode("h2", { class: "text-h6 q-my-none" }, _toDisplayString(_ctx.t('Meeting boards')), 1),
+                            (_ctx.view && _ctx.view.e2ee)
+                              ? (_openBlock(), _createElementBlock("p", {
+                                  key: 0,
+                                  class: "text-caption"
+                                }, _toDisplayString(_ctx.t('Not end-to-end encrypted: the server stores this board')), 1))
+                              : _createCommentVNode("", true),
+                            _createVNode(_component_q_list, { dense: "" }, {
+                              default: _withCtx(() => [
+                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.boardList, (b) => {
+                                  return (_openBlock(), _createBlock(_component_q_item, {
+                                    key: b.wikiPageId,
+                                    clickable: "",
+                                    onClick: $event => {_ctx.selectedBoard=b.wikiPageId;_ctx.showBoard(false)}
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                        default: _withCtx(() => [
+                                          _createVNode(_component_q_icon, { name: "sym_o_draw" })
+                                        ]),
+                                        _: 1
+                                      }),
+                                      _createVNode(_component_q_item_section, null, {
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(b.title), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1024)
+                                    ]),
+                                    _: 2
+                                  }, 1032, ["onClick"]))
+                                }), 128))
+                              ]),
+                              _: 1
+                            }),
+                            _createElementVNode("form", {
+                              class: "row q-gutter-xs q-mt-sm",
+                              onSubmit: _withModifiers($event => (_ctx.showBoard(false)), ["prevent"])
+                            }, [
+                              _createVNode(_component_q_input, {
+                                dense: "",
+                                outlined: "",
+                                class: "col",
+                                modelValue: _ctx.selectedBoard,
+                                "onUpdate:modelValue": $event => ((_ctx.selectedBoard) = $event),
+                                label: _ctx.t('Existing board ID')
+                              }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                              _createVNode(_component_q_btn, {
+                                flat: "",
+                                label: _ctx.t('Present board'),
+                                type: "submit",
+                                disable: !_ctx.selectedBoard.trim() || _ctx.boardBusy
+                              }, null, 8, ["label", "disable"])
+                            ], 40, ["onSubmit"]),
+                            (_ctx.boardCanCreate)
+                              ? (_openBlock(), _createElementBlock("form", {
+                                  key: 1,
+                                  class: "row q-gutter-xs q-mt-sm",
+                                  onSubmit: _withModifiers($event => (_ctx.showBoard(true)), ["prevent"])
+                                }, [
+                                  _createVNode(_component_q_input, {
+                                    dense: "",
+                                    outlined: "",
+                                    class: "col",
+                                    modelValue: _ctx.boardName,
+                                    "onUpdate:modelValue": $event => ((_ctx.boardName) = $event),
+                                    label: _ctx.t('Board name')
+                                  }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                                  _createVNode(_component_q_btn, {
+                                    color: "primary",
+                                    unelevated: "",
+                                    type: "submit",
+                                    label: _ctx.t('New board'),
+                                    disable: !_ctx.boardName.trim() || _ctx.boardBusy
+                                  }, null, 8, ["label", "disable"])
+                                ], 40, ["onSubmit"]))
+                              : _createCommentVNode("", true)
+                          ]),
+                          _: 1
+                        }),
+                        _createVNode(_component_q_card_actions, { align: "right" }, {
+                          default: _withCtx(() => [
+                            _withDirectives(_createVNode(_component_q_btn, {
+                              flat: "",
+                              label: _ctx.t('Close')
+                            }, null, 8, ["label"]), [
+                              [_directive_close_popup]
+                            ])
+                          ]),
+                          _: 1
+                        })
+                      ]),
+                      _: 1
+                    })
+                  ]),
+                  _: 1
+                }, 8, ["modelValue", "onUpdate:modelValue"]),
+                (_ctx.host)
+                  ? (_openBlock(true), _createElementBlock(_Fragment, { key: 2 }, _renderList(_ctx.pending, (leg) => {
+                      return (_openBlock(), _createElementBlock("div", {
+                        key: leg,
+                        class: "row items-center q-gutter-xs"
+                      }, [
+                        _createElementVNode("span", null, _toDisplayString(_ctx.name(leg)) + " " + _toDisplayString(_ctx.t('wants to present')), 1),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          dense: "",
+                          label: _ctx.t('Allow'),
+                          onClick: $event => (_ctx.command('approve',{targetLegId:leg}))
+                        }, null, 8, ["label", "onClick"]),
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          dense: "",
+                          label: _ctx.t('Decline'),
+                          onClick: $event => (_ctx.command('lower',{targetLegId:leg}))
+                        }, null, 8, ["label", "onClick"])
+                      ]))
+                    }), 128))
+                  : _createCommentVNode("", true),
+                (_ctx.sharing && _ctx.mine && !_ctx.call.sharing)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 3,
+                      class: "row items-center q-gutter-xs"
+                    }, [
+                      _createVNode(_component_q_toggle, {
+                        modelValue: _ctx.motion,
+                        "onUpdate:modelValue": $event => ((_ctx.motion) = $event),
+                        label: _ctx.motion?_ctx.t('Optimize for video'):_ctx.t('Optimize for text')
+                      }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                      _createVNode(_component_q_btn, {
+                        unelevated: "",
+                        color: "primary",
+                        disable: _ctx.call.picking,
+                        label: _ctx.t('This tab'),
+                        onClick: $event => (_ctx.capture('tab',_ctx.motion))
+                      }, null, 8, ["disable", "label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        outline: "",
+                        disable: _ctx.call.picking,
+                        label: _ctx.t('A window or screen'),
+                        onClick: $event => (_ctx.capture('window',_ctx.motion))
+                      }, null, 8, ["disable", "label", "onClick"])
+                    ]))
+                  : _createCommentVNode("", true),
+                (_ctx.sharing && _ctx.stream)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 4,
+                      class: "row items-center q-gutter-xs m-stage-ink-tools"
+                    }, [
+                      (_ctx.mine || _ctx.host)
+                        ? (_openBlock(), _createBlock(_component_q_btn_dropdown, {
+                            key: 0,
+                            dense: "",
+                            flat: "",
+                            label: _ctx.t('Annotation permissions')
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_list, { dense: "" }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(), _createElementBlock(_Fragment, null, _renderList(['off','hosts','everyone'], (mode) => {
+                                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                      key: mode,
+                                      clickable: "",
+                                      active: (_ctx.call.stage.inkMode || 'off')===mode,
+                                      onClick: $event => (_ctx.command('inkMode',{mode}))
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t({off:'Off',hosts:'Hosts',everyone:'Everyone'}[mode])), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["active", "onClick"])), [
+                                      [_directive_close_popup]
+                                    ])
+                                  }), 64))
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["label"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.inkAllowed)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 1,
+                            dense: "",
+                            flat: "",
+                            icon: "sym_o_edit",
+                            label: _ctx.annotating?_ctx.t('Finish drawing'):_ctx.t('Annotate'),
+                            onClick: $event => (_ctx.annotating=!_ctx.annotating)
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.inkAllowed && _ctx.annotating)
+                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                            _withDirectives(_createElementVNode("select", {
+                              "onUpdate:modelValue": $event => ((_ctx.inkTool) = $event),
+                              "aria-label": _ctx.t('Drawing tool')
+                            }, [
+                              (_openBlock(), _createElementBlock(_Fragment, null, _renderList(['draw','line','rectangle','ellipse','laser'], (tool) => {
+                                return _createElementVNode("option", {
+                                  key: tool,
+                                  value: tool
+                                }, _toDisplayString(_ctx.t(tool)), 9, ["value"])
+                              }), 64))
+                            ], 8, ["onUpdate:modelValue", "aria-label"]), [
+                              [_vModelSelect, _ctx.inkTool]
+                            ]),
+                            _withDirectives(_createElementVNode("input", {
+                              type: "color",
+                              "onUpdate:modelValue": $event => ((_ctx.inkColor) = $event),
+                              "aria-label": _ctx.t('Ink color')
+                            }, null, 8, ["onUpdate:modelValue", "aria-label"]), [
+                              [_vModelText, _ctx.inkColor]
+                            ]),
+                            _createVNode(_component_q_toggle, {
+                              dense: "",
+                              modelValue: _ctx.inkPin,
+                              "onUpdate:modelValue": $event => ((_ctx.inkPin) = $event),
+                              label: _ctx.t('Pin new strokes')
+                            }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                            _createVNode(_component_q_btn, {
+                              dense: "",
+                              flat: "",
+                              disable: !_ctx.call.inkStrokes.some(s=>!s.pinned && s.kind!=='laser'),
+                              label: _ctx.t('Pin last stroke'),
+                              onClick: $event => (_ctx.drawInk('pin',{strokeId:_ctx.call.inkStrokes.filter(s=>!s.pinned && s.kind!=='laser').at(-1).id}))
+                            }, null, 8, ["disable", "label", "onClick"])
+                          ], 64))
+                        : _createCommentVNode("", true),
+                      (_ctx.mine || _ctx.host)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 3,
+                            dense: "",
+                            flat: "",
+                            disable: !_ctx.call.inkStrokes.length,
+                            label: _ctx.t('Clear ink'),
+                            onClick: $event => (_ctx.drawInk('clear'))
+                          }, null, 8, ["disable", "label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (!_ctx.guest)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 4,
+                            dense: "",
+                            flat: "",
+                            icon: "sym_o_camera_alt",
+                            label: _ctx.t('Snapshot to board'),
+                            onClick: _ctx.snapshot
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true)
+                    ]))
+                  : _createCommentVNode("", true),
+                (_ctx.sharing && _ctx.stream)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 5,
+                      ref: "viewport",
+                      class: _normalizeClass(["m-present-viewport relative-position", {'m-present-preview':_ctx.mine}]),
+                      style: _normalizeStyle({height:_ctx.mine?'8rem':'min(58dvh,48rem)',maxWidth:_ctx.mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}),
+                      onWheel: _ctx.wheel,
+                      onPointerdown: $event => (_ctx.pointer($event,'start')),
+                      onPointermove: $event => (_ctx.pointer($event,'move')),
+                      onPointerup: $event => (_ctx.pointer($event,'end')),
+                      onPointercancel: $event => (_ctx.pointer($event,'end'))
+                    }, [
+                      _createElementVNode("div", {
+                        class: "relative-position",
+                        style: _normalizeStyle({width:'100%',height:'100%',transform:'translate('+_ctx.x+'px,'+_ctx.y+'px) scale('+_ctx.scale+')'})
+                      }, [
+                        _createVNode(_component_m_call_video, {
+                          stream: _ctx.stream,
+                          muted: "",
+                          style: {"width":"100%","height":"100%","object-fit":"contain"}
+                        }, null, 8, ["stream"]),
+                        _createVNode(_component_m_ink_layer, {
+                          active: _ctx.inkAllowed && _ctx.annotating,
+                          strokes: _ctx.call.inkStrokes,
+                          "hidden-echo": _ctx.call.stage.inkEmbedded,
+                          tool: _ctx.inkTool,
+                          color: _ctx.inkColor,
+                          pin: _ctx.inkPin,
+                          onStroke: s=>_ctx.drawInk('stroke',{stroke:s})
+                        }, null, 8, ["active", "strokes", "hidden-echo", "tool", "color", "pin", "onStroke"])
+                      ], 4)
+                    ], 46, ["onWheel", "onPointerdown", "onPointermove", "onPointerup", "onPointercancel"]))
+                  : _createCommentVNode("", true),
+                (_ctx.sharing && _ctx.stream && !_ctx.mine)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 6,
+                      class: "row items-center q-gutter-xs"
+                    }, [
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        label: _ctx.t('Fit'),
+                        onClick: _ctx.fit
+                      }, null, 8, ["label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        label: "100%",
+                        onClick: _ctx.actual
+                      }, null, 8, ["onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_fullscreen",
+                        "aria-label": _ctx.t('Full screen stage'),
+                        onClick: _ctx.fullscreen
+                      }, null, 8, ["aria-label", "onClick"])
+                    ]))
+                  : _createCommentVNode("", true),
+                (_ctx.tabControls)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 7,
+                      class: "row items-center q-gutter-xs"
+                    }, [
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        label: _ctx.forward?_ctx.t('Stop scrolling tab'):_ctx.t('Scroll captured tab'),
+                        onClick: $event => (_ctx.control('forwardWheel'))
+                      }, null, 8, ["label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_zoom_in",
+                        "aria-label": _ctx.t('Zoom in captured tab'),
+                        onClick: $event => (_ctx.control('increaseZoomLevel'))
+                      }, null, 8, ["aria-label", "onClick"]),
+                      _createVNode(_component_q_btn, {
+                        flat: "",
+                        dense: "",
+                        icon: "sym_o_zoom_out",
+                        "aria-label": _ctx.t('Zoom out captured tab'),
+                        onClick: $event => (_ctx.control('decreaseZoomLevel'))
+                      }, null, 8, ["aria-label", "onClick"])
+                    ]))
+                  : _createCommentVNode("", true),
+                (_ctx.notice)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 8,
+                      role: "status",
+                      class: "text-caption"
+                    }, _toDisplayString(_ctx.notice), 1))
                   : _createCommentVNode("", true)
               ]))
             }

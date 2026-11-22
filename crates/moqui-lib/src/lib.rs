@@ -21,6 +21,8 @@ pub mod age;
 pub mod barcode;
 pub mod cache;
 pub mod certificate;
+#[cfg(feature = "http")]
+pub mod dev_ca;
 pub mod codec;
 pub mod collection;
 pub mod context_stack;
@@ -48,6 +50,7 @@ pub mod resource;
 #[cfg(feature = "s3")]
 pub mod s3;
 pub mod safe_html;
+pub mod shared_runtime;
 #[cfg(feature = "sigv4")]
 pub mod sigv4;
 pub mod signer;

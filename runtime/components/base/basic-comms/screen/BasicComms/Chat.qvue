@@ -406,7 +406,7 @@ const isImage = (file) => /^image\/(png|jpe?g|gif|webp)$/i.test((file && file.co
 const isVideo = (file) => /^video\//i.test((file && file.contentType) || '');
 const isAudio = (file) => /^audio\//i.test((file && file.contentType) || '');
 // the details view (Comms-Messaging §5.1): one pane with tabs, each a side value, so Back and Esc close it as any pane
-const DETAIL_TABS = ['members', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'];
+const DETAIL_TABS = ['members', 'boards', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'];
 // the tabs of the room's files: the types each keeps on the server (files) and here (an encrypted room's, sorted here)
 const FILE_TABS = {
     media: { params: { contentTypePrefixes: 'image/,video/' }, keeps: (file) => /^(image|video)\//i.test(file.contentType || '') },
@@ -611,14 +611,14 @@ const messageTemplate = `
             <div v-if="item.attachments.length && !item.event.rich && !item.event.sticker" class="row q-gutter-xs q-mt-none">
                 <template v-for="file in item.attachments" :key="file.chatAttachmentId">
                     <img v-if="room.isImage(file)" :src="room.fileUrl(file, true)" :alt="file.fileName" class="rounded-borders cursor-pointer q-mt-xs"
-                            style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
+                            style="max-width:min(280px, 100%);max-height:200px" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments, item.eventSeq)">
                     <!-- a voice note or other sound plays here (an encrypted room's once decrypted) -->
                     <div v-else-if="room.isAudio(file)" class="row items-center no-wrap q-mt-xs m-chat-audio" :data-file="file.chatAttachmentId" @click.stop>
                         <audio v-if="room.mediaUrl(file)" :src="room.mediaUrl(file)" controls preload="metadata" :aria-label="file.fileName" style="max-width:min(300px, 100%);height:40px"></audio>
                         <q-btn v-else flat dense no-caps icon="sym_o_play_arrow" class="m-tonal" :label="room.t('Play the voice note')" @click="room.openMedia(file)"></q-btn>
                     </div>
                     <q-chip v-else dense square clickable :icon="room.fileIcon(file)" class="m-tonal q-ml-none"
-                            @click.stop="room.isVideo(file) ? room.preview(file, item.attachments) : room.download(file)">
+                            @click.stop="room.isVideo(file) ? room.preview(file, item.attachments, item.eventSeq) : room.download(file)">
                         <span class="ellipsis" style="max-width:220px">{{file.fileName}}</span><span class="m-muted q-ml-xs">{{room.sizeText(file.fileSize)}}</span>
                         <q-tooltip>{{room.isVideo(file) ? room.t('Play') : room.t('Download')}} {{file.fileName}}</q-tooltip></q-chip>
                 </template>
@@ -1057,7 +1057,7 @@ const chatStickerPicker = {
 const stickerTemplate = `
 <div class="q-mt-xs m-chat-sticker" :data-sticker="sticker.chatStickerId || ''">
     <img v-if="src" :src="src" :alt="sticker.altText || sticker.emoji || room.t('Sticker')" :title="sticker.altText || ''" class="cursor-pointer"
-            :style="'max-width:' + side + 'px;max-height:' + side + 'px;object-fit:contain;display:block'" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments)">
+            :style="'max-width:' + side + 'px;max-height:' + side + 'px;object-fit:contain;display:block'" @load="room.imageLoaded()" @click.stop="room.preview(file, item.attachments, item.eventSeq)">
     <div v-else class="text-body2 m-muted">{{room.t('Sticker')}} {{sticker.emoji || ''}}</div>
 </div>`;
 const chatSticker = {
@@ -1982,6 +1982,14 @@ const roomTemplate = `
                                 <q-separator class="col"></q-separator><span class="text-caption text-weight-medium m-muted q-px-sm">{{item.label}}</span><q-separator class="col"></q-separator></div>
                             <div v-else-if="item.kind === 'unread'" :id="domId('unread', false)" class="row items-center no-wrap q-my-xs q-px-sm text-negative">
                                 <q-separator class="col" color="negative"></q-separator><span class="text-caption text-weight-medium q-px-sm">{{t('New messages')}}</span></div>
+                            <div v-else-if="item.kind === 'board'" class="q-px-md q-py-xs">
+                                <q-card flat bordered style="max-width:22rem" class="m-chat-board-card">
+                                    <img v-if="item.hasPreview" :src="boardPreview(item.wikiPageId)" alt="" style="width:100%;height:8rem;object-fit:contain"/>
+                                    <q-card-section class="q-py-sm"><div class="text-subtitle2">{{item.title}}</div>
+                                        <small v-if="sealed">{{t('Not end-to-end encrypted: the server stores this board')}}</small></q-card-section>
+                                    <q-card-actions><q-btn flat dense icon="sym_o_draw" :label="t('Open board')" @click="openBoard(item.wikiPageId)"/></q-card-actions>
+                                </q-card>
+                            </div>
                             <div v-else-if="item.kind === 'system'" class="text-center text-caption m-muted q-py-xs q-px-md" :class="item.target ? 'cursor-pointer' : ''"
                                     :id="domId(item.eventSeq, false)" @click="item.target ? jumpTo(item.target) : null">
                                 <q-icon :name="item.icon" size="14px" class="q-mr-xs"></q-icon>{{item.text}} · {{item.time}}</div>
@@ -2191,6 +2199,19 @@ const roomTemplate = `
                 </div>
             </div>
 
+            <div v-else-if="side === 'boards'" class="col scroll q-pa-sm" data-pane="boards">
+                <p v-if="sealed" class="text-caption">{{t('Not end-to-end encrypted: the server stores this board')}}</p>
+                <form v-if="boardsPane.canCreate" class="row items-center q-gutter-xs q-mb-sm" @submit.prevent="newBoard">
+                    <q-input dense outlined class="col" v-model="boardsPane.name" :label="t('Board name')"/>
+                    <q-btn unelevated color="primary" type="submit" :loading="boardsPane.busy" :disable="!boardsPane.name.trim()" :label="t('New board')"/>
+                </form>
+                <q-linear-progress v-if="boardsPane.loading" indeterminate/>
+                <p v-else-if="!boardsPane.list.length" class="m-muted">{{t('No boards yet.')}}</p>
+                <q-list dense><q-item clickable v-for="b in boardsPane.list" :key="b.wikiPageId" @click="openBoard(b.wikiPageId)">
+                    <q-item-section avatar><img v-if="b.hasPreview" :src="boardPreview(b.wikiPageId)" alt="" width="56" height="40" style="object-fit:contain"/>
+                        <q-icon v-else name="sym_o_draw"/></q-item-section><q-item-section>{{b.title}}</q-item-section>
+                </q-item></q-list>
+            </div>
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0" data-pane="members">
                 <!-- the room's person across networks: their ways, mail line, merge and split (Comms-Messaging §11.1) -->
                 <m-chat-person v-if="person" :person="person" :room-id="roomId" :mail="personMail" :direct-encrypted="personEncrypted" :others="peopleList"
@@ -2446,10 +2467,12 @@ const roomTemplate = `
                     <div class="ellipsis">{{viewerFile.fileName}}</div>
                     <div class="text-caption ellipsis m-chat-viewer-where">{{[nameOf(viewerFile.senderUserId, viewerFile.senderName), shortWhen(viewerFile.sentDate)].filter((part) => part).join(' · ')}}<span v-if="viewer.list.length > 1"> · {{viewer.index + 1}} / {{viewer.list.length}}</span></div>
                 </div>
+                <q-btn v-if="canPost && isImage(viewerFile) && mediaUrl(viewerFile)" flat round dense icon="sym_o_draw" :aria-label="t('Mark up')" @click="markingImage=true"><q-tooltip>{{t('Mark up')}}</q-tooltip></q-btn>
                 <q-btn v-if="viewerFile.eventSeq" flat round dense icon="sym_o_chat" :aria-label="t('Show in chat')" @click="viewer.open = false; showFileInChat(viewerFile)"><q-tooltip>{{t('Show in chat')}}</q-tooltip></q-btn>
                 <q-btn flat round dense icon="sym_o_download" :aria-label="t('Download')" @click="download(viewerFile)"><q-tooltip>{{t('Download')}}</q-tooltip></q-btn>
             </div>
             <div class="col relative-position row items-center justify-center" style="min-height:0">
+                <m-image-markup v-if="markingImage" :key="viewerFile.chatAttachmentId" :src="mediaUrl(viewerFile)" :name="viewerFile.fileName" :busy="markupBusy" @save="saveMarkup" @close="markingImage=false"/>
                 <img v-if="isImage(viewerFile) && mediaUrl(viewerFile)" :src="mediaUrl(viewerFile)" :alt="viewerFile.fileName" style="max-width:100%;max-height:100%;object-fit:contain">
                 <video v-else-if="isVideo(viewerFile) && mediaUrl(viewerFile)" :key="viewerFile.chatAttachmentId" :src="mediaUrl(viewerFile)" controls playsinline style="max-width:100%;max-height:100%"></video>
                 <q-spinner v-else size="40px"></q-spinner>
@@ -2669,6 +2692,7 @@ const chatRoom = {
             hoverKey: null, tapKey: null, sheet: { open: false, item: null, inThread: false }, editing: null, replyTo: null, side: null,
             swipeKey: null, swipeDx: 0,
             threadView: { rootSeq: null, events: [], loading: false }, pinned: { list: [], loading: false },
+            boardsPane:{list:[],canCreate:false,loading:false,busy:false,name:""},
             threadsPane: { list: [], loading: false, hasMore: false, mine: false, next: null },
             tabs: { media: emptyTab(), files: emptyTab(), voice: emptyTab(), links: emptyTab(), reactions: emptyTab() },
             forward: { open: false, item: null, roomId: null, comment: '', busy: false },
@@ -2681,7 +2705,7 @@ const chatRoom = {
             settings: { open: false, roomName: '', topic: '', visibility: '', busy: false },
             timerBox: { open: false, value: 0, busy: false }, onceView: { open: false, url: null, kind: null, item: null, until: 0, secured: null },
             bridgeForm: { open: false, chatRoomBridgeId: null, chatBridgeId: null, externalRoomId: '', externalRoomName: '', externalRoomUrl: '', directionEnumId: 'CrbBoth', busy: false },
-            bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
+            markingImage:false, markupBusy:false, bridgeChoices: [], viewer: { open: false, list: [], index: 0 },
             tick: Date.now(), width: 0, dragOver: false, anchor: null, trust: null, bannerTick: 0, leftOutTick: 0,
             verifyBox: { open: false, userId: null }, problemBox: { open: false, problems: [], retry: null, busy: false }, dismissedFlows: {},
             // the room's person across networks (Comms-Messaging §11.1): their ways, a new direct chat's label, their mail line
@@ -2864,7 +2888,7 @@ const chatRoom = {
         detailsOpen() { return DETAIL_TABS.includes(this.side); },
         detailTabs() {
             const labels = { members: fill(t('People ({count})'), { count: this.members.length }), media: t('Media'), files: t('Files'), voice: t('Voice'),
-                links: t('Links'), reactions: t('Reactions'), pinned: t('Pinned') };
+                boards: t('Boards'), links: t('Links'), reactions: t('Reactions'), pinned: t('Pinned') };
             return DETAIL_TABS.map((name) => ({ name, label: labels[name] }));
         },
         reactionChips() { return [{ value: false, label: t('All') }, { value: true, label: t('To my messages') }]; },
@@ -3269,6 +3293,13 @@ const chatRoom = {
                 }
                 // a message of someone the user blocked: one quiet line for a run of them (Comms-Messaging §18.3 phase 11)
                 if (moqui.chat.hiddenLine(out, event)) { prev = null; continue; }
+                if (event.type === 'board' && event.content && event.content.wikiPageId) {
+                    out.push({kind:'board', key:'e'+event.eventSeq, eventSeq:event.eventSeq, wikiPageId:event.content.wikiPageId,
+                        title:event.content.title || t('Whiteboard'), hasPreview:!!event.content.hasPreview ||
+                            this.boardsPane.list.some(b => b.wikiPageId === event.content.wikiPageId && b.hasPreview)});
+                    prev = null;
+                    continue;
+                }
                 if (event.type !== 'message') {
                     const words = systemText(event, (id) => this.nameOf(id));
                     out.push({ kind: 'system', key: 'e' + event.eventSeq, eventSeq: event.eventSeq, text: words[0], icon: words[1], time: timeText(sent),
@@ -3554,7 +3585,7 @@ const chatRoom = {
             const seq = Number(event.eventSeq);
             if (this.room) this.room.lastEventSeq = Math.max(Number(this.room.lastEventSeq || 0), seq);
             if (event.senderUserId && event.senderName && !this.names[event.senderUserId]) this.names[event.senderUserId] = event.senderName;
-            const isRow = ['message', 'membership', 'system', 'pin', 'call', 'poll'].includes(event.type);
+            const isRow = ['message', 'membership', 'system', 'pin', 'call', 'poll', 'board'].includes(event.type);
             const mainTimeline = event.threadRootEventSeq == null;
             if (this.hasMoreAfter && isRow && mainTimeline) {
                 if (event.type === 'pin') {
@@ -3594,6 +3625,7 @@ const chatRoom = {
             if (event.type === 'system' && event.content && event.content.action === 'timer' && this.sealed && moqui.crypto && moqui.crypto.rotateRoom)
                 moqui.crypto.rotateRoom(this.roomId).catch(() => null);
             if (event.type === 'membership' || event.type === 'system') { this.reloadMeta(); this.$emit('changed'); }
+            if (event.type === 'board' && this.side === 'boards') this.loadBoards();
             if (this.side === 'pinned' && (event.type === 'pin' || event.type === 'redaction')) this.loadPinned();
             if (this.tabs[this.side] && this.tabTouched(this.side, event)) {
                 clearTimeout(this.tabTimer);
@@ -3626,15 +3658,15 @@ const chatRoom = {
         // outbox's until the answer or its push (onSent). Rejects when the outbox cannot keep it; resolves otherwise.
         sendMessage(message) {
             const threadRoot = message.threadRoot ? Number(message.threadRoot) : null;
-            const replyTo = threadRoot ? null : this.replyTo;
+            const replyTo = threadRoot ? null : (message.replyTo || this.replyTo);
             const params = { body: message.body || '', replyToEventSeq: replyTo ? replyTo.eventSeq : '', threadRootEventSeq: threadRoot || '',
                 chatAttachmentIds: (message.attachmentIds || []).join(',') };
             if (message.viewOnce) params.viewOnce = 'true';
             if (!threadRoot) {
-                this.replyTo = null;
+                if (!message.replyTo) this.replyTo = null;
                 if (!this.hasMoreAfter) this.$nextTick(() => this.scrollToBottom());
             }
-            const restore = (err) => { if (replyTo) this.replyTo = replyTo; throw err; };
+            const restore = (err) => { if (replyTo && !message.replyTo) this.replyTo = replyTo; throw err; };
             // an encrypted room: the message is encrypted before the outbox keeps it, which then holds only ciphertext (C7)
             if (this.sealed) {
                 const clientRef = moqui.chat.newClientRef();
@@ -4375,10 +4407,11 @@ const chatRoom = {
             setTimeout(() => document.body.removeChild(a), 0);
         },
         // the viewer, at file among the pictures and videos of list (the Media tab's, or a message's files): a swipe goes on
-        preview(file, list) {
+        preview(file, list, eventSeq) {
             const shown = (list || [file]).filter((one) => isImage(one) || isVideo(one));
             const index = Math.max(0, shown.indexOf(file));
-            this.viewer = { open: true, list: shown.length ? shown : [file], index };
+            const files = shown.length ? shown : [file];
+            this.viewer = { open:true, list:eventSeq ? files.map(one => ({...one, eventSeq})) : files, index };
             this.openMedia(this.viewer.list[index]);
         },
         viewerStep(by) {
@@ -4398,7 +4431,35 @@ const chatRoom = {
             const dx = point.clientX - from.x;
             if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(point.clientY - from.y)) this.viewerStep(dx < 0 ? 1 : -1);
         },
-        viewerClosed() { this.viewer = { open: false, list: [], index: 0 }; },
+        async saveMarkup(blob) {
+            if (this.markupBusy || !this.viewerFile) return;
+            const roomId = this.roomId, original = this.viewerFile;
+            this.markupBusy = true;
+            try {
+                const form = new FormData();
+                form.append('chatRoomId', roomId);
+                if (moqui.sessionToken) form.append('moquiSessionToken', moqui.sessionToken);
+                if (this.sealed) {
+                    const copy = new File([blob], 'markup.png', {type:'image/png'});
+                    const sealed = await moqui.chat.sealFile(copy);
+                    form.append('file', sealed.blob, 'encrypted');
+                    const response = await moqui.request(this.url('upload'), {method:'POST', params:form});
+                    const stored = response.json?.uploadList?.[0];
+                    if (!stored || this.roomId !== roomId) throw new Error(t('The marked-up image could not be sent'));
+                    const file = {chatAttachmentId:stored.chatAttachmentId, fileName:copy.name, contentType:copy.type, fileSize:copy.size, info:sealed.info};
+                    const sent = await this.sendMessage({body:'', replyTo:original, attachmentIds:[file.chatAttachmentId], files:[file]});
+                    if (sent?.failed) throw new Error(sent.error || t('The marked-up image could not be sent'));
+                } else {
+                    form.append('chatAttachmentId', original.chatAttachmentId);
+                    form.append('file', blob, 'markup.png');
+                    const response = await moqui.request(this.url('markup'), {method:'POST', params:form});
+                    if (!response.json?.chatAttachmentId) throw new Error(response.json?.errors || t('The marked-up image could not be sent'));
+                }
+                this.markingImage = false;
+            } catch (error) { moqui.handleAjaxError(error); }
+            finally { this.markupBusy = false; }
+        },
+        viewerClosed() { this.markingImage=false; this.viewer = { open: false, list: [], index: 0 }; },
         // where a picture, video or sound plays from: the server's file, or an encrypted room's decrypted blob (once opened)
         mediaUrl(file) {
             if (!file) return '';
@@ -4427,11 +4488,35 @@ const chatRoom = {
         },
 
         // ---- the side pane ----
+        boardPreview(id) {
+            return moqui.call.base().replace(/Calls$/, 'Boards/Board/image') + '?wikiPageId=' + encodeURIComponent(id) + '&filename=_board.svg';
+        },
+        openBoard(id) { this.$root.setUrl(moqui.call.appRoot() + '/Boards/Board?wikiPageId=' + encodeURIComponent(id)); },
+        async loadBoards() {
+            const roomId=this.roomId;
+            this.boardsPane.loading=true;
+            try {
+                const result=await this.get('roomBoards',{chatRoomId:roomId});
+                if (roomId === this.roomId) Object.assign(this.boardsPane,{list:result.boards || [],canCreate:!!result.canCreate});
+            } finally {if (roomId===this.roomId) this.boardsPane.loading=false;}
+        },
+        async newBoard() {
+            const roomId=this.roomId, name=this.boardsPane.name.trim();
+            if (!name || this.boardsPane.busy || !this.boardsPane.canCreate) return;
+            if (this.sealed && !this.boardsPane.list.length &&
+                !await moqui.confirmAction(t('Not end-to-end encrypted: the server stores this board. Create the first board in this room?'))) return;
+            this.boardsPane.busy=true;
+            try {
+                const result=await this.post('createRoomBoard',{chatRoomId:roomId,pageName:name});
+                if (result.wikiPageId && roomId===this.roomId) {this.boardsPane.name=''; await this.loadBoards(); this.openBoard(result.wikiPageId);}
+            } finally {this.boardsPane.busy=false;}
+        },
         openSide(name) {
             if (name === 'thread') return;
             // the panes the desktop client does not keep offline
-            if (['search', 'threads', 'media', 'files', 'voice', 'links', 'reactions', 'pinned'].includes(name) && needsConnection()) return;
+            if (['search', 'threads', 'media', 'files', 'voice', 'links', 'reactions', 'pinned', 'boards'].includes(name) && needsConnection()) return;
             this.side = name;
+            if (name === 'boards') this.loadBoards();
             if (name === 'pinned') this.loadPinned();
             if (name === 'threads') this.loadThreads(false);
             if (this.tabs[name]) this.loadTab(name, false);

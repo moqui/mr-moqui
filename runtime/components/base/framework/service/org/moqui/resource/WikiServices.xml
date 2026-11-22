@@ -13,6 +13,36 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="create" noun="WikiBoard">
+        <description>Create a blank board in the chosen writable wiki space, or in the current user's notes.</description>
+        <in-parameters><parameter name="wikiSpaceId"/><parameter name="pageName" required="true"/><parameter name="numberDuplicates" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions>
+            <if condition="!wikiSpaceId"><service-call name="org.moqui.resource.WikiServices.ensure#UserNotesSpace" in-map="{}" out-map="space"/>
+                <set field="wikiSpaceId" from="space.wikiSpaceId"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" in-map="{wikiSpaceId}" out-map="access"/>
+            <if condition="!access.canUpdate || access.readOnly"><return error="true" message="You may not create a board here"/></if>
+            <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="spaceRow" for-update="true"/>
+            <set field="pageName" from="String(pageName).trim().normalize('NFC')"/>
+            <if condition="!pageName || pageName === wikiSpaceId"><return error="true" message="Choose a board name"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageFile" out-map="existing"
+                    in-map="{rootPageLocation:spaceRow.rootPageLocation, pagePath:pageName}"/>
+            <if condition="numberDuplicates &amp;&amp; existing.pageReference?.exists"><script><![CDATA[
+                const base = pageName
+                let n = 1
+                while (existing.pageReference?.exists) {
+                    pageName = base + ' (' + (++n) + ')'
+                    existing = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageFile')
+                            .parameters({rootPageLocation:spaceRow.rootPageLocation,pagePath:pageName}).call()
+                    if (ec.message.hasError()) break
+                }
+            ]]></script></if>
+            <if condition="existing.pageReference?.exists"><return error="true" message="A page with this name already exists"/></if>
+            <service-call name="org.moqui.resource.WikiServices.update#WikiPage" out-map="saved"
+                    in-map="{wikiSpaceId, pageName, wikiType:'excalidraw', pageText:JSON.stringify({type:'excalidraw',version:2,elements:[],appState:{},files:{}})}"/>
+            <set field="wikiPageId" from="saved.wikiPageId"/>
+        </actions>
+    </service>
     <service verb="get" noun="WikiPageInfoById">
         <in-parameters><parameter name="wikiPageId"/></in-parameters>
         <out-parameters>
@@ -23,6 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="attachmentList" type="List"><parameter name="attachmentInfo" type="Map">
                 <parameter name="filename"/><parameter name="contentType"/><parameter name="lastModified" type="Long"/>
             </parameter></parameter>
+            <parameter name="wikiType"/>
             <parameter name="pageLocation"/>
             <parameter name="pageName"/>
             <parameter name="parentPath"/>
@@ -146,7 +177,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="WikiPageTypes">
         <description>The page types, a page file's extension, in one place (plans/Security-Review.md SEC-SCR-81): md, html
-            and txt for anyone (plainTypeList); fancy, html.fancy, md.fancy and markdown.fancy (scriptTypeList), which the
+            txt and excalidraw for anyone (plainTypeList); fancy, html.fancy, md.fancy and markdown.fancy (scriptTypeList), which the
             template renderers run as server script for whoever views the page, only for a holder of DATABASE_ADMIN, the
             permission for script stored in records. Authorization disabled does not stand in for it: a service that
             writes as the system for its caller (runAsSystem) would write the caller's text as script. wikiTypeList is
@@ -159,7 +190,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="scriptTypeList" type="List"><parameter name="wikiType"/></parameter>
         </out-parameters>
         <actions><script><![CDATA[
-            plainTypeList = ['md', 'html', 'txt']
+            plainTypeList = ['md', 'html', 'txt', 'excalidraw']
             scriptTypeList = ['fancy', 'html.fancy', 'md.fancy', 'markdown.fancy']
             scriptTypes = ec.user.hasPermission('DATABASE_ADMIN')
             wikiTypeList = plainTypeList.concat(scriptTypes ? scriptTypeList : [])
@@ -196,7 +227,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (wikiType != null && wikiType !== '' && !classify) {
                 const type = String(wikiType)
                 if (!PLAIN.includes(type) && !SCRIPT.includes(type)) {
-                    ec.message.addError(ec.l10n.localize('A page type is md, html or txt'))
+                    ec.message.addError(ec.l10n.localize('A page type is md, html, txt or excalidraw'))
                     return
                 }
                 scriptType = SCRIPT.includes(type)
@@ -600,7 +631,9 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             } else if (wikiType === 'md' || wikiType === 'markdown') {
                 renderedAs = 'markdown'
-                const html = ec.resource.markdownHtml(text, base)
+                const source = text.includes('[[') ? ec.resource.script('component://framework/service/org/moqui/resource/WikiBoard.js')
+                    .expandBoards(text, info.wikiPageId) : text
+                const html = ec.resource.markdownHtml(source, base)
                 pageHtml = anyHtml ? html : StringUtilities.cleanHtml(html)
             } else if (wikiType === 'html') {
                 renderedAs = 'html'
@@ -670,6 +703,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="attachmentReference" type="ResourceReference"/>
+            <parameter name="wikiType"/>
             <parameter name="wikiPageId"/>
             <parameter name="wikiSpaceId"/>
             <parameter name="pagePath"/>
@@ -744,6 +778,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="viewAccess" in-map="viewAccessIn"/>
             <if condition="!viewAccess.canView"><return error="true" message="Page not found"/></if>
             <set field="pageReference" from="fileOut.pageReference"/>
+            <set field="wikiType" from="pageReference?.fileName?.split('.').pop()"/>
             <set field="pageAttachmentsDirectoryRef" from="pageReference?.getChild('_attachments')"/>
             <set field="attachmentReference" from="pageAttachmentsDirectoryRef?.getChild(filename)"/>
         </actions>
@@ -768,6 +803,27 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="updateAccess" in-map="updateAccessIn"/>
             <if condition="updateAccess.readOnly"><return error="true" message="This space is a read-only mirror: its pages change where it is copied from"/></if>
             <if condition="!updateAccess.canUpdate"><return error="true" message="You may not change the files of this page"/></if>
+            <if condition="wikiType == 'excalidraw'">
+                <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="lockedBoard" for-update="true" cache="false"/>
+                <script><![CDATA[
+                const types = {png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', webp:'image/webp', gif:'image/gif', svg:'image/svg+xml'}
+                const extension = filename.split('.').pop().toLowerCase()
+                if (!Object.hasOwn(types, extension) || types[extension] !== attachmentFile.getContentType()) {
+                    ec.message.addError(ec.l10n.localize('A board attachment must be a PNG, JPEG, WebP, GIF or SVG image'))
+                } else if (attachmentFile.getSize() > Number(ec.factory.getConfValue('board@max-image-bytes'))) {
+                    ec.message.addError(ec.l10n.localize('Image exceeds the board image size limit'))
+                } else if (/^_board-.*\.svg$/.test(filename)) {
+                    ec.message.addError(ec.l10n.localize('Version preview names are reserved'))
+                } else if (filename !== '_board.svg' && !attachmentReference.exists) {
+                    const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo')
+                            .parameters({wikiSpaceId, pagePath}).call()
+                    const count = Array.from(info.attachmentList || []).filter(file => file.filename !== '_board.svg' && !/^_board-.*\.svg$/.test(file.filename)).length
+                    if (count >= Number(ec.factory.getConfValue('board@max-images'))) {
+                        ec.message.addError(ec.l10n.localize('Board has reached its image limit'))
+                    }
+                }
+            ]]></script></if>
+            <if condition="ec.message.hasError()"><return/></if>
             <!-- a .fancy file is a script page wherever it is under the space's root: only a holder of DATABASE_ADMIN adds one
                 (check#WikiPageType, SEC-SCR-81) -->
             <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" in-map="{location:filename}"/>
@@ -866,7 +922,7 @@ along with this software (see the LICENSE.md file). If not, see
 
             <!-- a page by its id is in its own space, which is the one read, checked and written -->
             <if condition="wikiPageId">
-                <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="wikiPage" cache="false"/>
+                <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="wikiPage" for-update="true" cache="false"/>
                 <if condition="wikiPage == null"><return error="true" message="Page not found"/></if>
                 <set field="wikiSpaceId" from="wikiPage.wikiSpaceId"/>
             </if>
@@ -896,7 +952,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <if condition="pagePath.split('/').some((part) => part == '.' || part == '..')">
                     <return error="true" message="A page path has no . or .. in it"/></if>
                 <!-- by the exact path: a path that is only an alias of a moved page is a new page here, which takes the path -->
-                <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList">
+                <entity-find entity-name="moqui.resource.wiki.WikiPage" list="wikiPageList" for-update="true">
                     <econdition field-name="wikiSpaceId"/><econdition field-name="pagePath" from="pagePath || null"/></entity-find>
                 <set field="wikiPage" from="wikiPageList?.length ? wikiPageList[0] : null"/>
                 <!-- no page at the path yet: a lock on a missing row locks nothing, so two first saves at once (two tabs, an
@@ -979,6 +1035,13 @@ along with this software (see the LICENSE.md file). If not, see
                 <script>pageText = StringUtilities.cleanMarkdown(pageText)</script>
             </if>
 
+            <if condition="wikiType == 'excalidraw'"><script><![CDATA[
+                try {
+                    const board = ec.resource.script('component://framework/service/org/moqui/resource/WikiBoardScene.js')
+                    boardScene = board.parseScene(pageText)
+                } catch (e) { ec.message.addError('Invalid board: ' + String(e.message || e)) }
+            ]]></script></if>
+            <if condition="ec.message.hasError()"><return/></if>
             <!-- do the update, then the move if applicable -->
             <set field="updatedPage" from="false"/>
             <set field="versionName" from="null"/>
@@ -992,6 +1055,12 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="updatedPage">
                 <service-call name="create#moqui.resource.wiki.WikiPageHistory" in-map="{wikiPageId:wikiPageId, userId:historyUserId,
                         changeDateTime:ec.user.nowTimestamp, versionName:versionName, versionNote:versionNote}"/>
+                <if condition="wikiType == 'excalidraw'"><script><![CDATA[
+                    const attachments = pageReference.getChild('_attachments')
+                    const svg = ec.resource.script('component://framework/service/org/moqui/resource/WikiBoardScene.js').preview(boardScene, attachments)
+                    attachments.getChild('_board.svg').putText(svg)
+                    if (versionName) attachments.getChild('_board-' + encodeURIComponent(versionName) + '.svg').putText(svg)
+                ]]></script></if>
                 <!-- the page's links: a text that cannot be read for links is logged, and the save stands -->
                 <service-call name="org.moqui.resource.WikiServices.index#WikiPageLinks" in-map="{wikiPageId:wikiPageId, pageText:pageText}"/>
             </if>
@@ -2004,9 +2073,20 @@ along with this software (see the LICENSE.md file). If not, see
                     pageLocation = page.getLocation();
                 }
                 const text = ec.resource.getLocationText(pageLocation);
-                document.content = text;
+                if (pageLocation.endsWith('.excalidraw')) {
+                    try {
+                        const elements = JSON.parse(text).elements
+                        document.content = elements.filter(el => el.type === 'text' && !el.isDeleted)
+                                .sort((a, b) => (a.y - b.y) || (a.x - b.x)).map(el => el.text).join('\n')
+                    } catch (e) {
+                        ec.logger.warn(`Wiki board ${pageLocation} could not be indexed: ${e}`)
+                        document.content = ''
+                    }
+                } else {
+                    document.content = text
+                }
                 document.pageName = pageName;
-                const heading = String(text || "").match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m) || String(text || "").match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+                const heading = String(document.content || "").match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m) || String(document.content || "").match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
                 document.title = heading ? heading[1].replace(/<[^>]+>/g, "").trim() : pageName;
                 try {
                     const change = ec.resource.getLastChange(pageLocation);
@@ -2092,6 +2172,16 @@ along with this software (see the LICENSE.md file). If not, see
                     canAdmin = true
                     return
                 }
+                const room = ec.entity.find('moqui.chat.ChatRoom').condition('wikiSpaceId',wikiSpaceId).one()
+                if (room) {
+                    const rights = userId && ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess')
+                        .parameters({chatRoomId:room.chatRoomId,userId}).call()
+                    canView = !!rights?.isMember && !rights.member?.leftDate
+                    readOnly = !!room.archivedDate
+                    canUpdate = canView && !!rights.canPost && !readOnly
+                    canAdmin = canUpdate && !!rights.canModerate
+                    return
+                }
                 const spaceUser = userId ? ec.entity.find('moqui.resource.wiki.WikiSpaceUser').condition({wikiSpaceId: wikiSpaceId, userId: userId}).one() : null
                 const pageUser = page && userId ? ec.entity.find('moqui.resource.wiki.WikiPageUser').condition({wikiPageId: page.wikiPageId, userId: userId}).one() : null
                 const adminGroup = !!userId && (current ? ec.user.isInGroup('ADMIN') : ec.entity.find('moqui.security.UserGroupMember')
@@ -2131,14 +2221,24 @@ along with this software (see the LICENSE.md file). If not, see
                 const adminGroup = !!userId && (current ? ec.user.isInGroup('ADMIN') : ec.entity.find('moqui.security.UserGroupMember')
                         .condition({userGroupId: 'ADMIN', userId: userId})
                         .condition(ec.entity.conditionFactory.makeConditionDate('fromDate', 'thruDate', null)).count() > 0)
-                if ((!userId && authzOff) || adminGroup) {
+                if (!userId && authzOff) {
                     viewSpaceIdList = spaces.map((space) => space.wikiSpaceId)
                     return
                 }
                 const memberSpaces = new Set(userId ? Array.from(ec.entity.find('moqui.resource.wiki.WikiSpaceUser').condition('userId', userId).list())
                         .filter((row) => row.allowView === 'Y' || row.allowAdmin === 'Y').map((row) => row.wikiSpaceId) : [])
-                viewSpaceIdList = spaces.filter((space) => space.restrictView !== 'Y' || memberSpaces.has(space.wikiSpaceId))
+                const roomSpaces = new Map(Array.from(ec.entity.find('moqui.chat.ChatRoom').condition('wikiSpaceId','is-not-null',null)
+                    .selectField('chatRoomId').selectField('wikiSpaceId').list(), r => [r.wikiSpaceId,r.chatRoomId]))
+                const memberships = new Set(userId ? Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition({userId,leftDate:null})
+                    .selectField('chatRoomId').list(),r => r.chatRoomId) : [])
+                viewSpaceIdList = spaces.filter(space => {
+                    const roomId = roomSpaces.get(space.wikiSpaceId)
+                    if (!roomId) return adminGroup || space.restrictView !== 'Y' || memberSpaces.has(space.wikiSpaceId)
+                    return memberships.has(roomId) && ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess')
+                        .parameters({chatRoomId:roomId,userId}).call().isMember
+                })
                         .map((space) => space.wikiSpaceId)
+                if (adminGroup) return
                 const viewPages = new Set(userId ? Array.from(ec.entity.find('moqui.resource.wiki.WikiPageUser')
                         .condition({userId: userId, allowView: 'Y'}).list()).map((row) => row.wikiPageId) : [])
                 hiddenPageIdList = Array.from(ec.entity.find('moqui.resource.wiki.WikiPage').condition('restrictView', 'Y')

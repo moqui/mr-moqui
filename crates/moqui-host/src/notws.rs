@@ -595,6 +595,7 @@ async fn run_socket(
                 let Some(push) = push else {
                     break;
                 };
+                if !collab::may_deliver(&factory, &slot, &push.text, false).await { continue; }
                 if !send_within(&mut socket, Message::Text(push.text.into())).await {
                     break;
                 }
@@ -651,7 +652,7 @@ async fn handle_incoming(
     match incoming {
         Some(Ok(Message::Text(text))) => {
             // a co-editing frame (JSON with `collab`)
-            if collab::handle(factory, slot, &text) {
+            if collab::handle(factory, slot, &text, None).await {
                 return true;
             }
             // a CalcGrid frame (JSON with `calc`)

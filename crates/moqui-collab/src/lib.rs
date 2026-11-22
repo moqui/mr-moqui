@@ -38,7 +38,10 @@
 //! entry below: `org.moqui.resource.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
 //! from its WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
 
+mod board;
 pub mod markdown;
+mod meeting;
+pub use meeting::Meeting;
 pub mod service;
 
 moqui_core::extension::submit! {
@@ -132,6 +135,7 @@ pub enum Event {
 /// The record a document key names.
 #[derive(Debug, Clone)]
 struct WikiTarget {
+    codec: Codec,
     wiki_space_id: String,
     wiki_page_id: String,
     page_path: String,
@@ -140,14 +144,49 @@ struct WikiTarget {
     on_database: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Codec {
+    Markdown,
+    Board,
+}
+
+impl Codec {
+    fn seed(self, doc: &Doc, text: &str) -> Result<(), Refusal> {
+        match self {
+            Self::Markdown => {
+                markdown::seed(doc, text);
+                Ok(())
+            }
+            Self::Board => board::seed(doc, text).map_err(|e| Refusal::new(422, e)),
+        }
+    }
+
+    fn render(self, doc: &Doc) -> String {
+        match self {
+            Self::Markdown => markdown::render(doc),
+            Self::Board => board::render(doc),
+        }
+    }
+
+    fn search_text(self, doc: &Doc) -> String {
+        match self {
+            Self::Markdown => markdown::render(doc),
+            Self::Board => board::search_text(doc),
+        }
+    }
+}
+
 struct Room {
+    saving: Arc<Mutex<()>>,
     doc: Doc,
+    board_candidate: Option<Doc>,
     target: WikiTarget,
     /// Changed since the state was last written.
     dirty: bool,
     changed_at: Instant,
     /// The users whose changes are in no version yet, and the last of them.
     unsaved: BTreeSet<String>,
+    meeting_names: BTreeSet<String>,
     last_editor: Option<String>,
     members: usize,
     /// Each member's access, by user, as last asked.
@@ -162,8 +201,11 @@ struct Room {
 
 /// Whether a member may change the document, when that was last answered, when to ask again after a check that
 /// failed, and how many clients of the user are in the room.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Grant {
+    meeting: Option<Meeting>,
+    writer: String,
+    name: String,
     can_edit: bool,
     checked: Instant,
     retry_at: Instant,
@@ -303,6 +345,11 @@ fn read_page(page_id: &str, on_database: bool) -> Result<(WikiTarget, String, Op
         None => page_path.clone(),
     };
     let target = WikiTarget {
+        codec: if location.ends_with(".excalidraw") {
+            Codec::Board
+        } else {
+            Codec::Markdown
+        },
         wiki_space_id,
         wiki_page_id: page_id.to_string(),
         page_path,
@@ -369,6 +416,7 @@ fn merge_into(key: &str, doc: &Doc, state: &[u8]) -> Option<Vec<u8>> {
 
 /// What another server stored: merged into the room, and what the room lacked queued for its clients.
 fn merge_stored(key: &str, room: &mut Room, row: &moqui_core::entity::EntityValue) {
+    room.board_candidate = None;
     if let Some(update) = merge_into(key, &room.doc, &bytes_of(row, "stateData")) {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
@@ -405,6 +453,25 @@ fn refresh_chunk(facade: &moqui_core::entity::EntityFacade, open: &[(String, Arc
         .condition(Condition::is_in("documentKey", keys))
         .select_field("documentKey,lastUpdatedStamp")
         .list()?;
+    let present: BTreeSet<String> = stamps
+        .iter()
+        .filter_map(|row| row.get("documentKey").map(to_plain_string))
+        .collect();
+    for (key, room) in open.iter().filter(|(key, _)| !present.contains(key)) {
+        // The page was deleted on this node or elsewhere. A new join may already
+        // have loaded a replacement, so retire only the room in this snapshot.
+        let mut all = lock(rooms());
+        if all.get(key).is_some_and(|current| Arc::ptr_eq(current, room)) {
+            all.remove(key);
+            drop(all);
+            for user_id in lock(room).can_edit.keys() {
+                lock(events()).push(Event::Revoked {
+                    document_key: key.clone(),
+                    user_id: user_id.clone(),
+                });
+            }
+        }
+    }
     let changed: Vec<Value> = stamps
         .iter()
         .filter(|row| {
@@ -442,6 +509,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
     let row = stored(key)?;
     let doc = Doc::new();
     let mut unsaved = BTreeSet::new();
+    let mut meeting_names = BTreeSet::new();
     let mut seed = true;
     let mut stamp = row.as_ref().and_then(stamp_of);
     if let Some(row) = &row {
@@ -468,6 +536,10 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
                         } else {
                             seed = false;
                             unsaved = editors;
+                            meeting_names = row
+                                .get("meetingEditorNames")
+                                .and_then(|v| serde_json::from_str(&to_plain_string(v)).ok())
+                                .unwrap_or_default();
                         }
                     }
                     Err(err) => tracing::error!(
@@ -478,25 +550,33 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         }
     }
     if seed {
-        markdown::seed(&doc, &page_text);
-        stamp = write_row(
+        target.codec.seed(&doc, &page_text)?;
+        let written = write_row(
             key,
-            &doc,
-            Stored::Replace,
+            (target.codec, &doc),
+            if row.is_none() { Stored::Insert } else { Stored::Replace },
             Some(&hash),
             version.as_deref(),
-            &unsaved,
+            (&unsaved, &meeting_names),
             None,
-        )?
-        .stamp;
+        )?;
+        if written.adopt_existing {
+            // Another node seeded the document while this join read its wiki page.
+            // Its Yjs item ids are already authoritative for other editors.
+            return load(key, page_id, on_database);
+        }
+        stamp = written.stamp;
     }
     let state_bytes = doc.transact().encode_state_as_update_v1(&StateVector::default()).len();
     let room = Arc::new(Mutex::new(Room {
+        saving: Arc::default(),
         doc,
+        board_candidate: None,
         target,
         dirty: false,
         changed_at: Instant::now(),
         unsaved,
+        meeting_names,
         last_editor: None,
         members: 0,
         can_edit: HashMap::new(),
@@ -510,6 +590,8 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
 /// How a row's stored state is taken.
 #[derive(Clone, Copy, PartialEq)]
 enum Stored {
+    /// Seed only if another server has not created the document in the meantime.
+    Insert,
     /// Merged into the document, so what another server wrote of it is kept.
     Merge,
     /// Replaced: the document was seeded again from its record's text.
@@ -519,6 +601,7 @@ enum Stored {
 /// What [`write_row`] did: the stamp it wrote, and the update of what another server had stored that the document
 /// lacked (merged into it, for its clients).
 struct Written {
+    adopt_existing: bool,
     stamp: Option<i64>,
     merged: Option<Vec<u8>>,
     /// The size of the state written.
@@ -528,22 +611,43 @@ struct Written {
 /// Write the document's state and snapshot.
 fn write_row(
     key: &str,
-    doc: &Doc,
+    (codec, doc): (Codec, &Doc),
     stored: Stored,
     base_hash: Option<&str>,
     base_version: Option<&str>,
-    unsaved: &BTreeSet<String>,
+    (unsaved, meeting_names): (&BTreeSet<String>, &BTreeSet<String>),
     last_editor: Option<&str>,
 ) -> Result<Written, Error> {
     let facade = entity()?;
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let tx = facade.transactions_for(COLLAB_DOCUMENT)?;
     tx.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+        let page_id = key.strip_prefix("WikiPage:").unwrap_or_default();
+        if facade
+            .find("moqui.resource.wiki.WikiPage")?
+            .eq("wikiPageId", Value::string(page_id))
+            .for_update(true)
+            .one()?
+            .is_none()
+        {
+            return Err(moqui_lib::error::Error::new("the co-edited page was removed"));
+        }
         let existing = facade
             .find(COLLAB_DOCUMENT)?
             .eq("documentKey", Value::string(key))
             .for_update(true)
             .one()?;
+        if stored == Stored::Insert && existing.is_some() {
+            return Ok(Written {
+                adopt_existing: true,
+                stamp: None,
+                merged: None,
+                state_bytes: 0,
+            });
+        }
+        if stored == Stored::Merge && existing.is_none() {
+            return Err(moqui_lib::error::Error::new("the co-edited document was removed"));
+        }
         let mut merged = None;
         if let Some(row) = existing.as_ref().filter(|_| stored == Stored::Merge) {
             // another server's edits: into this document too, so nothing either wrote is lost
@@ -556,7 +660,7 @@ fn write_row(
             .filter(|millis| *millis > 0);
         let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
         let state_bytes = state.len();
-        let snapshot = markdown::render(doc);
+        let snapshot = codec.search_text(doc);
         let mut row = match existing {
             Some(row) => row,
             None => {
@@ -583,6 +687,14 @@ fn write_row(
                 Value::string(unsaved.iter().cloned().collect::<Vec<_>>().join(","))
             },
         );
+        row.set(
+            "meetingEditorNames",
+            if meeting_names.is_empty() {
+                Value::Null
+            } else {
+                Value::string(serde_json::json!(meeting_names).to_string())
+            },
+        );
         if let Some(editor) = last_editor {
             row.set("lastChangeUserId", Value::string(editor));
             row.set("lastChangeDate", now_value());
@@ -593,6 +705,7 @@ fn write_row(
             row.update(&facade)?;
         }
         Ok(Written {
+            adopt_existing: false,
             stamp,
             merged,
             state_bytes,
@@ -605,6 +718,7 @@ fn write_row(
 fn wrote(key: &str, room: &mut Room, written: Written) {
     room.stamp = written.stamp;
     room.state_bytes = written.state_bytes;
+    room.board_candidate = None;
     if let Some(update) = written.merged {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
@@ -627,12 +741,30 @@ pub fn check_view(key: &str) -> Result<(), Refusal> {
 /// A client joins a document as `user_id`: the access check, the room, the update the client's state vector lacks.
 /// Runs on a request worker in a fresh context.
 pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Joined, Refusal> {
+    join_scoped(key, user_id, client_state_vector, None)
+}
+
+pub fn join_scoped(
+    key: &str,
+    user_id: &str,
+    client_state_vector: &[u8],
+    meeting: Option<Meeting>,
+) -> Result<Joined, Refusal> {
     let page_id = wiki_page_id(key)?;
-    let Access {
-        can_view,
-        can_edit,
-        on_database,
-    } = access(page_id, user_id)?;
+    let key_of_actor = meeting.as_ref().map_or_else(|| user_id.to_string(), Meeting::key);
+    let (
+        Access {
+            can_view,
+            can_edit,
+            on_database,
+        },
+        writer,
+        name,
+    ) = if let Some(scope) = &meeting {
+        scope.grant(page_id)?
+    } else {
+        (access(page_id, user_id)?, user_id.to_string(), user_name(user_id))
+    };
     if !can_view {
         return Err(Refusal::new(404, format!("{key} not found")));
     }
@@ -645,12 +777,18 @@ pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Join
     };
     let room = load(key, page_id, on_database)?;
     let mut room = lock(&room);
+    if meeting.is_some() && !matches!(room.target.codec, Codec::Board) {
+        return Err(Refusal::new(404, "board not found"));
+    }
     room.members += 1;
     let now = Instant::now();
-    let clients = room.can_edit.get(user_id).map_or(0, |grant| grant.clients) + 1;
+    let clients = room.can_edit.get(&key_of_actor).map_or(0, |grant| grant.clients) + 1;
     room.can_edit.insert(
-        user_id.to_string(),
+        key_of_actor,
         Grant {
+            meeting,
+            writer,
+            name: name.clone(),
             can_edit,
             checked: now,
             retry_at: now,
@@ -666,7 +804,7 @@ pub fn join(key: &str, user_id: &str, client_state_vector: &[u8]) -> Result<Join
         can_edit,
         update,
         state_vector,
-        user_name: user_name(user_id),
+        user_name: name,
     })
 }
 
@@ -705,21 +843,41 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
         None => return Err(Refusal::new(409, format!("{key} is not open here: join it first"))),
     }
     // the whole state is held in memory and written again at each flush: bounded (SEC-TLS-113)
-    let max = max_state_bytes();
+    let max = match room.target.codec {
+        Codec::Markdown => max_state_bytes(),
+        Codec::Board => {
+            if update.len() > board::limit("board@max-update-bytes", 1 << 20) {
+                return Err(Refusal::new(413, "board update exceeds the size limit"));
+            }
+            board::limit("board@max-document-bytes", 20 << 20)
+        }
+    };
     if room.state_bytes.saturating_add(update.len()) > max {
         return Err(Refusal::new(413, format!("the document is larger than {max} bytes")));
     }
+    if matches!(room.target.codec, Codec::Board) {
+        let Room {
+            doc, board_candidate, ..
+        } = &mut *room;
+        board::validate_update(doc, board_candidate, update)?;
+    }
     let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;
-    room.state_bytes = room.state_bytes.saturating_add(size);
     room.doc
         .transact_mut()
         .apply_update(update)
         .map_err(|err| Refusal::new(400, format!("the update was not applied: {err}")))?;
+    room.state_bytes = room.state_bytes.saturating_add(size);
     room.dirty = true;
     room.changed_at = Instant::now();
-    room.unsaved.insert(user_id.to_string());
-    room.last_editor = Some(user_id.to_string());
+    let grant = &room.can_edit[user_id];
+    let writer = grant.writer.clone();
+    if grant.meeting.is_some() {
+        let name = grant.name.clone();
+        room.meeting_names.insert(name);
+    }
+    room.unsaved.insert(writer.clone());
+    room.last_editor = Some(writer);
     Ok(())
 }
 
@@ -735,7 +893,8 @@ fn max_state_bytes() -> usize {
 /// An update another server applied: into this server's room, when it has the document open. That server writes it.
 pub fn apply_remote(key: &str, update: &[u8]) {
     let Some(room) = room_of(key) else { return };
-    let room = lock(&room);
+    let mut room = lock(&room);
+    room.board_candidate = None;
     match Update::decode_v1(update) {
         Ok(update) => {
             if let Err(err) = room.doc.transact_mut().apply_update(update) {
@@ -774,9 +933,12 @@ fn leave_count(key: &str) {
     }
 }
 
-/// The markdown of an open document, for a test or a preview.
+/// Searchable text of an open document: Markdown, or board text in reading order.
 pub fn snapshot(key: &str) -> Option<String> {
-    room_of(key).map(|room| markdown::render(&lock(&room).doc))
+    room_of(key).map(|room| {
+        let room = lock(&room);
+        room.target.codec.search_text(&room.doc)
+    })
 }
 
 /// The keys of the documents open on this server.
@@ -797,6 +959,9 @@ pub fn tick() {
     }
     refresh(&keys);
     for (key, room) in keys {
+        if !room_of(&key).is_some_and(|current| Arc::ptr_eq(&current, &room)) {
+            continue;
+        }
         recheck_access(&key, &room);
         if let Err(err) = tick_room(&key, &room) {
             tracing::error!("co-edited {key}: {}", err.message());
@@ -809,18 +974,20 @@ pub fn tick() {
 /// document ([`Event::Revoked`]). A check that fails leaves the answer to go stale, when [`apply`] refuses it
 /// (SEC-TLS-112).
 fn recheck_access(key: &str, room: &Mutex<Room>) {
-    let (page_id, due): (String, Vec<String>) = {
+    let (page_id, due): (String, Vec<_>) = {
         let room = lock(room);
         let now = Instant::now();
         let due = room
             .can_edit
             .iter()
-            .filter(|(_, grant)| grant.checked.elapsed() >= ACCESS_RECHECK && grant.retry_at <= now)
-            .map(|(user, _)| user.clone())
+            .filter(|(_, grant)| {
+                (grant.meeting.is_some() || grant.checked.elapsed() >= ACCESS_RECHECK) && grant.retry_at <= now
+            })
+            .map(|(user, grant)| (user.clone(), grant.meeting.clone()))
             .collect();
         (room.target.wiki_page_id.clone(), due)
     };
-    for user_id in due {
+    for (user_id, scope) in due {
         let revoke = |user_id: String| {
             lock(room).can_edit.remove(&user_id);
             lock(events()).push(Event::Revoked {
@@ -828,7 +995,12 @@ fn recheck_access(key: &str, room: &Mutex<Room>) {
                 user_id,
             });
         };
-        match access(&page_id, &user_id) {
+        let found = if let Some(scope) = &scope {
+            scope.grant(&page_id).map(|(access, _, _)| access)
+        } else {
+            access(&page_id, &user_id)
+        };
+        match found {
             Ok(found) if found.can_view => {
                 let mut room = lock(room);
                 let Some(grant) = room.can_edit.get_mut(&user_id) else {
@@ -860,7 +1032,7 @@ fn recheck_access(key: &str, room: &Mutex<Room>) {
                     .can_edit
                     .get(&user_id)
                     .is_some_and(|grant| grant.checked.elapsed() > ACCESS_STALE);
-                if stale {
+                if stale || scope.is_some() {
                     revoke(user_id);
                 } else if let Some(grant) = lock(room).can_edit.get_mut(&user_id) {
                     grant.failures = grant.failures.saturating_add(1);
@@ -923,7 +1095,15 @@ fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
     let mut guard = lock(room);
     let unsaved = guard.unsaved.clone();
     let editor = guard.last_editor.clone();
-    let written = write_row(key, &guard.doc, Stored::Merge, None, None, &unsaved, editor.as_deref())?;
+    let written = write_row(
+        key,
+        (guard.target.codec, &guard.doc),
+        Stored::Merge,
+        None,
+        None,
+        (&unsaved, &guard.meeting_names),
+        editor.as_deref(),
+    )?;
     wrote(key, &mut guard, written);
     guard.dirty = false;
     Ok(())
@@ -932,14 +1112,22 @@ fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
 /// Save the document as a version of its record, as `user_id` (an editor with update access), with `note` or one that
 /// names its editors. Out: the version made, none when the text was unchanged.
 fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -> Result<Option<String>, Error> {
+    let saving = Arc::clone(&lock(room).saving);
+    let _save = lock(&saving);
     // what other servers stored goes into the version too, though an update of theirs was lost on its way here
     let row = stored(key)?;
-    let (target, page_text, editors) = {
+    let (target, page_text, editors, meeting_names, saved_at) = {
         let mut room = lock(room);
         if let Some(row) = &row {
             merge_stored(key, &mut room, row);
         }
-        (room.target.clone(), markdown::render(&room.doc), room.unsaved.clone())
+        (
+            room.target.clone(),
+            room.target.codec.render(&room.doc),
+            room.unsaved.clone(),
+            room.meeting_names.clone(),
+            room.changed_at,
+        )
     };
     let note = note
         .map(str::to_string)
@@ -951,6 +1139,11 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
                 _ => format!("Edited together by {}", names.join(", ")),
             }
         });
+    let note = if meeting_names.is_empty() {
+        note
+    } else {
+        format!("{note} — {}", meeting_names.into_iter().collect::<Vec<_>>().join(", "))
+    };
     // the version is the user's: their name on it and their access checked, in their own login
     let username = ExecutionContext::with_current(|ec| {
         let _authz = ec.disable_authz();
@@ -993,6 +1186,9 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
     // No artifact authorization: an idle save runs on the socket's thread with no screen to inherit a grant from, and
     // update#WikiPage applies the wiki's access rule to the logged-in editor itself.
     let options = CallOptions {
+        // Release the WikiPage version lock before writing the CRDT checkpoint
+        // (a separate transaction), including when called while a meeting ends.
+        require_new_transaction: Some(true),
         disable_authz: true,
         ..Default::default()
     };
@@ -1005,17 +1201,30 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
     let version_name = Some(text(&out, "versionName")).filter(|name| !name.is_empty());
     {
         let mut room = lock(room);
-        room.unsaved.clear();
-        room.dirty = false;
+        // The page service ran without the room lock. A stroke made meanwhile belongs
+        // to the following version, even when it came from the same editor.
+        let unsaved = if room.changed_at == saved_at {
+            BTreeSet::new()
+        } else {
+            room.unsaved.clone()
+        };
+        let names = if unsaved.is_empty() {
+            BTreeSet::new()
+        } else {
+            room.meeting_names.clone()
+        };
         let written = write_row(
             key,
-            &room.doc,
+            (room.target.codec, &room.doc),
             Stored::Merge,
             Some(&text_hash(&page_text)),
             version_name.as_deref(),
-            &BTreeSet::new(),
+            (&unsaved, &names),
             None,
         )?;
+        room.meeting_names = names;
+        room.unsaved = unsaved;
+        room.dirty = false;
         wrote(key, &mut room, written);
     }
     {

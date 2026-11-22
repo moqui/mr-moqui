@@ -44,6 +44,10 @@ pub(super) fn handle(_factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, 
 
 pub(super) fn socket_closed(_factory: &Arc<ExecutionContextFactory>, _slot_id: u64) {}
 
+pub(super) fn has_binding(_slot_id: u64, _call: &str, _leg: &str) -> bool {
+    false
+}
+
 pub(super) fn in_call(_slot_id: u64) -> bool {
     false
 }

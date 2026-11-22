@@ -17,34 +17,24 @@ along with this software (see the LICENSE.md file). If not, see
         require-authentication="false" default-menu-include="false">
 
     <actions>
-        <set field="parentScreenDef" from="currentScreenDef"/>
-        <set field="parentScreenPath" from="currentScreenPath"/>
+        <set field="parentPath" from="currentScreenPath"/>
+        <set field="parents" from="ancestorLocations"/>
+        <set field="treeItems" from="sri.getMenuItems(parentPath, showAll == 'true').filter(item => !parents.includes(item.location) &amp;&amp; (showAll == 'true' || !item.hasRequiredParameters))"/>
     </actions>
     <widgets>
         <container style="ScreenTreeNested">
-            <section-iterate name="ScreenNestedSection" list="showAll == 'true' ? parentScreenDef.getSubscreensItemsSorted() : parentScreenDef.getMenuSubscreensItems()" entry="currentSubscreensItem">
+            <section-iterate name="ScreenNestedSection" list="treeItems" entry="item">
                 <actions>
-                    <set field="currentScreenDef" from="sri.sfi.getScreenDefinition(currentSubscreensItem.location)"/>
-                    <set field="currentScreenPath" value="${parentScreenPath}/${currentSubscreensItem.name}"/>
-                    <set field="currentUrlInfo" from="sri.buildUrl(currentScreenPath)"/>
+                    <set field="currentScreenPath" value="${parentPath}/${item.name}"/>
+                    <set field="ancestorLocations" from="parents.concat(item.location)"/>
                 </actions>
                 <widgets>
-                    <section name="ScreenItemRender">
-                        <condition><expression>currentScreenDef != null &amp;&amp; currentUrlInfo?.isPermitted() &amp;&amp; (showAll == 'true' || !currentScreenDef?.hasRequiredParameters())</expression></condition>
-                        <widgets>
-                            <section name="LinkOrLabel" condition="!currentScreenDef?.hasRequiredParameters()">
-                                <widgets><link url="${currentUrlInfo.path}" link-type="anchor"
-                                        text="${currentSubscreensItem.menuTitle}"/></widgets>
-                                <fail-widgets><label text="${currentSubscreensItem.menuTitle}" style="text-muted"/></fail-widgets>
-                            </section>
-
-                            <include-screen location="component://webroot/screen/webroot/apps/ScreenTree/ScreenTreeNested.xml"
-                                    share-scope="false"/>
-                        </widgets>
-                        <fail-widgets>
-                            <render-mode><text type="html"><![CDATA[<!-- excluding screen at path ${currentScreenPath} -->]]></text></render-mode>
-                        </fail-widgets>
+                    <section name="LinkOrLabel" condition="!item.disabled &amp;&amp; !item.hasRequiredParameters">
+                        <widgets><link url="${currentScreenPath}" link-type="anchor" text="${item.title}"/></widgets>
+                        <fail-widgets><label text="${item.title}" style="text-muted"/></fail-widgets>
                     </section>
+                    <include-screen location="component://webroot/screen/webroot/apps/ScreenTree/ScreenTreeNested.xml"
+                            share-scope="false"/>
                 </widgets>
             </section-iterate>
         </container>

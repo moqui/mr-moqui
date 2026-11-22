@@ -39,6 +39,36 @@ pub fn effective_http_port(raw: &str) -> Result<u16, moqui_lib::error::Error> {
         .map_err(|_| moqui_lib::error::Error::new(format!("the webroot webapp's http-port {raw} is not a port")))
 }
 
+/// Configured ports a local client can probe before opening another server on this runtime.
+pub fn local_web_ports(runtime: &std::path::Path, framework: &std::path::Path) -> Vec<(&'static str, u16)> {
+    let conf = crate::context::load_merged_conf(framework, runtime).ok();
+    let setting = |attr: &str| {
+        let selector = format!("{}@{attr}", crate::context::conf_env::WEBROOT);
+        conf.as_ref()
+            .map(|conf| crate::context::conf_env::conf_attribute(conf, &selector))
+            .unwrap_or_else(|| crate::context::conf_env::webroot_setting(attr))
+    };
+    let mut ports = Vec::new();
+    for (scheme, raw, fallback) in [
+        ("https", setting("https-listen-port"), 8443),
+        (
+            "http",
+            setting("http-listen-port"),
+            effective_http_port(&setting("http-port")).unwrap_or(8080),
+        ),
+    ] {
+        let port = if raw.is_empty() {
+            Some(fallback)
+        } else {
+            raw.parse().ok()
+        };
+        if let Some(port) = port.filter(|p| *p != 0) {
+            ports.push((scheme, port));
+        }
+    }
+    ports
+}
+
 /// Configured HTTP port text for a URL. Invalid non-empty values are kept for listener validation.
 pub fn http_url_port(raw: &str) -> String {
     effective_http_port(raw)

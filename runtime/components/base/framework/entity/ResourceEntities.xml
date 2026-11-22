@@ -881,7 +881,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="CollabDocument" package="moqui.resource" use="transactional" cache="never">
         <description>A document several people edit at once (m-coedit, org.moqui.resource.CollabServices; docs/data/Revision-Management.md,
             Co-editing): the Yjs state of its editors (stateData, the full update in Yjs v1 encoding, kept current a second
-            or two after an edit and merged when several servers write it), the markdown it renders to (snapshotText), and
+            or two after an edit and merged when several servers write it), its searchable text (markdown or board labels, snapshotText), and
             what it was last saved as. documentKey names the record, such as WikiPage:100023. The record's own text (the
             wiki page) is written only as a version: when the user saves, after a while without edits on database files,
             and when the last editor closes it. editorUserIds are the users whose changes are not in a version yet.</description>
@@ -892,6 +892,7 @@ along with this software (see the LICENSE.md file). If not, see
             or last saved as; a text that no longer has it was changed outside co-editing</description></field>
         <field name="baseVersionName" type="text-medium"/>
         <field name="editorUserIds" type="text-medium"/>
+        <field name="meetingEditorNames" type="text-medium"/>
         <field name="lastChangeDate" type="date-time"/>
         <field name="lastChangeUserId" type="id"/>
         <field name="lastSaveDate" type="date-time"/>

@@ -56,7 +56,7 @@ Needs the Android SDK, a JDK 17 or later, the Tauri CLI of the desktop app and t
 ./moq android dev                             # build, install and run on the emulator, or on a phone over adb
 ./moq android build --target x86_64 --apk     # a debug APK under gen/android/app/build/outputs/apk
 ./moq android build --release                 # a signed AAB and APKs, with MOQUI_ANDROID_KEYSTORE and the rest set
-adb reverse tcp:8080 tcp:8080                 # a server on this machine (./moq run) as the app's http://localhost:8080
+adb reverse tcp:8080 tcp:8080                 # the loopback HTTP server from Build-Test as the app's http://localhost:8080
 adb logcat -s moqui-mobile                    # the app's log
 ```
 

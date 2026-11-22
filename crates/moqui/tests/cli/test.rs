@@ -67,6 +67,7 @@ pub(super) fn test_runtime(tag: &str, components: &[(&str, &Path)]) -> Option<Te
 
 pub(super) fn moqui_test(runtime: &TestRuntime, args: &[&str]) -> (String, String, bool) {
     let output = Command::new(env!("CARGO_BIN_EXE_moqui"))
+        .env("MOQUI_SHARED_RUNTIME", "off")
         .arg("test")
         .args(args)
         .current_dir(repo())

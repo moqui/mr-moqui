@@ -18,8 +18,8 @@
         and the same value is the PASS server's pass@client-secret. -->
     <pass-authority grpc-enabled="true"><client id="forum" sites="FORUM_SITE" callback="https://forum.example.com/account/Sso"/></pass-authority>
 
-    <!-- gRPC for PASS servers on Maximal or Enterprise (REST is always there): the gRPC listener, pass-authority@grpc-port
-        (4317) on pass-authority@grpc-host, takes PASS calls with the client's id and secret in metadata and TLS from
+    <!-- gRPC for PASS servers on Maximal or Enterprise (REST is always there): the gRPC listener, webroot grpc-listen-port
+        (4317) on grpc-listen-bind, takes PASS calls with the client's id and secret in metadata and TLS from
         the HTTPS listener's certificate. The HTTPS listener takes the same calls over HTTP/2, so a PASS server's
         pass@backend-grpc-url can name the HTTPS port and no other port needs to be open. With no certificate in cert/
         the listener is plain h2c and takes PASS calls only on a loopback address, unless

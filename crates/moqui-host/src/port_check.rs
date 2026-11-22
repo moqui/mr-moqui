@@ -147,11 +147,13 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
     #[cfg_attr(not(feature = "grpc"), allow(unused_variables))]
     let mut https = false;
     if let Some(http) = http {
-        targets.push(required("HTTP", "http-port", http.ip().to_string(), http.port()));
+        if let Some(port) = http.http_port {
+            targets.push(required("HTTP", "http-listen-port", http.ip.to_string(), port));
+        }
         let listen_port = webroot("https-listen-port");
         if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property), &listen_port)? {
             https = true;
-            targets.push(required("HTTPS", "https-listen-port", http.ip().to_string(), port));
+            targets.push(required("HTTPS", "https-listen-port", http.ip.to_string(), port));
         }
         targets.push(required(
             "Cluster",
@@ -168,10 +170,10 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
     #[cfg(feature = "grpc")]
     if let Some(http) = http {
         let setting = |path: &str, name: &str| conf_setting(conf, path, name);
-        if let Some(address) = crate::grpc_listen::bind_address_by(&setting, http, https) {
+        if let Some(address) = crate::grpc_listen::bind_address_by(&setting, &webroot, http.ip, https) {
             targets.push(Target::optional(
                 crate::grpc_listen::LISTENER,
-                "grpc-port",
+                "grpc-listen-port",
                 address.ip(),
                 address.port(),
                 Proto::Tcp,

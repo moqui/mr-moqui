@@ -61,6 +61,7 @@ impl Drop for Server {
 /// `moqui` started in `dir`, with no `MOQUI_RUNTIME`: its runtime is found from (or made in) the working directory.
 fn moqui(dir: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_moqui"));
+    command.env("MOQUI_SHARED_RUNTIME", "off");
     command
         .current_dir(dir)
         .env_remove("MOQUI_RUNTIME")

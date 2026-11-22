@@ -3,7 +3,8 @@
 # vue, quasar and the icon fonts load with the page; dompurify and marked when the chat store or m-markdown needs them;
 # tiptap with the first m-rich-text (Chat's composer, Compose); matrix-sdk-crypto (a WebAssembly module, the CSP's
 # wasm-unsafe-eval) when WebrootCrypto.js opens the crypto device of an encrypted room; emoji (a data file) when
-# m-emoji-picker opens.
+# m-emoji-picker opens. A meeting board loads Excalidraw; its diagram source editor loads Mermaid and CodeMirror.
+# Markup and shared-screen annotation load drauu.
 vue
 quasar
 material-symbols
@@ -13,3 +14,7 @@ marked
 tiptap
 matrix-sdk-crypto
 emoji
+excalidraw
+mermaid
+codemirror
+drauu

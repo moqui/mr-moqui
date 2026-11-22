@@ -482,6 +482,9 @@ feature("a plain anchor to a screen in rendered content stays in the shell", {
             <div id="content">
                 <a id="wiki" href="/apps/marble/Wiki/wiki/EXAMPLE/Other?x=1#part">Other</a>
                 <a id="blank" href="/apps/marble/Wiki/wiki/EXAMPLE/Other" target="_blank">New tab</a>
+                <a id="standard" href="/apps/AppList" data-browser-navigation>Standard</a>
+                <a id="csv" href="/apps/gallery/List?renderMode=csv">CSV</a>
+                <a id="xlsx" href="/apps/gallery/List?saveFilename=List.xlsx">Spreadsheet</a>
                 <a id="file" href="/apps/marble/Wiki/wiki/EXAMPLE/file.pdf" download>File</a>
                 <a id="away" href="https://example.com/apps/x">Away</a>
                 <a id="static" href="/libs/readme.txt">Static</a>
@@ -503,7 +506,7 @@ feature("a plain anchor to a screen in rendered content stays in the shell", {
             return { routes: routes.slice(), shellTook: window.lastDefaultPrevented }
         }, id)
         assert.deepEqual(click("wiki"), { routes: ["/qapps/marble/Wiki/wiki/EXAMPLE/Other?x=1#part"], shellTook: true })
-        for (const id of ["blank", "file", "away", "static"]) {
+        for (const id of ["blank", "standard", "csv", "xlsx", "file", "away", "static"]) {
             const before = page.evaluate(() => routes.length)
             const result = click(id)
             assert.equal(result.routes.length, before, id + " is left to the browser")

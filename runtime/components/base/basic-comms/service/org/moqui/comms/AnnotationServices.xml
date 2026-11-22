@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="markup" noun="ChatImage">
+        <in-parameters><parameter name="chatRoomId" required="true"/><parameter name="chatAttachmentId" required="true"/><parameter name="file" type="FileItem" required="true"/></in-parameters>
+        <out-parameters><parameter name="chatAttachmentId"/><parameter name="eventSeq" type="Long"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.chat.ChatServices.get#Attachment" in-map="{chatAttachmentId}" out-map="original"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="original.chatRoomId !== chatRoomId || !original.eventSeq || !String(original.contentType).startsWith('image/') || file.getContentType() !== 'image/png'">
+                <return error="true" message="Choose an image from this room"/></if>
+            <service-call name="org.moqui.chat.ChatServices.upload#Attachment" in-map="{chatRoomId,file}" out-map="copy"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <service-call name="org.moqui.chat.ChatServices.send#Message" in-map="{chatRoomId,replyToEventSeq:original.eventSeq,chatAttachmentIdList:[copy.chatAttachmentId]}" out-map="sent"/>
+            <set field="chatAttachmentId" from="copy.chatAttachmentId"/><set field="eventSeq" from="sent.eventSeq"/>
+        </actions>
+    </service>
+    <service verb="snapshot" noun="Board">
+        <in-parameters><parameter name="callSessionId" required="true"/><parameter name="pageName" required="true"/>
+            <parameter name="frameFile" type="FileItem" required="true"/><parameter name="scene" allow-html="any" required="true"/></in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions>
+            <if condition="frameFile.getContentType() !== 'image/png' || frameFile.getName() !== 'capture.png'">
+                <return error="true" message="A snapshot needs a PNG frame"/></if>
+            <script><![CDATA[
+                if (scene.length > Number(ec.factory.getConfValue('board@max-document-bytes'))) { ec.message.addError('Snapshot too large'); return }
+                let content
+                try { content = JSON.parse(scene) } catch (_) { ec.message.addError('Invalid snapshot scene'); return }
+                const images = Array.isArray(content?.elements) ? content.elements.filter(e => e?.type === 'image') : []
+                if (images.length !== 1 || !images[0].locked || images[0].fileId !== 'capture') { ec.message.addError('Snapshot needs a locked frame'); return }
+                content.files = {capture:{id:'capture',mimeType:'image/png',attachmentName:'capture.png',created:Date.now()}}
+                pageText = JSON.stringify(content)
+                try { ec.resource.script('component://framework/service/org/moqui/resource/WikiBoardScene.js').parseScene(pageText) }
+                catch (e) { ec.message.addError(String(e.message || e)) }
+            ]]></script>
+            <if condition="ec.message.hasError()"><return/></if>
+            <service-call name="org.moqui.call.CallServices.create#MeetingBoard" in-map="{callSessionId,pageName,numberDuplicates:true}" out-map="board"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <set field="wikiPageId" from="board.wikiPageId"/>
+            <service-call name="org.moqui.resource.WikiServices.upload#WikiPageAttachment" in-map="{wikiPageId,attachmentFile:frameFile}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="page"/>
+            <service-call name="org.moqui.resource.WikiServices.update#WikiPage" in-map="{wikiPageId,wikiSpaceId:page.wikiSpaceId,pagePath:page.pagePath,pageName:page.pagePath.split('/').pop(),wikiType:'excalidraw',pageText,versionNote:'Snapshot'}"/>
+        </actions>
+    </service>
+</services>

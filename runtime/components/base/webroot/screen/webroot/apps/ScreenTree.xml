@@ -19,8 +19,8 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="showAll"/>
 
     <actions>
-        <set field="currentScreenDef" from="sri.getRootScreenDef()"/>
-        <set field="currentScreenPath" value=""/>
+        <set field="ancestorLocations" from="[]"/>
+        <set field="currentScreenPath" value="/apps"/>
     </actions>
     <widgets>
         <label text="Site Map" type="h2"/>

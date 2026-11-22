@@ -44,10 +44,6 @@ pub(crate) mod proto;
 
 /// `true` opens the host's gRPC listener for direct PASS clients.
 pub(crate) const ENABLED_PROPERTY: &str = "pass-authority@grpc-enabled";
-/// The listener's port when the OTLP receiver is not on it too (it then shares the receiver's): 4317 by default.
-pub(crate) const PORT_PROPERTY: &str = "pass-authority@grpc-port";
-/// The listener's address when the OTLP receiver is not on it: the HTTP listener's by default.
-pub(crate) const HOST_PROPERTY: &str = "pass-authority@grpc-host";
 /// `true` serves direct clients on plain h2c at an address that is not loopback (their secrets in clear).
 pub(crate) const INSECURE_PROPERTY: &str = "pass-authority@grpc-insecure";
 /// The path prefix of the service's calls, which a local node's down connection takes from its edge node.

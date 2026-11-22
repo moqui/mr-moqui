@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="change" noun="CallStage" authenticate="false" allow-remote="false" no-remember-parameters="true">
+        <description>Arbitrate a presentation requested through a bound call socket. The socket supplies its generation
+            and the signed-in user or guest credential. Each media node receives the state after commit.</description>
+        <in-parameters>
+            <parameter name="callSessionId" required="true"/><parameter name="callLegId" required="true"/>
+            <parameter name="generation" type="Long" required="true"/><parameter name="credential"/>
+            <parameter name="mode"/><parameter name="embedded" type="Boolean"/><parameter name="wikiPageId"/><parameter name="action" required="true"/><parameter name="kind"/>
+            <parameter name="targetLegId"/><parameter name="previousLegId"/>
+        </in-parameters>
+        <out-parameters><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/>
+            <parameter name="shareModeEnumId"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('changeStage', context))</script></actions>
+    </service>
+</services>

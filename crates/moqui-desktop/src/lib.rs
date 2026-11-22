@@ -492,7 +492,7 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     };
-    if let Some(port) = node::served_on_runtime_port() {
+    if let Some(port) = node::served_on_runtime_port(&runtime) {
         start_failed(
             app,
             &format!(

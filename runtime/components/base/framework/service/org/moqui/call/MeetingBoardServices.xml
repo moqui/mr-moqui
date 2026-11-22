@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="get" noun="MeetingBoardGrant" authenticate="false" allow-remote="false" no-remember-parameters="true">
+        <in-parameters>
+            <parameter name="wikiPageId" required="true"/><parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId" required="true"/><parameter name="credential"/><parameter name="userId"/>
+        </in-parameters>
+        <out-parameters><parameter name="canView" type="Boolean"/><parameter name="canEdit" type="Boolean"/>
+            <parameter name="writerUserId"/><parameter name="displayName"/><parameter name="guest" type="Boolean"/><parameter name="storage"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/MeetingBoardAccess.js').grant(context))</script></actions>
+    </service>
+    <service verb="access" noun="MeetingBoardImage" authenticate="anonymous-all" allow-remote="false" no-remember-parameters="true">
+        <in-parameters>
+            <parameter name="wikiPageId" required="true"/><parameter name="filename"/><parameter name="attachmentFile" type="FileItem"/><parameter name="locationOnly" type="Boolean"/>
+            <parameter name="callSessionId"/><parameter name="callLegId"/><parameter name="token"/><parameter name="credential"/>
+        </in-parameters>
+        <out-parameters><parameter name="denied" type="Boolean"/><parameter name="imageLocation"/><parameter name="mimeType"/><parameter name="base64"/><parameter name="filename"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/MeetingBoardAccess.js').file(context))</script></actions>
+    </service>
+</services>

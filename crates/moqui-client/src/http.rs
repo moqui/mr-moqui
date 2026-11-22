@@ -32,7 +32,11 @@ pub(crate) fn client() -> Result<reqwest::blocking::Client, Error> {
 
 /// [`client`] with another timeout for the whole request, its body read included.
 pub(crate) fn client_with(timeout: Duration) -> Result<reqwest::blocking::Client, Error> {
-    reqwest::blocking::Client::builder()
+    #[cfg(debug_assertions)]
+    let builder = moqui_lib::dev_ca::builder(false)?;
+    #[cfg(not(debug_assertions))]
+    let builder = reqwest::blocking::Client::builder();
+    builder
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)
         .connect_timeout(Duration::from_secs(CONNECT_SECONDS))

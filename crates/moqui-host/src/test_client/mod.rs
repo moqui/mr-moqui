@@ -70,7 +70,7 @@ use http::{Ask, Server, Session, SshTarget};
 const PRELUDE: &str = include_str!("prelude.js");
 
 /// The server when neither `--server` nor `MOQUI_TEST_SERVER` names one.
-const DEFAULT_SERVER: &str = "http://localhost:8080";
+const DEFAULT_SERVER: &str = "https://localhost:8443";
 
 /// A request's limit when its own `timeout` does not set one.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -376,9 +376,8 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
 
 /// The HTTP client of a run: redirects are the session's to follow, and `insecure` accepts any certificate.
 fn http_client(insecure: bool) -> Result<reqwest::blocking::Client, Error> {
-    reqwest::blocking::Client::builder()
+    moqui_lib::dev_ca::builder(insecure)?
         .redirect(reqwest::redirect::Policy::none())
-        .danger_accept_invalid_certs(insecure)
         .user_agent(concat!("moqui-test-client/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|err| Error::new(format!("HTTP client: {err}")))
@@ -386,6 +385,7 @@ fn http_client(insecure: bool) -> Result<reqwest::blocking::Client, Error> {
 
 /// The client host of a run of `args` against `server`, writing under `out_dir`.
 fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client, out_dir: &Path) -> Arc<ClientHost> {
+    let local = server.secure && moqui_lib::dev_ca::loopback(&server.host);
     Arc::new_cyclic(|me| ClientHost {
         me: me.clone(),
         server,
@@ -405,6 +405,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         current: Mutex::new((String::new(), String::new())),
         output: Mutex::new(Vec::new()),
         browser_config: browser::BrowserConfig {
+            loopback_tls: local,
             chromium: args.chromium.clone(),
             headed: args.headed,
             insecure: args.insecure,
@@ -1133,9 +1134,9 @@ impl ClientHost {
         let server = Server::parse(server, true)
             .map_err(|err| err.to_string())?
             .with_ssh(ssh.map(|(host, port)| SshTarget { host, port }));
-        let client = reqwest::blocking::Client::builder()
+        let client = moqui_lib::dev_ca::builder(insecure)
+            .map_err(|e| e.to_string())?
             .redirect(reqwest::redirect::Policy::none())
-            .danger_accept_invalid_certs(insecure)
             .user_agent(load::LOAD_AGENT)
             .build()
             .map_err(|err| format!("HTTP client: {err}"))?;
@@ -1158,6 +1159,7 @@ impl ClientHost {
             current: Mutex::new((String::new(), String::new())),
             output: Mutex::new(Vec::new()),
             browser_config: browser::BrowserConfig {
+                loopback_tls: false,
                 chromium: None,
                 headed: false,
                 insecure,
@@ -1608,6 +1610,10 @@ impl ClientHost {
     /// answer says to skip.
     fn new_page(&self, args: &Value) -> Result<Value, String> {
         let mut held = lock(&self.browser);
+        let capture_this_tab = field(args, "captureThisTab").as_bool() == Some(true);
+        if capture_this_tab && (held.is_some() || !*lock(&self.offline) || self.browser_config.headed) {
+            return Err("captureThisTab needs the first page of a headless offline spec".to_string());
+        }
         if held.is_none() {
             if let Err(reason) = crate::chromium::find_test_browser(
                 self.browser_config.runtime.as_deref(),
@@ -1615,7 +1621,7 @@ impl ClientHost {
             ) {
                 return Ok(json!({ "skipped": reason }));
             }
-            let mut launched = browser::SpecBrowser::launch(&self.browser_config)?;
+            let mut launched = browser::SpecBrowser::launch(&self.browser_config, capture_this_tab)?;
             if self.video {
                 launched.record_to(Arc::clone(&self.recording));
             }
@@ -1643,7 +1649,7 @@ impl ClientHost {
             ) {
                 return Ok(json!({ "skipped": reason }));
             }
-            let mut launched = browser::SpecBrowser::launch(&self.browser_config)?;
+            let mut launched = browser::SpecBrowser::launch(&self.browser_config, false)?;
             if self.video {
                 launched.record_to(Arc::clone(&self.recording));
             }

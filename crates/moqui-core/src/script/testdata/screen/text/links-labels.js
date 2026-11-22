@@ -23,6 +23,11 @@ try {
     sri.write("\n");
     $cellWidth = $lineChars * 0.8;
     sri.write($pad(ec.l10n.localize("C"), $lineChars * 0.2, true) + ": ");
+    {
+        let $linkText = ec.resource.expand("Plain");
+        if ($linkText === "null") $linkText = "";
+        sri.write($pad($linkText));
+    }
     sri.write("\n");
     $cellWidth = $lineChars * 0.8;
     sri.write($pad(ec.l10n.localize("D"), $lineChars * 0.2, true) + ": ");

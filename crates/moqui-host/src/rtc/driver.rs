@@ -76,6 +76,9 @@ pub(crate) struct Route {
 }
 
 struct LegRoute {
+    host: bool,
+    guest: bool,
+    member_screen: bool,
     generation: u64,
     route: Route,
     /// The leg's frames relayed to the others ([`relayed_frame`]).
@@ -142,6 +145,9 @@ struct Driver<'a> {
     media: Media,
     /// The frames each leg gets when it joins: the rooms' recording and captions notices.
     notices: RoomNotices,
+    stages: HashMap<String, Json>,
+    follows: HashMap<String, Json>,
+    ink: HashMap<String, super::ink::Ink>,
     /// The call's media node of each room this node is a leg node of (W7).
     origins: HashMap<String, String>,
     /// The most legs of one paired node's calls at once (`edge@call-legs-per-pairing`, E16); 0 for no cap.
@@ -234,6 +240,9 @@ pub(super) fn run(
         revoke,
         media: Media::default(),
         notices: RoomNotices::default(),
+        stages: HashMap::new(),
+        follows: HashMap::new(),
+        ink: HashMap::new(),
         origins: HashMap::new(),
         pairing_legs: pairing_legs(),
     };
@@ -341,6 +350,69 @@ impl Driver<'_> {
                 frame,
                 notice,
             } => {
+                if frame["rtc"] == "followQuery" {
+                    if let Some(latest) = self.follows.get(&room) {
+                        let answer = json!({"rtc":"followState","leg":frame["leg"],"latest":latest});
+                        self.send_node(&from, room_frame_body(&self.own, &from, &room, None, &answer, None));
+                    }
+                    return;
+                }
+                if frame["rtc"] == "followState" {
+                    let latest = &frame["latest"];
+                    let stage = self.stages.get(&room).map_or(&Json::Null, |s| &s["stage"]);
+                    if stage["kind"] != "follow"
+                        || stage["followEpoch"] != latest["followEpoch"]
+                        || stage["callLegId"] != latest["from"]
+                    {
+                        return;
+                    }
+                    let key = LegKey::new(&room, frame["leg"].as_str().unwrap_or(""));
+                    if self
+                        .follows
+                        .get(&room)
+                        .is_none_or(|old| follow_order(old) < follow_order(latest))
+                    {
+                        self.follows.insert(room.clone(), latest.clone());
+                    }
+                    if let Some(route) = self.routes.get(&key).filter(|r| r.member_screen) {
+                        self.to_leg(&key, route.generation, self.follows[&room].clone());
+                    }
+                    return;
+                }
+                if frame["rtc"] == "follow" {
+                    let current = self.stages.get(&room).map_or(&Json::Null, |f| &f["stage"]);
+                    if current["kind"] != "follow"
+                        || current["callLegId"] != frame["from"]
+                        || current["followEpoch"] != frame["followEpoch"]
+                    {
+                        return;
+                    }
+                    if self
+                        .follows
+                        .get(&room)
+                        .is_some_and(|old| follow_order(old) >= follow_order(&frame))
+                    {
+                        return;
+                    }
+                    self.follows.insert(room.clone(), frame.clone());
+                }
+                if frame["rtc"] == "ink" {
+                    let stage = self.stages.get(&room).map_or(&Json::Null, |f| &f["stage"]);
+                    if stage["kind"] != "screen" || stage["inkEpoch"] != frame["inkEpoch"] {
+                        return;
+                    }
+                    let leg = frame["from"].as_str().unwrap_or_default();
+                    if frame["action"] != "snapshot"
+                        && self
+                            .ink
+                            .entry(room.clone())
+                            .or_default()
+                            .apply(Instant::now(), stage, true, leg, &frame)
+                            .is_err()
+                    {
+                        return;
+                    }
+                }
                 if let Some((kind, keep)) = notice {
                     self.notices.set(&room, kind, keep.then(|| frame.clone()));
                 }
@@ -381,6 +453,9 @@ impl Driver<'_> {
                 self.sfu.close_room(Instant::now(), &room);
                 self.media.room_closed(&room);
                 self.notices.room_closed(&room);
+                self.stages.remove(&room);
+                self.follows.remove(&room);
+                self.ink.remove(&room);
                 self.origins.remove(&room);
                 let legs: Vec<LegKey> = self
                     .routes
@@ -402,6 +477,7 @@ impl Driver<'_> {
                 }
             }
             Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
+            Command::Stage { room, frame } => self.stage(&room, &frame),
             Command::ToRoom { room, frame } => self.spread(&room, None, frame, None, None),
             Command::RoomNotice {
                 room,
@@ -451,6 +527,9 @@ impl Driver<'_> {
                     self.routes.insert(
                         key.clone(),
                         LegRoute {
+                            member_screen: frame["boundMemberScreen"] == true,
+                            guest: frame["boundGuest"] == true,
+                            host: frame["boundHost"].as_bool().unwrap_or(false),
                             generation,
                             route: route.clone(),
                             relayed: RelayBucket::new(now),
@@ -483,6 +562,9 @@ impl Driver<'_> {
                     self.routes.insert(
                         key.clone(),
                         LegRoute {
+                            member_screen: frame["boundMemberScreen"] == true,
+                            guest: frame["boundGuest"] == true,
+                            host: frame["boundHost"].as_bool().unwrap_or(false),
                             generation,
                             route: route.clone(),
                             relayed: RelayBucket::new(now),
@@ -537,6 +619,77 @@ impl Driver<'_> {
                     left => left.map(|()| None),
                 }
             }
+            "follow" => {
+                let Some(sender) = self
+                    .routes
+                    .get_mut(&key)
+                    .filter(|r| r.generation == generation && r.member_screen)
+                else {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
+                };
+                let stage = self.stages.get(room).map_or(&Json::Null, |f| &f["stage"]);
+                if stage["kind"] != "follow" || !sender.peer.take(now) {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"stageUnavailable"}));
+                }
+                if frame["action"] == "catchUp" {
+                    self.follow_catchup(&key, generation);
+                } else if frame["action"] == "navigate" && stage["callLegId"] == leg {
+                    let mut relay = frame.clone();
+                    if let Some(fields) = relay.as_object_mut() {
+                        fields.remove("id");
+                    }
+                    relay["generation"] = json!(generation);
+                    if self
+                        .follows
+                        .get(room)
+                        .is_some_and(|old| follow_order(old) >= follow_order(&relay))
+                    {
+                        return;
+                    }
+                    relay["from"] = json!(leg);
+                    relay["followEpoch"] = stage["followEpoch"].clone();
+                    self.follows.insert(room.to_string(), relay.clone());
+                    self.spread(room, Some(leg), relay, None, None);
+                } else {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
+                }
+                Ok(None)
+            }
+            "ink" => {
+                let Some(leg_route) = self.routes.get_mut(&key).filter(|r| r.generation == generation) else {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notJoined"}));
+                };
+                let stage = self.stages.get(room).map_or(&Json::Null, |f| &f["stage"]);
+                if stage["kind"] != "screen" || !leg_route.peer.take(now) {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"stageUnavailable"}));
+                }
+                if frame["action"] == "snapshot" {
+                    if leg_route.guest || stage["inkEmbedded"] != true {
+                        return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
+                    }
+                    self.spread(
+                        room,
+                        None,
+                        json!({"rtc":"ink","action":"snapshot","from":leg,"inkEpoch":stage["inkEpoch"]}),
+                        None,
+                        None,
+                    );
+                    return;
+                }
+                match self
+                    .ink
+                    .entry(room.to_string())
+                    .or_default()
+                    .apply(now, stage, leg_route.host, leg, frame)
+                {
+                    Ok(mut relay) => {
+                        relay["inkEpoch"] = stage["inkEpoch"].clone();
+                        self.spread(room, None, relay, None, None);
+                    }
+                    Err(code) => return self.reply(&route, room, json!({"rtc":"error","id":id,"code":code})),
+                }
+                Ok(None)
+            }
             "mute" | "hand" | "reaction" | "unpublish" => match self.leg_generation(&key) {
                 Some(g) if g == generation => {
                     if self.routes.get_mut(&key).is_some_and(|r| !r.relayed.take(now)) {
@@ -573,10 +726,88 @@ impl Driver<'_> {
         // a leg that joins gets the room's notices (recording, captions) right after its answer, before any media:
         // late joiners and guests too
         if joined {
+            if let Some(stage) = frame.get("boundStage") {
+                self.stage(room, stage);
+            }
+            if let Some(stage) = self.stages.get(room) {
+                // Joining can create or replace the SFU room after the grant arrived.
+                self.sfu.set_guest_video_recipient(&key, frame["boundGuest"] == true);
+                self.sfu
+                    .set_presentation(room, screen_leg(stage), stage["stage"]["kind"] == "follow");
+                self.to_leg(&key, generation, stage.clone());
+            }
+            for track in self.sfu.published_tracks(&key) {
+                self.reply(
+                    &route,
+                    room,
+                    json!({"rtc":"track","to":leg,"callLegId":track.leg,
+                    "mid":track.mid,"kind":track.kind,"source":track.source,"open":true}),
+                );
+            }
+            if frame["boundMemberScreen"] == true {
+                self.follow_catchup(&key, generation);
+            }
+            if let Some(ink) = self.ink.get_mut(room) {
+                let visible = ink.visible(now);
+                for mut stroke in visible {
+                    if let Some(stage) = self.stages.get(room) {
+                        stroke["inkEpoch"] = stage["stage"]["inkEpoch"].clone();
+                    }
+                    self.to_leg(&key, generation, stroke);
+                }
+            }
             for notice in self.notices.of(room) {
                 self.to_leg(&key, generation, notice);
             }
         }
+    }
+
+    fn follow_catchup(&self, key: &LegKey, generation: u64) {
+        let room = key.room.as_ref();
+        if self.stages.get(room).is_none_or(|s| s["stage"]["kind"] != "follow") {
+            return;
+        }
+        if let Some(latest) = self.follows.get(room) {
+            self.to_leg(key, generation, latest.clone());
+        } else if let Some(origin) = self.origins.get(room) {
+            let frame = json!({"rtc":"followQuery","leg":key.leg.as_ref()});
+            self.send_node(origin, room_frame_body(&self.own, origin, room, None, &frame, None));
+        }
+    }
+
+    fn stage(&mut self, room: &str, frame: &Json) {
+        let Some(revision) = frame["revision"].as_u64().filter(|n| *n > 0) else {
+            return;
+        };
+        if self
+            .stages
+            .get(room)
+            .and_then(|f| f["revision"].as_u64())
+            .is_some_and(|current| current >= revision)
+        {
+            return;
+        }
+        if self.stages.get(room).is_none_or(|previous| {
+            previous["stage"]["inkEpoch"] != frame["stage"]["inkEpoch"]
+                || previous["stage"]["kind"] != frame["stage"]["kind"]
+                || previous["stage"]["callLegId"] != frame["stage"]["callLegId"]
+        }) || frame["stage"]["inkMode"] == "off"
+        {
+            self.ink.remove(room);
+        }
+        if self
+            .stages
+            .get(room)
+            .is_none_or(|old| old["stage"]["followEpoch"] != frame["stage"]["followEpoch"])
+            || frame["stage"]["kind"] != "follow"
+        {
+            self.follows.remove(room);
+        }
+        self.sfu
+            .set_presentation(room, screen_leg(frame), frame["stage"]["kind"] == "follow");
+        self.stages.insert(room.to_string(), frame.clone());
+        // The service sends to each participating media node after commit.
+        self.to_room(room, None, frame.clone());
     }
 
     /// The generation of a leg here: its SFU peer's, or a direct leg's route's.
@@ -859,6 +1090,18 @@ impl Driver<'_> {
     /// To every leg of the room, but `except`.
     fn to_room(&self, room: &str, except: Option<&str>, frame: Json) {
         for (key, r) in &self.routes {
+            if frame["rtc"] == "follow" && !r.member_screen {
+                continue;
+            }
+            if frame["rtc"] == "ink"
+                && frame["action"] == "snapshot"
+                && self
+                    .stages
+                    .get(room)
+                    .is_none_or(|s| s["stage"]["callLegId"].as_str() != Some(&key.leg))
+            {
+                continue;
+            }
             if &*key.room == room && except != Some(&*key.leg) {
                 let mut f = frame.clone();
                 if let Some(o) = f.as_object_mut() {
@@ -1030,6 +1273,20 @@ pub(super) fn peer_frame(leg: &str, frame: &Json) -> Option<Json> {
 /// The call id of a room: a paired node's room is keyed by node and call (E12).
 fn call_of(room: &str) -> &str {
     moqui_core::edge::media::split_room(room).1
+}
+
+fn follow_order(frame: &Json) -> (u64, u64) {
+    (
+        frame["generation"].as_u64().unwrap_or(0),
+        frame["sequence"].as_u64().unwrap_or(0),
+    )
+}
+
+fn screen_leg(frame: &Json) -> Option<&str> {
+    let stage = frame.get("stage")?;
+    (stage["kind"] == "screen" || stage["kind"] == "follow")
+        .then(|| stage["callLegId"].as_str())
+        .flatten()
 }
 
 fn with_id(mut frame: Json, id: &Json) -> Json {

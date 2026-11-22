@@ -137,7 +137,7 @@ component) whose actions-extend appends an entry to appSuites:
                         <div class="m-ui-modes row items-center justify-center q-mt-xl">
                             <span class="text-caption m-muted q-mr-sm">${html(ec.l10n.localize("Interface"))}</span>
                             <q-btn-group unelevated>
-                            <#list uiModes as uiMode><#if uiMode.current><q-btn unelevated no-caps color="primary" icon="sym_o_check" label="${html(ec.l10n.localize(uiMode.label))}"></q-btn><#else><q-btn unelevated no-caps class="m-btn-tonal" href="${html(uiMode.url)}" label="${html(ec.l10n.localize(uiMode.label))}"></q-btn></#if></#list>
+                            <#list uiModes as uiMode><#if uiMode.current><q-btn unelevated no-caps color="primary" icon="sym_o_check" label="${html(ec.l10n.localize(uiMode.label))}"></q-btn><#else><q-btn unelevated no-caps class="m-btn-tonal" data-browser-navigation href="${html(uiMode.url)}" label="${html(ec.l10n.localize(uiMode.label))}"></q-btn></#if></#list>
                             </q-btn-group>
                         </div>
                         </div>

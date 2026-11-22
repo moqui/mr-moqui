@@ -396,7 +396,7 @@ RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP
 $EMBED_OPTIONS_HELP"'
   -c, --conf FILE      Runtime conf merged over MoquiDefaultConf.xml (sets MOQUI_CONF); relative to
                        the runtime directory, like conf/MoquiProductionConf.xml, or a path
-  -p, --port N         HTTP port (the http-port of the webroot webapp)
+  -p, --port N         HTTP port (also --http-port N, or off)
       --https-port N   HTTPS port to listen on (its https-listen-port), or off
   -D name=value        Set a conf attribute by its environment name (moqui_conf__ssh_server__port;
                        moqui conf env lists them) or a conf property, as an environment variable;

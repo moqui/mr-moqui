@@ -37,10 +37,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="exists" type="Boolean"/>
             <parameter name="isOpen" type="Boolean"/>
             <parameter name="snapshotText"/>
+            <parameter name="activeEditorIdList" type="List"><description>Editors connected to this server now</description></parameter>
             <parameter name="unsavedUserIdList" type="List"/>
             <parameter name="lastChangeDate" type="Timestamp"/>
             <parameter name="lastChangeUserId"/>
             <parameter name="lastSaveDate" type="Timestamp"/>
         </out-parameters>
+    </service>
+    <service verb="save" noun="MeetingBoard" type="rust" location="moqui_collab::service::save_meeting_board" allow-remote="false">
+        <in-parameters><parameter name="callSessionId" required="true"/><parameter name="wikiPageId" required="true"/></in-parameters>
+        <out-parameters><parameter name="versionName"/></out-parameters>
     </service>
 </services>

@@ -88,6 +88,21 @@ impl TrackIn {
         }
     }
 
+    pub fn description(&self, mid: Mid) -> RelayTrack {
+        RelayTrack {
+            mid: mid.to_string(),
+            leg: self.leg.to_string(),
+            kind: if self.kind == MediaKind::Audio {
+                "audio"
+            } else {
+                "video"
+            }
+            .to_string(),
+            source: self.source().as_str().to_string(),
+            simulcast: self.simulcast && self.kind == MediaKind::Video,
+        }
+    }
+
     pub fn kind(&self) -> Kind {
         match self.kind {
             MediaKind::Audio => Kind::Audio,
@@ -210,6 +225,9 @@ pub(super) struct Peer {
     next_offer_id: u64,
     tracks_in: Vec<TrackInEntry>,
     tracks_out: Vec<TrackOut>,
+    pub(super) guest_video_recipient: bool,
+    pub(super) guest_screen_only: bool,
+    pub(super) screen_leg: Option<Arc<str>>,
     sources: HashMap<Mid, Source>,
     wanted: HashMap<Arc<str>, Option<Layer>>,
     estimate_kbps: Option<u64>,
@@ -234,6 +252,9 @@ impl Peer {
             next_offer_id: 1,
             tracks_in: Vec::new(),
             tracks_out: Vec::new(),
+            guest_video_recipient: false,
+            guest_screen_only: false,
+            screen_leg: None,
             sources: HashMap::new(),
             wanted: HashMap::new(),
             estimate_kbps: None,
@@ -289,6 +310,9 @@ impl Peer {
         let (leg, source) = match &self.relay {
             Some(relay) => {
                 let named = relay.remote.get(&mid.to_string());
+                if self.guest_screen_only && named.is_none() {
+                    return;
+                }
                 let leg = named.map(|t| t.leg.clone()).or_else(|| {
                     self.rtc
                         .media(mid)
@@ -309,10 +333,20 @@ impl Peer {
             }
             None => (
                 self.key.leg.clone(),
-                self.sources
-                    .get(&mid)
-                    .copied()
-                    .unwrap_or_else(|| Source::default_for(kind)),
+                self.sources.get(&mid).copied().unwrap_or_else(|| {
+                    // A second track of a kind is a presentation even while the
+                    // publisher's explicit MID declaration is still in flight.
+                    if (self.guest_screen_only && self.screen_leg.as_ref() == Some(&self.key.leg))
+                        || self.tracks_in.iter().any(|t| t.track.kind == kind)
+                    {
+                        match kind {
+                            MediaKind::Video => Source::Screen,
+                            MediaKind::Audio => Source::ScreenAudio,
+                        }
+                    } else {
+                        Source::default_for(kind)
+                    }
+                }),
             ),
         };
         let track = Arc::new(TrackIn::new(self.id, leg, mid, kind, source, simulcast));
@@ -556,15 +590,23 @@ impl Peer {
         }
         let estimate = self.estimate_kbps.unwrap_or(config.initial_kbps);
         let mut audio = 0u64;
-        let mut video = 0u64;
-        for o in &self.tracks_out {
-            match o.track_in.upgrade().map(|t| t.kind) {
-                Some(MediaKind::Audio) => audio += 1,
-                Some(MediaKind::Video) => video += 1,
-                None => {}
+        let mut cameras = 0u64;
+        let mut screen_rate = 0;
+        for track in self.tracks_out.iter().filter_map(|o| o.track_in.upgrade()) {
+            match track.kind {
+                MediaKind::Audio => audio += 1,
+                MediaKind::Video if track.source() == Source::Screen => {
+                    if self.screen_leg.as_ref() == Some(&track.leg) {
+                        if let Some(layer) = self.wanted.get(&track.leg).copied().unwrap_or(Some(Layer::High)) {
+                            screen_rate = config.layer_kbps[layer.index()];
+                        }
+                    }
+                }
+                MediaKind::Video => cameras += 1,
             }
         }
-        let share = estimate.saturating_sub(audio * config.audio_kbps) / video.max(1);
+        let video_budget = estimate.saturating_sub(audio * config.audio_kbps);
+        let camera_share = video_budget.saturating_sub(screen_rate) / cameras.max(1);
         let audio_only = estimate < config.audio_only_below_kbps;
         let mut desired = audio * config.audio_kbps;
         for o in &mut self.tracks_out {
@@ -573,8 +615,12 @@ impl Peer {
                 continue;
             }
             let wanted = self.wanted.get(&t.leg).copied().unwrap_or(Some(Layer::High));
+            let screen = t.source() == Source::Screen;
+            let share = if screen { video_budget } else { camera_share };
             let target = match wanted {
                 None => None,
+                Some(_) if screen && self.screen_leg.as_ref() != Some(&t.leg) => None,
+                Some(_) if !screen && screen_rate > 0 && camera_share < config.layer_kbps[0] => None,
                 Some(_) if audio_only => None,
                 Some(w) if o.simulcast() => {
                     let fits = Layer::ALL
@@ -996,13 +1042,7 @@ impl Peer {
             .filter(|o| matches!(o.state, OutState::Negotiating(_) | OutState::Open(_)))
             .filter_map(|o| {
                 let t = o.track_in.upgrade()?;
-                Some(RelayTrack {
-                    mid: o.mid()?.to_string(),
-                    leg: t.leg.to_string(),
-                    kind: if t.kind == MediaKind::Audio { "audio" } else { "video" }.to_string(),
-                    source: t.source().as_str().to_string(),
-                    simulcast: t.simulcast && t.kind == MediaKind::Video,
-                })
+                Some(t.description(o.mid()?))
             })
             .collect()
     }

@@ -176,6 +176,7 @@ const OWN_PROCESS: &str = "MOQUI_TEST_OWN_PROCESS";
 /// run in parallel instead of one at a time. At most half the CPUs' worth of children run at once
 /// (`MOQUI_TEST_PROCESSES` sets another number).
 pub fn own_process() -> bool {
+    moqui_lib::env::set_property("MOQUI_SHARED_RUNTIME", "off");
     test_crypt_pass();
     let test = std::thread::current()
         .name()

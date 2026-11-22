@@ -38,7 +38,8 @@ pub(super) struct Setup {
 /// The listeners besides HTTP that bind a fixed port by default or by the conf (the cluster on 8444, the dev conf's SSH
 /// on 2222), each a property or a conf selector. The server of a test run binds a free port for each instead, so it
 /// starts beside a running server.
-const OTHER_PORTS: [&str; 3] = [
+const OTHER_PORTS: [&str; 4] = [
+    "webapp-list/webapp[webroot]@grpc-listen-port",
     "cluster-member@https-port",
     "ssh-server@port",
     "webapp-list/webapp[webroot]@https-listen-port",
@@ -60,6 +61,8 @@ impl Setup {
     /// Watch standard input from the start, so a client that dies during the specs gets no server, and note the ports
     /// the user set before the conf sets any.
     pub(super) fn before_boot() -> Self {
+        // The advertised origin of this explicit HTTP listener must also stay HTTP for redirects and login.
+        moqui_lib::env::set_property(&port_name("webapp-list/webapp[webroot]@https-enabled"), "false");
         Self {
             stdin_closed: watch_stdin(),
             user_ports: OTHER_PORTS
@@ -187,7 +190,8 @@ fn serve_on(
             moqui_lib::env::get_prop_or_env(name)
         };
         // an empty cluster port is 8444; the others are off while empty
-        if !setup.user_ports.contains(&name) && (name == "cluster-member@https-port" || !set.is_empty()) {
+        if set != "off" && !setup.user_ports.contains(&name) && (name == "cluster-member@https-port" || !set.is_empty())
+        {
             if !set.is_empty() && set != "0" {
                 tracing::info!("{name} is {set} in the conf; the test server binds a free port instead");
             }

@@ -35,9 +35,32 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Chat" default-menu-index="3" menu-image="sym_o_chat" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
 
+    <parameter name="chatRoomId"/>
+
     <!-- ========== Reads ========== -->
 
     <!-- the rail: me, the chat preferences, my rooms and the totals -->
+    <transition name="markup" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.comms.AnnotationServices.markup#ChatImage').parameters({chatRoomId,chatAttachmentId,file}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="createRoomBoard" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.chat.RoomBoardServices.create#RoomBoard').parameters({chatRoomId,pageName}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="recordBoards" method="get" read-only="true"><actions><script><![CDATA[
+        const room = ec.service.sync().name('org.moqui.chat.ChatServices.get#Room').parameters({recordEntityName,recordId}).call()
+        const boards = room?.access?.isMember ? ec.service.sync().name('org.moqui.chat.RoomBoardServices.find#RoomBoards')
+                .parameter('chatRoomId',room.room.chatRoomId).disableAuthz().call() : {boards:[],canCreate:false}
+        ec.web.sendJsonResponse(boards)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="roomBoards" method="get" read-only="true"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.chat.RoomBoardServices.find#RoomBoards').parameters({chatRoomId}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
     <transition name="chatData" method="get" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.get#ChatData').parameter('limit', limit ? Number(limit) : 200).call()

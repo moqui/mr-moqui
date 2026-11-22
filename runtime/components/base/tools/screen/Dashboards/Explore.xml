@@ -196,14 +196,19 @@
         for (const field of datasetFields) {
             if (field.type==='string' || field.type==='boolean' || field.type==='number') autocompleteValues[field.name]=Array.from(new Set(documentList.map(doc=>doc[field.name]).filter(value=>value!=null && typeof value!=='object' && String(value).length<=80))).slice(0,20)
         }
-        histogramFrame = {fields:[]};topValues = []
+        histogramFrame = {fields:[]}; histogramNotices = []; showHistogram = false; topValues = []
         if (!queryError) {
             const base = {datasetId,from,thru,queryString:queryString || '',filters:filterPills}
             const histogram = exploreQuery('org.moqui.report.ReportServices.run#Query', {query:Object.assign({},base,{
-                aggregations:[{id:'time',type:'date_histogram',role:'x-axis',params:{field:datasetInfo.timeField,interval:'auto',targetBars:60}}]
+                aggregations:[{id:'time',type:'date_histogram',role:'x-axis',params:{field:datasetInfo.timeField,interval:'auto',targetBars:60,drop_partial:false}}]
             })})
-            if (histogram.error) queryNotices.push('Documents over time: '+histogram.error)
-            else histogramFrame = (histogram.result.frames || [])[0] || {fields:[]}
+            if (histogram.error) histogramNotices.push(histogram.error)
+            else {
+                histogramNotices = (histogram.result.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice))
+                histogramFrame = (histogram.result.frames || [])[0] || {fields:[]}
+                showHistogram = documentListCount === 0 || histogramFrame.fields.some(field => field.name === 'count' && (field.values || []).some(value => Number(value) > 0))
+                if (!showHistogram) histogramNotices.push('Matching documents were found, but the histogram returned no counts.')
+            }
             if (fieldName) {
                 const terms = exploreQuery('org.moqui.report.ReportServices.run#Query', {query:Object.assign({},base,{
                     aggregations:[{id:'value',type:'terms',role:'x-axis',params:{field:fieldName,size:20}}]
@@ -351,7 +356,8 @@
         </container>
         <label text="Queries run with your dataset permissions and row filters. Search syntax: field:value, AND, OR, NOT, quoted text, term~ for native typo matching, and clause^2 for relevance boosts. Fuzzy matches can differ between PostgreSQL and OpenSearch. Use attributes.key:value, attributes.key:*, and keyword wildcards for custom attributes. Numbered fuzziness and phrase slop are unsupported." type="p"/>
         <section name="ExploreResults" condition="!queryError"><widgets>
-        <report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries',appLinks:{explore:exploreOffers.path}}"/>
+        <section-iterate name="HistogramNotices" list="histogramNotices" entry="notice"><widgets><label text="Documents over time: ${notice}" type="p"/></widgets></section-iterate>
+        <section name="DocumentHistogram" condition="showHistogram"><widgets><report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries',appLinks:{explore:exploreOffers.path}}"/></widgets></section>
         <section name="LogPatterns" condition="patternsAvailable"><widgets>
             <link condition="showPatterns !== 'Y'" url="." text="Show log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y'}"/>
             <link condition="showPatterns === 'Y'" url="." text="Hide log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson}"/>

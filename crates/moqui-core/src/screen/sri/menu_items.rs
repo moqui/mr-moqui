@@ -29,6 +29,7 @@ pub struct MenuEntry {
     pub name: String,
     /// The subscreen takes parameters, so a list of applications leaves it out.
     pub has_parameters: bool,
+    pub has_required_parameters: bool,
     pub title: String,
     pub url: String,
     pub disabled: bool,
@@ -52,7 +53,11 @@ pub struct MenuEntry {
 /// # Errors
 ///
 /// Returns an error when the path of another screen cannot be resolved.
-pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<MenuEntry>, Error> {
+pub fn menu_items(
+    state: &RenderState,
+    screen_path: Option<&str>,
+    include_non_menu: bool,
+) -> Result<Vec<MenuEntry>, Error> {
     let root = state
         .url_info
         .path_defs
@@ -77,12 +82,10 @@ pub fn menu_items(state: &RenderState, screen_path: Option<&str>) -> Result<Vec<
     };
     parents.push(Arc::clone(&def));
     let mut out = Vec::new();
-    for item in def
-        .subscreens
-        .sorted()
-        .into_iter()
-        .filter(|item| item.is_valid_in_current_context() && crate::screen::menu::included(&def.location, item))
-    {
+    for item in def.subscreens.sorted().into_iter().filter(|item| {
+        item.is_valid_in_current_context()
+            && ((include_non_menu && !item.menu_include) || crate::screen::menu::included(&def.location, item))
+    }) {
         match menu_entry(state, prefix.as_deref(), &parents, item) {
             Ok(Some(entry)) => out.push(entry),
             Ok(None) => {}
@@ -146,6 +149,7 @@ fn menu_entry(
     Ok(Some(MenuEntry {
         name: item.name.clone(),
         has_parameters: !target.parameters.is_empty(),
+        has_required_parameters: target.parameters.iter().any(|parameter| parameter.required),
         title: item.menu_title.clone(),
         url: url.minimal_path_url_with_params(),
         disabled,

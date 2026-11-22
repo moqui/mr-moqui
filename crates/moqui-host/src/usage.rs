@@ -43,6 +43,8 @@ Check
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
+  dev-cert         [--shared]                              Prepare the localhost development certificate
+  install          [--from DIR] [--with-data] [--force]     Install this runtime for the current user
   embedded         info | list | diff | extract | checksum  The runtime and programs built into this binary
   conf             env [--names] [text]                     Each conf attribute with the environment name that sets it
 
@@ -57,7 +59,7 @@ Help
   version                                                   The version, package and features of this binary
 
 Server options
-  -p, --port N       HTTP port (the webroot webapp's http-port, default 8080). Also: port=N, -port=N, --port=N.
+  -p, --port N       HTTP port (--http-port N or off, default 8080). Also: port=N, -port=N, --port=N.
   --https-port N     HTTPS port to listen on (the webroot webapp's https-listen-port, default 8443), or 'off'. Certificates
                      are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
@@ -71,6 +73,8 @@ Server options
   moqui -p 8081 -D moqui_conf__entity_facade__datasource__TRANSACTIONAL__database_conf_name=postgres
 
 Environment
+  MOQUI_SHARED_RUNTIME Shared directory (absolute path, default ~/.mr-moqui), or off.
+  --installed        Use the installed runtime from any directory.
   MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
                      components/base directory, else the working directory itself when it has one, else
                      a new runtime in the working directory; never found from this executable, so one
@@ -328,7 +332,7 @@ directory on the server's machine, read there into memory on first use and kept 
   moqui refs org.moqui.impl.UserServices.create#UserAccount --out
   moqui refs component://example/screen/Gallery/ExampleDetail.xml
   moqui refs --project ~/src/moqui 'update#mantle.order.OrderHeader'
-  moqui refs --server http://localhost:8080 --project ~/src/moqui --out \
+  moqui refs --server https://localhost:8443 --project ~/src/moqui --out \
       ~/src/moqui/runtime/components/addon/my-site/screen/MySite/Order.xml
 ";
 
@@ -508,7 +512,7 @@ fixtures, else deployment, where no fixture user signs in and a spec takes an ac
   moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 
 Options:
-  --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
+  --server URL                    The server, https://localhost:8443 by default, or MOQUI_TEST_SERVER.
                                   Plain http is only for this machine unless --allow-http.
   --serve                         Start each suite's declared server, as above, instead of --server.
                                   Its SSH listener, when it has one, is where ssh.connect goes.
@@ -573,14 +577,14 @@ Otherwise it exits 1 when a threshold of the script is broken or no request succ
 a histogram's, within about 1.6%.
 
   moqui test-load mr-marble
-  moqui test-load mr-marble --script OrderToCash --server http://localhost:8080 --param pdf=false --label \"MR\"
+  moqui test-load mr-marble --script OrderToCash --server https://localhost:8443 --param pdf=false --label \"MR\"
   moqui test-load mr-marble --script OrderToCash --users 50 --duration 300 --ramp-up 30 --out /tmp/otc
   moqui test-load runtime/components/addon/mr-marble/test/load/OrderToCash.load.js --server https://test.example.com
   moqui test-load --compare /tmp/otc/java/result.json /tmp/otc/mr/result.json
 
 Options:
   --script Name                   The script test/load/Name.load.js of the component.
-  --server URL                    The server, http://localhost:8080 by default, or MOQUI_TEST_SERVER.
+  --server URL                    The server, https://localhost:8443 by default, or MOQUI_TEST_SERVER.
                                   Plain http is only for this machine unless --allow-http.
   --ssh host:port                 Where the script's ssh.connect goes when it names no host and port
                                   (a port alone is on the server's host), or MOQUI_TEST_SSH.
@@ -849,6 +853,8 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "refs" => Some(REFS),
         "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
+        "dev-cert" => Some("moqui dev-cert [--shared]\nPrepare the localhost development certificate without starting a server."),
+        "install" => Some("moqui install [--from DIR] [--with-data] [--force]\nInstall the binary and runtime under ~/.mr-moqui. Use moqui --installed to run it."),
         "embedded" => Some(EMBEDDED),
         "conf" => Some(CONF),
         "operator" => Some(OPERATOR),
@@ -918,6 +924,9 @@ fn is_known_command(name: &str) -> bool {
             | "refs"
             | "autodoc"
             | "lsp"
+            | "trust-dev-cert"
+            | "dev-cert"
+            | "install"
             | "embedded"
             | "test"
             | "test-client"
@@ -965,6 +974,7 @@ impl ServerOptions {
 }
 
 /// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/archive/Conf-Paths.md §1).
+pub const HTTP_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port";
 pub const HTTP_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_port";
 /// The webroot webapp's `https-listen-port` by its environment name, which `--https-port` sets.
 pub const HTTPS_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port";
@@ -981,11 +991,11 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
     let mut index = 0;
     while index < args.len() {
         let arg = args[index];
-        if let Some(value) = equals_value(arg, "port") {
-            opts.push(HTTP_PORT, parse_port(value)?.to_string());
-        } else if arg == "-p" || arg == "--port" {
+        if let Some(value) = equals_value(arg, "port").or_else(|| equals_value(arg, "http-port")) {
+            set_http_port(&mut opts, value)?;
+        } else if matches!(arg, "-p" | "--port" | "--http-port") {
             let value = next_value(&args, index, arg, "a port number")?;
-            opts.push(HTTP_PORT, parse_port(value)?.to_string());
+            set_http_port(&mut opts, value)?;
             index += 1;
         } else if let Some(value) = equals_value(arg, "https-port") {
             opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
@@ -1048,6 +1058,17 @@ fn require_conf(value: &str) -> Result<(), Error> {
 }
 
 /// An explicit empty or non-numeric port is an error. An unset `http-port` still means 8080.
+fn set_http_port(opts: &mut ServerOptions, raw: &str) -> Result<(), Error> {
+    if raw.trim() == "off" {
+        opts.push(HTTP_LISTEN_PORT, "off".to_string());
+    } else {
+        let port = parse_port(raw)?.to_string();
+        opts.push(HTTP_PORT, port.clone());
+        opts.push(HTTP_LISTEN_PORT, port);
+    }
+    Ok(())
+}
+
 fn parse_port(raw: &str) -> Result<u16, Error> {
     let raw = raw.trim();
     if raw.is_empty() {

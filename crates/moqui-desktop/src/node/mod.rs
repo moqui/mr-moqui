@@ -324,6 +324,14 @@ pub(crate) fn listen_properties(port: u16) -> Vec<(&'static str, String)> {
         ),
         ("moqui_conf__webapp_list__webapp__WEBROOT__http_port", port.to_string()),
         (
+            "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port",
+            port.to_string(),
+        ),
+        (
+            "moqui_conf__webapp_list__webapp__WEBROOT__https_enabled",
+            "false".to_string(),
+        ),
+        (
             "moqui_conf__webapp_list__webapp__WEBROOT__allowed_hosts",
             format!("127.0.0.1:{port},localhost:{port}"),
         ),
@@ -385,16 +393,17 @@ pub(crate) fn save_port(path: &Path, port: u16) {
     }
 }
 
-/// Whether a server already answers on this runtime's own port (the webroot webapp's `http-port`, default 8080), as
+/// Whether a server already answers on this runtime's configured HTTPS or HTTP port, as
 /// `moqui tui` checks: two nodes on one runtime would share its Postgres. A development run on this repository's
 /// runtime only.
-pub(crate) fn served_on_runtime_port() -> Option<u16> {
-    let port =
-        moqui_core::web::effective_http_port(&moqui_core::context::conf_env::webroot_setting("http-port")).ok()?;
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    std::net::TcpStream::connect_timeout(&address, Duration::from_millis(300))
-        .ok()
-        .map(|_| port)
+pub(crate) fn served_on_runtime_port(runtime: &std::path::Path) -> Option<u16> {
+    moqui_core::web::local_web_ports(runtime, &moqui_core::context::default_framework_dir(runtime))
+        .into_iter()
+        .map(|(_, port)| port)
+        .find(|port| {
+            let address = SocketAddr::from((Ipv4Addr::LOCALHOST, *port));
+            std::net::TcpStream::connect_timeout(&address, Duration::from_millis(300)).is_ok()
+        })
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ task_test() {
     exec_moqui "$bin" test "${OPT_REST[@]}"
 }
 
-# The client reads no conf: -p N is the server at http://localhost:N, and -c and -D are not passed on.
+# The client reads no conf: -p N is the server at https://localhost:N, and -c and -D are not passed on.
 task_test_client() {
     parse_run_opts test "$@"
     local bin prop
@@ -19,14 +19,15 @@ task_test_client() {
     server=()
     for prop in "${OPT_PROPS[@]}"; do
         case $prop in
-            moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "http://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port=off) die 'client -p needs a numeric HTTPS port' ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "https://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
         esac
     done
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     exec_moqui "$bin" test-client "${server[@]}" "${OPT_REST[@]}"
 }
 
-# As test-client: the client reads no conf, so -p N is the server at http://localhost:N.
+# As test-client: the client reads no conf, so -p N is the server at https://localhost:N.
 task_test_load() {
     parse_run_opts test "$@"
     local bin prop
@@ -34,7 +35,8 @@ task_test_load() {
     server=()
     for prop in "${OPT_PROPS[@]}"; do
         case $prop in
-            moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "http://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port=off) die 'client -p needs a numeric HTTPS port' ;;
+            moqui_conf__webapp_list__webapp__WEBROOT__http_port=*) server=(--server "https://localhost:${prop#moqui_conf__webapp_list__webapp__WEBROOT__http_port=}") ;;
         esac
     done
     # moq runs from the repo root: --out, the --compare files and a path target are the caller's, made absolute
@@ -172,6 +174,7 @@ parse_suite_opts() {
 # The framework's suites: cargo test, the tests of this script, and the specs, client specs and security proofs of
 # components/base and components/dev.
 framework_suites() {
+    export MOQUI_SHARED_RUNTIME=off
     local name
     local -a server client proofs
     server=()
@@ -650,7 +653,7 @@ so it runs beside the server in
 the same runtime directory. Arguments go to moqui test-client; the moq options below are read first
 and any other option is passed on:
   ./moq test-client framework
-  ./moq test-client framework -p 8081          the server at http://localhost:8081
+  ./moq test-client framework -p 8081          the server at https://localhost:8081
   ./moq test-client framework --spec SecurityAuthn --param user=john.doe
   ./moq test-client --server https://test.example.com --insecure
   ./moq test-client framework --serve          start the server its test/client/suite.js declares
@@ -664,7 +667,7 @@ proofs.md, the results by requirement; against a server it did not start the pro
   ./moq test-client framework --proofs --server https://test.example.com --param user=auditor
 
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
-  -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
+  -p, --port N  The server at https://localhost:N (--server); the default is https://localhost:8443
   --            End of moq options; everything after it goes to moqui test-client
 EOF
 }
@@ -679,12 +682,12 @@ writes the result and exits 130. --out, the --compare files and a path target ar
 directory moq runs in. The guide is docs/tools/Load-Runner.md. Arguments go to moqui test-load; the
 moq options below are read first and any other option is passed on:
   ./moq test-load mr-marble                                  list the scripts and their params
-  ./moq test-load mr-marble --script OrderToCash -p 8081     against http://localhost:8081
+  ./moq test-load mr-marble --script OrderToCash -p 8081     against https://localhost:8081
   ./moq test-load mr-marble --script OrderToCash --param pdf=false --users 20 --label "MR"
   ./moq test-load --compare a/result.json b/result.json
 
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
-  -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
+  -p, --port N  The server at https://localhost:N (--server); the default is https://localhost:8443
   --            End of moq options; everything after it goes to moqui test-load
 EOF
 }

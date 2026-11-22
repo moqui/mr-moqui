@@ -248,7 +248,7 @@ fn check_agreement() -> Result<(), Error> {
     };
     let server = target.base.clone();
     // no redirect is followed: the key goes to the server named and nowhere it points
-    let client = reqwest::blocking::Client::builder()
+    let client = moqui_lib::dev_ca::builder(false)?
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("moqui-check/", env!("CARGO_PKG_VERSION")))
@@ -504,6 +504,9 @@ fn java_checkout(dir: &Path) -> Option<moqui_devkit::project::Project> {
 /// The Java Moqui checkout `MOQUI_RUNTIME` is the runtime of, or else the one the working directory is in, when the
 /// working directory has no MR Moqui runtime.
 fn detected_java_checkout() -> Option<moqui_devkit::project::Project> {
+    if moqui_lib::env::get_property("MOQUI_INSTALLED_RUNTIME").is_some() {
+        return None;
+    }
     if let Some(runtime) = std::env::var_os("MOQUI_RUNTIME").filter(|dir| !dir.is_empty()) {
         return java_checkout(Path::new(&runtime));
     }

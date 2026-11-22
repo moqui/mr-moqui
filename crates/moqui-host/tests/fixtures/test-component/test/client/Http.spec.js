@@ -8,8 +8,8 @@ feature("an anonymous GET /Login is HTML with a session cookie that is HttpOnly 
         res.status == 200
         res.ok
         res.contentType.includes("text/html")
-        res.cookie("moqui.session").httpOnly
-        res.cookie("moqui.session").sameSite == "Lax"
+        res.cookie(server.url.startsWith("https://") ? "__Host-moqui.session" : "moqui.session").httpOnly
+        res.cookie(server.url.startsWith("https://") ? "__Host-moqui.session" : "moqui.session").sameSite == "Lax"
         res.headers("set-cookie").length >= 1
         res.timeMs >= 0
         http.token() != null
@@ -62,8 +62,8 @@ feature("a body saves into the output directory", {
 feature("params, server and files", {
     expect() {
         params.greeting == "hello"
-        server.url.startsWith("http://127.0.0.1:")
-        !server.secure
+        server.url.startsWith((params.scheme ?? "http") + "://127.0.0.1:")
+        server.secure == (params.scheme == "https")
         files.list("test/client", /\.spec\.js$/).includes("test/client/Http.spec.js")
         files.read("component.xml").includes("moqui-test-fixture")
     },

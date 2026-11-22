@@ -178,7 +178,43 @@ pub(super) fn handle(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, t
                 );
                 return true;
             }
-            forward(factory, slot, &binding, &id, frame);
+            if op == "follow" && frame["action"] == "navigate" {
+                static NAV: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
+                if !super::take(NAV.get_or_init(Default::default), &slot.id, 600) {
+                    error(
+                        slot,
+                        &call,
+                        &leg,
+                        &id,
+                        "rateLimited",
+                        "Navigation updates are arriving too quickly",
+                    );
+                    return true;
+                }
+                // Screen resolution runs off the socket task; later navigation
+                // wins even if an earlier definition takes longer to load.
+                static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (factory, slot) = (Arc::clone(factory), Arc::clone(slot));
+                tokio::spawn(async move {
+                    let screen_factory = Arc::clone(&factory);
+                    let clean = as_user(&factory, slot.user_id.clone(), move || {
+                        Ok(crate::rtc::follow::navigate(&screen_factory, &frame))
+                    })
+                    .await;
+                    if let Ok(Some(mut clean)) = clean {
+                        clean["sequence"] = json!(sequence);
+                        clean["id"] = id.clone();
+                        forward(&factory, &slot, &binding, &id, clean);
+                    } else {
+                        error(&slot, &call, &leg, &id, "invalidScreen", "Choose an application screen");
+                    }
+                });
+            } else if op == "stage" {
+                change_stage(factory, slot, Who::User(slot.user_id.clone()), binding, id, frame);
+            } else {
+                forward(factory, slot, &binding, &id, frame);
+            }
         }
     }
     true
@@ -190,6 +226,10 @@ fn bound(slot_id: u64, call: &str, leg: &str) -> Option<Binding> {
         .iter()
         .find(|b| b.call == call && b.leg == leg)
         .cloned()
+}
+
+pub(super) fn has_binding(slot_id: u64, call: &str, leg: &str) -> bool {
+    bound(slot_id, call, leg).is_some()
 }
 
 /// Who a socket binds a leg as: its signed-in user, or a guest by their credential.
@@ -328,6 +368,22 @@ fn join(
         };
         // a guest's frame never asks the driver for the direct path
         let mut frame = frame;
+        // The bound session is the sole source of stage state. Never trust a join's copy.
+        if let Some(obj) = frame.as_object_mut() {
+            obj.remove("boundStage");
+            obj.insert(
+                "boundMemberScreen".into(),
+                Json::Bool(matches!(out.get("memberScreen"), Some(Value::Bool(true)))),
+            );
+            obj.insert("boundGuest".into(), Json::Bool(matches!(&who, Who::Guest(_))));
+            obj.insert(
+                "boundHost".to_string(),
+                Json::Bool(matches!(out.get("isHost"), Some(Value::Bool(true)))),
+            );
+            if let Some(stage) = stage_of(&out) {
+                obj.insert("boundStage".into(), stage);
+            }
+        }
         if !direct {
             if let Some(o) = frame.as_object_mut() {
                 o.remove("direct");
@@ -418,6 +474,77 @@ fn leave(
             ),
             Ok(Err((code, message))) => error(&slot, &call, &leg, &id, &code, &message),
             Err(err) => error(&slot, &call, &leg, &id, "unavailable", err.message()),
+        }
+    });
+}
+
+fn stage_of(out: &BTreeMap<String, Value>) -> Option<Json> {
+    Some(json!({
+        "rtc": "stage", "stage": moqui_lib::json::to_json(out.get("stage")?),
+        "revision": to_plain_string(out.get("stageRevision")?).parse::<u64>().ok()?,
+        "shareModeEnumId": out.get("shareModeEnumId").map(to_plain_string).unwrap_or_else(|| "CsmAnyone".into()),
+    }))
+}
+
+/// Stage requests run on a request worker under the socket's identity. Only an
+/// authenticated media-control message may change the stage at an SFU.
+fn change_stage(
+    factory: &Arc<ExecutionContextFactory>,
+    slot: &Arc<Slot>,
+    who: Who,
+    binding: Binding,
+    id: Json,
+    frame: Json,
+) {
+    static BUCKETS: OnceLock<Mutex<HashMap<u64, super::Bucket>>> = OnceLock::new();
+    if !super::take(BUCKETS.get_or_init(Default::default), &slot.id, 60) {
+        return error(
+            slot,
+            &binding.call,
+            &binding.leg,
+            &id,
+            "rateLimited",
+            "Too many presentation requests",
+        );
+    }
+    let (factory, slot) = (Arc::clone(factory), Arc::clone(slot));
+    tokio::spawn(async move {
+        let mut params = BTreeMap::from([
+            ("callSessionId".to_string(), Value::string(&binding.call)),
+            ("callLegId".to_string(), Value::string(&binding.leg)),
+            ("generation".to_string(), Value::string(binding.generation.to_string())),
+        ]);
+        for field in ["action", "kind", "previousLegId", "targetLegId", "wikiPageId", "mode"] {
+            if let Some(value) = frame
+                .get(field)
+                .and_then(Json::as_str)
+                .filter(|value| value.len() <= 64)
+            {
+                params.insert(field.to_string(), Value::string(value));
+            }
+        }
+        if let Some(embedded) = frame["embedded"].as_bool() {
+            params.insert("embedded".to_string(), Value::Bool(embedded));
+        }
+        if let Who::Guest(credential) = &who {
+            params.insert("credential".to_string(), Value::string(credential));
+        }
+        let result = as_who(&factory, &who, move || {
+            Ok(call_service("org.moqui.call.StageServices.change#CallStage", params))
+        })
+        .await;
+        match result {
+            Ok(Ok(out)) => {
+                let mut reply = stage_of(&out).unwrap_or_else(|| json!({}));
+                reply["rtc"] = json!("ack");
+                reply["id"] = id;
+                reply["topic"] = json!(format!("rtc:{}", binding.call));
+                reply["callSessionId"] = json!(binding.call);
+                reply["callLegId"] = json!(binding.leg);
+                send(&slot, reply);
+            }
+            Ok(Err((code, message))) => error(&slot, &binding.call, &binding.leg, &id, &code, &message),
+            Err(err) => error(&slot, &binding.call, &binding.leg, &id, "unavailable", err.message()),
         }
     });
 }
@@ -633,6 +760,10 @@ fn deliver_signal(message: &TopicMessage) {
         }
         Some("control") => {
             let command = match body.get("action").and_then(Json::as_str) {
+                Some("stage") => Command::Stage {
+                    room: room.clone(),
+                    frame: json!({"rtc":"stage", "stage":body["stage"], "revision":body["revision"], "shareModeEnumId":body["shareModeEnumId"]}),
+                },
                 Some("closeLeg") => Command::CloseLeg {
                     room: room.clone(),
                     leg: text("callLegId"),
@@ -764,8 +895,12 @@ pub(crate) async fn guest_upgrade(
             guard.record(client, crate::guard::Event::AuthFailure);
         }
     };
-    ws.max_message_size(MAX_FRAME)
-        .max_frame_size(MAX_FRAME)
+    let board_limit = moqui_core::context::conf_env::setting_on(&state.factory, "board@max-update-bytes")
+        .parse::<usize>()
+        .unwrap_or(1 << 20);
+    let frame_limit = MAX_FRAME.max(board_limit.saturating_mul(4) / 3 + 4096);
+    ws.max_message_size(frame_limit)
+        .max_frame_size(frame_limit)
         .on_upgrade(move |socket| run_guest(socket, factory, shutdown, waiting, failed))
 }
 
@@ -804,7 +939,7 @@ async fn run_guest(
     use axum::extract::ws::Message;
     let first = tokio::time::timeout(GUEST_AUTH_WAIT, socket.recv()).await;
     let credential = match first {
-        Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Json>(&text)
+        Ok(Some(Ok(Message::Text(text)))) if text.len() <= 4096 => serde_json::from_str::<Json>(&text)
             .ok()
             .filter(|f| f.get("rtc").and_then(Json::as_str) == Some("guestAuth"))
             .and_then(|f| f.get("credential").and_then(Json::as_str).map(str::to_string))
@@ -840,6 +975,12 @@ async fn run_guest(
         leg: leg.clone(),
         credential: credential.clone(),
     };
+    let meeting = moqui_collab::Meeting {
+        call_id: call.clone(),
+        leg_id: leg.clone(),
+        credential: Some(credential.clone()),
+        user_id: String::new(),
+    };
     let authed = json!({"topic": format!("rtc:{call}"), "rtc": "guestAuthed", "callSessionId": call, "callLegId": leg,
         "admission": admission});
     let mut open = super::send_within(&mut socket, Message::Text(authed.to_string().into())).await;
@@ -866,18 +1007,25 @@ async fn run_guest(
                 }
             }
             incoming = socket.recv() => match incoming {
-                Some(Ok(Message::Text(text))) => guest_frame(&factory, &slot, &scope, &text),
+                Some(Ok(Message::Text(text))) => {
+                    if !super::collab::handle(&factory, &slot, &text, Some(&meeting)).await {
+                        guest_frame(&factory, &slot, &scope, &text);
+                    }
+                }
                 Some(Ok(Message::Ping(payload))) => open = super::send_within(&mut socket, Message::Pong(payload)).await,
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
             push = rx.recv() => {
                 let Some(push) = push else { break };
-                open = super::send_within(&mut socket, Message::Text(push.text.into())).await;
+                if super::collab::may_deliver(&factory, &slot, &push.text, true).await {
+                    open = super::send_within(&mut socket, Message::Text(push.text.into())).await;
+                }
             }
             _ = ping.tick() => open = super::send_within(&mut socket, Message::Ping(Vec::new().into())).await,
         }
     }
+    super::collab::socket_closed(&factory, id);
     super::unregister(id);
     socket_closed(&factory, id);
 }
@@ -899,6 +1047,9 @@ async fn refuse_guest(mut socket: axum::extract::ws::WebSocket, code: &str) {
 
 /// A guest's frame: only `rtc` frames of its own call and leg.
 fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: &GuestScope, text: &str) {
+    if text.len() > MAX_FRAME {
+        return;
+    }
     let Ok(frame) = serde_json::from_str::<Json>(text) else {
         return;
     };
@@ -924,6 +1075,7 @@ fn guest_frame(factory: &Arc<ExecutionContextFactory>, slot: &Arc<Slot>, scope: 
         "join" => join(factory, slot, who, scope.call.clone(), scope.leg.clone(), id, frame),
         "leave" => leave(factory, slot, who, scope.call.clone(), scope.leg.clone(), id, frame),
         _ => match bound(slot.id, &scope.call, &scope.leg) {
+            Some(binding) if op == "stage" => change_stage(factory, slot, who, binding, id, frame),
             Some(binding) => forward(factory, slot, &binding, &id, frame),
             None => error(
                 slot,

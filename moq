@@ -178,6 +178,7 @@ component-zip|Components|[name...]|Zip components in runtime/components/addon
 archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml, or --binary: the binary alone with the runtime built in
 desktop|Package|[dev or build] [--release] [cargo args...]|Run or bundle the desktop app: the node in a Tauri window (crates/moqui-desktop)
 android|Package|[emulator, init, dev or build] [--release] [--window] [args...]|Run or build the Android app, or start its emulator (crates/moqui-mobile)
+trust-dev-cert|Setup|[--system] [--untrust]|Trust or remove the localhost development CA
 completion|Setup|[bash or zsh] [--install]|Print or install shell completion
 help|Setup|[task]|Show the task list or help for one task'
 
@@ -216,7 +217,7 @@ zip-components|component-zip
 add-runtime|archive'
 
 # The tasks, one file an area, in scripts/moq/ (each with its tasks, their help and their helpers).
-for moq_part in core build run test desktop database opensearch chromium git components archive completion harness; do
+for moq_part in core build run test desktop database opensearch chromium git components archive trust completion harness; do
     # shellcheck source=/dev/null
     . "$ROOT/scripts/moq/$moq_part.sh" || { printf 'moq: could not read scripts/moq/%s.sh\n' "$moq_part" >&2; exit 1; }
 done

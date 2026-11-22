@@ -18,9 +18,8 @@
 //! - the PASS authority for direct clients (`crate::pass_authority`, plans/archive/Edge-Node.md §5.5), when
 //!   `moqui_conf__pass_authority__grpc_enabled=true` (the `edge` feature; in Maximal and Enterprise).
 //!
-//! It opens when either is on. With the receiver on, it listens where the receiver is configured (`grpc-bind`,
-//! `grpc-port`, 4317), and the PASS authority shares that port; else on `pass-authority@grpc-host` (the HTTP listener's
-//! address) and `pass-authority@grpc-port` (4317). With the HTTPS listener's certificates it serves TLS (ALPN h2), else
+//! The webroot webapp's grpc-listen-port and grpc-listen-bind select the dedicated socket for both services.
+//! With the HTTPS listener's certificates it serves TLS (ALPN h2), else
 //! plain h2c; then the PASS authority, whose clients send their secrets, is left off (an error logged) unless the
 //! address is loopback or `moqui_conf__pass_authority__grpc_insecure=true`. The edge guard admits each connection as it does for HTTP.
 
@@ -37,37 +36,47 @@ use tokio::net::TcpListener;
 #[derive(Default)]
 pub struct GrpcAddress(pub std::sync::Mutex<Option<SocketAddr>>);
 
-/// Where to listen, when a service is on: the receiver's address, else the PASS authority's. `tls`: the HTTPS listener
-/// has certificates, so the listener serves TLS.
-pub(crate) fn bind_address(factory: &ExecutionContextFactory, http: SocketAddr, tls: bool) -> Option<SocketAddr> {
-    bind_address_by(&|path, name| factory.conf_setting(path, name), http, tls)
+/// Address shared by the enabled services on the dedicated listener.
+pub(crate) fn bind_address(factory: &ExecutionContextFactory, ip: std::net::IpAddr, tls: bool) -> Option<SocketAddr> {
+    bind_address_by(
+        &|path, name| factory.conf_setting(path, name),
+        &moqui_core::context::conf_env::webroot_setting,
+        ip,
+        tls,
+    )
 }
 
-/// [`bind_address`] by a conf `setting`, for the port check before the factory is built.
 pub(crate) fn bind_address_by(
     setting: crate::monitor::grpc::Setting,
-    http: SocketAddr,
+    webroot: &dyn Fn(&str) -> String,
+    web_ip: std::net::IpAddr,
     tls: bool,
 ) -> Option<SocketAddr> {
-    let otlp = crate::monitor::grpc::bind_address_by(setting, http);
-    let pass =
-        crate::pass_authority::direct_enabled() && pass_allowed(otlp.unwrap_or_else(|| pass_address(http)), tls, false);
-    match (otlp, pass) {
-        (Some(otlp), true) => {
-            let port = moqui_core::context::conf_env::setting(crate::pass_authority::PORT_PROPERTY);
-            if !port.trim().is_empty() && port.trim() != otlp.port().to_string() {
-                tracing::warn!(
-                    "{} is {} but the OTLP/gRPC receiver listens on {otlp}; the PASS authority shares its port",
-                    crate::pass_authority::PORT_PROPERTY,
-                    port.trim()
-                );
+    let port = match webroot("grpc-listen-port").trim() {
+        "off" => return None,
+        "" => 4317,
+        text => match text.parse() {
+            Ok(port) => port,
+            Err(err) => {
+                tracing::error!("invalid grpc-listen-port {text}: {err}");
+                return None;
             }
-            Some(otlp)
-        }
-        (Some(otlp), false) => Some(otlp),
-        (None, true) => Some(pass_address(http)),
-        (None, false) => None,
-    }
+        },
+    };
+    let ip = match webroot("grpc-listen-bind").trim() {
+        "" => web_ip,
+        text => match text.parse() {
+            Ok(ip) => ip,
+            Err(err) => {
+                tracing::error!("invalid grpc-listen-bind {text}: {err}");
+                return None;
+            }
+        },
+    };
+    let address = SocketAddr::new(ip, port);
+    (crate::monitor::grpc::enabled_by(setting)
+        || (crate::pass_authority::direct_enabled() && pass_allowed(address, tls, true)))
+    .then_some(address)
 }
 
 /// Whether the PASS authority may serve on `bind`: with TLS, on a loopback address, or with
@@ -86,33 +95,6 @@ fn pass_allowed(bind: SocketAddr, tls: bool, log: bool) -> bool {
         );
     }
     false
-}
-
-/// `pass-authority@grpc-host` (the HTTP listener's address when empty) and `pass-authority@grpc-port` (4317).
-fn pass_address(http: SocketAddr) -> SocketAddr {
-    let get = |name: &str| moqui_core::context::conf_env::setting_or_property(name);
-    let port = match get(crate::pass_authority::PORT_PROPERTY).as_str() {
-        "" => 4317,
-        text => text.parse().unwrap_or_else(|_| {
-            tracing::error!(
-                "{} {text} is not a port; using 4317",
-                crate::pass_authority::PORT_PROPERTY
-            );
-            4317
-        }),
-    };
-    let ip = match get(crate::pass_authority::HOST_PROPERTY).as_str() {
-        "" => http.ip(),
-        text => text.parse().unwrap_or_else(|_| {
-            tracing::error!(
-                "{} {text} is not an IP address; using {}",
-                crate::pass_authority::HOST_PROPERTY,
-                http.ip()
-            );
-            http.ip()
-        }),
-    };
-    SocketAddr::new(ip, port)
 }
 
 /// The routes of the services that are on, and their names for the log.

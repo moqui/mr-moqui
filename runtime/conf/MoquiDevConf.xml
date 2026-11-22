@@ -10,7 +10,7 @@
         session cookie: localhost and 127.0.0.1 on any port and either scheme, and no other site (SEC-WEB-10). Name
         another origin here when a dev server runs elsewhere; `*` would let any site read the responses, and never
         comes with credentials. -->
-    <webapp-list><webapp name="webroot" allow-origins="localhost,127.0.0.1"/></webapp-list>
+    <webapp-list><webapp name="webroot" http-listen-port="off" grpc-listen-port="off" https-enabled="true" https-port="8443" allow-origins="localhost,127.0.0.1"/></webapp-list>
     <tools empty-db-load="all"/>
     <!-- the first administrator's form on an empty database (off by default, MoquiDefaultConf.xml) -->
     <user-facade><login initial-admin-enabled="true"/></user-facade>
@@ -67,7 +67,7 @@
     <telemetry>
         <artifact type="AT_XML_SCREEN_CONTENT" spans="true" metrics="true"/>
         <artifact type="AT_ENTITY" spans="false" metrics="true"/>
-        <!-- OTLP over gRPC as well as HTTP, on 4317 -->
+        <!-- OTLP over gRPC over HTTP/2 on the HTTPS listener -->
         <receiver grpc-enabled="true"/>
     </telemetry>
 

@@ -229,6 +229,10 @@ fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> R
     let exe = std::env::current_exe()
         .map_err(|err| Error::new("could not find this binary to start the server").with_source(err))?;
     let mut command = Command::new(exe);
+    command.env("MOQUI_SHARED_RUNTIME", "off");
+    if let Some(runtime) = moqui_lib::env::get_property("MOQUI_INSTALLED_RUNTIME") {
+        command.env("MOQUI_RUNTIME", runtime);
+    }
     command
         .args(child_args(server, &ready_file, args.acceptance))
         .stdin(Stdio::piped())

@@ -35,6 +35,10 @@ pub trait Overlay: Send + Sync {
     /// # Errors
     ///
     /// Returns an error when the overlay has the file and cannot read it.
+    fn disk_path(&self, _path: &str) -> Option<PathBuf> {
+        None
+    }
+
     fn read(&self, path: &str) -> io::Result<Option<Vec<u8>>>;
 
     /// Whether `path` is a file of the overlay.
@@ -48,6 +52,7 @@ pub trait Overlay: Send + Sync {
 }
 
 struct Mount {
+    shared: bool,
     /// The directory as given, made absolute and normalized ([`normalize`]).
     root: PathBuf,
     /// The directory with its links resolved, when it exists and differs from `root`.
@@ -68,18 +73,34 @@ static MOUNTED: AtomicBool = AtomicBool::new(false);
 
 /// Mount `overlay` on the directory `root`, in place of one mounted there before.
 pub fn mount(root: &Path, overlay: Arc<dyn Overlay>) {
+    mount_layer(root, Some(overlay), false);
+}
+
+/// Replace the shared definition layer at this root. Shared mounts precede every embedded mount,
+/// including mounts on an ancestor or descendant of this directory.
+pub fn mount_shared(root: &Path, overlay: Option<Arc<dyn Overlay>>) {
+    mount_layer(root, overlay, true);
+}
+
+fn mount_layer(root: &Path, overlay: Option<Arc<dyn Overlay>>, shared: bool) {
     let root = normalize(root);
     let canonical = std::fs::canonicalize(&root)
         .ok()
         .map(|path| normalize(&path))
         .filter(|path| *path != root);
     let mut mounts = MOUNTS.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-    mounts.retain(|mount| mount.root != root);
-    mounts.push(Mount {
-        root,
-        canonical,
-        overlay,
-    });
+    mounts.retain(|mount| mount.root != root || mount.shared != shared);
+    let Some(overlay) = overlay else { return };
+    let index = if shared { 0 } else { mounts.len() };
+    mounts.insert(
+        index,
+        Mount {
+            shared,
+            root,
+            canonical,
+            overlay,
+        },
+    );
     MOUNTED.store(true, Ordering::Release);
 }
 
@@ -264,7 +285,23 @@ pub fn is_from_overlay(path: impl AsRef<Path>) -> bool {
 /// while the process runs, and when there is none.
 #[must_use]
 pub fn modified(path: impl AsRef<Path>) -> Option<SystemTime> {
-    std::fs::metadata(path).and_then(|meta| meta.modified()).ok()
+    let path = path.as_ref();
+    let physical = source_file(path)?;
+    std::fs::metadata(physical).and_then(|meta| meta.modified()).ok()
+}
+
+/// Physical file selected from the local runtime or a directory overlay.
+pub fn source_file(path: &Path) -> Option<PathBuf> {
+    if path.is_file() {
+        return Some(path.to_path_buf());
+    }
+    let found = find(path)?;
+    for (overlay, rel) in found.within {
+        if overlay.is_file(&rel) {
+            return overlay.disk_path(&rel);
+        }
+    }
+    None
 }
 
 /// One entry of a directory [`read_dir`] lists.

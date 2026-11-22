@@ -430,7 +430,7 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             const CODES = {CetMessage: 'message', CetEdit: 'edit', CetReaction: 'reaction', CetRedaction: 'redaction',
-                CetMembership: 'membership', CetPin: 'pin', CetCall: 'call', CetPoll: 'poll', CetSystem: 'system'}
+                CetMembership: 'membership', CetPin: 'pin', CetCall: 'call', CetBoard: 'board', CetPoll: 'poll', CetSystem: 'system'}
             const snippetOf = (text, attachments) => {
                 const shown = String(text || '').replace(/\s+/g, ' ').trim()
                 if (shown) return shown.length > 140 ? shown.slice(0, 139) + '…' : shown
@@ -2156,8 +2156,8 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             const CODES = {CetMessage: 'message', CetEdit: 'edit', CetReaction: 'reaction', CetRedaction: 'redaction',
-                CetMembership: 'membership', CetPin: 'pin', CetCall: 'call', CetPoll: 'poll', CetSystem: 'system'}
-            const SHOWN = ['CetMessage', 'CetMembership', 'CetPin', 'CetCall', 'CetPoll', 'CetSystem']
+                CetMembership: 'membership', CetPin: 'pin', CetCall: 'call', CetBoard: 'board', CetPoll: 'poll', CetSystem: 'system'}
+            const SHOWN = ['CetMessage', 'CetMembership', 'CetPin', 'CetCall', 'CetBoard', 'CetPoll', 'CetSystem']
             room = null; access = null; eventList = []; hasMoreBefore = false; hasMoreAfter = false; lastReadEventSeq = null; memberList = []
             const roomOut = ec.service.sync().name('org.moqui.chat.ChatServices.get#Room').parameters({chatRoomId: chatRoomId,
                 recordEntityName: recordEntityName, recordId: recordId}).call()

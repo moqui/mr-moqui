@@ -1,0 +1,99 @@
+<template><div class="q-pa-md">
+    <template v-if="!pageId">
+        <h1 class="text-h5 q-mt-none">{{ t('My boards') }}</h1>
+        <form class="row items-center q-gutter-sm q-mb-md" @submit.prevent="create">
+            <q-input outlined dense v-model="name" :label="t('Board name')"/>
+            <q-btn color="primary" type="submit" :disable="busy || !name.trim()" :label="t('Create board')"/>
+        </form>
+        <q-list separator><q-item v-for="item in boards" :key="item.wikiPageId" clickable @click="open(item.wikiPageId)">
+            <q-item-section avatar><q-icon name="sym_o_draw"/></q-item-section>
+            <q-item-section>{{item.title}}</q-item-section>
+        </q-item></q-list>
+    </template>
+    <template v-else-if="board">
+        <div class="row items-center q-gutter-sm q-mb-sm">
+            <h1 class="text-h5 q-my-none">{{board.title}}</h1>
+            <q-space/>
+            <q-btn v-if="board.canEdit" flat icon="sym_o_save" :label="t('Save version')" @click="saveDialog=true"/>
+            <q-btn-dropdown flat :label="t('Download')"><q-list>
+                <q-item v-for="fmt in ['excalidraw','svg','png']" :key="fmt" clickable v-close-popup @click="$refs.editor.download(fmt)">
+                    <q-item-section>{{fmt === 'excalidraw' ? '.excalidraw' : fmt.toUpperCase()}}</q-item-section>
+                </q-item>
+            </q-list></q-btn-dropdown>
+            <q-btn flat icon="sym_o_history" :label="t('History')" @click="history=true"/>
+        </div>
+        <q-banner v-if="version" dense class="bg-grey-2 text-dark">{{t('Saved version')}} · {{version}}
+            <template #action><q-btn flat :label="t('Return to current board')" @click="selectVersion('')"/></template>
+        </q-banner>
+        <m-whiteboard ref="editor" :key="pageId + ':' + version" :wiki-page-id="version ? undefined : pageId"
+            :scene="parsedScene" :read-only="!board.canEdit" :files-url="fileBase + '{name}'" :preview-url="preview"
+            :upload-url="url('uploadImage')" :save-url="url('saveBoard')" @saved="refreshHistory"/>
+        <q-dialog v-model="saveDialog"><q-card style="width:min(420px,90vw)"><q-card-section>
+            <q-input v-model="note" autofocus :label="t('Version note')" @keyup.enter="save"/>
+        </q-card-section><q-card-actions align="right">
+            <q-btn flat v-close-popup :label="t('Cancel')"/><q-btn color="primary" :label="t('Save')" @click="save"/>
+        </q-card-actions></q-card></q-dialog>
+        <q-dialog v-model="history"><q-card style="min-width:min(400px,90vw)"><q-card-section class="text-h6">{{t('Version history')}}</q-card-section>
+            <q-list separator><q-item v-for="item in board.versionList" :key="item.versionName" clickable @click="selectVersion(item.versionName)">
+                <q-item-section><q-item-label>{{item.note || item.shortName}}</q-item-label><q-item-label caption>{{item.userName}} · {{versionDate(item.versionDate)}}</q-item-label></q-item-section>
+            </q-item></q-list><q-card-actions align="right"><q-btn flat v-close-popup :label="t('Close')"/></q-card-actions>
+        </q-card></q-dialog>
+    </template>
+    <p v-if="error" role="alert">{{error}}</p>
+</div></template>
+<script>
+module.exports = {
+    name:'CommsBoard',
+    inject:{mScreen:{default:null}},
+    data() { return {board:null,boards:[],name:'',version:'',history:false,saveDialog:false,note:'',busy:false,error:'',requestNumber:0}; },
+    computed:{
+        pageId() {
+            if (this.mScreen?.path && !this.mScreen.path.endsWith('/Boards/Board')) return null;
+            return (this.mScreen?.parameters || this.$root.currentParameters || {}).wikiPageId || '';
+        },
+        base() {
+            const path=this.mScreen?.path;
+            return path?.endsWith('/Boards/Board') ? path : (moqui.config?.calls?.appRoot || '/apps/BasicComms').replace(/^\/qapps\//,'/apps/') + '/Boards/Board';
+        },
+        fileBase() { return this.url('image') + '?wikiPageId=' + encodeURIComponent(this.pageId) + '&filename='; },
+        preview() { return this.board.previewName ? this.fileBase + encodeURIComponent(this.board.previewName) : ''; },
+        parsedScene() { return this.board.scene ? JSON.parse(this.board.scene) : null; }
+    },
+    watch:{pageId:{immediate:true,handler(id) { this.version=''; this.board=null; if(id===null)++this.requestNumber;else this.load(); }}},
+    methods:{
+        t(text) { return moqui.l10n.localize(text); },
+        versionDate(value) { return value ? new Date(Number(value)).toLocaleString() : ''; },
+        url(name) { return this.base + '/' + name; },
+        open(id) { this.$root.setUrl(this.base + '?wikiPageId=' + encodeURIComponent(id)); },
+        async request(name,params,method) {
+            const result=await moqui.request(this.url(name),{params,method:method || 'GET'});
+            return result.json;
+        },
+        async load() {
+            const serial=++this.requestNumber;
+            this.error='';
+            try {
+                const data=await (this.pageId ? this.request('board',{wikiPageId:this.pageId,versionName:this.version}) : this.request('notesBoards',{}));
+                if (serial !== this.requestNumber) return;
+                if (this.pageId) this.board=data; else this.boards=data.boards || [];
+            } catch(e) { if (serial === this.requestNumber) this.error=e.message || this.t('Could not open boards'); }
+        },
+        async create() {
+            this.busy=true;
+            try { const out=await this.request('createBoard',{pageName:this.name.trim()},'POST'); this.open(out.wikiPageId); }
+            catch(e) { this.error=e.message || this.t('Could not create board'); }
+            finally { this.busy=false; }
+        },
+        async selectVersion(version) { this.history=false; this.board=null; this.version=version; await this.load(); },
+        async save() {
+            try { await this.$refs.editor.save(this.note); this.saveDialog=false; this.note=''; }
+            catch(e) { this.error=e.message || this.t('Could not save board'); }
+        },
+        async refreshHistory() {
+            const id=this.pageId;
+            const data=await this.request('board',{wikiPageId:id});
+            if (this.board && this.pageId === id && !this.version) this.board.versionList=data.versionList;
+        }
+    }
+};
+</script>

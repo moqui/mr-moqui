@@ -44,10 +44,10 @@ use moqui_tools as _;
 use moqui_collab as _;
 use moqui_dav as _;
 // Vaults and managed instances, under their features, the same way.
-#[cfg(feature = "vault")]
-use moqui_vault_server as _;
 #[cfg(feature = "instances")]
 use moqui_instance as _;
+#[cfg(feature = "vault")]
+use moqui_vault_server as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
@@ -64,11 +64,6 @@ pub use moqui_drivers as db;
 #[cfg(feature = "git")]
 mod ci_run;
 mod conf_cmd;
-#[cfg(feature = "vault")]
-mod vault_cmd;
-#[cfg(not(feature = "vault"))]
-#[path = "vault_cmd_off.rs"]
-mod vault_cmd;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -80,18 +75,24 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+#[cfg(feature = "vault")]
+mod vault_cmd;
+#[cfg(not(feature = "vault"))]
+#[path = "vault_cmd_off.rs"]
+mod vault_cmd;
 // What the edge link and the manager link share: the role answer, the backoff, the link key's certificate.
 #[cfg(any(feature = "edge", feature = "manage"))]
 mod link;
 // The manager link (plans/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
+mod embedded_checksum;
+mod embedded_files;
+mod embedded_programs;
+mod install;
 #[cfg(feature = "manage")]
 pub mod manage_link;
 #[cfg(all(feature = "axum", not(feature = "manage")))]
 #[path = "manage_link_off.rs"]
 mod manage_link;
-mod embedded_checksum;
-mod embedded_files;
-mod embedded_programs;
 // The sealed start's host side: the gate of a server boot, the operator socket and `moqui operator`
 // (plans/Sealed-Secrets.md §3.3).
 #[cfg(unix)]
@@ -809,7 +810,20 @@ where
     S: AsRef<str>,
 {
     register_build();
-    let args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
+    let mut args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
+    if let Some(index) = args.iter().position(|arg| arg == "--installed") {
+        args.remove(index);
+        let runtime = install::destination()?;
+        if !moqui_core::context::layout::is_runtime(&runtime) {
+            return Err(moqui_lib::error::Error::new(
+                "the shared directory is not a runtime; run moqui install first",
+            ));
+        }
+        if std::env::var_os("MOQUI_RUNTIME").is_some() {
+            eprintln!("--installed overrides MOQUI_RUNTIME");
+        }
+        moqui_lib::env::set_property("MOQUI_INSTALLED_RUNTIME", runtime.to_string_lossy());
+    }
     if let Some(help) = usage::help_request(&args) {
         return help.map(Some);
     }
@@ -872,6 +886,38 @@ where
             dispatch_types(rest)?;
             Ok(None)
         }
+        [command, ..] if command == "trust-dev-cert" => {
+            let message = if cfg!(any(target_os = "macos", target_os = "linux")) {
+                "run ./moq trust-dev-cert to configure per-user certificate trust"
+            } else {
+                "per-user development certificate trust is supported on macOS and Linux"
+            };
+            Err(moqui_lib::error::Error::new(message))
+        }
+        [command, rest @ ..] if command == "dev-cert" => {
+            let shared = match rest {
+                [] => false,
+                [flag] if flag == "--shared" => true,
+                _ => return Err(moqui_lib::error::Error::new("usage: moqui dev-cert [--shared]")),
+            };
+            #[cfg(any(feature = "axum", feature = "inbound-smtp"))]
+            {
+                if shared {
+                    install::destination()?;
+                }
+                tls::prepare_dev_cert(&runtime_framework_dirs().0.join("cert"), shared)?;
+                Ok(None)
+            }
+            #[cfg(not(any(feature = "axum", feature = "inbound-smtp")))]
+            {
+                let _ = shared;
+                Err(moqui_lib::error::Error::new("this build has no TLS listener"))
+            }
+        }
+        [command, rest @ ..] if command == "install" => {
+            install::install(rest)?;
+            Ok(None)
+        }
         [command, rest @ ..] if command == "embedded" => {
             embedded_files::dispatch(rest)?;
             Ok(None)
@@ -925,6 +971,7 @@ where
             }
         }
         [command, rest @ ..] if command == "test" => {
+            moqui_lib::env::set_property("MOQUI_SHARED_RUNTIME", "off");
             // its scratch runtimes and the server it serves take the dev seal (plans/Sealed-Secrets.md S4)
             moqui_core::seal::set_test_run();
             test_cmd::dispatch_test(rest)?;
@@ -1045,7 +1092,9 @@ fn usage_error(args: &[String]) -> moqui_lib::error::Error {
 /// Like Moqui's `moqui.runtime`: an install runs from its own directory unless told otherwise. The files built into the
 /// binary are mounted on them ([`embedded_files::mount`]), so every command reads the ones not on disk from the binary.
 fn runtime_framework_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
-    let runtime = std::env::var_os("MOQUI_RUNTIME")
+    let runtime = moqui_lib::env::get_property("MOQUI_INSTALLED_RUNTIME")
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("MOQUI_RUNTIME"))
         .filter(|dir| !dir.is_empty())
         .map_or_else(default_runtime_dir, Into::into);
     let framework = framework_from_env(&runtime);
@@ -1667,19 +1716,19 @@ fn serve_thread(
             .components()
             .iter()
             .any(|component| component.name == "dev-aide")
-        && address.is_some_and(|address| !address.ip().is_loopback())
+        && address.is_some_and(|address| !address.ip.is_loopback())
     {
         if factory.conf_setting("dev-aide", "shared") == "true" {
             tracing::info!(
                 "Dev AIDE in shared mode (a team dev server) on {}: network git commands are off until an admin enables them",
-                address.unwrap_or(unbound)
+                address.map_or(unbound.ip(), |address| address.ip)
             );
         } else {
             tracing::warn!(
                 "Dev AIDE is loaded and the HTTP listener on {} is not bound to the loopback address: anyone who \
                  can sign in with a Dev AIDE permission can run code as this server's user. Set the webroot webapp's http-bind to 127.0.0.1, \
                  or dev-aide shared=\"true\" for a team dev server",
-                address.unwrap_or(unbound)
+                address.map_or(unbound.ip(), |address| address.ip)
             );
         }
     }
@@ -1702,7 +1751,7 @@ fn serve_thread(
     let https = match address.map(|address| {
         tls::plan(
             &runtime_dir,
-            address.ip(),
+            address.ip,
             matches!(bind, ListenBind::Property),
             &listen_port,
         )
@@ -1761,18 +1810,31 @@ fn serve_thread(
     listened
 }
 
+/// The web bind address and optional HTTP port, shared by listener startup and the preflight checks.
+#[cfg(feature = "axum")]
+#[derive(Clone, Copy)]
+struct WebBind {
+    ip: std::net::IpAddr,
+    http_port: Option<u16>,
+}
+
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-/// The HTTP listener's address: the webroot webapp's `http-port` and `http-bind`, read by `webroot` (an attribute name to
-/// its value) from the running conf, or from the merged conf before the factory is built (the port check).
 fn listen_address(
     bind: &ListenBind,
     webroot: &dyn Fn(&str) -> String,
-) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
+) -> Result<Option<WebBind>, moqui_lib::error::Error> {
     match bind {
         ListenBind::None => Ok(None),
-        ListenBind::Address(address) => Ok(Some(*address)),
+        ListenBind::Address(address) => Ok(Some(WebBind {
+            ip: address.ip(),
+            http_port: Some(address.port()),
+        })),
         ListenBind::Property => {
-            let port = http::http_port(&webroot("http-port"))?;
+            let http_port = match webroot("http-listen-port").trim() {
+                "off" => None,
+                "" => Some(http::http_port(&webroot("http-port"))?),
+                port => Some(http::http_port(port)?),
+            };
             // http-bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
             // http-host stays the host name of the URLs the server writes
             let host = webroot("http-bind");
@@ -1785,7 +1847,7 @@ fn listen_address(
                     moqui_lib::error::Error::new(format!("the webroot webapp's http-bind {host} is not an IP address"))
                 })?
             };
-            Ok(Some(std::net::SocketAddr::new(ip, port)))
+            Ok(Some(WebBind { ip, http_port }))
         }
     }
 }

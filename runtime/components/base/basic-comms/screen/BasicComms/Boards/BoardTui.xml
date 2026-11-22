@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd" default-menu-include="false">
+    <parameter name="wikiPageId"/>
+    <actions>
+        <if condition="wikiPageId">
+            <service-call name="org.moqui.comms.BoardServices.get#Board" in-map="{wikiPageId}" out-map="board"/>
+            <if condition="!ec.message.hasError()">
+                <service-call name="org.moqui.resource.CollabServices.get#CollabDocument" in-map="{documentKey:'WikiPage:'+wikiPageId}" out-map="doc"/>
+                <set field="editorText" from="(doc.activeEditorIdList || []).join(', ')"/>
+                <set field="boardUrl" from="'/qapps/BasicComms/Boards/Board?wikiPageId='+encodeURIComponent(wikiPageId)"/>
+            </if>
+        </if>
+    </actions>
+    <widgets><section name="BoardSummary"><widgets>
+        <label text="${board?.title || 'Boards'}" type="h2"/>
+        <label text="${editorText || ''}"/>
+        <label text="${boardUrl || '/qapps/BasicComms/Boards/Board'}"/>
+    </widgets></section></widgets>
+</screen>

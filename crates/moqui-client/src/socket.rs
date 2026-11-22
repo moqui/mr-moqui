@@ -252,6 +252,10 @@ impl Link {
                     .with_platform_verifier()
                     .map_err(|err| err.to_string())?
                     .with_no_client_auth();
+            #[cfg(debug_assertions)]
+            let config = moqui_lib::dev_ca::platform_config()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(config);
             let name = rustls::pki_types::ServerName::try_from(host.clone()).map_err(|err| err.to_string())?;
             let connection = rustls::ClientConnection::new(Arc::new(config), name).map_err(|err| err.to_string())?;
             Box::new(rustls::StreamOwned::new(

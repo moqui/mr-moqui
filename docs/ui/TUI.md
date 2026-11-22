@@ -22,7 +22,7 @@ moqui tui --keys classic                    the Classic keys for this run (Keys)
 
 The client runs in this process on this runtime. It opens no port unless `--serve`, and it writes nothing to stderr: the
 log goes to the log files and to the log pane (Alt+L). If a server already answers on the runtime's HTTP port, `moqui
-tui` says so and stops: stop the server first, or reach it with `moqui tui --server http://localhost:8080`.
+tui` says so and stops: stop the server first, or reach it with `moqui tui --server https://localhost:8443`.
 
 Each screen is rendered as the logged-in user with artifact authorization on, as the browser's requests are. The client
 holds no permission logic: what the user may not do is not in the document.

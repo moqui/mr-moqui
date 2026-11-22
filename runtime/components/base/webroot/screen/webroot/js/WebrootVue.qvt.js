@@ -106,12 +106,13 @@
     qvt.screenAnchorPath = (anchor, vm, location) => {
         if (!anchor || !vm || !vm.basePath || typeof vm.getLinkPath !== "function" || !location) return null;
         const target = anchor.getAttribute("target");
-        if (anchor.hasAttribute("download") || (target && target !== "_self")) return null;
+        if (anchor.hasAttribute("data-browser-navigation") || anchor.hasAttribute("download") || (target && target !== "_self")) return null;
         const raw = anchor.getAttribute("href") || "";
         if (!raw || raw.charAt(0) === "#") return null;
         let url;
         try { url = new URL(raw, location.href); } catch (err) { return null; }
-        if (url.origin !== location.origin) return null;
+        if (url.origin !== location.origin || url.searchParams.has("saveFilename") ||
+                ["csv", "xlsx", "text", "xsl-fo"].includes(url.searchParams.get("renderMode"))) return null;
         const base = (vm.appRootPath || "") + vm.basePath;
         if (url.pathname !== base && url.pathname.indexOf(base + "/") !== 0) return null;
         return vm.getLinkPath(url.pathname + url.search + url.hash);
@@ -2664,7 +2665,7 @@
                         '<q-space></q-space>' +
                         '<m-form-paginate :paginate="paginate" :form-list="this"></m-form-paginate>' +
                         '<m-form-go-page :id-val="idVal" :form-list="this"></m-form-go-page>' +
-                        '<q-btn v-if="csvButton" dense flat no-caps icon="download" type="a" :href="csvUrl" label="CSV"></q-btn>' +
+                        '<q-btn v-if="csvButton" dense flat no-caps icon="download" type="a" download :href="csvUrl" label="CSV"></q-btn>' +
                         '<slot name="nav"></slot>' +
                     '</div>' +
                     '<div class="table q-table" :id="idVal+\'_table\'">' +
@@ -5071,6 +5072,16 @@
     const peerOf = (message) => ({ client: message.client, userId: message.userId || "", name: message.name || message.userId || "",
         awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness) });
     moqui.coedit.Provider = CoeditProvider;
+
+    if (root.Vue && root.Vue.defineAsyncComponent) {
+        for (const [name,key] of [["m-ink-layer","layer"],["m-image-markup","markup"]]) {
+            component(name, root.Vue.defineAsyncComponent(() =>
+                moqui.loadScript("/js/WebrootInk.js", null, () => !!moqui.ink).then(() => moqui.ink[key])));
+        }
+        component("m-whiteboard", root.Vue.defineAsyncComponent(() =>
+            moqui.loadScript("/js/WebrootWhiteboard.js", null, () => !!moqui.whiteboard)
+                .then(() => moqui.whiteboard.component)));
+    }
 
     // m-rich-text on a shared document (docs/ui/Qvt-Client.md, Collaborative editing): doc-key names it ("WikiPage:100023"), and the
     // server seeds and renders it, so the editor never sets content of its own. The presence line shows the others (by user)
@@ -8254,7 +8265,26 @@
             }
         }
     });
-    component("m-chatter", recordPanel("chatter", "mChatter"));
+    component("m-record-boards", {
+        name:"mRecordBoards",
+        props:{record:Object},
+        data() {return {boards:[],load:0};},
+        watch:{record:{immediate:true, async handler(record) {
+            const serial=++this.load;
+            this.boards=[];
+            if (!moqui.call || !record.recordEntity || !record.recordId) return;
+            try {
+                const response=await moqui.request(moqui.call.base().replace(/Calls$/,"Chat/recordBoards"),
+                    {method:"GET",params:{recordEntityName:record.recordEntity,recordId:record.recordId}});
+                if (serial===this.load) this.boards=response.json.boards || [];
+            } catch (_) { /* The chatter's other entries remain usable if the room is unavailable. */ }
+        }}},
+        methods:{open(id) {moqui.openLink(moqui.call.appRoot()+"/Boards/Board?wikiPageId="+encodeURIComponent(id));}},
+        template:'<div v-if="boards.length" class="row items-center q-gutter-xs m-record-boards"><q-btn v-for="b in boards" :key="b.wikiPageId" flat dense icon="sym_o_draw" :label="b.title" @click="open(b.wikiPageId)"/></div>'
+    });
+    const chatterPanel=recordPanel("chatter", "mChatter");
+    chatterPanel.template=chatterPanel.template.replace("</div>", '<m-record-boards :record="record"></m-record-boards></div>');
+    component("m-chatter", chatterPanel);
     component("m-record-files", recordPanel("recordFiles", "mRecordFiles"));
 
     // An avatar (design §19): the face image, else the initials of the name on a color of the name, else a person icon. The

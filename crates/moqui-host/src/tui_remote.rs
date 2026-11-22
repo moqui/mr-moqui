@@ -75,7 +75,7 @@ impl HttpLink {
 impl Http {
     /// Requests to `base` (checked by [`base_url`]), with the key in `store` when there is one.
     fn new(base: String, store: Option<PathBuf>) -> Result<Self, Error> {
-        let client = reqwest::blocking::Client::builder()
+        let client = moqui_lib::dev_ca::builder(false)?
             // Session attributes (including one-time values across redirects) belong to this live connection.
             // The jar stays in memory; only the existing device login key is written to the key file.
             .cookie_store(true)
@@ -359,9 +359,10 @@ impl Http {
         let tcp = std::net::TcpStream::connect((host.as_str(), port)).map_err(|err| err.to_string())?;
         tcp.set_read_timeout(Some(PUSH_POLL)).map_err(|err| err.to_string())?;
         let stream: Box<dyn Duplex + Send> = if https {
-            let roots = rustls::RootCertStore {
+            let mut roots = rustls::RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
             };
+            moqui_lib::dev_ca::add_loopback_root(&mut roots, &host).map_err(|e| e.to_string())?;
             let config =
                 rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
                     .with_safe_default_protocol_versions()

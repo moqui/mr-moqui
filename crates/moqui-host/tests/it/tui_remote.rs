@@ -30,8 +30,16 @@ fn the_remote_link_logs_in_with_a_key_and_reads_screens() {
     if !crate::common::own_process() {
         return;
     }
-    let gate = crate::common::start("tui_remote");
-    let server = format!("http://{}", gate.server.address());
+    let gate = crate::common::start_with_properties(
+        "tui_remote",
+        None,
+        &[
+            ("instance@purpose", "dev"),
+            ("webapp-list/webapp[webroot]@https-listen-port", "0"),
+        ],
+    );
+    moqui_lib::env::set_property("MOQUI_INSTALLED_RUNTIME", gate.runtime.to_string_lossy());
+    let server = format!("https://localhost:{}", gate.server.https_address().unwrap().port());
     let key_file = gate.runtime.join("tui-key.toml");
     let none = BTreeMap::new();
 

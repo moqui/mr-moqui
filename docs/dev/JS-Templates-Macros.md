@@ -321,7 +321,7 @@ Theme, menus and the shell:
 | `getCurrentThemeId()` | The theme of the render: the user's, else one of the user's groups', else the default of the screen theme type |
 | `getThemeValues(resourceTypeEnumId, themeId)` | The theme's `ScreenThemeResource` values of a type, in sequence (`STRT_STYLESHEET`, `STRT_SCRIPT`, ...) |
 | `getThemeIconClass(text)` | The icon class of the first `ScreenThemeIcon` pattern the text matches, or null |
-| `getMenuItems(path)` | The subscreen menu items of a screen: `name`, `title`, `url`, `disabled`, `inPath`, `image`, `imageType`, `hasParameters`, `location`, `menuIndex`, `component` |
+| `getMenuItems(path?, includeNonMenu?)` | The permitted subscreens of a screen, in menu order. Pass true to also list non-menu screens. Each item has `hasRequiredParameters` and these properties: `name`, `title`, `url`, `disabled`, `inPath`, `image`, `imageType`, `hasParameters`, `location`, `menuIndex`, `component` |
 | `getMenuData(pathNames)` | The data of the `menuData` transition, or null after an error was sent |
 | `getExtItems(pathNames)` | The declared actions and panels of the screen at the path, or null after an error was sent |
 | `getShellData()` | The data of the `shellData` transition |

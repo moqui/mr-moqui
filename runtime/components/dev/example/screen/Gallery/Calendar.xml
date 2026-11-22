@@ -25,7 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
             const now = new Date()
             const pad = (n) => String(n).padStart(2, '0')
             const current = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`
-            const monthText = month && /^\d{4}-\d{2}$/.test(String(month)) ? String(month) : current
+            const monthText = month && /^\d{4}-(0[1-9]|1[0-2])$/.test(String(month)) ? String(month) : current
             const year = Number(monthText.slice(0, 4)), monthNum = Number(monthText.slice(5, 7))
             const dayCount = new Date(year, monthNum, 0).getDate()
             // kinds map to semantic colors in the component: meeting primary, call info, deadline warning, done positive

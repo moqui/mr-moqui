@@ -51,6 +51,14 @@ fn the_repository_shell_has_its_page_scripts_and_libraries() {
         "/js/WebrootSFrame.js",
         // the bundled Comms screens' libraries: the rich-text editor, and the crypto device's module
         "/libs/tiptap/tiptap.min.js",
+        "/js/WebrootWhiteboard.js",
+        "/js/WebrootInk.js",
+        "/libs/excalidraw/editor.js",
+        "/libs/excalidraw/editor.css",
+        "/libs/excalidraw/converter.js",
+        "/libs/mermaid/mermaid.min.js",
+        "/libs/codemirror/codemirror.min.js",
+        "/libs/drauu/drauu.js",
         "/libs/matrix-sdk-crypto/index.mjs",
     ] {
         let asset = assets.read(path).unwrap_or_else(|| panic!("{path}"));
@@ -61,7 +69,7 @@ fn the_repository_shell_has_its_page_scripts_and_libraries() {
         .expect("the crypto module");
     assert_eq!(wasm.content_type, "application/wasm");
     // a library the bundle does not stage is not served in development either
-    assert!(assets.read("/libs/mermaid/mermaid.min.js").is_none());
+    assert!(assets.read("/libs/chartjs/chart.umd.min.js").is_none());
     let worker = assets.read(SFRAME_WORKER).expect("the worker is staged");
     assert!(worker.worker);
     assert!(String::from_utf8_lossy(&worker.body).contains("importScripts(\"/js/WebrootSFrame.js\")"));

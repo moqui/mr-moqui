@@ -1721,7 +1721,7 @@
                 w("</m-container-dialog>");
             }
             // the exports in one menu: csv, xlsx, the text dialog (its button is the item), and print
-            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + A({ ":href": href, ":disable": disable, target: target || null }) + '><q-item-section><span v-text="' + e(loc(text)) + '"></span></q-item-section></q-item>';
+            const exportItem = (href, text, target) => '<q-item clickable v-close-popup tag="a"' + (target ? "" : " download") + A({ ":href": href, ":disable": disable, target: target || null }) + '><q-item-section><span v-text="' + e(loc(text)) + '"></span></q-item-section></q-item>';
             if (flags.csv || flags.xlsx || flags.text || flags.pdf) {
                 w('<q-btn-dropdown dense flat no-caps icon="download"' + A({ ":label": loc("Export") }) + "><q-list dense>");
                 if (flags.csv) w(exportItem("nv.exportUrl('csv')", "CSV"));

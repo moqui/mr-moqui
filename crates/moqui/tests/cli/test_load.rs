@@ -43,6 +43,7 @@ fn temp(tag: &str) -> TempDir {
 
 fn test_load(runtime: &Path, args: &[&str]) -> (String, String, bool) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_moqui"));
+    command.env("MOQUI_SHARED_RUNTIME", "off");
     command
         .arg("test-load")
         .args(args)

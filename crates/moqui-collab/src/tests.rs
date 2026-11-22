@@ -28,8 +28,12 @@ use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::EntityFacade;
 
 fn setup() -> (ExecutionContext, EntityFacade) {
+    setup_with_conf("")
+}
+
+fn setup_with_conf(conf: &str) -> (ExecutionContext, EntityFacade) {
     let ctx = ExecutionContextFactory::test_context_in(
-        "",
+        conf,
         moqui_core::service::ServicePools::idle(),
         moqui_core::context::framework_dir(),
     );
@@ -693,4 +697,126 @@ fn a_revoked_editor_is_dropped_and_a_lost_edit_is_told() {
     super::leave(&key);
     super::tick();
     let _ = super::take_events();
+}
+
+#[test]
+fn board_versions_keep_the_scene_while_the_search_snapshot_has_its_words() {
+    use serde_json::{json, Value as Json};
+    let _serial = serial();
+    let (ctx, facade) = setup_with_conf(
+        r#"<moqui-conf><board max-document-bytes="20971520" max-images="200" max-image-bytes="10485760" max-update-bytes="1048576"/></moqui-conf>"#,
+    );
+    let _entered = ctx.enter();
+    user(&facade, "artist");
+    login("artist");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[("wikiSpaceId", Value::string("ARTS"))],
+    );
+    let scene = json!({"type":"excalidraw","version":2,"elements":[
+        {"id":"label","type":"text","version":1,"versionNonce":7,"index":"a0","text":"Draft","x":1.5,"y":2}
+    ],"appState":{"viewBackgroundColor":"#ffffff"},"files":{}});
+    let saved = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("ARTS")),
+            ("pageName", Value::string("Sketch")),
+            ("wikiType", Value::string("excalidraw")),
+            ("pageText", Value::string(scene.to_string())),
+        ],
+    );
+    let id = to_plain_string(saved.get("wikiPageId").unwrap());
+    let key = format!("WikiPage:{id}");
+    let document = client(&super::join(&key, "artist", &[]).unwrap());
+    assert_eq!(super::board::search_text(&document), "Draft");
+    // An inline image is refused before it changes the server's document or clocks.
+    // A concurrent valid edit can still be saved after that refusal.
+    let invalid = Doc::new();
+    let files = invalid.get_or_insert_map("files");
+    yrs::Map::insert(
+        &files,
+        &mut invalid.transact_mut(),
+        "inline",
+        yrs::Any::from_json(r#"{"dataURL":"data:image/png;base64,AA=="}"#).unwrap(),
+    );
+    let bad = invalid.transact().encode_state_as_update_v1(&StateVector::default());
+    assert_eq!(super::apply(&key, "artist", &bad).unwrap_err().code, 422);
+    let rejected = super::room_of(&key).unwrap();
+    let rejected = moqui_lib::sync::lock(&rejected);
+    assert_eq!(super::board::render(&rejected.doc), super::board::render(&document));
+    drop(rejected);
+    let before = document.transact().state_vector();
+    let mut edit = scene;
+    edit["elements"][0]["version"] = json!(2);
+    edit["elements"][0]["text"] = json!("Final <caption>");
+    super::board::seed(&document, &edit.to_string()).unwrap();
+    super::apply(&key, "artist", &document.transact().encode_state_as_update_v1(&before)).unwrap();
+    let version = super::save(&key, Some("Meeting notes")).unwrap().unwrap();
+    let text = page_text("ARTS", "Sketch");
+    let saved: Json = serde_json::from_str(&text).unwrap();
+    assert_eq!(saved["elements"][0]["text"], "Final <caption>");
+    assert_eq!(saved["elements"][0]["x"], 1.5);
+    let persisted = super::stored(&key).unwrap().unwrap();
+    assert_eq!(
+        persisted.get("snapshotText").map(to_plain_string).as_deref(),
+        Some("Final <caption>")
+    );
+    let info = call(
+        "org.moqui.resource.WikiServices.get#WikiPageInfoById",
+        &[("wikiPageId", Value::string(&id))],
+    );
+    let location = super::text(&info, "pageLocation");
+    assert!(location.ends_with("Sketch.excalidraw"));
+    let stem = location.strip_suffix(".excalidraw").unwrap();
+    let preview = ctx
+        .factory()
+        .resource()
+        .location_text(&format!("{stem}/_attachments/_board-{version}.svg"))
+        .unwrap();
+    assert!(preview.contains("Final &lt;caption&gt;"), "{preview}");
+    super::leave_as(&key, Some("artist"));
+    super::tick();
+}
+
+#[test]
+fn a_dirty_room_cannot_recreate_a_deleted_document() {
+    let _serial = serial();
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "retired");
+    login("retired");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[
+            ("wikiSpaceId", Value::string("REMOVE")),
+            ("description", Value::string("Removed room")),
+        ],
+    );
+    let page = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("REMOVE")),
+            ("pageName", Value::string("Sketch")),
+            ("pageText", Value::string("Before")),
+        ],
+    );
+    let page_id = to_plain_string(&page["wikiPageId"]);
+    let key = format!("WikiPage:{page_id}");
+    let joined = super::join(&key, "retired", &[]).unwrap();
+    super::apply(&key, "retired", &type_paragraph(&client(&joined), "Unflushed")).unwrap();
+    let room = super::room_of(&key).unwrap();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    facade
+        .find(super::COLLAB_DOCUMENT)
+        .unwrap()
+        .eq("documentKey", Value::string(&key))
+        .delete_all()
+        .unwrap();
+    // The deleting transaction has dropped the document. A worker that had
+    // retained the room before the next tick must not insert its snapshot again.
+    assert!(super::flush(&key, &room).is_err());
+    super::tick();
+    assert!(super::room_of(&key).is_none());
+    assert!(super::stored(&key).unwrap().is_none());
+    assert!(super::take_events().iter().any(|event| matches!(event, super::Event::Revoked {document_key,user_id} if document_key == &key && user_id == "retired")));
 }

@@ -89,6 +89,7 @@
         largest picture and its longest side in pixels; pack-max, the stickers of a server pack, server-packs-max the
         server packs; user-packs-max and user-pack-max, the packs a user makes and the stickers in each; uploads-per-hour,
         the stickers a user adds an hour. -->
+    <board max-image-bytes="10485760" max-images="200" max-update-bytes="1048576" max-document-bytes="20971520"/>
     <chat server-name="localhost" store-key-secret="CHANGEME" to-device-retention-days="30" device-active-days="90"
             device-auto-expire-days="30" spam-purge-days="0" attachment-root="dbresource://chat"
             attachment-max-bytes="26214400" attachment-daily-bytes="1073741824" changes-keep-days="30"
@@ -279,13 +280,13 @@
             pin-min-digits="6"/>
 
     <!-- The PASS authority (mr-pass's deployments, docs in that component): grpc-enabled turns on its gRPC listener on
-        grpc-host (the HTTP listener's address when empty) and grpc-port (4317), plain HTTP/2 only with grpc-insecure true;
+        the webroot grpc-listen-bind and grpc-listen-port (4317), plain HTTP/2 only with grpc-insecure true;
         service is the service that answers a call (Mantle's by default). verification-template is the email template of
         an account's verification, sso-flows the auth flows a client may start, comma separated. A client is a client
         child by its id: sites (its site ids, comma separated), callback (its SSO callback URL) and secret (a secret,
         moqui_conf__pass_authority__client__FORUM__secret for the forum client); the Edge Apply wizard writes the edge
         node's (plans/Edge-Node2.md). -->
-    <pass-authority grpc-enabled="false" grpc-host="" grpc-port="4317" grpc-insecure="false"
+    <pass-authority grpc-enabled="false" grpc-insecure="false"
             service="mantle.pass.PassAuthorityServices.handle#Call" verification-template="" sso-flows=""/>
 
     <!-- Backups of the embedded database (docs/Run-Deploy.md, Backups): scheduled true or false sets the nightly
@@ -467,7 +468,8 @@
             (moqui_conf__webapp_list__webapp__WEBROOT__http_port):
             http-host: this server's public host name, for generated URLs; an empty https-host takes it.
             http-port, https-port: the ports clients see in generated URLs (they differ from the listeners' behind a
-                reverse proxy); http-port is also the port the HTTP listener binds, 8080 when empty.
+                reverse proxy); http-listen-port selects the HTTP listener (empty uses http-port, default 8080; off disables it).
+            grpc-listen-port selects the dedicated gRPC port (off disables it); grpc-listen-bind defaults to http-bind.
             https-listen-port: the port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is
                 8443, "off" none.
             http-bind: the address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local (a dev
@@ -495,7 +497,7 @@
                 whole policy where none is set; empty adds none. The Desktop app's sidecar sets upgrade-insecure-requests,
                 so a page's http:// loads of other hosts go over https there too (SEC-CLI-105). -->
         <webapp name="webroot" http-port="" http-host="" https-port="" https-host="" https-enabled="false"
-                https-listen-port="" http-bind="" allowed-hosts="" http2="true" csp-append=""
+                http-listen-port="" https-listen-port="" grpc-listen-port="4317" grpc-listen-bind="" http-bind="" allowed-hosts="" http2="true" csp-append=""
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"

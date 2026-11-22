@@ -1,11 +1,10 @@
 //! The OTLP/gRPC receiver (plans/archive/Monitoring.md, Ingest): the trace, logs and metrics collector services on
-//! tonic, on `<telemetry><receiver grpc-port>` (4317 by default), opened only when `grpc-enabled="true"`. It shares the
+//! tonic, on the webroot grpc-listen-port (4317 by default), opened only when `grpc-enabled="true"`. It shares the
 //! HTTP receiver's ingest keys, rate limit, concurrency budget, decoder and queue (`receiver.rs`); a refusal is the
 //! matching gRPC status. The services are routes of the host's gRPC listener (`crate::grpc_listen`), which serves TLS
 //! with the HTTPS listener's certificates (ALPN h2), else plain h2c, and admits each connection by the edge guard as
 //! for HTTP. Each service is wrapped in [`KeyFirst`], which checks the request's key before tonic reads its message
 //! (SEC-TLS-17).
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
@@ -41,25 +40,6 @@ pub(crate) fn enabled(factory: &ExecutionContextFactory) -> bool {
 /// [`enabled`] by `setting`.
 pub(crate) fn enabled_by(setting: Setting) -> bool {
     setting("telemetry/receiver", "grpc-enabled") == "true" && setting("telemetry/receiver", "enabled") != "false"
-}
-
-/// Where the receiver listens, when it is on: `grpc-bind` (the HTTP listener's address when empty) and `grpc-port`.
-pub(crate) fn bind_address_by(setting: Setting, http: SocketAddr) -> Option<SocketAddr> {
-    if !enabled_by(setting) {
-        return None;
-    }
-    let port = setting("telemetry/receiver", "grpc-port").parse().unwrap_or(4317_u16);
-    let ip = match setting("telemetry/receiver", "grpc-bind").as_str() {
-        "" => http.ip(),
-        text => text.parse().unwrap_or_else(|_| {
-            tracing::error!(
-                "telemetry receiver grpc-bind {text} is not an IP address; using {}",
-                http.ip()
-            );
-            http.ip()
-        }),
-    };
-    Some(SocketAddr::new(ip, port))
 }
 
 /// `routes` with the collector services, held to the receiver's `body-limit`, each behind [`KeyFirst`].

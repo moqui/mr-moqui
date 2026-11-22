@@ -112,6 +112,7 @@ fn the_manifest_licenses_are_the_reviewed_set() {
         let id = lib["id"].as_str().unwrap();
         let license = lib["license"].as_str().unwrap();
         let reviewed = match id {
+            "excalidraw" => "MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1",
             "fontawesome" => "OFL-1.1 AND MIT",
             "atkinson-next" | "atkinson-mono" => "OFL-1.1",
             "tom-select" | "material-icons" | "material-symbols" | "pdfjs" => "Apache-2.0",

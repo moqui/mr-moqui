@@ -211,6 +211,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('holdOwn', context))</script></actions>
     </service>
 
+    <service verb="set" noun="CallShareMode">
+        <in-parameters><parameter name="callSessionId" required="true"/><parameter name="shareModeEnumId" required="true"/></in-parameters>
+        <out-parameters><parameter name="call" type="Map"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('setShareMode', context))</script></actions>
+    </service>
     <service verb="get" noun="Call">
         <description>A call as the current user sees it: its state, participants and their legs, and the user's own leg
             (myLegId, myLegStatus). Not found for a user who may not see it.</description>
@@ -354,6 +359,8 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="name" required="true"/>
             <parameter name="chatRoomId"/>
+            <parameter name="wikiPageId"/>
+            <parameter name="shareModeEnumId"/>
             <parameter name="policy" default-value="lobby"/>
             <parameter name="video" type="Boolean" default="true"/>
             <parameter name="expiryHours" type="Integer"/>
@@ -488,6 +495,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="signalingNodeId"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="memberScreen" type="Boolean"/><parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
@@ -557,6 +565,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="direct" type="Boolean"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="memberScreen" type="Boolean"/><parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
@@ -738,5 +747,25 @@ along with this software (see the LICENSE.md file). If not, see
             ec.message.clearErrors()
             ec.message.popErrors()
         ]]></script></actions>
+    </service>
+    <service verb="get" noun="GuestBoardIdentity" authenticate="false" allow-remote="false" no-remember-parameters="true">
+        <in-parameters><parameter name="credential" required="true"/></in-parameters>
+        <out-parameters><parameter name="callGuestId"/><parameter name="callSessionId"/><parameter name="callLinkId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('guestBoardIdentity',context))</script></actions>
+    </service>
+    <service verb="find" noun="MeetingBoards">
+        <in-parameters><parameter name="callSessionId" required="true"/></in-parameters>
+        <out-parameters><parameter name="boards" type="List"/><parameter name="shown" type="List"/><parameter name="canCreate" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('meetingBoards',context))</script></actions>
+    </service>
+    <service verb="create" noun="MeetingBoard">
+        <in-parameters><parameter name="callSessionId" required="true"/><parameter name="pageName" required="true"/><parameter name="numberDuplicates" type="Boolean" default="false"/></in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('createMeetingBoard',context))</script></actions>
+    </service>
+    <service verb="set" noun="BoardDrawing">
+        <in-parameters><parameter name="callSessionId" required="true"/><parameter name="wikiPageId" required="true"/><parameter name="memberCanEdit" type="Boolean"/><parameter name="guestCanEdit" type="Boolean"/></in-parameters>
+        <out-parameters><parameter name="memberCanEdit" type="Boolean"/><parameter name="guestCanEdit" type="Boolean"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('boardDrawing',context))</script></actions>
     </service>
 </services>

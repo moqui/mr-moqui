@@ -87,7 +87,7 @@ impl Remote {
                     "no login key for {base}: log in once with moqui tui --server {base}, or set MOQUI_LOGIN_KEY"
                 ))
             })?;
-        let client = reqwest::blocking::Client::builder()
+        let client = moqui_lib::dev_ca::builder(false)?
             .timeout(std::time::Duration::from_secs(60))
             .user_agent(concat!("moqui-devtools/", env!("CARGO_PKG_VERSION")))
             .build()

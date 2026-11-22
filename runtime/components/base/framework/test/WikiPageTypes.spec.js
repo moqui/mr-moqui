@@ -1,5 +1,5 @@
 // A wiki page's type, its file's extension (org.moqui.resource.WikiServices check#WikiPageType; plans/Security-Review.md
-// SEC-SCR-81): md, html or txt for anyone; fancy, html.fancy, md.fancy and markdown.fancy, which the template renderers run
+// SEC-SCR-81): md, html, txt or excalidraw for anyone; fancy, html.fancy, md.fancy and markdown.fancy, which the template renderers run
 // as server script for whoever views the page, only for a holder of DATABASE_ADMIN, and nothing else (a path, an extension
 // of no renderer). A user without it may not write a script page that is there either. An md page's raw HTML is cleaned as
 // an html page is, unless the space allows any HTML; a txt page is kept as written. render#WikiPage chooses the renderer by
@@ -102,9 +102,9 @@ feature("without DATABASE_ADMIN a script page type, and a type outside the list,
     },
     then(r) {
         r.fancy.includes("DATABASE_ADMIN") && r.mdFancy.includes("DATABASE_ADMIN")
-        r.path.includes("md, html or txt") && r.noRenderer.includes("md, html or txt")
+        r.path.includes("md, html, txt or excalidraw") && r.noRenderer.includes("md, html, txt or excalidraw")
         r.space.includes("DATABASE_ADMIN")
-        JSON.stringify(Array.from(r.types)) == '["md","html","txt"]'
+        JSON.stringify(Array.from(r.types)) == '["md","html","txt","excalidraw"]'
         r.attachments.includes("attachments")
         r.files.every((text) => text == null)
     }
@@ -252,5 +252,31 @@ feature("script pages run only from a space's own place in the database; a copy 
         r.cloned.error == "" && spaceRow("SPWTCLN")?.allowScriptPages == null && spaceRow("SPWTSC3").allowScriptPages == "Y"
         r.path.includes('href="/apps/wiki/SPWTYP/Other"')
         r.host.includes('href="Other"') && r.scheme.includes('href="Other"')
+    }
+})
+
+feature("an Excalidraw page versions its previews and enforces its image limits", {
+    when() {
+        const asWriter = (verb, params) => invokeAs("spec.wt.user", verb, params)
+        const scene = JSON.stringify({type:"excalidraw", version:2, elements:[{id:"title", type:"text", text:"Design"}], files:{}})
+        const page = asWriter("update#WikiPage", {wikiSpaceId:"SPWTYP", pageName:"Design", wikiType:"excalidraw", pageText:scene})
+        const upload = (name, mime, text) => asWriter("upload#WikiPageAttachment",
+                {wikiPageId:page.wikiPageId, attachmentFile:uploadedFile(name, text, mime)})
+        const svg = '<svg xmlns="http://www.w3.org/2000/svg"/>'
+        const files = withConf("board@max-images", "1", () => [
+            upload("art.svg", "image/svg+xml", svg), upload("other.svg", "image/svg+xml", svg), upload("art.svg", "image/svg+xml", svg)
+        ])
+        return {page, files, type:upload("art.html", "text/html", "x"),
+            size:withConf("board@max-image-bytes", "10", () => upload("art.svg", "image/svg+xml", svg)),
+            info:asWriter("get#WikiPageInfoById", {wikiPageId:page.wikiPageId}),
+            malformed:asWriter("update#WikiPage", {wikiSpaceId:"SPWTYP", pageName:"Design", pageText:"{}"}).error}
+    },
+    then(r) {
+        r.page.error === "" && r.page.wikiPageId
+        r.files[0].error === "" && r.files[2].error === ""
+        r.files[1].error.includes("image limit") && r.type.error.includes("attachment must") && r.size.error.includes("size limit")
+        r.info.attachmentList.some(a => a.filename === "_board.svg")
+        r.info.attachmentList.some(a => a.filename === "_board-" + encodeURIComponent(r.page.versionName) + ".svg")
+        r.malformed.includes("Excalidraw scene")
     }
 })

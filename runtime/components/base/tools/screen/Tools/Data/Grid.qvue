@@ -419,6 +419,7 @@ module.exports = {
             const vm = this;
             const def = { title: column.title || column.name, field: column.name, headerSort: !column.encrypted, headerFilter: column.encrypted || column.type === 'binary' ? false : 'input',
                 headerMenu: () => vm.headerMenu(column), resizable: true };
+            if (def.headerFilter) def.headerFilterParams = { elementAttributes: { 'aria-label': 'Filter by ' + def.title } };
             if (column.type === 'number') { def.hozAlign = 'right'; def.cssClass = 'm-grid-numeric'; }
             def.formatter = (cell) => vm.formatCell(cell, column);
             if (this.saveEntity && column.editable && !column.encrypted && column.editor) {
@@ -457,8 +458,9 @@ module.exports = {
             input.type = 'datetime-local';
             input.step = '1';
             input.style.width = '100%';
-            const start = local(value);
-            input.value = start;
+            input.value = local(value);
+            // datetime-local normalizes zero seconds out of its value. Compare the native representation on blur.
+            const start = input.value;
             onRendered(() => { input.focus(); });
             const done = () => {
                 if (input.value === start) { cancel(); return; }
@@ -480,7 +482,7 @@ module.exports = {
             if (value == null || value === '') { if (value == null) { element.classList.add('m-grid-null'); return 'null'; } return ''; }
             const l10n = moqui.l10n;
             try {
-                if (column.type === 'date-time' && l10n) return l10n.formatTimestamp(value);
+                if (column.type === 'date-time' && l10n) return l10n.formatTimestamp(typeof value === 'string' && /^-?\d+$/.test(value) ? Number(value) : value);
                 if (column.type === 'date' && l10n && /^\d{4}-\d\d-\d\d/.test(String(value))) return l10n.formatDate(value);
                 if (column.type === 'number' && l10n && typeof value === 'number') return l10n.formatNumber(value);
             } catch (_) { /* shown as it is */ }

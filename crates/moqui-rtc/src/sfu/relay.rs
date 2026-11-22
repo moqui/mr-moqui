@@ -413,6 +413,8 @@ impl Sfu {
             sent: [0; 5],
         });
         if let Some(r) = self.rooms.get_mut(room) {
+            peer.guest_screen_only = r.guest_screen_only;
+            peer.screen_leg.clone_from(&r.screen_leg);
             for other in r.peers.iter().filter_map(|pid| self.peers.get(pid)) {
                 for t in other.tracks_in() {
                     peer.handle_track_open(Arc::downgrade(t));

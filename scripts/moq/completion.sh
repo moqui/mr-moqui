@@ -238,12 +238,12 @@ complete_run_like() {
             ;;
         -l | --location) echo @files; return ;;
         -D) filter_prefix "$cur" $(property_names); return ;;
-        -p | --port | -n | --name) return ;;
+        -p | --port | --http-port | -n | --name) return ;;
         --https-port) filter_prefix "$cur" off; return ;;
     esac
     case $cur in
         -*) filter_prefix "$cur" --lite --debug --release --enterprise --embed --embed-opensearch --embed-chromium -c --conf \
-            -p --port --https-port -D --nobuild --; return ;;
+            -p --port --http-port --https-port -D --nobuild --; return ;;
     esac
     printf '%s\n' "$positional"
 }
@@ -252,6 +252,7 @@ complete_run_like() {
 complete_task() {
     local task=$1 cur=$2 prev=$3 nargs=$4 first_arg=$5
     case $task in
+        trust-dev-cert) filter_prefix "$cur" --system --untrust ;;
         build)
             case $prev in
                 --embed) filter_prefix "$cur" framework production all ;;

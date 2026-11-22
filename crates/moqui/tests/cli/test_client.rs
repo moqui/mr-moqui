@@ -43,6 +43,7 @@ fn temp(tag: &str) -> TempDir {
 
 fn test_client(cwd: &Path, runtime: &Path, args: &[&str]) -> (String, String, bool) {
     let output = Command::new(env!("CARGO_BIN_EXE_moqui"))
+        .env("MOQUI_SHARED_RUNTIME", "off")
         .arg("test-client")
         .args(args)
         .current_dir(cwd)

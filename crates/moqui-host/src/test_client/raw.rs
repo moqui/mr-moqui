@@ -35,12 +35,21 @@ pub(crate) fn connect(
     timeout: Duration,
 ) -> Result<(Box<dyn Duplex>, TcpStream), String> {
     use std::net::ToSocketAddrs as _;
-    let address = (server.host.as_str(), server.port)
+    let addresses = (server.host.as_str(), server.port)
         .to_socket_addrs()
-        .map_err(|err| format!("{}:{}: {err}", server.host, server.port))?
-        .next()
-        .ok_or_else(|| format!("{}:{}: no address", server.host, server.port))?;
-    let tcp = TcpStream::connect_timeout(&address, timeout).map_err(|err| format!("{address}: {err}"))?;
+        .map_err(|err| format!("{}:{}: {err}", server.host, server.port))?;
+    let mut result = Err(format!("{}:{}: no address", server.host, server.port));
+    let start = Instant::now();
+    for address in addresses {
+        let Some(remaining) = timeout.checked_sub(start.elapsed()) else {
+            break;
+        };
+        result = TcpStream::connect_timeout(&address, remaining).map_err(|err| format!("{address}: {err}"));
+        if result.is_ok() {
+            break;
+        }
+    }
+    let tcp = result?;
     tcp.set_read_timeout(Some(timeout)).map_err(|err| err.to_string())?;
     tcp.set_write_timeout(Some(timeout)).map_err(|err| err.to_string())?;
     let kept = tcp.try_clone().map_err(|err| err.to_string())?;
@@ -48,12 +57,13 @@ pub(crate) fn connect(
         return Ok((Box::new(tcp), kept));
     }
     let name = rustls::pki_types::ServerName::try_from(server.host.clone()).map_err(|err| err.to_string())?;
-    let connection = rustls::ClientConnection::new(tls_config(insecure)?, name).map_err(|err| err.to_string())?;
+    let connection =
+        rustls::ClientConnection::new(tls_config(insecure, &server.host)?, name).map_err(|err| err.to_string())?;
     Ok((Box::new(rustls::StreamOwned::new(connection, tcp)), kept))
 }
 
 /// The client TLS settings: the web's root certificates, or with `--insecure` any certificate.
-fn tls_config(insecure: bool) -> Result<Arc<rustls::ClientConfig>, String> {
+fn tls_config(insecure: bool, host: &str) -> Result<Arc<rustls::ClientConfig>, String> {
     let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     let builder = rustls::ClientConfig::builder_with_provider(Arc::clone(&provider))
         .with_safe_default_protocol_versions()
@@ -64,11 +74,11 @@ fn tls_config(insecure: bool) -> Result<Arc<rustls::ClientConfig>, String> {
             .with_custom_certificate_verifier(Arc::new(AnyCertificate(provider)))
             .with_no_client_auth()
     } else {
-        builder
-            .with_root_certificates(rustls::RootCertStore {
-                roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-            })
-            .with_no_client_auth()
+        let mut roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        moqui_lib::dev_ca::add_loopback_root(&mut roots, host).map_err(|e| e.to_string())?;
+        builder.with_root_certificates(roots).with_no_client_auth()
     };
     Ok(Arc::new(config))
 }

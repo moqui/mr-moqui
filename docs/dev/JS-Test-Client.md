@@ -27,7 +27,7 @@ suite, needs `moqui test` and so the `embedded-postgres` build (not Enterprise).
 
 ```sh
 ./moq run                                              # a dev server, in one terminal
-./moq test-client framework                            # the framework's client specs against http://localhost:8080
+./moq test-client framework                            # the framework's client specs against https://localhost:8443
 ./moq test-client framework -p 8081                    # the server at http://localhost:8081
 moqui test-client framework --serve                    # start the server suite.js declares, run, stop it
 moqui test-client webroot --offline                   # client specs with no server and no listening port
@@ -50,12 +50,12 @@ directory, or one spec file (its component is the directory above `test/`). A pa
 files and the binary but no runtime.
 
 The run first sends `GET /` with redirects off. Any HTTP answer means the server is up; a connection error ends the run
-with "nothing answers at http://localhost:8080: start a server (./moq run), or pass --server or --serve". `--wait`
+with "nothing answers at https://localhost:8443: start a server (./moq run), or pass --server or --serve". `--wait`
 polls until it answers, for CI that starts the server in the background. Any failed feature exits 1.
 
 | Option | |
 |---|---|
-| `--server URL` | `http://localhost:8080` by default, or `MOQUI_TEST_SERVER`. Plain `http` goes only to this machine (`localhost`, `127.0.0.0/8`, `::1`) unless `--allow-http`, since a login over it crosses the network in the clear. `./moq test-client -p N` gives `http://localhost:N` |
+| `--server URL` | `https://localhost:8443` by default, or `MOQUI_TEST_SERVER`. Plain `http` goes only to this machine (`localhost`, `127.0.0.0/8`, `::1`) unless `--allow-http`, since a login over it crosses the network in the clear. `./moq test-client -p N` gives `https://localhost:N` |
 | `--ssh host:port` | Where `ssh.connect` goes when a spec names no host and port (`server.ssh`); a port alone is on the server's host. Or `MOQUI_TEST_SSH`. Not with `--serve`, which takes the started server's ([SSH](#ssh)) |
 | `--serve` | Start each suite's declared server as a child process and run against it (below). Not with `--server`, `--wait` or `--offline` |
 | `--offline` | Run only specs with `server: false`. Pages open at `https://moqui.test`. Nothing listens. Not with `--serve` |
@@ -441,6 +441,10 @@ off the harness still evaluates in the page: `evaluate`, `waitFor`, `text()` and
 are input events as before, so a link or a plain form submits as the browser does it; a page's handlers, its Vue client
 and `settle`'s wait for that client are not there. A page opened in a feature closes after it; one opened in
 `setupSpec` lives for the spec.
+
+On the first page of a headless offline spec, `browser.newPage({ captureThisTab: true })` starts Chromium with consent
+for capture of its own tab. Its synthetic microphone and camera remain available. This lets a spec call the real
+`getDisplayMedia` from a button click and check the tab's rendered pixels and audio.
 
 The spec has one Chromium, started on its first `newPage`, with a temporary profile removed after the spec. When no
 Chromium is found (or `--chromium` names a file that is not there), `newPage` skips the feature, or in `setupSpec` the

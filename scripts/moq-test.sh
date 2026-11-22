@@ -162,6 +162,16 @@ check "ambiguous alias gC" 2 'ambiguous: .*get-component' -- "$M" gC
 check "task --help" 0 'Options:' -- "$M" run --help
 check "help partial" 0 './moq component-create' -- "$M" help c-cr
 
+# A trust dry run and removal without an existing issuer touch no store or runtime.
+check "trust supports system removal" 0 'untrust' -- "$M" help trust-dev-cert
+check "missing shared root can be untrusted" 0 'No shared dev CA' -- \
+    env MOQUI_SHARED_RUNTIME="$FIX/no-signer" "$M" trust-dev-cert --untrust
+check "missing shared root stays absent" 1 '' -- test -e "$FIX/no-signer"
+check "a relative shared path cannot install trust" 1 'absolute directory' -- \
+    env MOQUI_SHARED_RUNTIME=relative "$M" trust-dev-cert
+check "trust dry run" 0 'would update dev CA trust' -- \
+    env MOQ_DRY_RUN=1 MOQUI_SHARED_RUNTIME="$FIX/no-signer" "$M" trust-dev-cert --system
+
 # ========== run and load ==========
 
 check "run options" 0 'export moqui_conf__webapp_list__webapp__WEBROOT__http_port=8081' -- dry "$M" run -p 8081 -D moqui_conf__instance__purpose=test lint --screens
@@ -198,8 +208,13 @@ check "build --embed framework adds no feature" 0 'features enterprise -p moqui$
 check "build --embed needs a known level" 1 'takes framework, production or all' -- dry "$M" build --embed most
 check "build two embed levels" 1 'ask for two levels' -- dry "$M" build --embed all --embed production
 check "run --embed" 0 'embed-production -p moqui$' -- dry "$M" run --embed production
-check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
-    env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+if [ "$(uname -s)" = Darwin ]; then
+    check "build --embed-opensearch explains the missing macOS archive" 1 'OpenSearch publishes no macOS tarball' -- \
+        env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+else
+    check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
+        env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+fi
 check "complete build --embed" 0 '^production$' -- "$M" __complete 3 build --embed p
 rm -f "$R/cargo.log"
 check "run --debug builds first" 0 '' -- "$M" run --debug
@@ -212,7 +227,9 @@ rm -f "$R/cargo.log"
 check "run --nobuild with the binary there does not build" 0 '' -- "$M" run --nobuild
 check "no cargo call" 1 '' -- test -f "$R/cargo.log"
 check "--nobuild says which binary it uses" 0 'using target/release/moqui' -- "$M" run --nobuild
-touch "$R/target/debug/moqui"
+# Bash 3.2 compares whole seconds for -nt. Give the mock binaries distinct mtimes.
+touch -t 202001010000 "$R/target/release/moqui"
+touch -t 202001010001 "$R/target/debug/moqui"
 check "--nobuild with no package takes the newer debug binary" 0 'using target/debug/moqui' -- "$M" run --nobuild
 check "--release takes the release binary whatever is newer" 0 'using target/release/moqui' -- "$M" run --nobuild --release
 mkdir -p "$R/crates/stale-check/src"
@@ -667,6 +684,9 @@ check "deny-apps checks each app for its targets" 0 \
     'cargo deny --manifest-path .*/crates/moqui-mobile/Cargo.toml --target aarch64-linux-android check advisories sources$' -- \
     dry "$M" deny-apps
 rm -rf "$R/crates/moqui-mobile" "$R/Cargo.lock"
+check "test-client port selects HTTPS" 0 'moqui test-client --server https://localhost:9443$' -- dry "$M" test-client -p 9443
+check "test-load port selects HTTPS" 0 'moqui test-load --server https://localhost:9443$' -- dry "$M" test-load -p 9443
+check "test-client rejects an off destination" 1 'numeric HTTPS port' -- dry "$M" test-client -p off
 check "test-client is still test-client" 0 'moqui test-client$' -- dry "$M" test-client
 # an app component and a framework component with specs, a served client suite and an offline one
 mkdir -p "$R/runtime/components/addon/app-x/test/client" "$R/runtime/components/base/fw-x/test/client" \
@@ -1047,6 +1067,9 @@ if have zip && have unzip && have tar && have gzip; then
     echo 'gc' >"$R/runtime/opensearch/logs/gc.log"
     echo 'index' >"$R/runtime/opensearch/data/nodes/x"
     echo 'scratch' >"$R/runtime/tmp/x"
+    mkdir -p "$R/runtime/cert/dev-ca/signer"
+    : >"$R/runtime/cert/dev-ca/signer/issuer.key"
+    : >"$R/runtime/cert/dev-ca/ca.crt"
     echo 'secret=1' >"$R/runtime/.env"
     echo '<moqui-conf dev-override=""/>' >"$R/runtime/MoquiConf.xml"
     # tests and the dev set stay out of a production archive; a deeper directory named test stays in
@@ -1087,14 +1110,14 @@ if have zip && have unzip && have tar && have gzip; then
     for kind in $kinds; do
         if [ "$kind" = zip ]; then list=$zip_list top=$today; else list=$tgz_list top=$tgz_today; fi
         for want in "$top/moqui" "$top/MoquiConf.xml" "$top/README.txt" "$top/conf/MoquiDevConf.xml" \
-            "$top/components/base/" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
+            "$top/components/base/" "$top/cert/dev-ca/ca.crt" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
             check "$kind has $want" 0 '' -- grep -qF " $want" <<<"$list"
         done
         check "$kind keeps a deeper test directory" 0 '' -- grep -qF " $top/components/base/fw-z/service/z/test/Keep.xml" <<<"$list"
         check "$kind keeps a deeper plan directory" 0 '' -- grep -qF " $top/components/base/fw-z/screen/plan/Keep.xml" <<<"$list"
         check "$kind keeps a deeper target directory" 0 '' -- grep -qF " $top/components/base/fw-z/src/target/Keep.rs" <<<"$list"
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
-            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/ \
+            cert/dev-ca/signer opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/ \
             fw-z/target/ __pycache__ 'Edit\.xml~'; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done
