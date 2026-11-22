@@ -442,6 +442,10 @@ are input events as before, so a link or a plain form submits as the browser doe
 and `settle`'s wait for that client are not there. A page opened in a feature closes after it; one opened in
 `setupSpec` lives for the spec.
 
+On the first page of a headless offline spec, `browser.newPage({ captureThisTab: true })` starts Chromium with consent
+for capture of its own tab. Its synthetic microphone and camera remain available. This lets a spec call the real
+`getDisplayMedia` from a button click and check the tab's rendered pixels and audio.
+
 The spec has one Chromium, started on its first `newPage`, with a temporary profile removed after the spec. When no
 Chromium is found (or `--chromium` names a file that is not there), `newPage` skips the feature, or in `setupSpec` the
 spec, with the reason; `--fail-on-skip` makes that a failure. A Chromium that is found but does not start fails the

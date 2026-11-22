@@ -244,6 +244,36 @@ function directPath(session, legs, participants) {
 }
 
 /** The call as a client sees it. */
+const stageRules = ec.resource.script('component://framework/service/org/moqui/call/CallStage.js')
+const shareModes = ['CsmAnyone', 'CsmHosts', 'CsmAsk']
+
+function stageInfo(session) {
+  return { stage: stageRules.read(session), stageRevision: Number(session.revision || 1),
+    shareModeEnumId: session.shareModeEnumId || 'CsmAnyone' }
+}
+
+function publishStage(session) {
+  mediaControl(session, Object.assign({ action: 'stage', revision: Number(session.revision) }, stageInfo(session)))
+}
+
+function setShareMode(p) {
+  const me = currentUser()
+  const session = me && p.callSessionId ? lockSession(p.callSessionId) : null
+  const member = session && participantOf(session.callSessionId, me)
+  if (!member || session.statusId === 'CssEnded') return refuse('notFound', 'Call not found')
+  if (member.roleEnumId !== 'CprHost' || member.admissionStatusId !== 'CasAdmitted') return refuse('notAllowed', 'Only a host changes who may present')
+  if (!shareModes.includes(p.shareModeEnumId)) return refuse('invalidMode', 'Unknown share mode')
+  if (p.shareModeEnumId !== (session.shareModeEnumId || 'CsmAnyone')) {
+    stageRules.setMode(session, p.shareModeEnumId)
+    session.set('shareModeEnumId', p.shareModeEnumId)
+    bump(session)
+    session.update()
+    publishStage(session)
+    pushState(session, 'shareMode')
+  }
+  return { call: view(session, me) }
+}
+
 function view(session, forUserId) {
   const participants = participantsOf(session.callSessionId)
   const legs = legsOf(session.callSessionId)
@@ -296,6 +326,7 @@ function view(session, forUserId) {
     .condition('statusId', 'in', OPEN_TRANSFER).limit(1).list())[0]
   return {
     callSessionId: session.callSessionId,
+    ...stageInfo(session),
     kind: KIND_CODES[session.kindEnumId] || null,
     status: STATUS_CODES[session.statusId] || null,
     revision: Number(session.revision || 1),
@@ -366,6 +397,20 @@ function ringEnded(session, action, extra) {
 
 function bump(session) {
   session.set('revision', Number(session.revision || 1) + 1)
+  if (session.stageState) {
+    const stage = stageRules.read(session)
+    let changed = false
+    if (session.statusId === 'CssEnded') changed = stageRules.end(session)
+    else {
+      const ids = new Set([stage.callLegId, ...(stage.requests || []).map(r => r.callLegId || r)].filter(Boolean))
+      if (ids.size) {
+        const live = new Set(Array.from(find(LEG).condition('callSessionId', session.callSessionId)
+          .condition('statusId', 'ClsAnswered').condition('callLegId', 'in', [...ids]).selectField('callLegId').list(), leg => leg.callLegId))
+        for (const id of ids) if (!live.has(id) && stageRules.leave(session, id)) changed = true
+      }
+    }
+    if (changed) publishStage(session)
+  }
 }
 
 /** A CetCall event in the call's room: its start and its end, so the room's timeline shows the call. */
@@ -1341,6 +1386,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
     pushState(session, 'rekey', { callLegId: leg.callLegId })
   }
   return {
+    ...stageInfo(session),
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: node, originNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,
   }
@@ -1364,7 +1410,16 @@ function heartbeat(p) {
 
 function release(p) {
   const conn = find(CONNECTION).condition('callLegId', p.callLegId).condition('generation', Number(p.generation || 0)).one()
-  if (!conn || conn.statusId !== 'CcsActive') return { released: false }
+  if (!conn) return { released: false }
+  const leg = one(LEG, {callLegId:p.callLegId})
+  const session = leg && lockSession(leg.callSessionId)
+  const current = session && one(CONNECTION, {callConnectionId:conn.callConnectionId})
+  if (!current || current.statusId !== 'CcsActive') return { released: false }
+  if (stageRules.leave(session,p.callLegId)) {
+    bump(session)
+    session.update()
+    publishStage(session)
+  }
   conn.setFields({ statusId: 'CcsClosed', closedDate: ec.user.nowTimestamp }, true, null, null)
   conn.update()
   return { released: true }
@@ -1607,6 +1662,7 @@ function createLink(p) {
   if (!me) return refuse('notSignedIn', 'Sign in to make a call link')
   const name = String(p.name || '').trim().slice(0, 100)
   if (!name) return refuse('noName', 'Give the link a name')
+  if (p.shareModeEnumId && !shareModes.includes(p.shareModeEnumId)) return refuse('invalidMode', 'Unknown share mode')
   const chatRoomId = p.chatRoomId || null
   if (chatRoomId) {
     const access = ec.service.sync().name('org.moqui.chat.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
@@ -1617,7 +1673,7 @@ function createLink(p) {
   const link = ec.entity.makeValue(LINK)
   link.setSequencedIdPrimary()
   link.setFields({
-    tokenHash: ec.user.singleUseCodeHash(token), name, ownerUserId: me, chatRoomId,
+    tokenHash: ec.user.singleUseCodeHash(token), name, ownerUserId: me, chatRoomId, shareModeEnumId:p.shareModeEnumId || 'CsmAnyone',
     policyEnumId: p.policy === 'link' ? 'ClpLink' : 'ClpLobby', video: p.video === false || p.video === 'false' ? 'N' : 'Y',
     createdDate: ec.user.nowTimestamp, expiryDate: new Date(nowMs() + hours * 3600000),
     e2eeRequired: truthy(p.requireE2ee) || roomRequiresE2ee(chatRoomId) ? 'Y' : 'N',
@@ -1632,7 +1688,7 @@ function linkView(link) {
   const waiting = active ? find(PARTICIPANT).condition('callSessionId', active.callSessionId)
     .condition('admissionStatusId', 'CasWaiting').count() : 0
   return {
-    callLinkId: link.callLinkId, name: link.name, policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby',
+    callLinkId: link.callLinkId, name: link.name, shareModeEnumId:link.shareModeEnumId || 'CsmAnyone', policy: link.policyEnumId === 'ClpLink' ? 'link' : 'lobby',
     video: link.video !== 'N', chatRoomId: link.chatRoomId || null, createdDate: ms(link.createdDate),
     expiryDate: ms(link.expiryDate), lastUsedDate: ms(link.lastUsedDate), callSessionId: active ? active.callSessionId : null,
     waitingCount: waiting, e2ee: link.e2eeRequired === 'Y',
@@ -1725,7 +1781,7 @@ function linkSession(link) {
   const session = ec.entity.makeValue(SESSION)
   session.setSequencedIdPrimary()
   session.setFields({
-    chatRoomId: link.chatRoomId || null, callLinkId: link.callLinkId, kindEnumId: 'CskMeeting', statusId: 'CssActive', revision: 1,
+    shareModeEnumId:link.shareModeEnumId || 'CsmAnyone', chatRoomId: link.chatRoomId || null, callLinkId: link.callLinkId, kindEnumId: 'CskMeeting', statusId: 'CssActive', revision: 1,
     directionEnumId: 'CdrInternal', video: link.video !== 'N' ? 'Y' : 'N', startedByUserId: link.ownerUserId, startedDate: now,
     answeredDate: now, mediaNodeId: nodes[0].instanceId, mediaGeneration: 1,
     encryptionMode: link.e2eeRequired === 'Y' || roomRequiresE2ee(link.chatRoomId) ? E2EE_MEDIA : PLAIN_MEDIA,
@@ -2794,7 +2850,8 @@ function setPreferences(p) {
 }
 
 const operations = {
-  preferences, setPreferences,
+  changeStage: p => stageRules.change(p, { lockSession, guestOf, mediaControl, bump, refuse, linkOwner }),
+  preferences, setPreferences, setShareMode,
   addPhoneLeg, offerUsers, closeUserLegs, closePhoneLeg, transferLeave, setHeld, setKind, mergeInto, context,
   startFromDevice, deviceCaller, ringStep, closeOffers, closeForward,
   refusedTargets: (p) => ({ refusedUserIdList: refusedTargets(Array.from(p.userIdList || [])) }),

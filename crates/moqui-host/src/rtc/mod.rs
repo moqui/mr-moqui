@@ -132,6 +132,11 @@ pub(crate) enum Command {
         room: String,
         frame: Json,
     },
+    /// The call engine's committed stage, for every local leg and the SFU forwarding gate.
+    Stage {
+        room: String,
+        frame: Json,
+    },
     /// A notice (an `rtc` frame) for every leg of a room now. With `keep`, the room's notice of that kind: each leg
     /// that joins later gets it right after its `joined`, with the room's other kinds, until a notice of the same kind
     /// without `keep` (the recording stopped, captions off) takes it down.

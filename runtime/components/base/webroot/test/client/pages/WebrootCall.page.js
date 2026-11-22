@@ -332,3 +332,62 @@ test("the app's native calls: a held call gone tells the app, one hold at a time
         call.holding = null;
     }
 });
+
+test("the stage owner alone can capture, and takeover ends both share tracks", async () => {
+    reset();
+    const frames = [];
+    const oldSend = call.send, oldPc = call.pc, oldConfirm = moqui.confirmAction;
+    const devices = navigator.mediaDevices;
+    const oldCapture = devices.getDisplayMedia;
+    const live = stream("video","audio");
+    let stopped = 0, options;
+    live.getTracks().forEach(track => {track.stop=() => {stopped++;};});
+    const senders = [];
+    call.pc = {
+        createOffer: async () => ({type:"offer",sdp:"test"}),
+        setLocalDescription: async function(offer) {this.localDescription=offer;},
+        addTransceiver(track) {
+            const sender={track,replaceTrack(next) {this.track=next;return Promise.resolve();}};
+            senders.push(sender);
+            return {sender,mid:String(senders.length),direction:"sendonly"};
+        }
+    };
+    const stage = (leg, revision) => call.handleFrame({rtc:"stage",callSessionId:"ST",revision,shareModeEnumId:"CsmAnyone",
+        stage:{kind:leg?"screen":null,callLegId:leg,requests:[]}});
+    try {
+        Object.assign(state,{current:"ST",legId:"ME",stageRevision:-1,shareMode:"CsmAnyone",sharing:false});
+        call.chain = Promise.resolve();
+        call.send = frame => frames.push(frame);
+        devices.getDisplayMedia = async opts => { options=opts;return live; };
+        stage("OTHER",1);
+        assert.equal(await call.shareScreen("window",false),false);
+        assert.equal(options,undefined);
+        moqui.confirmAction=async () => false;
+        await call.requestPresentation();
+        assert.equal(frames.length,0);
+        moqui.confirmAction=async () => true;
+        await call.requestPresentation();
+        assert.equal(frames[0].action,"take");
+        assert.equal(frames[0].previousLegId,"OTHER");
+        stage("ME",2);
+        assert.equal(await call.shareScreen("window",true),true);
+        assert.equal(options.audio,true);
+        assert.equal(options.systemAudio,"exclude");
+        assert.equal(options.video.frameRate.ideal,30);
+        assert.equal(live.getVideoTracks()[0].contentHint,"motion");
+        assert.deepEqual(frames.filter(f=>f.rtc==="publish").map(f=>f.source),["screen","screenAudio"]);
+        stage("OTHER",1);
+        assert.equal(state.sharing,true,"stale stage ignored");
+        stage(null,3);
+        await new Promise(resolve=>setTimeout(resolve,0));
+        assert.equal(state.sharing,false);
+        assert.equal(stopped,2);
+        assert.ok(senders.every(sender=>sender.track===null));
+        assert.equal(frames.some(f=>f.action==="stop"),false,"server already ended the stage");
+    } finally {
+        call.send=oldSend; call.pc=oldPc; moqui.confirmAction=oldConfirm; devices.getDisplayMedia=oldCapture;
+        call.screenTx=call.screenAudioTx=call.screenStream=null;
+        Object.assign(state,{stage:{kind:null,callLegId:null,requests:[]},stageRevision:-1});
+        reset();
+    }
+});

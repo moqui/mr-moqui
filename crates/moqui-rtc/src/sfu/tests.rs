@@ -293,6 +293,22 @@ fn media_is_taken_out_and_put_in() {
     net.sfu.add_tap(ROOM, Box::new(Collect(seen.clone()))).expect("tapped");
     let key = LegKey::new(ROOM, "A");
     let video_mid = net.client("A").video_mid.expect("a video mid").to_string();
+    assert!(matches!(
+        net.sfu.set_source(&key, 1, &video_mid, Source::Screen),
+        Err(SfuError::StageRequired)
+    ));
+    let before = net.received("B", "A", MediaKind::Video);
+    net.run(secs(1));
+    assert!(
+        net.received("B", "A", MediaKind::Video) <= before + 1,
+        "offstage video reached B"
+    );
+    assert!(!seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(_, _, _, source)| *source == Source::Screen));
+    net.sfu.set_screen_stage(ROOM, Some("A"));
     net.sfu
         .set_source(&key, 1, &video_mid, Source::Screen)
         .expect("declared");
@@ -364,6 +380,7 @@ fn a_screen_share_opens_as_its_own_track_and_ends_on_the_others() {
     net.join("A", false);
     net.join("B", false);
     net.run(secs(1));
+    net.sfu.set_screen_stage(ROOM, Some("A"));
     let mid = net.share_screen("A");
     net.run(secs(2));
     assert!(net.events.iter().any(
@@ -820,5 +837,21 @@ fn the_media_servers_dtls_and_srtp_take_only_strong_suites() {
     assert!(
         matches!(chosen, None | Some((_, None))),
         "weak SRTP profiles only: none is chosen ({chosen:04x?})"
+    );
+}
+
+#[test]
+fn browser_mdns_host_candidates_do_not_drop_renegotiation() {
+    let hostname = "candidate:1 1 udp 2113937151 abc.local 54120 typ host generation 0";
+    let numeric = "candidate:2 1 udp 2113937151 192.0.2.1 54121 typ host";
+    let sdp = format!("v=0\r\na={hostname}\r\na={numeric}\r\n");
+    assert_eq!(super::browser_sdp(&sdp), format!("v=0\r\na={numeric}\r\n"));
+    let mut net = Net::new();
+    net.join("A", false);
+    let key = LegKey::new(ROOM, "A");
+    net.sfu.add_candidate(&key, 1, hostname).unwrap();
+    assert!(
+        net.sfu.add_candidate(&key, 0, hostname).is_err(),
+        "generations remain fenced"
     );
 }

@@ -549,3 +549,9 @@ Two layers (plans/Comms-Messaging.md §8.4, where the results are kept):
   shaped link: the relay path is shaped on each page's link to the media server, the direct path (over the client
   namespace's loopback) once each way. TURN over TLS on 443 is not in it (UDP blocked checks ICE-TCP); a recorded
   cellular trace is later work.
+
+## Presenting in a call
+
+One participant holds the presentation stage. Hosts choose Anyone, Hosts, or Ask in the call controls. In Ask mode a host approves a request. Taking over prompts the new presenter and stops the previous capture. Hosts can stop a presentation, and leaving releases the stage.
+
+The browser's picker controls the tab, window or display that is captured. Tab audio, surface switching and cropping appear where the browser supports them. Viewers can pan, zoom or enter fullscreen. The media server checks stage ownership before forwarding screen video or mixing share audio into a phone leg.

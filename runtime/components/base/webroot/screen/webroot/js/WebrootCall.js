@@ -86,6 +86,7 @@
         speaker: null,
         layout: "grid", // grid, speaker
         sharing: false,
+        stage: {kind:null,callLegId:null,requests:[]}, stageRevision:-1, shareMode:"CsmAnyone", picking:false, capture:null,
         hand: false,
         participantsOpen: false,
         // a guest waiting in the lobby of a call link's meeting: {callSessionId, guestName}, for the dock
@@ -141,6 +142,7 @@
         offScreen: false,
         ringtone: null,
         nextId: 1,
+        captureEpoch: 0,
         // the direct path's connection and its signaling state (connectDirect), and the calls this page keeps on the
         // media server once one moved there (toRelay)
         direct: null,
@@ -261,6 +263,7 @@
         remember(view) {
             if (!view || !view.callSessionId) return;
             state.calls[view.callSessionId] = view;
+            if (view.callSessionId === state.current) call.stageFrame(view);
             // W8: an encrypted call's roster, for its keys
             if (moqui.callKeys && moqui.callKeys.state.active && moqui.callKeys.state.callSessionId === view.callSessionId) moqui.callKeys.onView(view);
             const ringingForMe = view.status !== "ended" && view.myLegStatus === "offered";
@@ -466,7 +469,12 @@
             call.hangUp("ended");
             return call.request("endCall", { callSessionId: id });
         },
-        open(callSessionId) {
+        open(callSessionId, confirmed) {
+            if (!confirmed && state.sharing && state.capture?.ownTab && moqui.confirmAction) {
+                moqui.confirmAction(t("Opening the call on the tab you share can show the call inside itself. Open it?"))
+                    .then(ok => { if (ok) call.open(callSessionId,true); });
+                return;
+            }
             if (call.inAppWindow()) { call.toShell(callSessionId); return; }
             if (state.panel === callSessionId) state.panel = null;
             if (call.vm && call.vm.setUrl) call.vm.setUrl(call.callUrl(callSessionId));
@@ -1071,6 +1079,12 @@
             const video = options.video !== false && !state.settings.cameraOff;
             state.current = callSessionId;
             state.legId = legId;
+            if (state.calls[callSessionId]) call.stageFrame(state.calls[callSessionId]);
+            const devices = root.navigator && root.navigator.mediaDevices;
+            if (devices && devices.setCaptureHandleConfig && !call.captureHandle) {
+                call.captureHandle = root.crypto.randomUUID();
+                try { devices.setCaptureHandleConfig({handle:call.captureHandle,permittedOrigins:[root.location.origin]}); } catch (_) { /* optional */ }
+            }
             state.phase = "joining";
             state.error = "";
             state.audioOnly = !video;
@@ -1179,7 +1193,11 @@
             call.pc = pc;
             call.chain = Promise.resolve();
             call.sentLayers = {};
-            call.screenTx = null;
+            ++call.captureEpoch;
+            if (call.screenStream) call.screenStream.getTracks().forEach(track => track.stop());
+            call.screenStream = call.captureController = null;
+            state.capture = null;
+            call.screenTx = call.screenAudioTx = null;
             state.sharing = false;
             call.pendingOffer = true;
             call.endDirect();
@@ -1246,6 +1264,10 @@
             const pc = call.pc;
             if (!pc || frame.callSessionId !== state.current) return null;
             switch (frame.rtc) {
+                case "ack":
+                case "stage":
+                    call.stageFrame(frame);
+                    break;
                 case "peer":
                     return call.onPeer(frame);
                 case "joined":
@@ -1257,6 +1279,11 @@
                         call.pendingOffer = false;
                         (call.early || []).forEach((early) => call.send(early));
                         call.early = null;
+                        if (call.afterRelayStage?.callSessionId === state.current) {
+                            const prev = call.afterRelayStage.previous;
+                            call.afterRelayStage = null;
+                            call.stageCommand(prev && state.shareMode !== "CsmAsk" ? "take" : "ask", {previousLegId:prev || undefined});
+                        }
                         (call.publish || []).forEach((p) =>
                             call.send({ rtc: "publish", callSessionId: state.current, callLegId: state.legId, mid: p.mid, source: p.source }));
                     }, (err) => (state.error = String(err)));
@@ -1349,7 +1376,10 @@
             const remote = state.remotes[legId];
             const tracks = (call.tracks[legId] || []).filter((tr) => tr.readyState !== "ended");
             if (!remote) return;
-            const isScreen = (tr) => call.trackSources[tr.id] === "screen" || call.trackSources[tr.id] === "screenAudio";
+            const isScreen = (tr) => {
+                const source = call.trackSources[call.trackKey(legId,tr.id)];
+                return source === "screen" || source === "screenAudio";
+            };
             const main = tracks.filter((tr) => !isScreen(tr));
             const screen = tracks.filter(isScreen);
             remote.stream = main.length ? new root.MediaStream(main) : null;
@@ -1379,10 +1409,15 @@
             event.track.onended = () => call.dropTrack(legId, null, event.track);
             call.sortTracks(legId);
         },
+        // str0m removes ":" from its SDP msid tokens. Resolve the browser track id within
+        // its leg, which also distinguishes e.g. leg 10 mid 02 from leg 100 mid 2.
+        trackKey(legId, id) {
+            return id.startsWith(legId) && !id.startsWith(legId + ":") ? legId + ":" + id.slice(legId.length) : id;
+        },
         dropTrack(legId, mid, track) {
             const list = call.tracks[legId];
             if (!list) return;
-            call.tracks[legId] = list.filter((tr) => (track ? tr !== track : tr.id !== legId + ":" + mid));
+            call.tracks[legId] = list.filter((tr) => (track ? tr !== track : call.trackKey(legId,tr.id) !== legId + ":" + mid));
             call.sortTracks(legId);
         },
 
@@ -1393,11 +1428,12 @@
             const legs = Object.keys(state.remotes);
             // the direct path has no layers to choose: the other page sends one
             if (!state.current || !legs.length || call.direct) return;
-            const sharing = legs.find((leg) => state.remotes[leg].screen);
+            const sharing = state.stage.kind === "screen" && state.stage.callLegId;
             const main = sharing || state.speaker || legs[0];
             const layers = {};
             for (const leg of legs) {
-                if (state.layout === "speaker" || call.offScreen) layers[leg] = leg === main ? (call.offScreen ? "mid" : "high") : call.offScreen ? "none" : "low";
+                if (sharing && state.network?.level === "poor") layers[leg] = leg === sharing ? "high" : "none";
+                else if (state.layout === "speaker" || call.offScreen) layers[leg] = leg === main ? (call.offScreen ? "mid" : "high") : call.offScreen ? "none" : "low";
                 else layers[leg] = legs.length <= 2 ? "high" : legs.length <= 4 ? "mid" : "low";
             }
             call.sentLayers = call.sentLayers || {};
@@ -1418,38 +1454,145 @@
         },
 
         // ---- screen share: a track of its own, offered by the page; the SFU answers ----
-        shareScreen() {
-            const media = root.navigator && root.navigator.mediaDevices;
-            if (!call.pc || !media || !media.getDisplayMedia || state.sharing) return Promise.resolve(false);
-            // a screen share is a track the media server names to the others: a direct call moves there first
-            if (call.direct) return call.toRelay("share").then(() => call.shareScreen());
-            return media.getDisplayMedia({ video: { frameRate: 15 }, audio: false }).then((stream) => {
-                const track = stream.getVideoTracks()[0];
-                if (!track || !call.pc) return false;
-                call.screenStream = stream;
-                const reuse = call.screenTx && call.screenTx.currentDirection !== "stopped" ? call.screenTx : null;
-                if (reuse) {
-                    reuse.direction = "sendonly";
-                    reuse.sender.replaceTrack(track);
-                } else {
-                    call.screenTx = call.pc.addTransceiver(track, { direction: "sendonly", streams: [stream] });
-                    if (call.keysOn(state.current)) moqui.callKeys.attachSender(call.screenTx.sender, "video");
-                }
-                track.onended = () => call.stopShare();
-                state.sharing = true;
-                return call.renegotiate("screen");
-            }, () => false);
+        // The engine grants a leg the stage before it can publish. The browser's picker is
+        // opened by a second user gesture after the grant, including an asynchronous host approval.
+        stageCommand(action, options) {
+            if (!call.pc || !state.current) return;
+            call.send(Object.assign({rtc:"stage", action, kind:"screen", id:call.nextId++,
+                callSessionId:state.current, callLegId:state.legId}, options));
         },
-        stopShare() {
-            if (!state.sharing) return Promise.resolve(false);
-            state.sharing = false;
-            if (call.screenStream) call.screenStream.getTracks().forEach((track) => track.stop());
-            call.screenStream = null;
-            if (call.screenTx) {
-                call.screenTx.sender.replaceTrack(null);
-                call.screenTx.direction = "inactive";
+        stageFrame(frame) {
+            if (!frame.stage || !Number.isSafeInteger(frame.revision) || frame.revision < state.stageRevision) return;
+            state.stageRevision = frame.revision;
+            state.stage = frame.stage;
+            state.shareMode = frame.shareModeEnumId || state.shareMode;
+            if (state.stage.callLegId !== state.legId || state.stage.kind !== "screen") {
+                call.captureEpoch++;
+                if (state.sharing || call.screenStream) call.stopShare(false);
             }
-            return call.renegotiate(null);
+            call.chooseLayers();
+        },
+        async requestPresentation() {
+            const prev = state.stage.callLegId;
+            const view = state.calls[state.current];
+            const host = !!view && view.participants.some(p => p.userId && p.userId === call.me && p.role === "host");
+            if (prev && prev !== state.legId && !host && state.shareMode !== "CsmAsk") {
+                const text = t("Take over from {name}?").replace("{name}",call.nameOf(prev));
+                const ok = moqui.confirmAction ? await moqui.confirmAction(text) : root.confirm(text);
+                if (!ok || prev !== state.stage.callLegId) return;
+            }
+            if (call.direct) {
+                call.afterRelayStage = {callSessionId:state.current, previous:prev};
+                await call.toRelay("share");
+                return;
+            }
+            call.stageCommand(prev && (host || state.shareMode !== "CsmAsk") ? "take" : "ask", {previousLegId:prev || undefined});
+        },
+        captureOptions(surface, motion, controller) {
+            const tab = surface === "tab";
+            const opts = {audio:true, video:{frameRate:{ideal:motion ? 30 : 15},displaySurface:tab ? "browser" : "window"},
+                systemAudio:"exclude", surfaceSwitching:"include", selfBrowserSurface:tab ? "include" : "exclude", preferCurrentTab:tab};
+            if (controller) opts.controller = controller;
+            return opts;
+        },
+        async cropCapture(track, target) {
+            if (!target) return "";
+            for (const [factory, method, label] of [[root.RestrictionTarget,"restrictTo","element"],[root.CropTarget,"cropTo","region"]]) {
+                if (!factory || !factory.fromElement || typeof track[method] !== "function") continue;
+                try {
+                    const restriction = await factory.fromElement(target);
+                    await track[method](restriction);
+                    return label;
+                } catch (_) { /* An unselected tab, or Element Capture unavailable: try Region Capture. */ }
+            }
+            return "";
+        },
+        captureTarget() {
+            // The shell's main page survives navigation and is a sibling of overlays and
+            // the call drawer. A camera tile may disappear as soon as the stage changes.
+            const page = root.document.querySelector("#m-canvas .q-page:not([style*='display: none'])");
+            if (page) {
+                page.style.isolation = "isolate";
+                return page;
+            }
+            return root.document.querySelector(".m-whiteboard") || null;
+        },
+        async shareScreen(surface, motion) {
+            const media = root.navigator && root.navigator.mediaDevices, pc = call.pc;
+            if (!pc || !media || !media.getDisplayMedia || state.sharing || state.picking ||
+                state.stage.callLegId !== state.legId || state.stage.kind !== "screen") return false;
+            const epoch = ++call.captureEpoch;
+            let stream;
+            state.picking = true;
+            try {
+                const controller = root.CaptureController ? new root.CaptureController() : null;
+                stream = await media.getDisplayMedia(call.captureOptions(surface, motion, controller));
+                if (controller && surface !== "tab" && controller.setFocusBehavior) {
+                    try { controller.setFocusBehavior("no-focus-change"); } catch (_) { /* optional */ }
+                }
+                const video = stream.getVideoTracks()[0], audio = stream.getAudioTracks()[0];
+                if (!video || pc !== call.pc || epoch !== call.captureEpoch) return false;
+                video.contentHint = motion ? "motion" : "detail";
+                const tab = video.getSettings && video.getSettings().displaySurface === "browser";
+                if (tab && surface === "tab" && call.vm?.currentPathList?.at(-1) === "Call" && !call.guest) {
+                    // Keep the app content on the shared tab and the controls beside it.
+                    call.vm.setUrl(call.appRoot() + "/Home");
+                    if (call.wide()) state.panel = state.current;
+                    if (root.Vue) await root.Vue.nextTick();
+                }
+                const crop = tab && surface === "tab" ? await call.cropCapture(video, call.captureTarget()) : "";
+                if (epoch !== call.captureEpoch) return false;
+                call.screenStream = stream;
+                call.captureController = controller;
+                state.capture = {surface:tab ? "tab" : "window", crop, audio:!!audio,
+                    ownTab:!!crop || !!(tab && video.getCaptureHandle && video.getCaptureHandle()?.handle === call.captureHandle)};
+                for (const [track, name] of [[video,"screenTx"],[audio,"screenAudioTx"]]) {
+                    if (!track) continue;
+                    const reuse = call[name];
+                    if (reuse && reuse.currentDirection !== "stopped") {
+                        await reuse.sender.replaceTrack(track);
+                        reuse.direction = "sendonly";
+                    } else {
+                        call[name] = pc.addTransceiver(track,{direction:"sendonly",streams:[stream]});
+                        if (call.keysOn(state.current)) moqui.callKeys.attachSender(call[name].sender,track.kind);
+                    }
+                    if (epoch !== call.captureEpoch || pc !== call.pc) return false;
+                }
+                const sender = call.screenTx.sender;
+                if (sender.getParameters && sender.setParameters) {
+                    const params = sender.getParameters();
+                    params.degradationPreference = motion ? "maintain-framerate" : "maintain-resolution";
+                    try { await sender.setParameters(params); } catch (_) { /* Browser has no degradation preference. */ }
+                }
+                if (epoch !== call.captureEpoch || pc !== call.pc) return false;
+                video.onended = () => call.stopShare();
+                state.sharing = true;
+                return await call.renegotiate("screen");
+            } catch (error) {
+                if (error.name !== "NotAllowedError" && epoch === call.captureEpoch) state.error = String(error.message || error);
+                if (epoch === call.captureEpoch) call.stopShare();
+                return false;
+            } finally {
+                if (!state.sharing || stream !== call.screenStream) stream?.getTracks().forEach(track => track.stop());
+                state.picking = false;
+            }
+        },
+        async stopShare(release = true) {
+            ++call.captureEpoch;
+            if (release && state.stage.callLegId === state.legId) call.stageCommand("stop");
+            const hadCapture = !!call.screenStream;
+            if (call.screenStream) call.screenStream.getTracks().forEach(track => {track.onended=null;track.stop();});
+            call.screenStream = null;
+            call.captureController = null;
+            state.capture = null;
+            state.sharing = false;
+            for (const tx of [call.screenTx,call.screenAudioTx]) {
+                if (tx && tx.currentDirection !== "stopped") {
+                    tx.direction = "inactive";
+                    await tx.sender.replaceTrack(null).catch(() => {});
+                }
+            }
+            return hadCapture && call.renegotiate(null);
         },
         // the page's own offer (a track added or stopped: a screen share, the camera); its answer comes as an "answer" frame
         renegotiate(source, tx) {
@@ -1462,6 +1605,8 @@
                 return pc.createOffer().then((offer) => pc.setLocalDescription(offer)).then(() => {
                     if (source && sent && sent.mid)
                         call.send({ rtc: "publish", callSessionId: state.current, callLegId: state.legId, mid: sent.mid, source });
+                    if (source === "screen" && call.screenAudioTx?.sender.track && call.screenAudioTx.mid != null)
+                        call.send({rtc:"publish",callSessionId:state.current,callLegId:state.legId,mid:call.screenAudioTx.mid,source:"screenAudio"});
                     call.send({ rtc: "offer", callSessionId: state.current, callLegId: state.legId, sdp: pc.localDescription.sdp, id: call.nextId++ });
                 });
             }).catch((err) => { call.pendingOffer = false; console.warn("call renegotiation failed", err); });
@@ -1524,6 +1669,12 @@
                 call.pc = null;
             }
             call.endDirect();
+            ++call.captureEpoch;
+            state.stage = {kind:null,callLegId:null,requests:[]};
+            state.stageRevision = -1;
+            state.capture = call.captureController = call.afterRelayStage = call.screenAudioTx = null;
+            state.shareMode = "CsmAnyone";
+            state.picking = false;
             call.unwatch();
             if (state.localStream) state.localStream.getTracks().forEach((track) => track.stop());
             if (call.screenStream) call.screenStream.getTracks().forEach((track) => track.stop());
@@ -1768,7 +1919,9 @@
                 const rtt = now.rtt || 0;
                 const weak = now.upLoss > 0.05 || (now.limited && now.outgoing != null && now.outgoing < 200000);
                 const level = loss > 0.1 || rtt > 0.6 || now.jitter > 0.1 || weak ? "poor" : loss > 0.03 || rtt > 0.3 || now.jitter > 0.05 ? "fair" : "good";
+                const changed = state.network?.level !== level;
                 state.network = { level, loss, rtt, jitter: now.jitter, weak };
+                if (changed) call.chooseLayers();
                 const expecting = Object.keys(state.remotes).some((leg) => (call.tracks[leg] || []).length);
                 now.stalled = pc.connectionState === "connected" && expecting && got === 0 ? (was.stalled || 0) + 1 : 0;
                 // at most every 20 s: the other side's own outage stalls this page too, and its restart cannot help
@@ -2031,6 +2184,102 @@
     // ---- components (registered by WebrootVue.qvt.js) ----
     const components = (moqui.qvtComponents = moqui.qvtComponents || {});
 
+    components["m-call-presentation"] = {
+        name:"mCallPresentation",
+        props:{view:Object},
+        data() { return {call:state,motion:false,scale:1,x:0,y:0,forward:false,notice:""}; },
+        computed:{
+            owner() { return this.call.stage.callLegId; },
+            mine() { return !!this.owner && this.owner === this.call.legId; },
+            pending() { return this.call.stage.requests || []; },
+            host() { return !!this.view?.participants?.some(p => p.userId && p.userId === call.me && p.role === "host"); },
+            sharing() { return this.call.stage.kind === "screen"; },
+            stream() { return this.mine ? (this.call.sharing && call.screenStream) : (this.owner && this.call.remotes[this.owner]?.screen); },
+            supported() { return !!root.navigator?.mediaDevices?.getDisplayMedia; },
+            tabControls() { return this.mine && this.call.capture?.surface === "tab" && !!call.captureController?.forwardWheel; },
+            modes() { return [{value:"CsmAnyone",label:t("Anyone")},{value:"CsmHosts",label:t("Hosts only")},{value:"CsmAsk",label:t("Ask a host")}]; },
+            presenter() { return this.mine ? t("You are presenting") : t("{name} is presenting").replace("{name}",call.nameOf(this.owner)); }
+        },
+        watch:{owner() { this.fit(); this.forward=false; this.notice=""; }},
+        methods:{
+            t, name:call.nameOf, command:call.stageCommand, ask:call.requestPresentation, capture:call.shareScreen, stop:call.stopShare,
+            setMode(value) { call.request("setCallShareMode",{callSessionId:this.call.current,shareModeEnumId:value}); },
+            fit() { this.scale=1;this.x=0;this.y=0; },
+            actual() {
+                const video=this.$refs.viewport?.querySelector("video");
+                if (!video?.videoWidth) return;
+                this.x=this.y=0;
+                this.scale=Math.max(video.videoWidth/video.clientWidth,video.videoHeight/video.clientHeight);
+            },
+            zoom(scale) { this.scale=Math.max(0.5,Math.min(8,scale)); },
+            wheel(event) {
+                if (this.mine || this.forward) return;
+                event.preventDefault();
+                this.zoom(this.scale*Math.exp(-event.deltaY/350));
+            },
+            pointer(event, kind) {
+                if (this.mine) return;
+                if (!this.pointers) this.pointers=new Map();
+                const id=event.pointerId, prev=this.pointers.get(id);
+                if (kind === "end") {this.pointers.delete(id);return;}
+                if (kind === "start") event.currentTarget.setPointerCapture(id);
+                if (kind === "move" && !prev) return;
+                const next={x:event.clientX,y:event.clientY};
+                this.pointers.set(id,next);
+                if (kind !== "move") return;
+                const other=[...this.pointers].find(([key])=>key!==id)?.[1];
+                if (other) {
+                    const distance=Math.hypot(prev.x-other.x,prev.y-other.y);
+                    if(distance>1)this.zoom(this.scale*Math.hypot(next.x-other.x,next.y-other.y)/distance);
+                } else {this.x+=next.x-prev.x;this.y+=next.y-prev.y;}
+            },
+            async control(method) {
+                try {
+                    const ctrl=call.captureController;
+                    if(method === "forwardWheel") {
+                        await ctrl.forwardWheel(this.forward?null:this.$refs.viewport.querySelector("video"));
+                        this.forward=!this.forward;
+                    } else await ctrl[method]();
+                } catch(err) {this.notice=String(err.message || err);}
+            },
+            fullscreen() { this.$refs.viewport?.requestFullscreen?.().catch(err=>{this.notice=String(err.message || err);}); }
+        },
+        template:`<section class="m-call-presentation q-mb-xs">
+            <div class="row items-center q-gutter-xs">
+                <span v-if="sharing && (!mine || call.sharing)" role="status" class="text-subtitle2">{{presenter}}</span>
+                <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop')"/>
+                <q-btn v-if="supported && !mine && !pending.includes(call.legId)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode === 'CsmHosts'" :label="t('Share the screen')" @click="ask()"/>
+                <q-btn v-if="pending.includes(call.legId)" flat dense :label="t('Cancel presentation request')" @click="command('lower')"/>
+                <q-btn-dropdown v-if="host" flat dense :label="t('Who can present')"><q-list dense>
+                    <q-item v-for="mode in modes" :key="mode.value" clickable v-close-popup :active="call.shareMode===mode.value" @click="setMode(mode.value)">
+                        <q-item-section>{{mode.label}}</q-item-section></q-item></q-list></q-btn-dropdown>
+            </div>
+            <div v-if="host" v-for="leg in pending" :key="leg" class="row items-center q-gutter-xs">
+                <span>{{name(leg)}} {{t('wants to present')}}</span><q-btn flat dense :label="t('Allow')" @click="command('approve',{targetLegId:leg})"/>
+                <q-btn flat dense :label="t('Decline')" @click="command('lower',{targetLegId:leg})"/></div>
+            <div v-if="sharing && mine && !call.sharing" class="row items-center q-gutter-xs">
+                <q-toggle v-model="motion" :label="motion?t('Optimize for video'):t('Optimize for text')"/>
+                <q-btn unelevated color="primary" :disable="call.picking" :label="t('This tab')" @click="capture('tab',motion)"/>
+                <q-btn outline :disable="call.picking" :label="t('A window or screen')" @click="capture('window',motion)"/>
+            </div>
+            <div v-if="sharing && stream" ref="viewport" class="m-present-viewport relative-position" :class="{'m-present-preview':mine}"
+                :style="{height:mine?'8rem':'min(58dvh,48rem)',maxWidth:mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}"
+                @wheel="wheel" @pointerdown="pointer($event,'start')" @pointermove="pointer($event,'move')" @pointerup="pointer($event,'end')" @pointercancel="pointer($event,'end')">
+                <m-call-video :stream="stream" muted :style="{width:'100%',height:'100%',objectFit:'contain',transform:'translate('+x+'px,'+y+'px) scale('+scale+')'}"/>
+            </div>
+            <div v-if="sharing && stream && !mine" class="row items-center q-gutter-xs">
+                <q-btn flat dense :label="t('Fit')" @click="fit"/><q-btn flat dense label="100%" @click="actual"/>
+                <q-btn flat dense icon="sym_o_fullscreen" :aria-label="t('Full screen stage')" @click="fullscreen"/>
+            </div>
+            <div v-if="tabControls" class="row items-center q-gutter-xs">
+                <q-btn flat dense :label="forward?t('Stop scrolling tab'):t('Scroll captured tab')" @click="control('forwardWheel')"/>
+                <q-btn flat dense icon="sym_o_zoom_in" :aria-label="t('Zoom in captured tab')" @click="control('increaseZoomLevel')"/>
+                <q-btn flat dense icon="sym_o_zoom_out" :aria-label="t('Zoom out captured tab')" @click="control('decreaseZoomLevel')"/>
+            </div>
+            <div v-if="notice" role="status" class="text-caption">{{notice}}</div>
+        </section>`
+    };
+
     // A video element bound to a stream; muted for the user's own.
     components["m-call-video"] = {
         name: "mCallVideo",
@@ -2244,6 +2493,7 @@
         template:
             '<div class="m-call-dock">' +
             '<m-call-audio v-for="r in remotes" :key="\'a\' + r.legId" :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
+            '<m-call-audio v-for="r in remotes" :key="\'s\' + r.legId" :stream="r.screen" :sink-id="call.settings.audioOut"></m-call-audio>' +
             '<q-page-sticky v-if="ringingCalls.length" position="top" :offset="[0, 8]" style="z-index:2600">' +
             '<q-card v-for="view in ringingCalls" :key="view.callSessionId" class="m-call-ring q-mb-sm" style="min-width:300px;max-width:96vw">' +
             '<q-card-section class="row items-center no-wrap q-py-sm">' +
@@ -2379,7 +2629,6 @@
                     list.push({ key: r.legId, legId: r.legId, name: r.name, stream: r.stream && r.stream.getVideoTracks().length && !r.cameraOff ? r.stream : null,
                         muted: r.muted, hand: r.hand, reaction: r.reaction, audioOnly: r.audioOnly && !this.phoneLegs.has(r.legId),
                         phone: this.phoneLegs.has(r.legId), speaking: this.call.speaker === r.legId });
-                    if (r.screen) list.push({ key: r.legId + ":screen", legId: r.legId, name: r.name + " · " + t("screen"), stream: r.screen, screen: true });
                 }
                 return list;
             },
@@ -2619,10 +2868,11 @@
             '<q-btn v-if="elsewhereLive" unelevated color="primary" icon="sym_o_devices" class="m-call-move" :disable="e2eeUnsupported || offline" :label="t(\'Move to this device\')" @click="moveHere"></q-btn>' +
             '<div v-if="elsewhereLive" class="text-caption m-muted">{{t(\'You are in this call on another device. Moving it here keeps it going: the other device leaves once this one is connected.\')}}</div>' +
             '<q-btn v-else unelevated color="primary" icon="sym_o_call" :disable="e2eeUnsupported || offline" :label="known.myLegStatus === \'offered\' ? t(\'Answer\') : t(\'Join\')" @click="join"></q-btn></div></div>' +
+            '<m-call-presentation v-if="inThis && !compactLayout" :view="known"></m-call-presentation>' +
             // in the call, a phone's width or the side panel: the compact call screen
             '<m-call-compact v-if="inThis && compactLayout && known" :view="known" :panel="panel" :label="label"></m-call-compact>' +
             // the call view: the grid, or the speaker (or a screen share) large over a strip of the rest
-            '<div v-if="inThis && !compactLayout && mainTile" style="height:60vh" class="q-mb-sm">' +
+            '<div v-if="inThis && !compactLayout && mainTile && !(call.stage.kind === \'screen\' && call.stage.callLegId !== call.legId)" style="height:60vh" class="q-mb-sm">' +
             '<div v-for="tile in [mainTile]" :key="\'main\' + tile.key" class="fit">' + '<div class="m-call-tile" :style="tileStyle(tile)">' +
             '<m-call-video v-if="tile.stream" :stream="tile.stream" muted :mirror="!!tile.mirror" :style="tile.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white text-subtitle1"><q-icon v-if="tile.phone" name="sym_o_call" class="q-mr-xs"></q-icon>{{tile.name}}</div>' +
@@ -2645,7 +2895,6 @@
             '<div v-if="inThis && !compactLayout" class="row justify-center q-gutter-sm q-mt-sm">' +
             '<q-btn round unelevated :color="call.muted ? \'negative\' : \'grey-8\'" :icon="call.muted ? \'sym_o_mic_off\' : \'sym_o_mic\'" :aria-label="t(\'Mute\')" @click="moquiCall().toggleMute()"><q-tooltip>{{call.muted ? t(\'Unmute\') : t(\'Mute\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="hasVideo ? \'grey-8\' : \'negative\'" :icon="hasVideo ? \'sym_o_videocam\' : \'sym_o_videocam_off\'" class="m-call-video-toggle" :aria-label="hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')" @click="moquiCall().toggleVideo()"><q-tooltip>{{hasVideo ? t(\'Turn off video\') : t(\'Turn on video\')}}</q-tooltip></q-btn>' +
-            '<q-btn v-if="canShare" round unelevated :color="call.sharing ? \'primary\' : \'grey-8\'" :icon="call.sharing ? \'sym_o_stop_screen_share\' : \'sym_o_present_to_all\'" :aria-label="call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')" @click="call.sharing ? moquiCall().stopShare() : moquiCall().shareScreen()"><q-tooltip>{{call.sharing ? t(\'Stop sharing\') : t(\'Share the screen\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated :color="call.hand ? \'warning\' : \'grey-8\'" icon="sym_o_back_hand" :aria-label="t(\'Raise your hand\')" @click="moquiCall().toggleHand()"><q-tooltip>{{call.hand ? t(\'Lower your hand\') : t(\'Raise your hand\')}}</q-tooltip></q-btn>' +
             '<q-btn v-if="call.captions.allowed || call.captions.on" round unelevated :color="call.captions.on ? \'primary\' : \'grey-8\'" icon="sym_o_closed_caption" :aria-label="call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')" @click="moquiCall().toggleCaptions()"><q-tooltip>{{call.captions.on ? t(\'Turn off captions\') : t(\'Turn on captions\')}}</q-tooltip></q-btn>' +
             '<q-btn round unelevated color="grey-8" icon="sym_o_add_reaction" :aria-label="t(\'React\')"><q-menu><div class="row q-pa-xs">' +
@@ -2751,8 +3000,9 @@
             '<q-btn flat no-caps color="negative" :label="t(\'Leave\')" @click="moquiCall().leaveHeld()"></q-btn></template></q-banner>' +
             // the call's E2EE label
             '<div v-show="!call.hostPip" class="row q-mb-xs"><q-chip dense square :icon="label.icon" class="m-call-encryption m-tonal" :class="label.lock ? \'m-call-e2ee text-positive\' : \'\'" :data-e2ee="label.state">{{label.short}}<q-tooltip max-width="320px">{{label.banner}}</q-tooltip></q-chip></div>' +
+            '<m-call-presentation :view="view"></m-call-presentation>' +
             // the stage
-            '<div class="col relative-position m-call-stage" style="min-height:240px;background:#000;border-radius:12px;overflow:hidden">' +
+            '<div v-if="!(call.stage.kind === \'screen\' && call.stage.callLegId !== call.legId)" class="col relative-position m-call-stage" style="min-height:240px;background:#000;border-radius:12px;overflow:hidden">' +
             '<div v-if="main" :key="main.key" class="m-call-tile absolute-full"><m-call-video :stream="main.stream" muted :style="main.screen ? \'width:100%;height:100%;object-fit:contain\' : \'width:100%;height:100%;object-fit:cover\'"></m-call-video>' +
             '<div class="absolute-bottom-left q-pa-sm text-white text-caption">{{main.name}}</div></div>' +
             '<div v-else class="absolute-full column flex-center text-white m-call-voice">' +
@@ -3044,6 +3294,7 @@
             '<div v-if="phase === \'waiting\'" class="row items-center q-gutter-sm"><q-spinner size="20px"></q-spinner><span>{{t(\'Waiting for someone in the call to let you in\')}}</span></div>' +
             '</div></div>' +
             // the call
+            '<m-call-presentation v-if="phase === \'in\'" :view="call.calls[callSessionId]"></m-call-presentation>' +
             '<div v-if="phase === \'in\'">' +
             '<div :style="gridStyle">' +
             '<div style="position:relative;background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
@@ -3051,9 +3302,10 @@
             '<div v-else class="fit flex flex-center text-white">{{name}}</div>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{name}}</div></div>' +
             '<div v-for="r in remotes" :key="r.legId" style="position:relative;background:#000;aspect-ratio:16/9;border-radius:8px;overflow:hidden">' +
-            '<m-call-video v-if="(r.screen || r.stream) && (r.screen || r.stream).getVideoTracks().length && !r.cameraOff" :stream="r.screen || r.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
+            '<m-call-video v-if="r.stream && r.stream.getVideoTracks().length && !r.cameraOff" :stream="r.stream" muted style="width:100%;height:100%;object-fit:cover"></m-call-video>' +
             '<div v-else class="fit flex flex-center text-white">{{r.name}}</div>' +
             '<m-call-audio :stream="r.stream" :sink-id="call.settings.audioOut"></m-call-audio>' +
+            '<m-call-audio :stream="r.screen" :sink-id="call.settings.audioOut"></m-call-audio>' +
             '<div class="absolute-bottom-left q-pa-xs text-white text-caption">{{r.name}}</div></div></div>' +
             '<div class="text-caption m-muted q-mt-xs">{{people.map(p => p.displayName).join(\', \')}}</div>' +
             captionsBox("true", "call.captions.lines") +

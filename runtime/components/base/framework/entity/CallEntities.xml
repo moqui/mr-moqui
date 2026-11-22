@@ -37,6 +37,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="callLinkId" type="id"><description>The call link a meeting was opened by (its guests come in through it)</description></field>
         <field name="kindEnumId" type="id"/>
         <field name="statusId" type="id"/>
+        <field name="shareModeEnumId" type="id" default="CsmAnyone"/>
+        <field name="stageState" type="text-very-long"><description>The live stage managed under the call session lock</description></field>
         <field name="revision" type="number-integer" default="1"/>
         <field name="directionEnumId" type="id"/>
         <field name="video" type="text-indicator"/>
@@ -109,6 +111,10 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration description="Removed" enumId="CerRemoved" enumCode="removed" enumTypeId="CallEndReason" sequenceNum="9"/>
 
             <!-- W8: the values of CallSession.encryptionMode are these enumCodes -->
+            <moqui.basic.EnumerationType description="Call share mode" enumTypeId="CallShareMode"/>
+            <moqui.basic.Enumeration enumId="CsmAnyone" enumTypeId="CallShareMode" description="Anyone can present" sequenceNum="1"/>
+            <moqui.basic.Enumeration enumId="CsmHosts" enumTypeId="CallShareMode" description="Hosts can present" sequenceNum="2"/>
+            <moqui.basic.Enumeration enumId="CsmAsk" enumTypeId="CallShareMode" description="Ask a host to present" sequenceNum="3"/>
             <moqui.basic.EnumerationType description="Call Encryption Mode" enumTypeId="CallEncryptionMode"/>
             <moqui.basic.Enumeration description="DTLS-SRTP to the server (hop by hop)" enumId="CemDtlsSrtp" enumCode="dtls-srtp" enumTypeId="CallEncryptionMode" sequenceNum="1"/>
             <moqui.basic.Enumeration description="End to end (SFrame)" enumId="CemE2eeSframe" enumCode="e2ee-sframe" enumTypeId="CallEncryptionMode" sequenceNum="2"/>
@@ -291,6 +297,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="name" type="text-medium"/>
         <field name="ownerUserId" type="id"/>
         <field name="chatRoomId" type="id"/>
+        <field name="shareModeEnumId" type="id" default="CsmAnyone"/>
         <field name="policyEnumId" type="id"/>
         <field name="video" type="text-indicator"/>
         <field name="createdDate" type="date-time"/>

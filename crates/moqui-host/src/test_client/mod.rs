@@ -1608,6 +1608,10 @@ impl ClientHost {
     /// answer says to skip.
     fn new_page(&self, args: &Value) -> Result<Value, String> {
         let mut held = lock(&self.browser);
+        let capture_this_tab = field(args, "captureThisTab").as_bool() == Some(true);
+        if capture_this_tab && (held.is_some() || !*lock(&self.offline) || self.browser_config.headed) {
+            return Err("captureThisTab needs the first page of a headless offline spec".to_string());
+        }
         if held.is_none() {
             if let Err(reason) = crate::chromium::find_test_browser(
                 self.browser_config.runtime.as_deref(),
@@ -1615,7 +1619,7 @@ impl ClientHost {
             ) {
                 return Ok(json!({ "skipped": reason }));
             }
-            let mut launched = browser::SpecBrowser::launch(&self.browser_config)?;
+            let mut launched = browser::SpecBrowser::launch(&self.browser_config, capture_this_tab)?;
             if self.video {
                 launched.record_to(Arc::clone(&self.recording));
             }
@@ -1643,7 +1647,7 @@ impl ClientHost {
             ) {
                 return Ok(json!({ "skipped": reason }));
             }
-            let mut launched = browser::SpecBrowser::launch(&self.browser_config)?;
+            let mut launched = browser::SpecBrowser::launch(&self.browser_config, false)?;
             if self.video {
                 launched.record_to(Arc::clone(&self.recording));
             }

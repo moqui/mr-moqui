@@ -211,6 +211,11 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('holdOwn', context))</script></actions>
     </service>
 
+    <service verb="set" noun="CallShareMode">
+        <in-parameters><parameter name="callSessionId" required="true"/><parameter name="shareModeEnumId" required="true"/></in-parameters>
+        <out-parameters><parameter name="call" type="Map"/><parameter name="reasonCode"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/call/Calls.js').execute('setShareMode', context))</script></actions>
+    </service>
     <service verb="get" noun="Call">
         <description>A call as the current user sees it: its state, participants and their legs, and the user's own leg
             (myLegId, myLegStatus). Not found for a user who may not see it.</description>
@@ -354,6 +359,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="name" required="true"/>
             <parameter name="chatRoomId"/>
+            <parameter name="shareModeEnumId"/>
             <parameter name="policy" default-value="lobby"/>
             <parameter name="video" type="Boolean" default="true"/>
             <parameter name="expiryHours" type="Integer"/>
@@ -488,6 +494,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="signalingNodeId"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>
@@ -557,6 +564,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="direct" type="Boolean"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>

@@ -128,6 +128,10 @@ impl Source {
         })
     }
 
+    pub fn is_screen(self) -> bool {
+        matches!(self, Self::Screen | Self::ScreenAudio)
+    }
+
     fn default_for(kind: MediaKind) -> Self {
         match kind {
             MediaKind::Audio => Source::Microphone,
@@ -313,6 +317,7 @@ pub enum SfuError {
     StaleGeneration,
     UnknownLeg,
     UnknownRoom,
+    StageRequired,
     BadSdp(String),
     Rtc(String),
 }
@@ -326,6 +331,7 @@ impl SfuError {
             SfuError::StaleGeneration => "staleGeneration",
             SfuError::UnknownLeg => "unknownLeg",
             SfuError::UnknownRoom => "unknownRoom",
+            SfuError::StageRequired => "stageRequired",
             SfuError::BadSdp(_) => "badSdp",
             SfuError::Rtc(_) => "rtcError",
         }
@@ -354,6 +360,7 @@ pub type TapId = u64;
 
 #[derive(Default)]
 struct Room {
+    screen_leg: Option<Arc<str>>,
     peers: Vec<PeerId>,
     injected: Vec<Injected>,
     taps: Vec<(TapId, Box<dyn MediaTap>)>,
@@ -548,7 +555,7 @@ impl Sfu {
         if replacing.is_none() && in_room >= self.config.max_legs_per_room {
             return Err(SfuError::RoomFull);
         }
-        let offer = SdpOffer::from_sdp_string(offer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        let offer = SdpOffer::from_sdp_string(&browser_sdp(offer)).map_err(|e| SfuError::BadSdp(e.to_string()))?;
 
         let mut rtc = Rtc::builder()
             .set_ice_lite(true)
@@ -583,6 +590,7 @@ impl Sfu {
         self.next_id += 1;
         let mut peer = Peer::new(id, key.clone(), generation, rtc, now);
         let room = self.rooms.entry(key.room.clone()).or_default();
+        peer.screen_leg.clone_from(&room.screen_leg);
         for other in room.peers.iter().filter_map(|pid| self.peers.get(pid)) {
             for t in other.tracks_in() {
                 peer.handle_track_open(Arc::downgrade(t));
@@ -608,7 +616,7 @@ impl Sfu {
         offer_id: u64,
         answer: &str,
     ) -> Result<(), SfuError> {
-        let answer = SdpAnswer::from_sdp_string(answer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        let answer = SdpAnswer::from_sdp_string(&browser_sdp(answer)).map_err(|e| SfuError::BadSdp(e.to_string()))?;
         let id = self.peer_id(key, generation)?;
         self.pending.insert(id);
         let peer = self.peers.get_mut(&id).ok_or(SfuError::UnknownLeg)?;
@@ -625,7 +633,7 @@ impl Sfu {
         generation: u64,
         offer: &str,
     ) -> Result<String, SfuError> {
-        let offer = SdpOffer::from_sdp_string(offer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        let offer = SdpOffer::from_sdp_string(&browser_sdp(offer)).map_err(|e| SfuError::BadSdp(e.to_string()))?;
         let id = self.peer_id(key, generation)?;
         self.pending.insert(id);
         let peer = self.peers.get_mut(&id).ok_or(SfuError::UnknownLeg)?;
@@ -637,6 +645,10 @@ impl Sfu {
     /// A trickled remote candidate (`candidate:...`, as in the browser's `RTCIceCandidate.candidate`).
     pub fn add_candidate(&mut self, key: &LegKey, generation: u64, candidate: &str) -> Result<(), SfuError> {
         let text = candidate.strip_prefix("a=").unwrap_or(candidate);
+        if mdns_candidate(text) {
+            self.peer_id(key, generation)?;
+            return Ok(());
+        }
         let c = Candidate::from_sdp_string(text).map_err(|e| SfuError::BadSdp(e.to_string()))?;
         let id = self.peer_id(key, generation)?;
         self.pending.insert(id);
@@ -644,11 +656,29 @@ impl Sfu {
         Ok(())
     }
 
+    /// The only leg whose screen and captured audio may reach the room's subscribers,
+    /// phone mix, and recording taps. The call engine grants this after arbitration.
+    pub fn set_screen_stage(&mut self, room: &str, leg: Option<&str>) {
+        if let Some(room) = self.rooms.get_mut(room) {
+            room.screen_leg = leg.map(Arc::from);
+            for id in &room.peers {
+                if let Some(peer) = self.peers.get_mut(id) {
+                    peer.screen_leg.clone_from(&room.screen_leg);
+                }
+            }
+        }
+    }
+
     /// What a leg's track at `mid` carries (camera, screen ...), from its `publish` frame.
     pub fn set_source(&mut self, key: &LegKey, generation: u64, mid: &str, source: Source) -> Result<(), SfuError> {
         let id = self.peer_id(key, generation)?;
         self.pending.insert(id);
+        // Remember the declaration even on refusal. Otherwise that MID could continue
+        // to be forwarded under its earlier default camera or microphone label.
         self.peer_mut(key, generation)?.set_source(mid, source);
+        if source.is_screen() && self.rooms.get(&key.room).and_then(|r| r.screen_leg.as_ref()) != Some(&key.leg) {
+            return Err(SfuError::StageRequired);
+        }
         Ok(())
     }
 
@@ -1090,6 +1120,9 @@ impl Sfu {
             return;
         };
         if let Propagated::MediaData(_, ref data, ref track) = item {
+            if track.source().is_screen() && room.screen_leg.as_ref() != Some(&track.leg) {
+                return;
+            }
             if !room.taps.is_empty() {
                 let codec = data.params.spec().codec;
                 let rid = data.rid.as_ref().map(|r| r.to_string());
@@ -1130,6 +1163,34 @@ impl Sfu {
             self.pending.insert(pid);
         }
     }
+}
+
+/// Browser host candidates can carry an mDNS name to conceal the local IP. An ICE-lite
+/// server cannot resolve it across the network; the browser checks our public candidate
+/// itself. Keep the numeric, server-reflexive and relay candidates.
+fn mdns_candidate(line: &str) -> bool {
+    let Some(candidate) = line.strip_prefix("candidate:") else {
+        return false;
+    };
+    let mut fields = candidate.split_ascii_whitespace();
+    fields
+        .nth(4)
+        .is_some_and(|addr| addr.trim_end_matches('.').to_ascii_lowercase().ends_with(".local"))
+        && fields.nth(1) == Some("typ")
+        && fields.next() == Some("host")
+}
+
+fn browser_sdp(sdp: &str) -> std::borrow::Cow<'_, str> {
+    if !sdp
+        .split_inclusive('\n')
+        .any(|line| mdns_candidate(line.strip_prefix("a=").unwrap_or_default()))
+    {
+        return sdp.into();
+    }
+    sdp.split_inclusive('\n')
+        .filter(|line| !mdns_candidate(line.strip_prefix("a=").unwrap_or_default()))
+        .collect::<String>()
+        .into()
 }
 
 fn codec_name(codec: Codec) -> &'static str {

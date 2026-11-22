@@ -771,12 +771,18 @@ fn fresh_file(dir: &Path, stem: &str, ext: &str) -> PathBuf {
 /// The spec browser's switches beyond the shared ones: Chromium's fake camera and microphone, granted without a prompt,
 /// and media that plays without a gesture, so a call spec has media (plans/archive/Comms-Framework.md §7.3); with `--insecure`,
 /// certificate errors ignored.
-fn browser_args(insecure: bool) -> Vec<String> {
+fn browser_args(insecure: bool, capture_this_tab: bool) -> Vec<String> {
     let mut args = vec![
         "--use-fake-device-for-media-stream".to_string(),
-        "--use-fake-ui-for-media-stream".to_string(),
         "--autoplay-policy=no-user-gesture-required".to_string(),
     ];
+    if capture_this_tab {
+        // The fake UI also fakes a monitor for getDisplayMedia. Grant this tab and the synthetic devices separately.
+        args.push("--auto-accept-this-tab-capture".to_string());
+        args.push("--auto-accept-camera-and-microphone-capture".to_string());
+    } else {
+        args.push("--use-fake-ui-for-media-stream".to_string());
+    }
     if insecure {
         args.push("--ignore-certificate-errors".to_string());
     }
@@ -785,7 +791,7 @@ fn browser_args(insecure: bool) -> Vec<String> {
 
 impl SpecBrowser {
     /// Start the spec's browser.
-    pub(crate) fn launch(config: &BrowserConfig) -> Result<SpecBrowser, String> {
+    pub(crate) fn launch(config: &BrowserConfig, capture_this_tab: bool) -> Result<SpecBrowser, String> {
         let binary =
             crate::chromium::find_test_browser(config.runtime.as_deref(), config.chromium.as_deref().unwrap_or(""))?;
         let launch = cdp::Launch {
@@ -793,7 +799,7 @@ impl SpecBrowser {
             headed: config.headed,
             window: VIEWPORT,
             profile_prefix: "moqui-test-chromium".to_string(),
-            extra_args: browser_args(config.insecure),
+            extra_args: browser_args(config.insecure, capture_this_tab),
         };
         let driver = cdp::Browser::start(&launch)?;
         Ok(SpecBrowser {

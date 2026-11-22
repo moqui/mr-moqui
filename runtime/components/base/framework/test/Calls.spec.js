@@ -28,7 +28,7 @@ function as(userId, name, parameters) {
     let thrown = ""
     try {
         // as the Calls screens' transitions call them: the services check the signed-in user's part in each call
-        out = sys(() => ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -173,6 +173,40 @@ feature("binding a socket claims the next generation and fences the older one", 
         stale.released == false
         conns[0].statusId == "CcsReplaced"
         conns[1].statusId == "CcsActive"
+    }
+})
+
+feature("the session arbitrates presentation grants, takeover, host stop and approval", {
+    when() {
+        const binding = user => {
+            const callLegId = as(user, "get#Call", {callSessionId:direct}).call.myLegId
+            return {callLegId, generation:as(user, "bind#Connection", {callSessionId:direct, callLegId}).generation}
+        }
+        const host = binding(A), member = binding(B)
+        const act = (who, leg, action, extra = {}) => as(who, "org.moqui.call.StageServices.change#CallStage",
+                {callSessionId:direct, ...leg, action, ...extra})
+        const setMode = shareModeEnumId => as(A, "set#CallShareMode", {callSessionId:direct, shareModeEnumId})
+        const first = act(A, host, "ask")
+        const confirm = act(B, member, "ask")
+        const takeover = act(B, member, "take", {previousLegId:host.callLegId})
+        const impostor = act(A, member, "stop")
+        const stop = act(A, host, "stop")
+        const hosts = setMode("CsmHosts")
+        const barred = act(B, member, "ask")
+        setMode("CsmAsk")
+        const queued = act(B, member, "ask")
+        const approved = act(A, host, "approve", {targetLegId:member.callLegId})
+        const view = as(A, "get#Call", {callSessionId:direct}).call
+        act(A, host, "stop")
+        setMode("CsmAnyone")
+        return {first, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, host, member}
+    },
+    then(r) {
+        r.first.stage.callLegId === r.host.callLegId && r.confirm.reasonCode === "takeoverRequired"
+        r.takeover.stage.callLegId === r.member.callLegId && r.impostor.reasonCode === "notAllowed"
+        r.stop.stage.kind == null && r.hosts.call.shareModeEnumId === "CsmHosts" && r.barred.reasonCode === "notAllowed"
+        r.queued.stage.kind == null && r.queued.stage.requests.includes(r.member.callLegId)
+        r.approved.stage.callLegId === r.member.callLegId && r.view.stage.callLegId === r.member.callLegId
     }
 })
 
@@ -495,7 +529,7 @@ function anon(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call() || {}
+        out = ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name).parameters(parameters || {}).call() || {}
     } catch (err) {
         thrown = String(err.message || err)
     }
@@ -508,7 +542,7 @@ function internal(name, parameters) {
     let out = {}
     let thrown = ""
     try {
-        out = sys(() => ec.service.sync().name("org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
+        out = sys(() => ec.service.sync().name(name.includes(".") ? name : "org.moqui.call.CallServices." + name).parameters(parameters || {}).call()) || {}
     } catch (err) {
         thrown = String(err.message || err)
     }

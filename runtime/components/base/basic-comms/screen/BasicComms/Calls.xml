@@ -141,9 +141,14 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- a call link: made (its path, with the token, in this answer only), and its meeting opened by its owner -->
+    <transition name="setCallShareMode" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.call.CallServices.set#CallShareMode')
+            .parameters({callSessionId,shareModeEnumId}).requireNewTransaction(true).disableAuthz().call() || {}
+        ec.web.sendJsonResponse({call:out.call || null,reasonCode:out.reasonCode || null,errors:ec.message.hasError() ? ec.message.errorsString : null})
+    ]]></script></actions><default-response type="none"/></transition>
     <transition name="createCallLink">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.call.CallServices.create#CallLink').parameters({name: name || '', chatRoomId: chatRoomId || null, policy: policy === 'link' ? 'link' : 'lobby',
+            const out = ec.service.sync().name('org.moqui.call.CallServices.create#CallLink').parameters({name: name || '', chatRoomId: chatRoomId || null, policy: policy === 'link' ? 'link' : 'lobby', shareModeEnumId:shareModeEnumId || null,
                 video: String(video) !== 'false', expiryHours: expiryHours ? Number(expiryHours) : null,
                 requireE2ee: typeof requireE2ee !== 'undefined' && String(requireE2ee) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}
             const errors = ec.message.hasError() ? ec.message.errorsString : null

@@ -142,6 +142,7 @@ struct Driver<'a> {
     media: Media,
     /// The frames each leg gets when it joins: the rooms' recording and captions notices.
     notices: RoomNotices,
+    stages: HashMap<String, Json>,
     /// The call's media node of each room this node is a leg node of (W7).
     origins: HashMap<String, String>,
     /// The most legs of one paired node's calls at once (`edge@call-legs-per-pairing`, E16); 0 for no cap.
@@ -234,6 +235,7 @@ pub(super) fn run(
         revoke,
         media: Media::default(),
         notices: RoomNotices::default(),
+        stages: HashMap::new(),
         origins: HashMap::new(),
         pairing_legs: pairing_legs(),
     };
@@ -381,6 +383,7 @@ impl Driver<'_> {
                 self.sfu.close_room(Instant::now(), &room);
                 self.media.room_closed(&room);
                 self.notices.room_closed(&room);
+                self.stages.remove(&room);
                 self.origins.remove(&room);
                 let legs: Vec<LegKey> = self
                     .routes
@@ -402,6 +405,7 @@ impl Driver<'_> {
                 }
             }
             Command::Media(command) => self.media.command(&mut self.sfu, Instant::now(), command),
+            Command::Stage { room, frame } => self.stage(&room, &frame),
             Command::ToRoom { room, frame } => self.spread(&room, None, frame, None, None),
             Command::RoomNotice {
                 room,
@@ -573,10 +577,36 @@ impl Driver<'_> {
         // a leg that joins gets the room's notices (recording, captions) right after its answer, before any media:
         // late joiners and guests too
         if joined {
+            if let Some(stage) = frame.get("boundStage") {
+                self.stage(room, stage);
+            }
+            if let Some(stage) = self.stages.get(room) {
+                // Joining can create or replace the SFU room after the grant arrived.
+                self.sfu.set_screen_stage(room, screen_leg(stage));
+                self.to_leg(&key, generation, stage.clone());
+            }
             for notice in self.notices.of(room) {
                 self.to_leg(&key, generation, notice);
             }
         }
+    }
+
+    fn stage(&mut self, room: &str, frame: &Json) {
+        let Some(revision) = frame["revision"].as_u64().filter(|n| *n > 0) else {
+            return;
+        };
+        if self
+            .stages
+            .get(room)
+            .and_then(|f| f["revision"].as_u64())
+            .is_some_and(|current| current >= revision)
+        {
+            return;
+        }
+        self.sfu.set_screen_stage(room, screen_leg(frame));
+        self.stages.insert(room.to_string(), frame.clone());
+        // The service sends to each participating media node after commit.
+        self.to_room(room, None, frame.clone());
     }
 
     /// The generation of a leg here: its SFU peer's, or a direct leg's route's.
@@ -1030,6 +1060,13 @@ pub(super) fn peer_frame(leg: &str, frame: &Json) -> Option<Json> {
 /// The call id of a room: a paired node's room is keyed by node and call (E12).
 fn call_of(room: &str) -> &str {
     moqui_core::edge::media::split_room(room).1
+}
+
+fn screen_leg(frame: &Json) -> Option<&str> {
+    let stage = frame.get("stage")?;
+    (stage["kind"] == "screen")
+        .then(|| stage["callLegId"].as_str())
+        .flatten()
 }
 
 fn with_id(mut frame: Json, id: &Json) -> Json {

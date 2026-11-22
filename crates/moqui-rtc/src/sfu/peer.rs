@@ -210,6 +210,7 @@ pub(super) struct Peer {
     next_offer_id: u64,
     tracks_in: Vec<TrackInEntry>,
     tracks_out: Vec<TrackOut>,
+    pub(super) screen_leg: Option<Arc<str>>,
     sources: HashMap<Mid, Source>,
     wanted: HashMap<Arc<str>, Option<Layer>>,
     estimate_kbps: Option<u64>,
@@ -234,6 +235,7 @@ impl Peer {
             next_offer_id: 1,
             tracks_in: Vec::new(),
             tracks_out: Vec::new(),
+            screen_leg: None,
             sources: HashMap::new(),
             wanted: HashMap::new(),
             estimate_kbps: None,
@@ -309,10 +311,18 @@ impl Peer {
             }
             None => (
                 self.key.leg.clone(),
-                self.sources
-                    .get(&mid)
-                    .copied()
-                    .unwrap_or_else(|| Source::default_for(kind)),
+                self.sources.get(&mid).copied().unwrap_or_else(|| {
+                    // A second track of a kind is a presentation even while the
+                    // publisher's explicit MID declaration is still in flight.
+                    if self.tracks_in.iter().any(|t| t.track.kind == kind) {
+                        match kind {
+                            MediaKind::Video => Source::Screen,
+                            MediaKind::Audio => Source::ScreenAudio,
+                        }
+                    } else {
+                        Source::default_for(kind)
+                    }
+                }),
             ),
         };
         let track = Arc::new(TrackIn::new(self.id, leg, mid, kind, source, simulcast));
@@ -556,15 +566,23 @@ impl Peer {
         }
         let estimate = self.estimate_kbps.unwrap_or(config.initial_kbps);
         let mut audio = 0u64;
-        let mut video = 0u64;
-        for o in &self.tracks_out {
-            match o.track_in.upgrade().map(|t| t.kind) {
-                Some(MediaKind::Audio) => audio += 1,
-                Some(MediaKind::Video) => video += 1,
-                None => {}
+        let mut cameras = 0u64;
+        let mut screen_rate = 0;
+        for track in self.tracks_out.iter().filter_map(|o| o.track_in.upgrade()) {
+            match track.kind {
+                MediaKind::Audio => audio += 1,
+                MediaKind::Video if track.source() == Source::Screen => {
+                    if self.screen_leg.as_ref() == Some(&track.leg) {
+                        if let Some(layer) = self.wanted.get(&track.leg).copied().unwrap_or(Some(Layer::High)) {
+                            screen_rate = config.layer_kbps[layer.index()];
+                        }
+                    }
+                }
+                MediaKind::Video => cameras += 1,
             }
         }
-        let share = estimate.saturating_sub(audio * config.audio_kbps) / video.max(1);
+        let video_budget = estimate.saturating_sub(audio * config.audio_kbps);
+        let camera_share = video_budget.saturating_sub(screen_rate) / cameras.max(1);
         let audio_only = estimate < config.audio_only_below_kbps;
         let mut desired = audio * config.audio_kbps;
         for o in &mut self.tracks_out {
@@ -573,8 +591,12 @@ impl Peer {
                 continue;
             }
             let wanted = self.wanted.get(&t.leg).copied().unwrap_or(Some(Layer::High));
+            let screen = t.source() == Source::Screen;
+            let share = if screen { video_budget } else { camera_share };
             let target = match wanted {
                 None => None,
+                Some(_) if screen && self.screen_leg.as_ref() != Some(&t.leg) => None,
+                Some(_) if !screen && screen_rate > 0 && camera_share < config.layer_kbps[0] => None,
                 Some(_) if audio_only => None,
                 Some(w) if o.simulcast() => {
                     let fits = Layer::ALL

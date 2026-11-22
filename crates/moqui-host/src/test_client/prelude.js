@@ -710,7 +710,7 @@
                 colorScheme: o.colorScheme == null ? null : String(o.colorScheme),
                 reducedMotion: o.reducedMotion == null ? null : String(o.reducedMotion),
                 javaScript: o.javaScript == null ? null : !!o.javaScript, timeout: timeoutOf(o),
-                problems: o.problems || null, feature: __moquiTest.caseName || null });
+                captureThisTab: !!o.captureThisTab, problems: o.problems || null, feature: __moquiTest.caseName || null });
             if (opened.skipped) skip(`no browser: ${opened.skipped}`);
             return new Page(opened.id);
         },

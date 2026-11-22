@@ -170,6 +170,8 @@ fn tracks_of_a_leg_at_the_leg_node_reach_the_origin_s_taps_in_every_layer() {
     net.join_leg_node("B", true);
     let seen: Seen = Arc::new(Mutex::new(Vec::new()));
     net.sfu.add_tap(ROOM, Box::new(Collect(seen.clone()))).expect("tapped");
+    net.sfu.set_screen_stage(ROOM, Some("B"));
+    net.leg_node_sfu().set_screen_stage(ROOM, Some("B"));
     // B shares its camera as a screen: the origin learns the new source over the link
     let video_mid = net.client("B").video_mid.expect("a video mid").to_string();
     net.leg_node_sfu()
