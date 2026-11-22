@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="create" noun="Board">
+        <description>Create a blank board in the chosen writable wiki space, or in the current user's notes.</description>
+        <in-parameters><parameter name="wikiSpaceId"/><parameter name="pageName" required="true"/></in-parameters>
+        <out-parameters><parameter name="wikiPageId"/></out-parameters>
+        <actions>
+            <if condition="!wikiSpaceId"><service-call name="org.moqui.resource.WikiServices.ensure#UserNotesSpace" in-map="{}" out-map="space"/>
+                <set field="wikiSpaceId" from="space.wikiSpaceId"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" in-map="{wikiSpaceId}" out-map="access"/>
+            <if condition="!access.canUpdate || access.readOnly"><return error="true" message="You may not create a board here"/></if>
+            <entity-find-one entity-name="moqui.resource.wiki.WikiSpace" value-field="spaceRow" for-update="true"/>
+            <set field="pageName" from="String(pageName).trim().normalize('NFC')"/>
+            <if condition="!pageName || pageName === wikiSpaceId"><return error="true" message="Choose a board name"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageFile" out-map="existing"
+                    in-map="{rootPageLocation:spaceRow.rootPageLocation, pagePath:pageName}"/>
+            <if condition="existing.pageReference?.exists"><return error="true" message="A page with this name already exists"/></if>
+            <service-call name="org.moqui.resource.WikiServices.update#WikiPage" out-map="saved"
+                    in-map="{wikiSpaceId, pageName, wikiType:'excalidraw', pageText:JSON.stringify({type:'excalidraw',version:2,elements:[],appState:{},files:{}})}"/>
+            <set field="wikiPageId" from="saved.wikiPageId"/>
+        </actions>
+    </service>
+    <service verb="get" noun="Board">
+        <in-parameters><parameter name="wikiPageId" required="true"/><parameter name="versionName"/></in-parameters>
+        <out-parameters><parameter name="title"/><parameter name="scene"/><parameter name="canEdit" type="Boolean"/>
+            <parameter name="previewName"/><parameter name="versionList" type="List"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageInfo" out-map="info" in-map="{wikiPageId,versionName}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="info.wikiType !== 'excalidraw'"><return error="true" message="Board not found"/></if>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="access" in-map="{wikiPageId}"/>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageHistory" out-map="history" in-map="{wikiPageId}"/>
+            <set field="versionList" from="history.versionList || []"/>
+            <if condition="versionName &amp;&amp; !versionList.some(v => v.versionName === versionName)"><return error="true" message="Version not found"/></if>
+            <set field="canEdit" from="!versionName &amp;&amp; access.canUpdate &amp;&amp; !access.readOnly"/>
+            <set field="title" from="info.pageName"/>
+            <set field="scene" from="info.pageReference.getText(versionName || null)"/>
+            <set field="previewName" from="versionName ? '_board-' + encodeURIComponent(versionName) + '.svg' : '_board.svg'"/>
+            <if condition="!(info.attachmentList || []).some(a => a.filename === previewName)"><set field="previewName" from="null"/></if>
+        </actions>
+    </service>
+    <service verb="save" noun="Board">
+        <in-parameters><parameter name="wikiPageId" required="true"/><parameter name="note"/><parameter name="preview" allow-html="any"/><parameter name="scene" allow-html="any"/></in-parameters>
+        <out-parameters><parameter name="versionName"/></out-parameters>
+        <actions>
+            <service-call name="org.moqui.resource.WikiServices.get#WikiPageInfo" out-map="info" in-map="{wikiPageId}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="info.wikiType !== 'excalidraw'"><return error="true" message="Board not found"/></if>
+            <if condition="preview &amp;&amp; (!/^\s*&lt;svg(?:\s|&gt;)/.test(preview) || encodeURIComponent(preview).replace(/%[0-9A-F]{2}/gi,'x').length > Number(ec.factory.getConfValue('board@max-image-bytes')))">
+                <return error="true" message="Invalid or oversized preview"/></if>
+            <service-call name="org.moqui.resource.CollabServices.save#CollabDocument" out-map="saved" in-map="{documentKey:'WikiPage:'+wikiPageId,versionNote:note}"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <set field="versionName" from="saved.versionName || info.currentVersionName"/>
+            <!-- An intervening remote edit can land after the browser exported its SVG. Keep the codec's preview
+                 when that happens. Object keys are unordered across JavaScript and the Rust serializer. -->
+            <script><![CDATA[
+                const ordered = value => Array.isArray(value) ? value.map(ordered) : value !== null && typeof value === 'object'
+                    ? Object.fromEntries(Object.keys(value).sort().map(k => [k,ordered(value[k])])) : value
+                matchesScene = false
+                if (preview && scene && versionName) {
+                    const savedScene = JSON.parse(info.pageReference.getText(versionName))
+                    const clientScene = typeof scene === 'string' ? JSON.parse(scene) : scene
+                    matchesScene = ['elements','appState','files'].every(key =>
+                        JSON.stringify(ordered(savedScene[key])) === JSON.stringify(ordered(clientScene[key])))
+                }
+            ]]></script>
+            <if condition="matchesScene">
+                <service-call name="org.moqui.resource.WikiServices.get#WikiPageAttachment" out-map="image" in-map="{wikiPageId,filename:'_board.svg'}"/>
+                <if condition="ec.message.hasError()"><return/></if>
+                <script>image.attachmentReference.putText(preview)</script>
+                <if condition="versionName">
+                    <service-call name="org.moqui.resource.WikiServices.get#WikiPageAttachment" out-map="image" in-map="{wikiPageId,filename:'_board-'+encodeURIComponent(versionName)+'.svg'}"/>
+                    <if condition="ec.message.hasError()"><return/></if>
+                    <script>image.attachmentReference.putText(preview)</script>
+                </if>
+            </if>
+        </actions>
+    </service>
+</services>

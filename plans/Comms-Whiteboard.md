@@ -1,6 +1,6 @@
 # Comms Whiteboard: boards, diagrams, and screen share in meetings
 
-Plan, 2026-11-21; nothing in it is built. The whiteboard is a tool of its own: a board to draw and diagram on, used
+Implementation, 2026-11-21. MW1 is built. The whiteboard is a tool of its own: a board to draw and diagram on, used
 in Comms meetings, in wiki spaces, and in Dev AIDE's HEMP design work. It is built first (MW1, §11), with its drawing
 and diagram support, and [Dev-HEMP](Dev-HEMP.md) depends on it. The plan covers:
 

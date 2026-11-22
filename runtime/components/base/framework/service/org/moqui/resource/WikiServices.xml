@@ -23,6 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="attachmentList" type="List"><parameter name="attachmentInfo" type="Map">
                 <parameter name="filename"/><parameter name="contentType"/><parameter name="lastModified" type="Long"/>
             </parameter></parameter>
+            <parameter name="wikiType"/>
             <parameter name="pageLocation"/>
             <parameter name="pageName"/>
             <parameter name="parentPath"/>
@@ -146,7 +147,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="WikiPageTypes">
         <description>The page types, a page file's extension, in one place (plans/Security-Review.md SEC-SCR-81): md, html
-            and txt for anyone (plainTypeList); fancy, html.fancy, md.fancy and markdown.fancy (scriptTypeList), which the
+            txt and excalidraw for anyone (plainTypeList); fancy, html.fancy, md.fancy and markdown.fancy (scriptTypeList), which the
             template renderers run as server script for whoever views the page, only for a holder of DATABASE_ADMIN, the
             permission for script stored in records. Authorization disabled does not stand in for it: a service that
             writes as the system for its caller (runAsSystem) would write the caller's text as script. wikiTypeList is
@@ -159,7 +160,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="scriptTypeList" type="List"><parameter name="wikiType"/></parameter>
         </out-parameters>
         <actions><script><![CDATA[
-            plainTypeList = ['md', 'html', 'txt']
+            plainTypeList = ['md', 'html', 'txt', 'excalidraw']
             scriptTypeList = ['fancy', 'html.fancy', 'md.fancy', 'markdown.fancy']
             scriptTypes = ec.user.hasPermission('DATABASE_ADMIN')
             wikiTypeList = plainTypeList.concat(scriptTypes ? scriptTypeList : [])
@@ -196,7 +197,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (wikiType != null && wikiType !== '' && !classify) {
                 const type = String(wikiType)
                 if (!PLAIN.includes(type) && !SCRIPT.includes(type)) {
-                    ec.message.addError(ec.l10n.localize('A page type is md, html or txt'))
+                    ec.message.addError(ec.l10n.localize('A page type is md, html, txt or excalidraw'))
                     return
                 }
                 scriptType = SCRIPT.includes(type)
@@ -600,7 +601,9 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             } else if (wikiType === 'md' || wikiType === 'markdown') {
                 renderedAs = 'markdown'
-                const html = ec.resource.markdownHtml(text, base)
+                const source = text.includes('[[') ? ec.resource.script('component://framework/service/org/moqui/resource/WikiBoard.js')
+                    .expandBoards(text, info.wikiPageId) : text
+                const html = ec.resource.markdownHtml(source, base)
                 pageHtml = anyHtml ? html : StringUtilities.cleanHtml(html)
             } else if (wikiType === 'html') {
                 renderedAs = 'html'
@@ -670,6 +673,7 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters>
             <parameter name="attachmentReference" type="ResourceReference"/>
+            <parameter name="wikiType"/>
             <parameter name="wikiPageId"/>
             <parameter name="wikiSpaceId"/>
             <parameter name="pagePath"/>
@@ -744,6 +748,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="viewAccess" in-map="viewAccessIn"/>
             <if condition="!viewAccess.canView"><return error="true" message="Page not found"/></if>
             <set field="pageReference" from="fileOut.pageReference"/>
+            <set field="wikiType" from="pageReference?.fileName?.split('.').pop()"/>
             <set field="pageAttachmentsDirectoryRef" from="pageReference?.getChild('_attachments')"/>
             <set field="attachmentReference" from="pageAttachmentsDirectoryRef?.getChild(filename)"/>
         </actions>
@@ -768,6 +773,27 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageAccess" out-map="updateAccess" in-map="updateAccessIn"/>
             <if condition="updateAccess.readOnly"><return error="true" message="This space is a read-only mirror: its pages change where it is copied from"/></if>
             <if condition="!updateAccess.canUpdate"><return error="true" message="You may not change the files of this page"/></if>
+            <if condition="wikiType == 'excalidraw'">
+                <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="lockedBoard" for-update="true" cache="false"/>
+                <script><![CDATA[
+                const types = {png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', webp:'image/webp', gif:'image/gif', svg:'image/svg+xml'}
+                const extension = filename.split('.').pop().toLowerCase()
+                if (!Object.hasOwn(types, extension) || types[extension] !== attachmentFile.getContentType()) {
+                    ec.message.addError(ec.l10n.localize('A board attachment must be a PNG, JPEG, WebP, GIF or SVG image'))
+                } else if (attachmentFile.getSize() > Number(ec.factory.getConfValue('board@max-image-bytes'))) {
+                    ec.message.addError(ec.l10n.localize('Image exceeds the board image size limit'))
+                } else if (/^_board-.*\.svg$/.test(filename)) {
+                    ec.message.addError(ec.l10n.localize('Version preview names are reserved'))
+                } else if (filename !== '_board.svg' && !attachmentReference.exists) {
+                    const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo')
+                            .parameters({wikiSpaceId, pagePath}).call()
+                    const count = Array.from(info.attachmentList || []).filter(file => file.filename !== '_board.svg' && !/^_board-.*\.svg$/.test(file.filename)).length
+                    if (count >= Number(ec.factory.getConfValue('board@max-images'))) {
+                        ec.message.addError(ec.l10n.localize('Board has reached its image limit'))
+                    }
+                }
+            ]]></script></if>
+            <if condition="ec.message.hasError()"><return/></if>
             <!-- a .fancy file is a script page wherever it is under the space's root: only a holder of DATABASE_ADMIN adds one
                 (check#WikiPageType, SEC-SCR-81) -->
             <service-call name="org.moqui.resource.WikiServices.check#WikiPageType" in-map="{location:filename}"/>
@@ -979,6 +1005,13 @@ along with this software (see the LICENSE.md file). If not, see
                 <script>pageText = StringUtilities.cleanMarkdown(pageText)</script>
             </if>
 
+            <if condition="wikiType == 'excalidraw'"><script><![CDATA[
+                try {
+                    const board = ec.resource.script('component://framework/service/org/moqui/resource/WikiBoardScene.js')
+                    boardScene = board.parseScene(pageText)
+                } catch (e) { ec.message.addError('Invalid board: ' + String(e.message || e)) }
+            ]]></script></if>
+            <if condition="ec.message.hasError()"><return/></if>
             <!-- do the update, then the move if applicable -->
             <set field="updatedPage" from="false"/>
             <set field="versionName" from="null"/>
@@ -992,6 +1025,12 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="updatedPage">
                 <service-call name="create#moqui.resource.wiki.WikiPageHistory" in-map="{wikiPageId:wikiPageId, userId:historyUserId,
                         changeDateTime:ec.user.nowTimestamp, versionName:versionName, versionNote:versionNote}"/>
+                <if condition="wikiType == 'excalidraw'"><script><![CDATA[
+                    const attachments = pageReference.getChild('_attachments')
+                    const svg = ec.resource.script('component://framework/service/org/moqui/resource/WikiBoardScene.js').preview(boardScene, attachments)
+                    attachments.getChild('_board.svg').putText(svg)
+                    if (versionName) attachments.getChild('_board-' + encodeURIComponent(versionName) + '.svg').putText(svg)
+                ]]></script></if>
                 <!-- the page's links: a text that cannot be read for links is logged, and the save stands -->
                 <service-call name="org.moqui.resource.WikiServices.index#WikiPageLinks" in-map="{wikiPageId:wikiPageId, pageText:pageText}"/>
             </if>
@@ -2004,9 +2043,20 @@ along with this software (see the LICENSE.md file). If not, see
                     pageLocation = page.getLocation();
                 }
                 const text = ec.resource.getLocationText(pageLocation);
-                document.content = text;
+                if (pageLocation.endsWith('.excalidraw')) {
+                    try {
+                        const elements = JSON.parse(text).elements
+                        document.content = elements.filter(el => el.type === 'text' && !el.isDeleted)
+                                .sort((a, b) => (a.y - b.y) || (a.x - b.x)).map(el => el.text).join('\n')
+                    } catch (e) {
+                        ec.logger.warn(`Wiki board ${pageLocation} could not be indexed: ${e}`)
+                        document.content = ''
+                    }
+                } else {
+                    document.content = text
+                }
                 document.pageName = pageName;
-                const heading = String(text || "").match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m) || String(text || "").match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+                const heading = String(document.content || "").match(/^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$/m) || String(document.content || "").match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
                 document.title = heading ? heading[1].replace(/<[^>]+>/g, "").trim() : pageName;
                 try {
                     const change = ec.resource.getLastChange(pageLocation);

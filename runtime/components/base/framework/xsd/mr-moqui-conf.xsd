@@ -25,6 +25,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:element minOccurs="0" ref="demo"/>
                 <xs:element minOccurs="0" ref="acme"/>
                 <xs:element minOccurs="0" ref="client-sync"/>
+                <xs:element minOccurs="0" ref="board"/>
                 <xs:element minOccurs="0" ref="chat"/>
                 <xs:element minOccurs="0" ref="channels"/>
                 <xs:element minOccurs="0" ref="push"/>
@@ -2257,6 +2258,15 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="upload-max-mb" type="non-neg-int-expandable" default="100"/>
         </xs:complexType>
     </xs:element>
+    <xs:element name="board">
+        <xs:complexType>
+            <xs:attribute name="max-image-bytes" type="xs:positiveInteger" default="10485760"/>
+            <xs:attribute name="max-images" type="xs:positiveInteger" default="200"/>
+            <xs:attribute name="max-update-bytes" type="xs:positiveInteger" default="1048576"/>
+            <xs:attribute name="max-document-bytes" type="xs:positiveInteger" default="20971520"/>
+        </xs:complexType>
+    </xs:element>
+
     <xs:element name="chat">
         <xs:annotation><xs:documentation>Chat: its devices and keys, attachments, retention, previews, the agent and
             GroupMe settings, disappearing messages, the contacts hook, one-time codes, calendar events and stickers

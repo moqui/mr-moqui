@@ -538,6 +538,17 @@ menus, queues and transfers are `org.moqui.call.IvrServices`, `CallQueueServices
   apps and your desk and soft phones, from the people in Settings, Chat, Calls that ring through, and as the same
   person's or number's second call within 3 minutes ([Qvt-Client, Chat push](../ui/Qvt-Client.md#install-and-web-push)).
 
+### Whiteboards
+
+Open **Comms → Boards** to create a drawing in your private notes space or reopen one of your boards. A board
+is an Excalidraw wiki page. People with update access can draw together and see one another’s pointers.
+**Save version** records the scene with a note. Open **History** to inspect a previous version or **Download**
+to export the drawing as Excalidraw JSON, SVG or PNG.
+
+**Insert Mermaid** turns a flowchart into shapes inside a frame. Select its frame and choose **Edit as Mermaid**
+to revise its source. Replacing the diagram replaces hand edits to shapes inside that frame. The wireframe
+and flowchart shapes in **Library** and the editor’s fonts load from the server.
+
 ## For app authors
 
 An app adds to BasicComms through four seams. None needs a copy of a BasicComms screen.

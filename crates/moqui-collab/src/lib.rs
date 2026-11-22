@@ -38,6 +38,7 @@
 //! entry below: `org.moqui.resource.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
 //! from its WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
 
+mod board;
 pub mod markdown;
 pub mod service;
 
@@ -132,6 +133,7 @@ pub enum Event {
 /// The record a document key names.
 #[derive(Debug, Clone)]
 struct WikiTarget {
+    codec: Codec,
     wiki_space_id: String,
     wiki_page_id: String,
     page_path: String,
@@ -140,8 +142,41 @@ struct WikiTarget {
     on_database: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Codec {
+    Markdown,
+    Board,
+}
+
+impl Codec {
+    fn seed(self, doc: &Doc, text: &str) -> Result<(), Refusal> {
+        match self {
+            Self::Markdown => {
+                markdown::seed(doc, text);
+                Ok(())
+            }
+            Self::Board => board::seed(doc, text).map_err(|e| Refusal::new(422, e)),
+        }
+    }
+
+    fn render(self, doc: &Doc) -> String {
+        match self {
+            Self::Markdown => markdown::render(doc),
+            Self::Board => board::render(doc),
+        }
+    }
+
+    fn search_text(self, doc: &Doc) -> String {
+        match self {
+            Self::Markdown => markdown::render(doc),
+            Self::Board => board::search_text(doc),
+        }
+    }
+}
+
 struct Room {
     doc: Doc,
+    board_candidate: Option<Doc>,
     target: WikiTarget,
     /// Changed since the state was last written.
     dirty: bool,
@@ -303,6 +338,11 @@ fn read_page(page_id: &str, on_database: bool) -> Result<(WikiTarget, String, Op
         None => page_path.clone(),
     };
     let target = WikiTarget {
+        codec: if location.ends_with(".excalidraw") {
+            Codec::Board
+        } else {
+            Codec::Markdown
+        },
         wiki_space_id,
         wiki_page_id: page_id.to_string(),
         page_path,
@@ -369,6 +409,7 @@ fn merge_into(key: &str, doc: &Doc, state: &[u8]) -> Option<Vec<u8>> {
 
 /// What another server stored: merged into the room, and what the room lacked queued for its clients.
 fn merge_stored(key: &str, room: &mut Room, row: &moqui_core::entity::EntityValue) {
+    room.board_candidate = None;
     if let Some(update) = merge_into(key, &room.doc, &bytes_of(row, "stateData")) {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
@@ -478,10 +519,10 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         }
     }
     if seed {
-        markdown::seed(&doc, &page_text);
+        target.codec.seed(&doc, &page_text)?;
         stamp = write_row(
             key,
-            &doc,
+            (target.codec, &doc),
             Stored::Replace,
             Some(&hash),
             version.as_deref(),
@@ -493,6 +534,7 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
     let state_bytes = doc.transact().encode_state_as_update_v1(&StateVector::default()).len();
     let room = Arc::new(Mutex::new(Room {
         doc,
+        board_candidate: None,
         target,
         dirty: false,
         changed_at: Instant::now(),
@@ -528,7 +570,7 @@ struct Written {
 /// Write the document's state and snapshot.
 fn write_row(
     key: &str,
-    doc: &Doc,
+    (codec, doc): (Codec, &Doc),
     stored: Stored,
     base_hash: Option<&str>,
     base_version: Option<&str>,
@@ -556,7 +598,7 @@ fn write_row(
             .filter(|millis| *millis > 0);
         let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
         let state_bytes = state.len();
-        let snapshot = markdown::render(doc);
+        let snapshot = codec.search_text(doc);
         let mut row = match existing {
             Some(row) => row,
             None => {
@@ -605,6 +647,7 @@ fn write_row(
 fn wrote(key: &str, room: &mut Room, written: Written) {
     room.stamp = written.stamp;
     room.state_bytes = written.state_bytes;
+    room.board_candidate = None;
     if let Some(update) = written.merged {
         lock(events()).push(Event::Update {
             document_key: key.to_string(),
@@ -705,17 +748,31 @@ pub fn apply(key: &str, user_id: &str, update: &[u8]) -> Result<(), Refusal> {
         None => return Err(Refusal::new(409, format!("{key} is not open here: join it first"))),
     }
     // the whole state is held in memory and written again at each flush: bounded (SEC-TLS-113)
-    let max = max_state_bytes();
+    let max = match room.target.codec {
+        Codec::Markdown => max_state_bytes(),
+        Codec::Board => {
+            if update.len() > board::limit("board@max-update-bytes", 1 << 20) {
+                return Err(Refusal::new(413, "board update exceeds the size limit"));
+            }
+            board::limit("board@max-document-bytes", 20 << 20)
+        }
+    };
     if room.state_bytes.saturating_add(update.len()) > max {
         return Err(Refusal::new(413, format!("the document is larger than {max} bytes")));
     }
+    if matches!(room.target.codec, Codec::Board) {
+        let Room {
+            doc, board_candidate, ..
+        } = &mut *room;
+        board::validate_update(doc, board_candidate, update)?;
+    }
     let size = update.len();
     let update = Update::decode_v1(update).map_err(|err| Refusal::new(400, format!("not a Yjs update: {err}")))?;
-    room.state_bytes = room.state_bytes.saturating_add(size);
     room.doc
         .transact_mut()
         .apply_update(update)
         .map_err(|err| Refusal::new(400, format!("the update was not applied: {err}")))?;
+    room.state_bytes = room.state_bytes.saturating_add(size);
     room.dirty = true;
     room.changed_at = Instant::now();
     room.unsaved.insert(user_id.to_string());
@@ -735,7 +792,8 @@ fn max_state_bytes() -> usize {
 /// An update another server applied: into this server's room, when it has the document open. That server writes it.
 pub fn apply_remote(key: &str, update: &[u8]) {
     let Some(room) = room_of(key) else { return };
-    let room = lock(&room);
+    let mut room = lock(&room);
+    room.board_candidate = None;
     match Update::decode_v1(update) {
         Ok(update) => {
             if let Err(err) = room.doc.transact_mut().apply_update(update) {
@@ -774,9 +832,12 @@ fn leave_count(key: &str) {
     }
 }
 
-/// The markdown of an open document, for a test or a preview.
+/// Searchable text of an open document: Markdown, or board text in reading order.
 pub fn snapshot(key: &str) -> Option<String> {
-    room_of(key).map(|room| markdown::render(&lock(&room).doc))
+    room_of(key).map(|room| {
+        let room = lock(&room);
+        room.target.codec.search_text(&room.doc)
+    })
 }
 
 /// The keys of the documents open on this server.
@@ -923,7 +984,15 @@ fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
     let mut guard = lock(room);
     let unsaved = guard.unsaved.clone();
     let editor = guard.last_editor.clone();
-    let written = write_row(key, &guard.doc, Stored::Merge, None, None, &unsaved, editor.as_deref())?;
+    let written = write_row(
+        key,
+        (guard.target.codec, &guard.doc),
+        Stored::Merge,
+        None,
+        None,
+        &unsaved,
+        editor.as_deref(),
+    )?;
     wrote(key, &mut guard, written);
     guard.dirty = false;
     Ok(())
@@ -934,12 +1003,17 @@ fn flush(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
 fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -> Result<Option<String>, Error> {
     // what other servers stored goes into the version too, though an update of theirs was lost on its way here
     let row = stored(key)?;
-    let (target, page_text, editors) = {
+    let (target, page_text, editors, saved_at) = {
         let mut room = lock(room);
         if let Some(row) = &row {
             merge_stored(key, &mut room, row);
         }
-        (room.target.clone(), markdown::render(&room.doc), room.unsaved.clone())
+        (
+            room.target.clone(),
+            room.target.codec.render(&room.doc),
+            room.unsaved.clone(),
+            room.changed_at,
+        )
     };
     let note = note
         .map(str::to_string)
@@ -1005,17 +1079,24 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
     let version_name = Some(text(&out, "versionName")).filter(|name| !name.is_empty());
     {
         let mut room = lock(room);
-        room.unsaved.clear();
-        room.dirty = false;
+        // The page service ran without the room lock. A stroke made meanwhile belongs
+        // to the following version, even when it came from the same editor.
+        let unsaved = if room.changed_at == saved_at {
+            BTreeSet::new()
+        } else {
+            room.unsaved.clone()
+        };
         let written = write_row(
             key,
-            &room.doc,
+            (room.target.codec, &room.doc),
             Stored::Merge,
             Some(&text_hash(&page_text)),
             version_name.as_deref(),
-            &BTreeSet::new(),
+            &unsaved,
             None,
         )?;
+        room.unsaved = unsaved;
+        room.dirty = false;
         wrote(key, &mut room, written);
     }
     {

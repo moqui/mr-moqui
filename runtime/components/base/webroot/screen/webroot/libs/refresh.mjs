@@ -21,6 +21,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { buildBoard } from './whiteboard-build/build.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const write = args.includes('--write');
@@ -780,6 +782,10 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   libMeta.push({ id: 'license-texts', name: 'License texts', version: '-', license: 'n/a',
     source: 'see each file', files: lt });
 
+  const board = buildBoard(join(work, "whiteboard"));
+  for (const [path, data] of board.outputs) outputs.set(path, data);
+  libMeta.push(board.lib);
+  notices.push(board);
   const noticesMd = renderNotices(notices);
   outputs.set('NOTICES.md', Buffer.from(noticesMd, 'utf8'));
   const manifest = {

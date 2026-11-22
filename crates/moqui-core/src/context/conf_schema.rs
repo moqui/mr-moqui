@@ -369,6 +369,7 @@ pub static CATALOG: &[Unit] = &[
     ),
     single("acme", Class::Live).secrets(&[("account-key", Secret::Generated)]),
     single("client-sync", Class::Live),
+    single("board", Class::Live),
     single("chat", Class::Live)
         .secrets(&[("store-key-secret", Secret::Generated)])
         .children(&[single("stickers", Class::Live)]),

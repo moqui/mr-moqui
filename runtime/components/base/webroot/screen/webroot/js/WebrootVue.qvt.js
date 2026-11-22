@@ -5068,6 +5068,12 @@
         awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness) });
     moqui.coedit.Provider = CoeditProvider;
 
+    if (root.Vue && root.Vue.defineAsyncComponent) {
+        component("m-whiteboard", root.Vue.defineAsyncComponent(() =>
+            moqui.loadScript("/js/WebrootWhiteboard.js", null, () => !!moqui.whiteboard)
+                .then(() => moqui.whiteboard.component)));
+    }
+
     // m-rich-text on a shared document (docs/ui/Qvt-Client.md, Collaborative editing): doc-key names it ("WikiPage:100023"), and the
     // server seeds and renders it, so the editor never sets content of its own. The presence line shows the others (by user)
     // and the sync state. Emits status ({state: loading, connecting, synced, saving, offline, readonly or failed, peers:

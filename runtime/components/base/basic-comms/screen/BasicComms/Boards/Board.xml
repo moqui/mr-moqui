@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
+        default-menu-title="Board" render-modes="qvue,tui" server-static="qvue">
+    <parameter name="wikiPageId"/>
+    <transition name="board" method="get" read-only="true"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.comms.BoardServices.get#Board')
+            .parameters({wikiPageId, versionName:versionName || null}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(404, 'Board or version not found')
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="createBoard" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.comms.BoardServices.create#Board')
+            .parameters({wikiSpaceId:wikiSpaceId || null,pageName}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400, ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="saveBoard" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.comms.BoardServices.save#Board')
+            .parameters({wikiPageId,note:note || null,preview:preview || null,scene:scene || null}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400, ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="uploadImage" method="post"><actions><script><![CDATA[
+        const name = file && String(file.getName() || '')
+        if (!name || !/^[a-zA-Z0-9_-]+\.[a-zA-Z]+$/.test(name) || name.startsWith('_board')) {
+            ec.web.sendError(400,'Invalid board image name')
+            return
+        }
+        const info = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageInfo').parameter('wikiPageId',wikiPageId).disableAuthz().call()
+        if (ec.message.hasError() || info.wikiType !== 'excalidraw') { ec.web.sendError(404,'Board not found'); return }
+        ec.service.sync().name('org.moqui.resource.WikiServices.upload#WikiPageAttachment')
+            .parameters({wikiPageId, attachmentFile:file}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse({attachmentName:name})
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="image" method="get" read-only="true"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageAttachment')
+            .parameters({wikiPageId, filename}).disableAuthz().call()
+        if (ec.message.hasError() || !out.attachmentReference?.exists || !/\.(?:png|jpe?g|webp|gif|svg)$/i.test(filename)) {
+            ec.web.sendError(404,'Image not found')
+            return
+        }
+        ec.web.response.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; img-src data:; sandbox")
+        ec.web.response.setHeader('X-Content-Type-Options','nosniff')
+        ec.web.sendResourceResponse(out.attachmentReference.location, ec.web.request.getHeader('Sec-Fetch-Dest') === 'image',filename)
+    ]]></script></actions><default-response type="none"/></transition>
+    <transition name="notesBoards" method="get" read-only="true"><actions><script><![CDATA[
+        const id = 'NOTES_' + ec.user.userId
+        const space = ec.entity.find('moqui.resource.wiki.WikiSpace').condition('wikiSpaceId',id).disableAuthz().one()
+        if (!space) { ec.web.sendJsonResponse({boards:[]}); return }
+        const out = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiSpacePages')
+            .parameters({wikiSpaceId:id,includeDetail:true}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse({boards:(out.allChildFileFlatList || []).filter(p => p.wikiPageId && p.location.endsWith('.excalidraw'))
+            .map(p => ({wikiPageId:p.wikiPageId,title:p.name}))})
+    ]]></script></actions><default-response type="none"/></transition>
+    <widgets><render-mode>
+        <text type="qvue" location="component://basic-comms/screen/BasicComms/Boards/Board.qvue" template="false"/>
+        <text type="tui" location="component://basic-comms/screen/BasicComms/Boards/Board.tui.json" template="fancy"/>
+    </render-mode></widgets>
+</screen>

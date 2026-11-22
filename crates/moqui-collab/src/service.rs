@@ -81,6 +81,17 @@ fn get_document(
         .eq("documentKey", Value::string(&key))
         .one()?;
     let open = crate::snapshot(&key);
+    let active = crate::room_of(&key)
+        .map(|room| {
+            crate::lock(&room)
+                .can_edit
+                .iter()
+                .filter(|(_, grant)| grant.can_edit && grant.clients > 0)
+                .map(|(user, _)| Value::string(user))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.insert("activeEditorIdList".to_string(), Value::List(active));
     let field = |name: &str| {
         row.as_ref()
             .and_then(|row| row.get(name).cloned())

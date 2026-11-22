@@ -15,6 +15,7 @@ publish.workspace = true
 moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
 pulldown-cmark = { workspace = true }
+serde_json = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
 yrs = { workspace = true }
