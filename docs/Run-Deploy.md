@@ -855,8 +855,9 @@ definitions and data directly. Windows supports checkout-local operation.
 
 | Port | Listener | Default | Properties |
 |---|---|---|---|
-| 8080 | HTTP | On, every address | `webapp-list/webapp[webroot]@http-port`, `webapp-list/webapp[webroot]@http-bind` |
+| 8080 | HTTP | Off in dev, otherwise on every address | `webapp-list/webapp[webroot]@http-listen-port`, `webapp-list/webapp[webroot]@http-bind` |
 | 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) or a name set up with ACME | `webapp-list/webapp[webroot]@https-listen-port` (`off`), `webapp-list/webapp[webroot]@http2` |
+| 4317 | Dedicated gRPC | Off in dev, otherwise opened when a gRPC service is enabled | Webroot `grpc-listen-port`, `grpc-listen-bind` |
 | 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster-member@https-port`, `cluster-member@bind-address`, `cluster-member@protocol` |
 | `ssh-server@port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh-server@port`, `ssh-server@host` |
 | `smtp-server@listen-port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp-server@listen-port`, `smtp-server@listen-host` |
