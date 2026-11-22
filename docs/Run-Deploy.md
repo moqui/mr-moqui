@@ -840,14 +840,36 @@ configuration, components, and instance data. Set `MOQUI_SHARED_RUNTIME` to anot
 directory or to `off` to disable it.
 
 `moqui install --from DIR` copies a runtime or unpacked archive, including its top-level
-`MoquiConf.xml`. With no instance conf the usual development conf applies. `--with-data` also
-copies instance data and secrets from a stopped runtime. The dev CA signing key stays on the
-original machine. Conflicting files are listed before installation. Use `--force` to replace them.
+`MoquiConf.xml`. With no instance conf the usual development conf applies. Conflicting files are
+listed before installation; use `--force` to replace them. A symbolic link in the source is left
+out with a warning. Each install writes `.install-manifest`, the definition files it installed,
+and the next install removes the ones its source no longer has (a file changed since it was
+installed is listed as a conflict first). Instance data is never removed. `.install-version`
+records the binary; a `moqui --installed` run by another binary logs a warning at boot.
 
-Other runtimes read definitions from their own `components/` and `conf/`, then the shared
-directories, then the binary. Their database, log, instance conf, environment and server
-identities belong to the individual runtime. An explicitly installed runtime uses its own
-definitions and data directly. Windows supports checkout-local operation.
+`--with-data` also copies instance data and secrets, and refuses while the source's server or
+embedded Postgres is running (a live `postmaster.pid`). The machine's own identity in a cluster
+or an edge link (`db/instance_id`, `db/edge_member_key`) is left out and made new; `.env` and the
+certificate keys are copied, with a warning, so the copy has the source's secrets and TLS
+identities. The dev CA signing key stays on the original machine.
+
+### Where runtime files come from
+
+- **`moqui --installed`** (the first argument): `~/.mr-moqui` *is* the runtime, used exclusively.
+  Files come from that directory, then from the binary for any it does not have. Nothing is read
+  from the working directory or `MOQUI_RUNTIME`. This is by design for production systems and
+  desktop installs, so there is one place the runtime's files come from. The boot logs
+  `Runtime: installed at <dir> (moqui install); files come from here and the binary`.
+- **Without `--installed`**: the runtime is the one found from the starting directory or set by
+  `MOQUI_RUNTIME`. Its files on disk come first, then the files built into the binary, then the
+  `components/` and `conf/` of `~/.mr-moqui` for what neither has (a shared add-on component; the
+  dev CA in `~/.mr-moqui/cert/dev-ca` is read the same way, after the runtime's own). A stale
+  shared copy never overrides the runtime or a newer binary. The boot logs `Runtime: <dir>;
+  missing files from the binary, then <~/.mr-moqui>` when the shared directory is there.
+
+The database, log, instance conf, environment and server identities always belong to the
+runtime itself. `moqui embedded diff` shows the files that differ from the binary, naming the
+local or the shared runtime. Windows supports checkout-local operation.
 
 ## HTTPS, ports and proxies
 

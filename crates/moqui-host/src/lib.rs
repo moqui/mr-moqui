@@ -811,16 +811,19 @@ where
 {
     register_build();
     let mut args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
-    if let Some(index) = args.iter().position(|arg| arg == "--installed") {
-        args.remove(index);
+    // only before the command, so a command's own argument of that name is left to it
+    if args.first().is_some_and(|arg| arg == "--installed") {
+        args.remove(0);
         let runtime = install::destination()?;
         if !moqui_core::context::layout::is_runtime(&runtime) {
             return Err(moqui_lib::error::Error::new(
                 "the shared directory is not a runtime; run moqui install first",
             ));
         }
-        if std::env::var_os("MOQUI_RUNTIME").is_some() {
-            eprintln!("--installed overrides MOQUI_RUNTIME");
+        for name in ["MOQUI_RUNTIME", "MOQUI_FRAMEWORK"] {
+            if std::env::var_os(name).is_some() {
+                eprintln!("--installed overrides {name}");
+            }
         }
         moqui_lib::env::set_property("MOQUI_INSTALLED_RUNTIME", runtime.to_string_lossy());
     }
@@ -2961,9 +2964,12 @@ fn configured_service_paths(
     Ok(paths)
 }
 
-/// The framework component beside `tools` and `webroot`, unless `MOQUI_FRAMEWORK` names another directory.
+/// The framework component beside `tools` and `webroot`, unless `MOQUI_FRAMEWORK` names another directory; an
+/// installed runtime (`--installed`) always uses its own.
 fn framework_from_env(runtime: &std::path::Path) -> std::path::PathBuf {
-    std::env::var_os("MOQUI_FRAMEWORK").map_or_else(|| moqui_core::context::default_framework_dir(runtime), Into::into)
+    std::env::var_os("MOQUI_FRAMEWORK")
+        .filter(|_| moqui_lib::env::get_property("MOQUI_INSTALLED_RUNTIME").is_none())
+        .map_or_else(|| moqui_core::context::default_framework_dir(runtime), Into::into)
 }
 
 fn resolve_framework_location(

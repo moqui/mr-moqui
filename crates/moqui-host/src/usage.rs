@@ -74,7 +74,8 @@ Server options
 
 Environment
   MOQUI_SHARED_RUNTIME Shared directory (absolute path, default ~/.mr-moqui), or off.
-  --installed        Use the installed runtime from any directory.
+  --installed        As the first argument: run the installed runtime (~/.mr-moqui, moqui install) from
+                     any directory, reading only its files and this binary's.
   MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
                      components/base directory, else the working directory itself when it has one, else
                      a new runtime in the working directory; never found from this executable, so one
