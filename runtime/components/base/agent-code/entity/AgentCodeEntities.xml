@@ -1,0 +1,759 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+
+<!-- Agent Code entities (plans/agent-code/01-Data-Mapping.md sections 2.1, 9.1 and 10). Made from the
+    plan tables, then kept by hand. Status and kind values are in data/AgentCodeTypeData.xml. -->
+
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-entity-definition.xsd">
+
+    <entity entity-name="AgentConversationUser" package="moqui.agent.code" use="transactional" cache="never">
+        <description>Per-user sidebar state of a thread (pin, settle, snooze, read). Settle, pin and snooze are per user (01 section 2.1).</description>
+        <field name="conversationId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="pinnedOrderKey" type="text-medium"/>
+        <field name="activeOrderKey" type="text-medium"/>
+        <field name="settledDate" type="date-time"/>
+        <field name="unsettleRestoreDate" type="date-time"/>
+        <field name="snoozeUntilDate" type="date-time"/>
+        <field name="lastVisitedDate" type="date-time"/>
+        <field name="readThroughSeq" type="number-integer"/>
+        <field name="markedUnread" type="text-indicator"/>
+        <field name="lastReturnDate" type="date-time"/>
+        <field name="notifyEnumId" type="id"><description>AgcnDefault, AgcnAll, AgcnNone</description></field>
+    </entity>
+
+    <entity entity-name="AgentCodeCommand" package="moqui.agent.code" use="transactional" cache="never">
+        <description>Receipt per commandId (T3 CommandReceiptStore). Kept 7 days.</description>
+        <field name="commandId" type="id" is-pk="true"/>
+        <field name="commandType" type="text-medium"/>
+        <field name="userId" type="id"/>
+        <field name="conversationId" type="id"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="resultJson" type="text-very-long"/>
+        <field name="changeSeq" type="number-integer"/>
+        <field name="errorText" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentCodeChange" package="moqui.agent.code" use="transactional" cache="never">
+        <description>Shell stream cursor (T3 subscribeShell sequence). Kept 1 day.</description>
+        <field name="changeSeq" type="number-integer" is-pk="true"/>
+        <field name="changeType" type="text-medium"/>
+        <field name="conversationId" type="id"/>
+        <field name="projectId" type="id"/>
+        <field name="userId" type="id"><description>null = all</description></field>
+        <field name="payloadJson" type="text-very-long"/>
+        <field name="changeDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentCodeEffect" package="moqui.agent.code" use="transactional" cache="never">
+        <description>Effects after commit (T3 effect outbox). Done rows kept 7 days. Failed rows kept.</description>
+        <field name="effectId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="effectType" type="text-medium"/>
+        <field name="payloadJson" type="text-very-long"/>
+        <field name="statusId" type="id"/>
+        <field name="attemptCount" type="number-integer"/>
+        <field name="nextAttemptDate" type="date-time"/>
+        <field name="leaseOwner" type="text-medium"/>
+        <field name="leaseExpireDate" type="date-time"/>
+        <field name="lastErrorText" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="doneDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentProject" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="title" type="text-long"/>
+        <field name="slug" type="text-medium"/>
+        <field name="rootLocation" type="text-medium"/>
+        <field name="hostInstanceId" type="id"/>
+        <field name="repositoryKey" type="text-medium"/>
+        <field name="repositoryId" type="id"/>
+        <field name="remoteUrl" type="text-medium"/>
+        <field name="defaultBranch" type="text-medium"/>
+        <field name="iconKindEnumId" type="id"/>
+        <field name="iconValue" type="text-medium"/>
+        <field name="iconLocation" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="pinnedOrderKey" type="text-medium"/>
+        <field name="archivedDate" type="date-time"/>
+        <field name="scratchFolder" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastUsedDate" type="date-time"/>
+        <field name="fileHash" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentProjectFolder" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="folderSeq" type="number-integer" is-pk="true"/>
+        <field name="location" type="text-medium"/>
+        <field name="label" type="text-long"/>
+        <field name="source" type="text-medium"><description>manual, workspace-file, t3-json</description></field>
+        <field name="vcsKindEnumId" type="id"><description>git, jj, none</description></field>
+    </entity>
+
+    <entity entity-name="AgentProjectScript" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="scriptSeq" type="number-integer" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="command" type="text-long"/>
+        <field name="icon" type="text-medium"/>
+        <field name="runOnWorktreeCreate" type="text-indicator"/>
+        <field name="runOnSettle" type="text-indicator"/>
+        <field name="stopOnSettle" type="text-indicator"/>
+        <field name="async" type="text-indicator"/>
+        <field name="previewUrl" type="text-medium"/>
+        <field name="autoOpenPreview" type="text-indicator"/>
+        <field name="source" type="text-medium"><description>setting, t3-json</description></field>
+    </entity>
+
+    <entity entity-name="AgentProjectSetting" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="settingName" type="text-medium" is-pk="true"/>
+        <field name="settingValue" type="text-very-long"/>
+    </entity>
+
+    <entity entity-name="AgentProjectMember" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="roleEnumId" type="id"><description>AgpmOwner, AgpmMember, AgpmViewer</description></field>
+        <field name="fromDate" type="date-time"/>
+        <field name="thruDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentProjectTracker" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="projectId" type="id" is-pk="true"/>
+        <field name="trackerSeq" type="number-integer" is-pk="true"/>
+        <field name="hostAccountId" type="id"/>
+        <field name="teamKey" type="text-medium"/>
+        <field name="teamName" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentWorkRoot" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="workRootId" type="id" is-pk="true"/>
+        <field name="projectId" type="id"/>
+        <field name="conversationId" type="id"/>
+        <field name="kindEnumId" type="id"><description>AgwkLocal, AgwkWorktree, AgwkScratch</description></field>
+        <field name="location" type="text-medium"/>
+        <field name="hostInstanceId" type="id"/>
+        <field name="branch" type="text-medium"/>
+        <field name="baseRef" type="text-medium"/>
+        <field name="startFromOrigin" type="text-indicator"/>
+        <field name="repositoriesJson" type="text-very-long"/>
+        <field name="sparse" type="text-indicator"/>
+        <field name="submodulesEnumId" type="id"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="removedDate" type="date-time"/>
+        <field name="keepReason" type="text-medium"/>
+        <field name="lastCheckedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentCodeLaunch" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="launchId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="projectId" type="id"/>
+        <field name="workRootId" type="id"/>
+        <field name="statusId" type="id"><description>AgclQueued, AgclWorktree, AgclSetup, AgclReady, AgclFailed, AgclCancelled</description></field>
+        <field name="stepText" type="text-long"/>
+        <field name="setupOutputLocation" type="text-medium"/>
+        <field name="lastError" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentProviderInstance" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="providerInstanceId" type="id" is-pk="true"/>
+        <field name="driverEnumId" type="id"/>
+        <field name="displayName" type="text-medium"/>
+        <field name="accentColor" type="text-medium"/>
+        <field name="enabled" type="text-indicator"/>
+        <field name="hostInstanceId" type="id"/>
+        <field name="binaryPath" type="text-medium"/>
+        <field name="homePath" type="text-medium"/>
+        <field name="shadowHomePath" type="text-medium"/>
+        <field name="launchArgs" type="text-medium"/>
+        <field name="serverUrl" type="text-medium"/>
+        <field name="setupModeEnumId" type="id"><description>managed, existing</description></field>
+        <field name="authMethodEnumId" type="id"/>
+        <field name="settingsJson" type="text-very-long"/>
+        <field name="capabilitiesJson" type="text-very-long"/>
+        <field name="statusJson" type="text-very-long"/>
+        <field name="versionText" type="text-medium"/>
+        <field name="lastCheckDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+        <field name="sequenceNum" type="number-integer"/>
+        <field name="isDefault" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentProviderInstanceEnv" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="providerInstanceId" type="id" is-pk="true"/>
+        <field name="envName" type="text-medium" is-pk="true"/>
+        <field name="envValue" type="text-very-long"/>
+        <field name="secretSourceId" type="id"/>
+    </entity>
+
+    <entity entity-name="AgentProviderAccount" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="providerInstanceId" type="id" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="homePath" type="text-medium"/>
+        <field name="authStatusEnumId" type="id"/>
+        <field name="accountLabel" type="text-medium"/>
+        <field name="signedInDate" type="date-time"/>
+        <field name="limitsJson" type="text-very-long"/>
+        <field name="limitsDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentProviderInstall" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="providerInstanceId" type="id" is-pk="true"/>
+        <field name="installKindEnumId" type="id"><description>homebrew, npm, pnpm, bun, yarn, vite-plus, volta, mise, nix, chocolatey, native, managed</description></field>
+        <field name="ownerProven" type="text-indicator"/>
+        <field name="currentVersion" type="text-medium"/>
+        <field name="latestVersion" type="text-medium"/>
+        <field name="updateState" type="text-medium"/>
+        <field name="lastRunDate" type="date-time"/>
+        <field name="lastOutputLocation" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentHarnessManifest" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="driverEnumId" type="id" is-pk="true"/>
+        <field name="rangeSeq" type="number-integer" is-pk="true"/>
+        <field name="versionPattern" type="text-medium"/>
+        <field name="brokenRange" type="text-medium"/>
+        <field name="note" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentAcpRegistryEntry" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="registryId" type="id" is-pk="true"/>
+        <field name="name" type="text-medium"/>
+        <field name="description" type="text-long"/>
+        <field name="version" type="text-medium"/>
+        <field name="platformsJson" type="text-very-long"/>
+        <field name="distributionJson" type="text-very-long"/>
+        <field name="iconUrl" type="text-medium"/>
+        <field name="fetchedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentUsageLimitSource" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="sourceId" type="id" is-pk="true"/>
+        <field name="kind" type="text-medium"><description>cliproxy</description></field>
+        <field name="label" type="text-long"/>
+        <field name="url" type="text-medium"/>
+        <field name="managementKeyRef" type="text-medium"/>
+        <field name="enabled" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentHarnessSession" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="harnessSessionId" type="id" is-pk="true"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="hostInstanceId" type="id"/>
+        <field name="cwd" type="text-medium"/>
+        <field name="pid" type="number-integer"/>
+        <field name="statusId" type="id"><description>AghsStarting, AghsReady, AghsRunning, AghsWaiting, AghsStopped, AghsError</description></field>
+        <field name="modelText" type="text-medium"/>
+        <field name="capabilitiesJson" type="text-very-long"/>
+        <field name="protocolVersion" type="text-medium"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="lastSeenDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentHarnessThread" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="harnessThreadId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="harnessSessionId" type="id"/>
+        <field name="ownerToolCallId" type="id"/>
+        <field name="nativeRef" type="text-medium"/>
+        <field name="nativeHeadRef" type="text-medium"/>
+        <field name="statusId" type="id"><description>AghtNotLoaded, AghtIdle, AghtActive, AghtArchived, AghtClosed, AghtError</description></field>
+        <field name="firstRunOrdinal" type="number-integer"/>
+        <field name="lastRunOrdinal" type="number-integer"/>
+        <field name="forkedFromId" type="id"/>
+        <field name="importedDate" type="date-time"/>
+        <field name="resumeJson" type="text-very-long"/>
+    </entity>
+
+    <entity entity-name="AgentRunAttempt" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="attemptSeq" type="number-integer" is-pk="true"/>
+        <field name="reasonEnumId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="harnessThreadId" type="id"/>
+        <field name="harnessTurnRef" type="text-medium"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="errorText" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentContextTransfer" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="transferId" type="id" is-pk="true"/>
+        <field name="transferTypeEnumId" type="id"/>
+        <field name="sourceConversationId" type="id"/>
+        <field name="targetConversationId" type="id"/>
+        <field name="sourcePointJson" type="text-very-long"/>
+        <field name="basePointJson" type="text-very-long"/>
+        <field name="statusId" type="id"/>
+        <field name="resolutionEnumId" type="id"><description>native, portable</description></field>
+        <field name="payloadLocation" type="text-medium"/>
+        <field name="tokenEstimate" type="number-integer"/>
+        <field name="createdByKind" type="text-medium"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="consumedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentDelegatedTask" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="taskId" type="id" is-pk="true"/>
+        <field name="parentConversationId" type="id"/>
+        <field name="parentRunId" type="id"/>
+        <field name="parentToolCallId" type="id"/>
+        <field name="childConversationId" type="id"/>
+        <field name="linkId" type="id"/>
+        <field name="remoteConversationId" type="id"/>
+        <field name="title" type="text-long"/>
+        <field name="task" type="text-very-long"/>
+        <field name="wakeEnumId" type="id"><description>always, settled_only</description></field>
+        <field name="statusId" type="id"/>
+        <field name="deliveryStatusId" type="id"><description>pending, delivered, acknowledged, disposed</description></field>
+        <field name="resultSummary" type="text-very-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentConversationTag" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="conversationId" type="id" is-pk="true"/>
+        <field name="tag" type="text-medium" is-pk="true"/>
+        <field name="taggedDate" type="date-time"/>
+        <field name="userId" type="id"/>
+    </entity>
+
+    <entity entity-name="AgentConversationLink" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="conversationId" type="id" is-pk="true"/>
+        <field name="linkSeq" type="number-integer" is-pk="true"/>
+        <field name="linkKindEnumId" type="id"><description>AgclPr, AgclIssue</description></field>
+        <field name="sourceEnumId" type="id"><description>manual, created, agent, stack, stack-dismissed</description></field>
+        <field name="hostKindEnumId" type="id"/>
+        <field name="host" type="text-medium"/>
+        <field name="owner" type="text-medium"/>
+        <field name="repository" type="text-medium"/>
+        <field name="number" type="number-integer"/>
+        <field name="url" type="text-medium"/>
+        <field name="repositoryWebUrl" type="text-medium"/>
+        <field name="mergeRequestId" type="id"/>
+        <field name="workEffortId" type="id"/>
+        <field name="displayKey" type="text-medium"/>
+        <field name="title" type="text-long"/>
+        <field name="snapshotJson" type="text-very-long"/>
+        <field name="linkedDate" type="date-time"/>
+        <field name="syncedDate" type="date-time"/>
+        <field name="dismissedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentPrWatch" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="conversationId" type="id" is-pk="true"/>
+        <field name="linkSeq" type="number-integer" is-pk="true"/>
+        <field name="untilEnumId" type="id"><description>checks, merged</description></field>
+        <field name="wakes" type="number-integer"/>
+        <field name="commentOnlyWakes" type="number-integer"/>
+        <field name="failedReads" type="number-integer"/>
+        <field name="awaitingBaseline" type="text-indicator"/>
+        <field name="checksAwaitedSince" type="date-time"/>
+        <field name="checksPending" type="text-indicator"/>
+        <field name="fingerprint" type="text-medium"/>
+        <field name="lastPollDate" type="date-time"/>
+        <field name="nextPollDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="endReason" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentCheckpoint" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="checkpointId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="toolCallId" type="id"/>
+        <field name="scopeEnumId" type="id"/>
+        <field name="parentCheckpointId" type="id"/>
+        <field name="workRootId" type="id"/>
+        <field name="gitRef" type="text-medium"/>
+        <field name="treeHash" type="text-medium"/>
+        <field name="baselineRef" type="text-medium"/>
+        <field name="statusId" type="id"><description>AgcpReady, AgcpMissing, AgcpError, AgcpRolledBack</description></field>
+        <field name="filesTotal" type="number-integer"/>
+        <field name="additions" type="number-integer"/>
+        <field name="deletions" type="number-integer"/>
+        <field name="capturedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentFileChange" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="checkpointId" type="id" is-pk="true"/>
+        <field name="path" type="text-medium" is-pk="true"/>
+        <field name="repositoryPath" type="text-medium"/>
+        <field name="changeKind" type="text-medium"><description>add, modify, delete, rename, rename-changed</description></field>
+        <field name="oldPath" type="text-medium"/>
+        <field name="additions" type="number-integer"/>
+        <field name="deletions" type="number-integer"/>
+        <field name="binary" type="text-indicator"/>
+        <field name="diffLocation" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentReviewFile" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="reviewKey" type="text-medium" is-pk="true"/>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="path" type="text-medium" is-pk="true"/>
+        <field name="headSha" type="text-medium"/>
+        <field name="viewedDate" type="date-time"/>
+        <field name="changedSince" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentReviewGuide" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="reviewKey" type="text-medium" is-pk="true"/>
+        <field name="headSha" type="text-medium" is-pk="true"/>
+        <field name="guideJson" type="text-very-long"/>
+        <field name="modelSelectionJson" type="text-very-long"/>
+        <field name="statusId" type="id"><description>running, ready, failed</description></field>
+        <field name="generatedDate" type="date-time"/>
+        <field name="failedDate" type="date-time"/>
+        <field name="errorText" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentWebhook" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="triggerId" type="id" is-pk="true"/>
+        <field name="hookId" type="id"/>
+        <field name="tokenHash" type="text-medium"/>
+        <field name="signatureHeader" type="text-medium"/>
+        <field name="signatureEncoding" type="text-medium"/>
+        <field name="signaturePrefix" type="text-medium"/>
+        <field name="secretRef" type="text-medium"/>
+        <field name="maxDeliveryAgeMinutes" type="number-integer"/>
+        <field name="replayKeyTemplate" type="text-medium"/>
+        <field name="coalesceKeyTemplate" type="text-medium"/>
+        <field name="coalesceWindowSeconds" type="number-integer"/>
+        <field name="filtersJson" type="text-very-long"/>
+        <field name="holdOffline" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentWebhookDelivery" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="deliveryId" type="id" is-pk="true"/>
+        <field name="triggerId" type="id"/>
+        <field name="receivedDate" type="date-time"/>
+        <field name="method" type="text-medium"/>
+        <field name="contentType" type="text-medium"/>
+        <field name="bodyBytes" type="number-integer"/>
+        <field name="outcomeEnumId" type="id"/>
+        <field name="signatureVerified" type="text-indicator"/>
+        <field name="pendingWindow" type="text-indicator"/>
+        <field name="missingFields" type="text-indicator"/>
+        <field name="bodyLocation" type="text-medium"/>
+        <field name="promptLocation" type="text-medium"/>
+        <field name="runId" type="id"/>
+        <field name="errorText" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentWebhookDedupe" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="triggerId" type="id" is-pk="true"/>
+        <field name="keyHash" type="text-medium" is-pk="true"/>
+        <field name="kindEnumId" type="id"><description>replay, coalesce</description></field>
+        <field name="firstDate" type="date-time"/>
+        <field name="windowEndDate" type="date-time"/>
+        <field name="lastDeliveryId" type="id"/>
+    </entity>
+
+    <entity entity-name="AgentPreviewTab" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="tabId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="ownerEnumId" type="id"><description>agent, human, unclaimed</description></field>
+        <field name="controlUserId" type="id"/>
+        <field name="url" type="text-medium"/>
+        <field name="title" type="text-long"/>
+        <field name="profileId" type="id"/>
+        <field name="runtimeEnumId" type="id"><description>desktop, server</description></field>
+        <field name="width" type="number-integer"/>
+        <field name="height" type="number-integer"/>
+        <field name="colorScheme" type="text-medium"/>
+        <field name="statusText" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="closedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentBrowserProfile" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="profileId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="kindEnumId" type="id"><description>persistent, incognito</description></field>
+        <field name="location" type="text-medium"/>
+        <field name="label" type="text-long"/>
+        <field name="lastUsedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentPreviewRecording" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="recordingId" type="id" is-pk="true"/>
+        <field name="tabId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="statusId" type="id"><description>running, succeeded, failed, interrupted</description></field>
+        <field name="location" type="text-medium"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentDeviceHost" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="deviceHostId" type="id" is-pk="true"/>
+        <field name="kindEnumId" type="id"><description>local, ssh, expo, simlock</description></field>
+        <field name="label" type="text-long"/>
+        <field name="sshTarget" type="text-medium"/>
+        <field name="identitySecretRef" type="text-medium"/>
+        <field name="port" type="number-integer"/>
+        <field name="settingsJson" type="text-very-long"/>
+        <field name="statusText" type="text-long"/>
+        <field name="lastTestDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+        <field name="enabled" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentDeviceSession" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="deviceSessionId" type="id" is-pk="true"/>
+        <field name="deviceHostId" type="id"/>
+        <field name="platform" type="text-medium"><description>ios, android</description></field>
+        <field name="deviceRef" type="text-medium"/>
+        <field name="deviceName" type="text-medium"/>
+        <field name="conversationId" type="id"/>
+        <field name="claimRunId" type="id"/>
+        <field name="ownerEnumId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="openedDate" type="date-time"/>
+        <field name="closedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentSecretSource" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="secretSourceId" type="id" is-pk="true"/>
+        <field name="kindEnumId" type="id"><description>value, sealed, onepassword, vault</description></field>
+        <field name="reference" type="text-medium"/>
+        <field name="label" type="text-long"/>
+        <field name="lastCheckDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentSecretRequest" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="requestId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="questionId" type="id"/>
+        <field name="clientRequestId" type="id"/>
+        <field name="fieldsJson" type="text-very-long"/>
+        <field name="deliveryEnumId" type="id"><description>ref, file</description></field>
+        <field name="statusId" type="id"><description>pending, saved, declined, referenced, cancelled</description></field>
+        <field name="secretRef" type="text-medium"/>
+        <field name="fileLocation" type="text-medium"/>
+        <field name="fileExpireDate" type="date-time"/>
+        <field name="pageUrl" type="text-medium"/>
+        <field name="answeredDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentGuestShare" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="shareId" type="id" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="tokenHash" type="text-medium"/>
+        <field name="redeemedDate" type="date-time"/>
+        <field name="browserKeyHash" type="text-medium"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="endReason" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentGuestMessage" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="guestMessageId" type="id" is-pk="true"/>
+        <field name="shareId" type="id"/>
+        <field name="messageText" type="text-very-long"/>
+        <field name="attachmentsJson" type="text-very-long"/>
+        <field name="statusId" type="id"><description>pending, sent, dismissed</description></field>
+        <field name="receivedDate" type="date-time"/>
+        <field name="decidedDate" type="date-time"/>
+        <field name="runId" type="id"/>
+    </entity>
+
+    <entity entity-name="AgentVoiceModel" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="modelKey" type="text-medium" is-pk="true"/>
+        <field name="hostInstanceId" type="id"/>
+        <field name="stateEnumId" type="id"><description>downloadable, downloading, verifying, installed, failed</description></field>
+        <field name="location" type="text-medium"/>
+        <field name="sizeBytes" type="number-integer"/>
+        <field name="tierEnumId" type="id"><description>cpu, accelerated</description></field>
+        <field name="selected" type="text-indicator"/>
+    </entity>
+
+    <entity entity-name="AgentHarnessUsageDaily" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="usageDate" type="date" is-pk="true"/>
+        <field name="hostInstanceId" type="id" is-pk="true"/>
+        <field name="driverEnumId" type="id" is-pk="true"/>
+        <field name="model" type="text-medium" is-pk="true"/>
+        <field name="accountKey" type="text-medium" is-pk="true"/>
+        <field name="inputTokens" type="number-integer"/>
+        <field name="cachedInputTokens" type="number-integer"/>
+        <field name="cacheWriteTokens" type="number-integer"/>
+        <field name="outputTokens" type="number-integer"/>
+        <field name="reasoningTokens" type="number-integer"/>
+        <field name="cost" type="number-decimal"/>
+        <field name="costSourceEnumId" type="id"><description>providerReported, modelPriced, unpriced</description></field>
+        <field name="premiumCost" type="number-decimal"/>
+        <field name="otherCost" type="number-decimal"/>
+        <field name="sourceStatus" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentModelPriceOverride" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="driverEnumId" type="id" is-pk="true"/>
+        <field name="model" type="text-medium" is-pk="true"/>
+        <field name="inputPrice" type="number-decimal"/>
+        <field name="outputPrice" type="number-decimal"/>
+        <field name="cacheReadPrice" type="number-decimal"/>
+        <field name="cacheWritePrice" type="number-decimal"/>
+        <field name="mapToModel" type="text-medium"/>
+        <field name="lastSaveError" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentCodeHostAccount" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="hostAccountId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="hostKindEnumId" type="id"><description>github, gitlab, forgejo, bitbucket, azure, gitcafe, tanstack, cursor-origin, linear, moqui</description></field>
+        <field name="host" type="text-medium"/>
+        <field name="username" type="text-medium"/>
+        <field name="credentialRef" type="text-medium"/>
+        <field name="cliPath" type="text-medium"/>
+        <field name="authStatusEnumId" type="id"/>
+        <field name="enabled" type="text-indicator"/>
+        <field name="lastCheckDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentEnvironmentLink" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="linkId" type="id" is-pk="true"/>
+        <field name="remoteEnvironmentId" type="id"/>
+        <field name="label" type="text-long"/>
+        <field name="urlsJson" type="text-very-long"/>
+        <field name="directionEnumId" type="id"><description>outbound, inbound</description></field>
+        <field name="accessEnumId" type="id"><description>read-only, approval-required, auto-accept-edits, auto, full-access</description></field>
+        <field name="credentialRef" type="text-medium"/>
+        <field name="linkedByUserId" type="id"/>
+        <field name="linkedDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="lastReachedDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+        <field name="statusEnumId" type="id"><description>reachable, unreachable, expired, revoked</description></field>
+        <field name="balanceEnumId" type="id"/>
+        <field name="prSharingEnumId" type="id"/>
+        <field name="viaEdgeNodeId" type="id"/>
+    </entity>
+
+    <entity entity-name="AgentLinkedThreadCache" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="linkId" type="id" is-pk="true"/>
+        <field name="remoteConversationId" type="id" is-pk="true"/>
+        <field name="title" type="text-long"/>
+        <field name="statusText" type="text-long"/>
+        <field name="lastActivityDate" type="date-time"/>
+        <field name="rowJson" type="text-very-long"/>
+        <field name="cachedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentSshHost" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="sshHostId" type="id" is-pk="true"/>
+        <field name="label" type="text-long"/>
+        <field name="target" type="text-medium"/>
+        <field name="port" type="number-integer"/>
+        <field name="identitySecretRef" type="text-medium"/>
+        <field name="hostKeyPin" type="text-medium"/>
+        <field name="purposeEnumId" type="id"><description>device-host, launch</description></field>
+        <field name="lastTestDate" type="date-time"/>
+        <field name="lastError" type="text-long"/>
+    </entity>
+
+    <entity entity-name="ClientPairingCode" package="moqui.security" use="transactional" cache="never">
+        <field name="pairingCodeId" type="id" is-pk="true"/>
+        <field name="codeHash" type="text-medium"/>
+        <field name="kindEnumId" type="id"><description>CpcDevice, CpcLink, CpcApproval</description></field>
+        <field name="userId" type="id"/>
+        <field name="scopeText" type="text-long"/>
+        <field name="accessEnumId" type="id"/>
+        <field name="label" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="usedDate" type="date-time"/>
+        <field name="usedByLoginKey" type="text-medium"/>
+        <field name="attempts" type="number-integer"/>
+    </entity>
+
+    <entity entity-name="AgentMcpOAuthClient" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="clientId" type="id" is-pk="true"/>
+        <field name="clientName" type="text-medium"/>
+        <field name="redirectUrisJson" type="text-very-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="registeredByAddress" type="text-medium"/>
+    </entity>
+
+    <entity entity-name="AgentMcpOAuthGrant" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="grantId" type="id" is-pk="true"/>
+        <field name="clientId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="accessEnumId" type="id"/>
+        <field name="scopeText" type="text-long"/>
+        <field name="codeHash" type="text-medium"/>
+        <field name="codeExpireDate" type="date-time"/>
+        <field name="loginKey" type="text-medium"/>
+        <field name="approvedDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentCodeSetting" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="settingName" type="text-medium" is-pk="true"/>
+        <field name="settingValue" type="text-very-long"/>
+        <field name="lastUpdatedByUserId" type="id"/>
+    </entity>
+
+    <entity entity-name="AgentCodePolicy" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="policyKey" type="text-medium" is-pk="true"/>
+        <field name="policyValue" type="text-very-long"/>
+        <field name="note" type="text-long"/>
+    </entity>
+
+    <entity entity-name="AgentCodeCleanupRun" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="cleanupRunId" type="id" is-pk="true"/>
+        <field name="startedDate" type="date-time"/>
+        <field name="endedDate" type="date-time"/>
+        <field name="removedJson" type="text-very-long"/>
+        <field name="keptJson" type="text-very-long"/>
+        <field name="failedJson" type="text-very-long"/>
+        <field name="unusedJson" type="text-very-long"/>
+    </entity>
+
+    <entity entity-name="AgentMcpSessionKey" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="loginKeyHash" type="text-medium" is-pk="true"/>
+        <field name="conversationId" type="id"/>
+        <field name="runId" type="id"/>
+        <field name="providerInstanceId" type="id"/>
+        <field name="harnessSessionId" type="id"/>
+        <field name="capabilitiesText" type="text-long"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="idleExpireDate" type="date-time"/>
+        <field name="expireDate" type="date-time"/>
+        <field name="revokedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="AgentCodeAccessLog" package="moqui.agent.code" use="transactional" cache="never">
+        <field name="logId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="actionEnumId" type="id"><description>pair, device-approve, revoke, link, unlink, mode-full-access</description></field>
+        <field name="targetText" type="text-medium"/>
+        <field name="clientIp" type="text-medium"/>
+        <field name="logDate" type="date-time"/>
+    </entity>
+</entities>

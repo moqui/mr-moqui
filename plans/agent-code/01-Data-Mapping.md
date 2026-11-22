@@ -346,7 +346,7 @@ and gains a link, so one worktree shows in both apps.
 | `AgentCodePolicy` | policyKey | policyValue, note |
 | `AgentCodeCleanupRun` | cleanupRunId | startedDate, endedDate, removedJson, keptJson, failedJson, unusedJson |
 | `AgentMcpSessionKey` | loginKeyHash | conversationId, runId, providerInstanceId, harnessSessionId, capabilitiesText, createdDate, idleExpireDate, expireDate, revokedDate ([08](08-MCP-Tools.md)) |
-| `AgentCodeAccessLog` | logId | userId, actionEnumId (pair, device-approve, revoke, link, unlink, mode-full-access), targetText, clientIp, date ([14 §7](14-Security.md#7-audit)) |
+| `AgentCodeAccessLog` | logId | userId, actionEnumId (pair, device-approve, revoke, link, unlink, mode-full-access), targetText, clientIp, logDate ([14 §7](14-Security.md#7-audit)) |
 | `AgentCodeCommand`, `AgentCodeChange`, `AgentCodeEffect` | see §9.1 | |
 
 ## 11. Field additions to existing entities

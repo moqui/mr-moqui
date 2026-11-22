@@ -81,6 +81,7 @@ pub const RESERVED: &[Reserved] = &[
     host("metrics"),
     host("notws"),
     host("termws"),
+    host("agentws"),
     host("callws"),
     host("git"),
     host("dav"),
@@ -140,7 +141,7 @@ pub struct PartlyReserved {
 pub const PARTLY_RESERVED: &[PartlyReserved] = &[
     PartlyReserved {
         segment: ".well-known",
-        sub_paths: &["caldav", "carddav", "agent-card.json", "mcp.json", "ai-catalog.json"],
+        sub_paths: &["caldav", "carddav", "agent-card.json", "mcp.json", "ai-catalog.json", "moqui"],
     },
     PartlyReserved {
         segment: "ci",

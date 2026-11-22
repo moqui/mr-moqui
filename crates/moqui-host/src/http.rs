@@ -93,7 +93,7 @@ pub(crate) struct ListenLimits {
     /// per-client parts are on; another is answered 503 (SEC-RTE-91).
     pub max_uploads_per_client: usize,
     /// `request-timeout` (`webapp-list/webapp[webroot]/web-protection/requests@request-timeout`), default 300: from the request head to the response head, or the
-    /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
+    /// answer is 504. `/notws`, `/termws` and `/agentws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
     /// `max` (`webapp-list/webapp[webroot]/web-protection/connections@max`), default 4096: connections served at once, HTTP and HTTPS together, upgraded
     /// WebSockets included until they close. Past it the listeners stop accepting until one closes.
@@ -337,6 +337,8 @@ pub(crate) async fn listen(
     }
     let notws = endpoint_enabled(&factory, "/notws");
     let termws = cfg!(feature = "tui") && endpoint_enabled(&factory, "/termws");
+    #[cfg(feature = "code")]
+    let agentws = crate::agentws::enabled(&factory);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
@@ -390,6 +392,15 @@ pub(crate) async fn listen(
         app.route("/termws", get(crate::termws::upgrade).connect(crate::termws::upgrade))
     } else {
         moqui_lib::env::set_property(crate::termws::ENDPOINT_PROPERTY, "");
+        app
+    };
+    // The Agent Code socket and its descriptor, while the `/agentws` endpoint is on (agentws.rs: on a dev instance by
+    // default).
+    #[cfg(feature = "code")]
+    let app = if agentws {
+        app.route("/agentws", get(crate::agentws::upgrade).connect(crate::agentws::upgrade))
+            .route("/.well-known/moqui/agent-code", get(crate::agentws::descriptor))
+    } else {
         app
     };
     #[cfg(feature = "git")]

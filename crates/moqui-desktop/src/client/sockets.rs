@@ -32,7 +32,7 @@ use super::Client;
 use crate::node::scheme::Local;
 
 /// The paths a page of the node in process may open a socket to.
-const LOCAL_PATHS: [&str; 3] = ["/notws", "/callws", "/termws"];
+const LOCAL_PATHS: [&str; 4] = ["/notws", "/callws", "/termws", "/agentws"];
 
 /// The longest text frame a page may send.
 const FRAME_MAX: usize = 1024 * 1024;

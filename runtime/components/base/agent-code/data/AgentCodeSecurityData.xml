@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<entity-facade-xml type="seed">
+    <!-- Agent Code permissions (plans/agent-code/14-Security.md section 1). AgentCodeHost and AgentCodeAdmin are sealed
+        (user-facade authz sealed-permissions): only a holder grants them. -->
+    <moqui.security.UserPermission userPermissionId="AgentCodeUse" description="Agent Code: use the app, own threads, projects one is a member of, own settings and devices"/>
+    <moqui.security.UserPermission userPermissionId="AgentCodeHost" description="Agent Code: run as the server's OS user (terminals, project scripts, full-access mode, host ports, any host path)"/>
+    <moqui.security.UserPermission userPermissionId="AgentCodeAdmin" description="Agent Code: environment settings, policy, provider instances, peer links, other users' threads, storage and usage"/>
+
+    <moqui.security.UserGroup userGroupId="AGENT_CODE_USERS" description="Agent Code Users"/>
+    <moqui.security.UserGroup userGroupId="AGENT_CODE_HOSTS" description="Agent Code Hosts"/>
+    <moqui.security.UserGroup userGroupId="AGENT_CODE_ADMINS" description="Agent Code Administrators"/>
+    <moqui.security.UserGroupPermission userGroupId="AGENT_CODE_USERS" userPermissionId="AgentCodeUse" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="AGENT_CODE_HOSTS" userPermissionId="AgentCodeUse" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="AGENT_CODE_HOSTS" userPermissionId="AgentCodeHost" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="AGENT_CODE_ADMINS" userPermissionId="AgentCodeUse" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="AGENT_CODE_ADMINS" userPermissionId="AgentCodeAdmin" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentCodeUse" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="AgentCodeAdmin" fromDate="0"/>
+
+    <!-- The services of org.moqui.code, and the screens of /qapps/code when they come (phase P1). Each service checks
+        the AgentCode* permission itself; the artifact group lets a member of a group reach them. -->
+    <artifactGroups artifactGroupId="AGENT_CODE_APP" description="Agent Code App">
+        <artifacts artifactName="org\.moqui\.code\..*" nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <authz artifactAuthzId="AGENT_CODE_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="AGENT_CODE_APP_USERS" userGroupId="AGENT_CODE_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="AGENT_CODE_APP_HOSTS" userGroupId="AGENT_CODE_HOSTS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="AGENT_CODE_APP_ADMINS" userGroupId="AGENT_CODE_ADMINS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+
+    <!-- The effect worker each minute (it is also woken after a commit), and the feed cleanup each day -->
+    <moqui.service.job.ServiceJob jobName="run_AgentCodeEffects_frequent" description="Run the due Agent Code effects"
+            serviceName="org.moqui.code.EffectServices.run#Effects" cronExpression="0 * * * * ?" paused="N" errorHistoryOnly="Y"/>
+    <moqui.service.job.ServiceJob jobName="clean_AgentCodeFeed_daily" description="Clean old Agent Code effects, receipts and changes"
+            serviceName="org.moqui.code.EffectServices.clean#AgentCodeFeed" cronExpression="0 40 3 * * ?" paused="N" errorHistoryOnly="Y"/>
+</entity-facade-xml>

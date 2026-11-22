@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- Existing AgentServices entry points retain their native behavior. These entry points select each operation's
+        implementation from AgentConversation. NULL/empty values on old rows use the entity's native defaults. -->
+    <service verb="start" noun="Run" transaction="ignore">
+        <description>Start or steer a run using AgentConversation.startServiceName.</description>
+        <implements service="org.moqui.agent.AgentServices.start#AgentRun"/>
+        <in-parameters><parameter name="conversationId" required="true"/></in-parameters>
+        <out-parameters><parameter name="systemMessageId"/></out-parameters>
+        <actions><service-call name="org.moqui.agent.ConversationServices.call#Operation"
+                in-map="Object.assign({}, context, {operation:'start'})" out-map="context"/></actions>
+    </service>
+    <service verb="cancel" noun="Run" transaction="ignore">
+        <description>Cancel through cancelServiceName. Native operations accept runId or the conversation's activeRunId.</description>
+        <in-parameters><parameter name="conversationId" required="true"/><parameter name="runId"/></in-parameters>
+        <out-parameters><parameter name="statusId"/><parameter name="systemMessageId"/></out-parameters>
+        <actions><service-call name="org.moqui.agent.ConversationServices.call#Operation"
+                in-map="Object.assign({}, context, {operation:'cancel'})" out-map="context"/></actions>
+    </service>
+    <service verb="submit" noun="Input" transaction="ignore">
+        <description>Submit input through inputServiceName.</description>
+        <in-parameters>
+            <parameter name="conversationId" required="true"/><parameter name="runId"/>
+            <parameter name="inputKind" default-value="message"/><parameter name="messageText" allow-html="any"/>
+            <parameter name="data" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="statusId"/><parameter name="systemMessageId"/></out-parameters>
+        <actions><service-call name="org.moqui.agent.ConversationServices.call#Operation"
+                in-map="Object.assign({}, context, {operation:'input'})" out-map="context"/></actions>
+    </service>
+    <service verb="get" noun="Events" transaction="ignore">
+        <description>Read events through eventsServiceName.</description>
+        <in-parameters>
+            <parameter name="conversationId" required="true"/><parameter name="runId"/>
+            <parameter name="afterSeq" type="Long" default="0"/>
+        </in-parameters>
+        <out-parameters><parameter name="eventList" type="List"/><parameter name="lastEventSeq" type="Long"/>
+            <parameter name="statusId"/><parameter name="systemMessageId"/></out-parameters>
+        <actions><service-call name="org.moqui.agent.ConversationServices.call#Operation"
+                in-map="Object.assign({}, context, {operation:'events'})" out-map="context"/></actions>
+    </service>
+    <service verb="call" noun="Operation" allow-remote="false" transaction="ignore">
+        <description>Shared dispatch for conversation operations. Requires AgentUse and ownership before invoking a
+            configured implementation. The implementation retains its own authorization and transaction behavior.</description>
+        <in-parameters>
+            <parameter name="operation" required="true"/><parameter name="conversationId" required="true"/>
+            <parameter name="runId"/><parameter name="agentId"/><parameter name="surface"/>
+            <parameter name="messageText" allow-html="any"/><parameter name="tail" allow-html="any"/>
+            <parameter name="clientRequestId"/><parameter name="clientMessageId"/>
+            <parameter name="inputKind"/><parameter name="data" type="Map"/><parameter name="afterSeq" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/><parameter name="conversationId"/><parameter name="statusId"/>
+            <parameter name="queued" type="Boolean"/><parameter name="systemMessageId"/>
+            <parameter name="eventList" type="List"/><parameter name="lastEventSeq" type="Long"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) throw new Error('A conversation operation needs a logged-in user');
+            if (!ec.user.hasPermission('AgentUse')) throw new Error('This needs the AgentUse permission');
+            const operations = {
+                start: ['startServiceName', 'org.moqui.agent.AgentServices.start#AgentRun'],
+                cancel: ['cancelServiceName', 'org.moqui.agent.AgentServices.cancel#AgentRun'],
+                input: ['inputServiceName', 'org.moqui.agent.AgentServices.submit#AgentInput'],
+                events: ['eventsServiceName', 'org.moqui.agent.AgentServices.get#AgentRunEvents']
+            };
+            if (!Object.hasOwn(operations, operation)) throw new Error('Unknown conversation operation');
+            const row = ec.entity.find('moqui.agent.AgentConversation').condition('conversationId', conversationId).disableAuthz().one();
+            if (!row || row.get('userId') !== ec.user.userId) throw new Error('No agent conversation ' + conversationId);
+            const [field, nativeService] = operations[operation], service = row.get(field) || nativeService;
+            if (service.startsWith('org.moqui.agent.ConversationServices.')) throw new Error('Name an implementation service for ' + field);
+            const input = Object.assign({}, context);
+            // Custom services need no local AgentRun. Native services accept the explicit run or the active one.
+            if (operation !== 'start' && service === nativeService) {
+                input.runId = runId || row.get('activeRunId');
+                const run = input.runId && ec.entity.find('moqui.agent.AgentRun').condition('runId', input.runId).disableAuthz().one();
+                if (!run || run.get('conversationId') !== conversationId || run.get('userId') !== ec.user.userId)
+                    throw new Error('No agent run in conversation ' + conversationId);
+            }
+            Object.assign(context, ec.service.sync().name(service).parameters(input).call() || {});
+        ]]></script></actions>
+    </service>
+</services>

@@ -1,0 +1,3 @@
+# The regression budget in seconds of feature time (docs/Build-Test.md, "The regression budget"). Agent Code's first
+# specs (plans/agent-code P0). Raise it only with the user's agreement.
+server = 1

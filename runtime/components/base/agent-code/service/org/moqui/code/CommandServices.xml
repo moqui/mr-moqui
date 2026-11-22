@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+
+    <service verb="dispatch" noun="Command" type="rust" location="moqui_code::services::dispatch_command"
+            transaction="ignore">
+        <description>Run one Agent Code command (plans/agent-code/02-Orchestration.md section 1) for the current user,
+            who needs AgentCodeUse. The command is a map with type, commandId (1 to 40 letters, digits, '-', '_' or
+            '.') and the fields of its type. The rows, the changes for the shell stream, the effects and a receipt are
+            written in one transaction; a commandId with a receipt answers the stored result again (replayed true) and
+            writes nothing. A command on a thread locks the thread's row first. On a refusal the error is on the
+            message list and errorCode names it: invalid_command, unknown_command, internal_only, not_found,
+            conflict, forbidden or failed.</description>
+        <in-parameters>
+            <parameter name="command" type="Map" required="true" allow-html="any"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sequence" type="Long"><description>The last change number written</description></parameter>
+            <parameter name="result" type="Map"><description>threadId and the thread's new summary, for most commands</description></parameter>
+            <parameter name="replayed" type="Boolean"/>
+            <parameter name="errorCode"/>
+        </out-parameters>
+    </service>
+
+    <service verb="dispatch" noun="InternalCommand" type="rust" location="moqui_code::services::dispatch_command"
+            transaction="ignore" allow-remote="false">
+        <description>dispatch#Command for the server's own code, which may also send the internal command types (such
+            as thread.title.regeneration.complete). Not allowed remotely.</description>
+        <in-parameters>
+            <parameter name="command" type="Map" required="true" allow-html="any"/>
+            <parameter name="internal" default-value="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sequence" type="Long"/>
+            <parameter name="result" type="Map"/>
+            <parameter name="replayed" type="Boolean"/>
+            <parameter name="errorCode"/>
+        </out-parameters>
+    </service>
+</services>

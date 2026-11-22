@@ -4661,6 +4661,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "moqui-code"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.4.3",
+ "inventory",
+ "jiff",
+ "moqui-core",
+ "moqui-db",
+ "moqui-lib",
+ "serde_json",
+ "sha2 0.11.1",
+ "tracing",
+]
+
+[[package]]
 name = "moqui-collab"
 version = "0.1.0"
 dependencies = [
@@ -4900,6 +4915,7 @@ dependencies = [
  "lsp-types",
  "moqui-calc",
  "moqui-channels",
+ "moqui-code",
  "moqui-collab",
  "moqui-core",
  "moqui-dav",

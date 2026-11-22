@@ -244,10 +244,11 @@ fn boot_registers_components_and_named_resource_errors() {
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
     let components = factory.components();
     let names: Vec<&str> = components.iter().map(|info| info.name.as_str()).collect();
-    // basic-comms depends on webroot (its shell values go on webroot's Quasar theme), so it comes after it
+    // agent-code and basic-comms depend on webroot (basic-comms' shell values go on webroot's Quasar theme), so they
+    // come after it
     assert_eq!(
         names,
-        vec!["framework", "webroot", "basic-comms", "tools", "unlinked-tool"]
+        vec!["framework", "webroot", "agent-code", "basic-comms", "tools", "unlinked-tool"]
     );
     for info in components.iter() {
         assert_eq!(info.version, "phase2-test");
