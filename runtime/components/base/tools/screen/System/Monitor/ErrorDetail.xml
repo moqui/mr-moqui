@@ -8,6 +8,7 @@
         const result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters({datasetId:'otel_errors',
             queryString:'fingerprint:'+JSON.stringify(String(fingerprint)),from:from || 'now-7d',thru:thru || 'now',pageSize:1}).call()
         errorGroup = result.hits && result.hits.length ? result.hits[0].body : {}
+        groupTitle = result.hits && result.hits.length ? ec.resource.script('component://tools/template/MonitorErrorGroups.js').label(errorGroup) : 'Error group not found in this time range'
         sampleTraces = errorGroup.sample_trace_ids || []
         // The logs of the group: its exception type (else the start of its message) from a minute before it was first seen.
         const millis = value => /^\d+$/.test(String(value)) ? Number(value) : Date.parse(String(value || ''))
@@ -18,7 +19,7 @@
             errorGroup.message ? 'body:'+JSON.stringify(String(errorGroup.message).slice(0,100)) : ''
     ]]></script></actions>
     <widgets>
-        <label text="${errorGroup.message || 'Error group not found in this time range'}" type="h4"/>
+        <label text="${groupTitle}" type="h4"/>
         <label text="Occurrences: ${errorGroup.count || 0}" type="p"/>
         <link condition="logsQueryString" url="logs" text="Logs with this error" parameter-map="{queryString:logsQueryString,from:logsFrom,thru:logsThru}"/>
         <code-view text="${errorGroup.stacktrace || ''}" language="text"/>

@@ -30,7 +30,7 @@ along with this software (see the LICENSE.md file). If not, see
             </div>
         </div>
         <div class="col-12 col-md-auto row q-gutter-xs items-center">
-            <q-input dense outlined clearable v-model="search" placeholder="Search settings" style="min-width:14rem" data-conf-search>
+            <q-input dense outlined clearable v-model="search" aria-label="Search settings" placeholder="Search settings" style="min-width:14rem" data-conf-search>
                 <template v-slot:prepend><q-icon name="sym_o_search"></q-icon></template>
             </q-input>
             <q-btn flat dense no-caps icon="sym_o_unfold_more" label="Open all" @click="openAll(true)"></q-btn>

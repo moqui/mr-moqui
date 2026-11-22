@@ -416,7 +416,8 @@ feature("the overview and the support summary are a reader's; the summary's JSON
         redacted.instance.preparedBy == null
         redacted.instance.version.length > 0
         redacted.readiness.available == true
-        redacted.readiness.checks.length > 0
+        redacted.readiness.checks.some(row => row.checkKey === "admin.telemetry" &&
+            /^(Local telemetry|The local exporter)/.test(row.message) && !row.exporters && !row.counters && !row.sources)
         redacted.readiness.failedProviders.includes("Spec failing check")
         // no fix place, refresh or scope, and no address
         !redactedText.includes("fixRoute") && !redactedText.includes("refreshKey") && !redactedText.includes('"scope"')
@@ -437,4 +438,24 @@ feature("the overview and the support summary are a reader's; the summary's JSON
         refused.error.includes("ADMIN_OVERVIEW_VIEW")
         check.error.includes("ADMIN_OVERVIEW_VIEW")
     }
+})
+
+feature("telemetry readiness summarizes each configured exporter without publishing source or counter details", {
+    expect() {
+        const {telemetryCheck} = ec.resource.script("component://framework/service/org/moqui/admin/Readiness.js")
+        for (const [local, state, text] of [
+            ["disabled", "unavailable", "disabled"], ["unsearchable", "unavailable", "search is unavailable"],
+            ["waiting", "unavailable", "awaiting"], ["loss", "warning", "loss"], ["ready", "ready", "has been exported"]
+        ]) {
+            const result = telemetryCheck({local})
+            assert.equal(result.state, state)
+            assert.ok(result.message.includes(text))
+        }
+        const loss = telemetryCheck({local: "ready", remote: "loss"})
+        assert.equal(loss.state, "warning")
+        assert.ok(loss.message.includes("Local telemetry has been exported"))
+        assert.ok(loss.message.includes("external exporter recorded telemetry loss"))
+        assert.equal(telemetryCheck({local: "ready", remote: "waiting"}).state, "unavailable")
+        assert.equal(telemetryCheck({local: "ready", remote: "ready"}).state, "ready")
+    },
 })

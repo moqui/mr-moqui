@@ -156,40 +156,39 @@ fn source_status(ec: &ExecutionContext, _: &ServiceInfo<'_>, _: &Parameters) -> 
         ])),
     );
     let resource = moqui_core::telemetry::for_factory(ec.factory());
+    let (local, status) = if !resource.config().enabled {
+        ("disabled", "disabled; health unknown")
+    } else if moqui_core::search::installed(ec.factory()).is_none() {
+        ("unsearchable", "search unavailable; health unknown")
+    } else if counters.failed > 0 || counters.dropped > 0 {
+        ("loss", "telemetry loss; health unknown")
+    } else if counters.exported == 0 {
+        ("waiting", "awaiting successful export; health unknown")
+    } else {
+        ("ready", "local exporter ready; health unknown")
+    };
+    let mut exporters = indexmap::IndexMap::from_iter([("local".into(), Value::string(local))]);
     let mut sources = vec![Value::Map(indexmap::IndexMap::from_iter([
         ("service".into(), Value::string(&resource.resource().service_name)),
         ("instance".into(), Value::string(&resource.resource().instance_id)),
-        (
-            "status".into(),
-            Value::string(if !resource.config().enabled {
-                "disabled; health unknown"
-            } else if moqui_core::search::installed(ec.factory()).is_none() {
-                "search unavailable; health unknown"
-            } else if counters.failed > 0 || counters.dropped > 0 {
-                "telemetry loss; health unknown"
-            } else if counters.exported == 0 {
-                "awaiting successful export; health unknown"
-            } else {
-                "local exporter ready; health unknown"
-            }),
-        ),
+        ("status".into(), Value::string(status)),
     ]))];
     if !ec.factory().conf_setting("telemetry", "otlp-endpoint").is_empty() {
+        let (remote, status) = if counters.remote_failed > 0 || counters.remote_dropped > 0 {
+            ("loss", "external export loss; health unknown")
+        } else if counters.remote_exported == 0 {
+            ("waiting", "awaiting external export; health unknown")
+        } else {
+            ("ready", "external exporter ready; health unknown")
+        };
+        exporters.insert("remote".into(), Value::string(remote));
         sources.push(Value::Map(indexmap::IndexMap::from_iter([
             ("service".into(), Value::string("external collector")),
             ("instance".into(), Value::Null),
-            (
-                "status".into(),
-                Value::string(if counters.remote_failed > 0 || counters.remote_dropped > 0 {
-                    "external export loss; health unknown"
-                } else if counters.remote_exported == 0 {
-                    "awaiting external export; health unknown"
-                } else {
-                    "external exporter ready; health unknown"
-                }),
-            ),
+            ("status".into(), Value::string(status)),
         ])));
     }
+    out.insert("exporters".into(), Value::Map(exporters));
     let _authz = ec.disable_authz();
     let rows = entity(ec)?.find(KEYS)?.eq("userId", Value::string(owner()?)).list()?;
     for row in rows.iter() {
