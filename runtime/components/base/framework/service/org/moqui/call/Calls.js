@@ -535,6 +535,13 @@ function seconds(from, to) {
   return start && end && end > start ? Math.round((end - start) / 1000) : 0
 }
 
+/** The call's meeting-board grants are asked again once this commits (CollabServices.recheck#MeetingBoards). */
+function recheckBoards(callSessionId) {
+  if (!ec.factory.hasFeature('collab')) return
+  ec.service.sync().name('org.moqui.resource.CollabServices.recheck#MeetingBoards').parameter('callSessionId', callSessionId)
+    .disableAuthz().call()
+}
+
 /** Ends a leg; an answered leg's time goes in its user's log. */
 function closeLeg(leg, status, reason) {
   const now = ec.user.nowTimestamp
@@ -542,6 +549,7 @@ function closeLeg(leg, status, reason) {
   leg.setFields({ statusId: status, endReasonEnumId: reason || leg.endReasonEnumId || null, leftDate: now },
     true, null, null)
   leg.update()
+  recheckBoards(leg.callSessionId)
   for (const conn of rows(CONNECTION, { callLegId: leg.callLegId, statusId: 'CcsActive' })) {
     conn.setFields({ statusId: 'CcsClosed', closedDate: now }, true, null, null)
     conn.update()
@@ -629,6 +637,7 @@ function endSession(session, reason, keepRoom) {
   session.setFields({ statusId: 'CssEnded', endedDate: now, endReasonEnumId: reason }, true, null, null)
   bump(session)
   session.update()
+  recheckBoards(session.callSessionId)
   // V5: its queue entries were abandoned, its transfer is over
   if (find(QUEUE_ENTRY).condition('callSessionId', session.callSessionId).condition('statusId', 'CqeWaiting').count()) {
     v5('CallQueues', 'sessionEnded', { callSessionId: session.callSessionId })
@@ -1721,6 +1730,7 @@ function revokeGuest(guest, reason) {
     guest.update()
   }
   if (!participant) return
+  recheckBoards(participant.callSessionId)
   if (reason === 'CerRemoved' && !['CasRevoked', 'CasDenied'].includes(participant.admissionStatusId)) {
     participant.setFields({ admissionStatusId: 'CasRevoked', revokedDate: now }, true, null, null)
     participant.update()
@@ -1942,6 +1952,7 @@ function admitOrDeny(p, admit) {
   target.setFields(admit ? { admissionStatusId: 'CasAdmitted', admittedDate: now } : { admissionStatusId: 'CasDenied', revokedDate: now },
     true, null, null)
   target.update()
+  if (!admit) recheckBoards(session.callSessionId)
   for (const leg of rows(LEG, { callParticipantId: target.callParticipantId, statusId: 'ClsOffered' })) {
     if (admit) {
       leg.setFields({ statusId: 'ClsAnswered', answeredDate: now }, true, null, null)
@@ -1978,6 +1989,7 @@ function removeParticipant(p) {
   } else {
     target.setFields({ admissionStatusId: 'CasRevoked', revokedDate: ec.user.nowTimestamp }, true, null, null)
     target.update()
+    recheckBoards(session.callSessionId)
     for (const leg of rows(LEG, { callParticipantId: target.callParticipantId })) {
       if (leg.statusId === 'ClsAnswered') leaveLeg(session, leg, 'CerRemoved', target.userId)
       else if (leg.statusId === 'ClsOffered') closeLeg(leg, 'ClsCanceled', 'CerRemoved')

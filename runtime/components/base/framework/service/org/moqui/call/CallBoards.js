@@ -5,6 +5,11 @@ const wiki = 'org.moqui.resource.WikiServices.'
 const rooms = 'org.moqui.chat.RoomBoardServices.'
 const invoke = (name, params) => ec.service.sync().name(name).parameters(params).disableAuthz().call() || {}
 const find = (name, fields) => ec.entity.find(name).condition(fields).disableAuthz()
+// The servers ask the call's board grants again after the commit (collab-recheck); a socket's frames are answered
+// from the grant in memory between those checks. A build without co-editing has no boards to tell.
+const recheck = (callSessionId) => {
+    if (ec.factory.hasFeature('collab')) invoke('org.moqui.resource.CollabServices.recheck#MeetingBoards', {callSessionId})
+}
 function readable(id, userId) {
     if (!id) return false
     const access = invoke(wiki+'get#WikiPageAccess',{wikiPageId:id,userId:userId || ec.user.userId})
@@ -38,6 +43,7 @@ function open(session,pageId,legId) {
         record.setFields({...keys,openedDate:ec.user.nowTimestamp,openedByUserId:user,closedDate:null,
             memberCanEdit:write ? 'Y' : 'N',guestCanEdit:write ? 'Y' : 'N'},true,null,null)
         if (fresh) record.create(); else record.update()
+        recheck(session.callSessionId)
         if (session.chatRoomId) {
             const access=invoke('org.moqui.chat.ChatServices.get#RoomAccess',{chatRoomId:session.chatRoomId,userId:user})
             if (access.canPost && user === ec.user.userId) invoke(rooms+'post#RoomBoard',{chatRoomId:session.chatRoomId,wikiPageId:pageId})
@@ -48,7 +54,7 @@ function open(session,pageId,legId) {
 function close(session,id) {
     if (!id) return
     const row = find(CB,{callSessionId:session.callSessionId,wikiPageId:id}).one()
-    if (row && !row.closedDate) { row.set('closedDate',ec.user.nowTimestamp); row.update() }
+    if (row && !row.closedDate) { row.set('closedDate',ec.user.nowTimestamp); row.update(); recheck(session.callSessionId) }
 }
 function finish(session) {
     for (const row of find(CB,{callSessionId:session.callSessionId}).list()) {
@@ -100,10 +106,11 @@ function drawing(p, engine) {
     stage.guestCanEdit=!!editable && p.guestCanEdit === true
     row.setFields({memberCanEdit:stage.memberCanEdit?'Y':'N',guestCanEdit:stage.guestCanEdit?'Y':'N'},true,null,null)
     row.update()
+    recheck(p.callSessionId)
     session.set('stageState',JSON.stringify(stage))
     engine.bump(session)
     session.update()
     engine.publishStage(session)
     return {memberCanEdit:stage.memberCanEdit,guestCanEdit:stage.guestCanEdit}
 }
-;({readable,open,close,finish,list,create,drawing})
+;({readable,open,close,finish,list,create,drawing,recheck})

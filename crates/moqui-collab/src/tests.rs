@@ -107,6 +107,9 @@ fn type_paragraph(doc: &Doc, words: &str) -> Vec<u8> {
     doc.transact().encode_state_as_update_v1(&before)
 }
 
+/// The board settings of the default conf, which a test conf does not read.
+const BOARD_CONF: &str = r#"<moqui-conf><board max-document-bytes="20971520" max-images="200" max-image-bytes="10485760" max-update-bytes="1048576"/></moqui-conf>"#;
+
 /// The rooms and their events are the process's: the tests that read events take turns.
 fn serial() -> std::sync::MutexGuard<'static, ()> {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -703,9 +706,7 @@ fn a_revoked_editor_is_dropped_and_a_lost_edit_is_told() {
 fn board_versions_keep_the_scene_while_the_search_snapshot_has_its_words() {
     use serde_json::{json, Value as Json};
     let _serial = serial();
-    let (ctx, facade) = setup_with_conf(
-        r#"<moqui-conf><board max-document-bytes="20971520" max-images="200" max-image-bytes="10485760" max-update-bytes="1048576"/></moqui-conf>"#,
-    );
+    let (ctx, facade) = setup_with_conf(BOARD_CONF);
     let _entered = ctx.enter();
     user(&facade, "artist");
     login("artist");
@@ -819,4 +820,110 @@ fn a_dirty_room_cannot_recreate_a_deleted_document() {
     assert!(super::room_of(&key).is_none());
     assert!(super::stored(&key).unwrap().is_none());
     assert!(super::take_events().iter().any(|event| matches!(event, super::Event::Revoked {document_key,user_id} if document_key == &key && user_id == "retired")));
+}
+
+/// A meeting member's frames are answered from the room's grant, with no grant service call per frame: asked at the
+/// join and by the tick every 10 seconds, or at the next tick once the call changed (`recheck_meeting`, the
+/// `collab-recheck` topic), which tells a lost edit right and drops a member who lost the board.
+#[test]
+fn a_meeting_grant_is_answered_in_memory_and_asked_again_when_the_call_changes() {
+    use serde_json::json;
+    use std::sync::atomic::Ordering;
+    let _serial = serial();
+    let (context, facade) = setup_with_conf(BOARD_CONF);
+    let _entered = context.enter();
+    user(&facade, "convener");
+    login("convener");
+    call(
+        "org.moqui.resource.WikiServices.create#WikiSpace",
+        &[("wikiSpaceId", Value::string("MEET"))],
+    );
+    let scene = json!({"type":"excalidraw","version":2,"elements":[
+        {"id":"note","type":"text","version":1,"versionNonce":3,"index":"a0","text":"Agenda"}
+    ],"appState":{},"files":{}});
+    let saved = call(
+        "org.moqui.resource.WikiServices.update#WikiPage",
+        &[
+            ("wikiSpaceId", Value::string("MEET")),
+            ("pageName", Value::string("Board")),
+            ("wikiType", Value::string("excalidraw")),
+            ("pageText", Value::string(scene.to_string())),
+        ],
+    );
+    let key = format!("WikiPage:{}", to_plain_string(saved.get("wikiPageId").unwrap()));
+    struct Answer;
+    impl Drop for Answer {
+        fn drop(&mut self) {
+            *super::lock(&super::meeting::MEETING_GRANT_FOR_TEST) = None;
+        }
+    }
+    let _answer = Answer;
+    let set = |answer: Result<(bool, bool), u16>| *super::lock(&super::meeting::MEETING_GRANT_FOR_TEST) = Some(answer);
+    let asked = || super::meeting::MEETING_GRANTS_ASKED.load(Ordering::SeqCst);
+    set(Ok((true, true)));
+    let meeting = super::Meeting {
+        call_id: "MEETCALL".into(),
+        leg_id: "LEG1".into(),
+        user_id: "convener".into(),
+        credential: None,
+    };
+    let actor = meeting.key();
+    let before = asked();
+    let joined = super::join_scoped(&key, "convener", &[], Some(meeting)).unwrap();
+    assert!(joined.can_edit);
+    assert_eq!(asked(), before + 1, "the join asks once");
+
+    // frames and an update go by the grant in memory; a tick within 10 seconds asks nothing
+    let document = client(&joined);
+    assert!(super::meeting_allows(&key, &actor, false));
+    assert!(super::meeting_allows(&key, &actor, true));
+    assert!(
+        !super::meeting_allows(&key, "\0meeting/OTHER/LEG1", false),
+        "no grant, no frames"
+    );
+    let before_edit = document.transact().state_vector();
+    let mut edit = scene.clone();
+    edit["elements"][0]["version"] = json!(2);
+    edit["elements"][0]["text"] = json!("Agenda, revised");
+    super::board::seed(&document, &edit.to_string()).unwrap();
+    super::apply(
+        &key,
+        &actor,
+        &document.transact().encode_state_as_update_v1(&before_edit),
+    )
+    .unwrap();
+    super::tick();
+    super::recheck_meeting("ANOTHERCALL");
+    super::tick();
+    assert_eq!(asked(), before + 1, "no grant call per frame or per tick");
+    let _ = super::take_events();
+
+    // a stale grant allows nothing; the tick past 10 seconds asks again
+    super::age_grants(&key, super::ACCESS_STALE + std::time::Duration::from_secs(1));
+    assert!(!super::meeting_allows(&key, &actor, false));
+    super::tick();
+    assert_eq!(asked(), before + 2);
+    assert!(super::meeting_allows(&key, &actor, false));
+
+    // the call changed: drawing turned off, told at the next tick
+    set(Ok((true, false)));
+    super::recheck_meeting("MEETCALL");
+    super::tick();
+    assert_eq!(asked(), before + 3);
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::CanEdit { user_id, can_edit: false, .. } if *user_id == actor)));
+    assert!(super::meeting_allows(&key, &actor, false));
+    assert!(!super::meeting_allows(&key, &actor, true));
+    assert_eq!(super::apply(&key, &actor, &[0, 0]).unwrap_err().code, 403);
+
+    // the leg left: dropped at the next tick
+    set(Ok((false, false)));
+    super::recheck_meeting("MEETCALL");
+    super::tick();
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::Revoked { user_id, .. } if *user_id == actor)));
+    assert!(!super::meeting_allows(&key, &actor, false));
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
 }

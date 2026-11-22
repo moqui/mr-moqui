@@ -1968,6 +1968,9 @@ along with this software (see the LICENSE.md file). If not, see
             // who took them out: such a person comes back by an invite link only through a request (ChatInvites.js)
             row.set('removedByUserId', self ? null : me)
             row.update()
+            // the room's calls' boards are no longer theirs (MeetingBoardAccess.js); their sockets are told after the commit
+            if (userId && ec.factory.hasFeature('collab')) ec.service.sync().name('org.moqui.resource.CollabServices.recheck#MeetingBoards').parameter('chatRoomId', chatRoomId)
+                .disableAuthz().call()
             let leftSeq = null
             if (!isDirect) {
                 const left = ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,

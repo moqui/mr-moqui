@@ -1,6 +1,16 @@
 //! An admitted meeting leg's grant to a particular open board. For a guest the
 //! credential remains in memory on the serving node, never in a document or event.
+//! The grant is asked at the join and again by the tick (`recheck_access`); the frames between are answered from the
+//! room's copy ([`super::meeting_allows`]).
 use super::{call_internal, flag, text, Access, Refusal, Value};
+
+/// What [`Meeting::grant`] answers in a test in place of the call's: `Some` answers that (view, edit), `None` asks the
+/// service; and how many times it was asked.
+#[cfg(test)]
+pub(crate) static MEETING_GRANT_FOR_TEST: std::sync::Mutex<Option<Result<(bool, bool), u16>>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+pub(crate) static MEETING_GRANTS_ASKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 #[derive(Clone)]
 pub struct Meeting {
@@ -17,6 +27,24 @@ impl Meeting {
     }
 
     pub(crate) fn grant(&self, page_id: &str) -> Result<(Access, String, String), Refusal> {
+        #[cfg(test)]
+        {
+            MEETING_GRANTS_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(answer) = *moqui_lib::sync::lock(&MEETING_GRANT_FOR_TEST) {
+                return match answer {
+                    Ok((can_view, can_edit)) => Ok((
+                        Access {
+                            can_view,
+                            can_edit,
+                            on_database: true,
+                        },
+                        self.user_id.clone(),
+                        format!("{} (meeting)", self.user_id),
+                    )),
+                    Err(code) => Err(Refusal::new(code, "the meeting grant check failed")),
+                };
+            }
+        }
         let out = call_internal(
             "org.moqui.call.MeetingBoardServices.get#MeetingBoardGrant",
             &[
@@ -39,13 +67,5 @@ impl Meeting {
             text(&out, "writerUserId"),
             text(&out, "displayName"),
         ))
-    }
-
-    pub fn check(&self, key: &str, editing: bool) -> Result<bool, Refusal> {
-        let (access, _, _) = self.grant(super::wiki_page_id(key)?)?;
-        if !access.can_view || (editing && !access.can_edit) {
-            return Err(Refusal::new(403, "this meeting does not grant access to that board"));
-        }
-        Ok(access.can_edit)
     }
 }

@@ -29,6 +29,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, save_document)?;
     rust_service!(map, save_meeting_board)?;
     rust_service!(map, get_document)?;
+    rust_service!(map, recheck_meeting_boards)?;
     Ok(())
 }
 
@@ -115,6 +116,87 @@ fn save_meeting_board(
         "versionName".into(),
         version.map_or(Value::Null, Value::string),
     )]))
+}
+
+/// `recheck#MeetingBoards`: once the caller's transaction commits (at once outside one), every server asks again the
+/// meeting-board grants of the call (`callSessionId`), or of each call of the room (`chatRoomId`) not ended, at its
+/// next co-editing tick ([`moqui_core::notify::COLLAB_RECHECK`]). A call is announced once per transaction on this
+/// thread. Nothing is refused: a lost announcement only waits for the regular recheck.
+fn recheck_meeting_boards(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut calls: Vec<String> = text(parameters, "callSessionId").into_iter().collect();
+    if let Some(room) = text(parameters, "chatRoomId") {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let sessions = facade
+            .find("moqui.call.CallSession")?
+            .eq("chatRoomId", Value::string(&room))
+            .select_field("callSessionId,statusId")
+            .list()?;
+        calls.extend(
+            sessions
+                .iter()
+                .filter(|row| row.get("statusId").map(to_plain_string).as_deref() != Some("CssEnded"))
+                .filter_map(|row| row.get("callSessionId").map(to_plain_string)),
+        );
+    }
+    for call in calls {
+        announce_after_commit(facade, call);
+    }
+    Ok(BTreeMap::new())
+}
+
+thread_local! {
+    /// The calls to announce when this thread's transaction commits, so a call is announced once per transaction.
+    static PENDING: std::cell::RefCell<std::collections::BTreeSet<String>> = const {
+        std::cell::RefCell::new(std::collections::BTreeSet::new())
+    };
+}
+
+fn announce_after_commit(facade: &EntityFacade, call: String) {
+    let send = {
+        let facade = facade.clone();
+        let call = call.clone();
+        move || {
+            let body = serde_json::json!({"callSessionId": call});
+            let sent = moqui_core::cluster::prepare_message(body).and_then(|message| {
+                moqui_core::cluster::publish(&facade, moqui_core::notify::COLLAB_RECHECK, &message)
+            });
+            if let Err(err) = sent {
+                tracing::warn!(
+                    "co-editing: the meeting boards of call {call} were not announced: {}",
+                    err.message()
+                );
+            }
+        }
+    };
+    let tx = match facade.default_transactions() {
+        Ok(tx) if tx.in_transaction() => tx,
+        _ => return send(),
+    };
+    if !PENDING.with(|pending| pending.borrow_mut().insert(call.clone())) {
+        return;
+    }
+    let forget = |call: String| {
+        move || {
+            PENDING.with(|pending| pending.borrow_mut().remove(&call));
+        }
+    };
+    let on_commit = {
+        let forget = forget(call.clone());
+        move || {
+            forget();
+            send();
+        }
+    };
+    if let Err(err) = tx
+        .on_commit(on_commit)
+        .and_then(|()| tx.on_rollback(forget(call.clone())))
+    {
+        tracing::warn!("co-editing: the meeting boards of call {call} were not announced after the commit: {err}");
+        forget(call)();
+    }
 }
 
 /// `get#CollabDocument`: the stored state of a document the current user may view: its markdown, who changed it last

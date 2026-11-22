@@ -76,6 +76,9 @@ const IDLE_SAVE: Duration = Duration::from_secs(120);
 const ACCESS_RECHECK: Duration = Duration::from_secs(60);
 /// An answer this old is not used for an update: the tick did not ask again.
 const ACCESS_STALE: Duration = Duration::from_secs(180);
+/// A meeting member's grant is asked again this often; a change to the call asks it at the next tick
+/// ([`recheck_meeting`]).
+const MEETING_RECHECK: Duration = Duration::from_secs(10);
 
 /// Why a message was refused, with the HTTP-like code the client reads.
 #[derive(Debug, Clone)]
@@ -211,6 +214,8 @@ struct Grant {
     retry_at: Instant,
     failures: u32,
     clients: usize,
+    /// Asked again at the next tick, whatever the answer's age ([`recheck_meeting`]).
+    nudged: bool,
 }
 
 fn rooms() -> &'static Mutex<HashMap<String, Arc<Mutex<Room>>>> {
@@ -794,6 +799,7 @@ pub fn join_scoped(
             retry_at: now,
             failures: 0,
             clients,
+            nudged: false,
         },
     );
     let txn = room.doc.transact();
@@ -981,7 +987,12 @@ fn recheck_access(key: &str, room: &Mutex<Room>) {
             .can_edit
             .iter()
             .filter(|(_, grant)| {
-                (grant.meeting.is_some() || grant.checked.elapsed() >= ACCESS_RECHECK) && grant.retry_at <= now
+                let every = if grant.meeting.is_some() {
+                    MEETING_RECHECK
+                } else {
+                    ACCESS_RECHECK
+                };
+                (grant.nudged || grant.checked.elapsed() >= every) && grant.retry_at <= now
             })
             .map(|(user, grant)| (user.clone(), grant.meeting.clone()))
             .collect();
@@ -1011,6 +1022,7 @@ fn recheck_access(key: &str, room: &Mutex<Room>) {
                 grant.checked = Instant::now();
                 grant.retry_at = grant.checked;
                 grant.failures = 0;
+                grant.nudged = false;
                 drop(room);
                 if changed {
                     lock(events()).push(Event::CanEdit {
@@ -1039,6 +1051,34 @@ fn recheck_access(key: &str, room: &Mutex<Room>) {
                     let wait = Duration::from_secs(5u64.saturating_mul(1 << grant.failures.min(4)).min(60));
                     grant.retry_at = Instant::now() + wait;
                 }
+            }
+        }
+    }
+}
+
+/// Whether the meeting member `actor_key` ([`Meeting::key`]) of the open document `key` may see its frames, or with
+/// `editing` change it: answered from the room's grant, which the [`tick`] renews every [`MEETING_RECHECK`] and at
+/// once after [`recheck_meeting`], so the socket asks no service per frame. A grant past [`ACCESS_STALE`] allows
+/// nothing.
+pub fn meeting_allows(key: &str, actor_key: &str, editing: bool) -> bool {
+    let Some(room) = room_of(key) else { return false };
+    let room = lock(&room);
+    room.can_edit.get(actor_key).is_some_and(|grant| {
+        grant.meeting.is_some() && grant.checked.elapsed() <= ACCESS_STALE && (!editing || grant.can_edit)
+    })
+}
+
+/// The call `call_id` changed (a leg left, a board closed, a guest was removed): its members' grants on this server
+/// are asked again at the next [`tick`], which drops or tells those that changed. The host calls it for each
+/// `collab-recheck` message (`CollabServices.recheck#MeetingBoards`).
+pub fn recheck_meeting(call_id: &str) {
+    let open: Vec<Arc<Mutex<Room>>> = lock(rooms()).values().cloned().collect();
+    let now = Instant::now();
+    for room in open {
+        for grant in lock(&room).can_edit.values_mut() {
+            if grant.meeting.as_ref().is_some_and(|meeting| meeting.call_id == call_id) {
+                grant.nudged = true;
+                grant.retry_at = now;
             }
         }
     }

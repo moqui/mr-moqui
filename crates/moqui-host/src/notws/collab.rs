@@ -26,13 +26,14 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use base64::Engine;
 use moqui_core::context::ExecutionContextFactory;
-use moqui_core::notify::{TopicMessage, COLLAB_UPDATE};
+use moqui_core::notify::{TopicMessage, COLLAB_RECHECK, COLLAB_UPDATE};
 use moqui_lib::sync::lock;
 use serde_json::{json, Value as Json};
 
 use super::{Push, Slot};
 
 static REMOTE: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
+static RECHECK: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 
 /// An editor on this server: its socket, its client id, user and presence id.
 #[derive(Clone)]
@@ -165,13 +166,9 @@ pub(super) async fn handle(
         member(&doc, &client, slot.id).and_then(|m| m.meeting)
     };
     if matches!(kind, "awareness" | "update") {
-        if let Some(scope) = scope.clone() {
-            let checked_doc = doc.clone();
-            let write = kind == "update";
-            if !matches!(
-                super::on_pool(factory, move || Ok(scope.check(&checked_doc, write))).await,
-                Ok(Ok(_))
-            ) {
+        // the room's grant, which the tick keeps current (moqui_collab::meeting_allows): no service call per frame
+        if let Some(scope) = &scope {
+            if !moqui_collab::meeting_allows(&doc, &scope.key(), kind == "update") {
                 error(slot, &doc, &client, 403, "the call no longer grants this action");
                 return true;
             }
@@ -304,9 +301,12 @@ fn member(doc: &str, client: &str, slot_id: u64) -> Option<Member> {
         .cloned()
 }
 
-/// Credentials and room membership may change after a frame was queued. Recheck
-/// meeting deliveries on a request worker before any board data leaves the socket.
-pub(super) async fn may_deliver(factory: &Arc<ExecutionContextFactory>, slot: &Slot, text: &str, guest: bool) -> bool {
+/// Credentials and room membership may change after a frame was queued, so a board frame leaves the socket only while
+/// one of the socket's memberships of the document still allows it: the one the frame names by `client` when it is
+/// the socket's, else any. A meeting membership is answered from the room's grant in memory
+/// (`moqui_collab::meeting_allows`, kept current by the tick and `collab-recheck`); a wiki one is the user's, rechecked
+/// by the tick, and never a guest's.
+pub(super) fn may_deliver(slot: &Slot, text: &str, guest: bool) -> bool {
     if !text.contains("collab:") {
         return true;
     }
@@ -323,20 +323,31 @@ pub(super) async fn may_deliver(factory: &Arc<ExecutionContextFactory>, slot: &S
     if frame["type"] == "error" {
         return true;
     }
-    let registered = lock(members())
+    let mine: Vec<Member> = lock(members())
         .get(doc)
-        .and_then(|members| members.iter().find(|m| m.slot_id == slot.id).map(|m| m.meeting.clone()));
-    let Some(registered) = registered else {
-        return false;
+        .map(|list| list.iter().filter(|m| m.slot_id == slot.id).cloned().collect())
+        .unwrap_or_default();
+    deliverable(&mine, frame.get("client").and_then(Json::as_str), guest, |scope| {
+        moqui_collab::meeting_allows(doc, &scope.key(), false)
+    })
+}
+
+/// Whether a frame for the socket's memberships `mine` of a document may go out: judged by the membership whose client
+/// the frame names, when the socket has it, else by any of them.
+fn deliverable(
+    mine: &[Member],
+    client: Option<&str>,
+    guest: bool,
+    allows: impl Fn(&moqui_collab::Meeting) -> bool,
+) -> bool {
+    let allowed = |member: &Member| match &member.meeting {
+        Some(scope) => allows(scope),
+        None => !guest,
     };
-    let Some(scope) = registered else {
-        return !guest;
-    };
-    let doc = doc.to_string();
-    matches!(
-        super::on_pool(factory, move || Ok(scope.check(&doc, false))).await,
-        Ok(Ok(_))
-    )
+    match mine.iter().find(|member| client == Some(member.client.as_str())) {
+        Some(named) => allowed(named),
+        None => mine.iter().any(allowed),
+    }
 }
 
 fn update(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, client: &str, message: &Json) {
@@ -517,6 +528,20 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
                 let _ = REMOTE.set(subscription);
             }
             Err(err) => tracing::error!("co-editing: the cluster topic was not subscribed: {}", err.message()),
+        }
+    }
+    if RECHECK.get().is_none() {
+        // a call changed on some server: its meeting grants here are asked again at the next tick
+        let recheck = |message: &TopicMessage| {
+            if let Some(call) = message.body.get("callSessionId").and_then(Json::as_str) {
+                moqui_collab::recheck_meeting(call);
+            }
+        };
+        match moqui_core::notify::subscribe(COLLAB_RECHECK, Arc::new(recheck)) {
+            Ok(subscription) => {
+                let _ = RECHECK.set(subscription);
+            }
+            Err(err) => tracing::error!("co-editing: the recheck topic was not subscribed: {}", err.message()),
         }
     }
     let factory = Arc::clone(factory);
@@ -750,5 +775,53 @@ mod tests {
             "the receiver still held, no member is kept"
         );
         drop(rx);
+    }
+
+    /// A socket with two memberships of one board: a frame naming one of its clients is judged by that membership, a
+    /// frame naming another socket's client goes out while any of them allows it, and a guest socket's wiki membership
+    /// allows nothing.
+    #[test]
+    fn a_frame_is_judged_by_the_membership_it_names_else_by_any() {
+        let meeting = |leg: &str| moqui_collab::Meeting {
+            call_id: "call".into(),
+            leg_id: leg.into(),
+            user_id: "member".into(),
+            credential: None,
+        };
+        let member = |client: &str, scope: Option<moqui_collab::Meeting>| Member {
+            slot: Weak::new(),
+            slot_id: 1,
+            client: client.into(),
+            user_id: "member".into(),
+            name: "Member".into(),
+            awareness: Json::Null,
+            meeting: scope,
+        };
+        let mine = [
+            member("old", Some(meeting("left"))),
+            member("new", Some(meeting("kept"))),
+        ];
+        let allows = |scope: &moqui_collab::Meeting| scope.leg_id == "kept";
+        assert!(
+            !deliverable(&mine, Some("old"), false, allows),
+            "the named membership left"
+        );
+        assert!(deliverable(&mine, Some("new"), false, allows));
+        assert!(
+            deliverable(&mine, Some("elsewhere"), false, allows),
+            "another membership allows it"
+        );
+        assert!(deliverable(&mine, None, false, allows));
+        assert!(
+            !deliverable(&mine[..1], Some("elsewhere"), false, allows),
+            "no membership allows it"
+        );
+        assert!(!deliverable(&[], None, false, allows), "no membership");
+        let wiki = [member("wiki", None)];
+        assert!(deliverable(&wiki, None, false, allows));
+        assert!(
+            !deliverable(&wiki, None, true, allows),
+            "a guest socket has no wiki membership"
+        );
     }
 }

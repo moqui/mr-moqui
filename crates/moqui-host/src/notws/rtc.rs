@@ -1018,7 +1018,7 @@ async fn run_guest(
             },
             push = rx.recv() => {
                 let Some(push) = push else { break };
-                if super::collab::may_deliver(&factory, &slot, &push.text, true).await {
+                if super::collab::may_deliver(&slot, &push.text, true) {
                     open = super::send_within(&mut socket, Message::Text(push.text.into())).await;
                 }
             }

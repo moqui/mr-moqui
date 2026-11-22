@@ -595,7 +595,7 @@ async fn run_socket(
                 let Some(push) = push else {
                     break;
                 };
-                if !collab::may_deliver(&factory, &slot, &push.text, false).await { continue; }
+                if !collab::may_deliver(&slot, &push.text, false) { continue; }
                 if !send_within(&mut socket, Message::Text(push.text.into())).await {
                     break;
                 }

@@ -28,6 +28,11 @@ pub const NOTIFICATION_MESSAGE: &str = "notification-message";
 /// A co-edited document's update or presence from another server (moqui-collab), for that server's editors.
 pub const COLLAB_UPDATE: &str = "collab-update";
 
+/// A call's state changed in a way that may change its members' meeting-board grants (a leg left, a board closed, a
+/// guest removed), `{"callSessionId"}`: every server asks those grants again at its next co-editing tick
+/// (`CollabServices.recheck#MeetingBoards`, moqui-collab `recheck_meeting`).
+pub const COLLAB_RECHECK: &str = "collab-recheck";
+
 /// Web sessions ended on one server (`end#UserVisit`), `{"sessionIds": [..]}`, so every server stops serving its live copy.
 pub const SESSION_END: &str = "session-end";
 
@@ -77,6 +82,7 @@ pub const TOPICS: &[&str] = &[
     ENTITY_CACHE_INVALIDATE,
     NOTIFICATION_MESSAGE,
     COLLAB_UPDATE,
+    COLLAB_RECHECK,
     CALC_UPDATE,
     CALC_PRESENCE,
     SESSION_END,
