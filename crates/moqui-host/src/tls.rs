@@ -30,7 +30,7 @@
 //! The directory is read again at most every [`RECHECK`], so a renewed or added certificate is served without a
 //! restart. A pair whose files changed but do not load keeps serving the one loaded before.
 //!
-//! In dev (`moqui_conf__instance__purpose=dev`) an empty directory gets a self-signed `localhost` certificate and a `default` copy.
+//! In dev (`moqui_conf__instance__purpose=dev`) a fresh runtime gets a managed localhost leaf and constrained intermediate, also served as `default`.
 //!
 //! A key need not be a file (plans/Sealed-Secrets.md §3.1, S4): a certificate whose key file is not there is served
 //! with a key held in memory, an ACME certificate's from its encrypted row ([`hold_key`]) or one an operator put with
@@ -45,7 +45,7 @@
 #![cfg_attr(not(feature = "axum"), allow(dead_code))]
 
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, RwLock, TryLockError};
 use std::time::{Duration, Instant, SystemTime};
@@ -539,6 +539,9 @@ fn pair_names(dir: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let file = entry.file_name().into_string().ok()?;
+            if file == "dev-ca" || file.starts_with(".dev-ca") {
+                return None;
+            }
             if entry.path().is_dir() {
                 return Some(file);
             }
@@ -783,43 +786,31 @@ pub(crate) fn leaf_for(dir: &Path, name: &str) -> Option<CertificateDer<'static>
         .cloned()
 }
 
-/// A self-signed `localhost` certificate plus `default` copies, when the directory has no pair at all.
+#[path = "dev_issuer.rs"]
+mod dev_issuer;
+
 pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
-    if has_any_pair(dir) {
-        return Ok(());
-    }
-    let fail = |what: &str, err: &dyn std::fmt::Display| Error::new(format!("{what}: {err}"));
-    moqui_lib::private_fs::create_dir_all(dir).map_err(|err| fail("could not create the cert directory", &err))?;
-    let key = rcgen::KeyPair::generate().map_err(|err| fail("could not generate a key", &err))?;
-    let mut params = rcgen::CertificateParams::new(vec!["localhost".to_string()])
-        .map_err(|err| fail("could not set up the certificate", &err))?;
-    params.subject_alt_names.extend([
-        rcgen::SanType::IpAddress(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-        rcgen::SanType::IpAddress(IpAddr::V6(Ipv6Addr::LOCALHOST)),
-    ]);
-    let mut name = rcgen::DistinguishedName::new();
-    name.push(rcgen::DnType::CommonName, "localhost");
-    params.distinguished_name = name;
-    let cert = params
-        .self_signed(&key)
-        .map_err(|err| fail("could not sign the certificate", &err))?;
-    let cert_pem = pem("CERTIFICATE", cert.der());
-    let key_pem = zeroize::Zeroizing::new(pem("PRIVATE KEY", &key.serialize_der()));
-    for stem in ["localhost", "default"] {
-        // the key in the seal's store when the server has one (plans/Sealed-Secrets.md S4), else a file beside it
-        let name = format!("{}{stem}", moqui_core::seal::secrets::TLS_KEY_PREFIX);
-        if let Err(err) = moqui_core::seal::secrets::put_named(&name, &key_pem) {
-            tracing::debug!("The development key is written as a file: {err}");
-            write_private(&dir.join(format!("{stem}.key")), &key_pem)?;
+    if !dir.join("dev-ca/managed-leaves").exists() && has_any_pair(dir) {
+        let names: Vec<_> = ["localhost", "default"]
+            .into_iter()
+            .filter(|stem| find_pair(dir, stem).is_some())
+            .collect();
+        if !names.is_empty() {
+            tracing::warn!("Unmanaged TLS identities {} in {}. Back up and move their certificates and keys aside, including any sealed tls-key/<name>, to enable managed development TLS", names.join(", "), dir.display());
+            return Ok(());
         }
-        std::fs::write(dir.join(format!("{stem}.crt")), &cert_pem)
-            .map_err(|err| fail("could not write the certificate", &err))?;
     }
-    tracing::info!(
-        "Generated a self-signed development certificate for localhost in {}",
-        dir.display()
-    );
-    Ok(())
+    let shared = moqui_lib::shared_runtime::directory().map_err(|e| Error::new(e.to_string()))?;
+    dev_issuer::ensure(dir, shared, false)
+}
+
+pub(crate) fn prepare_dev_cert(dir: &Path, shared: bool) -> Result<(), Error> {
+    let shared_dir = if shared {
+        Some(crate::install::destination()?)
+    } else {
+        moqui_lib::shared_runtime::directory().map_err(|e| Error::new(e.to_string()))?
+    };
+    dev_issuer::ensure(dir, shared_dir, shared)
 }
 
 /// Write a private key to `path` as a new file of mode `0600` (`moqui_lib::private_fs`). A file or a symbolic link

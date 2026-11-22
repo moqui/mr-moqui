@@ -886,6 +886,26 @@ where
             dispatch_types(rest)?;
             Ok(None)
         }
+        [command, rest @ ..] if command == "dev-cert" => {
+            let shared = match rest {
+                [] => false,
+                [flag] if flag == "--shared" => true,
+                _ => return Err(moqui_lib::error::Error::new("usage: moqui dev-cert [--shared]")),
+            };
+            #[cfg(any(feature = "axum", feature = "inbound-smtp"))]
+            {
+                if shared {
+                    install::destination()?;
+                }
+                tls::prepare_dev_cert(&runtime_framework_dirs().0.join("cert"), shared)?;
+                Ok(None)
+            }
+            #[cfg(not(any(feature = "axum", feature = "inbound-smtp")))]
+            {
+                let _ = shared;
+                Err(moqui_lib::error::Error::new("this build has no TLS listener"))
+            }
+        }
         [command, rest @ ..] if command == "install" => {
             install::install(rest)?;
             Ok(None)
@@ -1782,9 +1802,8 @@ fn serve_thread(
     listened
 }
 
-#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-/// The HTTP listener's address: the webroot webapp's `http-port` and `http-bind`, read by `webroot` (an attribute name to
-/// its value) from the running conf, or from the merged conf before the factory is built (the port check).
+/// The web bind address and optional HTTP port, shared by listener startup and the preflight checks.
+#[cfg(feature = "axum")]
 #[derive(Clone, Copy)]
 struct WebBind {
     ip: std::net::IpAddr,

@@ -51,6 +51,7 @@ const RENDER_ERROR: &str = r"Error rendering[^\n]*|Exception in render[^\n]*";
 
 /// What the browser of a run needs from its options.
 pub(crate) struct BrowserConfig {
+    pub(crate) loopback_tls: bool,
     pub(crate) chromium: Option<String>,
     pub(crate) headed: bool,
     pub(crate) insecure: bool,
@@ -789,17 +790,41 @@ fn browser_args(insecure: bool, capture_this_tab: bool) -> Vec<String> {
     args
 }
 
+/// Chromium accepts an SPKI in the presented chain. Pin the managed leaf of this runtime.
+fn managed_leaf_pin(runtime: Option<&Path>) -> Option<String> {
+    use base64::Engine as _;
+    use rustls::pki_types::{pem::PemObject as _, CertificateDer};
+    use sha2::Digest as _;
+
+    let runtime = runtime.map(Path::to_path_buf).unwrap_or_else(moqui_lib::dev_ca::runtime_dir);
+    let dir = runtime.join("cert");
+    let chain = std::fs::read(dir.join("localhost.crt")).ok()?;
+    let marker = std::fs::read_to_string(dir.join("dev-ca/managed-leaves")).ok()?;
+    let fingerprint = crate::tls_pin::hex(&sha2::Sha256::digest(&chain).into());
+    if !marker.lines().any(|entry| entry == fingerprint) {
+        return None;
+    }
+    let cert = CertificateDer::from_pem_slice(&chain).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(crate::tls_pin::public_key_sha256(&cert)?))
+}
+
 impl SpecBrowser {
     /// Start the spec's browser.
     pub(crate) fn launch(config: &BrowserConfig, capture_this_tab: bool) -> Result<SpecBrowser, String> {
         let binary =
             crate::chromium::find_test_browser(config.runtime.as_deref(), config.chromium.as_deref().unwrap_or(""))?;
+        let mut extra_args = browser_args(config.insecure, capture_this_tab);
+        if !config.insecure && config.loopback_tls {
+            if let Some(pin) = managed_leaf_pin(config.runtime.as_deref()) {
+                extra_args.push(format!("--ignore-certificate-errors-spki-list={pin}"));
+            }
+        }
         let launch = cdp::Launch {
             binary,
             headed: config.headed,
             window: VIEWPORT,
             profile_prefix: "moqui-test-chromium".to_string(),
-            extra_args: browser_args(config.insecure, capture_this_tab),
+            extra_args,
         };
         let driver = cdp::Browser::start(&launch)?;
         Ok(SpecBrowser {

@@ -43,6 +43,7 @@ Check
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
+  dev-cert         [--shared]                              Prepare the localhost development certificate
   install          [--from DIR] [--with-data] [--force]     Install this runtime for the current user
   embedded         info | list | diff | extract | checksum  The runtime and programs built into this binary
   conf             env [--names] [text]                     Each conf attribute with the environment name that sets it
@@ -852,6 +853,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "refs" => Some(REFS),
         "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
+        "dev-cert" => Some("moqui dev-cert [--shared]\nPrepare the localhost development certificate without starting a server."),
         "install" => Some("moqui install [--from DIR] [--with-data] [--force]\nInstall the binary and runtime under ~/.mr-moqui. Use moqui --installed to run it."),
         "embedded" => Some(EMBEDDED),
         "conf" => Some(CONF),
@@ -922,6 +924,7 @@ fn is_known_command(name: &str) -> bool {
             | "refs"
             | "autodoc"
             | "lsp"
+            | "dev-cert"
             | "install"
             | "embedded"
             | "test"

@@ -376,9 +376,8 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
 
 /// The HTTP client of a run: redirects are the session's to follow, and `insecure` accepts any certificate.
 fn http_client(insecure: bool) -> Result<reqwest::blocking::Client, Error> {
-    reqwest::blocking::Client::builder()
+    moqui_lib::dev_ca::builder(insecure)?
         .redirect(reqwest::redirect::Policy::none())
-        .danger_accept_invalid_certs(insecure)
         .user_agent(concat!("moqui-test-client/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|err| Error::new(format!("HTTP client: {err}")))
@@ -386,6 +385,7 @@ fn http_client(insecure: bool) -> Result<reqwest::blocking::Client, Error> {
 
 /// The client host of a run of `args` against `server`, writing under `out_dir`.
 fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client, out_dir: &Path) -> Arc<ClientHost> {
+    let local = server.secure && moqui_lib::dev_ca::loopback(&server.host);
     Arc::new_cyclic(|me| ClientHost {
         me: me.clone(),
         server,
@@ -405,6 +405,7 @@ fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client
         current: Mutex::new((String::new(), String::new())),
         output: Mutex::new(Vec::new()),
         browser_config: browser::BrowserConfig {
+            loopback_tls: local,
             chromium: args.chromium.clone(),
             headed: args.headed,
             insecure: args.insecure,
@@ -1133,9 +1134,9 @@ impl ClientHost {
         let server = Server::parse(server, true)
             .map_err(|err| err.to_string())?
             .with_ssh(ssh.map(|(host, port)| SshTarget { host, port }));
-        let client = reqwest::blocking::Client::builder()
+        let client = moqui_lib::dev_ca::builder(insecure)
+            .map_err(|e| e.to_string())?
             .redirect(reqwest::redirect::Policy::none())
-            .danger_accept_invalid_certs(insecure)
             .user_agent(load::LOAD_AGENT)
             .build()
             .map_err(|err| format!("HTTP client: {err}"))?;
@@ -1158,6 +1159,7 @@ impl ClientHost {
             current: Mutex::new((String::new(), String::new())),
             output: Mutex::new(Vec::new()),
             browser_config: browser::BrowserConfig {
+                loopback_tls: false,
                 chromium: None,
                 headed: false,
                 insecure,

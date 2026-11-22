@@ -190,7 +190,7 @@ async fn handshake_serves_known_domain_and_refuses_unknown() {
             });
         }
     });
-    let connector = client_trusting(&dir.join("localhost.crt"));
+    let connector = client_trusting(&dir.join("dev-ca/ca.crt"));
     let connect = |name: &'static str| {
         let connector = connector.clone();
         async move {

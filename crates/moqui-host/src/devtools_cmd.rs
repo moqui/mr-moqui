@@ -248,7 +248,7 @@ fn check_agreement() -> Result<(), Error> {
     };
     let server = target.base.clone();
     // no redirect is followed: the key goes to the server named and nowhere it points
-    let client = reqwest::blocking::Client::builder()
+    let client = moqui_lib::dev_ca::builder(false)?
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .user_agent(concat!("moqui-check/", env!("CARGO_PKG_VERSION")))

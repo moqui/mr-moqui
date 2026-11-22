@@ -189,7 +189,7 @@ feature("parallel threads log in on sessions of their own", {
         return parallel(3, (index, args) => {
             login(args.user, args.password)
             if (index == 2) throw new Error("thread two throws")
-            return { index, cookie: http.cookies().some((c) => c.name == "moqui.session") }
+            return { index, cookie: http.cookies().some((c) => c.name == (server.url.startsWith("https://") ? "__Host-moqui.session" : "moqui.session")) }
         }, ARGS)
     },
     then({ results, errors }) {

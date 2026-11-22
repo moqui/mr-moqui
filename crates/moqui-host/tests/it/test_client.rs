@@ -69,22 +69,24 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
         return;
     }
     // with ssh and tui the server listens for SSH too (Ssh.spec.js); without, that spec skips
+    #[allow(unused_mut)] // SSH-enabled builds add their listener below.
+    let mut properties = vec![
+        ("instance@purpose", "dev"),
+        ("webapp-list/webapp[webroot]@https-listen-port", "0"),
+    ];
     #[cfg(all(feature = "ssh", feature = "tui"))]
-    let gate = {
+    let seed = {
         use base64::Engine as _;
-        let seed = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
-        crate::common::start_with_properties(
-            "test-client",
-            None,
-            &[
-                ("moqui_conf__ssh_server__port", "0"),
-                ("moqui_conf__ssh_server__host_key", &seed),
-            ],
-        )
+        base64::engine::general_purpose::STANDARD.encode([7u8; 32])
     };
-    #[cfg(not(all(feature = "ssh", feature = "tui")))]
-    let gate = crate::common::start("test-client");
-    let server = format!("http://{}", gate.server.address());
+    #[cfg(all(feature = "ssh", feature = "tui"))]
+    properties.extend([
+        ("moqui_conf__ssh_server__port", "0"),
+        ("moqui_conf__ssh_server__host_key", seed.as_str()),
+    ]);
+    let gate = crate::common::start_with_properties("test-client", None, &properties);
+    moqui_lib::env::set_property("MOQUI_INSTALLED_RUNTIME", gate.runtime.to_string_lossy());
+    let server = format!("https://{}", gate.server.https_address().unwrap());
     let ssh = gate.server.ssh_address().map(|address| address.to_string());
     let out = temp_dir("moqui-test-client-out");
     let _out = DirGuard(out.clone());
@@ -92,7 +94,7 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     let files = out.join("files");
     let specs = fixture_component().join("test/client");
     let slow = format!("slowServer={}", slow_server());
-    let mut args = vec![specs.to_str().unwrap(), "--server", &server];
+    let mut args = vec![specs.to_str().unwrap(), "--server", &server, "--param", "scheme=https"];
     if let Some(ssh) = &ssh {
         args.extend(["--ssh", ssh.as_str()]);
     }

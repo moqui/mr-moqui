@@ -33,9 +33,9 @@ feature("the login form answers a redirect, and its session is logged in", {
     then({ res, after, s }) {
         res.status == 302
         res.location != null
-        res.cookie("moqui.session") != null
+        res.cookie(server.url.startsWith("https://") ? "__Host-moqui.session" : "moqui.session") != null
         after.status == 200
-        s.cookies().some((c) => c.name == "moqui.session")
+        s.cookies().some((c) => c.name == (server.url.startsWith("https://") ? "__Host-moqui.session" : "moqui.session"))
     },
 })
 
