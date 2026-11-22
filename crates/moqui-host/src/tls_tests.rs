@@ -141,9 +141,9 @@ fn a_renewal_that_does_not_load_keeps_the_previous_key() {
 #[test]
 fn dev_cert_is_generated_once_and_loads() {
     let dir = temp_dir("dev").join("cert");
-    ensure_dev_cert(&dir).unwrap();
+    ensure_dev_cert_with(&dir, None).unwrap();
     let first = std::fs::read(dir.join("localhost.crt")).unwrap();
-    ensure_dev_cert(&dir).unwrap();
+    ensure_dev_cert_with(&dir, None).unwrap();
     assert_eq!(first, std::fs::read(dir.join("localhost.crt")).unwrap());
     let store = CertStore::new(dir.clone());
     assert!(store.lookup(Some("localhost")).is_some());
@@ -168,7 +168,7 @@ fn mismatched_key_is_not_served() {
 async fn handshake_serves_known_domain_and_refuses_unknown() {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     let dir = temp_dir("handshake").join("cert");
-    ensure_dev_cert(&dir).unwrap();
+    ensure_dev_cert_with(&dir, None).unwrap();
     // Only `localhost`: drop the default so an unknown name has nothing to fall back to.
     std::fs::remove_file(dir.join("default.crt")).unwrap();
     std::fs::remove_file(dir.join("default.key")).unwrap();

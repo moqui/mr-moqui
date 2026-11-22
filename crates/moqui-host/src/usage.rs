@@ -43,7 +43,7 @@ Check
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
   lsp              [--server URL]                           A language server for editors and coding agents
-  dev-cert         [--shared]                              Prepare the localhost development certificate
+  dev-cert         [--shared] [--replace] [--rotate]        Prepare the localhost development certificate
   install          [--from DIR] [--with-data] [--force]     Install this runtime for the current user
   embedded         info | list | diff | extract | checksum  The runtime and programs built into this binary
   conf             env [--names] [text]                     Each conf attribute with the environment name that sets it
@@ -59,7 +59,10 @@ Help
   version                                                   The version, package and features of this binary
 
 Server options
-  -p, --port N       HTTP port (--http-port N or off, default 8080). Also: port=N, -port=N, --port=N.
+  -p, --port N       The plain HTTP port to listen on, or off (--http-port N); it sets http-port and
+                     http-listen-port. Without it HTTP follows http-listen-port: off in the dev conf, which
+                     listens on HTTPS 8443 only; 8080 otherwise. (For moqui test-client and test-load, -p is
+                     the HTTPS port of the server they reach.) Also: port=N, -port=N, --port=N.
   --https-port N     HTTPS port to listen on (the webroot webapp's https-listen-port, default 8443), or 'off'. Certificates
                      are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
@@ -74,7 +77,8 @@ Server options
 
 Environment
   MOQUI_SHARED_RUNTIME Shared directory (absolute path, default ~/.mr-moqui), or off.
-  --installed        Use the installed runtime from any directory.
+  --installed        As the first argument: run the installed runtime (~/.mr-moqui, moqui install) from
+                     any directory, reading only its files and this binary's.
   MOQUI_RUNTIME      Runtime directory (default: runtime in the working directory when it has a
                      components/base directory, else the working directory itself when it has one, else
                      a new runtime in the working directory; never found from this executable, so one
@@ -853,7 +857,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "refs" => Some(REFS),
         "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
-        "dev-cert" => Some("moqui dev-cert [--shared]\nPrepare the localhost development certificate without starting a server."),
+        "dev-cert" => Some("moqui dev-cert [--shared] [--replace] [--rotate]\nPrepare the localhost development certificate without starting a server.\n  --shared   sign it with the per-user dev CA in ~/.mr-moqui, made from this checkout's when there is none (./moq trust-dev-cert)\n  --replace  move an older self-signed runtime/cert/localhost or default pair aside (into cert/replaced-<time>) first\n  --rotate   make a new development root and issuer, then new certificates; trust the new root again"),
         "install" => Some("moqui install [--from DIR] [--with-data] [--force]\nInstall the binary and runtime under ~/.mr-moqui. Use moqui --installed to run it."),
         "embedded" => Some(EMBEDDED),
         "conf" => Some(CONF),

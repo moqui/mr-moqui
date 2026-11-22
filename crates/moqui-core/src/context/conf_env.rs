@@ -534,15 +534,52 @@ pub fn declared_secret(selector: &str) -> bool {
     })
 }
 
+/// The conf attributes renamed away, each with the attribute that replaced it: the gRPC listener's port and address
+/// moved to the webroot webapp beside the HTTP and HTTPS ports (`grpc-listen-port`, `grpc-listen-bind`), which every
+/// gRPC service shares. Nothing reads the old ones, so a conf that sets one is refused rather than silently ignored.
+pub const RETIRED_ATTRIBUTES: &[(&str, &str)] = &[
+    (
+        "pass-authority@grpc-host",
+        "webapp-list/webapp[webroot]@grpc-listen-bind",
+    ),
+    (
+        "pass-authority@grpc-port",
+        "webapp-list/webapp[webroot]@grpc-listen-port",
+    ),
+    (
+        "telemetry/receiver@grpc-port",
+        "webapp-list/webapp[webroot]@grpc-listen-port",
+    ),
+    (
+        "telemetry/receiver@grpc-bind",
+        "webapp-list/webapp[webroot]@grpc-listen-bind",
+    ),
+];
+
 /// Refuse a merged conf that still uses the retired properties (plans/archive/Conf-Paths.md, phase 7): a `default-property`,
 /// which nothing reads, and an attribute holding `${`, which is not expanded (an `actions` block's XML actions are not
-/// conf attributes and keep theirs). Each is logged, naming its attribute and the environment name that sets it.
+/// conf attributes and keep theirs); and a renamed attribute ([`RETIRED_ATTRIBUTES`]), from a conf file or from its
+/// environment name, which the merged conf holds too. Each is logged, naming its attribute and the environment name
+/// that sets it, and for a renamed one its replacement.
 ///
 /// # Errors
 ///
-/// When the conf has either.
+/// When the conf has any.
 pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
     let mut found = Vec::new();
+    for (retired, replacement) in RETIRED_ATTRIBUTES {
+        let set = AttrPath::parse(retired)
+            .ok()
+            .and_then(|path| path::resolve(conf, &path, &conf_schema::keying, false).ok())
+            .is_some_and(|target| target.node.attribute(&target.attribute).is_some());
+        if set {
+            found.push(format!(
+                "{retired} ({}) is renamed: set {replacement} ({}) instead",
+                env_name_of(retired),
+                env_name_of(replacement)
+            ));
+        }
+    }
     for node in conf.children_named("default-property") {
         found.push(format!(
             "<default-property name=\"{}\"> is not read: set the attribute it fed (`moqui conf env` lists each \
@@ -558,7 +595,7 @@ pub fn refuse_retired(conf: &MNode) -> Result<(), Error> {
         tracing::error!("Conf: {item}");
     }
     Err(Error::new(format!(
-        "the conf uses properties, which are retired (plans/archive/Conf-Paths.md): {}",
+        "the conf uses retired properties or attributes (plans/archive/Conf-Paths.md, docs/Run-Deploy.md): {}",
         found.join("; ")
     )))
 }

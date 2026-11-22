@@ -44,7 +44,8 @@ impl moqui_lib::vfs::Overlay for Builtin {
     }
 }
 
-/// Runtime definitions supplied by the shared installation.
+/// The files of the per-user shared runtime (`~/.mr-moqui`), read in a run without `--installed` only where neither the
+/// runtime's disk nor the binary has the file.
 struct Directory(PathBuf);
 
 impl moqui_lib::vfs::Overlay for Directory {
@@ -79,8 +80,11 @@ impl moqui_lib::vfs::Overlay for Directory {
 
 /// Mount the built-in files on the runtime `runtime_dir` whose framework component is `framework_dir`, so a file of
 /// theirs that is not on disk is read from the binary: the framework, tools and the webroot, the other built-in
-/// components, the sets' manifest, the placeholder page at `/` and the confs. Mounting again replaces the mounts.
-pub(crate) fn mount(runtime_dir: &Path, framework_dir: &Path) {
+/// components, the sets' manifest, the placeholder page at `/` and the confs. Behind them is the per-user shared
+/// runtime's `components` and `conf` ([`moqui_lib::shared_runtime`]), unless it is the runtime itself (`--installed`),
+/// so the order is the runtime on disk, the binary, then the shared runtime. Mounting again replaces the mounts.
+/// Returns the shared runtime when it was mounted.
+pub(crate) fn mount(runtime_dir: &Path, framework_dir: &Path) -> Option<PathBuf> {
     let shared = match moqui_lib::shared_runtime::directory() {
         Ok(dir) => dir
             .filter(|path| path.is_dir() && moqui_lib::vfs::normalize(path) != moqui_lib::vfs::normalize(runtime_dir)),
@@ -90,6 +94,7 @@ pub(crate) fn mount(runtime_dir: &Path, framework_dir: &Path) {
         }
     };
     mount_with_shared(runtime_dir, framework_dir, shared.as_deref());
+    shared
 }
 
 fn mount_with_shared(runtime_dir: &Path, framework_dir: &Path, shared: Option<&Path>) {
@@ -130,7 +135,8 @@ pub(crate) fn ensure_runtime(runtime_dir: &Path, framework_dir: &Path) -> Result
         std::fs::create_dir_all(dir)
             .map_err(|err| Error::new(format!("could not create {}", dir.display())).with_source(err))?;
     }
-    mount(runtime_dir, framework_dir);
+    let shared = mount(runtime_dir, framework_dir);
+    log_sources(runtime_dir, shared.as_deref());
     let manifest = framework_dir.join("component.xml");
     if !manifest.is_file() {
         if let Some(source) = moqui_lib::vfs::source_file(&manifest) {
@@ -156,6 +162,30 @@ pub(crate) fn ensure_runtime(runtime_dir: &Path, framework_dir: &Path) -> Result
         }
     }
     Ok(())
+}
+
+/// Log where the runtime's files come from, once at boot: an installed runtime (`--installed`, `~/.mr-moqui` itself)
+/// reads only its own directory and the binary, by design for production systems and desktop installs; another
+/// runtime reads its directory, then the binary, then the shared runtime for the files neither has (the dev CA, a
+/// shared add-on component).
+fn log_sources(runtime_dir: &Path, shared: Option<&Path>) {
+    if moqui_lib::env::get_property("MOQUI_INSTALLED_RUNTIME").is_some() {
+        tracing::info!(
+            "Runtime: installed at {} (moqui install); files come from here and the binary",
+            runtime_dir.display()
+        );
+        if let Err(err) = crate::install::check_version(runtime_dir) {
+            tracing::warn!("{err}");
+        }
+    } else if let Some(shared) = shared {
+        tracing::info!(
+            "Runtime: {}; missing files from the binary, then {}",
+            runtime_dir.display(),
+            shared.display()
+        );
+    } else {
+        tracing::info!("Runtime: {}; missing files from the binary", runtime_dir.display());
+    }
 }
 
 /// The runtime's directory of each built-in component set that the factory loaded: the framework, tools and webroot

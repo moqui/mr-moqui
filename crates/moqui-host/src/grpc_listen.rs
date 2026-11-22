@@ -43,14 +43,18 @@ pub(crate) fn bind_address(factory: &ExecutionContextFactory, ip: std::net::IpAd
         &moqui_core::context::conf_env::webroot_setting,
         ip,
         tls,
+        true,
     )
 }
 
+/// [`bind_address`] from the settings `setting` and `webroot`; the PASS authority's h2c refusal is logged when `log`
+/// (the listener's own start), not by the port check before it, so it is logged once.
 pub(crate) fn bind_address_by(
     setting: crate::monitor::grpc::Setting,
     webroot: &dyn Fn(&str) -> String,
     web_ip: std::net::IpAddr,
     tls: bool,
+    log: bool,
 ) -> Option<SocketAddr> {
     let port = match webroot("grpc-listen-port").trim() {
         "off" => return None,
@@ -75,7 +79,7 @@ pub(crate) fn bind_address_by(
     };
     let address = SocketAddr::new(ip, port);
     (crate::monitor::grpc::enabled_by(setting)
-        || (crate::pass_authority::direct_enabled() && pass_allowed(address, tls, true)))
+        || (crate::pass_authority::direct_enabled() && pass_allowed(address, tls, log)))
     .then_some(address)
 }
 

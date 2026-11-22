@@ -7,7 +7,7 @@ working task, a push notification to a loopback receiver (the server's conf must
 and GetExtendedAgentCard.
 
     python3 -m venv venv && venv/bin/pip install a2a-sdk httpx
-    A2A_TOKEN=<login key> venv/bin/python interop_a2a_sdk.py http://localhost:8080
+    SSL_CERT_FILE=runtime/cert/dev-ca/ca.crt A2A_TOKEN=<login key> venv/bin/python interop_a2a_sdk.py https://localhost:8443
 
 The host test crates/moqui-host/tests/it/a2a.rs runs it when A2A_SDK_PYTHON names such a python, against a server
 whose model is the scripted fake provider (each reply takes a moment, so a task can be subscribed to and canceled).
@@ -23,7 +23,7 @@ import a2a.types as t
 import httpx
 from a2a.client import ClientConfig, create_client
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('A2A_BASE_URL', 'http://localhost:8080')
+BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('A2A_BASE_URL', 'https://localhost:8443')
 TOKEN = os.environ.get('A2A_TOKEN', '')
 
 passed: list[str] = []

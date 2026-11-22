@@ -227,3 +227,48 @@ fn a_secret_at_changeme_is_made_into_the_seal_never_dotenv_unless_an_override_se
     assert!(!unsealed.join(".env").exists() && !unsealed.join("db/seal.json").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_renamed_attribute_is_refused_naming_its_replacement_from_a_file_or_the_environment() {
+    for (retired, replacement) in super::RETIRED_ATTRIBUTES {
+        let (element, attribute) = retired.split_once('@').unwrap();
+        let xml = match element.split_once('/') {
+            Some((outer, inner)) => {
+                format!("<moqui-conf><{outer}><{inner} {attribute}=\"4318\"/></{outer}></moqui-conf>")
+            }
+            None => format!("<moqui-conf><{element} {attribute}=\"4318\"/></moqui-conf>"),
+        };
+        let file = MNode::parse_text("moqui-conf", &xml).unwrap();
+        let err = super::refuse_retired(&file).unwrap_err().to_string();
+        assert!(err.contains(retired) && err.contains(replacement), "{err}");
+        assert!(err.contains(&super::env_name_of(replacement)), "{err}");
+    }
+    // the environment form: moqui_conf__pass_authority__grpc_port adds the attribute to the merged conf
+    let conf = MNode::parse_text(
+        "moqui-conf",
+        "<moqui-conf><pass-authority grpc-enabled=\"true\"/></moqui-conf>",
+    )
+    .unwrap();
+    assert!(super::refuse_retired(&conf).is_ok());
+    let _ = apply_from(
+        &conf,
+        vec![name(
+            "moqui_conf__pass_authority__grpc_port",
+            "4318",
+            Source::Environment,
+        )],
+    );
+    let err = super::refuse_retired(&conf).unwrap_err().to_string();
+    assert!(
+        err.contains("moqui_conf__pass_authority__grpc_port") && err.contains("grpc-listen-port"),
+        "{err}"
+    );
+    // the current names are not refused
+    let current = MNode::parse_text(
+        "moqui-conf",
+        r#"<moqui-conf><webapp-list><webapp name="webroot" grpc-listen-port="4317" grpc-listen-bind=""/></webapp-list>
+            <telemetry><receiver grpc-enabled="true"/></telemetry></moqui-conf>"#,
+    )
+    .unwrap();
+    assert!(super::refuse_retired(&current).is_ok());
+}

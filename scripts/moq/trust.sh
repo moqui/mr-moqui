@@ -1,5 +1,9 @@
 # shellcheck shell=bash
 # Trust the public root of the per-user dev CA. Keys stay with the Rust issuer.
+
+# The common name of every development root, and the start of its NSS nickname (`<prefix> <sha-256>`).
+DEV_ROOT_PREFIX='MR Moqui development root'
+
 task_trust_dev_cert() {
     local system='' remove='' arg shared root bin digest nick os
     for arg in "$@"; do
@@ -11,21 +15,33 @@ task_trust_dev_cert() {
     case $shared in /*) ;; *) die 'MOQUI_SHARED_RUNTIME must name an absolute directory to install trust' ;; esac
     root=$shared/cert/dev-ca/ca.crt
     if dry_run; then
-        info "would update dev CA trust for $root"
+        if [ -n "$remove" ] && [ ! -f "$root" ]; then
+            info "would remove every dev CA root named '$DEV_ROOT_PREFIX ...' (no shared dev CA at $root)"
+        else
+            info "would update dev CA trust for $root"
+        fi
         return 0
     fi
     if [ -z "$remove" ]; then
         bin=$(moqui_binary "${OPT_PACKAGE:-release}") || return 1
-        MOQUI_RUNTIME="$RUNTIME_DIR" "$bin" dev-cert --shared || return 1
+        if ! MOQUI_RUNTIME="$RUNTIME_DIR" "$bin" dev-cert --shared; then
+            echo 'An older self-signed runtime/cert/localhost certificate is moved aside, and a managed one issued, by:' >&2
+            echo '  ./moq moqui dev-cert --replace   (then ./moq trust-dev-cert again)' >&2
+            return 1
+        fi
     fi
-    if [ ! -f "$root" ]; then
-        [ -n "$remove" ] && { echo "No shared dev CA at $root"; return 0; }
+    # with no root left to compare, --untrust removes every development root by its name
+    digest=
+    if [ -f "$root" ]; then
+        digest=$(dev_root_fingerprint "$root") || return 1
+    elif [ -n "$remove" ]; then
+        echo "No shared dev CA at $root: removing every root named '$DEV_ROOT_PREFIX ...'"
+    else
         die "missing dev CA $root"
     fi
-    digest=$(dev_root_fingerprint "$root") || return 1
-    nick="MR Moqui development root $digest"
+    nick="$DEV_ROOT_PREFIX $digest"
     if [ "$os" = Darwin ]; then
-        local keychain
+        local keychain hash
         if [ -n "$system" ]; then
             keychain=/Library/Keychains/System.keychain
         else
@@ -39,27 +55,32 @@ task_trust_dev_cert() {
             keychain=${keychain%\"*}
         fi
         if [ -n "$remove" ]; then
-            local fingerprints
-            fingerprints=$(security find-certificate -a -Z "$keychain") || { [ "$?" = 44 ] || return 1; }
-            if [[ "$fingerprints" == *"SHA-256 hash: $digest"* ]]; then
+            while IFS= read -r hash; do
+                [ -n "$hash" ] || continue
+                [ -z "$digest" ] || [ "$hash" = "$digest" ] || continue
                 if [ -n "$system" ]; then
-                    sudo security remove-trusted-cert -d "$root" && sudo security delete-certificate -Z "$digest" "$keychain" || return 1
+                    if [ -n "$digest" ]; then sudo security remove-trusted-cert -d "$root" || return 1; fi
+                    sudo security delete-certificate -Z "$hash" "$keychain" || return 1
                 else
-                    security delete-certificate -t -Z "$digest" "$keychain" || return 1
+                    security delete-certificate -t -Z "$hash" "$keychain" || return 1
                 fi
-            fi
+            done < <(keychain_dev_roots "$keychain")
         elif [ -n "$system" ]; then
             sudo security add-trusted-cert -d -r trustRoot -p ssl -k "$keychain" "$root" || return 1
         else
             security add-trusted-cert -r trustRoot -p ssl -k "$keychain" "$root" || return 1
+            # a root an earlier --rotate replaced
+            while IFS= read -r hash; do
+                [ -z "$hash" ] || [ "$hash" = "$digest" ] || security delete-certificate -t -Z "$hash" "$keychain" || return 1
+            done < <(keychain_dev_roots "$keychain")
         fi
-        echo "Checked $keychain for $digest"
+        echo "Checked $keychain for ${digest:-$DEV_ROOT_PREFIX}"
         return
     fi
     local db profile failed=0
     if command -v certutil >/dev/null 2>&1; then
-        db=$HOME/.local/share/pki/nssdb
-        if [ -f "$HOME/.pki/nssdb/cert9.db" ]; then db=$HOME/.pki/nssdb; fi
+        # Chromium and Chrome read ~/.pki/nssdb on Linux; their snap and Flatpak builds and Firefox keep their own
+        db=$HOME/.pki/nssdb
         if [ -z "$remove" ] && [ ! -f "$db/cert9.db" ]; then
             mkdir -p "$db" && certutil -N -d "sql:$db" --empty-password || return 1
         fi
@@ -67,8 +88,8 @@ task_trust_dev_cert() {
             [ -f "$profile/cert9.db" ] || continue
             trust_nss_db "$profile" "$nick" "$root" "$digest" "$remove" || failed=1
         done < <({
-            printf '%s\n' "$db"
-            if [ -n "$remove" ]; then printf '%s\n' "$HOME/.pki/nssdb" "$HOME/.local/share/pki/nssdb"; fi
+            printf '%s\n' "$db" "$HOME/.local/share/pki/nssdb" "$HOME/snap/chromium/current/.pki/nssdb" \
+                "$HOME/.var/app/org.chromium.Chromium/.pki/nssdb" "$HOME/.var/app/com.google.Chrome/.pki/nssdb"
             for profile in "$HOME/.mozilla/firefox" "$HOME/snap/firefox/common/.mozilla/firefox" \
                 "$HOME/.var/app/org.mozilla.firefox/.mozilla/firefox"; do
                 firefox_nss_profiles "$profile"
@@ -78,7 +99,7 @@ task_trust_dev_cert() {
         echo 'NSS stores skipped. Install certutil to configure Chromium and Firefox.' >&2
         failed=1
     fi
-    local anchor_dir refresh anchor
+    local anchor_dir refresh anchor stale
     if command -v update-ca-certificates >/dev/null 2>&1; then
         anchor_dir=/usr/local/share/ca-certificates
         refresh=(update-ca-certificates)
@@ -92,16 +113,23 @@ task_trust_dev_cert() {
     fi
     anchor="$anchor_dir/mr-moqui-$digest.crt"
     if [ -n "$system" ]; then
-        if [ -f "$anchor" ] && [ "$(dev_root_fingerprint "$anchor")" != "$digest" ]; then
+        if [ -n "$digest" ] && [ -f "$anchor" ] && [ "$(dev_root_fingerprint "$anchor")" != "$digest" ]; then
             die "different certificate at $anchor"
         fi
-        if [ -n "$remove" ]; then
+        if [ -n "$remove" ] && [ -n "$digest" ]; then
             if [ -f "$anchor" ]; then sudo rm -- "$anchor" || return 1; fi
-        else
+        elif [ -z "$remove" ]; then
             sudo install -m 0644 "$root" "$anchor" || return 1
         fi
+        # with no root, every development root's anchor; when trusting, the ones an earlier --rotate replaced
+        if [ -z "$digest" ] || [ -z "$remove" ]; then
+            for stale in "$anchor_dir"/mr-moqui-*.crt; do
+                [ -f "$stale" ] && [ "$stale" != "$anchor" ] || continue
+                sudo rm -- "$stale" || return 1
+            done
+        fi
         sudo "${refresh[@]}" || return 1
-        echo "Checked system trust in $anchor for $digest"
+        echo "Checked system trust in $anchor_dir for ${digest:-$DEV_ROOT_PREFIX}"
     elif [ -n "$remove" ]; then
         printf 'To remove system trust, run ./moq trust-dev-cert --system --untrust\n'
     else
@@ -110,6 +138,11 @@ task_trust_dev_cert() {
         printf '\n'
     fi
     return "$failed"
+}
+
+# The SHA-256 hash of each development root in a macOS keychain, by its common name.
+keychain_dev_roots() {
+    security find-certificate -a -c "$DEV_ROOT_PREFIX" -Z "$1" 2>/dev/null | awk '/^SHA-256 hash:/ { print $3 }'
 }
 
 # An existing Firefox NSS database, including a custom absolute Path in profiles.ini.
@@ -138,9 +171,16 @@ dev_root_fingerprint() {
     printf '%s\n' "${fingerprint//:/}"
 }
 
+# The nicknames of the development roots in an NSS database.
+nss_dev_roots() {
+    certutil -L -d "sql:$1" 2>/dev/null | grep -oE "^$DEV_ROOT_PREFIX [0-9A-Fa-f]{64}"
+}
+
+# Trust, or with remove untrust, the root under nick in one NSS database. With no digest (the root is gone), remove
+# every development root by its nickname; when trusting, also the roots an earlier --rotate replaced.
 trust_nss_db() {
-    local db=$1 nick=$2 root=$3 digest=$4 remove=$5 found
-    if certutil -L -d "sql:$db" -n "$nick" >/dev/null 2>&1; then
+    local db=$1 nick=$2 root=$3 digest=$4 remove=$5 found other
+    if [ -n "$digest" ] && certutil -L -d "sql:$db" -n "$nick" >/dev/null 2>&1; then
         found=$(certutil -L -d "sql:$db" -n "$nick" -a | openssl x509 -noout -fingerprint -sha256) || return 1
         found=${found#*=}
         [ "${found//:/}" = "$digest" ] || { echo "Different root under $nick in $db" >&2; return 1; }
@@ -149,11 +189,19 @@ trust_nss_db() {
     elif [ -z "$remove" ]; then
         certutil -A -d "sql:$db" -n "$nick" -t 'C,,' -i "$root" || return 1
     fi
-    echo "Checked NSS trust in $db for $digest"
+    if [ -z "$digest" ] || [ -z "$remove" ]; then
+        while IFS= read -r other; do
+            [ -n "$other" ] && [ "$other" != "$nick" ] || continue
+            certutil -D -d "sql:$db" -n "$other" || return 1
+        done < <(nss_dev_roots "$db")
+    fi
+    echo "Checked NSS trust in $db for ${digest:-$DEV_ROOT_PREFIX}"
 }
 
 help_trust_dev_cert() {
     echo 'moq trust-dev-cert [--system] [--untrust]
-Trust the shared localhost dev CA for the current user. --system selects system trust.
-Use --untrust to remove the matching root from the selected stores.'
+Trust the shared localhost dev CA for the current user (Chromium, Chrome and Firefox NSS stores, including their
+snap and Flatpak builds, and the macOS login keychain). --system selects system trust. A root an earlier
+moqui dev-cert --rotate replaced is removed. Use --untrust to remove the root from the selected stores; with no
+shared dev CA left, it removes every root named "MR Moqui development root".'
 }

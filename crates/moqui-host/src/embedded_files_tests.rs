@@ -86,7 +86,7 @@ fn the_compared_components_are_named_in_a_list() {
 }
 
 #[test]
-fn shared_definitions_precede_overlapping_builtin_mounts_and_merge_addons() {
+fn shared_files_come_after_the_runtime_and_the_binary_and_merge_addons() {
     let base = moqui_lib::private_fs::new_dir_in(&std::env::temp_dir(), "moqui-runtime-layer").unwrap();
     let local = base.join("local");
     let shared = base.join("shared");
@@ -98,10 +98,21 @@ fn shared_definitions_precede_overlapping_builtin_mounts_and_merge_addons() {
     std::fs::create_dir_all(&addon).unwrap();
     std::fs::write(addon.join("component.xml"), "<component name='extra'/>").unwrap();
     std::fs::write(shared.join("MoquiConf.xml"), "private").unwrap();
+    std::fs::create_dir_all(shared.join("conf")).unwrap();
+    std::fs::write(shared.join("conf/SharedOnlyConf.xml"), "<moqui-conf/>").unwrap();
+    std::fs::write(shared.join("conf/MoquiDevConf.xml"), "stale").unwrap();
     super::mount_with_shared(&local, &framework, Some(&shared));
+    // a file the binary has is read from it, not from a stale shared copy
+    let built_in = moqui_lib::vfs::read_to_string(framework.join("component.xml")).unwrap();
+    assert!(built_in.contains("<component"), "{built_in}");
+    assert_ne!(
+        moqui_lib::vfs::read_to_string(local.join("conf/MoquiDevConf.xml")).unwrap(),
+        "stale"
+    );
+    // a file neither the runtime nor the binary has is read from the shared runtime
     assert_eq!(
-        moqui_lib::vfs::read_to_string(framework.join("component.xml")).unwrap(),
-        "shared"
+        moqui_lib::vfs::read_to_string(local.join("conf/SharedOnlyConf.xml")).unwrap(),
+        "<moqui-conf/>"
     );
     assert!(
         moqui_core::context::layout::component_dirs(&local, &[moqui_core::context::layout::Set::Addon])
@@ -117,6 +128,9 @@ fn shared_definitions_precede_overlapping_builtin_mounts_and_merge_addons() {
     );
     for set in moqui_embedded::Set::ALL {
         moqui_lib::vfs::unmount(&set.dir_in(&local, &framework));
+    }
+    for tree in ["components", "conf"] {
+        moqui_lib::vfs::mount_shared(&local.join(tree), None);
     }
     std::fs::remove_dir_all(base).unwrap();
 }

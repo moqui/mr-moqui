@@ -408,6 +408,14 @@ the old secrets to their new names before the first start, or a new one is gener
 `./moq load` for a dev runtime), the session cookie key, `ssh_host_key` (else the SSH host key changes) and the edge link
 key (else each local node must pair again).
 
+The gRPC listener's port and address moved to the webroot webapp, beside the HTTP and HTTPS ports, since the OTLP
+receiver and the PASS authority share one listener: `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` are
+now `webapp-list/webapp[webroot]@grpc-listen-bind`, and `pass-authority@grpc-port` and `telemetry/receiver@grpc-port`
+are `webapp-list/webapp[webroot]@grpc-listen-port` (`moqui_conf__webapp_list__webapp__WEBROOT__grpc_listen_port`). The
+boot refuses a conf file or an environment name that still sets an old one, naming its replacement. The listener
+ports are separate from the ports of generated URLs: `http-listen-port` and `https-listen-port` are what the server
+binds, `http-port` and `https-port` what its URLs say.
+
 The settings most deployments set or should know. Their defaults are in `MoquiDefaultConf.xml`.
 
 | Setting | Default | What it does |
@@ -421,6 +429,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `webapp-list/webapp[webroot]@https-listen-port` | empty: 8443 | The HTTPS listen port (`--https-port`), or `off` |
 | `webapp-list/webapp[webroot]@https-port` | empty: 443 | The HTTPS port in generated URLs and redirects |
 | `webapp-list/webapp[webroot]@https-enabled` | `false` | `true` makes generated URLs https |
+| `webapp-list/webapp[webroot]@grpc-listen-port` | `4317` (`off` in the dev conf) | The dedicated gRPC listener for the OTLP receiver and the PASS authority, opened only when one is on, or `off`; gRPC over HTTP/2 on the HTTPS listener works either way. Was `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` |
+| `webapp-list/webapp[webroot]@grpc-listen-bind` | empty: `http-bind`'s | The address the gRPC listener binds. Was `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` |
 | `webapp-list/webapp[webroot]@allow-origins` | empty (`localhost,127.0.0.1` in the dev conf) | Other origins allowed for CORS; `*` allows any origin without credentials |
 | `webapp-list/webapp[webroot]@trusted-proxies` | empty | Address ranges of the proxies in front ([proxies](#behind-a-proxy-or-load-balancer)) |
 | `webapp-list/webapp[webroot]@client-ip-header` | empty | The header those proxies put the client address in |
@@ -433,6 +443,8 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `ssh-server@port`, `ssh-server@host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh-server@port` is empty (`2222` in the dev conf) |
 | `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
+| `board@max-document-bytes`, `board@max-update-bytes` | 20 MB, 1 MB | Boards (wiki and meeting whiteboards): the largest scene a board holds, and the largest single co-editing update a client sends |
+| `board@max-images`, `board@max-image-bytes` | `200`, 10 MB | The images one board may hold, and the largest one |
 | `calls@guest-joins-per-minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
 | `chat@server-name`, `chat@to-device-retention-days` | `localhost`, `30` | The server name in the Matrix user IDs of browsers' crypto devices (set it before the first device: a change makes every device new), and how long a to-device message waits for a device that does not take it ([Chat keys](interfaces/Chat-Keys.md)) |
 | `chat@store-key-secret` | generated | The platform secret each crypto device's browser-store key is derived under (HMAC of user, device and revision), so no table holds the keys. A new value makes every browser's store unreadable: each makes a new device and reads older messages from the key backup ([Chat keys](interfaces/Chat-Keys.md)) |
@@ -840,14 +852,36 @@ configuration, components, and instance data. Set `MOQUI_SHARED_RUNTIME` to anot
 directory or to `off` to disable it.
 
 `moqui install --from DIR` copies a runtime or unpacked archive, including its top-level
-`MoquiConf.xml`. With no instance conf the usual development conf applies. `--with-data` also
-copies instance data and secrets from a stopped runtime. The dev CA signing key stays on the
-original machine. Conflicting files are listed before installation. Use `--force` to replace them.
+`MoquiConf.xml`. With no instance conf the usual development conf applies. Conflicting files are
+listed before installation; use `--force` to replace them. A symbolic link in the source is left
+out with a warning. Each install writes `.install-manifest`, the definition files it installed,
+and the next install removes the ones its source no longer has (a file changed since it was
+installed is listed as a conflict first). Instance data is never removed. `.install-version`
+records the binary; a `moqui --installed` run by another binary logs a warning at boot.
 
-Other runtimes read definitions from their own `components/` and `conf/`, then the shared
-directories, then the binary. Their database, log, instance conf, environment and server
-identities belong to the individual runtime. An explicitly installed runtime uses its own
-definitions and data directly. Windows supports checkout-local operation.
+`--with-data` also copies instance data and secrets, and refuses while the source's server or
+embedded Postgres is running (a live `postmaster.pid`). The machine's own identity in a cluster
+or an edge link (`db/instance_id`, `db/edge_member_key`) is left out and made new; `.env` and the
+certificate keys are copied, with a warning, so the copy has the source's secrets and TLS
+identities. The dev CA signing key stays on the original machine.
+
+### Where runtime files come from
+
+- **`moqui --installed`** (the first argument): `~/.mr-moqui` *is* the runtime, used exclusively.
+  Files come from that directory, then from the binary for any it does not have. Nothing is read
+  from the working directory or `MOQUI_RUNTIME`. This is by design for production systems and
+  desktop installs, so there is one place the runtime's files come from. The boot logs
+  `Runtime: installed at <dir> (moqui install); files come from here and the binary`.
+- **Without `--installed`**: the runtime is the one found from the starting directory or set by
+  `MOQUI_RUNTIME`. Its files on disk come first, then the files built into the binary, then the
+  `components/` and `conf/` of `~/.mr-moqui` for what neither has (a shared add-on component; the
+  dev CA in `~/.mr-moqui/cert/dev-ca` is read the same way, after the runtime's own). A stale
+  shared copy never overrides the runtime or a newer binary. The boot logs `Runtime: <dir>;
+  missing files from the binary, then <~/.mr-moqui>` when the shared directory is there.
+
+The database, log, instance conf, environment and server identities always belong to the
+runtime itself. `moqui embedded diff` shows the files that differ from the binary, naming the
+local or the shared runtime. Windows supports checkout-local operation.
 
 ## HTTPS, ports and proxies
 
@@ -919,11 +953,22 @@ again within seconds of a change, so a renewal needs no restart.
 In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets a localhost leaf for DNS, IPv4 and IPv6 loopback.
 The server sends it with its constrained signing intermediate. The public root is `cert/dev-ca/ca.crt`.
 Run `./moq trust-dev-cert` once per user to establish the shared issuer and trust the root in the
-macOS login keychain or Linux browser NSS stores. A system-store client on Linux can use
+macOS login keychain or Linux browser NSS stores (`~/.pki/nssdb` for Chromium and Chrome, their snap and Flatpak
+stores, and Firefox's profiles). A system-store client on Linux can use
 `curl --cacert runtime/cert/dev-ca/ca.crt https://localhost:8443/health` or `--system` trust.
-Use `--untrust` at the same scope to remove trust. Windows clients can use the runtime-local public root.
-Managed leaves renew within 30 days of expiry. For an existing unmanaged localhost/default identity,
-back up and move aside its certificates and keys (including sealed TLS keys) before requesting a managed leaf. Outside dev with no
+Use `--untrust` at the same scope to remove trust; with the shared root gone, it removes every root named
+`MR Moqui development root`. Windows clients can use the runtime-local public root. The host's own clients (`moqui tui
+--server`, the devtools commands) trust the dev root only for loopback names, and only a `ca.crt` the current user
+owns that no other user can write.
+
+The root is valid ten years and its key is dropped once it signs the intermediate; the intermediate, whose key stays in
+`~/.mr-moqui/cert/dev-ca/signer`, is valid two years. `moqui dev-cert --rotate` makes a new root and intermediate and
+new leaves; run `./moq trust-dev-cert` again to trust the new root (it removes the old one). Managed leaves renew within
+30 days of expiry, at boot and once a day while a dev server runs. A runtime with an older self-signed
+`cert/localhost.*` (an unmanaged localhost or default identity) keeps serving it, and `./moq trust-dev-cert` stops
+naming the fix: `moqui dev-cert --replace` (`./moq moqui dev-cert --replace` in a checkout) moves the pair aside into
+`cert/replaced-<time>` and issues a managed leaf; a key the seal held for that pair is replaced at the server's next
+renewal. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
 `runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
 the start: the listener waits the same way.

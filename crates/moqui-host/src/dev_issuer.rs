@@ -12,7 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Local development CA. Only the name-constrained intermediate's signing key persists.
+//! Local development CA. Only the name-constrained intermediate's signing key persists. The root is valid ten years and
+//! its key is dropped once it signs the intermediate; the intermediate two years, when `moqui dev-cert --rotate` makes a
+//! new pair (and the new root is trusted again). `moqui dev-cert --replace` moves an older self-signed pair aside.
 use moqui_lib::{error::Error, private_fs};
 use rcgen::{
     BasicConstraints, CertificateParams, CidrSubnet, DistinguishedName, DnType, ExtendedKeyUsagePurpose,
@@ -27,6 +29,26 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DAY: u64 = 86400;
+/// The development root's validity, in days.
+const ROOT_DAYS: u64 = 3652;
+/// The intermediate's: its key is on disk, so it is short-lived and rotated.
+const ISSUER_DAYS: u64 = 730;
+/// The localhost and default stems that [`issue`] manages in `runtime/cert`.
+const STEMS: [&str; 2] = ["localhost", "default"];
+/// The stems `moqui dev-cert --replace` moved aside: a key the seal still holds under `tls-key/<stem>` belongs to the
+/// moved pair and is replaced at the next issue, not a reason to refuse.
+const REPLACED_HELD: &str = "replaced-held";
+
+/// What `moqui dev-cert` asks of [`ensure`] beyond a boot's issue.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Options {
+    /// Make the shared signer from this checkout's (`--shared`, `./moq trust-dev-cert`).
+    pub establish: bool,
+    /// Move an unmanaged localhost or default pair aside first (`--replace`).
+    pub replace: bool,
+    /// Replace the root and the intermediate, then the leaves (`--rotate`).
+    pub rotate: bool,
+}
 fn parameters(name: &str, days: u64) -> CertificateParams {
     let now = SystemTime::now();
     let mut params = CertificateParams::default();
@@ -44,7 +66,7 @@ fn authority(intermediate: bool) -> CertificateParams {
         } else {
             "MR Moqui development root"
         },
-        3652,
+        if intermediate { ISSUER_DAYS } else { ROOT_DAYS },
     );
     p.is_ca = IsCa::Ca(BasicConstraints::Constrained(if intermediate { 0 } else { 1 }));
     p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
@@ -104,7 +126,8 @@ fn create_issuer(dir: &Path) -> io::Result<()> {
     result
 }
 
-/// Establish the first shared signer from this checkout if it already issued an identity.
+/// Establish the first shared signer from this checkout if it already issued an identity; the checkout's own copy of
+/// the signing key is removed once the shared one is in place, so one key signs.
 fn promote(local: &Path, shared: &Path) -> io::Result<()> {
     let source = local.join("signer");
     if !source.is_dir() || shared.join("signer").exists() {
@@ -121,8 +144,61 @@ fn promote(local: &Path, shared: &Path) -> io::Result<()> {
     })();
     if result.is_err() {
         let _ = fs::remove_dir_all(staged);
+        return result;
     }
-    result
+    fs::remove_dir_all(source)
+}
+
+/// Move the unmanaged localhost and default pairs of `dir` aside into `dir/replaced-<seconds>`, and name their stems
+/// in [`REPLACED_HELD`]. Returns the directory, or `None` when there was nothing to move.
+fn replace(dir: &Path, local: &Path, at: SystemTime) -> io::Result<Option<PathBuf>> {
+    let known = read_optional(&local.join("managed-leaves"))?.unwrap_or_default();
+    let managed = |path: &Path| {
+        read_optional(path)
+            .ok()
+            .flatten()
+            .is_some_and(|cert| known.lines().any(|hash| hash == fingerprint(&cert)))
+    };
+    let seconds = at.duration_since(UNIX_EPOCH).map_err(io::Error::other)?.as_secs();
+    let aside = dir.join(format!("replaced-{seconds}"));
+    let mut moved = Vec::new();
+    for stem in STEMS {
+        let crt = dir.join(format!("{stem}.crt"));
+        if crt.is_file() && managed(&crt) {
+            continue;
+        }
+        let mut paths: Vec<PathBuf> = vec![crt, dir.join(format!("{stem}.key")), dir.join(stem)];
+        if let Some((cert, key)) = super::find_pair(dir, stem) {
+            paths.push(cert);
+            if let super::KeyFrom::File(key) = key {
+                paths.push(key);
+            }
+        }
+        paths.sort();
+        paths.dedup();
+        for path in paths.into_iter().filter(|path| fs::symlink_metadata(path).is_ok()) {
+            let Some(name) = path.file_name() else { continue };
+            private_fs::create_dir_all(&aside)?;
+            fs::rename(&path, aside.join(name))?;
+            if !moved.contains(&stem) {
+                moved.push(stem);
+            }
+        }
+    }
+    if moved.is_empty() {
+        return Ok(None);
+    }
+    private_fs::create_dir_all(local)?;
+    let mut held: Vec<String> = read_optional(&local.join(REPLACED_HELD))?
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect();
+    held.extend(moved.iter().map(|stem| (*stem).to_string()));
+    held.sort();
+    held.dedup();
+    publish(&local.join(REPLACED_HELD), &held.join("\n"))?;
+    Ok(Some(aside))
 }
 
 fn publish(path: &Path, text: &str) -> io::Result<()> {
@@ -179,18 +255,21 @@ fn issue(dir: &Path, source: &Path, establish: bool, at: SystemTime) -> io::Resu
     let end = until(&issuer_cert)?.min(until(&root)?);
     if end <= now + 30 * DAY {
         return Err(io::Error::other(
-            "dev issuer expires within 30 days; untrust and explicitly replace the dev CA",
+            "the dev issuer expires within 30 days: run moqui dev-cert --rotate, then ./moq trust-dev-cert to trust \
+             the new root",
         ));
     }
     let marker = local.join("managed-leaves");
     let known = read_optional(&marker)?.unwrap_or_default();
+    let replaced_held = read_optional(&local.join(REPLACED_HELD))?.unwrap_or_default();
     let mut existing = Vec::new();
     let mut unmanaged = Vec::new();
-    for stem in ["localhost", "default"] {
+    for stem in STEMS {
         let path = dir.join(format!("{stem}.crt"));
         let cert = read_optional(&path)?;
         let disk_key = read_optional(&dir.join(format!("{stem}.key")))?.map(zeroize::Zeroizing::new);
-        let held = super::held_key(dir, stem);
+        // a held key of a pair --replace moved aside is replaced below, not refused
+        let held = super::held_key(dir, stem).filter(|_| !replaced_held.lines().any(|s| s == stem));
         let unknown_key = [disk_key.as_deref(), held.as_deref()].into_iter().flatten().any(|key| {
             let id = format!("key {}", fingerprint(key));
             !known.lines().any(|hash| hash == id)
@@ -205,24 +284,24 @@ fn issue(dir: &Path, source: &Path, establish: bool, at: SystemTime) -> io::Resu
     }
     if !unmanaged.is_empty() {
         let names = unmanaged.join(", ");
-        let message=format!("Unmanaged TLS identities in {}: {names}. Back up their certificate and key files and explicitly move them aside. For a sealed key, back up the seal and remove its tls-key/<name> entry before running moqui dev-cert.",dir.display());
-        if establish {
-            eprintln!("{message}");
-            return Ok(());
-        }
-        return Err(io::Error::other(message));
+        return Err(io::Error::other(format!(
+            "Unmanaged TLS identities in {}: {names}. Run moqui dev-cert --replace to move them aside (into \
+             cert/replaced-<time>) and issue a managed development certificate, or back up and move them aside \
+             yourself.",
+            dir.display()
+        )));
     }
     if existing.iter().all(|c| {
         c.as_ref()
             .is_some_and(|c| c.ends_with(&issuer_cert) && until(c).is_ok_and(|t| t > now + 30 * DAY))
-    }) && ["localhost", "default"]
+    }) && STEMS
         .iter()
         .all(|stem| super::find_pair(dir, stem).is_some_and(|(c, k)| super::read_certified_key(&c, &k).is_ok()))
     {
         return Ok(());
     }
     if !known.is_empty()
-        && ["localhost", "default"].iter().any(|stem| {
+        && STEMS.iter().any(|stem| {
             dir.join(format!("{stem}.crt")).is_file()
                 && !dir.join(format!("{stem}.key")).is_file()
                 && super::held_key(dir, stem).is_none()
@@ -253,25 +332,61 @@ fn issue(dir: &Path, source: &Path, establish: bool, at: SystemTime) -> io::Resu
     let key = key_pem(&key);
     let hash = format!("{}\nkey {}", fingerprint(&chain), fingerprint(&key));
     publish(&marker, &format!("{known}\n{hash}"))?;
-    for stem in ["localhost", "default"] {
+    let mut sealed = true;
+    for stem in STEMS {
         let name = format!("{}{stem}", moqui_core::seal::secrets::TLS_KEY_PREFIX);
         let disk_key = dir.join(format!("{stem}.key"));
         if moqui_core::seal::secrets::put_named(&name, &key).is_err() {
+            sealed = false;
             publish(&disk_key, &key)?;
         } else if disk_key.is_file() {
             fs::remove_file(&disk_key)?;
         }
         publish(&dir.join(format!("{stem}.crt")), &chain)?;
     }
+    if sealed && !replaced_held.is_empty() {
+        // the seal now holds this issue's key under each stem
+        fs::remove_file(local.join(REPLACED_HELD))?;
+    }
     publish(&marker, &hash)
 }
 
+/// Remove the signer at `source` (`--rotate`), so the next issue makes a new root and intermediate.
+fn rotate(source: &Path) -> io::Result<()> {
+    match fs::remove_dir_all(source.join("signer")) {
+        Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err),
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn ensure(dir: &Path, shared: Option<PathBuf>, establish: bool) -> Result<(), Error> {
+    ensure_with(
+        dir,
+        shared,
+        Options {
+            establish,
+            ..Options::default()
+        },
+    )
+}
+
+/// [`ensure`] with the `moqui dev-cert` options.
+pub(super) fn ensure_with(dir: &Path, shared: Option<PathBuf>, options: Options) -> Result<(), Error> {
+    let Options {
+        establish,
+        replace: replacing,
+        rotate: rotating,
+    } = options;
     let run = || -> io::Result<()> {
         private_fs::create_dir_all(dir)?;
         let dir = dir.canonicalize()?;
         let _local = lock(&dir)?;
         let local = dir.join("dev-ca");
+        if replacing {
+            if let Some(aside) = replace(&dir, &local, SystemTime::now())? {
+                eprintln!("Moved the unmanaged TLS identities aside into {}", aside.display());
+            }
+        }
         let shared = shared
             .map(|s| s.join("cert/dev-ca"))
             .filter(|s| s != &local && s.parent().and_then(|p| p.canonicalize().ok()).as_ref() != Some(&dir));
@@ -283,7 +398,13 @@ pub(super) fn ensure(dir: &Path, shared: Option<PathBuf>, establish: bool) -> Re
             if establish {
                 promote(&local, &shared)?;
             }
+            if rotating {
+                rotate(&shared)?;
+            }
             return issue(&dir, &shared, establish, SystemTime::now());
+        }
+        if rotating {
+            rotate(&local)?;
         }
         issue(&dir, &local, establish, SystemTime::now())
     };

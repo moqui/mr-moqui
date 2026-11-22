@@ -110,7 +110,7 @@ impl Listener {
 
 async fn listen(label: &str, web: impl FnOnce(Router, ListenLimits) -> WebApp, http2: bool) -> Listener {
     let dir = tls::tests::temp_dir(label).join("cert");
-    tls::ensure_dev_cert(&dir).unwrap();
+    tls::ensure_dev_cert_with(&dir, None).unwrap();
     let mut config = tls::server_config(tls::CertStore::new(dir.clone())).unwrap();
     config.alpn_protocols = tls::web_alpn(http2);
     let limits = ListenLimits {

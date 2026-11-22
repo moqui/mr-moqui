@@ -170,7 +170,7 @@ fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Ta
     #[cfg(feature = "grpc")]
     if let Some(http) = http {
         let setting = |path: &str, name: &str| conf_setting(conf, path, name);
-        if let Some(address) = crate::grpc_listen::bind_address_by(&setting, &webroot, http.ip, https) {
+        if let Some(address) = crate::grpc_listen::bind_address_by(&setting, &webroot, http.ip, https, false) {
             targets.push(Target::optional(
                 crate::grpc_listen::LISTENER,
                 "grpc-listen-port",

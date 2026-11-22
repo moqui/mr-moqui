@@ -20,8 +20,12 @@ runs on the result of the one before; a failure stops the release until it is fi
 6. **Load (optional)**: the components' load scripts (`./moq test-load <component> --script <Name>`) against a release
    build with production-like data, compared with the last release's results ([Load-Runner](../../../docs/tools/Load-Runner.md)).
 7. **The build**: `./moq build --release`, `./moq archive`, `moqui embedded checksum`, as CI's `release` pipeline does.
-8. **The upgrade**: boot the target runtime's conf once (a retired `default-property` or a `${}` in an attribute
-   refuses the start, naming each), check its names with `moqui conf env`, and write any setting the release renamed
-   or added into its upgrade notes ([Run-Deploy](../../../docs/Run-Deploy.md#settings-and-the-environment)).
+8. **The upgrade**: boot the target runtime's conf once (a retired `default-property`, a `${}` in an attribute or a
+   renamed attribute refuses the start, naming each and its replacement), check its names with `moqui conf env`, and
+   write any setting the release renamed or added into its upgrade notes
+   ([Run-Deploy](../../../docs/Run-Deploy.md#settings-and-the-environment)). Renamed so far (`RETIRED_ATTRIBUTES` in
+   `conf_env.rs`): `pass-authority@grpc-host` and `telemetry/receiver@grpc-bind` to
+   `webapp-list/webapp[webroot]@grpc-listen-bind`, `pass-authority@grpc-port` and `telemetry/receiver@grpc-port` to
+   `webapp-list/webapp[webroot]@grpc-listen-port`; check the runtime's conf files, `.env` and the service environment.
 
 Report what ran, what passed, and each failure with its output; a step skipped is named as skipped.

@@ -88,3 +88,82 @@ fn the_retained_signing_key_can_only_issue_loopback_server_identities() {
     assert_eq!(fs::read_to_string(runtime.join("default.crt")).unwrap(), manual);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn an_older_self_signed_pair_is_refused_naming_replace_and_replace_moves_it_aside() {
+    let dir = private_fs::new_dir_in(&std::env::temp_dir(), "moqui-dev-replace").unwrap();
+    let runtime = dir.join("checkout/cert");
+    fs::create_dir_all(&runtime).unwrap();
+    fs::write(runtime.join("localhost.crt"), "old self-signed").unwrap();
+    fs::write(runtime.join("localhost.key"), "old key").unwrap();
+    // establishing the shared CA (./moq trust-dev-cert) fails, naming the way out
+    let err = ensure(&runtime, Some(dir.join("shared")), true)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("moqui dev-cert --replace"), "{err}");
+    assert_eq!(
+        fs::read_to_string(runtime.join("localhost.crt")).unwrap(),
+        "old self-signed"
+    );
+
+    let replace = Options {
+        establish: true,
+        replace: true,
+        rotate: false,
+    };
+    ensure_with(&runtime, Some(dir.join("shared")), replace).unwrap();
+    let aside: Vec<_> = fs::read_dir(&runtime)
+        .unwrap()
+        .flatten()
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("replaced-"))
+        .collect();
+    assert_eq!(aside.len(), 1);
+    assert_eq!(
+        fs::read_to_string(aside[0].path().join("localhost.key")).unwrap(),
+        "old key"
+    );
+    let leaf = fs::read_to_string(runtime.join("localhost.crt")).unwrap();
+    let issuer = fs::read_to_string(dir.join("shared/cert/dev-ca/signer/issuer.crt")).unwrap();
+    assert!(leaf.ends_with(&issuer), "a managed leaf");
+    // a managed pair is not moved again
+    ensure_with(&runtime, Some(dir.join("shared")), replace).unwrap();
+    assert_eq!(fs::read_to_string(runtime.join("localhost.crt")).unwrap(), leaf);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_issuer_lives_two_years_promotion_leaves_one_signer_and_rotate_makes_a_new_root() {
+    let dir = private_fs::new_dir_in(&std::env::temp_dir(), "moqui-dev-rotate").unwrap();
+    let runtime = dir.join("checkout/cert");
+    let shared = dir.join("shared");
+    ensure(&runtime, None, false).unwrap();
+    assert!(runtime.join("dev-ca/signer/issuer.key").is_file());
+    let issuer = fs::read_to_string(runtime.join("dev-ca/signer/issuer.crt")).unwrap();
+    let root = fs::read_to_string(runtime.join("dev-ca/ca.crt")).unwrap();
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let issuer_days = (until(&issuer).unwrap() - now) / DAY;
+    assert!((725..=730).contains(&issuer_days), "{issuer_days}");
+    assert!((until(&root).unwrap() - now) / DAY > 3600);
+
+    // the checkout's signer moves to the shared runtime, and its own copy of the key is gone
+    ensure(&runtime, Some(shared.clone()), true).unwrap();
+    assert!(!runtime.join("dev-ca/signer").exists());
+    assert_eq!(
+        fs::read_to_string(shared.join("cert/dev-ca/signer/issuer.crt")).unwrap(),
+        issuer
+    );
+
+    let rotate = Options {
+        rotate: true,
+        ..Options::default()
+    };
+    ensure_with(&runtime, Some(shared.clone()), rotate).unwrap();
+    let new_root = fs::read_to_string(shared.join("cert/dev-ca/ca.crt")).unwrap();
+    assert_ne!(new_root, root);
+    assert_eq!(fs::read_to_string(runtime.join("dev-ca/ca.crt")).unwrap(), new_root);
+    let new_issuer = fs::read_to_string(shared.join("cert/dev-ca/signer/issuer.crt")).unwrap();
+    assert!(fs::read_to_string(runtime.join("localhost.crt"))
+        .unwrap()
+        .ends_with(&new_issuer));
+    fs::remove_dir_all(dir).unwrap();
+}

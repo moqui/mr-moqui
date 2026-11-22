@@ -76,8 +76,9 @@ pub fn mount(root: &Path, overlay: Arc<dyn Overlay>) {
     mount_layer(root, Some(overlay), false);
 }
 
-/// Replace the shared definition layer at this root. Shared mounts precede every embedded mount,
-/// including mounts on an ancestor or descendant of this directory.
+/// Replace the shared layer at this root (the per-user `~/.mr-moqui` of a run without `--installed`). Shared mounts
+/// come after every other mount, including mounts on an ancestor or descendant of this directory, so the disk comes
+/// first, then the files built into the binary, and a shared file is read only when neither has it.
 pub fn mount_shared(root: &Path, overlay: Option<Arc<dyn Overlay>>) {
     mount_layer(root, overlay, true);
 }
@@ -91,7 +92,11 @@ fn mount_layer(root: &Path, overlay: Option<Arc<dyn Overlay>>, shared: bool) {
     let mut mounts = MOUNTS.write().unwrap_or_else(std::sync::PoisonError::into_inner);
     mounts.retain(|mount| mount.root != root || mount.shared != shared);
     let Some(overlay) = overlay else { return };
-    let index = if shared { 0 } else { mounts.len() };
+    let index = if shared {
+        mounts.len()
+    } else {
+        mounts.iter().position(|mount| mount.shared).unwrap_or(mounts.len())
+    };
     mounts.insert(
         index,
         Mount {

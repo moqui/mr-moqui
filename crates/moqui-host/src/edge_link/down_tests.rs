@@ -53,7 +53,7 @@ async fn echo(
 /// trusts it.
 fn local(label: &str) -> (LocalWeb, tokio_rustls::TlsConnector, tokio::sync::watch::Sender<bool>) {
     let runtime = crate::tls::tests::temp_dir(label);
-    crate::tls::ensure_dev_cert(&runtime.join("cert")).unwrap();
+    crate::tls::ensure_dev_cert_with(&runtime.join("cert"), None).unwrap();
     let store = crate::tls::CertStore::new(runtime.join("cert"));
     let tls = Arc::new(crate::tls::server_config(store).unwrap());
     let connector = crate::tls::tests::client_trusting(&runtime.join("cert").join("localhost.crt"));
