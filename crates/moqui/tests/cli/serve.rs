@@ -30,6 +30,7 @@ use super::test::{fixture_component, test_runtime, TestRuntime};
 
 fn client_command(runtime: &TestRuntime, args: &[&str]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_moqui"));
+    command.env("MOQUI_SHARED_RUNTIME", "off");
     command
         .arg("test-client")
         .args(args)

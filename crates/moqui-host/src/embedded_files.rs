@@ -44,10 +44,60 @@ impl moqui_lib::vfs::Overlay for Builtin {
     }
 }
 
+/// Runtime definitions supplied by the shared installation.
+struct Directory(PathBuf);
+
+impl moqui_lib::vfs::Overlay for Directory {
+    fn disk_path(&self, path: &str) -> Option<PathBuf> {
+        Some(self.0.join(path))
+    }
+    fn read(&self, path: &str) -> std::io::Result<Option<Vec<u8>>> {
+        match std::fs::read(self.0.join(path)) {
+            Ok(bytes) => Ok(Some(bytes)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    fn is_file(&self, path: &str) -> bool {
+        self.0.join(path).is_file()
+    }
+    fn is_dir(&self, path: &str) -> bool {
+        self.0.join(path).is_dir()
+    }
+    fn children(&self, path: &str) -> Vec<(String, bool)> {
+        let mut entries = Vec::new();
+        if let Ok(list) = std::fs::read_dir(self.0.join(path)) {
+            for entry in list.flatten() {
+                if let Ok(name) = entry.file_name().into_string() {
+                    entries.push((name, entry.path().is_dir()));
+                }
+            }
+        }
+        entries
+    }
+}
+
 /// Mount the built-in files on the runtime `runtime_dir` whose framework component is `framework_dir`, so a file of
 /// theirs that is not on disk is read from the binary: the framework, tools and the webroot, the other built-in
 /// components, the sets' manifest, the placeholder page at `/` and the confs. Mounting again replaces the mounts.
 pub(crate) fn mount(runtime_dir: &Path, framework_dir: &Path) {
+    let shared = match moqui_lib::shared_runtime::directory() {
+        Ok(dir) => dir
+            .filter(|path| path.is_dir() && moqui_lib::vfs::normalize(path) != moqui_lib::vfs::normalize(runtime_dir)),
+        Err(err) => {
+            tracing::error!("{err}");
+            None
+        }
+    };
+    mount_with_shared(runtime_dir, framework_dir, shared.as_deref());
+}
+
+fn mount_with_shared(runtime_dir: &Path, framework_dir: &Path, shared: Option<&Path>) {
+    for tree in ["components", "conf"] {
+        let directory = shared.as_ref().map(|dir| dir.join(tree)).filter(|dir| dir.is_dir());
+        let overlay = directory.map(|dir| Arc::new(Directory(dir)) as Arc<dyn moqui_lib::vfs::Overlay>);
+        moqui_lib::vfs::mount_shared(&runtime_dir.join(tree), overlay);
+    }
     for set in Set::ALL {
         moqui_lib::vfs::mount(&set.dir_in(runtime_dir, framework_dir), Arc::new(Builtin(set)));
     }
@@ -81,7 +131,12 @@ pub(crate) fn ensure_runtime(runtime_dir: &Path, framework_dir: &Path) -> Result
             .map_err(|err| Error::new(format!("could not create {}", dir.display())).with_source(err))?;
     }
     mount(runtime_dir, framework_dir);
-    if !framework_dir.join("component.xml").is_file() {
+    let manifest = framework_dir.join("component.xml");
+    if !manifest.is_file() {
+        if let Some(source) = moqui_lib::vfs::source_file(&manifest) {
+            tracing::info!("Reading the framework component from {}", source.display());
+            return Ok(());
+        }
         let level = moqui_embedded::level();
         if level == moqui_embedded::Level::Framework {
             tracing::info!(
@@ -159,7 +214,7 @@ fn names(dirs: &[(Set, PathBuf)]) -> String {
 }
 
 fn log_differences(dirs: &[(Set, PathBuf)]) {
-    let differences = match moqui_embedded::compare(&borrowed(dirs)) {
+    let differences = match compare(dirs) {
         Ok(differences) => differences,
         Err(err) => {
             tracing::error!("Could not read the runtime files built into this binary: {err}");
@@ -175,6 +230,35 @@ fn log_differences(dirs: &[(Set, PathBuf)]) {
     if !moqui_embedded::components().is_empty() {
         log_set_differences(&other_dirs, others, tracing::Level::INFO);
     }
+}
+
+/// Reconcile the two physical layers before reporting the embedded fallback.
+fn compare(dirs: &[(Set, PathBuf)]) -> std::io::Result<Vec<moqui_embedded::Difference>> {
+    let mut local = moqui_embedded::compare(&borrowed(dirs))?;
+    let Some(shared) = moqui_lib::shared_runtime::directory()?.filter(|dir| dir.is_dir()) else {
+        return Ok(local);
+    };
+    let framework = moqui_core::context::layout::framework_dir(&shared);
+    let shared_dirs: Vec<_> = dirs
+        .iter()
+        .map(|(set, _)| (*set, set.dir_in(&shared, &framework)))
+        .collect();
+    let differences = moqui_embedded::compare(&borrowed(&shared_dirs))?;
+    local.retain(|d| d.kind != Kind::Missing || !selected_shared(dirs, d.set, &d.path));
+    for d in differences {
+        if d.kind != Kind::Missing && selected_shared(dirs, d.set, &d.path) {
+            local.push(d);
+        }
+    }
+    Ok(local)
+}
+
+fn selected_shared(dirs: &[(Set, PathBuf)], set: Set, path: &str) -> bool {
+    let Some((_, dir)) = dirs.iter().find(|(s, _)| *s == set) else {
+        return false;
+    };
+    let path = dir.join(path);
+    !path.exists() && moqui_lib::vfs::source_file(&path).is_some()
 }
 
 /// Log the differences of the sets `dirs`: the files read from the binary, then the ones that differ at `level`.
@@ -205,12 +289,26 @@ fn log_set_differences(dirs: &[(Set, PathBuf)], differences: Vec<moqui_embedded:
     if level == tracing::Level::WARN {
         tracing::warn!("{summary}");
         for difference in &differences {
-            tracing::warn!("Differs from the binary: {difference}");
+            tracing::warn!(
+                "Differs from the binary ({}): {difference}",
+                if selected_shared(dirs, difference.set, &difference.path) {
+                    "shared runtime"
+                } else {
+                    "local runtime"
+                }
+            );
         }
     } else {
         tracing::info!("{summary}");
         for difference in &differences {
-            tracing::info!("Differs from the binary: {difference}");
+            tracing::info!(
+                "Differs from the binary ({}): {difference}",
+                if selected_shared(dirs, difference.set, &difference.path) {
+                    "shared runtime"
+                } else {
+                    "local runtime"
+                }
+            );
         }
     }
 }
@@ -316,7 +414,7 @@ fn runtime_dirs() -> Vec<(Set, PathBuf)> {
 
 fn diff_all() -> Result<(), Error> {
     let dirs = runtime_dirs();
-    let differences = moqui_embedded::compare(&borrowed(&dirs)).map_err(io_error)?;
+    let differences = compare(&dirs).map_err(io_error)?;
     let (built_in, differences): (Vec<_>, Vec<_>) = differences
         .into_iter()
         .partition(|difference| difference.kind == Kind::Missing);
@@ -378,7 +476,15 @@ fn diff_one(path: &str) -> Result<(), Error> {
 
 /// Print the diff of one file; false when it matches.
 fn print_diff(set: Set, path: &str, dir: &Path) -> Result<bool, Error> {
-    match moqui_embedded::unified_diff(set, path, dir).map_err(io_error)? {
+    let physical = moqui_lib::vfs::source_file(&dir.join(path));
+    let mut source = physical.as_deref();
+    if let Some(file) = source {
+        println!("{} comes from {}", path, file.display());
+        for _ in Path::new(path).components() {
+            source = source.and_then(Path::parent);
+        }
+    }
+    match moqui_embedded::unified_diff(set, path, source.unwrap_or(dir)).map_err(io_error)? {
         Some(diff) => {
             print!("{diff}");
             Ok(true)

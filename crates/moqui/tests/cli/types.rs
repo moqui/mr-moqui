@@ -23,6 +23,7 @@ fn types_writes_the_declarations_into_out() {
     let out = std::env::temp_dir().join(format!("moqui-types-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
     let output = Command::new(env!("CARGO_BIN_EXE_moqui"))
+        .env("MOQUI_SHARED_RUNTIME", "off")
         .args(["types", "--out", &out.display().to_string()])
         .current_dir(repo())
         .env("MOQUI_RUNTIME", repo().join("runtime"))
@@ -60,6 +61,7 @@ fn types_writes_the_declarations_into_out() {
 
     // An argument it does not know is the usage error.
     let output = Command::new(env!("CARGO_BIN_EXE_moqui"))
+        .env("MOQUI_SHARED_RUNTIME", "off")
         .args(["types", "--bogus"])
         .current_dir(repo())
         .output()

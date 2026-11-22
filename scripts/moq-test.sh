@@ -1047,6 +1047,9 @@ if have zip && have unzip && have tar && have gzip; then
     echo 'gc' >"$R/runtime/opensearch/logs/gc.log"
     echo 'index' >"$R/runtime/opensearch/data/nodes/x"
     echo 'scratch' >"$R/runtime/tmp/x"
+    mkdir -p "$R/runtime/cert/dev-ca/signer"
+    : >"$R/runtime/cert/dev-ca/signer/issuer.key"
+    : >"$R/runtime/cert/dev-ca/ca.crt"
     echo 'secret=1' >"$R/runtime/.env"
     echo '<moqui-conf dev-override=""/>' >"$R/runtime/MoquiConf.xml"
     # tests and the dev set stay out of a production archive; a deeper directory named test stays in
@@ -1087,14 +1090,14 @@ if have zip && have unzip && have tar && have gzip; then
     for kind in $kinds; do
         if [ "$kind" = zip ]; then list=$zip_list top=$today; else list=$tgz_list top=$tgz_today; fi
         for want in "$top/moqui" "$top/MoquiConf.xml" "$top/README.txt" "$top/conf/MoquiDevConf.xml" \
-            "$top/components/base/" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
+            "$top/components/base/" "$top/cert/dev-ca/ca.crt" "$top/db/instance_id" "$top/.env" "$top/opensearch/data/nodes/x"; do
             check "$kind has $want" 0 '' -- grep -qF " $want" <<<"$list"
         done
         check "$kind keeps a deeper test directory" 0 '' -- grep -qF " $top/components/base/fw-z/service/z/test/Keep.xml" <<<"$list"
         check "$kind keeps a deeper plan directory" 0 '' -- grep -qF " $top/components/base/fw-z/screen/plan/Keep.xml" <<<"$list"
         check "$kind keeps a deeper target directory" 0 '' -- grep -qF " $top/components/base/fw-z/src/target/Keep.rs" <<<"$list"
         for unwanted in "$top/runtime" "$top/log" "$top/tmp" "$top/save" "$top/install" db/install \
-            opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/ \
+            cert/dev-ca/signer opensearch/logs/. '\.git/' '\.moq-archive' fw-z/test/ fw-z/plan/ fw-z/plans/ components/test/ components/dev/ \
             fw-z/target/ __pycache__ 'Edit\.xml~'; do
             lacks "$kind leaves out $unwanted" "$unwanted" -- printf '%s\n' "$list"
         done

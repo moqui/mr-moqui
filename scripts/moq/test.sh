@@ -172,6 +172,7 @@ parse_suite_opts() {
 # The framework's suites: cargo test, the tests of this script, and the specs, client specs and security proofs of
 # components/base and components/dev.
 framework_suites() {
+    export MOQUI_SHARED_RUNTIME=off
     local name
     local -a server client proofs
     server=()

@@ -829,6 +829,24 @@ external database. `org.moqui.admin.BackupServices` reads the job's runs and the
 backup screen (IronStone Admin › Data › Backups): coverage as the runs recorded it, the archives as names and sizes, and
 a backup asked for now with the job's own parameters ([Attack-Surface](security/Attack-Surface-Admin.md)).
 
+## Shared runtime (~/.mr-moqui)
+
+On macOS and Linux, `moqui install` installs the running binary and its embedded files under
+`~/.mr-moqui`. Add that directory to PATH and run `moqui --installed` from any directory. The
+installation has the same layout as an unpacked runtime archive. One directory holds its binary,
+configuration, components, and instance data. Set `MOQUI_SHARED_RUNTIME` to another absolute
+directory or to `off` to disable it.
+
+`moqui install --from DIR` copies a runtime or unpacked archive, including its top-level
+`MoquiConf.xml`. With no instance conf the usual development conf applies. `--with-data` also
+copies instance data and secrets from a stopped runtime. The dev CA signing key stays on the
+original machine. Conflicting files are listed before installation. Use `--force` to replace them.
+
+Other runtimes read definitions from their own `components/` and `conf/`, then the shared
+directories, then the binary. Their database, log, instance conf, environment and server
+identities belong to the individual runtime. An explicitly installed runtime uses its own
+definitions and data directly. Windows supports checkout-local operation.
+
 ## HTTPS, ports and proxies
 
 ### Ports

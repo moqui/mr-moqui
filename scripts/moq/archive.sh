@@ -285,7 +285,7 @@ task_archive() {
         esac
         entries+=("$name/$base")
     done
-    excludes=("$name/db/install" "$name/db/install/*" "$name/opensearch/logs/*" "$name/opensearch/pid")
+    excludes=("$name/cert/dev-ca/signer" "$name/cert/dev-ca/signer/*" "$name/cert/dev-ca/*.key" "$name/cert/dev-ca/.*" "$name/db/install" "$name/db/install/*" "$name/opensearch/logs/*" "$name/opensearch/pid")
     while IFS= read -r entry; do excludes+=("$entry"); done < <(archive_excludes "$name")
     [ -z "$no_data" ] || excludes+=("$name/opensearch/data/*")
     # A production archive carries no tests, plans and dev set unless asked (plans/archive/Components-Dir.md 3.6): each

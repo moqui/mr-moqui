@@ -267,6 +267,8 @@ pub(crate) fn run(
             .try_clone()
             .map_err(|err| Error::new(format!("could not open {}", log.display())).with_source(err))?;
         let child = Command::new(&exe)
+            .env("MOQUI_RUNTIME", runtime)
+            .env("MOQUI_SHARED_RUNTIME", "off")
             .args(worker_args(args, components, bin, &results))
             .stdin(Stdio::null())
             .stdout(log_file)

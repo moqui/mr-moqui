@@ -87,6 +87,7 @@ mod link;
 mod embedded_checksum;
 mod embedded_files;
 mod embedded_programs;
+mod install;
 #[cfg(feature = "manage")]
 pub mod manage_link;
 #[cfg(all(feature = "axum", not(feature = "manage")))]
@@ -809,7 +810,20 @@ where
     S: AsRef<str>,
 {
     register_build();
-    let args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
+    let mut args: Vec<String> = args.into_iter().map(|arg| arg.as_ref().to_string()).collect();
+    if let Some(index) = args.iter().position(|arg| arg == "--installed") {
+        args.remove(index);
+        let runtime = install::destination()?;
+        if !moqui_core::context::layout::is_runtime(&runtime) {
+            return Err(moqui_lib::error::Error::new(
+                "the shared directory is not a runtime; run moqui install first",
+            ));
+        }
+        if std::env::var_os("MOQUI_RUNTIME").is_some() {
+            eprintln!("--installed overrides MOQUI_RUNTIME");
+        }
+        moqui_lib::env::set_property("MOQUI_INSTALLED_RUNTIME", runtime.to_string_lossy());
+    }
     if let Some(help) = usage::help_request(&args) {
         return help.map(Some);
     }
@@ -872,6 +886,10 @@ where
             dispatch_types(rest)?;
             Ok(None)
         }
+        [command, rest @ ..] if command == "install" => {
+            install::install(rest)?;
+            Ok(None)
+        }
         [command, rest @ ..] if command == "embedded" => {
             embedded_files::dispatch(rest)?;
             Ok(None)
@@ -925,6 +943,7 @@ where
             }
         }
         [command, rest @ ..] if command == "test" => {
+            moqui_lib::env::set_property("MOQUI_SHARED_RUNTIME", "off");
             // its scratch runtimes and the server it serves take the dev seal (plans/Sealed-Secrets.md S4)
             moqui_core::seal::set_test_run();
             test_cmd::dispatch_test(rest)?;
@@ -1045,7 +1064,9 @@ fn usage_error(args: &[String]) -> moqui_lib::error::Error {
 /// Like Moqui's `moqui.runtime`: an install runs from its own directory unless told otherwise. The files built into the
 /// binary are mounted on them ([`embedded_files::mount`]), so every command reads the ones not on disk from the binary.
 fn runtime_framework_dirs() -> (std::path::PathBuf, std::path::PathBuf) {
-    let runtime = std::env::var_os("MOQUI_RUNTIME")
+    let runtime = moqui_lib::env::get_property("MOQUI_INSTALLED_RUNTIME")
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("MOQUI_RUNTIME"))
         .filter(|dir| !dir.is_empty())
         .map_or_else(default_runtime_dir, Into::into);
     let framework = framework_from_env(&runtime);

@@ -84,3 +84,39 @@ fn the_compared_components_are_named_in_a_list() {
         "framework, tools and webroot"
     );
 }
+
+#[test]
+fn shared_definitions_precede_overlapping_builtin_mounts_and_merge_addons() {
+    let base = moqui_lib::private_fs::new_dir_in(&std::env::temp_dir(), "moqui-runtime-layer").unwrap();
+    let local = base.join("local");
+    let shared = base.join("shared");
+    let framework = moqui_core::context::layout::framework_dir(&local);
+    let shared_framework = moqui_core::context::layout::framework_dir(&shared);
+    std::fs::create_dir_all(&shared_framework).unwrap();
+    std::fs::write(shared_framework.join("component.xml"), "shared").unwrap();
+    let addon = shared.join("components/addon/extra");
+    std::fs::create_dir_all(&addon).unwrap();
+    std::fs::write(addon.join("component.xml"), "<component name='extra'/>").unwrap();
+    std::fs::write(shared.join("MoquiConf.xml"), "private").unwrap();
+    super::mount_with_shared(&local, &framework, Some(&shared));
+    assert_eq!(
+        moqui_lib::vfs::read_to_string(framework.join("component.xml")).unwrap(),
+        "shared"
+    );
+    assert!(
+        moqui_core::context::layout::component_dirs(&local, &[moqui_core::context::layout::Set::Addon])
+            .iter()
+            .any(|(_, p)| p.ends_with("addon/extra"))
+    );
+    assert!(!moqui_lib::vfs::exists(local.join("MoquiConf.xml")));
+    std::fs::create_dir_all(&framework).unwrap();
+    std::fs::write(framework.join("component.xml"), "local").unwrap();
+    assert_eq!(
+        moqui_lib::vfs::read_to_string(framework.join("component.xml")).unwrap(),
+        "local"
+    );
+    for set in moqui_embedded::Set::ALL {
+        moqui_lib::vfs::unmount(&set.dir_in(&local, &framework));
+    }
+    std::fs::remove_dir_all(base).unwrap();
+}
