@@ -166,3 +166,19 @@ fn lsof_holders_pairs_pid_and_command() {
         ]
     );
 }
+
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+#[test]
+fn disabling_http_preserves_the_web_bind_address_and_explicit_test_ports() {
+    let setting = |name: &str| match name {
+        "http-bind" => "::1".to_owned(),
+        "http-listen-port" => "off".to_owned(),
+        _ => String::new(),
+    };
+    let web = crate::listen_address(&ListenBind::Property, &setting).unwrap().unwrap();
+    assert_eq!(web.ip, std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST));
+    assert_eq!(web.http_port, None);
+    let explicit = ListenBind::Address("127.0.0.1:0".parse().unwrap());
+    let web = crate::listen_address(&explicit, &setting).unwrap().unwrap();
+    assert_eq!(web.http_port, Some(0));
+}

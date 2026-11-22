@@ -280,13 +280,13 @@
             pin-min-digits="6"/>
 
     <!-- The PASS authority (mr-pass's deployments, docs in that component): grpc-enabled turns on its gRPC listener on
-        grpc-host (the HTTP listener's address when empty) and grpc-port (4317), plain HTTP/2 only with grpc-insecure true;
+        the webroot grpc-listen-bind and grpc-listen-port (4317), plain HTTP/2 only with grpc-insecure true;
         service is the service that answers a call (Mantle's by default). verification-template is the email template of
         an account's verification, sso-flows the auth flows a client may start, comma separated. A client is a client
         child by its id: sites (its site ids, comma separated), callback (its SSO callback URL) and secret (a secret,
         moqui_conf__pass_authority__client__FORUM__secret for the forum client); the Edge Apply wizard writes the edge
         node's (plans/Edge-Node2.md). -->
-    <pass-authority grpc-enabled="false" grpc-host="" grpc-port="4317" grpc-insecure="false"
+    <pass-authority grpc-enabled="false" grpc-insecure="false"
             service="mantle.pass.PassAuthorityServices.handle#Call" verification-template="" sso-flows=""/>
 
     <!-- Backups of the embedded database (docs/Run-Deploy.md, Backups): scheduled true or false sets the nightly
@@ -496,7 +496,7 @@
                 whole policy where none is set; empty adds none. The Desktop app's sidecar sets upgrade-insecure-requests,
                 so a page's http:// loads of other hosts go over https there too (SEC-CLI-105). -->
         <webapp name="webroot" http-port="" http-host="" https-port="" https-host="" https-enabled="false"
-                https-listen-port="" http-bind="" allowed-hosts="" http2="true" csp-append=""
+                http-listen-port="" https-listen-port="" grpc-listen-port="4317" grpc-listen-bind="" http-bind="" allowed-hosts="" http2="true" csp-append=""
                 handle-cors="true" allow-origins="" require-session-token="true" upload-executable-allow="false"
                 websocket-timeout="600000" client-ip-header="" trusted-proxies="" status-ips="127.0.0.1"
                 dev-marker-color="#2196f3" qvt-static-only="false" transfer-workers="4"

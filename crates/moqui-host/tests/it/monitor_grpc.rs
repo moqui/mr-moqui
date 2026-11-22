@@ -75,7 +75,7 @@ fn each_signal_over_grpc_with_the_ingest_key_limits_and_partial_success() {
     let gate = common::start_with_conf_properties(
         "monitor-grpc",
         None,
-        r#"<telemetry sample-ratio="0"><receiver body-limit="4096" grpc-enabled="true" grpc-port="0"/></telemetry>"#,
+        r#"<telemetry sample-ratio="0"><receiver body-limit="4096" grpc-enabled="true"/></telemetry><webapp-list><webapp name="webroot" grpc-listen-port="0"/></webapp-list>"#,
         &[],
     );
     let factory = gate.server.factory();
@@ -280,7 +280,7 @@ fn otlp_over_grpc_on_the_https_port() {
     let gate = common::start_with_conf_files(
         "monitor-grpc-https",
         None,
-        r#"<telemetry sample-ratio="0"><receiver grpc-enabled="true" grpc-port="0"/></telemetry>"#,
+        r#"<telemetry sample-ratio="0"><receiver grpc-enabled="true"/></telemetry><webapp-list><webapp name="webroot" grpc-listen-port="off"/></webapp-list>"#,
         &[("moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port", "0")],
         &[("cert/localhost.crt", &cert_pem), ("cert/localhost.key", &key_pem)],
     );
@@ -296,6 +296,7 @@ fn otlp_over_grpc_on_the_https_port() {
     )
     .unwrap();
     let token = key.get("accessToken").and_then(Value::as_str).unwrap().to_owned();
+    assert!(gate.server.grpc_address().is_none());
     let https = gate
         .server
         .https_address()

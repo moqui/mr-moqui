@@ -21,8 +21,6 @@ use std::sync::Arc;
 
 use moqui_core::context::ExecutionContextFactory;
 
-pub(crate) const PORT_PROPERTY: &str = "pass-authority@grpc-port";
-pub(crate) const HOST_PROPERTY: &str = "pass-authority@grpc-host";
 pub(crate) const INSECURE_PROPERTY: &str = "pass-authority@grpc-insecure";
 const ENABLED_PROPERTY: &str = "pass-authority@grpc-enabled";
 

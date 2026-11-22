@@ -57,7 +57,7 @@ Help
   version                                                   The version, package and features of this binary
 
 Server options
-  -p, --port N       HTTP port (the webroot webapp's http-port, default 8080). Also: port=N, -port=N, --port=N.
+  -p, --port N       HTTP port (--http-port N or off, default 8080). Also: port=N, -port=N, --port=N.
   --https-port N     HTTPS port to listen on (the webroot webapp's https-listen-port, default 8443), or 'off'. Certificates
                      are looked up by domain in runtime/cert (<domain>.crt and <domain>.key). Also: https-port=N.
   -c, --conf FILE    Runtime conf, relative to the runtime directory or absolute.
@@ -965,6 +965,7 @@ impl ServerOptions {
 }
 
 /// The webroot webapp's `http-port` by its environment name, which `-p` sets (plans/archive/Conf-Paths.md §1).
+pub const HTTP_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port";
 pub const HTTP_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__http_port";
 /// The webroot webapp's `https-listen-port` by its environment name, which `--https-port` sets.
 pub const HTTPS_LISTEN_PORT: &str = "moqui_conf__webapp_list__webapp__WEBROOT__https_listen_port";
@@ -981,11 +982,11 @@ pub fn parse_server_args(args: &[impl AsRef<str>]) -> Result<ServerOptions, Erro
     let mut index = 0;
     while index < args.len() {
         let arg = args[index];
-        if let Some(value) = equals_value(arg, "port") {
-            opts.push(HTTP_PORT, parse_port(value)?.to_string());
-        } else if arg == "-p" || arg == "--port" {
+        if let Some(value) = equals_value(arg, "port").or_else(|| equals_value(arg, "http-port")) {
+            set_http_port(&mut opts, value)?;
+        } else if matches!(arg, "-p" | "--port" | "--http-port") {
             let value = next_value(&args, index, arg, "a port number")?;
-            opts.push(HTTP_PORT, parse_port(value)?.to_string());
+            set_http_port(&mut opts, value)?;
             index += 1;
         } else if let Some(value) = equals_value(arg, "https-port") {
             opts.push(HTTPS_LISTEN_PORT, parse_https_port(value)?);
@@ -1048,6 +1049,17 @@ fn require_conf(value: &str) -> Result<(), Error> {
 }
 
 /// An explicit empty or non-numeric port is an error. An unset `http-port` still means 8080.
+fn set_http_port(opts: &mut ServerOptions, raw: &str) -> Result<(), Error> {
+    if raw.trim() == "off" {
+        opts.push(HTTP_LISTEN_PORT, "off".to_string());
+    } else {
+        let port = parse_port(raw)?.to_string();
+        opts.push(HTTP_PORT, port.clone());
+        opts.push(HTTP_LISTEN_PORT, port);
+    }
+    Ok(())
+}
+
 fn parse_port(raw: &str) -> Result<u16, Error> {
     let raw = raw.trim();
     if raw.is_empty() {

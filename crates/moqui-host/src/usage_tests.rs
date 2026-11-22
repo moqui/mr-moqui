@@ -31,6 +31,10 @@ fn owned(args: &[&str]) -> Vec<String> {
 
 #[test]
 fn usage_port_forms_set_the_http_port() {
+    let off = parse(&["--http-port=off"]);
+    assert_eq!(off.value(super::HTTP_LISTEN_PORT), Some("off"));
+    assert_eq!(off.value(super::HTTP_PORT), None);
+    assert_eq!(parse(&["--http-port", "0"]).value(super::HTTP_LISTEN_PORT), Some("0"));
     assert_eq!(parse(&["--port", "8081"]).value(super::HTTP_PORT), Some("8081"));
     assert_eq!(parse(&["--port=8081"]).value(super::HTTP_PORT), Some("8081"));
     assert_eq!(parse(&["-port=8081"]).value(super::HTTP_PORT), Some("8081"));

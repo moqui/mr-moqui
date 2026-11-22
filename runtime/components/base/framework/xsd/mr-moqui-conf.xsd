@@ -309,11 +309,6 @@ along with this software (see the LICENSE.md file). If not, see
                 are gRPC statuses (UNAUTHENTICATED, RESOURCE_EXHAUSTED, UNAVAILABLE, INVALID_ARGUMENT). With the HTTPS
                 listener's certificates it is TLS, else plain h2c. Default false.</xs:documentation></xs:annotation>
             </xs:attribute>
-            <xs:attribute name="grpc-port" type="xs:nonNegativeInteger"><xs:annotation><xs:documentation>The gRPC
-                port; 0 is any free port. Default 4317.</xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="grpc-bind" type="xs:string"><xs:annotation><xs:documentation>The IP address the gRPC
-                receiver listens on. Default the HTTP listener's (webapp-list/webapp[webroot]@http-bind).</xs:documentation></xs:annotation>
-            </xs:attribute>
         </xs:complexType></xs:element>
         <xs:element name="browser" minOccurs="0"><xs:complexType>
             <xs:annotation><xs:documentation>Real-user monitoring from signed-in qvt pages: a page load span with its web
@@ -772,6 +767,9 @@ along with this software (see the LICENSE.md file). If not, see
                 per-client parts of web-protection are on by default. Empty, the header is believed from any peer
                 (first hop), as before. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="http-listen-port" type="xs:string"/>
+            <xs:attribute name="grpc-listen-port" type="xs:string"/>
+            <xs:attribute name="grpc-listen-bind" type="xs:string"/>
             <xs:attribute name="https-listen-port" type="xs:string"><xs:annotation><xs:documentation>The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, off none. https-port is the port clients see in generated URLs, which differs behind a reverse proxy.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="http-bind" type="xs:string"><xs:annotation><xs:documentation>The address the HTTP listener binds, every address when empty; 127.0.0.1 keeps it local.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="allowed-hosts" type="xs:string"><xs:annotation><xs:documentation>The Host names (with the port, as the header gives it: 127.0.0.1:8080) a request straight to a listener must name, comma separated, or it is answered 421; empty takes any.</xs:documentation></xs:annotation></xs:attribute>
@@ -2520,8 +2518,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:attribute name="secret" type="xs:string"><xs:annotation><xs:documentation>A secret.</xs:documentation></xs:annotation></xs:attribute>
             </xs:complexType></xs:element></xs:sequence>
             <xs:attribute name="grpc-enabled" type="xs:string" default="false"/>
-            <xs:attribute name="grpc-host" type="xs:string"/>
-            <xs:attribute name="grpc-port" type="xs:string" default="4317"/>
             <xs:attribute name="grpc-insecure" type="xs:string" default="false"/>
             <xs:attribute name="service" type="xs:string" default="mantle.pass.PassAuthorityServices.handle#Call"/>
             <xs:attribute name="verification-template" type="xs:string"/>

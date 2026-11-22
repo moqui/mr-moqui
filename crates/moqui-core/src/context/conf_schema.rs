@@ -198,6 +198,9 @@ pub static CATALOG: &[Unit] = &[
     single("webapp-list", BOOT).children(&[keyed("webapp", &["name"], Class::Live)
         .attrs(&[
             ("http-port", LISTENER),
+            ("http-listen-port", LISTENER),
+            ("grpc-listen-port", LISTENER),
+            ("grpc-listen-bind", LISTENER),
             ("https-port", LISTENER),
             ("https-enabled", LISTENER),
             ("client-ip-header", BOOT),
@@ -386,12 +389,7 @@ pub static CATALOG: &[Unit] = &[
     single("comms", Class::Live),
     single("demo", Class::Live),
     single("pass-authority", Class::Live)
-        .attrs(&[
-            ("grpc-enabled", LISTENER),
-            ("grpc-host", LISTENER),
-            ("grpc-port", LISTENER),
-            ("grpc-insecure", LISTENER),
-        ])
+        .attrs(&[("grpc-enabled", LISTENER), ("grpc-insecure", LISTENER)])
         .children(&[keyed("client", &["id"], Class::Live).secrets(&[("secret", Secret::Kept)])]),
     single("database-backup", Class::Live),
     single("sip-server", LISTENER).children(&[single("limits", LISTENER), single("registrar", Class::Live)]),

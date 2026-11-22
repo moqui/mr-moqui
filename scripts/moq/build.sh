@@ -69,17 +69,21 @@ parse_run_opts() {
                 shift
                 ;;
             --conf=*) OPT_CONF=${arg#--conf=} ;;
-            -p | --port | --port=*)
+            -p | --port | --http-port | --port=* | --http-port=*)
                 local port
-                if [ "$arg" = "${arg#--port=}" ]; then
+                if [ "$arg" = "${arg#*=}" ]; then
                     [ $# -ge 2 ] || die "$arg needs a port number"
                     port=$2
                     shift
                 else
-                    port=${arg#--port=}
+                    port=${arg#*=}
                 fi
-                case $port in '' | *[!0-9]*) die "port '$port' is not a number" ;; esac
-                OPT_PROPS+=("moqui_conf__webapp_list__webapp__WEBROOT__http_port=$port")
+                case $port in
+                    off) ;;
+                    '' | *[!0-9]*) die "port '$port' is not a number or off" ;;
+                    *) OPT_PROPS+=("moqui_conf__webapp_list__webapp__WEBROOT__http_port=$port") ;;
+                esac
+                OPT_PROPS+=("moqui_conf__webapp_list__webapp__WEBROOT__http_listen_port=$port")
                 ;;
             --https-port | --https-port=*)
                 local https_port

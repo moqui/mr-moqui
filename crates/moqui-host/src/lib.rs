@@ -44,10 +44,10 @@ use moqui_tools as _;
 use moqui_collab as _;
 use moqui_dav as _;
 // Vaults and managed instances, under their features, the same way.
-#[cfg(feature = "vault")]
-use moqui_vault_server as _;
 #[cfg(feature = "instances")]
 use moqui_instance as _;
+#[cfg(feature = "vault")]
+use moqui_vault_server as _;
 // CalcGrid, the same way, where xlsx (the spreadsheet engine) is built in.
 #[cfg(feature = "xlsx")]
 use moqui_calc as _;
@@ -64,11 +64,6 @@ pub use moqui_drivers as db;
 #[cfg(feature = "git")]
 mod ci_run;
 mod conf_cmd;
-#[cfg(feature = "vault")]
-mod vault_cmd;
-#[cfg(not(feature = "vault"))]
-#[path = "vault_cmd_off.rs"]
-mod vault_cmd;
 mod detach;
 mod devtools_cmd;
 #[cfg(feature = "tui")]
@@ -80,18 +75,23 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+#[cfg(feature = "vault")]
+mod vault_cmd;
+#[cfg(not(feature = "vault"))]
+#[path = "vault_cmd_off.rs"]
+mod vault_cmd;
 // What the edge link and the manager link share: the role answer, the backoff, the link key's certificate.
 #[cfg(any(feature = "edge", feature = "manage"))]
 mod link;
 // The manager link (plans/Vault-Instances.md §4.4): a managed instance's dialer, and a manager's moqui-manage/1.
+mod embedded_checksum;
+mod embedded_files;
+mod embedded_programs;
 #[cfg(feature = "manage")]
 pub mod manage_link;
 #[cfg(all(feature = "axum", not(feature = "manage")))]
 #[path = "manage_link_off.rs"]
 mod manage_link;
-mod embedded_checksum;
-mod embedded_files;
-mod embedded_programs;
 // The sealed start's host side: the gate of a server boot, the operator socket and `moqui operator`
 // (plans/Sealed-Secrets.md §3.3).
 #[cfg(unix)]
@@ -1667,19 +1667,19 @@ fn serve_thread(
             .components()
             .iter()
             .any(|component| component.name == "dev-aide")
-        && address.is_some_and(|address| !address.ip().is_loopback())
+        && address.is_some_and(|address| !address.ip.is_loopback())
     {
         if factory.conf_setting("dev-aide", "shared") == "true" {
             tracing::info!(
                 "Dev AIDE in shared mode (a team dev server) on {}: network git commands are off until an admin enables them",
-                address.unwrap_or(unbound)
+                address.map_or(unbound.ip(), |address| address.ip)
             );
         } else {
             tracing::warn!(
                 "Dev AIDE is loaded and the HTTP listener on {} is not bound to the loopback address: anyone who \
                  can sign in with a Dev AIDE permission can run code as this server's user. Set the webroot webapp's http-bind to 127.0.0.1, \
                  or dev-aide shared=\"true\" for a team dev server",
-                address.unwrap_or(unbound)
+                address.map_or(unbound.ip(), |address| address.ip)
             );
         }
     }
@@ -1702,7 +1702,7 @@ fn serve_thread(
     let https = match address.map(|address| {
         tls::plan(
             &runtime_dir,
-            address.ip(),
+            address.ip,
             matches!(bind, ListenBind::Property),
             &listen_port,
         )
@@ -1764,15 +1764,29 @@ fn serve_thread(
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 /// The HTTP listener's address: the webroot webapp's `http-port` and `http-bind`, read by `webroot` (an attribute name to
 /// its value) from the running conf, or from the merged conf before the factory is built (the port check).
+#[derive(Clone, Copy)]
+struct WebBind {
+    ip: std::net::IpAddr,
+    http_port: Option<u16>,
+}
+
+#[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 fn listen_address(
     bind: &ListenBind,
     webroot: &dyn Fn(&str) -> String,
-) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
+) -> Result<Option<WebBind>, moqui_lib::error::Error> {
     match bind {
         ListenBind::None => Ok(None),
-        ListenBind::Address(address) => Ok(Some(*address)),
+        ListenBind::Address(address) => Ok(Some(WebBind {
+            ip: address.ip(),
+            http_port: Some(address.port()),
+        })),
         ListenBind::Property => {
-            let port = http::http_port(&webroot("http-port"))?;
+            let http_port = match webroot("http-listen-port").trim() {
+                "off" => None,
+                "" => Some(http::http_port(&webroot("http-port"))?),
+                port => Some(http::http_port(port)?),
+            };
             // http-bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
             // http-host stays the host name of the URLs the server writes
             let host = webroot("http-bind");
@@ -1785,7 +1799,7 @@ fn listen_address(
                     moqui_lib::error::Error::new(format!("the webroot webapp's http-bind {host} is not an IP address"))
                 })?
             };
-            Ok(Some(std::net::SocketAddr::new(ip, port)))
+            Ok(Some(WebBind { ip, http_port }))
         }
     }
 }
