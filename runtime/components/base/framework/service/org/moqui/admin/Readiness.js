@@ -131,6 +131,28 @@ function check(checkKey, title, state, reason, message, extra = {}) {
 }
 const ready = (checkKey, title, message, extra) => check(checkKey, title, "ready", null, message, extra)
 
+function telemetryCheck(exporters) {
+    const {local, remote} = exporters || {}
+    const messages = {
+        disabled: "Local telemetry is disabled",
+        unsearchable: "Local telemetry search is unavailable",
+        waiting: "Local telemetry is awaiting its first successful export",
+        loss: "The local exporter recorded telemetry loss",
+        ready: "Local telemetry has been exported"
+    }
+    const external = {
+        waiting: "External telemetry is awaiting its first successful export",
+        loss: "The external exporter recorded telemetry loss",
+        ready: "External telemetry has been exported"
+    }
+    const message = [messages[local] || "Local exporter state is unavailable"]
+    if (remote) message.push(external[remote] || "External exporter state is unavailable")
+    const summary = message.join(". ")
+    if (local === "loss" || remote === "loss") return check("admin.telemetry", "Telemetry", "warning", "TELEMETRY_LOSS", summary)
+    if (local !== "ready" || (remote && remote !== "ready")) return check("admin.telemetry", "Telemetry", "unavailable", "TELEMETRY_UNKNOWN", summary)
+    return ready("admin.telemetry", "Telemetry", summary)
+}
+
 // ===== the framework's own checks =====
 // Each reads the framework's own records with authorization off, after its permission; none names a host, an address or
 // a person. The keys are their registrations' (data/AdminConfigurationData.xml).
@@ -351,28 +373,7 @@ const instanceChecks = {
                 .requireNewTransaction(true)
                 .call() || {}
         if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
-        const statuses = Array.from(out.sources || []).map(row => String(row.status || ""))
-        if (statuses.some(status => status.includes("loss")))
-            return [
-                check(
-                    "admin.telemetry",
-                    "Telemetry",
-                    "warning",
-                    "TELEMETRY_LOSS",
-                    "Telemetry is being lost, so health is unknown"
-                )
-            ]
-        if (!statuses.length || statuses.some(status => status.includes("unknown")))
-            return [
-                check(
-                    "admin.telemetry",
-                    "Telemetry",
-                    "unavailable",
-                    "TELEMETRY_UNKNOWN",
-                    "Telemetry is off or not searchable, so health is unknown"
-                )
-            ]
-        return [ready("admin.telemetry", "Telemetry", "Telemetry is received")]
+        return [telemetryCheck(out.exporters)]
     },
     // the Constitution for the instance: the sources it passed over, counted, not shown
     "constitution.global": () => {
@@ -1012,6 +1013,7 @@ function supportSummary(p) {
 
 const operations = {readiness, requestRefresh, overview, healthCards, settings, instanceSetup, supportSummary}
 ;({
+    telemetryCheck,
     execute: (op, parameters) => {
         if (!operations[op]) throw new Error("Unknown readiness operation " + op)
         return operations[op](parameters)
