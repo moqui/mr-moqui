@@ -18,7 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     component from Home. A change to the set of components needs a restart. A list, so the terminal reaches it. Terminal
     opens a shell on the server in the root's directory (the browser terminal's host session, for a user who may). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
-        default-menu-title="Repositories" default-menu-index="3">
+        default-menu-title="Repositories" default-menu-index="3" menu-image="sym_o_folder_data" menu-image-type="icon">
 
     <transition name="fetchAll"><service-call name="org.moqui.devaide.VcsServices.fetch#All" out-map="done"/>
         <actions><script>for (const row of done.results || []) {

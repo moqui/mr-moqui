@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
     terminal shows WorkspaceTui.xml in a dynamic container, with the parameters below: its Code, Changes and Commits tabs
     call the same services. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
-        default-menu-title="Workspace" default-menu-index="2" render-modes="qvue,tui">
+        default-menu-title="Workspace" default-menu-index="2" menu-image="sym_o_folder_code" menu-image-type="icon" render-modes="qvue,tui">
     <!-- the file to open (rootId, path, line, view), and the terminal form's own: its tab, a search, the change, commit
         and page shown, and the diff of the open file -->
     <parameter name="rootId"/>
