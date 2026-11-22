@@ -153,9 +153,19 @@
         }
     };
 
+    // The messages the page's configs carry (each island's own texts, IslandMessages.js): a public page loads no locale
+    // catalog, so these are what moqui.l10n.localize finds; every island of the page adds its own before it mounts.
+    const messages = {};
+    const addMessages = (config) => {
+        if (!moqui.l10n || !config.messages || typeof config.messages !== "object") return;
+        Object.assign(messages, config.messages);
+        moqui.l10n.setCatalog(Object.assign({}, messages));
+    };
+
     // One Vue app of a config, mounted at `selector`; its $route is its own root's.
     const mountApp = (config, render, selector) => {
         setGlobals(config);
+        addMessages(config);
         const options = publicRootOptions(config);
         options.render = render;
         const app = root.Vue.createApp(options);

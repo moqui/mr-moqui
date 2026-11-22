@@ -36,7 +36,9 @@ test("a runtime-build page mounts a bundled .qvue island with no eval and no new
     config.textContent = JSON.stringify({ shell: "island", locale: "en", timeZone: "UTC", quasarLang: "enUS",
         qvt: { build: "runtime", handles: ["static-template", "bundled-qvue"] },
         route: { name: "island", basePath: "/shop/Island", title: "Island", renderModes: ["qvue"] },
-        context: { note: "from the page" }, labels: { loading: "Loading", notFound: "" } });
+        context: { note: "from the page" }, labels: { loading: "Loading", notFound: "" },
+        // the island's own texts in the page's language (IslandMessages.js): a public page loads no catalog
+        messages: { "Island text": "xx island" } });
 
     // what a policy without 'unsafe-eval' refuses, refused here
     const evaluated = [];
@@ -55,6 +57,7 @@ test("a runtime-build page mounts a bundled .qvue island with no eval and no new
         islands = moqui.startPublicIslands();
         const title = await settle(() => mount.querySelector(".island-title"), "the island");
         assert.equal(title.textContent, "Bundled island");
+        assert.equal(moqui.l10n.localize("Island text"), "xx island", "the config's messages are in the catalog");
         assert.deepEqual(Array.from(mount.querySelectorAll("li")).map((li) => li.textContent), ["one", "two"]);
         assert.equal(mount.querySelector(".island-note").textContent, "from the page", "a nested component's render");
         assert.ok(!mount.querySelector(".q-layout"), "an island has no layout");
@@ -76,6 +79,7 @@ test("a runtime-build page mounts a bundled .qvue island with no eval and no new
         globalThis.eval = realEval;
         globalThis.Function = RealFunction;
         moqui.qvueBundleUrl = bundleUrl;
+        moqui.l10n.setCatalog({});
         for (const vm of Object.values(islands)) vm.$.appContext.app.unmount();
         for (const node of added) node.remove();
     }
