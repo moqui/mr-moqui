@@ -116,8 +116,10 @@ returns a map, which `putAll` sets in the context so that the declared out-param
 - **An inert module is kept.** A module whose top level only declares gives the same value for the rest of the
   outermost script run on the thread (the request, job or call), made once (`script/parse.rs` `module_is_inert`). Inert
   means each top-level statement is a function declaration, a `const` of a function, a literal, a table, `Set` or `Map`
-  of literals, another module by `ec.resource.script("...")` with a literal location, or names read from those; and
-  the last statement gives back an object of them, a name or a function.
+  of literals, another module by `ec.resource.script("...")` with a literal location, a literal text localized
+  (`ec.l10n.localize("...")`, or `L("...")` with `const L = text => ec.l10n.localize(text)`), or names read from
+  those; and the last statement gives back an object of them, a name or a function. A localized label table is kept
+  because the run is in one session locale.
 - A `let`, a `var`, a loop or any other call at the top level keeps the file out: it is evaluated again on each
   `ec.resource.script` call. So module-level state never lasts past the run, and a per-call cache belongs in the call.
 - The `resource-facade@script-module-cache` property set to `false` turns the keeping off.

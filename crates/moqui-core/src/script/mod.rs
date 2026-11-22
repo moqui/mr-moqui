@@ -102,6 +102,42 @@ mod tests {
         assert!(!module_is_inert("function f() {}\nf()"), "a value computed at load");
     }
 
+    /// A label table of localized literal texts is inert: the run is in one session locale. A localization of a value
+    /// that is not a literal, in a locale named, or through a helper that does more than localize is not.
+    #[test]
+    fn a_table_of_localized_literals_is_inert() {
+        use super::parse::module_is_inert;
+        let lib = r#"
+            const L = text => ec.l10n.localize(text)
+            const M = (words) => ec.l10n.localize(words)
+            const states = {open: ec.l10n.localize("Open"), done: L("Done"), held: M("Held")}
+            const order = [L("First"), ec.l10n.localize('Second')]
+            function label(key) { return states[key] || L(key) }
+            ({label, order})
+        "#;
+        assert!(module_is_inert(lib));
+        assert!(
+            !module_is_inert("const name = ec.l10n.localize(partyId)\n({name})"),
+            "a context value localized"
+        );
+        assert!(
+            !module_is_inert("const name = ec.l10n.localize('Open', 'es')\n({name})"),
+            "a locale named"
+        );
+        assert!(
+            !module_is_inert("const L = text => ec.l10n.localize(text + '!')\nconst a = L('Open')\n({a})"),
+            "a helper that changes the text"
+        );
+        assert!(
+            !module_is_inert("const L = text => ec.l10n.format(text)\nconst a = L('Open')\n({a})"),
+            "a helper that is not a localization"
+        );
+        assert!(
+            !module_is_inert("const a = ec.l10n.expand('Open ${x}')\n({a})"),
+            "other l10n calls"
+        );
+    }
+
     #[test]
     fn parse_js_accepts_arithmetic_and_actions_return_ok() {
         parse_js("1 + 1").unwrap();

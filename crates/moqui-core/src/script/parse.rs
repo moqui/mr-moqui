@@ -231,13 +231,15 @@ pub(crate) fn module_not_inert(source: &str) -> Option<String> {
         names
     }
     /// A value that is the same each time the module's top level runs: a function, a literal, a table of them, a
-    /// `Set` or `Map` of them, another module by `ec.resource.script("...")`, the module's own names and what is read
-    /// from them, and operators over all of these.
-    fn inert(expression: &Expression<'_>, names: &HashSet<&str>, depth: usize) -> bool {
+    /// `Set` or `Map` of them, another module by `ec.resource.script("...")`, a literal text localized
+    /// (`ec.l10n.localize("...")`, or a module helper that only does that), the module's own names and what is read
+    /// from them, and operators over all of these. A localized text is the same for the rest of the run: the run is one
+    /// request, job or call, in one session locale.
+    fn inert(expression: &Expression<'_>, names: &HashSet<&str>, localizers: &HashSet<&str>, depth: usize) -> bool {
         if depth > 32 {
             return false;
         }
-        let again = |value: &Expression<'_>| inert(value, names, depth + 1);
+        let again = |value: &Expression<'_>| inert(value, names, localizers, depth + 1);
         match expression {
             Expression::BooleanLiteral(_)
             | Expression::NullLiteral(_)
@@ -276,9 +278,68 @@ pub(crate) fn module_not_inert(source: &str) -> Option<String> {
                         .iter()
                         .all(|argument| argument.as_expression().is_some_and(again))
             }
-            Expression::CallExpression(call) => module_load(call),
+            Expression::CallExpression(call) => module_load(call) || literal_localized(call, localizers),
             _ => false,
         }
+    }
+    /// `ec.l10n.localize`, as a callee.
+    fn is_localize(callee: &Expression<'_>) -> bool {
+        let Expression::StaticMemberExpression(localize) = callee else {
+            return false;
+        };
+        let Expression::StaticMemberExpression(l10n) = &localize.object else {
+            return false;
+        };
+        localize.property.name == "localize"
+            && l10n.property.name == "l10n"
+            && matches!(&l10n.object, Expression::Identifier(ec) if ec.name == "ec")
+    }
+    /// `ec.l10n.localize("...")`, or `L("...")` with `L` a module helper of [`localizers`]: one literal text.
+    fn literal_localized(call: &oxc_ast::ast::CallExpression<'_>, localizers: &HashSet<&str>) -> bool {
+        let helper = matches!(&call.callee, Expression::Identifier(name) if localizers.contains(name.name.as_str()));
+        (helper || is_localize(&call.callee))
+            && call.arguments.len() == 1
+            && matches!(call.arguments[0].as_expression(), Some(Expression::StringLiteral(_)))
+    }
+    /// The module's `const L = text => ec.l10n.localize(text)` helpers: an arrow of one parameter whose body is the
+    /// localization of that parameter alone.
+    fn localizers<'a>(body: &'a [Statement<'a>]) -> HashSet<&'a str> {
+        let mut found = HashSet::new();
+        for statement in body {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.kind != VariableDeclarationKind::Const {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let (BindingPattern::BindingIdentifier(name), Some(Expression::ArrowFunctionExpression(arrow))) =
+                    (&declarator.id, &declarator.init)
+                else {
+                    continue;
+                };
+                let params = &arrow.params;
+                let [param] = params.items.as_slice() else {
+                    continue;
+                };
+                let BindingPattern::BindingIdentifier(param) = &param.pattern else {
+                    continue;
+                };
+                if params.rest.is_some() {
+                    continue;
+                }
+                let oxc_ast::ast::ArrowFunctionBody::CallExpression(call) = &arrow.body else {
+                    continue;
+                };
+                let passes_param = call.arguments.len() == 1
+                    && matches!(call.arguments[0].as_expression(),
+                        Some(Expression::Identifier(argument)) if argument.name == param.name);
+                if is_localize(&call.callee) && passes_param {
+                    found.insert(name.name.as_str());
+                }
+            }
+        }
+        found
     }
     /// `ec.resource.script("component://...")`.
     fn module_load(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
@@ -314,11 +375,13 @@ pub(crate) fn module_not_inert(source: &str) -> Option<String> {
             text.chars().take(90).collect::<String>().replace('\n', " ")
         };
         let names = declared(body);
+        let localizers = localizers(body);
         let gives_back = match last {
-            Statement::ExpressionStatement(statement) => inert(&statement.expression, &names, 0),
-            Statement::ReturnStatement(statement) => {
-                statement.argument.as_ref().is_some_and(|value| inert(value, &names, 0))
-            }
+            Statement::ExpressionStatement(statement) => inert(&statement.expression, &names, &localizers, 0),
+            Statement::ReturnStatement(statement) => statement
+                .argument
+                .as_ref()
+                .is_some_and(|value| inert(value, &names, &localizers, 0)),
             _ => false,
         };
         if !gives_back {
@@ -330,10 +393,12 @@ pub(crate) fn module_not_inert(source: &str) -> Option<String> {
                 Statement::FunctionDeclaration(_) | Statement::EmptyStatement(_) => false,
                 Statement::VariableDeclaration(declaration) => {
                     declaration.kind != VariableDeclarationKind::Const
-                        || !declaration
-                            .declarations
-                            .iter()
-                            .all(|declarator| declarator.init.as_ref().is_some_and(|init| inert(init, &names, 0)))
+                        || !declaration.declarations.iter().all(|declarator| {
+                            declarator
+                                .init
+                                .as_ref()
+                                .is_some_and(|init| inert(init, &names, &localizers, 0))
+                        })
                 }
                 _ => true,
             })
