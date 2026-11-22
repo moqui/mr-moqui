@@ -258,7 +258,7 @@ function matrixContext(p) {
         listRows,
         unsupportedRows: Array.from(found.unsupportedList || []).map(row =>
             Object.assign({}, row, {
-                ruleText: row.ruleType === "artifact" ? ec.l10n.localize("App gate") : "Permission",
+                ruleText: row.ruleType === "artifact" ? ec.l10n.localize("App gate") : ec.l10n.localize("Permission"),
                 scopeText: Array.from(row.filterSetIds || []).join(", ")
             })
         ),

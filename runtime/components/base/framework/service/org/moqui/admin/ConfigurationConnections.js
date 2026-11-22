@@ -195,10 +195,10 @@ function engine(def) {
     const stateRow = parts => (def.statePart ? parts[def.statePart] : null)
     const enabledOf = parts => stateRow(parts)?.disabled !== "Y"
     const stateTexts = {
-        ready: "Enabled",
+        ready: ec.l10n.localize("Enabled"),
         untested: ec.l10n.localize("Enabled, not tested as it is configured now"),
         needsTest: ec.l10n.localize("Disabled until a test passes"),
-        disabled: "Disabled",
+        disabled: ec.l10n.localize("Disabled"),
         incomplete: ec.l10n.localize("Not configured"),
         readOnly: ec.l10n.localize("Read only here")
     }

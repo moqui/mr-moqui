@@ -1004,7 +1004,7 @@ function describedRun(run, lock, registration, failedItems, counts) {
         failedItemCount: failedItems,
         countList: counts,
         traceId: /^[0-9a-f]{16,64}$/i.test(text(run.traceId)) ? text(run.traceId) : null,
-        startedBy: run.userId ? "A person" : ec.l10n.localize("The scheduler"),
+        startedBy: run.userId ? ec.l10n.localize("A person") : ec.l10n.localize("The scheduler"),
         timeZone: zone()
     }
 }

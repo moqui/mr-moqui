@@ -33,7 +33,13 @@ const maxGroups = 8
 const defaultGroups = 6
 const maxReviewGroups = 60
 const kindOrder = ["launcher", "view", "edit", "export", "sensitive"]
-const kindLabels = {launcher: "Launcher", view: "View", edit: "Change", export: "Export", sensitive: ec.l10n.localize("Sensitive values")}
+const kindLabels = {
+    launcher: ec.l10n.localize("Launcher"),
+    view: ec.l10n.localize("View"),
+    edit: ec.l10n.localize("Change##edit"),
+    export: ec.l10n.localize("Export"),
+    sensitive: ec.l10n.localize("Sensitive values")
+}
 const kindByEnum = {CpkView: "view", CpkEdit: "edit", CpkExport: "export", CpkSensitive: "sensitive"}
 const typeText = enumId => ({AUTHZT_ALLOW: "Allow", AUTHZT_ALWAYS: "Always", AUTHZT_DENY: "Deny"})[enumId] || enumId || ""
 
@@ -237,7 +243,9 @@ function unsupportedRules(groups, context, index) {
                     ruleType: "permission",
                     id: grant.userPermissionId,
                     label: index.permissionDescriptions.get(grant.userPermissionId) || grant.userPermissionId,
-                    typeText: context.sealed.has(grant.userPermissionId) ? ec.l10n.localize("Sealed permission") : "Permission",
+                    typeText: context.sealed.has(grant.userPermissionId)
+                        ? ec.l10n.localize("Sealed permission")
+                        : ec.l10n.localize("Permission"),
                     filterSetIds: [],
                     reason: ec.l10n.localize("Not in a registered bundle")
                 })

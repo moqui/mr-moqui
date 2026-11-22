@@ -37,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
                         receivePath:(receivePath ?? ''), receiveFilePattern:(receiveFilePattern ?? ''), receiveMovePath:(receiveMovePath ?? ''),
                         receiveResponseEnumId:(receiveResponseEnumId ?? ''), reason:reason}"/>
             <if condition="!ec.message.hasError()">
-                <script>ec.message.addMessage(!stored.applied ? stored.reason : stored.changed ? ec.l10n.localize('Message type saved') : 'Nothing changed', stored.applied ? 'success' : 'warning')</script>
+                <script>ec.message.addMessage(!stored.applied ? stored.reason : stored.changed ? ec.l10n.localize('Message type saved') : ec.l10n.localize('Nothing changed'), stored.applied ? 'success' : 'warning')</script>
             </if>
         </actions>
         <default-response url="."><parameter name="systemMessageTypeId"/></default-response>
@@ -85,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
             ].filter(row => row.value) : []
             handlerRows = Array.from(found?.handlerList || []).map(row => ({roleText: row.roleText, currentText: row.currentService || 'None',
                 registeredText: Array.from(row.choiceList || []).map(choice => choice.title + (choice.current ? ' (current)' : '')).join(', ') || row.note || ''}))
-            remoteRows = Array.from(found?.remoteList || []).map(row => Object.assign({}, row, {stateText: row.disabled ? ec.l10n.localize('Disabled until its test passes') : 'In use'}))
+            remoteRows = Array.from(found?.remoteList || []).map(row => Object.assign({}, row, {stateText: row.disabled ? ec.l10n.localize('Disabled until its test passes') : ec.l10n.localize('In use')}))
             recoveryRows = Array.from(found?.recoveryList || []).map(row => Object.assign({}, row, {
                 actionText: ['Retry: ' + row.retryText, 'Settle: ' + row.reconcileText, 'Cancel: ' + row.cancelText].join(' · '),
                 permissionText: ['ADMIN_OPERATION_MANAGE', row.ownerPermission].filter(Boolean).join(' and ')}))

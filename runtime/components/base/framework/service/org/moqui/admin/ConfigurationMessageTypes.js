@@ -63,7 +63,12 @@ const directionOf = type => {
     const incoming = !!(text(type.consumeServiceName) || text(type.receiveServiceName) || text(type.receivePath))
     return out && incoming ? "both" : out ? "out" : incoming ? "in" : "none"
 }
-const directionTexts = {both: ec.l10n.localize("Sent and received"), out: "Sent", in: "Received", none: ec.l10n.localize("Not routed")}
+const directionTexts = {
+    both: ec.l10n.localize("Sent and received"),
+    out: ec.l10n.localize("Sent"),
+    in: ec.l10n.localize("Received"),
+    none: ec.l10n.localize("Not routed")
+}
 const modeText = (mode, owner) =>
     mode === "native" ? "By the message service" : mode === "owner" ? "By " + owner : "Not offered"
 // A type as the list and the detail show it.

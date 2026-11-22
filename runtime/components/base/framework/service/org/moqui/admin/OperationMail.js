@@ -61,9 +61,15 @@ const signInTemplates = () =>
     ec.resource.script("component://framework/service/org/moqui/mail/RelayRules.js").signInTemplates()
 
 const states = {
-    retryable: {text: "Not sent", next: ec.l10n.localize("Nothing was sent. It can be sent again.")},
-    permanent: {text: "Refused", next: ec.l10n.localize("The server refused it. It can be sent again once what it refused is put right.")},
-    bounced: {text: "Bounced", next: ec.l10n.localize("It was returned after it was sent. It can be sent again.")},
+    retryable: {text: ec.l10n.localize("Not sent"), next: ec.l10n.localize("Nothing was sent. It can be sent again.")},
+    permanent: {
+        text: ec.l10n.localize("Refused"),
+        next: ec.l10n.localize("The server refused it. It can be sent again once what it refused is put right.")
+    },
+    bounced: {
+        text: ec.l10n.localize("Bounced"),
+        next: ec.l10n.localize("It was returned after it was sent. It can be sent again.")
+    },
     uncertain: {
         text: ec.l10n.localize("May have been sent"),
         next: ec.l10n.localize("The session was lost part way. Look in the mail server's own log before anything is sent again.")
@@ -76,10 +82,10 @@ const states = {
 }
 const stateList = [
     {state: "attention", text: "Needs attention"},
-    {state: "retryable", text: "Not sent"},
-    {state: "permanent", text: "Refused"},
+    {state: "retryable", text: ec.l10n.localize("Not sent")},
+    {state: "permanent", text: ec.l10n.localize("Refused")},
     {state: "uncertain", text: ec.l10n.localize("May have been sent")},
-    {state: "bounced", text: "Bounced"},
+    {state: "bounced", text: ec.l10n.localize("Bounced")},
     {state: "settled", text: ec.l10n.localize("Settled by a person")},
     {state: "sent", text: "Sent"},
     {state: "all", text: ec.l10n.localize("All outgoing")}
