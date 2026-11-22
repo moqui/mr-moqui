@@ -7,8 +7,8 @@ session (the owner's cookie and session token; the MCP client itself can never d
 requestState runs it once. A second client that declares no URL elicitation is refused the write.
 
     python3 -m venv venv && venv/bin/pip install 'mcp==2.3.0'
-    MCP_TOKEN=<login key> MCP_OWNER_COOKIE=<cookie> MCP_OWNER_CSRF=<session token> MCP_WRITE_TOOL=<tool> \
-        MCP_WRITE_ARGS='<json>' venv/bin/python -I smoke_mcp_sdk.py http://localhost:8080
+    SSL_CERT_FILE=runtime/cert/dev-ca/ca.crt MCP_TOKEN=<login key> MCP_OWNER_COOKIE=<cookie> MCP_OWNER_CSRF=<session token> MCP_WRITE_TOOL=<tool> \
+        MCP_WRITE_ARGS='<json>' venv/bin/python -I smoke_mcp_sdk.py https://localhost:8443
 
 The host test crates/moqui-host/tests/it/mcp.rs runs it when MCP_SDK_PYTHON names such a python.
 """
@@ -23,7 +23,7 @@ import mcp.types as types
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('MCP_BASE_URL', 'http://localhost:8080')
+BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('MCP_BASE_URL', 'https://localhost:8443')
 TOKEN = os.environ.get('MCP_TOKEN', '')
 OWNER_COOKIE = os.environ.get('MCP_OWNER_COOKIE', '')
 OWNER_CSRF = os.environ.get('MCP_OWNER_CSRF', '')

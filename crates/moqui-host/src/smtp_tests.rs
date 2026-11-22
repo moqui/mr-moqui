@@ -368,7 +368,7 @@ async fn a_proxy_header_names_the_client_which_must_be_allowed_too() {
 /// that trusts it.
 fn tls_pair(label: &str) -> (TlsAcceptor, tokio_rustls::TlsConnector, std::path::PathBuf) {
     let runtime = crate::tls::tests::temp_dir(label);
-    crate::tls::ensure_dev_cert(&runtime.join("cert")).unwrap();
+    crate::tls::ensure_dev_cert_with(&runtime.join("cert"), None).unwrap();
     let server = crate::tls::smtp_server_config(&runtime, "localhost", "", "").unwrap();
     let connector = crate::tls::tests::client_trusting(&runtime.join("cert").join("localhost.crt"));
     (TlsAcceptor::from(Arc::new(server)), connector, runtime)
@@ -443,7 +443,7 @@ fn starttls_with_no_certificate_does_not_start() {
         err.to_string().contains("no certificate for mx.test or default"),
         "{err}"
     );
-    crate::tls::ensure_dev_cert(&runtime.join("dev")).unwrap();
+    crate::tls::ensure_dev_cert_with(&runtime.join("dev"), None).unwrap();
     assert!(
         crate::tls::smtp_server_config(&runtime, "mx.test", "dev/localhost.crt", "").is_err(),
         "the files go together"

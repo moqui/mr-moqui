@@ -25,7 +25,7 @@ Fixture users come from `runtime/components/base/framework/test/ClientFixtures.s
 
 ```sh
 moqui test framework --spec ClientFixtures --db existing
-./moq test-client framework --server http://127.0.0.1:8080
+./moq test-client framework --server https://localhost:8443
 ```
 
 Features that need a missing fixture user skip and name that command. The other proofs log in as `john.doe` / `moqui` (`--param user=`, `--param password=`). None sends that user a wrong password (the fourth failure locks the account, `max-failures="3"`), and none logs it out over REST (`UserAccount.hasLoggedOut` ends its other sessions). Wrong-password and lockout use `sec.lock.test`.

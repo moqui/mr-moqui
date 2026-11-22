@@ -953,11 +953,22 @@ again within seconds of a change, so a renewal needs no restart.
 In dev (`moqui_conf__instance__purpose=dev`), an empty certificate directory gets a localhost leaf for DNS, IPv4 and IPv6 loopback.
 The server sends it with its constrained signing intermediate. The public root is `cert/dev-ca/ca.crt`.
 Run `./moq trust-dev-cert` once per user to establish the shared issuer and trust the root in the
-macOS login keychain or Linux browser NSS stores. A system-store client on Linux can use
+macOS login keychain or Linux browser NSS stores (`~/.pki/nssdb` for Chromium and Chrome, their snap and Flatpak
+stores, and Firefox's profiles). A system-store client on Linux can use
 `curl --cacert runtime/cert/dev-ca/ca.crt https://localhost:8443/health` or `--system` trust.
-Use `--untrust` at the same scope to remove trust. Windows clients can use the runtime-local public root.
-Managed leaves renew within 30 days of expiry. For an existing unmanaged localhost/default identity,
-back up and move aside its certificates and keys (including sealed TLS keys) before requesting a managed leaf. Outside dev with no
+Use `--untrust` at the same scope to remove trust; with the shared root gone, it removes every root named
+`MR Moqui development root`. Windows clients can use the runtime-local public root. The host's own clients (`moqui tui
+--server`, the devtools commands) trust the dev root only for loopback names, and only a `ca.crt` the current user
+owns that no other user can write.
+
+The root is valid ten years and its key is dropped once it signs the intermediate; the intermediate, whose key stays in
+`~/.mr-moqui/cert/dev-ca/signer`, is valid two years. `moqui dev-cert --rotate` makes a new root and intermediate and
+new leaves; run `./moq trust-dev-cert` again to trust the new root (it removes the old one). Managed leaves renew within
+30 days of expiry, at boot and once a day while a dev server runs. A runtime with an older self-signed
+`cert/localhost.*` (an unmanaged localhost or default identity) keeps serving it, and `./moq trust-dev-cert` stops
+naming the fix: `moqui dev-cert --replace` (`./moq moqui dev-cert --replace` in a checkout) moves the pair aside into
+`cert/replaced-<time>` and issues a managed leaf; a key the seal held for that pair is replaced at the server's next
+renewal. Outside dev with no
 certificate, the HTTPS listener does not start until a name is set up with ACME (below) or a certificate is added to
 `runtime/cert` (seen within a minute). A `webapp-list/webapp[webroot]@https-listen-port` set explicitly with no certificate no longer fails
 the start: the listener waits the same way.

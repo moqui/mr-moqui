@@ -898,22 +898,41 @@ where
             Err(moqui_lib::error::Error::new(message))
         }
         [command, rest @ ..] if command == "dev-cert" => {
-            let shared = match rest {
-                [] => false,
-                [flag] if flag == "--shared" => true,
-                _ => return Err(moqui_lib::error::Error::new("usage: moqui dev-cert [--shared]")),
-            };
+            let (mut shared, mut replace, mut rotate) = (false, false, false);
+            for flag in rest {
+                match flag.as_str() {
+                    "--shared" => shared = true,
+                    "--replace" => replace = true,
+                    "--rotate" => rotate = true,
+                    _ => {
+                        return Err(moqui_lib::error::Error::new(
+                            "usage: moqui dev-cert [--shared] [--replace] [--rotate]",
+                        ))
+                    }
+                }
+            }
             #[cfg(any(feature = "axum", feature = "inbound-smtp"))]
             {
                 if shared {
                     install::destination()?;
                 }
-                tls::prepare_dev_cert(&runtime_framework_dirs().0.join("cert"), shared)?;
+                let options = tls::DevCertOptions {
+                    establish: shared,
+                    replace,
+                    rotate,
+                };
+                tls::prepare_dev_cert(&runtime_framework_dirs().0.join("cert"), options)?;
+                if rotate {
+                    println!(
+                        "Made a new development root and issuer. Run ./moq trust-dev-cert to trust the new root (it \
+                         removes the old one), and restart the dev servers that use it."
+                    );
+                }
                 Ok(None)
             }
             #[cfg(not(any(feature = "axum", feature = "inbound-smtp")))]
             {
-                let _ = shared;
+                let _ = (shared, replace, rotate);
                 Err(moqui_lib::error::Error::new("this build has no TLS listener"))
             }
         }

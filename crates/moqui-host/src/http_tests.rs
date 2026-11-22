@@ -592,7 +592,7 @@ async fn a_stop_waits_for_open_requests_only_until_the_shutdown_deadline() {
 #[tokio::test]
 async fn a_request_over_tls_is_marked_secure() {
     let dir = tls::tests::temp_dir("serve").join("cert");
-    tls::ensure_dev_cert(&dir).unwrap();
+    tls::ensure_dev_cert_with(&dir, None).unwrap();
     let config = Arc::new(tls::server_config(tls::CertStore::new(dir.clone())).unwrap());
     let app = Router::new().route(
         "/",

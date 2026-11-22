@@ -104,6 +104,7 @@ pub(crate) fn plan(
                 dir.display()
             );
         }
+        renew_dev_cert_daily(&dir);
     }
     let store = CertStore::new(dir.clone());
     let standby = store.is_empty();
@@ -789,28 +790,75 @@ pub(crate) fn leaf_for(dir: &Path, name: &str) -> Option<CertificateDer<'static>
 #[path = "dev_issuer.rs"]
 mod dev_issuer;
 
+pub(crate) use dev_issuer::Options as DevCertOptions;
+
+/// Issue or renew the development certificate of the dev runtime's `dir` (`runtime/cert`), signed by the shared dev
+/// CA in `~/.mr-moqui` when there is one ([`moqui_lib::shared_runtime`]). A unit test of this crate never reaches the
+/// developer's shared directory: it uses [`ensure_dev_cert_with`] with none.
 pub(crate) fn ensure_dev_cert(dir: &Path) -> Result<(), Error> {
+    let shared = if cfg!(test) {
+        None
+    } else {
+        moqui_lib::shared_runtime::directory().map_err(|e| Error::new(e.to_string()))?
+    };
+    ensure_dev_cert_with(dir, shared)
+}
+
+/// [`ensure_dev_cert`] with the shared runtime `shared` (none: the checkout's own CA in `dir/dev-ca`).
+pub(crate) fn ensure_dev_cert_with(dir: &Path, shared: Option<PathBuf>) -> Result<(), Error> {
     if !dir.join("dev-ca/managed-leaves").exists() && has_any_pair(dir) {
         let names: Vec<_> = ["localhost", "default"]
             .into_iter()
             .filter(|stem| find_pair(dir, stem).is_some())
             .collect();
         if !names.is_empty() {
-            tracing::warn!("Unmanaged TLS identities {} in {}. Back up and move their certificates and keys aside, including any sealed tls-key/<name>, to enable managed development TLS", names.join(", "), dir.display());
+            tracing::warn!(
+                "Unmanaged TLS identities {} in {} (an older self-signed development certificate): they are served as \
+                 they are. Run moqui dev-cert --replace to move them aside and issue a managed development certificate \
+                 that ./moq trust-dev-cert can trust",
+                names.join(", "),
+                dir.display()
+            );
             return Ok(());
         }
     }
-    let shared = moqui_lib::shared_runtime::directory().map_err(|e| Error::new(e.to_string()))?;
     dev_issuer::ensure(dir, shared, false)
 }
 
-pub(crate) fn prepare_dev_cert(dir: &Path, shared: bool) -> Result<(), Error> {
-    let shared_dir = if shared {
+/// Check the development certificate of `dir` once a day while the server runs, so a dev server that stays up renews
+/// its leaf before it expires (the issue renews it within 30 days of its end), not only at its next boot. One checker
+/// per directory.
+pub(crate) fn renew_dev_cert_daily(dir: &Path) {
+    static WATCHED: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(Mutex::default);
+    if cfg!(test) || !sync::lock(&WATCHED).insert(dir.to_path_buf()) {
+        return;
+    }
+    let dir = dir.to_path_buf();
+    let spawned = std::thread::Builder::new()
+        .name("dev-cert-renew".into())
+        .spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(86_400));
+            if let Err(err) = ensure_dev_cert(&dir) {
+                tracing::warn!(
+                    "Could not renew the development certificate in {}: {err}",
+                    dir.display()
+                );
+            }
+        });
+    if let Err(err) = spawned {
+        tracing::warn!("Could not start the daily development certificate check: {err}");
+    }
+}
+
+/// `moqui dev-cert`: issue the development certificate of `dir` with `options`, signed by the shared dev CA (by the one
+/// `moqui install` uses when `establish`, which makes it from this checkout's when there is none).
+pub(crate) fn prepare_dev_cert(dir: &Path, options: DevCertOptions) -> Result<(), Error> {
+    let shared_dir = if options.establish {
         Some(crate::install::destination()?)
     } else {
         moqui_lib::shared_runtime::directory().map_err(|e| Error::new(e.to_string()))?
     };
-    dev_issuer::ensure(dir, shared_dir, shared)
+    dev_issuer::ensure_with(dir, shared_dir, options)
 }
 
 /// Write a private key to `path` as a new file of mode `0600` (`moqui_lib::private_fs`). A file or a symbolic link

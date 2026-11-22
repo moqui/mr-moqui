@@ -48,11 +48,62 @@ pub fn loopback(host: &str) -> bool {
             .is_ok_and(|ip| ip.is_loopback())
 }
 
+/// The development root a loopback handshake may also trust: the runtime's `cert/dev-ca/ca.crt`, else the shared
+/// runtime's, each only when it is the current user's own ([`owned_by_me`]). The runtime is found from the working
+/// directory, so another user's directory could otherwise hand a client (a release-build TUI or devtools client too) a
+/// root of their choosing for localhost.
 fn root() -> Option<CertificateDer<'static>> {
     let shared = crate::shared_runtime::directory().ok().flatten();
     std::iter::once(runtime_dir())
         .chain(shared)
-        .find_map(|dir| CertificateDer::from_pem_file(dir.join("cert/dev-ca/ca.crt")).ok())
+        .map(|dir| dir.join("cert/dev-ca/ca.crt"))
+        .filter(|path| owned_by_me(path))
+        .find_map(|path| CertificateDer::from_pem_file(path).ok())
+}
+
+/// Whether `path` is a regular file (not a link) of the current user that no other user may change: neither it nor
+/// its directory is owned by another user or writable by the group or others. Always true off Unix.
+#[cfg(unix)]
+fn owned_by_me(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    let Some(uid) = current_uid() else {
+        return false;
+    };
+    let mine = |meta: &std::fs::Metadata| meta.uid() == uid && meta.mode() & 0o022 == 0;
+    let file = std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file() && mine(&meta));
+    let dir = path
+        .parent()
+        .and_then(|dir| std::fs::metadata(dir).ok())
+        .is_some_and(|meta| mine(&meta));
+    if !file || !dir {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if path.exists() && !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                "The development root {} is not trusted: it, or its directory, is another user's or writable by others",
+                path.display()
+            );
+        }
+        return false;
+    }
+    true
+}
+
+#[cfg(not(unix))]
+fn owned_by_me(_path: &std::path::Path) -> bool {
+    true
+}
+
+/// The effective user id of this process: the owner of a directory it makes (std has no `geteuid`).
+#[cfg(unix)]
+fn current_uid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt as _;
+    static UID: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    *UID.get_or_init(|| {
+        let probe = crate::private_fs::new_dir_in(&std::env::temp_dir(), ".moqui-uid").ok()?;
+        let uid = std::fs::metadata(&probe).ok().map(|meta| meta.uid());
+        let _ = std::fs::remove_dir(&probe);
+        uid
+    })
 }
 
 /// Extend the existing raw TLS root store for this destination.
@@ -146,7 +197,91 @@ pub fn builder(insecure: bool) -> Result<reqwest::blocking::ClientBuilder, Error
 
 #[cfg(test)]
 mod tests {
-    use super::loopback;
+    use super::{loopback, LocalVerifier};
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+    use rustls::{DigitallySignedStruct, SignatureScheme};
+    use std::sync::Arc;
+
+    /// A verifier that accepts every certificate, or none.
+    #[derive(Debug)]
+    struct Fixed(bool);
+
+    impl ServerCertVerifier for Fixed {
+        fn verify_server_cert(
+            &self,
+            _: &CertificateDer<'_>,
+            _: &[CertificateDer<'_>],
+            _: &ServerName<'_>,
+            _: &[u8],
+            _: UnixTime,
+        ) -> Result<ServerCertVerified, rustls::Error> {
+            if self.0 {
+                Ok(ServerCertVerified::assertion())
+            } else {
+                Err(rustls::Error::General("refused".into()))
+            }
+        }
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            Ok(HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn the_development_root_verifier_is_asked_only_for_a_loopback_name() {
+        // the platform refuses, the dev root would accept anything: only a loopback name reaches the dev root
+        let verifier = LocalVerifier {
+            normal: Arc::new(Fixed(false)),
+            local: Arc::new(Fixed(true)),
+        };
+        let cert = CertificateDer::from(vec![0u8]);
+        let check = |name: &'static str| {
+            verifier.verify_server_cert(&cert, &[], &ServerName::try_from(name).unwrap(), &[], UnixTime::now())
+        };
+        for name in ["localhost", "127.0.0.1", "::1"] {
+            assert!(check(name).is_ok(), "{name}");
+        }
+        for name in ["example.net", "localhost.example.net", "10.0.0.1"] {
+            assert!(check(name).is_err(), "{name}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_development_root_others_can_write_is_not_trusted() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = crate::private_fs::new_dir_in(&std::env::temp_dir(), "moqui-dev-ca-owner").unwrap();
+        let root = dir.join("ca.crt");
+        std::fs::write(&root, "root").unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(super::owned_by_me(&root));
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(!super::owned_by_me(&root));
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(!super::owned_by_me(&root), "a directory others can write");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = dir.join("link.crt");
+        std::os::unix::fs::symlink(&root, &link).unwrap();
+        assert!(!super::owned_by_me(&link), "a link");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn the_development_root_is_available_only_to_loopback_destinations() {

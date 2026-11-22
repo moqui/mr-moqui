@@ -6,7 +6,7 @@ maps to its exceptions: an unknown model (NotFoundError), a bad key (Authenticat
 (RateLimitError, when GATEWAY_KEY_OVER_QUOTA is given) and a field the gateway does not pass (BadRequestError).
 
     python3 -m venv venv && venv/bin/pip install openai
-    GATEWAY_KEY=<login key> venv/bin/python openai_client.py http://localhost:8080/llm/v1
+    SSL_CERT_FILE=runtime/cert/dev-ca/ca.crt GATEWAY_KEY=<login key> venv/bin/python openai_client.py https://localhost:8443/llm/v1
 
 The host test crates/moqui-host/tests/it/gateway.rs runs it when OPENAI_PYTHON names such a python, against a fake
 upstream model server on loopback (the aliases fast, resp and embed of its conf).
@@ -17,7 +17,7 @@ import sys
 
 import openai
 
-BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('GATEWAY_BASE_URL', 'http://localhost:8080/llm/v1')
+BASE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get('GATEWAY_BASE_URL', 'https://localhost:8443/llm/v1')
 KEY = os.environ.get('GATEWAY_KEY', '')
 OVER_QUOTA = os.environ.get('GATEWAY_KEY_OVER_QUOTA', '')
 
