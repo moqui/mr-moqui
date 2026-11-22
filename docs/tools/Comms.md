@@ -555,6 +555,10 @@ can follow the presenter’s viewport or pan independently and choose **Follow a
 Admitted guests draw by default and lose access when removed or when the board closes. The recording’s details
 link to boards shown during the meeting. For a recurring meeting, choose a board on the call link.
 
+While sharing, **Annotation permissions** controls who may draw. Unpinned marks fade after five seconds. Use the laser for
+pointing or pin a stroke to keep it visible. **Snapshot to board** creates a board with the captured frame locked and
+each stroke available to edit. In chat, open an image and choose **Mark up** to save a new PNG as a reply to the original.
+
 ## For app authors
 
 An app adds to BasicComms through four seams. None needs a copy of a BasicComms screen.

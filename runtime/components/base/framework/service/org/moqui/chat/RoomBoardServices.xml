@@ -65,12 +65,12 @@
         </actions>
     </service>
     <service verb="create" noun="RoomBoard">
-        <in-parameters><parameter name="chatRoomId" required="true"/><parameter name="pageName" required="true"/></in-parameters>
+        <in-parameters><parameter name="chatRoomId" required="true"/><parameter name="pageName" required="true"/><parameter name="numberDuplicates" type="Boolean" default="false"/></in-parameters>
         <out-parameters><parameter name="wikiPageId"/></out-parameters>
         <actions>
             <service-call name="org.moqui.chat.RoomBoardServices.ensure#ChatRoomSpace" in-map="{chatRoomId}" out-map="space"/>
             <if condition="ec.message.hasError()"><return/></if>
-            <service-call name="org.moqui.resource.WikiServices.create#WikiBoard" in-map="{wikiSpaceId:space.wikiSpaceId,pageName}" out-map="created"/>
+            <service-call name="org.moqui.resource.WikiServices.create#WikiBoard" in-map="{wikiSpaceId:space.wikiSpaceId,pageName,numberDuplicates}" out-map="created"/>
             <if condition="ec.message.hasError()"><return/></if>
             <set field="wikiPageId" from="created.wikiPageId"/>
             <service-call name="org.moqui.chat.RoomBoardServices.post#RoomBoard" in-map="{chatRoomId,wikiPageId}"/>

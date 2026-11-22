@@ -25,6 +25,11 @@ along with this software (see the LICENSE.md file). If not, see
 
     <subscreens default-item="History"/>
 
+    <transition name="snapshotBoard" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.comms.AnnotationServices.snapshot#Board').parameters({callSessionId,pageName,frameFile,scene}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
     <transition name="boardDrawing" method="post"><actions><script><![CDATA[
         const out = ec.service.sync().name('org.moqui.call.CallServices.set#BoardDrawing').parameters({callSessionId,wikiPageId,memberCanEdit,guestCanEdit}).disableAuthz().call()
         if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)

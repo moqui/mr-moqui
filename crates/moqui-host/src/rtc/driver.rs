@@ -76,6 +76,8 @@ pub(crate) struct Route {
 }
 
 struct LegRoute {
+    host: bool,
+    guest: bool,
     generation: u64,
     route: Route,
     /// The leg's frames relayed to the others ([`relayed_frame`]).
@@ -143,6 +145,7 @@ struct Driver<'a> {
     /// The frames each leg gets when it joins: the rooms' recording and captions notices.
     notices: RoomNotices,
     stages: HashMap<String, Json>,
+    ink: HashMap<String, super::ink::Ink>,
     /// The call's media node of each room this node is a leg node of (W7).
     origins: HashMap<String, String>,
     /// The most legs of one paired node's calls at once (`edge@call-legs-per-pairing`, E16); 0 for no cap.
@@ -236,6 +239,7 @@ pub(super) fn run(
         media: Media::default(),
         notices: RoomNotices::default(),
         stages: HashMap::new(),
+        ink: HashMap::new(),
         origins: HashMap::new(),
         pairing_legs: pairing_legs(),
     };
@@ -343,6 +347,23 @@ impl Driver<'_> {
                 frame,
                 notice,
             } => {
+                if frame["rtc"] == "ink" {
+                    let stage = self.stages.get(&room).map_or(&Json::Null, |f| &f["stage"]);
+                    if stage["kind"] != "screen" || stage["inkEpoch"] != frame["inkEpoch"] {
+                        return;
+                    }
+                    let leg = frame["from"].as_str().unwrap_or_default();
+                    if frame["action"] != "snapshot"
+                        && self
+                            .ink
+                            .entry(room.clone())
+                            .or_default()
+                            .apply(Instant::now(), stage, true, leg, &frame)
+                            .is_err()
+                    {
+                        return;
+                    }
+                }
                 if let Some((kind, keep)) = notice {
                     self.notices.set(&room, kind, keep.then(|| frame.clone()));
                 }
@@ -384,6 +405,7 @@ impl Driver<'_> {
                 self.media.room_closed(&room);
                 self.notices.room_closed(&room);
                 self.stages.remove(&room);
+                self.ink.remove(&room);
                 self.origins.remove(&room);
                 let legs: Vec<LegKey> = self
                     .routes
@@ -455,6 +477,8 @@ impl Driver<'_> {
                     self.routes.insert(
                         key.clone(),
                         LegRoute {
+                            guest: frame["boundGuest"] == true,
+                            host: frame["boundHost"].as_bool().unwrap_or(false),
                             generation,
                             route: route.clone(),
                             relayed: RelayBucket::new(now),
@@ -487,6 +511,8 @@ impl Driver<'_> {
                     self.routes.insert(
                         key.clone(),
                         LegRoute {
+                            guest: frame["boundGuest"] == true,
+                            host: frame["boundHost"].as_bool().unwrap_or(false),
                             generation,
                             route: route.clone(),
                             relayed: RelayBucket::new(now),
@@ -541,6 +567,41 @@ impl Driver<'_> {
                     left => left.map(|()| None),
                 }
             }
+            "ink" => {
+                let Some(leg_route) = self.routes.get_mut(&key).filter(|r| r.generation == generation) else {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notJoined"}));
+                };
+                let stage = self.stages.get(room).map_or(&Json::Null, |f| &f["stage"]);
+                if stage["kind"] != "screen" || !leg_route.peer.take(now) {
+                    return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"stageUnavailable"}));
+                }
+                if frame["action"] == "snapshot" {
+                    if leg_route.guest || stage["inkEmbedded"] != true {
+                        return self.reply(&route, room, json!({"rtc":"error","id":id,"code":"notAllowed"}));
+                    }
+                    self.spread(
+                        room,
+                        None,
+                        json!({"rtc":"ink","action":"snapshot","from":leg,"inkEpoch":stage["inkEpoch"]}),
+                        None,
+                        None,
+                    );
+                    return;
+                }
+                match self
+                    .ink
+                    .entry(room.to_string())
+                    .or_default()
+                    .apply(now, stage, leg_route.host, leg, frame)
+                {
+                    Ok(mut relay) => {
+                        relay["inkEpoch"] = stage["inkEpoch"].clone();
+                        self.spread(room, None, relay, None, None);
+                    }
+                    Err(code) => return self.reply(&route, room, json!({"rtc":"error","id":id,"code":code})),
+                }
+                Ok(None)
+            }
             "mute" | "hand" | "reaction" | "unpublish" => match self.leg_generation(&key) {
                 Some(g) if g == generation => {
                     if self.routes.get_mut(&key).is_some_and(|r| !r.relayed.take(now)) {
@@ -585,6 +646,15 @@ impl Driver<'_> {
                 self.sfu.set_screen_stage(room, screen_leg(stage));
                 self.to_leg(&key, generation, stage.clone());
             }
+            if let Some(ink) = self.ink.get_mut(room) {
+                let visible = ink.visible(now);
+                for mut stroke in visible {
+                    if let Some(stage) = self.stages.get(room) {
+                        stroke["inkEpoch"] = stage["stage"]["inkEpoch"].clone();
+                    }
+                    self.to_leg(&key, generation, stroke);
+                }
+            }
             for notice in self.notices.of(room) {
                 self.to_leg(&key, generation, notice);
             }
@@ -602,6 +672,14 @@ impl Driver<'_> {
             .is_some_and(|current| current >= revision)
         {
             return;
+        }
+        if self.stages.get(room).is_none_or(|previous| {
+            previous["stage"]["inkEpoch"] != frame["stage"]["inkEpoch"]
+                || previous["stage"]["kind"] != frame["stage"]["kind"]
+                || previous["stage"]["callLegId"] != frame["stage"]["callLegId"]
+        }) || frame["stage"]["inkMode"] == "off"
+        {
+            self.ink.remove(room);
         }
         self.sfu.set_screen_stage(room, screen_leg(frame));
         self.stages.insert(room.to_string(), frame.clone());
@@ -889,6 +967,15 @@ impl Driver<'_> {
     /// To every leg of the room, but `except`.
     fn to_room(&self, room: &str, except: Option<&str>, frame: Json) {
         for (key, r) in &self.routes {
+            if frame["rtc"] == "ink"
+                && frame["action"] == "snapshot"
+                && self
+                    .stages
+                    .get(room)
+                    .is_none_or(|s| s["stage"]["callLegId"].as_str() != Some(&key.leg))
+            {
+                continue;
+            }
             if &*key.room == room && except != Some(&*key.leg) {
                 let mut f = frame.clone();
                 if let Some(o) = f.as_object_mut() {

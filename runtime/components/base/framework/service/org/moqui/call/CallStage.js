@@ -21,6 +21,12 @@ function leave(session, legId) {
     return store(session, stage)
 }
 function present(session,stage,leg,kind,pageId) {
+    if (stage.kind !== kind || stage.callLegId !== leg) {
+        delete stage.inkMode
+        delete stage.inkEmbedded
+        if (kind === 'screen') stage.inkEpoch = Number(session.revision || 0) + 1
+        else delete stage.inkEpoch
+    }
     let data={}
     if (kind==='board') {
         data=boards.open(session,pageId,leg)
@@ -88,6 +94,15 @@ function change(p, engine) {
         const req=stage.requested?.[target] || {kind:'screen'}
         if (!present(session,stage,target,req.kind,req.wikiPageId)) return engine.refuse('notFound','Board not found')
         stage.requests = stage.requests.filter(id => id !== target)
+    } else if (p.action === 'inkMode' || p.action === 'inkSurface') {
+        if (stage.kind !== 'screen' || (stage.callLegId !== leg && (!host || p.action === 'inkSurface')))
+            return engine.refuse('notAllowed','Only the presenter or a host may manage share annotation')
+        if (p.action === 'inkMode') {
+            if (!['off','hosts','everyone'].includes(p.mode)) return engine.refuse('badRequest','Unknown drawing permission')
+            stage.inkMode = p.mode
+        } else {
+            stage.inkEmbedded = p.embedded === true
+        }
     } else if (p.action === 'lower') {
         if (target !== leg && !host) return engine.refuse('notAllowed', 'Only a host may dismiss another request')
         stage.requests = stage.requests.filter(id => id !== target)

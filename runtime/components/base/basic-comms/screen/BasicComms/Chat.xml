@@ -38,6 +38,11 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== Reads ========== -->
 
     <!-- the rail: me, the chat preferences, my rooms and the totals -->
+    <transition name="markup" method="post"><actions><script><![CDATA[
+        const out = ec.service.sync().name('org.moqui.comms.AnnotationServices.markup#ChatImage').parameters({chatRoomId,chatAttachmentId,file}).disableAuthz().call()
+        if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)
+        else ec.web.sendJsonResponse(out)
+    ]]></script></actions><default-response type="none"/></transition>
     <transition name="createRoomBoard" method="post"><actions><script><![CDATA[
         const out = ec.service.sync().name('org.moqui.chat.RoomBoardServices.create#RoomBoard').parameters({chatRoomId,pageName}).disableAuthz().call()
         if (ec.message.hasError()) ec.web.sendError(400,ec.message.errorsString)

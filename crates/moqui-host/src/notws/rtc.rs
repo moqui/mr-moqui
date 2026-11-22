@@ -339,6 +339,11 @@ fn join(
         // The bound session is the sole source of stage state. Never trust a join's copy.
         if let Some(obj) = frame.as_object_mut() {
             obj.remove("boundStage");
+            obj.insert("boundGuest".into(), Json::Bool(matches!(&who, Who::Guest(_))));
+            obj.insert(
+                "boundHost".to_string(),
+                Json::Bool(matches!(out.get("isHost"), Some(Value::Bool(true)))),
+            );
             if let Some(stage) = stage_of(&out) {
                 obj.insert("boundStage".into(), stage);
             }
@@ -473,7 +478,7 @@ fn change_stage(
             ("callLegId".to_string(), Value::string(&binding.leg)),
             ("generation".to_string(), Value::string(binding.generation.to_string())),
         ]);
-        for field in ["action", "kind", "previousLegId", "targetLegId", "wikiPageId"] {
+        for field in ["action", "kind", "previousLegId", "targetLegId", "wikiPageId", "mode"] {
             if let Some(value) = frame
                 .get(field)
                 .and_then(Json::as_str)
@@ -481,6 +486,9 @@ fn change_stage(
             {
                 params.insert(field.to_string(), Value::string(value));
             }
+        }
+        if let Some(embedded) = frame["embedded"].as_bool() {
+            params.insert("embedded".to_string(), Value::Bool(embedded));
         }
         if let Who::Guest(credential) = &who {
             params.insert("credential".to_string(), Value::string(credential));

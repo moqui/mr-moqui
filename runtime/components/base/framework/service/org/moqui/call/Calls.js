@@ -1387,6 +1387,7 @@ function bindLeg(session, leg, participant, signalingNodeId, forUserId, direct) 
     pushState(session, 'rekey', { callLegId: leg.callLegId })
   }
   return {
+    isHost: participant.roleEnumId === 'CprHost',
     ...stageInfo(session),
     callConnectionId: conn.callConnectionId, generation, mediaNodeId: node, originNodeId: session.mediaNodeId,
     callLegId: leg.callLegId, call: forUserId ? view(session, forUserId) : null,

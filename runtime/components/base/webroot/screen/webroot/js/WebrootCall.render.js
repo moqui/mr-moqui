@@ -3087,8 +3087,8 @@
               ]))
             }
         } },
-        "m-call-presentation": { hash: "a458602f", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
+        "m-call-presentation": { hash: "666a3dc2", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, vModelSelect: _vModelSelect, vModelText: _vModelText, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_btn = _resolveComponent("q-btn")
@@ -3105,6 +3105,7 @@
               const _component_q_card = _resolveComponent("q-card")
               const _component_q_dialog = _resolveComponent("q-dialog")
               const _component_m_call_video = _resolveComponent("m-call-video")
+              const _component_m_ink_layer = _resolveComponent("m-ink-layer")
               const _directive_close_popup = _resolveDirective("close-popup")
 
               return (_openBlock(), _createElementBlock("section", { class: "m-call-presentation q-mb-xs" }, [
@@ -3447,6 +3448,117 @@
                 (_ctx.sharing && _ctx.stream)
                   ? (_openBlock(), _createElementBlock("div", {
                       key: 3,
+                      class: "row items-center q-gutter-xs m-stage-ink-tools"
+                    }, [
+                      (_ctx.mine || _ctx.host)
+                        ? (_openBlock(), _createBlock(_component_q_btn_dropdown, {
+                            key: 0,
+                            dense: "",
+                            flat: "",
+                            label: _ctx.t('Annotation permissions')
+                          }, {
+                            default: _withCtx(() => [
+                              _createVNode(_component_q_list, { dense: "" }, {
+                                default: _withCtx(() => [
+                                  (_openBlock(), _createElementBlock(_Fragment, null, _renderList(['off','hosts','everyone'], (mode) => {
+                                    return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                      key: mode,
+                                      clickable: "",
+                                      active: (_ctx.call.stage.inkMode || 'off')===mode,
+                                      onClick: $event => (_ctx.command('inkMode',{mode}))
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_item_section, null, {
+                                          default: _withCtx(() => [
+                                            _createTextVNode(_toDisplayString(_ctx.t({off:'Off',hosts:'Hosts',everyone:'Everyone'}[mode])), 1)
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1032, ["active", "onClick"])), [
+                                      [_directive_close_popup]
+                                    ])
+                                  }), 64))
+                                ]),
+                                _: 1
+                              })
+                            ]),
+                            _: 1
+                          }, 8, ["label"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.inkAllowed)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 1,
+                            dense: "",
+                            flat: "",
+                            icon: "sym_o_edit",
+                            label: _ctx.annotating?_ctx.t('Finish drawing'):_ctx.t('Annotate'),
+                            onClick: $event => (_ctx.annotating=!_ctx.annotating)
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (_ctx.inkAllowed && _ctx.annotating)
+                        ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                            _withDirectives(_createElementVNode("select", {
+                              "onUpdate:modelValue": $event => ((_ctx.inkTool) = $event),
+                              "aria-label": _ctx.t('Drawing tool')
+                            }, [
+                              (_openBlock(), _createElementBlock(_Fragment, null, _renderList(['draw','line','rectangle','ellipse','laser'], (tool) => {
+                                return _createElementVNode("option", {
+                                  key: tool,
+                                  value: tool
+                                }, _toDisplayString(_ctx.t(tool)), 9, ["value"])
+                              }), 64))
+                            ], 8, ["onUpdate:modelValue", "aria-label"]), [
+                              [_vModelSelect, _ctx.inkTool]
+                            ]),
+                            _withDirectives(_createElementVNode("input", {
+                              type: "color",
+                              "onUpdate:modelValue": $event => ((_ctx.inkColor) = $event),
+                              "aria-label": _ctx.t('Ink color')
+                            }, null, 8, ["onUpdate:modelValue", "aria-label"]), [
+                              [_vModelText, _ctx.inkColor]
+                            ]),
+                            _createVNode(_component_q_toggle, {
+                              dense: "",
+                              modelValue: _ctx.inkPin,
+                              "onUpdate:modelValue": $event => ((_ctx.inkPin) = $event),
+                              label: _ctx.t('Pin new strokes')
+                            }, null, 8, ["modelValue", "onUpdate:modelValue", "label"]),
+                            _createVNode(_component_q_btn, {
+                              dense: "",
+                              flat: "",
+                              disable: !_ctx.call.inkStrokes.some(s=>!s.pinned && s.kind!=='laser'),
+                              label: _ctx.t('Pin last stroke'),
+                              onClick: $event => (_ctx.drawInk('pin',{strokeId:_ctx.call.inkStrokes.filter(s=>!s.pinned && s.kind!=='laser').at(-1).id}))
+                            }, null, 8, ["disable", "label", "onClick"])
+                          ], 64))
+                        : _createCommentVNode("", true),
+                      (_ctx.mine || _ctx.host)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 3,
+                            dense: "",
+                            flat: "",
+                            disable: !_ctx.call.inkStrokes.length,
+                            label: _ctx.t('Clear ink'),
+                            onClick: $event => (_ctx.drawInk('clear'))
+                          }, null, 8, ["disable", "label", "onClick"]))
+                        : _createCommentVNode("", true),
+                      (!_ctx.guest)
+                        ? (_openBlock(), _createBlock(_component_q_btn, {
+                            key: 4,
+                            dense: "",
+                            flat: "",
+                            icon: "sym_o_camera_alt",
+                            label: _ctx.t('Snapshot to board'),
+                            onClick: _ctx.snapshot
+                          }, null, 8, ["label", "onClick"]))
+                        : _createCommentVNode("", true)
+                    ]))
+                  : _createCommentVNode("", true),
+                (_ctx.sharing && _ctx.stream)
+                  ? (_openBlock(), _createElementBlock("div", {
+                      key: 4,
                       ref: "viewport",
                       class: _normalizeClass(["m-present-viewport relative-position", {'m-present-preview':_ctx.mine}]),
                       style: _normalizeStyle({height:_ctx.mine?'8rem':'min(58dvh,48rem)',maxWidth:_ctx.mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}),
@@ -3456,16 +3568,30 @@
                       onPointerup: $event => (_ctx.pointer($event,'end')),
                       onPointercancel: $event => (_ctx.pointer($event,'end'))
                     }, [
-                      _createVNode(_component_m_call_video, {
-                        stream: _ctx.stream,
-                        muted: "",
-                        style: _normalizeStyle({width:'100%',height:'100%',objectFit:'contain',transform:'translate('+_ctx.x+'px,'+_ctx.y+'px) scale('+_ctx.scale+')'})
-                      }, null, 8, ["stream", "style"])
+                      _createElementVNode("div", {
+                        class: "relative-position",
+                        style: _normalizeStyle({width:'100%',height:'100%',transform:'translate('+_ctx.x+'px,'+_ctx.y+'px) scale('+_ctx.scale+')'})
+                      }, [
+                        _createVNode(_component_m_call_video, {
+                          stream: _ctx.stream,
+                          muted: "",
+                          style: {"width":"100%","height":"100%","object-fit":"contain"}
+                        }, null, 8, ["stream"]),
+                        _createVNode(_component_m_ink_layer, {
+                          active: _ctx.inkAllowed && _ctx.annotating,
+                          strokes: _ctx.call.inkStrokes,
+                          "hidden-echo": _ctx.call.stage.inkEmbedded,
+                          tool: _ctx.inkTool,
+                          color: _ctx.inkColor,
+                          pin: _ctx.inkPin,
+                          onStroke: s=>_ctx.drawInk('stroke',{stroke:s})
+                        }, null, 8, ["active", "strokes", "hidden-echo", "tool", "color", "pin", "onStroke"])
+                      ], 4)
                     ], 46, ["onWheel", "onPointerdown", "onPointermove", "onPointerup", "onPointercancel"]))
                   : _createCommentVNode("", true),
                 (_ctx.sharing && _ctx.stream && !_ctx.mine)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 4,
+                      key: 5,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -3491,7 +3617,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.tabControls)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 5,
+                      key: 6,
                       class: "row items-center q-gutter-xs"
                     }, [
                       _createVNode(_component_q_btn, {
@@ -3518,7 +3644,7 @@
                   : _createCommentVNode("", true),
                 (_ctx.notice)
                   ? (_openBlock(), _createElementBlock("div", {
-                      key: 6,
+                      key: 7,
                       role: "status",
                       class: "text-caption"
                     }, _toDisplayString(_ctx.notice), 1))

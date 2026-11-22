@@ -144,7 +144,13 @@ fn get_document(
                 .can_edit
                 .iter()
                 .filter(|(_, grant)| grant.can_edit && grant.clients > 0)
-                .map(|(user, _)| Value::string(user))
+                .filter_map(|(user, grant)| {
+                    let user = grant.meeting.as_ref().map_or(user, |scope| &scope.user_id);
+                    (!user.is_empty()).then_some(user)
+                })
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .map(Value::string)
                 .collect()
         })
         .unwrap_or_default();

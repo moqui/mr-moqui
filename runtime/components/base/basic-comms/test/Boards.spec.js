@@ -56,3 +56,53 @@ feature("room boards follow current membership and survive room archival", {
         !r.departed.canView && !r.scope.viewSpaceIdList.includes(r.wikiSpaceId)
     }
 })
+
+feature("markup saves a reply attachment beside the original image", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const chat = "org.moqui.chat.ChatServices."
+        const {chatRoomId} = boardCall(chat+"create#Room",{roomTypeEnumId:"CrtPrivate",roomName:"Image markup"})
+        const image = uploadedFile("map.png","original pixels","image/png")
+        const original = boardCall(chat+"upload#Attachment",{chatRoomId,file:image})
+        const sent = boardCall(chat+"send#Message",{chatRoomId,chatAttachmentIdList:[original.chatAttachmentId]})
+        const copy = boardCall("org.moqui.comms.AnnotationServices.markup#ChatImage",{chatRoomId,chatAttachmentId:original.chatAttachmentId,
+            file:uploadedFile("map-marked.png","annotated pixels","image/png")})
+        const get = id => boardCall(chat+"get#Attachment",{chatAttachmentId:id})
+        const first = get(original.chatAttachmentId), second = get(copy.chatAttachmentId)
+        const reply = ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId,eventSeq:copy.eventSeq}).disableAuthz().one()
+        return {copy,original,sent,first,second,reply}
+    },
+    then(r) {
+        r.copy.error === "" && r.copy.chatAttachmentId !== r.original.chatAttachmentId
+        r.first.fileName === "map.png" && r.second.fileName === "map-marked.png"
+        r.first.location !== r.second.location
+        Number(r.reply.replyToEventSeq) === Number(r.sent.eventSeq)
+    }
+})
+
+feature("a snapshot stores its locked frame as an attachment and its annotations as editable shapes", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const call = "org.moqui.call.CallServices."
+        boardCall(call+"register#MediaNode",{instanceId:"board-snapshot-spec",mediaAddress:"127.0.0.1:20101"})
+        const {chatRoomId} = boardCall("org.moqui.chat.ChatServices.create#Room",{roomName:"Snapshot review",roomTypeEnumId:"CrtPrivate"})
+        const {callSessionId} = boardCall(call+"start#Call",{chatRoomId})
+        const scene = {type:"excalidraw",version:2,files:{},elements:[
+            {id:"frame",type:"image",fileId:"capture",locked:true,x:0,y:0,width:10,height:10},
+            {id:"stroke",type:"line",x:0,y:0,width:5,height:5,points:[[0,0],[5,5]]}]}
+        const snapshot = () => boardCall("org.moqui.comms.AnnotationServices.snapshot#Board",{callSessionId,pageName:"Snapshot specimen",
+            frameFile:uploadedFile("capture.png","pixels","image/png"),scene:JSON.stringify(scene)})
+        const result = snapshot(), second = snapshot()
+        if (result.error || second.error) throw Error(result.error || second.error)
+        const read = boardCall("org.moqui.comms.BoardServices.get#Board",{wikiPageId:result.wikiPageId})
+        const info = boardCall("org.moqui.resource.WikiServices.get#WikiPageInfo",{wikiPageId:result.wikiPageId})
+        boardCall(call+"end#Call",{callSessionId})
+        return {scene:JSON.parse(read.scene), info,second:boardCall("org.moqui.comms.BoardServices.get#Board",{wikiPageId:second.wikiPageId})}
+    },
+    then(r) {
+        r.second.title === "Snapshot specimen (2)"
+        r.scene.elements[0].locked === true && !r.scene.elements[1].locked
+        r.scene.files.capture.attachmentName === "capture.png"
+        r.info.attachmentList.some(file=>file.filename === "capture.png")
+    }
+})

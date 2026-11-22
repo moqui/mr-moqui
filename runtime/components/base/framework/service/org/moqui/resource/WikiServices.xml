@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
     <service verb="create" noun="WikiBoard">
         <description>Create a blank board in the chosen writable wiki space, or in the current user's notes.</description>
-        <in-parameters><parameter name="wikiSpaceId"/><parameter name="pageName" required="true"/></in-parameters>
+        <in-parameters><parameter name="wikiSpaceId"/><parameter name="pageName" required="true"/><parameter name="numberDuplicates" type="Boolean" default="false"/></in-parameters>
         <out-parameters><parameter name="wikiPageId"/></out-parameters>
         <actions>
             <if condition="!wikiSpaceId"><service-call name="org.moqui.resource.WikiServices.ensure#UserNotesSpace" in-map="{}" out-map="space"/>
@@ -27,6 +27,16 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!pageName || pageName === wikiSpaceId"><return error="true" message="Choose a board name"/></if>
             <service-call name="org.moqui.resource.WikiServices.get#WikiPageFile" out-map="existing"
                     in-map="{rootPageLocation:spaceRow.rootPageLocation, pagePath:pageName}"/>
+            <if condition="numberDuplicates &amp;&amp; existing.pageReference?.exists"><script><![CDATA[
+                const base = pageName
+                let n = 1
+                while (existing.pageReference?.exists) {
+                    pageName = base + ' (' + (++n) + ')'
+                    existing = ec.service.sync().name('org.moqui.resource.WikiServices.get#WikiPageFile')
+                            .parameters({rootPageLocation:spaceRow.rootPageLocation,pagePath:pageName}).call()
+                    if (ec.message.hasError()) break
+                }
+            ]]></script></if>
             <if condition="existing.pageReference?.exists"><return error="true" message="A page with this name already exists"/></if>
             <service-call name="org.moqui.resource.WikiServices.update#WikiPage" out-map="saved"
                     in-map="{wikiSpaceId, pageName, wikiType:'excalidraw', pageText:JSON.stringify({type:'excalidraw',version:2,elements:[],appState:{},files:{}})}"/>

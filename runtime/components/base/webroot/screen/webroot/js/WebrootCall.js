@@ -86,7 +86,7 @@
         speaker: null,
         layout: "grid", // grid, speaker
         sharing: false,
-        stage: {kind:null,callLegId:null,requests:[]}, stageRevision:-1, shareMode:"CsmAnyone", picking:false, capture:null,
+        stage: {kind:null,callLegId:null,requests:[]}, stageRevision:-1, inkStrokes:[], shareMode:"CsmAnyone", picking:false, capture:null,
         hand: false,
         participantsOpen: false,
         // a guest waiting in the lobby of a call link's meeting: {callSessionId, guestName}, for the dock
@@ -1264,6 +1264,9 @@
             const pc = call.pc;
             if (!pc || frame.callSessionId !== state.current) return null;
             switch (frame.rtc) {
+                case "ink":
+                    call.inkFrame(frame);
+                    break;
                 case "ack":
                 case "stage":
                     call.stageFrame(frame);
@@ -1462,8 +1465,66 @@
             call.send(Object.assign({rtc:"stage", action, kind:"screen", id:call.nextId++,
                 callSessionId:state.current, callLegId:state.legId}, options));
         },
+        inkTimers:new Map(),
+        clearInk() {
+            call.inkTimers.forEach(clearTimeout);call.inkTimers.clear();
+            state.inkStrokes=[];moqui.ink?.embedded(null,[]);
+        },
+        drawInk(action, fields) {
+            if (state.current && state.stage.kind==="screen") call.send({rtc:"ink",action,...fields,id:call.nextId++,
+                callSessionId:state.current,callLegId:state.legId});
+        },
+        syncEmbeddedInk() {
+            const enabled=state.capture?.ownTab && state.stage.kind==="screen" && state.stage.callLegId===state.legId;
+            const target=enabled ? (state.capture.crop ? call.captureTarget() : root.document.body) : null;
+            moqui.ink?.embedded(target,state.inkStrokes,call.screenStream?.getVideoTracks()[0]);
+        },
+        inkFrame(frame) {
+            if (state.stage.kind!=="screen" || frame.inkEpoch!==state.stage.inkEpoch) return;
+            if (frame.action==="snapshot") {
+                if (state.stage.callLegId===state.legId && !call.guest && !call.snapshotPending) {
+                    const video=root.document.querySelector(".m-present-preview video");
+                    if(video)call.snapshotBoard(video).catch(error=>{state.error=String(error.message || error);});
+                }
+                return;
+            }
+            if (frame.action==="clear") call.clearInk();
+            if (frame.action==="pin") {
+                const stroke=state.inkStrokes.find(s=>s.id===frame.strokeId);
+                if (stroke) stroke.pinned=true;
+                clearTimeout(call.inkTimers.get(frame.strokeId));call.inkTimers.delete(frame.strokeId);
+            }
+            if (frame.action==="stroke" && frame.stroke) {
+                const s={...frame.stroke,startedAt:Date.now()-Math.max(0,Number(frame.ageMs) || 0)};
+                clearTimeout(call.inkTimers.get(s.id));
+                state.inkStrokes=state.inkStrokes.filter(old=>old.id!==s.id).concat([s]);
+                if (!s.pinned) call.inkTimers.set(s.id,setTimeout(()=>{
+                    state.inkStrokes=state.inkStrokes.filter(old=>old.id!==s.id);call.inkTimers.delete(s.id);call.syncEmbeddedInk();
+                },Math.max(0,(s.kind==="laser"?600:5000)-(Date.now()-s.startedAt))));
+            }
+            call.syncEmbeddedInk();
+        },
+        async snapshotBoard(video) {
+            if (call.snapshotPending || call.guest || !video) return;
+            const session=state.current,leg=state.stage.callLegId;
+            if(state.stage.inkEmbedded && leg!==state.legId){call.drawInk("snapshot");return;}
+            call.snapshotPending=true;
+            try {
+                const {frame,scene}=await moqui.ink.snapshot(video,state.inkStrokes.slice(),state.stage.inkEmbedded);
+                if(session!==state.current || leg!==state.stage.callLegId || state.stage.kind!=="screen")return;
+                const form=new FormData();
+                form.append("callSessionId",session);form.append("pageName",t("Presentation snapshot"));
+                form.append("frameFile",frame,"capture.png");form.append("scene",JSON.stringify(scene));
+                if(moqui.sessionToken)form.append("moquiSessionToken",moqui.sessionToken);
+                const result=await call.request("snapshotBoard",form,"POST",true);
+                if(!result.wikiPageId)throw new Error(result.errors || t("The snapshot could not be saved"));
+                if(session===state.current)await call.requestPresentation("board",result.wikiPageId);
+            } finally {call.snapshotPending=false;}
+        },
         stageFrame(frame) {
             if (!frame.stage || !Number.isSafeInteger(frame.revision) || frame.revision < state.stageRevision) return;
+            if (state.stage.callLegId!==frame.stage.callLegId || state.stage.kind!==frame.stage.kind || state.stage.inkEpoch!==frame.stage.inkEpoch ||
+                (state.stage.inkMode && frame.stage.inkMode==="off")) call.clearInk();
             state.stageRevision = frame.revision;
             state.stage = frame.stage;
             state.shareMode = frame.shareModeEnumId || state.shareMode;
@@ -1572,6 +1633,10 @@
                 if (epoch !== call.captureEpoch || pc !== call.pc) return false;
                 video.onended = () => call.stopShare();
                 state.sharing = true;
+                if (state.capture.ownTab) {
+                    await moqui.loadScript("/js/WebrootInk.js",null,()=>!!moqui.ink);
+                    call.syncEmbeddedInk();call.stageCommand("inkSurface",{embedded:true});
+                }
                 return await call.renegotiate("screen");
             } catch (error) {
                 if (error.name !== "NotAllowedError" && epoch === call.captureEpoch) state.error = String(error.message || error);
@@ -1585,6 +1650,7 @@
         async stopShare(release = true) {
             ++call.captureEpoch;
             if (release && state.stage.callLegId === state.legId) call.stageCommand("stop");
+            moqui.ink?.embedded(null,[]);
             const hadCapture = !!call.screenStream;
             if (call.screenStream) call.screenStream.getTracks().forEach(track => {track.onended=null;track.stop();});
             call.screenStream = null;
@@ -1675,6 +1741,7 @@
             }
             call.endDirect();
             ++call.captureEpoch;
+            call.clearInk();
             state.stage = {kind:null,callLegId:null,requests:[]};
             state.stageRevision = -1;
             state.capture = call.captureController = call.afterRelayStage = call.screenAudioTx = null;
@@ -2209,6 +2276,7 @@
         name:"mCallPresentation",
         props:{view:Object},
         data() { return {call:state,motion:false,scale:1,x:0,y:0,forward:false,notice:"",
+            annotating:false,inkTool:"draw",inkColor:"#e53935",inkPin:false,
             picker:false,boardList:[],boardCanCreate:false,boardName:"",selectedBoard:"",boardBusy:false,followBoard:true}; },
         computed:{
             owner() { return this.call.stage.callLegId; },
@@ -2216,6 +2284,7 @@
             pending() { return this.call.stage.requests || []; },
             host() { return !!this.view?.participants?.some(p => p.userId && p.userId === call.me && p.role === "host"); },
             sharing() { return this.call.stage.kind === "screen"; },
+            inkAllowed() {return this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
             boardId() { return this.call.stage.kind === "board" ? this.call.stage.wikiPageId : null; },
             guest() { return call.guest; },
             stream() { return this.mine ? (this.call.sharing && call.screenStream) : (this.owner && this.call.remotes[this.owner]?.screen); },
@@ -2227,6 +2296,8 @@
         watch:{owner() { this.fit(); this.forward=false; this.notice=""; this.followBoard=true; }, boardId(){this.followBoard=true;}},
         methods:{
             t, name:call.nameOf, command:call.stageCommand, ask:call.requestPresentation, capture:call.shareScreen, stop:call.stopShare,
+            drawInk:call.drawInk,
+            async snapshot(){try{await call.snapshotBoard(this.$refs.viewport?.querySelector("video"));}catch(e){this.notice=String(e.message || e);}},
             async boardPicker() {
                 const id=this.call.current;
                 try {
@@ -2286,7 +2357,7 @@
                 this.zoom(this.scale*Math.exp(-event.deltaY/350));
             },
             pointer(event, kind) {
-                if (this.mine) return;
+                if (this.mine || (this.annotating && this.inkAllowed)) return;
                 if (!this.pointers) this.pointers=new Map();
                 const id=event.pointerId, prev=this.pointers.get(id);
                 if (kind === "end") {this.pointers.delete(id);return;}
@@ -2361,10 +2432,28 @@
                 <q-btn unelevated color="primary" :disable="call.picking" :label="t('This tab')" @click="capture('tab',motion)"/>
                 <q-btn outline :disable="call.picking" :label="t('A window or screen')" @click="capture('window',motion)"/>
             </div>
+            <div v-if="sharing && stream" class="row items-center q-gutter-xs m-stage-ink-tools">
+                <q-btn-dropdown v-if="mine || host" dense flat :label="t('Annotation permissions')"><q-list dense>
+                    <q-item v-for="mode in ['off','hosts','everyone']" :key="mode" clickable v-close-popup :active="(call.stage.inkMode || 'off')===mode" @click="command('inkMode',{mode})">
+                        <q-item-section>{{t({off:'Off',hosts:'Hosts',everyone:'Everyone'}[mode])}}</q-item-section></q-item>
+                </q-list></q-btn-dropdown>
+                <q-btn v-if="inkAllowed" dense flat icon="sym_o_edit" :label="annotating?t('Finish drawing'):t('Annotate')" @click="annotating=!annotating"/>
+                <template v-if="inkAllowed && annotating">
+                    <select v-model="inkTool" :aria-label="t('Drawing tool')"><option v-for="tool in ['draw','line','rectangle','ellipse','laser']" :key="tool" :value="tool">{{t(tool)}}</option></select>
+                    <input type="color" v-model="inkColor" :aria-label="t('Ink color')"/>
+                    <q-toggle dense v-model="inkPin" :label="t('Pin new strokes')"/>
+                    <q-btn dense flat :disable="!call.inkStrokes.some(s=>!s.pinned && s.kind!=='laser')" :label="t('Pin last stroke')" @click="drawInk('pin',{strokeId:call.inkStrokes.filter(s=>!s.pinned && s.kind!=='laser').at(-1).id})"/>
+                </template>
+                <q-btn v-if="mine || host" dense flat :disable="!call.inkStrokes.length" :label="t('Clear ink')" @click="drawInk('clear')"/>
+                <q-btn v-if="!guest" dense flat icon="sym_o_camera_alt" :label="t('Snapshot to board')" @click="snapshot"/>
+            </div>
             <div v-if="sharing && stream" ref="viewport" class="m-present-viewport relative-position" :class="{'m-present-preview':mine}"
                 :style="{height:mine?'8rem':'min(58dvh,48rem)',maxWidth:mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}"
                 @wheel="wheel" @pointerdown="pointer($event,'start')" @pointermove="pointer($event,'move')" @pointerup="pointer($event,'end')" @pointercancel="pointer($event,'end')">
-                <m-call-video :stream="stream" muted :style="{width:'100%',height:'100%',objectFit:'contain',transform:'translate('+x+'px,'+y+'px) scale('+scale+')'}"/>
+                <div class="relative-position" :style="{width:'100%',height:'100%',transform:'translate('+x+'px,'+y+'px) scale('+scale+')'}">
+                    <m-call-video :stream="stream" muted style="width:100%;height:100%;object-fit:contain"/>
+                    <m-ink-layer :active="inkAllowed && annotating" :strokes="call.inkStrokes" :hidden-echo="call.stage.inkEmbedded" :tool="inkTool" :color="inkColor" :pin="inkPin" @stroke="s=>drawInk('stroke',{stroke:s})"/>
+                </div>
             </div>
             <div v-if="sharing && stream && !mine" class="row items-center q-gutter-xs">
                 <q-btn flat dense :label="t('Fit')" @click="fit"/><q-btn flat dense label="100%" @click="actual"/>

@@ -5069,6 +5069,10 @@
     moqui.coedit.Provider = CoeditProvider;
 
     if (root.Vue && root.Vue.defineAsyncComponent) {
+        for (const [name,key] of [["m-ink-layer","layer"],["m-image-markup","markup"]]) {
+            component(name, root.Vue.defineAsyncComponent(() =>
+                moqui.loadScript("/js/WebrootInk.js", null, () => !!moqui.ink).then(() => moqui.ink[key])));
+        }
         component("m-whiteboard", root.Vue.defineAsyncComponent(() =>
             moqui.loadScript("/js/WebrootWhiteboard.js", null, () => !!moqui.whiteboard)
                 .then(() => moqui.whiteboard.component)));

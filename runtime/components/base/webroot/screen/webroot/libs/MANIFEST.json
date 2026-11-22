@@ -1,6 +1,8 @@
 {
   "generatedBy": "libs/refresh.mjs",
   "buildTools": {
+    "perfect-freehand": "1.2.2",
+    "nanoevents": "9.1.0",
     "esbuild": "0.28.2",
     "@vue/compiler-dom": "3.5.44",
     "@vue/compiler-core": "3.5.44",
@@ -113,9 +115,26 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "c7d6e34af92629c5f3eb74b82236e09864fe2cda84b8c16dce7e78a1793282a2"
+    "sha256": "b6c4ea495c38a69fe2d2c441d90b3f205bffc39d243641f37acb2627e3b61a7d"
   },
   "libraries": [
+    {
+      "id": "drauu",
+      "name": "drauu",
+      "version": "1.0.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/@drauu/core/-/core-1.0.0.tgz",
+      "npm": "@drauu/core@1.0.0",
+      "tarballIntegrity": "sha512-r1fPyuKaGuNHc8vxRFUT8LxqWjJ3nx+U+zsHcEOurmJoB7uN+zpFw5kTLInfdfvQZ+qF/ebQjw1AwbGcc1XKsQ==",
+      "files": [
+        {
+          "path": "drauu/drauu.js",
+          "from": "dist/index.mjs",
+          "size": 29311,
+          "sha256": "568977f38346fbf377ff0b47ec2ab19e3f75209b9193b0c559383ea7f4b37177"
+        }
+      ]
+    },
     {
       "id": "fontawesome",
       "name": "Font Awesome",

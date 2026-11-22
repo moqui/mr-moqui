@@ -79,10 +79,10 @@ function create(p) {
     const actor=asMember(p.callSessionId)
     if (!actor || actor.session.statusId==='CssEnded') { ec.message.addError('Meeting has ended'); return {} }
     const session=actor.session
-    if (session.chatRoomId) return invoke(rooms+'create#RoomBoard',{chatRoomId:session.chatRoomId,pageName:p.pageName})
+    if (session.chatRoomId) return invoke(rooms+'create#RoomBoard',{chatRoomId:session.chatRoomId,pageName:p.pageName,numberDuplicates:p.numberDuplicates === true})
     // The starter owns the notes space. Only someone with existing update access can create a file there.
     const space=invoke(wiki+'ensure#UserNotesSpace',{userId:session.startedByUserId})
-    return invoke(wiki+'create#WikiBoard',{wikiSpaceId:space.wikiSpaceId,pageName:p.pageName})
+    return invoke(wiki+'create#WikiBoard',{wikiSpaceId:space.wikiSpaceId,pageName:p.pageName,numberDuplicates:p.numberDuplicates === true})
 }
 function drawing(p, engine) {
     const actor=asMember(p.callSessionId)

@@ -187,6 +187,9 @@ feature("the session arbitrates presentation grants, takeover, host stop and app
                 {callSessionId:direct, ...leg, action, ...extra})
         const setMode = shareModeEnumId => as(A, "set#CallShareMode", {callSessionId:direct, shareModeEnumId})
         const first = act(A, host, "ask")
+        const untrustedInk = act(B, member, "inkMode", {mode:"everyone"})
+        const inkMode = act(A, host, "inkMode", {mode:"hosts"})
+        const embedded = act(A, host, "inkSurface", {embedded:true})
         const confirm = act(B, member, "ask")
         const takeover = act(B, member, "take", {previousLegId:host.callLegId})
         const impostor = act(A, member, "stop")
@@ -199,10 +202,12 @@ feature("the session arbitrates presentation grants, takeover, host stop and app
         const view = as(A, "get#Call", {callSessionId:direct}).call
         act(A, host, "stop")
         setMode("CsmAnyone")
-        return {first, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, host, member}
+        return {first, untrustedInk, inkMode, embedded, confirm, takeover, impostor, stop, hosts, barred, queued, approved, view, host, member}
     },
     then(r) {
         r.first.stage.callLegId === r.host.callLegId && r.confirm.reasonCode === "takeoverRequired"
+        r.untrustedInk.reasonCode === "notAllowed" && r.inkMode.stage.inkMode === "hosts" && r.embedded.stage.inkEmbedded === true
+        !r.takeover.stage.inkEmbedded && !r.takeover.stage.inkMode
         r.takeover.stage.callLegId === r.member.callLegId && r.impostor.reasonCode === "notAllowed"
         r.stop.stage.kind == null && r.hosts.call.shareModeEnumId === "CsmHosts" && r.barred.reasonCode === "notAllowed"
         r.queued.stage.kind == null && r.queued.stage.requests.includes(r.member.callLegId)

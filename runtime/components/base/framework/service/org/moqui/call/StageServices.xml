@@ -6,7 +6,7 @@
         <in-parameters>
             <parameter name="callSessionId" required="true"/><parameter name="callLegId" required="true"/>
             <parameter name="generation" type="Long" required="true"/><parameter name="credential"/>
-            <parameter name="wikiPageId"/><parameter name="action" required="true"/><parameter name="kind"/>
+            <parameter name="mode"/><parameter name="embedded" type="Boolean"/><parameter name="wikiPageId"/><parameter name="action" required="true"/><parameter name="kind"/>
             <parameter name="targetLegId"/><parameter name="previousLegId"/>
         </in-parameters>
         <out-parameters><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/>
