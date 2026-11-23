@@ -162,6 +162,12 @@ save-db|Database|[name]|Save the embedded database and OpenSearch data to runtim
 reload-save|Database|[name]|clean-db, then restore a save-db copy
 clean-db|Database||Delete the embedded database, txlog, and OpenSearch data
 clean-log|Database||Delete the files in runtime/log
+build-js|JavaScript|[--force] [--offline]|Build verified browser libraries
+verify-js|JavaScript||Rebuild from the locks and compare to the manifest
+update-js|JavaScript|<lib> <version> or --all|Update reviewed npm dependencies
+outdated-js|JavaScript||Check available package updates
+audit-js|JavaScript||Audit locks and bundled libraries
+clean-js|JavaScript||Remove generated webroot libraries
 clean|Database||Tidy old cargo artifacts, keeping the current build
 clean-dev|Database||Reset the local instance data and generated types
 clean-all|Database|[--yes]|Reset instance data and remove build output after confirmation
@@ -219,7 +225,7 @@ zip-components|component-zip
 add-runtime|archive'
 
 # The tasks, one file an area, in scripts/moq/ (each with its tasks, their help and their helpers).
-for moq_part in core build run test desktop database opensearch chromium git components archive trust completion harness; do
+for moq_part in core js build run test desktop database opensearch chromium git components archive trust completion harness; do
     # shellcheck source=/dev/null
     . "$ROOT/scripts/moq/$moq_part.sh" || { printf 'moq: could not read scripts/moq/%s.sh\n' "$moq_part" >&2; exit 1; }
 done

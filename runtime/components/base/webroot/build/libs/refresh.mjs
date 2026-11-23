@@ -1,7 +1,7 @@
 // Build and verify the browser assets from both npm lockfiles.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, statSync } from 'node:fs';
+import { cpSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,8 @@ import { buildBoard } from '../whiteboard/build.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
 const here = resolve(source, '../../screen/webroot/libs');
-const pins = JSON.parse(readFileSync(join(source, 'package.json'))).dependencies;
+const projects = process.env.JS_PROJECTS || dirname(source);
+const pins = JSON.parse(readFileSync(join(projects, 'libs/package.json'))).dependencies;
 const args = process.argv.slice(2);
 const write = args.includes('--write');
 const workArg = args.includes('--work') ? args[args.indexOf('--work') + 1] : null;
@@ -495,7 +496,11 @@ function installProject(project, directory) {
 }
 
 function main() {
-  const work = workArg ? resolve(workArg) : mkdtempSync(join(tmpdir(), 'moqui-libs-'));
+  const work = workArg ? resolve(workArg) : mkdtempSync(join(process.env.JS_CACHE || tmpdir(), 'build-'));
+  try { buildAssets(work); } finally { cleanup(work); }
+}
+
+function buildAssets(work) {
   if (existsSync(work) && readdirSync(work).length) throw new Error(`work directory ${work} is not empty`);
   mkdirSync(work, { recursive: true });
   const outputs = new Map(); // path under libs/ -> Buffer
@@ -503,8 +508,8 @@ function main() {
   const notices = [];
   const packages = {};
 
-  const build = installProject(source, join(work, 'libs'));
-  const lock = JSON.parse(readFileSync(join(source, 'package-lock.json')));
+  const build = installProject(join(projects, 'libs'), join(work, 'libs'));
+  const lock = JSON.parse(readFileSync(join(projects, 'libs/package-lock.json')));
   for (const lib of LIBS) {
     lib.version = pins[lib.npm];
     const key = 'node_modules/' + lib.npm;
@@ -657,7 +662,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   libMeta.push({ id: 'license-texts', name: 'License texts', version: '-', license: 'n/a',
     source: 'see each file', files: lt });
 
-  const board = buildBoard(installProject(join(source, '../whiteboard'), join(work, 'whiteboard')), true);
+  const board = buildBoard(installProject(join(projects, 'whiteboard'), join(work, 'whiteboard')), true);
   for (const [path, data] of board.outputs) outputs.set(path, data);
   libMeta.push(board.lib);
   notices.push(board);
@@ -670,50 +675,38 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   };
   const manifestText = JSON.stringify(manifest, null, 2) + '\n';
 
-  if (write) {
+  if (!write && manifestText !== readFileSync(join(here, 'MANIFEST.json'), 'utf8')) {
+    const previous = JSON.parse(readFileSync(join(here, 'MANIFEST.json')));
+    const before = new Map(previous.libraries.flatMap(lib => lib.files.map(file => [file.path, file.sha256])));
     for (const [path, buf] of outputs) {
-      const dest = join(here, path);
-      mkdirSync(dirname(dest), { recursive: true });
-      writeFileSync(dest, buf);
+      if (before.has(path) && before.get(path) !== sha256(buf)) console.error(`Rebuilt ${path} differs`);
     }
-    writeFileSync(join(here, 'MANIFEST.json'), manifestText);
-    console.log(`wrote ${outputs.size} files and MANIFEST.json under ${here}`);
-    cleanup(work);
-    return;
+    throw new Error('Rebuilt assets or metadata differ from the reviewed MANIFEST.json');
   }
+  if (write || args.includes('--build')) {
+    outputs.set('MANIFEST.json', Buffer.from(manifestText));
+    publish(outputs);
+  }
+  console.log(`${write || args.includes('--build') ? 'Built' : 'Verified'} ${outputs.size} files`);
+}
 
-  // Verify mode: compare against the committed manifest, and the rebuilt bytes against the tree.
-  const committed = JSON.parse(readFileSync(join(here, 'MANIFEST.json'), 'utf8'));
-  const want = new Map();
-  for (const lib of committed.libraries) for (const f of lib.files) want.set(f.path, f.sha256);
-  want.set(committed.notices.path, committed.notices.sha256);
-  const problems = [];
-  if (manifestText !== readFileSync(join(here, 'MANIFEST.json'), 'utf8')) problems.push('Rebuilt manifest differs');
-  // the reviewed patches a bundle was built with are the ones on disk
-  for (const lib of committed.libraries) {
-    for (const patch of lib.patches ?? []) {
-      const disk = join(source, patch.path);
-      if (!existsSync(disk)) problems.push(`missing patch: ${patch.path}`);
-      else if (sha256(readFileSync(disk)) !== patch.sha256) problems.push(`patch ${patch.path} differs from MANIFEST.json`);
+// Prepare the complete tree on the same filesystem. Keep the old tree until the new one is in place.
+function publish(outputs) {
+  const staged = mkdtempSync(join(dirname(here), '.libs-stage-'));
+  const backup = join(dirname(here), '.libs-previous');
+  try {
+    for (const [path, bytes] of outputs) {
+      const file = join(staged, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, bytes);
     }
+    renameSync(here, backup);
+    try { renameSync(staged, here); }
+    catch (error) { renameSync(backup, here); throw error; }
+    rmSync(backup, { recursive: true });
+  } finally {
+    rmSync(staged, { recursive: true, force: true });
   }
-  for (const [path, buf] of outputs) {
-    const h = sha256(buf);
-    if (!want.has(path)) problems.push(`not in MANIFEST.json: ${path}`);
-    else if (want.get(path) !== h) problems.push(`rebuilt ${path} differs from MANIFEST.json (rebuilt ${h}, manifest ${want.get(path)})`);
-  }
-  for (const [path, h] of want) {
-    if (!outputs.has(path)) problems.push(`in MANIFEST.json but not rebuilt: ${path}`);
-    const disk = join(here, path);
-    if (!existsSync(disk)) problems.push(`missing on disk: ${path}`);
-    else if (statSync(disk).isFile() && sha256(readFileSync(disk)) !== h) problems.push(`on-disk ${path} differs from MANIFEST.json`);
-  }
-  cleanup(work);
-  if (problems.length) {
-    console.error(problems.join('\n'));
-    process.exit(1);
-  }
-  console.log(`verified ${want.size} files against MANIFEST.json`);
 }
 
 function cleanup(work) {

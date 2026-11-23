@@ -77,8 +77,15 @@ task_clean_all() {
     done
     require_server_stopped clean-all
     clean_dev_paths
+    local entry
+    local -a js_paths
+    js_paths=()
+    for entry in "$JS_LIBS"/*; do
+        case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
+        [ ! -e "$entry" ] || js_paths+=("$entry")
+    done
     info "Removing:"
-    for path in "${CLEAN_PATHS[@]}" "$target"; do
+    for path in "${CLEAN_PATHS[@]}" "${js_paths[@]}" "$target"; do
         if [ -e "$path" ] || [ -L "$path" ]; then du -sh "$path" || return 1; fi
     done
     info "Keeping downloads, certificates, local configuration, saves, worktrees and named exports."
@@ -90,6 +97,7 @@ task_clean_all() {
     fi
     need_tool cargo
     remove_dev_paths || return 1
+    for entry in "${js_paths[@]}"; do run_cmd rm -rf -- "$entry" || return 1; done
     run_cmd cargo clean --target-dir "$target"
 }
 
@@ -131,7 +139,7 @@ tidy_cargo_run() {
     # layout) or build/ in it. Do not walk into deps/ or incremental/, and never into the generated
     # crate at target/moqui-app.
     find "$ROOT/target" -maxdepth 3 \
-        \( -path "$ROOT/target/moqui-app" -o -path "$ROOT/target/moqui-app/*" \) -prune -o \
+        \( -path "$ROOT/target/js" -o -path "$ROOT/target/moqui-app" -o -path "$ROOT/target/moqui-app/*" \) -prune -o \
         -type d \( -name .fingerprint -o -name build \) -print >"$TIDY_TMP/found" \
         || die "tidy-cargo: could not read target/"
     while IFS= read -r profile; do

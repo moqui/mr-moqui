@@ -11,7 +11,12 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export function buildBoard(work, installed = false) {
   mkdirSync(work, { recursive: true });
-  for (const filename of ['package.json', 'package-lock.json', 'editor-entry.js', 'converter-external.js', 'mermaid-external.js']) {
+  if (installed) {
+    for (const filename of ['package.json', 'package-lock.json']) cpSync(join(work, '..', filename), join(work, filename));
+  } else {
+    for (const filename of ['package.json', 'package-lock.json']) cpSync(join(source, filename), join(work, filename));
+  }
+  for (const filename of ['editor-entry.js', 'converter-external.js', 'mermaid-external.js']) {
     cpSync(join(source, filename), join(work, filename));
   }
   if (!installed) execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: work });
@@ -104,11 +109,12 @@ export function buildBoard(work, installed = false) {
   const notice = [...[...notices].map(([text, names]) => [...names].sort().join(', ') + '\n' + text),
     ...wrapperNotes, ...nativeNotes, readFileSync(join(source, 'Font-NOTICES.txt'), 'utf8').trim()].join('\n\n') + '\n';
   outputs.set('excalidraw/NOTICES.txt', Buffer.from(notice));
-  const lock = JSON.parse(readFileSync(join(source, 'package-lock.json')));
+  const lock = JSON.parse(readFileSync(join(work, 'package-lock.json')));
+  const editor = lock.packages['node_modules/@excalidraw/excalidraw'];
   const lib = { id: 'excalidraw', name: 'Excalidraw editor and Mermaid converter', npm: '@excalidraw/excalidraw',
-    version: '0.18.0', license: 'MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1',
-    source: 'https://registry.npmjs.org/@excalidraw/excalidraw/-/excalidraw-0.18.0.tgz',
-    tarballIntegrity: lock.packages['node_modules/@excalidraw/excalidraw'].integrity,
+    version: editor.version, license: 'MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1',
+    source: editor.resolved,
+    tarballIntegrity: editor.integrity,
     build: 'webroot/build/whiteboard/build.mjs, isolated npm ci from its package-lock.json',
     files: [...outputs].map(([path, data]) => ({ path, from: 'build', size: data.length, sha256: sha(data) })) };
   return { outputs, lib, text: 'Excalidraw, React, the converter and their dependencies are credited in excalidraw/NOTICES.txt. Fonts carry their own notices.' };
