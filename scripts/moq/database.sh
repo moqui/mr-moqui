@@ -33,23 +33,69 @@ clean_log() {
     done
 }
 
+task_clean() {
+    task_tidy_cargo "$@"
+}
+
+# Collect the exact runtime paths once, before displaying or removing them.
+clean_dev_paths() {
+    local path
+    CLEAN_PATHS=()
+    for path in "$CLUSTER_DIR" "$RUNTIME_DIR/txlog" "$OS_DIR/data" "$OS_DIR"/logs/* "$OS_DIR"/logs/.[!.]* \
+        "$RUNTIME_DIR"/log/* "$RUNTIME_DIR"/log/.[!.]* "$RUNTIME_DIR/tmp" "$RUNTIME_DIR/types"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then CLEAN_PATHS+=("$path"); fi
+    done
+}
+
+remove_dev_paths() {
+    local path pause=
+    if [ -d "$OS_DIR/data" ] || [ -d "$OS_DIR/logs" ]; then
+        opensearch_pause || return 1
+        pause=1
+    fi
+    local status=0
+    for path in "${CLEAN_PATHS[@]}"; do rm_path "$path" || status=1; done
+    if [ -n "$pause" ]; then opensearch_resume || status=1; fi
+    return "$status"
+}
+
+clean_dev() {
+    require_server_stopped clean-dev
+    clean_dev_paths
+    remove_dev_paths
+}
+
+task_clean_dev() {
+    [ $# -eq 0 ] || die "clean-dev takes no arguments"
+    clean_dev
+}
+
 task_clean_all() {
-    [ $# -eq 0 ] || die "clean-all takes no arguments"
-    clean_all
-    # load-save uses clean_all alone: it must not touch target/
-    tidy_cargo
+    local yes= path arg answer target=$ROOT/target
+    for arg in "$@"; do
+        case "$arg" in --yes) yes=1 ;; --dry-run) local MOQ_DRY_RUN=1 ;; *) die "unknown clean-all option: $arg" ;; esac
+    done
+    require_server_stopped clean-all
+    clean_dev_paths
+    info "Removing:"
+    for path in "${CLEAN_PATHS[@]}" "$target"; do
+        if [ -e "$path" ] || [ -L "$path" ]; then du -sh "$path" || return 1; fi
+    done
+    info "Keeping downloads, certificates, local configuration, saves, worktrees and named exports."
+    dry_run && return 0
+    if [ -z "$yes" ]; then
+        [ -t 0 ] || die "clean-all needs a terminal or --yes"
+        read -r -p "Remove the paths listed above? [y/N] " answer
+        case "$answer" in y|Y|yes|YES) ;; *) die "clean-all cancelled" ;; esac
+    fi
+    need_tool cargo
+    remove_dev_paths || return 1
+    run_cmd cargo clean --target-dir "$target"
 }
 
 task_tidy_cargo() {
     [ $# -eq 0 ] || die "tidy-cargo takes no arguments"
     tidy_cargo
-}
-
-# The runtime data: database, logs, and runtime/tmp.
-clean_all() {
-    clean_db
-    clean_log
-    rm_path "$RUNTIME_DIR/tmp"
 }
 
 # Drop old cargo artifacts under target/ and keep the current build.
@@ -931,12 +977,14 @@ help_clean_log() {
     echo 'Deletes everything in runtime/log.'
 }
 
+help_clean() { help_tidy_cargo; }
+
+help_clean_dev() {
+    echo 'Reset the stopped instance: database, transaction log, OpenSearch data and logs, runtime/log, tmp and generated types.'
+}
+
 help_clean_all() {
-    cat <<'EOF'
-clean-db, clean-log, runtime/tmp, and tidy-cargo. tidy-cargo removes old cargo artifacts and keeps
-the current build of each package. Saves in runtime/save are kept; delete those by hand.
-load-save cleans the runtime data only, not target/.
-EOF
+    echo 'Reset the stopped instance and remove its build output. Preview with --dry-run. Use --yes in scripts.'
 }
 
 help_tidy_cargo() {

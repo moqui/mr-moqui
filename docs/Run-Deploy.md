@@ -182,7 +182,9 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run client specs against a server | `./moq test-client framework` | |
 | Run a load script against a server | `./moq test-load mr-marble --script OrderToCash` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
-| Remove the database, logs and old build output | `./moq clean-all` | `./gradlew cleanAll` |
+| Remove obsolete cargo artifacts | `./moq clean` | |
+| Reset the local instance and keep builds | `./moq clean-dev` | |
+| Reset the local instance and remove build output | `./moq clean-all` | `./gradlew cleanAll` |
 | Show the binary's package and features | `target/release/moqui version` (`target\release\moqui.exe version` on Windows) | |
 
 ## Choose a topology
@@ -785,7 +787,7 @@ cluster when the entity database is not Postgres. OpenSearch is optional:
 
 `./moq save-db [name]` writes the embedded database to `runtime/save/<name>/moqui.dump`, and the content database beside
 it to `moqui_content.dump`. It also writes the OpenSearch data when there is any. `./moq reload-save [name]` empties the
-database and restores that save. `./moq load-save -n <name> [types]` runs `clean-all`, loads, and saves. Stop the server
+database and restores that save. `./moq load-save -n <name> [types]` runs `clean-dev`, loads, and saves. Stop the server
 before a restore. These work on the embedded database only; an external database has its own tools.
 
 ### Backups

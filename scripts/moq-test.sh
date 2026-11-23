@@ -626,11 +626,26 @@ check "tidy-cargo kept a deps file with no hash in the earlier layout" 0 '' -- t
 check "tidy-cargo with the build directory layout again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
 
 rm -f "$R/cargo.log"
-check "clean-all" 0 'Deleting runtime/tmp' -- "$M" clean-all
+mkdir -p "$R/runtime"/{types,drive-export,git-export,cert,worktrees}
+touch "$R/runtime"/{MoquiConf.xml,.env}
+check "exact clean" 0 'tidy-cargo:' -- "$M" clean
+check "clean-all dry run" 0 'runtime/types' -- "$M" clean-all --dry-run
+check "clean-all needs confirmation" 1 'terminal or --yes' -- "$M" clean-all </dev/null
+check "refusal kept data" 0 '' -- test -f "$R/runtime/log/moqui.log"
+mkdir -p "$R/runtime/db/embedded/data"
+echo $$ >"$R/runtime/db/embedded/data/postmaster.pid"
+check "running instance refuses clean-dev" 1 'stop the server' -- "$M" clean-dev
+check "running instance refuses clean-all" 1 'stop the server' -- "$M" clean-all --yes
+rm "$R/runtime/db/embedded/data/postmaster.pid"
+check "clean-dev" 0 'Deleting runtime/types' -- "$M" clean-dev
+check "clean-dev kept build" 0 '' -- test -x "$R/target/release/moqui"
+check "clean-dev kept cargo untouched" 1 '' -- test -f "$R/cargo.log"
+check "clean-all confirmed" 0 'Keeping downloads' -- "$M" clean-all --yes
+check "clean-all ran cargo clean" 0 'cargo: clean --target-dir' -- cat "$R/cargo.log"
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"
-check "clean-all did not run cargo clean" 1 '' -- test -f "$R/cargo.log"
-check "clean-all runs tidy-cargo" 0 '^tidy-cargo:' -- "$M" clean-all
-check "clean-all kept saves" 0 '' -- test -f "$R/runtime/save/t1/moqui.dump"
+for kept in save/t1/moqui.dump drive-export git-export MoquiConf.xml .env worktrees cert; do
+    check "clean-all kept $kept" 0 '' -- test -e "$R/runtime/$kept"
+done
 check "load-save dry run" 0 'save-db .*runtime/save/demo/moqui.dump.part' -- dry "$M" load-save -n demo seed
 check "opensearch-start without install" 1 'no OpenSearch' -- "$M" opensearch-start
 check "opensearch-stop without pid" 0 'not running' -- "$M" opensearch-stop

@@ -157,12 +157,14 @@ deny-apps|Run||Check the dependencies of the apps against the RustSec advisories
 accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (test/acceptance/) of the components, or of all
 accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of test/acceptance/ and the Rust opt-in and ignored tests
 autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)
-load-save|Run|[-n name] [load args...]|clean-all, load, then save-db
+load-save|Run|[-n name] [load args...]|clean-dev, load, then save-db
 save-db|Database|[name]|Save the embedded database and OpenSearch data to runtime/save/<name>
 reload-save|Database|[name]|clean-db, then restore a save-db copy
 clean-db|Database||Delete the embedded database, txlog, and OpenSearch data
 clean-log|Database||Delete the files in runtime/log
-clean-all|Database||clean-db, clean-log, runtime/tmp, and tidy-cargo (old artifacts; the latest build stays)
+clean|Database||Tidy old cargo artifacts, keeping the current build
+clean-dev|Database||Reset the local instance data and generated types
+clean-all|Database|[--yes]|Reset instance data and remove build output after confirmation
 tidy-cargo|Database||Delete old cargo artifacts in target/, keeping the latest build
 opensearch-download|OpenSearch|[version] [-f] [--cache-only]|Download OpenSearch into runtime/opensearch and the embed cache
 opensearch-start|OpenSearch||Start runtime/opensearch as a daemon with a pid file

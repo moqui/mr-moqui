@@ -84,7 +84,7 @@ task_load_save() {
         shift
     done
     valid_name "$name" || die "save name '$name' may use only letters, digits, '.', '_' and '-'"
-    clean_all
+    clean_dev || return 1
     (task_load "${load_args[@]}") || die "load failed; nothing was saved"
     task_save_db "$name" "${save_args[@]}" --nobuild
 }
@@ -147,7 +147,7 @@ EOF
 
 help_load_save() {
     cat <<'EOF'
-gradle loadSave: clean-all, then load with the given arguments, then save-db.
+gradle loadSave: clean-dev, then load with the given arguments, then save-db.
   ./moq load-save
   ./moq load-save -n demo seed seed-initial install demo
 

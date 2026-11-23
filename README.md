@@ -48,6 +48,9 @@ archive once. It makes the release binary (`target/release/moqui`, the Maximal
 [package](docs/Build-Test.md#packages): every feature, embedded Postgres and the dev tools), which `./moq` then uses
 to load data and run. To deploy to a server, a container or a cluster, see [Run and Deploy](docs/Run-Deploy.md).
 
+Use `./moq clean` to prune obsolete build artifacts or `./moq clean-dev` to reset a stopped development instance.
+`./moq clean-all --dry-run` previews the combined instance and build cleanup.
+
 ## What is in the framework
 
 - **Artifacts in XML.** Entities, services, screens and forms, entity and service ECA rules, REST APIs and data
