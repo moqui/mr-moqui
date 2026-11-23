@@ -71,3 +71,70 @@ feature("a meeting board grant follows the board, the leg, the room membership a
         !r.ended.canView
     }
 })
+
+feature("the owner opens a recurring board after early arrivals and revocation ends guest image access", {
+    when() {
+        ec.user.internalLoginUser("john.doe")
+        const calls = "org.moqui.call.CallServices."
+        const wiki = "org.moqui.resource.WikiServices."
+        const service = (name, params) => {
+            const result = grantCall(name, params)
+            if (result.error) throw Error(name + ": " + result.error)
+            return result
+        }
+        const reader = "BOARD_EARLY_READER"
+        service("create#moqui.security.UserAccount", {userId: reader, username: "board.early.reader", userFullName: "Early reader"})
+        service(calls + "register#MediaNode", {instanceId:"board-recurring-spec", mediaAddress:"127.0.0.1:20103"})
+        const {chatRoomId} = service("org.moqui.chat.ChatServices.create#Room", {roomName:"Recurring meeting", memberUserIdList:[reader]})
+        const {wikiSpaceId} = service(wiki + "create#WikiSpace", {wikiSpaceId:"EARLY", restrictUpdate:"Y", description:"Recurring boards",
+            memberList:[{userId:reader, allowView:"Y", allowUpdate:"N"}]})
+        const {wikiPageId} = service(wiki + "create#WikiBoard", {wikiSpaceId, pageName:"Recurring drawing"})
+        const {callLinkId, token} = service(calls + "create#CallLink", {name:"Weekly sketch", wikiPageId, chatRoomId, policy:"link"})
+        const guest = service(calls + "join#AsGuest", {token, displayName:"Early visitor"})
+        const callSessionId = guest.callSessionId
+        const boardRows = () => find("moqui.call.CallBoard", {callSessionId, wikiPageId}).count()
+        const afterGuest = boardRows()
+        ec.user.internalLoginUser("board.early.reader")
+        const rights = service(wiki + "get#WikiPageAccess", {wikiPageId})
+        const member = service(calls + "join#Call", {callSessionId})
+        const afterMember = boardRows()
+        ec.user.internalLoginUser("john.doe")
+        const opened = service(calls + "open#CallLink", {callLinkId})
+        const keys = {callSessionId, wikiPageId, callLegId:guest.callLegId, credential:guest.credential}
+        const image = params => service("org.moqui.call.MeetingBoardServices.access#MeetingBoardImage",
+            {...keys, token, ...params})
+        const file = () => uploadedFile("sketch.png", "pixels", "image/png")
+        const uploaded = image({attachmentFile:file()})
+        const read = image({filename:"sketch.png"})
+        const grant = () => service("org.moqui.call.MeetingBoardServices.get#MeetingBoardGrant", keys)
+        const before = grant()
+        const bound = service(calls + "bind#Connection", {callSessionId, callLegId:opened.callLegId})
+        service("org.moqui.call.StageServices.change#CallStage", {callSessionId, callLegId:opened.callLegId,
+            generation:bound.generation, action:"take", kind:"screen"})
+        const reopened = service(calls + "open#CallLink", {callLinkId})
+        service("org.moqui.call.StageServices.change#CallStage", {callSessionId, callLegId:opened.callLegId,
+            generation:bound.generation, action:"take", kind:"board", wikiPageId})
+        const restored = grant()
+        service(calls + "revoke#CallLink", {callLinkId})
+        const refusedRead = image({filename:"sketch.png"}), refusedWrite = image({attachmentFile:file()}), revoked = grant()
+        const replacement = service(calls + "create#CallLink", {name:"Weekly sketch", wikiPageId, chatRoomId, policy:"link"})
+        const checks = token => service(calls + "check#CallLinkToken", {token}).valid
+        const reissued = replacement.token !== token && checks(replacement.token) && !checks(token)
+        // A clean board already shown in the call has no new revision when the host ends it.
+        const history = () => find("moqui.resource.wiki.WikiPageHistory", {wikiPageId}).count()
+        const revisions = history()
+        service(calls + "end#Call", {callSessionId})
+        return {afterGuest, afterMember, member, rights, opened, reopened, wikiPageId, uploaded, read, before, restored, revoked,
+            refusedRead, refusedWrite, reissued, rows:boardRows(), clean:history() === revisions}
+    },
+    then(r) {
+        r.afterGuest === 0 && r.afterMember === 0 && !!r.member.callLegId
+        r.rights.canView && !r.rights.canUpdate
+        r.opened.call.stage.wikiPageId === r.wikiPageId && r.rows === 1
+        r.reopened.call.stage.kind === "screen" && r.reopened.call.stage.callLegId === r.opened.callLegId
+        r.uploaded.filename === "sketch.png" && r.read.base64 === "cGl4ZWxz"
+        r.before.canEdit && r.restored.canEdit && r.before.canView && !r.revoked.canEdit && !r.revoked.canView
+        r.refusedRead.denied && r.refusedWrite.denied
+        r.reissued && r.clean
+    }
+})

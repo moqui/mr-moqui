@@ -409,6 +409,14 @@ last saved as, and the users whose changes are in no version yet.
 IronStone's Knowledge and Notes use it when the page exists and the page has its notification socket, and the markdown
 text area otherwise or when the editor cannot start (`fallback`).
 
+### Whiteboard revisions
+
+The Excalidraw codec stores elements by ID and revision in Yjs. On save it writes the winning elements in scene order, document settings, attachment references, and a compact tombstone for each deletion. A stale editor cannot resurrect a shape by sending its earlier revision. Malformed individual entries are logged and skipped when seeding a room.
+
+Meeting actors use a call and leg grant. Guest contributions carry their display name and guest designation. Ending the call saves outstanding changes under the host with a note naming the meeting. Closing a fully saved room clears its stored Yjs state only if another writer has not changed it. The next join rebuilds from the versioned scene and its tombstones.
+
+Saving prunes unreferenced image attachments after a ten-minute grace period. Version previews, the current preview, and `capture.png` are kept. An older revision that referenced a pruned image can lose that image when reopened.
+
 ## Token routes and the public shell
 
 A `token-route` of the webroot `webapp` in the conf makes `/<name>/<token>` an anonymous page:

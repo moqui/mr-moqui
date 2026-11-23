@@ -58,6 +58,18 @@ along with this software (see the LICENSE.md file). If not, see
             shell: { logoUrl: logoList.length ? sri.buildUrl(logoList[0]).url : '' },
             labels: { loading: ec.l10n.localize('Loading'), notFound: ec.l10n.localize('This link has expired or was not found.') }
         }
+        if (tokenRoute.name === 'call') {
+            const {islandMessages} = ec.resource.script('component://webroot/script/IslandMessages.js')
+            // The guest has no signed-in catalog. Include the dynamic tool labels and board/socket replies too.
+            publicConfig.messages = islandMessages(['component://webroot/screen/webroot/js/WebrootCall.js',
+                'component://webroot/screen/webroot/js/WebrootInk.js', 'component://webroot/screen/webroot/js/WebrootWhiteboard.js'], [
+                'draw', 'line', 'rectangle', 'ellipse', 'laser', 'too many updates; slow down',
+                'too many updates; join the page again', 'board exceeds its image limit', 'board images must be page attachments',
+                'board exceeds the document size limit', 'expected an Excalidraw scene', 'board needs an elements array',
+                'board not found', 'board update exceeds the size limit', 'join the call first', 'join the meeting board first',
+                'the call no longer grants this action', 'you may no longer view this page', 'Too many presentation requests'
+            ])
+        }
     ]]></script></pre-actions>
 
     <widgets>

@@ -392,6 +392,29 @@ test("the stage owner alone can capture, and takeover ends both share tracks", a
     }
 });
 
+test("the presenter sends navigation once and locates changes within the same screen", async()=>{
+    const prior={followPath:call.followPath,followPage:call.followPage,send:call.send,guest:call.guest};
+    const sent=[];
+    let path="/qapps/BasicComms/Chat";
+    const queue=async()=>{call.queueFollow(0);await new Promise(resolve=>setTimeout(resolve,5));};
+    try {
+        call.followReset();
+        Object.assign(state,{current:"FOLLOW",legId:"ME",stage:{kind:"follow",callLegId:"ME"}});
+        call.guest=null;call.send=frame=>sent.push(frame);
+        call.followPath=()=>({path,params:{}});
+        call.followPage=()=>document.body;
+        await queue();
+        call.followPointer={id:"target",x:0.5,y:0.5};
+        await queue();await queue();
+        path="/qapps/BasicComms/Home";
+        await queue();
+        assert.deepEqual(sent.map(frame=>frame.action),["navigate","locate","navigate"]);
+        assert.deepEqual(sent[1].pointer,call.followPointer);
+    } finally {
+        call.followReset();Object.assign(call,prior);reset();state.stage={kind:null,callLegId:null,requests:[]};
+    }
+});
+
 test("a presenter's page sends what the server keeps, a follower with unsaved work pauses, and refused follow frames stay quiet", async()=>{
     // the vectors rtc/follow.rs tests too: one rule on both sides
     const vectors=await (await fetch("/files/component/webroot/test/client/pages/follow-vectors.json")).json();

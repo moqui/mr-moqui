@@ -201,7 +201,7 @@ participant whose only track is the screen, which the SFU and the pages treat as
   diffs by element, one per line.
 - Its images are the page's attachments (`<Page>/` as any page's), uploaded through the existing attachment services,
   with the board's limits (§8).
-- **A preview.** On each version the editor's page uploads an SVG export as the attachment `_board.svg`. It is shown
+- **A preview.** The wiki save renders the scene on the server to `_board.svg` and a version-specific SVG. The browser exports SVG for downloads and sends it on save. For a wiki board, its SVG replaces the server preview only when the elements, settings and files match the saved revision. It is shown
   only as an `<img>` (no script runs in an SVG image), used for the chat card, a page list's thumbnail, printing and
   PDF. A board with no preview yet shows its name and "Open the board".
 - **Search.** The snapshot text the server keeps is the board's text elements in reading order, so a board is found
@@ -262,7 +262,7 @@ A Vue component in webroot over Excalidraw (React mounted in the component's ele
 ### 4.4 Viewing and editing outside meetings
 
 - **BasicComms:** a Board screen (`BasicComms/Boards/Board?wikiPageId=`) with the board, its history (the page's
-  versions, each with its preview), Save and Download (`.excalidraw`, SVG, PNG). Qvt only; the terminal shows the
+  versions, listed without thumbnails), Save and Download (`.excalidraw`, SVG, PNG). Qvt only; the terminal shows the
   page's name, its editors and its link.
 - **BOSS:** Knowledge and Notes show an `excalidraw` page with `m-whiteboard` where they show `m-coedit` for
   markdown, and New page offers Whiteboard. That work is in mr-boss.
@@ -310,8 +310,7 @@ A Vue component in webroot over Excalidraw (React mounted in the component's ele
   Switch moves between them.
 - **After the call.** The board's last version is saved when the call ends (a note names the call). A recording's
   record links the call's boards; a recording does not capture the board unless someone shared it as a tab.
-- **A call link's board.** `CallLink.wikiPageId`: a recurring meeting's board, opened on its stage each time the
-  meeting starts.
+- **A call link's board.** `CallLink.wikiPageId`: a recurring meeting’s board. The link owner opens it on an empty stage once per meeting. Earlier guests and view-only members do not open it.
 
 ### 5.3 Guests
 
@@ -321,7 +320,7 @@ A Vue component in webroot over Excalidraw (React mounted in the component's ele
   call gives. A guest's edits are named in the version note as "Ana (guest)"; the version is written as the call's
   host.
 - A guest cannot open the board's page, its history, or other boards of the space.
-- Removing or denying a guest, or the call ending, closes their collab documents with the socket.
+- The room caches its grant and rechecks it every ten seconds and on the tick following a membership or call change. Revocation ends drawing and image access. Guest image reads and uploads require the current token and a credential for that same link.
 
 ### 5.4 Encrypted rooms
 
@@ -415,10 +414,10 @@ Each BOSS change belongs in mr-boss's own design and impl plans, after this one'
 - **Previews.** An uploaded `_board.svg` is stored as an attachment and served with `Content-Type: image/svg+xml`,
   `Content-Disposition: attachment` unless shown through `<img>`, and the attachment CSP. It is never inlined.
 - **Images.** The page attachment rules: types `image/png`, `image/jpeg`, `image/webp`, `image/gif`, `image/svg+xml`
-  as an image only; `board@max-image-bytes` (10 MB) and `board@max-images` (200) as settings on a new `board` element
+  as an image only; `board@max-image-bytes` (10 MB) and `board@max-images` (200) and `board@max-total-image-bytes` (200 MiB) as settings on a new `board` element
   in `MoquiDefaultConf.xml` with its XSD and schema entry.
 - **Frames.** A collab update over `/notws` or `/callws` is limited by size (`board@max-update-bytes`, 1 MB) and
-  rate as the socket limits other frames; a board document over `board@max-document-bytes` (20 MB) takes no more
+  per socket to 1,200 updates and 600 awareness frames per minute by default; a board document over `board@max-document-bytes` (20 MB) takes no more
   edits and says so.
 - **The stage.** Enforced at the SFU (§3.1); `ink` and `follow` frames are relayed only within the call; `follow`
   parameters never reach guests or phone legs.
@@ -443,8 +442,7 @@ Each BOSS change belongs in mr-boss's own design and impl plans, after this one'
 - **The space of a call with no room.** The starter's own notes space (BOSS Notes has one per user; the framework has
   `ensure#UserNotesSpace`) or a hidden space per call link?
 - **Guest drawing default.** Everyone draws by default; should a meeting from a call link start view only for guests?
-- **The board bundle's size** (Excalidraw, React and the converter) is *unverified*; measure it in MW1's spike and
-  decide whether the converter loads only on Insert, Mermaid.
+- **Shipped assets, uncompressed.** The editor with React is 4,879,249 bytes and its CSS is 144,689 bytes. The font subset worker is a separate 1,825,524 bytes. Mermaid insertion loads the 53,925-byte converter on demand.
 
 ## 11. Phases
 

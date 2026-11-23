@@ -24,7 +24,7 @@ feature("a room meeting presents a share, then a board which an admitted guest d
             const opened=await moqui.call.request("openCallLink",{callLinkId:link.callLinkId})
             moqui.call.open(opened.callSessionId)
             await moqui.call.join(opened.callSessionId,opened.callLegId,{video:true})
-            return {path:link.path,room}
+            return {path:link.path, callLinkId:link.callLinkId, room}
         })
         guest.goto(meeting.path)
         guest.getByLabel("Your name").fill("Board visitor")
@@ -63,12 +63,32 @@ feature("a room meeting presents a share, then a board which an admitted guest d
         guest.waitFor(()=>moqui.call.state.stage.guestCanEdit===false)
         host.keyboard.press("Escape")
         const listed=host.evaluate(async room=>(await moqui.request("/apps/BasicComms/Chat/roomBoards",{params:{chatRoomId:room}})).json.boards,meeting.room)
-        button(guest,"Leave").click()
-        host.evaluate(()=>moqui.call.leave())
-        return {drawn,listed:listed.some(b=>b.wikiPageId===board && b.title==="Meeting sketch")}
+        guest.evaluate(id => {
+            // Removal may close the admitted guest's socket before its board's revocation event arrives.
+            window.drawingSocket = moqui.call.guest.socket
+            moqui.call.guest.registerListener("collab:WikiPage:" + id, frame => {
+                if (frame.type === "error" && frame.code === 403 && frame.message === "you may no longer view this page")
+                    window.boardGrantRevoked = true
+            })
+            return true
+        }, board)
+        host.evaluate(async callLinkId => {
+            await moqui.request("/apps/BasicComms/Calls/History/revokeLink", {method:"POST", params:{callLinkId}})
+            return true
+        }, meeting.callLinkId)
+        guest.waitFor(() => window.boardGrantRevoked === true || window.drawingSocket.readyState === WebSocket.CLOSED, {timeout:35})
+        const saved = host.evaluate(async wikiPageId => {
+            await moqui.call.request("endCall", {callSessionId:moqui.call.state.current})
+            const {json} = await moqui.request("/apps/BasicComms/Boards/Board/board", {params:{wikiPageId}})
+            const version = json.versionList.find(v => v.note?.includes("Meeting Drawing session ended"))
+            return {writer:version?.userId, guest:version?.note?.includes("Board visitor"),
+                drawn:JSON.parse(json.scene).elements.some(e => e.type === "rectangle")}
+        }, board)
+        return {drawn,saved,listed:listed.some(b=>b.wikiPageId===board && b.title==="Meeting sketch")}
     },
-    then({drawn,listed}) {
+    then({drawn,saved,listed}) {
         drawn == true
         listed == true
+        saved.writer === "EX_JOHN_DOE" && saved.guest === true && saved.drawn === true
     }
 })

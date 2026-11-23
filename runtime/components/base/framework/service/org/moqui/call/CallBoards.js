@@ -25,7 +25,7 @@ function asMember(id) {
     if (!member) { ec.message.addError('Call not found'); return null }
     if (session.chatRoomId) {
         const rights = invoke('org.moqui.chat.ChatServices.get#RoomAccess',{chatRoomId:session.chatRoomId})
-        if (!rights.isMember || rights.member?.leftDate) { ec.message.addError('Room not found'); return null }
+        if (!rights.isMember || rights.member?.leftDate) { ec.message.addError(ec.l10n.localize('Room not found')); return null }
     }
     return {session,member}
 }
@@ -83,7 +83,7 @@ function list(p) {
 }
 function create(p) {
     const actor=asMember(p.callSessionId)
-    if (!actor || actor.session.statusId==='CssEnded') { ec.message.addError('Meeting has ended'); return {} }
+    if (!actor || actor.session.statusId==='CssEnded') { ec.message.addError(ec.l10n.localize('Meeting has ended')); return {} }
     const session=actor.session
     if (session.chatRoomId) return invoke(rooms+'create#RoomBoard',{chatRoomId:session.chatRoomId,pageName:p.pageName,numberDuplicates:p.numberDuplicates === true})
     // The starter owns the notes space. Only someone with existing update access can create a file there.
@@ -96,11 +96,11 @@ function drawing(p, engine) {
     const {session,member}=actor
     const stage=JSON.parse(session.stageState || '{}')
     if (session.statusId==='CssEnded' || member.roleEnumId!=='CprHost' || stage.kind!=='board' || stage.wikiPageId!==p.wikiPageId) {
-        ec.message.addError('Only the host can change drawing on the staged board')
+        ec.message.addError(ec.l10n.localize('Only the host can change drawing on the staged board'))
         return {}
     }
     const row=find(CB,{callSessionId:p.callSessionId,wikiPageId:p.wikiPageId,closedDate:null}).one()
-    if (!row) { ec.message.addError('Board has closed'); return {} }
+    if (!row) { ec.message.addError(ec.l10n.localize('Board has closed')); return {} }
     const editable=invoke(wiki+'get#WikiPageAccess',{wikiPageId:p.wikiPageId,userId:row.openedByUserId}).canUpdate
     stage.memberCanEdit=!!editable && p.memberCanEdit === true
     stage.guestCanEdit=!!editable && p.guestCanEdit === true

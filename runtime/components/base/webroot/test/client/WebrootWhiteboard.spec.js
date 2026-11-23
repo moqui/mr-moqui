@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 // The browser binding must reconcile the same shape by Excalidraw revision, independent of Yjs client id.
 spec({server: false})
-feature("a mounted board merges local and remote edits and preserves the source of a Mermaid frame", {
+feature("a mounted board merges local and remote edits and reconciles compacted deletions", {
     expect() {
         const page = browser.newPage()
         page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head>
@@ -37,6 +37,8 @@ feature("a mounted board merges local and remote edits and preserves the source 
             window.vm=app.mount('#app');
             </script></body></html>`)
         page.waitFor(() => !!(vm.$refs.board && vm.$refs.board.api && document.querySelector(".excalidraw canvas")))
+        assert.deepEqual(page.evaluate(() => ["es-MX", "zh", "zh_TW", "unknown"].map(moqui.whiteboard.language)),
+            ["es-ES", "zh-CN", "zh-TW", "en"])
         page.evaluate(() => {
             const e = MoquiBoardEditor.convertToExcalidrawElements([{type:"rectangle",x:20,y:60,width:100,height:65}])
             vm.$refs.board.api.updateScene({elements:e})
@@ -45,16 +47,15 @@ feature("a mounted board merges local and remote edits and preserves the source 
         page.waitFor(() => synced().length === 1)
         page.evaluate(() => {remoteEdit(); return true})
         page.waitFor(() => vm.$refs.board.api.getSceneElements()[0].x === 130)
-        page.evaluate(async () => {
-            const b=vm.$refs.board
-            b.editMermaid()
-            b.updateSource("flowchart LR\n A[Receive] --> B[Review]")
-            await b.insertMermaid()
-            return true
+        const deleted = page.evaluate(() => {
+            const known = synced()[0]
+            const tombstone = {id: known.id, isDeleted: true, version: known.version + 1, versionNonce: 19}
+            const local = new Map([[known.id, known]])
+            const shown = moqui.whiteboard.shown([tombstone, {...tombstone, id: "unknown"}], local)
+            return {count: shown.length, deleted: shown[0].isDeleted, preservesShape: shown[0].x === known.x,
+                revision: shown[0].version === tombstone.version && shown[0].versionNonce === 19}
         })
-        assert.equal(page.evaluate(() => vm.$refs.board.error), "")
-        page.waitFor(() => synced().some(e => e.type === "frame" && e.customData.mermaid.includes("Receive")))
-        assert.equal(page.evaluate(() => synced().some(e => e.type === "arrow" && e.frameId)), true)
+        assert.deepEqual(deleted, {count: 1, deleted: true, preservesShape: true, revision: true})
     }
 })
 

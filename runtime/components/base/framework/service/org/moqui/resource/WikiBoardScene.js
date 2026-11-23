@@ -1,16 +1,16 @@
 // CC0 plus patent grant. A board version may be written after its last browser has left.
 function parseScene(text) {
     if (typeof text !== 'string' || encodeURIComponent(text).replace(/%[0-9a-f]{2}/gi, 'x').length > Number(ec.factory.getConfValue('board@max-document-bytes')))
-        throw Error('Board exceeds the document size limit')
+        throw Error(ec.l10n.localize('Board exceeds the document size limit'))
     const scene = JSON.parse(text)
     if (scene?.type !== 'excalidraw' || !Array.isArray(scene.elements) || scene.elements.some(e => !e || typeof e.id !== 'string' || !e.id))
-        throw Error('Expected an Excalidraw scene with named elements')
+        throw Error(ec.l10n.localize('Expected an Excalidraw scene with named elements'))
     const files = Object.values(scene.files || {})
     if (files.length > Number(ec.factory.getConfValue('board@max-images')) || files.some(file =>
             !file || file.dataURL != null || typeof file.attachmentName !== 'string' || !file.attachmentName ||
             /[\/\\#?]/.test(file.attachmentName) || ['.', '..'].includes(file.attachmentName) ||
             !['image/png','image/jpeg','image/webp','image/gif','image/svg+xml'].includes(file.mimeType)))
-        throw Error('Board images must be page attachments within the board image limit')
+        throw Error(ec.l10n.localize('Board images must be page attachments within the board image limit'))
     return scene
 }
 

@@ -4986,7 +4986,7 @@
                 }
             } else if (message.type === "peer") { if (!own) this.onPeer(message); }
             else if (message.type === "saved") { if (this.options.onSaved) this.options.onSaved(message); }
-            else if (message.type === "error") { if (own) this.onError(message); }
+            else if (message.type === "error") { if (own) this.onError({...message, message: moqui.l10n?.localize(message.message) || message.message}); }
         }
         // the server's diff against our state vector, then ours against its, when it holds anything (an empty update is 2 bytes)
         onJoined(message) {

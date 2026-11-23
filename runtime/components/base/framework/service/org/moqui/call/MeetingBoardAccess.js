@@ -51,7 +51,7 @@ function file(p) {
     if (!access.canView || (upload && !access.canEdit)) return {denied:true}
     const filename = String(upload ? upload.getName() : p.filename || '')
     if (!/^[\w.-]+\.(png|jpe?g|gif|webp|svg)$/i.test(filename) || filename.startsWith('_board')) {
-        ec.message.addError('Invalid board image name')
+        ec.message.addError(ec.l10n.localize('Invalid board image name'))
         return {}
     }
     return ec.artifactExecution.runAsSystem(() => {

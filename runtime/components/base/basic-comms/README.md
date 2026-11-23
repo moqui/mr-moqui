@@ -7,6 +7,7 @@ usable with only the framework ([plans/archive/Comms-Framework.md](../../../../p
 | Path | What |
 | --- | --- |
 | `screen/BasicComms.xml`, `screen/BasicComms/` | The app root and its screens (`.qvue` with `.tui.json` twins beside their XML) |
+| `screen/BasicComms/Boards/` | Personal and room whiteboards, version history and exports. A meeting can share a board with admitted guests. [Whiteboards](../../../../docs/tools/Comms.md#whiteboards) |
 | `screen/ChatJoin.xml`, `ChatJoin.qvue` | A room's invite link page, `/join/<token>` (the token-route `join` of `MoquiConf.xml`): sign in, Join or Ask to join ([Comms](../../../../docs/tools/Comms.md)) |
 | `screen/System/` | Admin: Voice (trunks, numbers and which carry rooms' text members, caller IDs, fraud limits, emergency setup, desk and soft phones, ring groups, schedules, IVR menus, queues, the spam filter of texts and its rules), Chat Bridges ([docs/interfaces/Chat-Bridges.md](../../../../docs/interfaces/Chat-Bridges.md)), Chat Stickers (the server's sticker packs) and Push Health (every user's push devices and their counts; [docs/ui/Qvt-Client.md](../../../../docs/ui/Qvt-Client.md#install-and-web-push)), mounted into the tools System app by `MoquiConf.xml` |
 | `screen-extend/tools/screen/System/Home.xml` | Voice, Chat Bridges and Push Health in the Integration group of the System home's navigation |

@@ -1426,6 +1426,14 @@ client), `server` (an error answering the join, or a fourth in a row after it), 
 joins again with the state vector, so the edits made meanwhile merge. Unmounting sends leave and destroys the editor, the awareness
 and the Y doc.
 
+### Whiteboards and ink
+
+`m-whiteboard` mounts Excalidraw. A `wiki-page-id` joins that wiki page’s collaborative room. For a meeting, supply `meeting-id`, `leg-id`, `socket-client` and `user-name`; `guest-files` supplies the guest image read and upload callbacks. `stage` selects the stage layout, and `follow` identifies the presenter leg whose viewport to follow. The component emits `unfollow` when the viewer pans away.
+
+In file mode supply `scene` (an object or JSON text) and a `save-url` that accepts a POST with the scene, note and SVG preview. `files-url` and `upload-url` locate image attachments. `preview-url` supplies the fallback image. `read-only` disables editing. `skeleton` supplies initial shapes, `libraries` supplies shape library URLs, and `link-schemes` declares application links returned to the host via `open-link`. Other events include `editors`, `saved` and `error`.
+
+`m-ink-layer` displays normalized strokes over the shared image and captures strokes while active. `m-image-markup` takes `src`, `name` and `busy`, and emits `save` with a flattened PNG or `close`. Chat sends the PNG as a separate attachment.
+
 ## CalcGrid rooms
 
 The CalcGrid sheet (`moqui.calc.sheet`, `js/WebrootCalc.js`; [Database](../tools/Database.md#calc-mode)) reads cells

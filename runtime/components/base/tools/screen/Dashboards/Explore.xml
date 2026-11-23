@@ -207,7 +207,7 @@
                 histogramNotices = (histogram.result.notices || []).map(notice=>typeof notice==='string'?notice:notice.message || JSON.stringify(notice))
                 histogramFrame = (histogram.result.frames || [])[0] || {fields:[]}
                 showHistogram = documentListCount === 0 || histogramFrame.fields.some(field => field.name === 'count' && (field.values || []).some(value => Number(value) > 0))
-                if (!showHistogram) histogramNotices.push('Matching documents were found, but the histogram returned no counts.')
+                if (!showHistogram) histogramNotices.push(ec.l10n.localize('Matching documents were found, but the histogram returned no counts.'))
             }
             if (fieldName) {
                 const terms = exploreQuery('org.moqui.report.ReportServices.run#Query', {query:Object.assign({},base,{

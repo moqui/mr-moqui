@@ -74,7 +74,7 @@ lasts 4 hours (hash kept). basic-comms declares a per-client rate limit for it (
 `webapp-list/webapp[webroot]/web-protection@enabled` `true`; [Web protection](Attack-Surface-Web.md#web-protection)). On the default conf `joinGuest`
 has no per-client limit.
 
-- A guest's credential reaches only that call's signaling, on `GET /callws`. The guest page never puts it in a URL.
+- A guest's credential authorizes signaling and board collaboration for their own call on `GET /callws`. The guest page never puts it in a URL.
   `guestState`, `iceServers` and `recordingState` are `read-only` with no `method`, so the server takes the credential
   from a query string as well as from a body ([CSRF](Attack-Surface-Web.md#csrf)). A wrong credential is not counted as
   a failed login.
@@ -97,6 +97,16 @@ has no per-client limit.
 - Revoking the link, or removing or denying the guest, ends the credential and closes the guest's legs.
 - A link made end-to-end encrypted (W8) takes no guest (`encryptedNoGuests`): a guest has no crypto device. The page says
   so from the token's route context (`encrypted`).
+
+### Presentation and meeting boards
+
+Stage requests (`ask`, `take`, `approve`, `lower`, `stop`, `inkMode`, `inkSurface`) use the admitted participant and current bound leg. A non-host cannot take the stage from a host. Ink applies only to a screen stage. Its drawing mode controls who may send a stroke or pin one. A host or the presenter may clear it. A snapshot request goes to the presenter. The SFU marks guest recipients at every join. During a follow presentation only these recipients receive the screen video.
+
+A signed-in local web leg gets the `member_screen` flag at bind. The socket tracks the presenter from stage revisions (`note_stage`). Before spending the rate allowance or resolving a screen, it checks both flags for `follow/navigate` and `follow/locate`. A location update changes the section, dialog or pointer on the last resolved screen. `catchUp` asks for the latest position. For a call spanning media nodes, a leg node forwards the follow frame to the origin, which relays it to the other leg nodes. Each delivers it only to eligible member pages. The page quietly drops refusals marked `follow:true`, including `followRate`. A follower receives permitted identifiers declared by the screen or a read-only transition, including name values such as `userName`. A member can therefore receive the name even when their own session lacks permission to open the destination.
+
+A collaboration join for a meeting board binds the page to the meeting, leg and actor. Reads, edits and outgoing frames use that room’s in-memory grant. Call and membership changes publish `collab-recheck` after commit, prompting a check on the next tick. The periodic check asks again every ten seconds. Default per-socket allowances are 1,200 updates and 600 awareness messages per minute. A fifth consecutive excess update removes that socket’s clients from the document.
+
+The guest page’s POST transitions `boardFile` and `uploadBoardFile` check the link token against the guest credential’s link, then require a live board grant with view or edit access respectively. Revoking a link ends its guest credentials and schedules the grant recheck. A replacement link uses a new token.
 
 ## Call captions
 

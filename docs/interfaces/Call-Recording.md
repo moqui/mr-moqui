@@ -30,6 +30,8 @@ The policy must meet the deployment's jurisdiction. The notice alone does not.
 
 ## What is recorded
 
+During **Present this screen**, the recording omits the presentation. Members navigate in their own sessions, and the optional tab video goes only to guests. The other eligible call tracks are recorded as usual.
+
 - **Each track**, as it was sent, with no transcoding: a leg's microphone and screen audio as Opus in Ogg, and its
   camera and screen share as VP8 in WebM. A simulcast track is recorded at its best layer that sent a keyframe: it
   moves up at a better layer's keyframe, and down when its layer is silent for a second. One file per track and

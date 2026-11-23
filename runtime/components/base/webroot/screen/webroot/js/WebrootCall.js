@@ -1363,7 +1363,7 @@
                     if (frame.code === "staleGeneration" || frame.follow) return null;
                     // the server keeps this call on the media server (a third person, Always relay): there it goes
                     if (frame.code === "notDirect" && call.direct) return call.toRelay("refused");
-                    state.error = frame.message || frame.code;
+                    state.error = t(frame.message || frame.code);
                     if (frame.code === "notFound" || frame.code === "callEnded" || frame.code === "legClosed") call.hangUp("ended");
                     break;
                 default:

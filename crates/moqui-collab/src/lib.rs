@@ -599,6 +599,8 @@ enum Stored {
     Insert,
     /// Merged into the document, so what another server wrote of it is kept.
     Merge,
+    /// Merged after a version save, recording its timestamp in the checkpoint transaction.
+    Save,
     /// Replaced: the document was seeded again from its record's text.
     Replace,
 }
@@ -650,11 +652,12 @@ fn write_row(
                 state_bytes: 0,
             });
         }
-        if stored == Stored::Merge && existing.is_none() {
+        let merge = matches!(stored, Stored::Merge | Stored::Save);
+        if merge && existing.is_none() {
             return Err(moqui_lib::error::Error::new("the co-edited document was removed"));
         }
         let mut merged = None;
-        if let Some(row) = existing.as_ref().filter(|_| stored == Stored::Merge) {
+        if let Some(row) = existing.as_ref().filter(|_| merge) {
             // another server's edits: into this document too, so nothing either wrote is lost
             merged = merge_into(key, doc, &bytes_of(row, "stateData"));
         }
@@ -679,6 +682,9 @@ fn write_row(
         };
         row.set("stateData", Value::Bytes(state));
         row.set("snapshotText", Value::string(snapshot));
+        if stored == Stored::Save {
+            row.set("lastSaveDate", now_value());
+        }
         if let Some(hash) = base_hash {
             row.set("baseTextHash", Value::string(hash));
         }
@@ -1277,15 +1283,6 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
     }
     let out = result?;
     let version_name = Some(text(&out, "versionName")).filter(|name| !name.is_empty());
-    // before the state's write, so the row's stamp is the one that write leaves (refresh, compact_row)
-    {
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-        let facade = entity()?;
-        facade
-            .find(COLLAB_DOCUMENT)?
-            .eq("documentKey", Value::string(key))
-            .update_all([("lastSaveDate".to_string(), now_value())])?;
-    }
     {
         let mut room = lock(room);
         // The page service ran without the room lock. A stroke made meanwhile belongs
@@ -1303,7 +1300,7 @@ fn save_room(key: &str, room: &Mutex<Room>, user_id: &str, note: Option<&str>) -
         let written = write_row(
             key,
             (room.target.codec, &room.doc),
-            Stored::Merge,
+            Stored::Save,
             Some(&text_hash(&page_text)),
             version_name.as_deref(),
             (&unsaved, &names),

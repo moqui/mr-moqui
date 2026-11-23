@@ -1,6 +1,6 @@
 # Follow-up: whiteboards, presentation stage and follow, and the per-user install
 
-Follow-up, 2026-11-22. Phases 1 to 6 are built; Phase 7 (docs, localization) and the items under **Remaining** are not.
+Follow-up, 2026-11-22. Phases 1 to 7 are implemented. The follow-up remains active for the acceptance failures under **Remaining**.
 This covers a review of the commits that brought [Comms-Whiteboard](Comms-Whiteboard.md)'s boards, meeting boards, ink
 and markup, the presentation stage and follow mode, and [Install-DevCA](Install-DevCA.md)'s per-user install, shared
 `~/.mr-moqui` definitions, development certificates and separate listener ports. The review found the core models
@@ -11,7 +11,7 @@ sound:
 - **Follow:** a follower opens the relayed path and params under their own session.
 
 It also found bugs, scaling risks, missing upgrade paths, failure-tolerance gaps, missing tests, stale security docs
-and missing es/zh rows. **Built** means it is in the source; **Remaining** names what is left.
+and missing es/zh rows. The phase table records the original work. The verification record below covers the follow-up.
 
 Decisions:
 - **Shared `~/.mr-moqui`:** with `--installed` it is the runtime, used alone (production and desktop installs). Without
@@ -36,68 +36,29 @@ Decisions:
 | 6 | Boards: tolerant seed (a bad element is skipped and logged); Board.qvue fallback on an unreadable scene; compaction when a room closes with nothing unsaved, with saved tombstones; `board@max-total-image-bytes` and pruning on `save#Board`; collab update and awareness rate limits (`socket-updates-per-minute`, `socket-awareness-per-minute`); `delete#WikiPageRows` taking a page's board rows; Excalidraw locale codes; meeting version note by name; nits | Pruning drops images from older versions' previews |
 | 7 | `WebrootTabCapture` moved to the webroot acceptance client suite; mr-boss and mr-marble READMEs point at `https://localhost:8443` | |
 
+## Verification, 2026-11-22
+
+- The owner opens the configured board once on an empty stage. A guest or a member with view-only board access can arrive before the owner. Reopening the link preserves an occupied stage.
+- Revoking a link ends its guests’ board and image grants. The owner can create another link through the existing workflow. Follow relays a declared, permitted `userName`; a member can receive that value even if their own session cannot open the destination.
+- The security, Comms, recording, client, revision and deployment guides now describe the shipped behavior. The 174 additions to each of the Spanish and Simplified Chinese catalogs cover the board, stage and follow UI and socket messages, enum descriptions and the affected tools and Gallery screens. Error codes and silent follow refusals retain their existing behavior.
+- On macOS 27.2.1 (arm64), the real user trust tools installed and rotated generated roots in a disposable keychain. With the login-keychain lookup returning no preference, the fallback located the same disposable keychain. Repeated removal succeeded with and without the root file. The unrelated certificate remained and the test keychain was removed. On Debian 13.7 (Linux aarch64), five real NSS SQL databases passed the same checks, including the SSL trust flag. They covered both Chromium user paths, snap Chromium, Flatpak Chrome and a Firefox profile selected by an absolute path in profiles.ini.
+- The initial webroot run took 55.6 seconds of feature time. After moving Mermaid conversion to acceptance, a quiet release run still took 52.2 seconds. The keyboard regressions now wait for actual selections and submissions and read completed key events directly. The full offline suite then passed all 548 features in 47.3 seconds of feature time. The final framework run measured **47.2 seconds against the 48-second budget** (69.68 seconds wall time). Board merges and compacted deletions remain in regression. Grid’s date checks use the existing offline mount.
+- The live RTC scenario exposed a lock during call-end saves. The save timestamp now uses the same transaction as the collaboration checkpoint. The rebuilt RTC-enabled MeetingBoards scenario executed and passed. Ending the call saved the guest’s rectangle under the host with the meeting and guest names in its note. The service regression passed both features, including the clean-board revision count, image grants before and after revocation and issuing a replacement link. Both Rust lints and screen parsing passed. The focused SFU track test passed. Webroot acceptance passed all seven features after the terminal walk was made independent of the host shell’s prompt and menu focus.
+- Basic-comms acceptance ran 77 features. MeetingBoards was among the 36 passes. Seven failed and 34 were skipped. The encrypted-device verification passed twice on isolated working-tree runs (7/7 each). The other six failures reproduced using the committed framework sources at `d679c4ae3`.
+- All eight groups of `./moq test-framework --release --nobuild` passed. The `./moq test-apps --release --nobuild` run passed 4,961 service and 48 client features, plus 31 proofs with three skipped. `cargo lint`, `cargo lint-min`, and screen lint passed (2,417 screens, zero parse failures). Both catalogs passed checks for matching keys, uniqueness, length, unchanged entries and placeholders. All 461 relative file links in the eleven edited Markdown files resolved. The language-pack commit is `4155868`. The Rust workspace passed 6,488 tests with 67 ignored, using one Rust test thread on macOS. The redirect test now supplies its own session-cookie fixture and passes in isolation.
+
 ## Remaining
 
-**Docs (Phase 7):**
-- **Attack-Surface-Routes.md:** `/callws` now carries collab frames, up to about 1.4 MB.
-- **Attack-Surface-Comms.md:**
-  - the stage, follow (`navigate`, `locate`, `catchUp`) and ink ops, `followRate`, and the `follow:true` error flag;
-  - `member_screen` gating, and the presenter and member gate (`note_stage`);
-  - guest-only screen video, and guests marked at every join;
-  - the cross-node follow frames;
-  - the `CallGuest.xml` `boardFile` and `uploadBoardFile` transitions;
-  - the meeting-scoped collab join, the in-memory meeting grants, `collab-recheck` and the 10 s recheck;
-  - the collab rate limits.
-- **docs/tools/Comms.md:**
-  - the share modes, and that a non-host can't take over from a host;
-  - Present this screen;
-  - Follow again, and the pause for a changed form;
-  - a reload gives up a screen share.
-- **docs/interfaces/Call-Recording.md:** a follow-mode recording leaves out the presentation.
-- **docs/ui/Qvt-Client.md:** `m-whiteboard`, with its props, file mode, `link-schemes`, `libraries` and `skeleton`;
-  `m-ink-layer`; `m-image-markup`.
-- **docs/data/Revision-Management.md:** the board codec, meeting actors, compaction and tombstones, and pruning.
-- **docs/Run-Deploy.md settings:** `board@max-total-image-bytes`, `socket-updates-per-minute`,
-  `socket-awareness-per-minute`.
-- **The basic-comms README:** Boards.
-- **[Comms-Whiteboard](Comms-Whiteboard.md):** §4.1 (the server preview and the browser's SVG), §4.4 (history has no
-  thumbnails), §5.2, §5.3, §8 (rate limits now built) and §10 (the bundle size), updated to what is built.
+Keep this plan active until the six basic-comms acceptance failures are fixed, per the archive decision on 2026-11-22.
 
-**Localization (Phase 7):**
-- **Missing es/zh rows (about 100):** literal `t()`/`localize` keys from these commits. They cover the board screens,
-  Chat's Boards tab, the call board, ink and snapshot controls, the markup dialog, Recordings, the stage and follow
-  labels and refusals ("Only a host may take over from a host", "{name} wants to present"), board service messages
-  ("Board files exceed the board total size limit", "Snapshot too large", "Meeting ${name} ended", "Meeting ended",
-  "Uploaded in a meeting by ${name}", "This board could not be read"), the CallEntities enum descriptions, and the
-  Monitor, Explore, Calendar, Grid and Gallery Wizard strings from 43c61c2c3 and b43ac94bf.
-- **Method:** collect the literal keys added since 05dd583d5 and check them against the rows and the `unchanged-*.txt`
-  lists, as for the earlier localization pass.
-- **Rust socket messages:** send codes the client localizes, or English keys it passes through `t()`. They are in
-  `notws/collab.rs` ("too many updates; slow down", "too many updates; join the page again"), `board.rs` and
-  `notws/rtc.rs`. Follow errors are now dropped by the page, so the rtc ones matter least.
+| Spec | Observed failure |
+|---|---|
+| ChatLabels (phone and desktop) | Both walks time out opening the device verification dialog from the room banner. |
+| PhoneChat (attachments and Back navigation) | The attachment menu includes Location in addition to Camera, Gallery and File. The Back walk encounters an undefined timer label. |
+| ChatDetails (phone) | Opening the details view encounters the same undefined timer label. |
+| ChatPalette | Selecting a room with Mod+K and Enter leaves a different room selected. |
 
-**Not built, needing a decision:**
-- **Recurring board for a guest or view-only first joiner:** `openLink` runs only for the link owner. Opening it for
-  whoever joins first needs a new open path in `guestJoin` and `join`, with a stage presenter who may be a guest.
-- **A board's image link token:** `revokeLink` removes guests, which now rechecks and ends drawing. There is no
-  token-rotation operation to align with image access.
-- **`*Name` params sent to followers** (a `userName` a member cannot open): left as they are.
-
-**Tests not written:**
-- client page tests for the whiteboard's `board.language` and tombstones;
-- `save#MeetingBoard` at call end;
-- the SFU's new-track labelling;
-- `queueFollow` choosing `locate` (the page test cannot set the page location);
-- the real trust store removal and keychain paths (only `bash -n` and dry runs).
-
-**Checks to make:**
-- **Webroot client budget:** the suite was at 45.5 of 48 s before the board and follow client tests. Measure it after
-  these changes; if it is over, move WebrootWhiteboard's Mermaid conversion to acceptance.
-- **`tools/test/client/GridDates.spec.js`:** 2.7 s, but Data/Grid is also rendered by `tools/test/DataGrid.spec.js`
-  and mounted offline in `WebrootVue.qvt.markdown`. Decide whether its date checks fold into one of those renders, per
-  the render-once rule.
-- **Acceptance `MeetingBoards`:** run it once, since meeting-board access now answers from memory and is rechecked on
-  call changes.
+Once these checks pass, move this review to `archive/`, add the archive note below its title, update its relative links and move its index entry to archived reviews. [Comms-Whiteboard](Comms-Whiteboard.md) and [Install-DevCA](Install-DevCA.md) track their own remaining work.
 
 ## Opus 5.5 medium Cost Calibration
 

@@ -419,7 +419,7 @@ module.exports = {
             const vm = this;
             const def = { title: column.title || column.name, field: column.name, headerSort: !column.encrypted, headerFilter: column.encrypted || column.type === 'binary' ? false : 'input',
                 headerMenu: () => vm.headerMenu(column), resizable: true };
-            if (def.headerFilter) def.headerFilterParams = { elementAttributes: { 'aria-label': 'Filter by ' + def.title } };
+            if (def.headerFilter) def.headerFilterParams = { elementAttributes: { 'aria-label': (moqui.l10n?.localize('Filter by {field}') || 'Filter by {field}').replace('{field}', () => def.title) } };
             if (column.type === 'number') { def.hozAlign = 'right'; def.cssClass = 'm-grid-numeric'; }
             def.formatter = (cell) => vm.formatCell(cell, column);
             if (this.saveEntity && column.editable && !column.encrypted && column.editor) {

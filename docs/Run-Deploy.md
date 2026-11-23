@@ -444,6 +444,9 @@ The settings most deployments set or should know. Their defaults are in `MoquiDe
 | `media-server@port`, `media-server@host`, `media-server@public-address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `media-server@port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `calls@ring-seconds` | `45` | How long a call rings before it is missed |
 | `board@max-document-bytes`, `board@max-update-bytes` | 20 MB, 1 MB | Boards (wiki and meeting whiteboards): the largest scene a board holds, and the largest single co-editing update a client sends |
+| `board@max-total-image-bytes` | `209715200` | Maximum total board image bytes (200 MiB). Saving a board prunes unused images after a grace period |
+| `webapp-list/webapp[webroot]@socket-updates-per-minute` | `1200` | Collaboration document updates per socket per minute |
+| `webapp-list/webapp[webroot]@socket-awareness-per-minute` | `600` | Collaboration awareness messages per socket per minute |
 | `board@max-images`, `board@max-image-bytes` | `200`, 10 MB | The images one board may hold, and the largest one |
 | `calls@guest-joins-per-minute` | `20` | The most guests who join by one call link in a minute, whatever their client |
 | `chat@server-name`, `chat@to-device-retention-days` | `localhost`, `30` | The server name in the Matrix user IDs of browsers' crypto devices (set it before the first device: a change makes every device new), and how long a to-device message waits for a device that does not take it ([Chat keys](interfaces/Chat-Keys.md)) |
