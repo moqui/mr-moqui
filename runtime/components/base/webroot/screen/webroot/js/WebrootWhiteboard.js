@@ -119,6 +119,7 @@
             },
             async open() {
                 try {
+                    root.MoquiBoardCjk = (await fetchJson("/libs/fonts-extra/installed.json")).includes("excalidraw-cjk");
                     root.EXCALIDRAW_ASSET_PATH = new URL(base, root.location.href).href;
                     moqui.loadStylesheet(base + "editor.css");
                     const lib = Promise.all([...defaultLibraries, ...(this.libraries || [])].map(async path =>

@@ -60,6 +60,9 @@ js_build_js() {
 js_rebuild() {
     js_node
     mkdir -p "$JS_CACHE" || return 1
+    local JS_PACKS
+    JS_PACKS=$(js_state selected) || return 1
+    export JS_PACKS
     JS_CACHE="$JS_CACHE" node "$JS_SOURCE/libs/refresh.mjs" "$@"
 }
 
@@ -85,6 +88,9 @@ task_update_js() { js_locked update-js "$@"; }
 js_update_js() {
     js_node
     mkdir -p "$JS_CACHE" || return 1
+    local JS_PACKS
+    JS_PACKS=$(js_state selected) || return 1
+    export JS_PACKS
     JS_CACHE="$JS_CACHE" node "$JS_SOURCE/libs/manage.mjs" update "$@" && js_state stamp
 }
 
@@ -104,3 +110,37 @@ help_clean_js() { echo 'Remove generated browser libraries and target/js.'; }
 help_update_js() { echo 'Update one exact library version or --all, then regenerate the manifest and notices. --security permits a recent security fix.'; }
 help_outdated_js() { echo 'List newer library versions and versions past the two-week cooldown.'; }
 help_audit_js() { echo 'Audit both projects and inspect the copies embedded in distributed assets.'; }
+
+
+task_fonts_download() {
+    if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
+        js_state packs || return 1
+        echo "Installed: $(js_state selected)"
+        return
+    fi
+    js_locked fonts-download "$@"
+}
+
+js_fonts_download() {
+    local current selected pack action=add
+    current=$(js_state selected) || return 1
+    selected=" $current "
+    if [ "${1:-}" = --remove ]; then action=remove; shift; fi
+    [ $# -gt 0 ] || die "name a font pack or use --list"
+    for pack in "$@"; do
+        js_state packs | grep -Fxq -- "$pack" || die "unknown font pack $pack"
+        if [ "$action" = remove ]; then selected=${selected// "$pack" / }; else selected="$selected$pack "; fi
+    done
+    selected=$(MOQUI_FONT_PACKS="$selected" js_state selected) || return 1
+    MOQUI_FONT_PACKS="$selected" js_build_js || return 1
+    printf '%s\n' "$selected" > "$JS_SOURCE/fonts/selected.txt.new" &&
+        mv "$JS_SOURCE/fonts/selected.txt.new" "$JS_SOURCE/fonts/selected.txt"
+}
+
+js_report_fonts() {
+    local packs
+    packs=$(js_state selected) || return 1
+    info "Optional font packs: ${packs:-none}" >&2
+}
+
+help_fonts_download() { echo 'List optional fonts with --list, add named packs, or --remove named packs. MOQUI_FONT_PACKS overrides the checkout selection.'; }

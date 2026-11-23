@@ -545,6 +545,7 @@ stage_desktop_sidecar() {
 # embedded as its Tauri assets (target/mobile-shell, its frontendDist).
 stage_client_shell() {
     ensure_js
+    js_report_fonts || return 1
     local stage=$1 webroot=$ROOT/runtime/$BASE_SET/webroot/screen/webroot lib
     need_tool rsync
     # the libraries of shell/libs.txt only: one dropped from the list goes from the stage too

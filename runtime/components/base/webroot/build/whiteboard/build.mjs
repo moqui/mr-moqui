@@ -49,6 +49,10 @@ export function buildBoard(work, installed = false) {
   const references = faces.map((face, i) => i ? JSON.stringify(face) : '{uri:cc,descriptors:' + JSON.stringify(face.descriptors) + '}');
   replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'var cc="./fonts/Liberation/LiberationSans-Regular.woff2";var lc=[{uri:cc}];',
     'var cc=' + JSON.stringify(faces[0].uri) + ';var lc=[' + references.join(',') + '];');
+  // The board sets the installed packs before the editor module runs. Omit the optional face
+  // from registration and fallback resolution together, including during SVG export.
+  replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'n(Mn,...b1)', 'globalThis.MoquiBoardCjk&&n(Mn,...b1)');
+  replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'case Ie.Excalifont:return[Mn,Tn]', 'case Ie.Excalifont:return globalThis.MoquiBoardCjk?[Mn,Tn]:[Tn]');
   // Modern browsers disallow unload by default. pagehide also fires when a board enters the back/forward cache.
   replaceOnce(join(prod, 'index.js'), 'Ae(window,"unload",this.onUnload,!1)', 'Ae(window,"pagehide",this.onUnload,!1)');
   replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'import("./subset-worker.chunk.js")',

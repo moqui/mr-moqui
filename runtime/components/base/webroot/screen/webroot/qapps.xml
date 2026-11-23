@@ -184,6 +184,13 @@ along with this software (see the LICENSE.md file). If not, see
         const localeTag = String(ec.user.locale || 'en_US').replace('_', '-')
         const quasarLang = qvtLib.quasarLangOf(localeTag)
         const staticOnly = ec.factory.getConfValue('webapp-list/webapp[webroot]@qvt-static-only') == 'true'
+        const fonts = ec.resource.getLocationReference("component://webroot/screen/webroot/libs/fonts-extra/installed.json")
+        if (fonts.getExists()) {
+            for (const pack of JSON.parse(fonts.getText())) {
+                if (pack !== "excalidraw-cjk" && /^[a-z0-9-]+$/.test(pack))
+                    html_stylesheets.add("/libs/fonts-extra/" + pack + "/" + pack + ".css")
+            }
+        }
         footer_scripts.add(staticOnly ? '/libs/vue/vue.runtime.global.prod.js' : '/libs/vue/vue.global.prod.js')
         footer_scripts.add('/libs/quasar/quasar.umd.prod.js')
         footer_scripts.add('/libs/quasar/lang/' + quasarLang + '.umd.prod.js')

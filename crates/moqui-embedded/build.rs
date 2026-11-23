@@ -71,8 +71,19 @@ fn check_browser_libs(runtime: &Path) {
         &std::fs::read(&manifest).unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", manifest.display())),
     )
     .expect("browser library manifest");
+    let selection = libs.join("fonts-extra/installed.json");
+    println!("cargo:rerun-if-changed={}", selection.display());
+    let selected: Vec<String> =
+        serde_json::from_slice(&std::fs::read(selection).expect("missing browser font selection; run ./moq build-js"))
+            .expect("installed font packs");
     for library in json["libraries"].as_array().expect("manifest libraries") {
         for file in library["files"].as_array().expect("manifest files") {
+            if file["pack"]
+                .as_str()
+                .is_some_and(|pack| !selected.iter().any(|name| name == pack))
+            {
+                continue;
+            }
             let path = libs.join(file["path"].as_str().expect("asset path"));
             println!("cargo:rerun-if-changed={}", path.display());
             assert!(path.is_file(), "{} missing; run ./moq build-js", path.display());

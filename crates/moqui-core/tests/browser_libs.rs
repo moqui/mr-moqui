@@ -38,7 +38,11 @@ fn every_file_in_the_manifest_exists_with_its_recorded_sha256() {
     let dir = libs_dir();
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("MANIFEST.json")).expect("MANIFEST.json")).unwrap();
-    let mut listed: Vec<String> = vec!["MANIFEST.json".into()];
+    let selection = "fonts-extra/installed.json";
+    let installed: Vec<String> =
+        serde_json::from_slice(&std::fs::read(dir.join(selection)).expect("run ./moq build-js"))
+            .expect("installed font packs");
+    let mut listed: Vec<String> = vec!["MANIFEST.json".into(), selection.into()];
     let mut check = |path: &str, sha: &str, size: Option<u64>| {
         let bytes = std::fs::read(dir.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
         assert_eq!(hex(&Sha256::digest(&bytes)), sha, "sha256 of {path}");
@@ -63,6 +67,12 @@ fn every_file_in_the_manifest_exists_with_its_recorded_sha256() {
             assert!(lib["source"].as_str().unwrap().starts_with("https://"), "{id}");
         }
         for file in lib["files"].as_array().unwrap() {
+            if file["pack"]
+                .as_str()
+                .is_some_and(|pack| !installed.iter().any(|name| name == pack))
+            {
+                continue;
+            }
             check(
                 file["path"].as_str().unwrap(),
                 file["sha256"].as_str().unwrap(),
@@ -106,6 +116,7 @@ fn the_manifest_licenses_are_the_reviewed_set() {
         let license = lib["license"].as_str().unwrap();
         let reviewed = match id {
             "excalidraw" => "MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1",
+            name if name.starts_with("font-noto-sans") => "OFL-1.1",
             "fontawesome" => "OFL-1.1 AND MIT",
             "atkinson-next" | "atkinson-mono" => "OFL-1.1",
             "tom-select" | "material-icons" | "material-symbols" | "pdfjs" => "Apache-2.0",

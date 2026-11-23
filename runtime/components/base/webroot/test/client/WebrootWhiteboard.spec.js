@@ -37,6 +37,12 @@ feature("a mounted board merges local and remote edits and reconciles compacted 
             window.vm=app.mount('#app');
             </script></body></html>`)
         page.waitFor(() => !!(vm.$refs.board && vm.$refs.board.api && document.querySelector(".excalidraw canvas")))
+        assert.equal(page.evaluate(async () => {
+            const installed = (await fetch("/libs/fonts-extra/installed.json").then(r => r.json())).includes("excalidraw-cjk")
+            await document.fonts.load('16px Xiaolai', '漢字')
+            const fetched = performance.getEntriesByType("resource").some(r => r.name.includes("/fonts/Xiaolai/"))
+            return fetched === installed
+        }), true)
         assert.deepEqual(page.evaluate(() => ["es-MX", "zh", "zh_TW", "unknown"].map(moqui.whiteboard.language)),
             ["es-ES", "zh-CN", "zh-TW", "en"])
         page.evaluate(() => {

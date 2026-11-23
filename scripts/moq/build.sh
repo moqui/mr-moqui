@@ -272,6 +272,7 @@ prepare_embed() {
     fi
     case $OPT_EMBED in
         production | all)
+            js_report_fonts || return 1
             MOQUI_EMBED_RUNTIME=$RUNTIME_DIR
             MOQUI_EMBED_COMPONENTS=$(cd "$RUNTIME_DIR/components" 2>/dev/null && ls -d -- */*/ 2>/dev/null | tr '\n' ' ')
             export MOQUI_EMBED_RUNTIME MOQUI_EMBED_COMPONENTS

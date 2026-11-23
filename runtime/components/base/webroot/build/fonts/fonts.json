@@ -1,0 +1,85 @@
+{
+  "cjk": {
+    "license": "OFL-1.1",
+    "subsets": [
+      "numbered"
+    ],
+    "sources": [
+      {
+        "package": "@fontsource-variable/noto-sans-sc",
+        "version": "5.3.1",
+        "integrity": "sha512-UB96JJ17HyD5ehEU7Em0hDdh7fvTMB4B4Hzmq5c4QaNwwSLqTrdM2S+coySeBqCkXwh0DxqXT0b0wMrmzorFpQ=="
+      },
+      {
+        "package": "@fontsource-variable/noto-sans-tc",
+        "version": "5.3.1",
+        "integrity": "sha512-gueh+AySNkihE+HvizXLHltxt5/xVFSvw6ISnKTlpb/lG5QQm6u/KwuempTJ/jDYMST3xwiERYTTyseoJ/Kxew=="
+      },
+      {
+        "package": "@fontsource-variable/noto-sans-jp",
+        "version": "5.3.1",
+        "integrity": "sha512-/anGvJFc5y36f8DJ+3TSh2+KAvaRLA9PaLUMvneeY5s4j8m+8X4F3lE/sjTuG9YI5BX4sykvCk4TuJMG7ecMRQ=="
+      },
+      {
+        "package": "@fontsource-variable/noto-sans-kr",
+        "version": "5.3.1",
+        "integrity": "sha512-f5aty6Qgk2LVU5TjCtXHxiYHqUWYW8f75ll0Chn8ucCqoOlIomcACUwf1V47yUt6wTdWZiGr3dcbQk+zlOspMA=="
+      }
+    ]
+  },
+  "arabic": {
+    "license": "OFL-1.1",
+    "subsets": [
+      "arabic"
+    ],
+    "sources": [
+      {
+        "package": "@fontsource-variable/noto-sans-arabic",
+        "version": "5.3.0",
+        "integrity": "sha512-Rz8+DBzza3//cmN+DBQajJhx3x+Dx12eUgnQsTOgPWbOT0+In6APmE8z4I/QQnUWfAx+s8l93+60qDT5vJH1sA=="
+      }
+    ]
+  },
+  "devanagari": {
+    "license": "OFL-1.1",
+    "subsets": [
+      "devanagari"
+    ],
+    "sources": [
+      {
+        "package": "@fontsource-variable/noto-sans-devanagari",
+        "version": "5.3.0",
+        "integrity": "sha512-52XBcJS3jRvZ5ugFXJvdKgffXPYnN08LeodXkgCbepOdMKVRVTQu1yj071cq8S3zmUwT6w6XKKXRSQlQkwwNNg=="
+      }
+    ]
+  },
+  "cyrillic-greek": {
+    "license": "OFL-1.1",
+    "subsets": [
+      "cyrillic",
+      "cyrillic-ext",
+      "greek",
+      "greek-ext"
+    ],
+    "sources": [
+      {
+        "package": "@fontsource-variable/noto-sans",
+        "version": "5.3.0",
+        "integrity": "sha512-e3ZuxzY9AL2psXPZlhwhnYrHUHv6PMoyK9MQ7croF0CUgURLqu9EMjW7q2FgVLwij1tjLsIHQrnwQ8aUcg4BiA=="
+      }
+    ]
+  },
+  "excalidraw-cjk": {
+    "license": "OFL-1.1",
+    "subsets": [
+      "Xiaolai"
+    ],
+    "sources": [
+      {
+        "package": "@excalidraw/excalidraw",
+        "version": "0.18.1",
+        "integrity": "sha512-6i5Gt7IDTOH//qa0Z315Ly5iVRhjWpu2whrlQFqkuwrkKUWgRsMk0P5qdE7bpyDpai7jeLeWYkyj1eVAfni1lw=="
+      }
+    ]
+  }
+}

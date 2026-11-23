@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { assetPack, fontLibraries, packs } from '../fonts/build.mjs';
 import { buildBoard } from '../whiteboard/build.mjs';
 
 const source = dirname(fileURLToPath(import.meta.url));
@@ -475,6 +476,8 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
   },
 ];
 
+LIBS.push(...fontLibraries());
+
 const LICENSE_TEXTS = [
   { path: 'licenses/LGPL-2.1.txt', url: LGPL_URL },
   { path: 'licenses/OFL-1.1.txt', url: OFL_URL },
@@ -527,6 +530,7 @@ function buildAssets(work) {
     return readFileSync(out);
   };
   const ctx = {
+    package: id => packages[id],
     version: (id) => LIBS.find((l) => l.id === id).version,
     esbuildCompilerDom() {
       writeFileSync(join(build, 'cd-entry.js'), "module.exports = require('@vue/compiler-dom');\n");
@@ -689,7 +693,13 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
 
   const board = buildBoard(installProject(join(projects, 'whiteboard'), join(work, 'whiteboard')), true);
   for (const [path, data] of board.outputs) outputs.set(path, data);
+  const cjk = packs['excalidraw-cjk'].sources[0];
+  if (cjk.integrity !== board.lib.tarballIntegrity || cjk.version !== board.lib.version) throw new Error('Review Xiaolai source in fonts.json');
   libMeta.push(board.lib);
+  for (const lib of libMeta) for (const file of lib.files) {
+    const pack = assetPack(file.path);
+    if (pack) file.pack = pack;
+  }
   notices.push(board);
   const noticesMd = renderNotices(notices);
   outputs.set('NOTICES.md', Buffer.from(noticesMd, 'utf8'));
@@ -709,6 +719,12 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
     throw new Error('Rebuilt assets or metadata differ from the reviewed MANIFEST.json');
   }
   if (write || args.includes('--build')) {
+    const selected = (process.env.JS_PACKS || '').split(' ').filter(Boolean);
+    for (const path of outputs.keys()) {
+      const pack = assetPack(path);
+      if (pack && !selected.includes(pack)) outputs.delete(path);
+    }
+    outputs.set('fonts-extra/installed.json', Buffer.from(JSON.stringify(selected) + '\n'));
     outputs.set('MANIFEST.json', Buffer.from(manifestText));
     publish(outputs);
   }

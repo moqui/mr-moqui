@@ -167,6 +167,7 @@ verify-js|JavaScript||Rebuild from the locks and compare to the manifest
 update-js|JavaScript|<lib> <version> or --all|Update reviewed npm dependencies
 outdated-js|JavaScript||Check available package updates
 audit-js|JavaScript||Audit locks and bundled libraries
+fonts-download|JavaScript|[pack...] [--list] [--remove pack]|Select optional font packs
 clean-js|JavaScript||Remove generated webroot libraries
 clean|Database||Tidy old cargo artifacts, keeping the current build
 clean-dev|Database||Reset the local instance data and generated types

@@ -138,3 +138,4 @@ Desktop.ini
 !/runtime/components/base/webroot/screen/webroot/libs/licenses/
 /runtime/components/base/webroot/screen/webroot/.libs-*
 /.npm-cache/
+/runtime/components/base/webroot/build/fonts/selected.txt

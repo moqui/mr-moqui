@@ -30,6 +30,12 @@ the reviewed manifest. `./moq verify-js` rebuilds independently. `audit-js` chec
 and license changes together. Updates normally observe a 14-day cooldown. A reviewed security fix may use `--security`.
 The server and the regression test runners use the built files directly.
 
+`./moq fonts-download --list` shows the optional font packs. Add packs by name or remove them with `--remove`.
+`MOQUI_FONT_PACKS` (a comma- or space-separated list) overrides the selection saved in this checkout. Every installed
+pack ships in archives, embedded production runtimes and client apps. Xiaolai is in `excalidraw-cjk`; boards use
+the viewer's system CJK face by default. The `cjk`, `arabic`, `devanagari` and `cyrillic-greek` packs provide
+Unicode-range Noto faces for the shell.
+
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
                                        # --enterprise for the others; links any component crates in runtime/components/addon

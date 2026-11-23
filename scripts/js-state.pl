@@ -22,16 +22,30 @@ sub files {
     return sort @paths;
 }
 
+my $font_config = "$source/fonts/fonts.json";
+my $packs = -f $font_config ? decode_json(bytes($font_config)) : {};
+my $selection = "$source/fonts/selected.txt";
+my %selected = map { $_ => 1 } grep { length } split /[\s,]+/,
+    $ENV{MOQUI_FONT_PACKS} // (-f $selection ? bytes($selection) : '');
+for my $name (keys %selected) { die "Unknown font pack $name\n" unless exists $packs->{$name}; }
+if ($action eq 'selected') { print join(' ', sort keys %selected), "\n"; exit 0; }
+if ($action eq 'packs') { print join("\n", sort keys %$packs), "\n"; exit 0; }
 my $manifest = decode_json(bytes("$libs/MANIFEST.json"));
 my %want = ('MANIFEST.json' => undef);
 for my $f ($manifest->{notices}, map { @{$_->{files}} } @{$manifest->{libraries}}) {
+    next if $f->{pack} && !$selected{$f->{pack}};
     $want{$f->{path}} = $f->{sha256};
+}
+if (-f $font_config) {
+    $want{'fonts-extra/installed.json'} = sha256_hex(encode_json([sort keys %selected]) . "\n");
 }
 my $stamp = "$cache/stamp.json";
 my $inputs = Digest::SHA->new(256);
 for my $path (files($source)) {
+    next if $path eq "fonts/selected.txt";
     $inputs->add($path, "\0", sha256_hex(bytes("$source/$path")), "\n");
 }
+$inputs->add(join(" ", sort keys %selected));
 $inputs->add(sha256_hex(bytes("$libs/MANIFEST.json")));
 my $signature = $inputs->hexdigest;
 

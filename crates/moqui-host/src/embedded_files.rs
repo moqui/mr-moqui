@@ -248,12 +248,24 @@ fn log_differences(dirs: &[(Set, PathBuf)]) {
         let libs = webroot.join("screen/webroot/libs");
         if let Ok(bytes) = moqui_lib::vfs::read(libs.join("MANIFEST.json")) {
             if let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let installed = moqui_lib::vfs::read(libs.join("fonts-extra/installed.json"))
+                    .ok()
+                    .and_then(|data| serde_json::from_slice::<Vec<String>>(&data).ok());
                 let mut missing = Vec::new();
+                if installed.is_none() {
+                    missing.push("fonts-extra/installed.json");
+                }
+                let installed = installed.unwrap_or_default();
                 for library in manifest["libraries"].as_array().into_iter().flatten() {
                     if library["files"]
                         .as_array()
                         .into_iter()
                         .flatten()
+                        .filter(|f| {
+                            f["pack"]
+                                .as_str()
+                                .is_none_or(|pack| installed.iter().any(|name| name == pack))
+                        })
                         .filter_map(|f| f["path"].as_str())
                         .any(|file| !moqui_lib::vfs::is_file(libs.join(file)))
                     {
