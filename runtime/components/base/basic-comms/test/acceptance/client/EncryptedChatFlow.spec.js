@@ -1,20 +1,20 @@
 // Encrypted chat rooms in browsers (plans/archive/Comms-Framework.md §4.5, C7; docs/interfaces/Chat-Keys.md "Encrypted rooms"):
-// john.doe makes an encrypted room with calls.client.b and calls.client.c (CallClientFixtures). Each page holds its own
+// chat.crypto.a makes an encrypted room with chat.crypto.b and chat.crypto.c (CallClientFixtures). Each page holds its own
 // crypto device (moqui.crypto over matrix-sdk-crypto); messages are Megolm-encrypted in the sending page and decrypted in
 // the others (moqui.chat.sealMessage, openEvents), an image goes up encrypted and comes back as a decrypted blob, and
-// nothing the sender posted, nor its outbox in localStorage, holds the plaintext. When calls.client.c leaves, the next
+// nothing the sender posted, nor its outbox in localStorage, holds the plaintext. When chat.crypto.c leaves, the next
 // message is in a new Megolm session that c cannot decrypt. A second tab of the same browser (a window the page opens, which
 // shares the browser's storage, Web Locks and BroadcastChannel) reads through the tab that holds the store, and takes the store
-// when that one closes it. A new device of john.doe (a page of its own, so a new store) reads nothing older until it
+// when that one closes it. A new device of chat.crypto.a (a page of its own, so a new store) reads nothing older until it
 // restores the key backup with the recovery key, and after "New recovery key" the old key still restores its older version.
 // With only verified devices on (the sender's setting, or the room's), an unverified device cannot read the next message: the
-// sender's page knows whose device it left out, and the reader's says the sender has not verified it (COM-UI-013). john.doe
-// verifies calls.client.b by emoji, so the room's lock gets its check, and b's new device then stops john.doe's next send
+// sender's page knows whose device it left out, and the reader's says the sender has not verified it (COM-UI-013). chat.crypto.a
+// verifies chat.crypto.b by emoji, so the room's lock gets its check, and b's new device then stops chat.crypto.a's next send
 // until it is verified (the send then goes) or let through for the room, which "only verified devices" still leaves out
 // (§6.1 rule 3). A
 // store re-made under another key is reported and kept, never deleted unasked, until "Start over". A store from before the
 // derived store key (its random key stored, set here through Tools) moves to a new device with its room keys.
-// Run: ./moq test-client basic-comms --serve --spec EncryptedChatFlow
+// Run: ./moq accept basic-comms --spec EncryptedChatFlow
 const PASSWORD = "CallsClient1!!"
 const SECRET = "Encrypted lunch plans 7f3a"
 const LATER = "After c left 91be"
@@ -46,9 +46,9 @@ const HELPERS = `(() => {
 
 spec({
     setupSpec() {
-        a = browser.newPage({user: "john.doe", timeout: 30})
-        b = browser.newPage({user: "calls.client.b", password: PASSWORD, timeout: 30})
-        c = browser.newPage({user: "calls.client.c", password: PASSWORD, timeout: 30})
+        a = browser.newPage({user: "chat.crypto.a", password: PASSWORD, timeout: 30})
+        b = browser.newPage({user: "chat.crypto.b", password: PASSWORD, timeout: 30})
+        c = browser.newPage({user: "chat.crypto.c", password: PASSWORD, timeout: 30})
         for (const page of [a, b, c]) {
             page.allowProblems(/userPhoto\?userId=/)
             page.goto("/qapps/BasicComms/Home")
@@ -67,7 +67,7 @@ spec({
 feature("an encrypted message and an encrypted image go both ways; the server and the outbox never hold the plaintext", {
     when() {
         const members = [room.a, room.b, room.c]
-        // john.doe: an image encrypted and uploaded, then a message naming it, through the outbox (localStorage)
+        // chat.crypto.a: an image encrypted and uploaded, then a message naming it, through the outbox (localStorage)
         const sent = a.evaluate(([roomId, members, secret, png]) => {
             const bytes = Uint8Array.from(atob(png), (ch) => ch.charCodeAt(0))
             return window.moqui.chat.sealFile(new Blob([bytes], {type: "image/png"})).then((sealed) => {
@@ -91,7 +91,7 @@ feature("an encrypted message and an encrypted image go both ways; the server an
                 })
             })
         }, [room.id, members, SECRET, PNG])
-        // calls.client.b: the room in Chat shows the message, decrypted, and the image from a decrypted blob
+        // chat.crypto.b: the room in Chat shows the message, decrypted, and the image from a decrypted blob
         b.goto("/qapps/BasicComms/Chat?chatRoomId=" + room.id)
         const shown = b.waitFor((secret) => document.body.innerText.indexOf(secret) >= 0, {arg: SECRET, timeout: 15})
         const image = b.waitFor(() => { const img = document.querySelector("img[src^='blob:']"); return img && img.naturalWidth > 0 ? img.naturalWidth : 0 }, {timeout: 15})
@@ -127,7 +127,7 @@ feature("a member who leaves gets no key of the next message: it is in a new ses
         const cRead = c.evaluate(([roomId, seq]) => window.__e2ee.page(roomId).then((list) => (list.find((e) => e.eventSeq === seq) || {}).bodyText || null),
             [room.id, before.eventSeq])
         c.evaluate((roomId) => window.__e2ee.post("leave", {chatRoomId: roomId}), room.id)
-        // john.doe's page hears the leave (rotateRoom) and sends to the members now in the room
+        // chat.crypto.a's page hears the leave (rotateRoom) and sends to the members now in the room
         a.evaluate((roomId) => window.moqui.crypto.rotateRoom(roomId), room.id)
         const after = a.evaluate(([roomId, members, text]) => window.__e2ee.send(roomId, members, "<p>" + text + "</p>"), [room.id, [room.a, room.b], LATER])
         const sealedAfter = a.evaluate(([roomId, seq]) => window.__e2ee.get("timeline", {chatRoomId: roomId, eventSeq: seq}).then((p) => p.eventList[0]),
@@ -199,7 +199,7 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
             .then((p) => window.moqui.crypto.decryptRoom(roomId, p.eventList[0])).then((out) => (out.content ? out.content.body : null)), [room.id, seq])
         const setMine = (page, on) => page.evaluate((on) => window.moqui.request("/apps/BasicComms/Settings/Devices/storeKeySettings",
             {method: "POST", params: {verifiedDevicesOnly: on ? "true" : "false"}}).then(() => window.moqui.crypto.settingsChanged()), on)
-        // b's own setting: john.doe's device is not verified for b, so it cannot read b's next message
+        // b's own setting: chat.crypto.a's device is not verified for b, so it cannot read b's next message
         setMine(b, true)
         const mine = b.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>Only verified b</p>"), [room.id, members])
         const leftOut = b.evaluate((roomId) => window.moqui.crypto.leftOut(roomId), room.id)
@@ -212,7 +212,7 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
         const open = b.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>To all b</p>"), [room.id, members])
         const aReadsOpen = readBy(a, open.eventSeq)
         const leftOutOpen = b.evaluate((roomId) => window.moqui.crypto.leftOut(roomId), room.id)
-        // the room's setting, by its owner john.doe: b's device is not verified for john.doe
+        // the room's setting, by its owner chat.crypto.a: b's device is not verified for chat.crypto.a
         const roomOn = a.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "true"})
             .then((out) => { window.moqui.crypto.settingsChanged(); return out }), room.id)
         const notMember = c.evaluate((roomId) => window.__e2ee.post("setVerifiedDevicesOnly", {chatRoomId: roomId, verifiedDevicesOnly: "false"}), room.id)
@@ -238,7 +238,7 @@ feature("only verified devices: with the sender's setting, or the room's, a devi
 
 // COM-UI-013, §6.1 rule 3: another person verified by emoji (Chat's Verify), so the room's lock gets its check; then a new
 // device of that verified person is said before the next send, and Send anyway lets it through
-feature("john.doe verifies calls.client.b by emoji: the room's label has its check; b's new device stops the next send until verified (then it goes) or let through for the room, which only verified devices still leaves out", {
+feature("chat.crypto.a verifies chat.crypto.b by emoji: the room's label has its check; b's new device stops the next send until verified (then it goes) or let through for the room, which only verified devices still leaves out", {
     when() {
         const members = [room.a, room.b]
         // cross-signing on both: the emoji comparison then verifies b's identity, so b's signed devices too
@@ -262,14 +262,14 @@ feature("john.doe verifies calls.client.b by emoji: the room's label has its che
         for (const page of [a, b]) page.evaluate((id) => window.moqui.crypto.verification(id, "confirm").then(() => true), flowId)
         shown(a, "done")
         shown(b, "done")
-        // the room as john.doe's Chat shows it (moqui.chat.trustOf, e2eeLabel)
+        // the room as chat.crypto.a's Chat shows it (moqui.chat.trustOf, e2eeLabel)
         const seen = a.waitFor(async ([roomId, members, me, other]) => {
             const trust = window.moqui.chat.trustOf(await window.moqui.crypto.roomTrust(roomId, members), me)
             const label = window.moqui.chat.e2eeLabel({ encrypted: true, roomTypeEnumId: "CrtPrivate" }, trust)
             return trust.people[other] && trust.people[other].verified ? { label: label.state, person: trust.people[other].verified } : null
         }, {arg: [room.id, members, room.a, room.b], timeout: 15})
-        // b on a new browser: a device b did not sign, of a person john.doe verified
-        const b2 = browser.newPage({user: "calls.client.b", password: PASSWORD, timeout: 30})
+        // b on a new browser: a device b did not sign, of a person chat.crypto.a verified
+        const b2 = browser.newPage({user: "chat.crypto.b", password: PASSWORD, timeout: 30})
         b2.allowProblems(/userPhoto\?userId=/)
         b2.goto("/qapps/BasicComms/Home")
         b2.evaluate(HELPERS)
@@ -279,8 +279,8 @@ feature("john.doe verifies calls.client.b by emoji: the room's label has its che
             try { await window.__e2ee.send(roomId, members, "<p>To verified b</p>"); return null } catch (err) {
                 return err && err.reasonCode === "verifiedUserProblem" ? { reasonCode: err.reasonCode, problems: err.problems } : null }
         }, {arg: [room.id, members], timeout: 20})
-        // Verify, then send: john.doe verifies b's new device by emoji (b did not sign it), and the send goes with no question
-        // b's new browser opens the room (Chat reads its trust), so it knows john.doe's devices
+        // Verify, then send: chat.crypto.a verifies b's new device by emoji (b did not sign it), and the send goes with no question
+        // b's new browser opens the room (Chat reads its trust), so it knows chat.crypto.a's devices
         b2.evaluate(([roomId, members]) => window.moqui.crypto.roomTrust(roomId, members).then(() => true), [room.id, members])
         const flow2 = a.waitFor(async (d) => {
             await window.moqui.crypto.sync()
@@ -304,7 +304,7 @@ feature("john.doe verifies calls.client.b by emoji: the room's label has its che
         const verifiedThenSent = a.evaluate(([roomId, members]) => window.__e2ee.send(roomId, members, "<p>After Verify</p>")
             .then((out) => ({eventSeq: out.eventSeq}), (err) => ({reasonCode: err && err.reasonCode, errors: err && err.errors})), [room.id, members])
         // Send anyway: a third device of b, let through for this room by its key, not as the SDK's trust
-        const b3 = browser.newPage({user: "calls.client.b", password: PASSWORD, timeout: 30})
+        const b3 = browser.newPage({user: "chat.crypto.b", password: PASSWORD, timeout: 30})
         b3.allowProblems(/userPhoto\?userId=/)
         b3.goto("/qapps/BasicComms/Home")
         const thirdDevice = b3.evaluate(() => window.moqui.crypto.ensureDevice().then((d) => d.deviceId))
@@ -346,7 +346,7 @@ feature("john.doe verifies calls.client.b by emoji: the room's label has its che
 
 feature("a store this browser cannot open is kept and reported, never deleted unasked; Start over makes a new device", {
     when() {
-        const page = browser.newPage({user: "calls.client.c", password: PASSWORD, timeout: 30})
+        const page = browser.newPage({user: "chat.crypto.c", password: PASSWORD, timeout: 30})
         page.allowProblems(/userPhoto\?userId=|crypto store|encryption keys/)
         page.goto("/qapps/BasicComms/Home")
         const result = page.evaluate(async () => {
@@ -396,8 +396,8 @@ feature("a new device of the same user reads older messages only after restoring
         const backup = a.evaluate(() => window.moqui.crypto.enableBackup().then((out) => window.moqui.crypto.backupStatus().then((status) => ({out, status}))))
         const item = a.evaluate(([roomId]) => window.__e2ee.get("timeline", {chatRoomId: roomId, limit: 50})
             .then((p) => p.eventList.filter((e) => e.encrypted).pop()), [room.id])
-        // a new browser of john.doe: a new store, so a new device
-        const fresh = browser.newPage({user: "john.doe", timeout: 30})
+        // a new browser of chat.crypto.a: a new store, so a new device
+        const fresh = browser.newPage({user: "chat.crypto.a", password: PASSWORD, timeout: 30})
         fresh.allowProblems(/userPhoto\?userId=/)
         fresh.goto("/qapps/BasicComms/Home")
         const device = fresh.evaluate(() => window.moqui.crypto.ensureDevice())
@@ -410,7 +410,7 @@ feature("a new device of the same user reads older messages only after restoring
         const expected = a.evaluate(([roomId, item]) => window.moqui.crypto.decryptRoom(roomId, item).then((out) => out.content.body), [room.id, item])
         // "New recovery key": a new backup version; the old one keeps its keys, and the old recovery key still restores them
         const second = a.evaluate(() => window.moqui.crypto.enableBackup())
-        const later = browser.newPage({user: "john.doe", timeout: 30})
+        const later = browser.newPage({user: "chat.crypto.a", password: PASSWORD, timeout: 30})
         later.allowProblems(/userPhoto\?userId=/)
         later.goto("/qapps/BasicComms/Home")
         later.evaluate(() => window.moqui.crypto.ensureDevice().then(() => true))

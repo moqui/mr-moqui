@@ -1,5 +1,5 @@
 // The quick switcher on the web (plans/Comms-Messaging.md §3, "Done when"): in Comms, Mod+K, two letters and Enter open a
-// room. john.doe's room of CryptoClientFixtures ("Crypto client spec") is found by "cr" through the server's palette
+// room. The room created for this walk is found by its two-letter prefix through the server's palette
 // (shellSearch, search#PaletteRooms), whose Chat rooms lead while Comms is the current app, with no # prefix. The same
 // walk in the desktop app's shell is ChatDesktop. Comms is the server's comms app (calls.appRoot of the page's config):
 // BasicComms alone, or an app that mounts it, such as BOSS's Comms, which hides BasicComms from the launcher, so BasicComms
@@ -25,22 +25,30 @@ feature("in Comms, Mod+K, two letters and Enter open a room", {
             page.goto(appRoot + "/Chat")
             page.locator(".m-chat-root").waitFor({timeout: 20})
         }
+        const expected = page.evaluate(async root => {
+            const name = "Qz palette " + Date.now()
+            const result = await window.moqui.request(root.replace(/^\/qapps/, "/apps") + "/Chat/createRoom", {
+                method: "POST", params: {roomName: name, roomTypeEnumId: "private", encrypted: false}
+            })
+            if (!result.json.chatRoomId) throw new Error("Could not create the palette room")
+            return {id: result.json.chatRoomId, name}
+        }, appRoot)
         const lead = page.evaluate(() => window.moqui.webrootVue.paletteLead.slice())
         page.keyboard.press("Control+K")
         page.waitFor(() => document.getElementById("m-palette-input") === document.activeElement, {timeout: 10})
-        page.keyboard.type("cr")
+        page.keyboard.type("qz")
         page.keyboard.press("Enter")
         page.waitForURL(/chatRoomId=/, {timeout: 15})
         const url = page.url()
         const roomId = decodeURIComponent((/[?&]chatRoomId=([^&#]*)/.exec(url) || [])[1] || "") || null
         const roomName = page.evaluate(id => window.moqui.request(id[1].replace(/^\/qapps/, "/apps") + "/Chat/room", {params: {chatRoomId: id[0]}})
             .then(result => (result.json && result.json.room && result.json.room.roomName) || null), [roomId, appRoot])
-        return {lead, roomId, roomName, appRoot, path: url.replace(/^[a-z]+:\/\/[^/]+/, "").split("?")[0]}
+        return {lead, expected, roomId, roomName, appRoot, path: url.replace(/^[a-z]+:\/\/[^/]+/, "").split("?")[0]}
     },
-    then({lead, roomId, roomName, appRoot, path}) {
+    then({lead, expected, roomId, roomName, appRoot, path}) {
         lead.includes("Rooms")
-        roomId != null
-        roomName == "Crypto client spec"
+        roomId == expected.id
+        roomName == expected.name
         path == appRoot + "/Chat"
     }
 })

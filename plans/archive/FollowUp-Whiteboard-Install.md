@@ -1,8 +1,9 @@
 # Follow-up: whiteboards, presentation stage and follow, and the per-user install
 
-Follow-up, 2026-11-22. Phases 1 to 7 are implemented. The follow-up remains active for the acceptance failures under **Remaining**.
-This covers a review of the commits that brought [Comms-Whiteboard](Comms-Whiteboard.md)'s boards, meeting boards, ink
-and markup, the presentation stage and follow mode, and [Install-DevCA](Install-DevCA.md)'s per-user install, shared
+> Archived 2026-11-22 after phases 1–7 and the basic-comms acceptance checks passed.
+
+This covers a review of the commits that brought [Comms-Whiteboard](../Comms-Whiteboard.md)'s boards, meeting boards, ink
+and markup, the presentation stage and follow mode, and [Install-DevCA](../Install-DevCA.md)'s per-user install, shared
 `~/.mr-moqui` definitions, development certificates and separate listener ports. The review found the core models
 sound:
 - **Boards:** guest and member grants checked on the server, all four `board@*` limits enforced, SVG shown only
@@ -44,21 +45,25 @@ Decisions:
 - On macOS 27.2.1 (arm64), the real user trust tools installed and rotated generated roots in a disposable keychain. With the login-keychain lookup returning no preference, the fallback located the same disposable keychain. Repeated removal succeeded with and without the root file. The unrelated certificate remained and the test keychain was removed. On Debian 13.7 (Linux aarch64), five real NSS SQL databases passed the same checks, including the SSL trust flag. They covered both Chromium user paths, snap Chromium, Flatpak Chrome and a Firefox profile selected by an absolute path in profiles.ini.
 - The initial webroot run took 55.6 seconds of feature time. After moving Mermaid conversion to acceptance, a quiet release run still took 52.2 seconds. The keyboard regressions now wait for actual selections and submissions and read completed key events directly. The full offline suite then passed all 548 features in 47.3 seconds of feature time. The final framework run measured **47.2 seconds against the 48-second budget** (69.68 seconds wall time). Board merges and compacted deletions remain in regression. Grid’s date checks use the existing offline mount.
 - The live RTC scenario exposed a lock during call-end saves. The save timestamp now uses the same transaction as the collaboration checkpoint. The rebuilt RTC-enabled MeetingBoards scenario executed and passed. Ending the call saved the guest’s rectangle under the host with the meeting and guest names in its note. The service regression passed both features, including the clean-board revision count, image grants before and after revocation and issuing a replacement link. Both Rust lints and screen parsing passed. The focused SFU track test passed. Webroot acceptance passed all seven features after the terminal walk was made independent of the host shell’s prompt and menu focus.
-- Basic-comms acceptance ran 77 features. MeetingBoards was among the 36 passes. Seven failed and 34 were skipped. The encrypted-device verification passed twice on isolated working-tree runs (7/7 each). The other six failures reproduced using the committed framework sources at `d679c4ae3`.
+- The first basic-comms acceptance run covered 77 features. MeetingBoards was among the 36 passes. Seven failed and 34 were skipped. The encrypted-device verification passed twice on isolated working-tree runs (7/7 each). The other six failures reproduced using the committed framework sources at `d679c4ae3`.
 - All eight groups of `./moq test-framework --release --nobuild` passed. The `./moq test-apps --release --nobuild` run passed 4,961 service and 48 client features, plus 31 proofs with three skipped. `cargo lint`, `cargo lint-min`, and screen lint passed (2,417 screens, zero parse failures). Both catalogs passed checks for matching keys, uniqueness, length, unchanged entries and placeholders. All 461 relative file links in the eleven edited Markdown files resolved. The language-pack commit is `4155868`. The Rust workspace passed 6,488 tests with 67 ignored, using one Rust test thread on macOS. The redirect test now supplies its own session-cookie fixture and passes in isolation.
 
-## Remaining
+## Closeout, 2026-11-22
 
-Keep this plan active until the six basic-comms acceptance failures are fixed, per the archive decision on 2026-11-22.
+The full RTC-enabled basic-comms acceptance suite passed in 117.13 seconds. Across 13 specs, 43 features passed, including MeetingBoards and all six chat checks that kept this review open. The harness skipped 34 network-shaping cases that require Linux network namespaces and `tc netem`.
 
-| Spec | Observed failure |
+| Spec | What the passing walk verified |
 |---|---|
-| ChatLabels (phone and desktop) | Both walks time out opening the device verification dialog from the room banner. |
-| PhoneChat (attachments and Back navigation) | The attachment menu includes Location in addition to Camera, Gallery and File. The Back walk encounters an undefined timer label. |
-| ChatDetails (phone) | Opening the details view encounters the same undefined timer label. |
-| ChatPalette | Selecting a room with Mod+K and Enter leaves a different room selected. |
+| ChatLabels (phone and desktop) | A configured test device supplies setup and per-room trust. Both widths show the verified lock and open Bob’s device list from the other room’s Verify button. |
+| PhoneChat (attachments and Back navigation) | The menu offers Camera, Gallery, File and Location. Back closes the menu, sheet, thread and room in order. The test shell loads the expiry-label script used by the shipped shell. |
+| ChatDetails (phone) | The same expiry-label script lets the room details render. The walk checks every details tab, swipes the media viewer and closes the pane. |
+| ChatPalette | Mod+K, two letters and Enter open the room created for the walk. The resulting route, room ID and server-returned name all match. |
 
-Once these checks pass, move this review to `archive/`, add the archive note below its title, update its relative links and move its index entry to archived reviews. [Comms-Whiteboard](Comms-Whiteboard.md) and [Install-DevCA](Install-DevCA.md) track their own remaining work.
+The encrypted-chat walk also passed all seven features on its own and in the full suite. It uses dedicated accounts so devices registered by earlier call scenarios cannot change which room members have verified devices.
+
+All eight framework regression groups passed on the closeout run with one Rust test thread. The earlier two-thread run exhausted a PostgreSQL shared-memory slot and timed out in an XMPP test. Both tests passed twice in isolation and again in the serial suite. Webroot passed 548/548 in 47.2 seconds of feature time against its 48-second budget (69.79 seconds wall time). The service runner reported timing advisories for framework (30.0 seconds against 29) and basic-comms (9.4 seconds against 9).
+
+[Comms-Whiteboard](../Comms-Whiteboard.md) and [Install-DevCA](../Install-DevCA.md) continue to track their own work.
 
 ## Opus 5.5 medium Cost Calibration
 
