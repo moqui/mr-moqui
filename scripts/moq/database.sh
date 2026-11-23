@@ -79,7 +79,9 @@ task_clean_all() {
     clean_dev_paths
     local entry
     local -a js_paths
-    js_paths=()
+    local vault=$JS_WEBROOT/screen/webroot/js/vault/moqui_vault.wasm
+    js_paths=("$JS_SOURCE/fonts/selected.txt" "$vault" "$vault.json")
+    [ "$JS_CACHE" = "$target/js" ] || js_paths+=("$JS_CACHE")
     for entry in "$JS_LIBS"/*; do
         case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
         [ ! -e "$entry" ] || js_paths+=("$entry")

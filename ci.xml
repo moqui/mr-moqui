@@ -70,10 +70,18 @@ along with this software (see the LICENSE.md file). If not, see
         <job name="archive" image="moqui-build" pool="linux" timeout-minutes="180">
             <env name="npm_config_cache" value="/workspace/src/.npm-cache"/>
             <cache key="npm-${hash:runtime/components/base/webroot/build/libs/package-lock.json}-${hash:runtime/components/base/webroot/build/whiteboard/package-lock.json}" path=".npm-cache"/>
+            <cache key="release-source-${hash:.git/HEAD}" path="target/release-source"/>
+            <step name="Get release components" run="./moq component-get"/>
+            <step name="Prepare offline sources" run="mkdir -p target/release-source &amp;&amp; ./moq source-archive target/source.tar.gz &amp;&amp; cp target/source.tar.gz target/release-source/mr-moqui-source.tar.gz"/>
             <step run="./moq build-js"/>
             <step run="./moq build --release"/>
-            <step run="./moq archive dist/mr-moqui.zip"/>
+            <step run="mkdir -p dist &amp;&amp; ./moq archive dist/mr-moqui.zip"/>
+            <artifact name="mr-moqui-source" path="target/release-source/*.tar.gz" retention-days="365"/>
             <artifact name="mr-moqui" path="dist/*.zip" retention-days="365"/>
+        </job>
+        <job name="offline-source" image="moqui-build" pool="linux-offline" needs="archive" timeout-minutes="360">
+            <cache key="release-source-${hash:.git/HEAD}" path="target/release-source"/>
+            <step run="scripts/test-source-archive.sh target/release-source/mr-moqui-source.tar.gz"/>
         </job>
     </pipeline>
 </ci>

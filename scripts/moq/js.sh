@@ -80,7 +80,7 @@ js_clean_js() {
         case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
         run_cmd rm -rf -- "$entry" || return 1
     done
-    run_cmd rm -rf -- "${JS_CACHE:?}"
+    run_cmd rm -rf -- "${JS_CACHE:?}" "$JS_SOURCE/fonts/selected.txt"
 }
 
 task_update_js() { js_locked update-js "$@"; }

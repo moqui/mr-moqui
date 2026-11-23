@@ -262,11 +262,13 @@ prepare_embed() {
     fi
     if [ -n "$OPT_EMBED_OPENSEARCH" ] && [ -z "${MOQUI_OPENSEARCH_ARCHIVE:-}" ] &&
         [ ! -f "$cache/opensearch-$OPENSEARCH_VERSION-$target.tar.gz" ]; then
+        [ "${CARGO_NET_OFFLINE:-}" != true ] || die "offline build needs the OpenSearch archive in $cache"
         info "The OpenSearch archive to embed is not in $cache yet; getting it" >&2
         (task_opensearch_download --cache-only) >&2 || die "could not get the OpenSearch archive"
     fi
     if [ -n "$OPT_EMBED_CHROMIUM" ] && [ -z "${MOQUI_CHROMIUM_ARCHIVE:-}" ] &&
         [ ! -f "$cache/chromium-$target.tar.gz" ]; then
+        [ "${CARGO_NET_OFFLINE:-}" != true ] || die "offline build needs the Chromium archive in $cache"
         info "The Chromium archive to embed is not in $cache yet; getting it" >&2
         (task_chromium_download --cache-only) >&2 || die "could not get the Chromium archive"
     fi
@@ -334,6 +336,7 @@ ensure_pg_archive() {
     [ -z "${MOQUI_PG_ARCHIVE:-}" ] && [ -x "$payload" ] || return 0
     archive=$("$payload" path) || die "could not find where the Postgres archive is kept"
     [ ! -f "$archive" ] || return 0
+    [ "${CARGO_NET_OFFLINE:-}" != true ] || die "offline build needs $archive"
     info "The embedded Postgres archive is not there yet; getting it ($(rel "$payload") strip)" >&2
     run_cmd "$payload" strip >&2 || die "could not get the embedded Postgres archive"
 }
@@ -531,8 +534,10 @@ fn main() {
     moqui_app::link();
     moqui_host::main();
 }"
-    if [ ! -f "$app/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$app/Cargo.lock" ]; then
-        run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
+    local seed=$ROOT/Cargo.lock
+    [ ! -f "$ROOT/vendor/app-Cargo.lock" ] || seed=$ROOT/vendor/app-Cargo.lock
+    if [ ! -f "$app/Cargo.lock" ] || [ "$seed" -nt "$app/Cargo.lock" ]; then
+        run_cmd cp "$seed" "$app/Cargo.lock" || die "could not copy Cargo.lock"
     fi
 }
 
@@ -621,6 +626,7 @@ task_build() {
             continue
         fi
         case $1 in
+            --offline) enable_offline_build || return 1; cargo_args+=(--offline) ;;
             --lite) set_package lite ;;
             --debug) set_package debug ;;
             --release) set_package release ;;

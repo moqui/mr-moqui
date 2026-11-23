@@ -1,4 +1,5 @@
 // Build and verify the browser assets from both npm lockfiles.
+import { esbuildBinary, npmCommand } from '../tools.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'node:fs';
@@ -493,7 +494,7 @@ const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { encoding: 'utf8'
 function installProject(project, directory) {
   mkdirSync(directory, { recursive: true });
   for (const name of ['package.json', 'package-lock.json']) cpSync(join(project, name), join(directory, name));
-  run('npm', ['ci', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: directory });
+  run(npmCommand[0], [...npmCommand.slice(1), 'ci', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: directory });
   const work = join(directory, 'work');
   mkdirSync(work);
   cpSync(join(directory, 'node_modules'), join(work, 'node_modules'),
@@ -526,7 +527,7 @@ function buildAssets(work) {
   }
   const esbuild = (argv) => {
     const out = join(build, 'out', `o${Math.random().toString(36).slice(2)}.js`);
-    run(join(build, 'node_modules', '.bin', 'esbuild'), [...argv, `--outfile=${out}`, '--log-level=error'], { cwd: build });
+    run(esbuildBinary(join(build, 'node_modules')), [...argv, `--outfile=${out}`, '--log-level=error'], { cwd: build });
     return readFileSync(out);
   };
   const ctx = {
@@ -740,6 +741,7 @@ function publish(outputs) {
       const file = join(staged, path);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, bytes);
+      if (!readFileSync(file).equals(bytes)) throw new Error('Staged asset differs: ' + path);
     }
     renameSync(here, backup);
     try { renameSync(staged, here); }

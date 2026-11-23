@@ -184,6 +184,7 @@ component-get|Components|[name...] [-t type] [-r repo]|Get components or compone
 component-depends|Components|[-t type] [-r repo]|Get missing depends-on components for runtime/components/addon
 component-create|Components|<name> [opts]|Create a component from the component template
 component-zip|Components|[name...]|Zip components in runtime/components/addon
+source-archive|Package|[file]|Package tagged sources with offline build inputs
 archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml, or --binary: the binary alone with the runtime built in
 desktop|Package|[dev or build] [--release] [cargo args...]|Run or bundle the desktop app: the node in a Tauri window (crates/moqui-desktop)
 android|Package|[emulator, init, dev or build] [--release] [--window] [args...]|Run or build the Android app, or start its emulator (crates/moqui-mobile)
@@ -226,7 +227,7 @@ zip-components|component-zip
 add-runtime|archive'
 
 # The tasks, one file an area, in scripts/moq/ (each with its tasks, their help and their helpers).
-for moq_part in core js build run test desktop database opensearch chromium git components archive trust completion harness; do
+for moq_part in core js source build run test desktop database opensearch chromium git components archive trust completion harness; do
     # shellcheck source=/dev/null
     . "$ROOT/scripts/moq/$moq_part.sh" || { printf 'moq: could not read scripts/moq/%s.sh\n' "$moq_part" >&2; exit 1; }
 done
@@ -286,6 +287,7 @@ main() {
         exit 0
     fi
     cd "$ROOT" || die "could not cd to $ROOT"
+    if [ -f "$ROOT/vendor/cargo-config.toml" ]; then enable_offline_build || return 1; fi
     # Alias arguments are fixed words from ALIASES, so splitting them is safe.
     # shellcheck disable=SC2086
     "task_${RESOLVED_TASK//-/_}" $RESOLVED_ARGS "$@"

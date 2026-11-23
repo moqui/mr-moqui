@@ -20,7 +20,8 @@ runs on the result of the one before; a failure stops the release until it is fi
 6. **Load (optional)**: the components' load scripts (`./moq test-load <component> --script <Name>`) against a release
    build with production-like data, compared with the last release's results ([Load-Runner](../../../docs/tools/Load-Runner.md)).
 7. **The build**: `./moq build --release`, `./moq archive`, `moqui embedded checksum`, as CI's `release` pipeline does.
-8. **The upgrade**: boot the target runtime's conf once (a retired `default-property`, a `${}` in an attribute or a
+8. **The source release**: produce the offline source archive from the clean release tag. Verify the unpacked artifact in the network-disabled release job with `./moq build --offline --release` and `./moq test-framework`.
+9. **The upgrade**: boot the target runtime's conf once (a retired `default-property`, a `${}` in an attribute or a
    renamed attribute refuses the start, naming each and its replacement), check its names with `moqui conf env`, and
    write any setting the release renamed or added into its upgrade notes
    ([Run-Deploy](../../../docs/Run-Deploy.md#settings-and-the-environment)). Renamed so far (`RETIRED_ATTRIBUTES` in

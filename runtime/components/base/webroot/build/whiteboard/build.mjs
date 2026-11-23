@@ -1,5 +1,6 @@
 // Rebuild the board in an isolated dependency tree. Its pinned React and Mermaid transitive versions
 // are independent of the shell. The converter takes window.mermaid, and the editor takes no Yjs.
+import { esbuildBinary, npmCommand } from '../tools.mjs';
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, cpSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +20,7 @@ export function buildBoard(work, installed = false) {
   for (const filename of ['editor-entry.js', 'converter-external.js', 'mermaid-external.js']) {
     cpSync(join(source, filename), join(work, filename));
   }
-  if (!installed) execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: work });
+  if (!installed) execFileSync(npmCommand[0], [...npmCommand.slice(1), 'ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: work });
   const modules = join(work, 'node_modules');
   const prod = join(modules, '@excalidraw/excalidraw/dist/prod');
   const outputs = new Map();
@@ -59,14 +60,14 @@ export function buildBoard(work, installed = false) {
     'Promise.resolve({WorkerUrl:new URL("subset-worker.js",window.EXCALIDRAW_ASSET_PATH)})');
   // The worker is separately bundled below. Its URL is a local asset even though the editor is an IIFE.
   replaceOnce(join(prod, 'chunk-K2UTITRG.js'), '!import.meta.url||t.toString()===import.meta.url', 't.toString()===window.location.href');
-  execFileSync(join(modules, '.bin/esbuild'), [join(prod, 'subset-worker.chunk.js'), '--bundle', '--minify', '--format=esm',
+  execFileSync(esbuildBinary(modules), [join(prod, 'subset-worker.chunk.js'), '--bundle', '--minify', '--format=esm',
     '--outfile=subset-worker.js', '--log-level=error'], { cwd: work });
   outputs.set('excalidraw/subset-worker.js', readFileSync(join(work, 'subset-worker.js')));
   for (const [name, entry, global, alias] of [
     ['editor', 'editor-entry.js', 'MoquiBoardEditor', '@excalidraw/mermaid-to-excalidraw=./converter-external.js'],
     ['converter', 'node_modules/@excalidraw/mermaid-to-excalidraw/dist/index.js', 'MoquiBoardMermaid', 'mermaid=./mermaid-external.js']
   ]) {
-    execFileSync(join(modules, '.bin/esbuild'), [entry, '--bundle', '--minify', '--conditions=production', '--format=iife',
+    execFileSync(esbuildBinary(modules), [entry, '--bundle', '--minify', '--conditions=production', '--format=iife',
       '--global-name=' + global, '--define:process.env.NODE_ENV="production"', '--alias:' + alias,
       '--outfile=' + name + '.js', '--metafile=' + name + '-meta.json', '--log-level=error'], { cwd: work });
     outputs.set('excalidraw/' + name + '.js', readFileSync(join(work, name + '.js')));

@@ -116,3 +116,9 @@ systemctl --user start moqui.service
 ```
 
 Rootless user services need a lingering user (`loginctl enable-linger`) if they should run without a login. A system-wide copy goes in `/etc/containers/systemd/` and is `systemctl start moqui.service` without `--user`.
+
+
+The offline source check uses Chromium as user 1000 in a network-disabled container. Its seccomp profile permits
+the namespace calls Chromium uses for its browser sandbox. The container drops capabilities except the chroot
+capability used by the sandbox. `chromium-seccomp.json` is the Apache-2.0 profile published by Playwright v1.64.1.
+[Upstream profile](https://github.com/microsoft/playwright/blob/v1.64.1/utils/docker/seccomp_profile.json)

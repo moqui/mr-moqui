@@ -13,6 +13,21 @@ Zod 4.6.6. The browser editor uses Excalidraw 0.18.1 and its actual editor and c
 UUID 9.0.1. The converter still uses the shell's Mermaid. Its installed parser tree resolves lodash-es 4.18.1.
 The lock changes resolved with the ordinary 14-day cooldown.
 
+The original lock and bundle findings are grouped by the version that resolves them. Parent packages in the audit inherit these findings.
+
+| Package | Resolved version | Distribution | Advisory |
+|---|---|---|---|
+| @excalidraw/excalidraw | 0.18.1 | Editor bundle. The editor and converter use the shell Mermaid global. | [GHSA-39h7-pwv7-rc3x](https://github.com/advisories/GHSA-39h7-pwv7-rc3x) |
+| @excalidraw/mermaid-to-excalidraw | 2.2.2 | The shipped converter already used 2.2.2. The editor update removed the affected nested converter from the install. | [GHSA-39h7-pwv7-rc3x](https://github.com/advisories/GHSA-39h7-pwv7-rc3x) |
+| dompurify | 3.4.17 | Mermaid shipped its own 3.4.12 alongside the standalone 3.4.17. These advisories applied to the shipped copy. | [GHSA-55q2-fjhq-7xh7](https://github.com/advisories/GHSA-55q2-fjhq-7xh7) [GHSA-6688-9rhm-gjv2](https://github.com/advisories/GHSA-6688-9rhm-gjv2) [GHSA-c6gr-qvv4-5v3f](https://github.com/advisories/GHSA-c6gr-qvv4-5v3f) [GHSA-cg2g-xh64-v4q7](https://github.com/advisories/GHSA-cg2g-xh64-v4q7) [GHSA-mrv2-3pqr-j5jr](https://github.com/advisories/GHSA-mrv2-3pqr-j5jr) |
+| dompurify | Removed 3.1.6 | The converter alias excluded this older nested install from the editor. Its lockfile carried these additional advisories. | [GHSA-39q2-94rc-95cp](https://github.com/advisories/GHSA-39q2-94rc-95cp) [GHSA-76mc-f452-cxcm](https://github.com/advisories/GHSA-76mc-f452-cxcm) [GHSA-c2j3-45gr-mqc4](https://github.com/advisories/GHSA-c2j3-45gr-mqc4) [GHSA-cj63-jhhr-wcxv](https://github.com/advisories/GHSA-cj63-jhhr-wcxv) [GHSA-cjmm-f4jc-qw8r](https://github.com/advisories/GHSA-cjmm-f4jc-qw8r) [GHSA-cmwh-pvxp-8882](https://github.com/advisories/GHSA-cmwh-pvxp-8882) [GHSA-crv5-9vww-q3g8](https://github.com/advisories/GHSA-crv5-9vww-q3g8) [GHSA-gvmj-g25r-r7wr](https://github.com/advisories/GHSA-gvmj-g25r-r7wr) [GHSA-h7mw-gpvr-xq4m](https://github.com/advisories/GHSA-h7mw-gpvr-xq4m) [GHSA-h8r8-wccr-v5f2](https://github.com/advisories/GHSA-h8r8-wccr-v5f2) [GHSA-hpcv-96wg-7vj8](https://github.com/advisories/GHSA-hpcv-96wg-7vj8) [GHSA-r47g-fvhr-h676](https://github.com/advisories/GHSA-r47g-fvhr-h676) [GHSA-rp9w-3fw7-7cwq](https://github.com/advisories/GHSA-rp9w-3fw7-7cwq) [GHSA-v2wj-7wpq-c8vv](https://github.com/advisories/GHSA-v2wj-7wpq-c8vv) [GHSA-v8jm-5vwx-cfxm](https://github.com/advisories/GHSA-v8jm-5vwx-cfxm) [GHSA-v9jr-rg53-9pgp](https://github.com/advisories/GHSA-v9jr-rg53-9pgp) [GHSA-vhxf-7vqr-mrjg](https://github.com/advisories/GHSA-vhxf-7vqr-mrjg) [GHSA-vxr8-fq34-vvx9](https://github.com/advisories/GHSA-vxr8-fq34-vvx9) [GHSA-x4vx-rjvf-j5p4](https://github.com/advisories/GHSA-x4vx-rjvf-j5p4) |
+| katex | 0.18.2 | Previously served inside Mermaid at 0.16.47. | [GHSA-238p-pmpm-9mq7](https://github.com/advisories/GHSA-238p-pmpm-9mq7) |
+| lodash-es | 4.18.1 | Installed by the parser. The whiteboard bundle input list contains no lodash-es. | [GHSA-r5fr-rjxr-66jc](https://github.com/advisories/GHSA-r5fr-rjxr-66jc) [GHSA-xxjr-mmjv-4gpg](https://github.com/advisories/GHSA-xxjr-mmjv-4gpg) |
+| mermaid | 11.17.2 | The shell serves the 11.x bundle. The board alias excluded the affected 10.x copies, now removed. | [GHSA-2v8p-3f2j-5mp7](https://github.com/advisories/GHSA-2v8p-3f2j-5mp7) [GHSA-6m6c-36f7-fhxh](https://github.com/advisories/GHSA-6m6c-36f7-fhxh) [GHSA-6x64-9x62-f2gx](https://github.com/advisories/GHSA-6x64-9x62-f2gx) [GHSA-7rqq-prvp-x9jh](https://github.com/advisories/GHSA-7rqq-prvp-x9jh) [GHSA-87f9-hvmw-gh4p](https://github.com/advisories/GHSA-87f9-hvmw-gh4p) [GHSA-c4c3-pg64-4m4v](https://github.com/advisories/GHSA-c4c3-pg64-4m4v) [GHSA-ghcm-xqfw-q4vr](https://github.com/advisories/GHSA-ghcm-xqfw-q4vr) [GHSA-xcj9-5m2h-648r](https://github.com/advisories/GHSA-xcj9-5m2h-648r) |
+| nanoid | 3.3.20 and 5.1.16 | Both branches ship in the editor and converter assets. | [GHSA-28wg-ghj8-5hjv](https://github.com/advisories/GHSA-28wg-ghj8-5hjv) [GHSA-2v37-7h3g-55p8](https://github.com/advisories/GHSA-2v37-7h3g-55p8) [GHSA-mwcw-c2x4-8c55](https://github.com/advisories/GHSA-mwcw-c2x4-8c55) [GHSA-xwg4-73v4-xw9w](https://github.com/advisories/GHSA-xwg4-73v4-xw9w) |
+| uuid | Removed 9.0.1 | Old nested install only. No UUID package appeared in the whiteboard bundle inputs. | [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq) |
+| zod | 4.6.6 | OpenUI ships Zod code in the bundle used by the browser and QuickJS. | [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5) |
+
 ## Why
 
 MR Moqui is becoming an engine for hosting JavaScript. Screens, the qvt client, Assist and the whiteboard run in the
@@ -36,9 +51,7 @@ What that committed output costs:
 
 - **npm is required to build.** Node and npm are build dependencies, like cargo, for every developer, for CI, and
   for the release build.
-  - The Node floor is the version the build image (`debian:13-slim`) installs, which is the one CI tests. It is set
-    when this is built. `refresh.mjs` says Node 18, which has been past its end of life since April 2025, and Node 20
-    since April 2026. The npm floor is 7, for lockfile version 3.
+  - Development and CI use Node 24 LTS and its bundled npm. The build image pins Node 24.22.3, which ships npm 11.19.1. Both npm projects commit lockfile version 3.
   - Production machines still do not need Node. The archive, an embedded binary and the desktop and mobile apps all
     carry the built libraries.
   - There is no separate prebuilt JS archive. An offline build comes from the source release, which carries the
@@ -316,11 +329,11 @@ How far this goes:
   (`plans/Debian-Packaging.md` §3). It is the "project apt repository" track of that plan (§6.5), which already
   assumes `cargo vendor` output as an extra tarball.
 
-## Open decisions
+## Release size
 
-- **The size of the complete lock's tree.** Settled by the measurement in step 2 (see [Layout](#layout)).
-- **One source archive or two.** A small one that needs the network, and the full one with `vendor/`, or the full
-  one alone. Decided when the vendored size is known.
+The release ships one source archive. The arm64 Linux verification fixture, including seven application repositories,
+compressed to 847 MiB. Its extracted inputs occupied 1.2 GiB for Cargo, 503 MiB for npm and 100 MiB for the five
+PostgreSQL payloads. The release commands and CI runner requirements are in [Build-Test](../docs/Build-Test.md#offline-source-release).
 
 ## Steps
 

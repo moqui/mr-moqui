@@ -31,6 +31,7 @@ RUN apt-get update \
         libgcc-s1 \
         libgssapi-krb5-2 \
         liblz4-1 \
+        libpq5 \
         libssl3t64 \
         libxml2 \
         libzstd1 \

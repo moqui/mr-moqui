@@ -1,7 +1,7 @@
 // Fontsource supplies both the WOFF2 and the Unicode ranges for each face.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-export const packs = JSON.parse(readFileSync(new URL('fonts.json', import.meta.url)));
+export const packs = JSON.parse(readFileSync(process.env.JS_PROJECTS ? join(process.env.JS_PROJECTS, 'fonts/fonts.json') : new URL('fonts.json', import.meta.url)));
 
 export function fontLibraries() {
   return Object.entries(packs).filter(([id]) => id !== 'excalidraw-cjk').flatMap(([id, pack]) => {

@@ -217,11 +217,13 @@ check "build two embed levels" 1 'ask for two levels' -- dry "$M" build --embed 
 check "run --embed" 0 'embed-production -p moqui$' -- dry "$M" run --embed production
 if [ "$(uname -s)" = Darwin ]; then
     check "build --embed-opensearch explains the missing macOS archive" 1 'OpenSearch publishes no macOS tarball' -- \
-        env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+        env CARGO_NET_OFFLINE=false MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
 else
     check "build --embed-opensearch gets the archive first" 0 'opensearch-3\.[0-9.]*-.*\.tar\.gz' -- \
-        env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
+        env CARGO_NET_OFFLINE=false MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --embed-opensearch
 fi
+check "offline build names the missing OpenSearch archive" 1 'offline build needs the OpenSearch archive' -- \
+    env MOQUI_EMBED_CACHE="$FIX/embed-cache" MOQ_DRY_RUN=1 "$M" build --offline --embed-opensearch
 check "complete build --embed" 0 '^production$' -- "$M" __complete 3 build --embed p
 rm -f "$R/cargo.log"
 check "run --debug builds first" 0 '' -- "$M" run --debug

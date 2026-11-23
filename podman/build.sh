@@ -100,6 +100,9 @@ if [ "$build_image" -eq 1 ]; then
     # with the vault's browser module and its stamp, which are not tracked, so ./moq test there finds it up to date
     libs=runtime/components/base/webroot/screen/webroot/libs
     cp -a "$root/$libs/." "$build/tree/$libs/"
+    # Reuse the staged selection when a component job verifies the read-only /opt/moqui tree.
+    perl -MJSON::PP -0777 -ne 'print join(" ", @{decode_json($_)}), "\n"' \
+        "$root/$libs/fonts-extra/installed.json" >"$build/tree/runtime/components/base/webroot/build/fonts/selected.txt"
     vault=runtime/components/base/webroot/screen/webroot/js/vault
     cp -a "$root/$vault/moqui_vault.wasm" "$root/$vault/moqui_vault.wasm.json" "$build/tree/$vault/"
     rust_version=$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' "$root/rust-toolchain.toml")

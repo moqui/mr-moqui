@@ -1,6 +1,7 @@
 // Maintenance commands. Use the same two lockfiles that build-js installs.
+import { npmCommand } from '../tools.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,14 +14,14 @@ const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
 const manifest = read(join(output, 'MANIFEST.json'));
 
 function npm(argv, cwd, capture = false) {
-  return execFileSync('npm', argv, { cwd, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
+  return execFileSync(npmCommand[0], [...npmCommand.slice(1), ...argv], { cwd, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
 }
 
 if (task === 'audit') {
   if (args.length) throw new Error('audit-js takes no arguments');
   for (const project of projects) {
     console.log('Auditing', project);
-    const result = spawnSync('npm', ['audit', '--package-lock-only'], { cwd: join(source, '..', project), stdio: 'inherit' });
+    const result = spawnSync(npmCommand[0], [...npmCommand.slice(1), 'audit', '--package-lock-only'], { cwd: join(source, '..', project), stdio: 'inherit' });
     if (result.status !== 0) process.exitCode = 1;
   }
   const diagram = readFileSync(join(output, 'mermaid/mermaid.min.js'), 'utf8');
@@ -44,7 +45,7 @@ if (task === 'audit') {
     const cwd = join(source, '..', project);
     for (const before of [[], ['--before=' + cutoff]]) {
       console.log(project, ...before);
-      const result = spawnSync('npm', ['outdated', '--package-lock-only', ...before], { cwd, stdio: 'inherit' });
+      const result = spawnSync(npmCommand[0], [...npmCommand.slice(1), 'outdated', '--package-lock-only', ...before], { cwd, stdio: 'inherit' });
       if (result.error || ![0, 1].includes(result.status)) throw result.error || new Error('npm outdated failed');
     }
   }
@@ -71,9 +72,23 @@ if (task === 'audit') {
         ...(security ? [] : ['--before=' + cutoff]), ...updates], cwd);
     }
     if (!found) throw new Error('Unknown direct dependency ' + name);
+    const catalogFile = join(source, '../fonts/fonts.json');
+    const catalog = read(catalogFile);
+    const locks = projects.map(project => read(join(candidate, project, 'package-lock.json')).packages);
+    for (const pack of Object.values(catalog)) for (const font of pack.sources) {
+      const pkg = locks.map(lock => lock['node_modules/' + font.package]).find(Boolean);
+      if (!pkg) throw new Error('Missing locked font source ' + font.package);
+      font.version = pkg.version;
+      font.integrity = pkg.integrity;
+    }
+    mkdirSync(join(candidate, 'fonts'));
+    const newCatalog = join(candidate, 'fonts/fonts.json');
+    writeFileSync(newCatalog, JSON.stringify(catalog, null, 2) + '\n');
     execFileSync(process.execPath, [join(source, 'refresh.mjs'), '--write'], {
       stdio: 'inherit', env: { ...process.env, JS_PROJECTS: candidate }
     });
+    cpSync(newCatalog, catalogFile + '.new');
+    renameSync(catalogFile + '.new', catalogFile);
     for (const project of projects) for (const file of ['package.json', 'package-lock.json']) {
       const dest = join(source, '..', project, file);
       cpSync(join(candidate, project, file), dest + '.new');

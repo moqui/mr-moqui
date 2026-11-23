@@ -99,6 +99,7 @@ if [ "${MOQ_DRY_RUN:-}" = 1 ]; then
     exit 0
 fi
 
+[ "${CARGO_NET_OFFLINE:-}" != true ] || { echo "offline build needs the pinned NASM on PATH or in its cache" >&2; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "curl is required to download NASM" >&2; exit 1; }
 command -v sha256sum >/dev/null 2>&1 || { echo "sha256sum is required to check NASM" >&2; exit 1; }
 

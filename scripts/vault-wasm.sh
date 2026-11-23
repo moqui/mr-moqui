@@ -137,6 +137,7 @@ need_target() {
     local sysroot
     sysroot=$(rustc --print sysroot) || die "rustc --print sysroot failed"
     [ ! -d "$sysroot/lib/rustlib/$target" ] || return 0
+    [ "${CARGO_NET_OFFLINE:-}" != true ] || die "offline build needs the preinstalled $target Rust target"
     if command -v rustup >/dev/null 2>&1; then
         echo "vault-wasm.sh: adding the $target target to $(rustc -V) (rustup target add $target)" >&2
         rustup target add "$target" >&2 || die "rustup target add $target failed"

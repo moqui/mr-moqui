@@ -324,6 +324,23 @@ own ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)). How much i
   that keeps them (`./moq archive --binary` writes them beside the `.gz`) has the binary check itself at startup
   ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)).
 
+### Offline source release
+
+Run `./moq source-archive [file.tar.gz]` at a clean release tag. It includes the framework, each checked-out component
+at its recorded revision, all locked npm tarballs and vendored Cargo sources. The Postgres payloads cover Linux and
+macOS on arm64 and x86-64, and Windows on x86-64. The archive includes the stripped payloads and checksums.
+Install the pinned Rust toolchain with the wasm32-unknown-unknown target, Node 24 with npm, and the platform build
+prerequisites before disconnecting. On Debian the embedded Postgres standby also needs `libpq5` for WAL replay.
+Unpack the archive and run `./moq build --offline --release` in its root.
+An ordinary checkout can also use `--offline` once the package and Postgres caches are populated.
+
+The tag pipeline hands the archive to the trusted `linux-offline` shell runner via the detached commit’s cache key.
+Provision that pool with a rootless Podman or Docker engine, disk for a cold Rust build and regression run, and the
+`localhost/moqui-build:latest` image built with Chromium. The runner can reach its CI server to restore the archive.
+`scripts/test-source-archive.sh <archive>` streams it into a fresh container with `--network none` and empty caches,
+checks the expected revision when `MOQUI_CI_COMMIT` is set, builds the release and runs `./moq test-framework`.
+Set `MOQUI_BUILD_IMAGE` to use another locally installed build image.
+
 ### Instance archive
 
 `./moq archive [file]` (with the package flags and `--nobuild`) zips what one instance needs to run into `file`

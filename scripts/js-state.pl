@@ -60,7 +60,9 @@ if ($action eq 'check') {
     if (-f $stamp) {
         my $saved = eval { decode_json(bytes($stamp)) };
         exit 1 unless $saved && $saved->{inputs} eq $signature;
-        exit 0;
+        exit 0 if exists $saved->{outputs};
+        $ENV{JS_NODE_VERSION} = $saved->{node} if defined $saved->{node};
+        $ENV{JS_NPM_VERSION} = $saved->{npm} if defined $saved->{npm};
     }
     # A packaged or read-only tree can be verified directly against its manifest.
     exit 0 unless -w $cache || !-e $cache && -w "$cache/..";
@@ -68,7 +70,16 @@ if ($action eq 'check') {
     die "Unknown state operation $action\n";
 }
 make_path($cache);
+my %esbuild;
+for my $project (qw(libs whiteboard)) {
+    my $lock = "$source/$project/package-lock.json";
+    $esbuild{$project} = decode_json(bytes($lock))->{packages}{'node_modules/esbuild'}{version} if -f $lock;
+}
+$want{'MANIFEST.json'} = sha256_hex(bytes("$libs/MANIFEST.json"));
 open my $out, '>:raw', "$stamp.$$" or die "$stamp: $!";
-print $out encode_json({ inputs => $signature, node => $ENV{JS_NODE_VERSION}, npm => $ENV{JS_NPM_VERSION} });
+print $out JSON::PP->new->canonical->encode({
+    inputs => $signature, node => $ENV{JS_NODE_VERSION}, npm => $ENV{JS_NPM_VERSION},
+    esbuild => \%esbuild, packs => [sort keys %selected], outputs => \%want,
+});
 close $out or die "$stamp: $!";
 rename "$stamp.$$", $stamp or die "$stamp: $!";

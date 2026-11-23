@@ -23,6 +23,7 @@ procedure.
    - An application: `./moq test-apps`, and `moqui lint --screens` for a changed screen.
    - An acceptance test you added or changed: that test, then its component's acceptance suite. No other acceptance
      test, no load test, no `./moq test-all` unless the user asks.
+   - JS lockfiles, build inputs, fonts or patches: `./moq verify-js`, plus focused browser specs for the affected consumers.
    - Docs only: no build; check the links.
 3. **Read the results** ([Reading the results](../../../docs/Build-Test.md#reading-the-results)):
    - `cargo test` stops at the first failing binary: `cargo test --workspace --no-fail-fast` to see them all.
