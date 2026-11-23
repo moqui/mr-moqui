@@ -2,6 +2,8 @@
 # The CI runner needs its server during checkout and cache restore. Only the build container is offline.
 set -euo pipefail
 [ "$#" -eq 1 ] || { echo "usage: $0 mr-moqui-source.tar.gz" >&2; exit 1; }
+# In CI the archive comes from the archive job through the release-source cache.
+[ -f "$1" ] || { echo "$1 is missing: the release-source cache was not restored; rerun the archive job" >&2; exit 1; }
 root=$(cd "$(dirname "$0")/.." && pwd)
 if command -v podman >/dev/null 2>&1; then engine=podman; else engine=docker; fi
 # The ACME reachability test connects to the test node through this loopback name.

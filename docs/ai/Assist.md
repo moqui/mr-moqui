@@ -928,7 +928,7 @@ no image of any kind (each a placeholder) and no link but a checked path of the 
 anywhere. An `Image` is a static file of this site (an image's extension, no query, never under `/apps`, `/qapps`,
 `/rest` or `/assist`, whose GET would run with the cookie); a `Link` goes through `safePath`; a Mermaid height is a CSS
 length only. lang-core's bundle has no process, network or telemetry call (its telemetry and git code is emptied by
-the reviewed patch, and `refresh.mjs` fails on `child_process`, `execFile`, `getBuiltinModule`, `sendBeacon`,
+the reviewed patch, and `build/libs/refresh.mjs` fails on `child_process`, `execFile`, `getBuiltinModule`, `sendBeacon`,
 `XMLHttpRequest`, `fetch(` and the telemetry hosts).
 
 **Reads: one proxy** (`crates/moqui-llm/src/ui/proxy.rs`, J12). A Query, a Lookup's options and a Display's value are

@@ -12,6 +12,16 @@ const read = file => JSON.parse(readFileSync(file));
 const [task, ...args] = process.argv.slice(2);
 const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
 const manifest = read(join(output, 'MANIFEST.json'));
+// Dependencies inlined in a library's published dist file, which the lockfiles cannot see. pattern reads the inlined
+// version from the file; null lists one that carries no version, for review by hand. Mermaid, Tiptap, CodeMirror,
+// OpenUI and the whiteboard are bundled here from the locks, so npm audit covers what they contain.
+const BUNDLED_COPIES = [
+  { lib: 'chartjs', file: 'chartjs/chart.umd.min.js', pkg: '@kurkle/color', pattern: /@kurkle\/color v(\d+\.\d+\.\d+)/ },
+  { lib: 'drauu', file: 'drauu/drauu.js', pkg: 'perfect-freehand', pattern: /perfect-freehand@(\d+\.\d+\.\d+)\// },
+  { lib: 'drauu', file: 'drauu/drauu.js', pkg: 'nanoevents', pattern: /nanoevents@(\d+\.\d+\.\d+)\// },
+  ...['rrweb-snapshot', 'rrdom', 'mitt', 'base64-arraybuffer', '@xstate/fsm']
+    .map(pkg => ({ lib: 'rrweb', file: 'rrweb/rrweb.umd.min.js', pkg, pattern: null })),
+];
 
 function npm(argv, cwd, capture = false) {
   return execFileSync(npmCommand[0], [...npmCommand.slice(1), ...argv], { cwd, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'inherit'] : 'inherit' });
@@ -24,30 +34,61 @@ if (task === 'audit') {
     const result = spawnSync(npmCommand[0], [...npmCommand.slice(1), 'audit', '--package-lock-only'], { cwd: join(source, '..', project), stdio: 'inherit' });
     if (result.status !== 0) process.exitCode = 1;
   }
-  const diagram = readFileSync(join(output, 'mermaid/mermaid.min.js'), 'utf8');
+  // The lockfiles name what the build bundles itself. A library copied as published may carry its own copy of a
+  // dependency at a version the lock does not show, so read that version from the distributed file.
   const embedded = {};
-  for (const [pkg, pattern] of [['dompurify', /DOMPurify ([\d.]+)/], ['katex', /"([\d.]+)",\w+=\{Span:/]]) {
-    const version = diagram.match(pattern)?.[1];
-    if (!version) throw new Error('Review embedded ' + pkg + ' version in Mermaid');
-    console.log('Mermaid bundles', pkg, version);
-    embedded[pkg] = [version];
+  for (const { lib, file, pkg, pattern } of BUNDLED_COPIES) {
+    const text = readFileSync(join(output, file), 'utf8');
+    if (!pattern) { console.log(lib, 'bundles', pkg, 'with no version in', file + ': review by hand'); continue; }
+    const version = text.match(pattern)?.[1];
+    if (!version) throw new Error('Update BUNDLED_COPIES: no ' + pkg + ' version found in ' + file);
+    console.log(lib, 'bundles', pkg, version);
+    (embedded[pkg] ??= []).push(version);
   }
-  const response = await fetch('https://registry.npmjs.org/-/npm/v1/security/advisories/bulk',
-    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(embedded) });
-  if (!response.ok) throw new Error('Bundled library audit returned ' + response.status);
-  for (const [pkg, advisories] of Object.entries(await response.json())) {
-    for (const item of advisories) console.error(pkg, item.severity, item.title, item.url);
-    process.exitCode = 1;
+  if (Object.keys(embedded).length) {
+    const response = await fetch('https://registry.npmjs.org/-/npm/v1/security/advisories/bulk',
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(embedded) });
+    if (!response.ok) throw new Error('Bundled library audit returned ' + response.status);
+    for (const [pkg, advisories] of Object.entries(await response.json())) {
+      for (const item of advisories) console.error(pkg, item.severity, item.title, item.url);
+      process.exitCode = 1;
+    }
   }
 } else if (task === 'outdated') {
   if (args.length) throw new Error('outdated-js takes no arguments');
+  // npm outdated reads an installed tree, which the source directories do not have. Compare each exact pin with the
+  // registry instead: the newest release ^pin admits and the newest overall, each also as of the cooldown cutoff.
+  const stable = v => /^\d+\.\d+\.\d+$/.test(v);
+  const parts = v => v.split('.').map(Number);
+  const newer = (a, b) => { const [x, y] = [parts(a), parts(b)]; for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i]; return false; };
+  const newest = list => list.reduce((best, v) => (!best || newer(v, best) ? v : best), null);
+  const rows = [];
   for (const project of projects) {
-    const cwd = join(source, '..', project);
-    for (const before of [[], ['--before=' + cutoff]]) {
-      console.log(project, ...before);
-      const result = spawnSync(npmCommand[0], [...npmCommand.slice(1), 'outdated', '--package-lock-only', ...before], { cwd, stdio: 'inherit' });
-      if (result.error || ![0, 1].includes(result.status)) throw result.error || new Error('npm outdated failed');
+    const pins = Object.entries(read(join(source, '..', project, 'package.json')).dependencies);
+    for (let i = 0; i < pins.length; i += 8) {
+      await Promise.all(pins.slice(i, i + 8).map(async ([pkg, pin]) => {
+        const response = await fetch('https://registry.npmjs.org/' + pkg.replace('/', '%2F'));
+        if (!response.ok) throw new Error('Registry returned ' + response.status + ' for ' + pkg);
+        const { time } = await response.json();
+        const all = Object.keys(time).filter(stable);
+        const cooled = all.filter(v => time[v] <= cutoff);
+        // What ^pin admits: the same major, or for 0.x the same minor (0.0.x: the same patch).
+        const p = parts(pin);
+        const lead = p[0] ? 1 : p[1] ? 2 : 3;
+        const caret = list => list.filter(v => parts(v).slice(0, lead).every((n, i) => n === p[i]));
+        const row = { project, pkg, pin, inMajor: newest(caret(cooled)), latest: newest(cooled), newest: newest(all) };
+        if ([row.inMajor, row.latest, row.newest].some(v => v && newer(v, pin))) rows.push(row);
+      }));
     }
+  }
+  if (!rows.length) console.log('Every pin is the newest release.');
+  else {
+    const table = [['Project', 'Package', 'Pinned', 'Compatible, cooled', 'Latest, cooled', 'Newest'],
+      ...rows.sort((a, b) => a.project.localeCompare(b.project) || a.pkg.localeCompare(b.pkg))
+        .map(r => [r.project, r.pkg, r.pin, r.inMajor ?? '-', r.latest ?? '-', r.newest ?? '-'])];
+    const widths = table[0].map((_, c) => Math.max(...table.map(row => row[c].length)));
+    for (const row of table) console.log(row.map((cell, c) => cell.padEnd(widths[c])).join('  ').trimEnd());
+    console.log('Cooled: published before ' + cutoff.slice(0, 10) + '. update-js --all takes "Compatible, cooled" (^pin).');
   }
 } else if (task === 'update') {
   const security = args[0] === '--security';
@@ -67,7 +108,9 @@ if (task === 'audit') {
       const pins = read(join(cwd, 'package.json')).dependencies;
       if (!all && !Object.hasOwn(pins, name)) continue;
       found = true;
-      const updates = all ? Object.keys(pins).map(pkg => pkg + '@*') : [name + '@' + args[1]];
+      // --all takes what ^pin admits: the same major, or the same minor of a 0.x. Anything past that is its own reviewed
+      // update-js <package> <version>.
+      const updates = all ? Object.entries(pins).map(([pkg, pin]) => pkg + '@^' + pin) : [name + '@' + args[1]];
       npm(['install', '--package-lock-only', '--save-exact', '--ignore-scripts', '--no-audit', '--no-fund',
         ...(security ? [] : ['--before=' + cutoff]), ...updates], cwd);
     }

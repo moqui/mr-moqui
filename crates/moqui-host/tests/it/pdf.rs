@@ -99,8 +99,9 @@ fn an_html_print_document_becomes_pdf_and_reaches_no_network() {
 fn pdf_library() -> moqui_core::screen::PdfLibrary {
     let libs = crate::common::repo_runtime().join("components/base/webroot/screen/webroot/libs/pdfjs");
     moqui_core::screen::PdfLibrary {
-        main: std::fs::read_to_string(libs.join("pdf.min.mjs")).expect("pdf.min.mjs"),
-        worker: std::fs::read_to_string(libs.join("pdf.worker.min.mjs")).expect("pdf.worker.min.mjs"),
+        main: std::fs::read_to_string(libs.join("pdf.min.mjs")).expect("pdf.min.mjs; run ./moq build-js"),
+        worker: std::fs::read_to_string(libs.join("pdf.worker.min.mjs"))
+            .expect("pdf.worker.min.mjs; run ./moq build-js"),
     }
 }
 

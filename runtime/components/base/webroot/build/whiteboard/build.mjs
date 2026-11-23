@@ -12,9 +12,8 @@ const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export function buildBoard(work, installed = false) {
   mkdirSync(work, { recursive: true });
-  if (installed) {
-    for (const filename of ['package.json', 'package-lock.json']) cpSync(join(work, '..', filename), join(work, filename));
-  } else {
+  // An installed tree already holds the lock it was installed from.
+  if (!installed) {
     for (const filename of ['package.json', 'package-lock.json']) cpSync(join(source, filename), join(work, filename));
   }
   for (const filename of ['editor-entry.js', 'converter-external.js', 'mermaid-external.js']) {

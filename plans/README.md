@@ -66,11 +66,11 @@ audits and historical tests do not complete a walk. The
   one `grpc-listen-port`), a name-constrained dev CA trusted once by `./moq trust-dev-cert` for every checkout, one
   client trust helper for the dev tools, and the shared `~/.mr-moqui/` runtime (a layer between the start
   directory's runtime and the embedded files, `moqui install`, `moqui --installed`). Plan; nothing built.
-- [JS-Build.md](JS-Build.md): npm as a build dependency. The browser libraries are built by `./moq build-js` from
+- [JS-Build.md](JS-Build.md): npm as a build dependency, built 2026-11-22 and 23. The browser libraries are built by `./moq build-js` from
   committed lockfiles and checked against `MANIFEST.json`, not committed (41 MB). It also covers the `*-js` tasks,
   `clean`, `clean-dev` and `clean-all` defaults, trimmed default fonts with `fonts-download` packs, which a build
   ships when installed, a source release that builds offline (an npm cache and `cargo vendor`), and npm in Dev AIDE for
-  component libraries later. The build and maintenance commands are in [Build-Test](../docs/Build-Test.md).
+  component libraries, which is what remains. The build and maintenance commands are in [Build-Test](../docs/Build-Test.md).
 
 **Security**
 - [Security-Review.md](Security-Review.md): the findings register of the security review that began 2026-11-15, open until 0.1.0 by the README's notice: the method, coverage by slice, what was found sound, the findings by area with their status (reported, checked a second time, confirmed by the lead), the High ones in full, and what is left. The Medium findings in full are in [Security-Review-Medium.md](Security-Review-Medium.md) and the Low and Info ones in [Security-Review-Low.md](Security-Review-Low.md). Rounds 1 and 2 read every slice in part and their High, Medium and most Low findings are fixed; round 3 (2026-11-17 and 18) read what they did not reach and recorded 406 more (12 High, 89 Medium), none fixed yet. The map it reviews is [Attack-Surface](../docs/security/Attack-Surface.md).

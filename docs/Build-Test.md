@@ -23,10 +23,13 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
 Prerequisites: Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins
 1.100.0) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
 embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once and strips of psql (it
-links GPL readline); `./moq build` runs that when the archive is missing. A fresh checkout needs Node 24 LTS and its bundled npm for `./moq build-js` (tested with Node 24.22.3 and npm 11.19.1).
+links GPL readline); `./moq build` runs that when the archive is missing. A fresh checkout needs Node 22.13 or later (22 or 24 LTS) and its bundled npm for `./moq build-js`; the CI image uses Node
+24.22.3 and npm 11.19.1.
 The two npm projects install from exact locks with lifecycle scripts disabled. Each build checks the installed assets against
-the reviewed manifest. `./moq verify-js` rebuilds independently. `audit-js` checks the lockfiles and embedded copies,
-`outdated-js` lists updates, and `update-js <package> <version>` refreshes assets and notices. Review the lock, manifest
+the reviewed manifest. `./moq verify-js` rebuilds independently. `audit-js` checks the lockfiles and the dependency
+versions inlined in copied library files (`BUNDLED_COPIES` in `build/libs/manage.mjs`). `outdated-js` compares each
+pin with the registry, and `update-js <package> <version>` refreshes assets and notices. `update-js --all` takes the
+newest release each `^pin` admits, so a new major version is always its own `update-js`. Review the lock, manifest
 and license changes together. Updates normally observe a 14-day cooldown. A reviewed security fix may use `--security`.
 The server and the regression test runners use the built files directly.
 
@@ -326,10 +329,11 @@ own ([Built-in runtime files](Run-Deploy.md#built-in-runtime-files)). How much i
 
 ### Offline source release
 
-Run `./moq source-archive [file.tar.gz]` at a clean release tag. It includes the framework, each checked-out component
+Run `./moq source-archive [file.tar.gz]` in a clean checkout: at a release tag for a release, or at any commit. The
+tag, or else the commit, labels the archive in its `SOURCE-RELEASE.txt`. It includes the framework, each checked-out component
 at its recorded revision, all locked npm tarballs and vendored Cargo sources. The Postgres payloads cover Linux and
 macOS on arm64 and x86-64, and Windows on x86-64. The archive includes the stripped payloads and checksums.
-Install the pinned Rust toolchain with the wasm32-unknown-unknown target, Node 24 with npm, and the platform build
+Install the pinned Rust toolchain with the wasm32-unknown-unknown target, Node 22.13 or later with npm, and the platform build
 prerequisites before disconnecting. On Debian the embedded Postgres standby also needs `libpq5` for WAL replay.
 Unpack the archive and run `./moq build --offline --release` in its root.
 An ordinary checkout can also use `--offline` once the package and Postgres caches are populated.

@@ -13,7 +13,7 @@
  */
 
 //! OpenUI Lang on the server (plans/LLM-A2A-Assist.md 4.10, 7.4, D6, J28): the one parser is the vendored
-//! `@openuidev/lang-core` bundle (`webroot/libs/openui/lang-core.min.js`, built by `libs/refresh.mjs` with its reviewed
+//! `@openuidev/lang-core` bundle (`webroot/libs/openui/lang-core.min.js`, built by `build/libs/refresh.mjs` with its reviewed
 //! patches), run in a quickjs-oxide runtime of its own with the component library the renderer declares
 //! (`webroot/js/openui-library.spec.json`, generated from `js/WebrootAssistCanvas.js`). A `write_ui` program is parsed
 //! once here, before anything is shown; a patch is merged here once with lang-core's own `mergeStatements` (the
@@ -493,11 +493,14 @@ pub fn sources(factory: &ExecutionContextFactory) -> Result<Sources, Error> {
                 .map_err(|err| Error::new(err.to_string()))?
                 .into());
         }
-        #[cfg(not(test))]
-        let _ = file;
-        found
-            .map(Into::into)
-            .map_err(|err| Error::new(format!("{location} cannot be read: {err}")))
+        found.map(Into::into).map_err(|err| {
+            let hint = if file.starts_with("libs/") {
+                "; run ./moq build-js"
+            } else {
+                ""
+            };
+            Error::new(format!("{location} cannot be read: {err}{hint}"))
+        })
     };
     let made = Sources {
         bundle: read(BUNDLE_LOCATION, "libs/openui/lang-core.min.js")?,
@@ -520,7 +523,14 @@ pub(crate) fn source_path(file: &str) -> std::path::PathBuf {
 pub(crate) fn test_sources() -> Sources {
     let read = |file: &str| -> Arc<str> {
         std::fs::read_to_string(source_path(file))
-            .unwrap_or_else(|err| panic!("{file}: {err}"))
+            .unwrap_or_else(|err| {
+                let hint = if file.starts_with("libs/") {
+                    "; run ./moq build-js"
+                } else {
+                    ""
+                };
+                panic!("{file}: {err}{hint}")
+            })
             .into()
     };
     Sources {

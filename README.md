@@ -41,7 +41,7 @@ cd mr-moqui
 
 Open `https://localhost:8443` and sign in as `john.doe` with the password `moqui`.
 
-It needs the pinned Rust toolchain, Node 24 LTS with npm, git and bash, on Linux, macOS, or Windows ([Build](docs/Build-Test.md#build)). On
+It needs the pinned Rust toolchain, Node 22 or 24 LTS (22.13 or later) with npm, git and bash, on Linux, macOS, or Windows ([Build](docs/Build-Test.md#build)). On
 Windows, use the MSVC toolchain, Visual Studio Build Tools and Git for Windows, and `moq.cmd` from PowerShell or cmd
 ([Windows](docs/Build-Test.md#windows)). The first build takes a few minutes and downloads the embedded Postgres
 archive once. It makes the release binary (`target/release/moqui`, the Maximal

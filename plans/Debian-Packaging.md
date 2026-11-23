@@ -72,7 +72,7 @@ Debian Policy 4.13 says a package should not use a convenience copy of code that
 
 ## 4. Web libraries in the base component
 
-`libs/refresh.mjs` fetches 25 libraries from npm, runs esbuild over some of them, and records each file in `MANIFEST.json`. Every file in a Debian source package must be in its preferred form for modification (DFSG). lintian flags minified files and prebuilt binaries in the source (`source-is-missing`, `source-contains-prebuilt-javascript-object`, `source-contains-prebuilt-wasm-binary`). ftpmasters reject on these. There are three accepted ways to handle each file:
+`build/libs/refresh.mjs` installs the libraries from a committed npm lockfile, runs esbuild over some of them, and checks each file against `MANIFEST.json` ([JS-Build](JS-Build.md)). Every file in a Debian source package must be in its preferred form for modification (DFSG). lintian flags minified files and prebuilt binaries in the source (`source-is-missing`, `source-contains-prebuilt-javascript-object`, `source-contains-prebuilt-wasm-binary`). ftpmasters reject on these. There are three accepted ways to handle each file:
 
 1. **Use Debian's package.** Exclude the copy (`Files-Excluded` in `debian/copyright`, which repacks the tarball as `+dfsg`), add the package to Depends, and point to it with a symlink into `/usr/share/javascript` or `/usr/share/fonts`.
 2. **Build it in the package build from source** in the source tree, or from Debian's `node-*` packages. Debian has esbuild 0.28.2, the same version as `MANIFEST.json`.

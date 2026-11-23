@@ -80,7 +80,7 @@ task_clean_all() {
     local entry
     local -a js_paths
     local vault=$JS_WEBROOT/screen/webroot/js/vault/moqui_vault.wasm
-    js_paths=("$JS_SOURCE/fonts/selected.txt" "$vault" "$vault.json")
+    js_paths=("$vault" "$vault.json")
     [ "$JS_CACHE" = "$target/js" ] || js_paths+=("$JS_CACHE")
     for entry in "$JS_LIBS"/*; do
         case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
@@ -90,7 +90,7 @@ task_clean_all() {
     for path in "${CLEAN_PATHS[@]}" "${js_paths[@]}" "$target"; do
         if [ -e "$path" ] || [ -L "$path" ]; then du -sh "$path" || return 1; fi
     done
-    info "Keeping downloads, certificates, local configuration, saves, worktrees and named exports."
+    info "Keeping downloads, certificates, local configuration, the font pack selection, saves, worktrees and named exports."
     dry_run && return 0
     if [ -z "$yes" ]; then
         [ -t 0 ] || die "clean-all needs a terminal or --yes"

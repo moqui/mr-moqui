@@ -31,7 +31,7 @@ fn render_dir() -> PathBuf {
 fn compiler_script() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
-    std::fs::read_to_string(path).expect("compiler-dom.cjs.js")
+    std::fs::read_to_string(&path).unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", path.display()))
 }
 
 /// Assert that every template compiles with the Vue compiler.
@@ -744,7 +744,10 @@ fn a_qvt_render_error_is_logged_and_written_in_its_place() {
 fn bundled_screens_are_precompiled() {
     let repo = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read = |path: &str| std::fs::read_to_string(repo.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
-    let compiler = read("runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js");
+    let compiler = std::fs::read_to_string(
+        repo.join("runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
+    )
+    .unwrap_or_else(|err| panic!("the Vue compiler: {err}; run ./moq build-js"));
     let list = read("crates/moqui-desktop/shell/bundled-screens.txt");
     let entries: Vec<(&str, String)> = list
         .lines()
@@ -829,7 +832,7 @@ fn a_bundled_qvue_makes_its_component_with_render_functions() {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
     )
-    .unwrap();
+    .unwrap_or_else(|err| panic!("the Vue compiler: {err}; run ./moq build-js"));
     let source = r#"<!-- a header comment -->
 <template><div class="x"><item-row v-for="item in items" :key="item" :item="item"></item-row>{{ title }}</div></template>
 <script>
@@ -1031,7 +1034,8 @@ fn client_components_are_precompiled() {
     let js = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/components/base/webroot/screen/webroot");
     let read = |path: &str| std::fs::read_to_string(js.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
-    let compiler = read("libs/vue/compiler-dom.cjs.js");
+    let compiler = std::fs::read_to_string(js.join("libs/vue/compiler-dom.cjs.js"))
+        .unwrap_or_else(|err| panic!("the Vue compiler: {err}; run ./moq build-js"));
     let made = crate::screen::vue_check::precompiled_components(
         &compiler,
         &[
@@ -1073,7 +1077,8 @@ fn call_components_are_precompiled() {
     let js = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../runtime/components/base/webroot/screen/webroot");
     let read = |path: &str| std::fs::read_to_string(js.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
-    let compiler = read("libs/vue/compiler-dom.cjs.js");
+    let compiler = std::fs::read_to_string(js.join("libs/vue/compiler-dom.cjs.js"))
+        .unwrap_or_else(|err| panic!("the Vue compiler: {err}; run ./moq build-js"));
     let made = crate::screen::vue_check::precompiled_added_components(
         &compiler,
         &[&read("js/MoquiLib.js"), &read("js/WebrootVue.qvt.js")],

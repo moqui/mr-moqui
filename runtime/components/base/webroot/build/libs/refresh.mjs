@@ -2,7 +2,7 @@
 import { esbuildBinary, npmCommand } from '../tools.mjs';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -490,20 +490,28 @@ const LICENSE_TEXTS = [
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts });
 
-// Keep the installed tree pristine. Patch and bundle a private copy, preserving relative bin links.
+// Install one project into its own temporary directory. The run owns that tree and deletes it, so patches and bundles
+// work in it directly: nothing installed outlives the run to need undoing.
 function installProject(project, directory) {
   mkdirSync(directory, { recursive: true });
   for (const name of ['package.json', 'package-lock.json']) cpSync(join(project, name), join(directory, name));
   run(npmCommand[0], [...npmCommand.slice(1), 'ci', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: directory });
-  const work = join(directory, 'work');
-  mkdirSync(work);
-  cpSync(join(directory, 'node_modules'), join(work, 'node_modules'),
-    { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
-  return work;
+  return directory;
+}
+
+// Node skips finally blocks when a signal ends it. Remove the temporary trees here too, or each interrupted run would
+// leave two installed trees in target/js and a staged tree beside the served libs/.
+const temporary = new Set();
+for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+  process.on(signal, () => {
+    for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+    process.exit(code);
+  });
 }
 
 function main() {
   const work = workArg ? resolve(workArg) : mkdtempSync(join(process.env.JS_CACHE || tmpdir(), 'build-'));
+  if (!workArg) temporary.add(work);
   try { buildAssets(work); } finally { cleanup(work); }
 }
 
@@ -735,6 +743,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
 // Prepare the complete tree on the same filesystem. Keep the old tree until the new one is in place.
 function publish(outputs) {
   const staged = mkdtempSync(join(dirname(here), '.libs-stage-'));
+  temporary.add(staged);
   const backup = join(dirname(here), '.libs-previous');
   try {
     for (const [path, bytes] of outputs) {
@@ -749,6 +758,7 @@ function publish(outputs) {
     rmSync(backup, { recursive: true });
   } finally {
     rmSync(staged, { recursive: true, force: true });
+    temporary.delete(staged);
   }
 }
 

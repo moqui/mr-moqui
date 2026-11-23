@@ -4,8 +4,8 @@
 # ========== test and accept tasks ==========
 
 task_test() {
-    ensure_js
     parse_run_opts test "$@"
+    ensure_js
     local bin
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env ""
@@ -14,8 +14,8 @@ task_test() {
 
 # The client reads no conf: -p N is the server at https://localhost:N, and -c and -D are not passed on.
 task_test_client() {
-    ensure_js
     parse_run_opts test "$@"
+    ensure_js
     local bin prop
     local -a server
     server=()

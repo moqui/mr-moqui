@@ -2,7 +2,7 @@
   "name": "moqui-browser-libraries",
   "private": true,
   "engines": {
-    "node": ">=24"
+    "node": ">=22.13"
   },
   "dependencies": {
     "@babel/helper-string-parser": "7.29.7",

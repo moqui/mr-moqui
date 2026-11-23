@@ -6,8 +6,9 @@ JS_CACHE=${CARGO_TARGET_DIR:-$ROOT/target}/js
 
 js_node() {
     need_tool node npm
-    node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 24 ? 0 : 1)' ||
-        die 'Install Node 24 LTS with its bundled npm to build the JavaScript libraries'
+    # 22.13 is the oldest Node a locked package declares (pdfjs-dist); distributions commonly carry 22.
+    node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 22 || (a === 22 && b >= 13) ? 0 : 1)' ||
+        die 'Install Node 22.13 or later (22 or 24 LTS) with its bundled npm to build the JavaScript libraries'
     JS_NODE_VERSION=$(node --version)
     JS_NPM_VERSION=$(npm --version)
     export JS_NODE_VERSION JS_NPM_VERSION
@@ -31,10 +32,14 @@ js_locked() {
         ' "$JS_CACHE.lock" "$MOQ" "$task" "$@"
         return $?
     fi
-    local backup=${JS_LIBS%/*}/.libs-previous
+    local backup=${JS_LIBS%/*}/.libs-previous stale
     if [ -d "$backup" ]; then
         if [ -d "$JS_LIBS" ]; then rm -rf -- "$backup"; else mv -- "$backup" "$JS_LIBS"; fi || return 1
     fi
+    # An interrupted run leaves its staged tree and its temporary installs. None is in use while the lock is held.
+    for stale in "${JS_LIBS%/*}"/.libs-stage-* "$JS_CACHE"/build-* "$JS_CACHE"/update-*; do
+        [ ! -e "$stale" ] || rm -rf -- "$stale" || return 1
+    done
     "js_${task//-/_}" "$@"
 }
 
@@ -66,7 +71,10 @@ js_rebuild() {
     JS_CACHE="$JS_CACHE" node "$JS_SOURCE/libs/refresh.mjs" "$@"
 }
 
-task_verify_js() {
+# Locked as well: its temporary install under target/js is what a locked task removes as stale.
+task_verify_js() { js_locked verify-js "$@"; }
+
+js_verify_js() {
     [ $# -eq 0 ] || die "verify-js takes no arguments"
     js_rebuild --verify
 }
@@ -80,7 +88,8 @@ js_clean_js() {
         case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
         run_cmd rm -rf -- "$entry" || return 1
     done
-    run_cmd rm -rf -- "${JS_CACHE:?}" "$JS_SOURCE/fonts/selected.txt"
+    # The font selection is the checkout's choice, not output: the next build-js rebuilds the same packs.
+    run_cmd rm -rf -- "${JS_CACHE:?}"
 }
 
 task_update_js() { js_locked update-js "$@"; }
@@ -106,9 +115,9 @@ task_audit_js() {
 
 help_build_js() { echo 'Install locked packages and build the manifest-verified browser libraries. --force rebuilds. --offline uses cached packages.'; }
 help_verify_js() { echo 'Independently rebuild both locked projects and check their outputs against the reviewed manifest.'; }
-help_clean_js() { echo 'Remove generated browser libraries and target/js.'; }
-help_update_js() { echo 'Update one exact library version or --all, then regenerate the manifest and notices. --security permits a recent security fix.'; }
-help_outdated_js() { echo 'List newer library versions and versions past the two-week cooldown.'; }
+help_clean_js() { echo 'Remove generated browser libraries and target/js. The font pack selection is kept.'; }
+help_update_js() { echo 'Update one exact library version, or --all to the newest ^pin release, then regenerate the manifest and notices. --security permits a recent security fix.'; }
+help_outdated_js() { echo 'List pins with newer releases: compatible with ^pin, latest and newest, each past the two-week cooldown or not.'; }
 help_audit_js() { echo 'Audit both projects and inspect the copies embedded in distributed assets.'; }
 
 

@@ -1,8 +1,15 @@
 # JS build: npm as a build tool, the browser libraries built rather than committed
 
-Implementation started 2026-11-22. The locked migration reproduced all 321 original outputs and the original manifest.
-On macOS arm64 the installed libraries occupied 394 MiB (274 packages) and the original whiteboard 285 MiB (311 packages).
-The build uses Node 24.22.3 and npm 11.19.1.
+Status 2026-11-23: steps 1 to 7 are built (2026-11-22 and 23), with a follow-up the same day from a review of those
+commits. What remains is the [Dev AIDE future](#future-npm-in-dev-aide-for-components). The sections below describe
+what was built. Where it differs from the first design: each build installs into a temporary tree and deletes it
+(no persistent `target/js/<project>`), Mermaid is bundled from the lock instead of copied, and the optional Xiaolai face
+is switched off by a guard in the whiteboard bundle (`globalThis.MoquiBoardCjk`), not by editing the editor's font
+table at run time.
+
+The locked migration reproduced all 321 original outputs and the original manifest. On macOS arm64 the installed
+libraries occupied 394 MiB (274 packages) and the original whiteboard 285 MiB (311 packages). The build uses Node
+24.22.3 and npm 11.19.1.
 
 ### Security updates after the migration
 
@@ -51,7 +58,9 @@ What that committed output costs:
 
 - **npm is required to build.** Node and npm are build dependencies, like cargo, for every developer, for CI, and
   for the release build.
-  - Development and CI use Node 24 LTS and its bundled npm. The build image pins Node 24.22.3, which ships npm 11.19.1. Both npm projects commit lockfile version 3.
+  - The build needs Node 22.13 or later with its bundled npm: 22 is what current Linux distributions carry, and 22.13
+    is the oldest Node a locked package declares (pdfjs-dist). The build image pins Node 24.22.3, which ships npm
+    11.19.1. Both npm projects commit lockfile version 3, and the outputs do not depend on the Node or npm version.
   - Production machines still do not need Node. The archive, an embedded binary and the desktop and mobile apps all
     carry the built libraries.
   - There is no separate prebuilt JS archive. An offline build comes from the source release, which carries the
@@ -92,10 +101,13 @@ What that committed output costs:
   - `npm pack` fetches a tarball alone. As a dependency, each library brings its whole tree: Mermaid's d3 and
     cytoscape, the optional native canvas of `pdfjs-dist`. None of that is served, since only `dist` files are
     copied. `--omit=optional` is not a way out, because esbuild's binary is an optional dependency.
-  - The audit then reports packages that are not served, and misses some that are. The lock resolves Mermaid's
-    DOMPurify range to a current version while `mermaid.min.js` carries 3.4.12. `audit-js` therefore keeps its list
-    of bundled copies, and the docs say that a clean `npm audit` covers the bundle inputs and the libraries' own
-    versions, not what a library's `dist` has inside it.
+  - The audit then reports packages that are not served, and misses some that are. A library copied as published
+    can inline a dependency at a version the lock does not show: Chart.js's UMD file carries `@kurkle/color` 0.3.2
+    while the lock resolves 0.3.4. Mermaid had the same gap (its `dist` carried DOMPurify 3.4.12) until it was bundled
+    from the lock. `audit-js` therefore keeps a list of these inlined copies (`BUNDLED_COPIES` in `manage.mjs`): it
+    reads each version from the distributed file and asks the registry's advisory endpoint about it, and it names the
+    ones that carry no version (rrweb's) for review by hand. A clean `npm audit` covers the bundle inputs and the
+    libraries' own versions, not what a copied `dist` has inside it.
   - Hoisting can change the version a bundle input resolves to, which is why the whiteboard is kept apart. The
     byte-for-byte check of step 2 catches it.
   - This is accepted for a complete lock. One lock that names every library and everything it declares gives the
@@ -104,17 +116,17 @@ What that committed output costs:
     `npm pack` for the copy-only libraries, checked against the `tarballIntegrity` already in `MANIFEST.json`.
 - **The whiteboard stays its own project** (`build/whiteboard/`). Its isolated React and transitive Mermaid versions
   are deliberate (see `build.mjs`). It should not be merged into a workspace that would hoist them.
-- **The npm work trees go under `target/js/<project>/`, not into the source tree.** The output goes where it is
-  served, `webroot/screen/webroot/libs/`.
-  - A worktree with its own target directory gets its own `node_modules`.
-  - npm's cache (`~/.npm`) shares the tarballs, so a second worktree does not download them again.
-  - `cargo clean` removes `target/js` with the rest, and the next `build-js` installs again from the cache.
-  - `tidy-cargo` must prune `target/js` as it prunes `target/moqui-app`. It takes any directory named `build` within
-    three levels of `target/` for a cargo profile, and `refresh.mjs` makes one in its work tree.
-- **Nothing is patched in place in `node_modules`.** `build.mjs` (`replaceOnce`) and the OpenUI `patch -p1` edit the
-  installed packages today. That is safe only because every run starts in an empty scratch directory. In a tree
-  that persists, a changed or removed patch could not be undone. Each build copies the packages it patches into a
-  fresh directory under `target/js/<project>/work/` and patches the copy.
+- **Each build installs into a temporary tree under `target/js/`, never into the source tree.** A run makes
+  `target/js/build-XXXX/` with one `npm ci --prefer-offline` per project, bundles and patches there, and deletes it.
+  The output goes where it is served, `webroot/screen/webroot/libs/`.
+  - npm's cache (`~/.npm`) shares the tarballs, so a rebuild and a second worktree do not download them again.
+  - Nothing installed outlives the run, so `build.mjs` (`replaceOnce`) and the OpenUI `patch -p1` edit the installed
+    packages directly: no changed or removed patch is ever left to undo.
+  - Node skips `finally` when a signal ends it, so `refresh.mjs` also removes its temporary and staged trees on
+    SIGINT, SIGTERM and SIGHUP. The next locked `moq` JS task removes whatever a killed run still left
+    (`target/js/build-*`, `update-*` and `screen/webroot/.libs-stage-*`).
+  - The stamp makes a rebuild rare, which is why a persistent install was not worth its upkeep.
+  - `cargo clean` removes `target/js` with the rest. `tidy-cargo` prunes `target/js` as it prunes `target/moqui-app`.
 - **`build-js` decides what to do from two checks:**
   - **The outputs, on every call.** Each file of the selected set is compared with its sha256 in `MANIFEST.json`, in
     shell (`sha256sum -c`, or `shasum -a 256 -c`). 41 MB hashes in well under a second. A deleted or edited file is
@@ -123,7 +135,8 @@ What that committed output costs:
     - the hash of each `package.json` and lockfile, `refresh.mjs`, `patches/`, everything under `build/whiteboard/`
       (`build.mjs`, the entry files, `library/`), `fonts.json` and `MANIFEST.json`;
     - the font packs selected;
-    - the Node and npm versions, and both esbuild versions (0.28.2 for the libraries, 0.25.12 for the whiteboard);
+    - the Node and npm versions and both esbuild versions (0.28.2 for the libraries, 0.25.12 for the whiteboard), for
+      diagnosis only: they are not compared, since the output hashes decide;
     - the checksum list derived from `MANIFEST.json` for the first check.
   
   `build-js` does nothing while the outputs match and the stamp matches. With no stamp and matching outputs it writes
@@ -134,11 +147,11 @@ What that committed output costs:
 | Task | What |
 |---|---|
 | `build-js [--force]` | `npm ci --ignore-scripts --prefer-offline` for each project into `target/js`, then the copy, bundle and patch steps into `libs/`. Then it checks every file against `MANIFEST.json` and writes the stamp. Skips the work when the outputs and the stamp match. `build`, `test`, `test-client`, `test-framework`, `test-apps`, `archive`, `desktop build` and `android build` call it, as they call `ensure_vault_wasm`. It dies with an install hint when Node or npm is missing or too old. |
-| `update-js <lib> <version>` or `update-js --all` | Changes a pin with the cooldown (`npm install --before`), rebuilds, and rewrites `MANIFEST.json` and `NOTICES.md`: today's `refresh.mjs --write`. It builds every font pack, selected or not, since the manifest records them all, and it is the only task that downloads the license texts. The diff of the lockfile, manifest and notices is what gets reviewed. `plans/archive/License-Review.md` is updated as now. |
+| `update-js <lib> <version>` or `update-js --all` | `--all` takes the newest release each `^pin` admits (the same major, or the same minor of a 0.x). A new major is always its own `update-js <lib> <version>`. Changes a pin with the cooldown (`npm install --before`), rebuilds, and rewrites `MANIFEST.json` and `NOTICES.md`: today's `refresh.mjs --write`. It builds every font pack, selected or not, since the manifest records them all, and it is the only task that downloads the license texts. The diff of the lockfile, manifest and notices is what gets reviewed. `plans/archive/License-Review.md` is updated as now. |
 | `verify-js` | A from-scratch rebuild in a scratch directory, compared with the manifest, ignoring the stamp and the cache: today's `node refresh.mjs`. Part of the pre-commit checks when a lockfile, `refresh.mjs`, `patches/` or `build/` changed. |
-| `outdated-js` | `npm outdated` for each project, plus the pins that are past the cooldown. |
-| `audit-js` | `npm audit` for each project. It also lists the known copies bundled inside other packages that the lockfiles do not show, such as DOMPurify in Mermaid's dist, from a short list kept in `refresh.mjs`. |
-| `clean-js` | Removes the built `libs/` output (everything gitignored there), the extra font packs and `target/js/`. It leaves the npm cache alone. |
+| `outdated-js` | Each pin compared with the registry: the newest release `^pin` admits, the latest, and the newest, each as of the cooldown cutoff where it applies. `npm outdated` needs an installed tree, which the source directories do not have. |
+| `audit-js` | `npm audit` for each project. It also checks the dependencies inlined in copied `dist` files that the lockfiles do not show, from the `BUNDLED_COPIES` list in `manage.mjs`. |
+| `clean-js` | Removes the built `libs/` output (everything gitignored there), the extra font packs and `target/js/`. It leaves the npm cache and the checkout's font selection (`build/fonts/selected.txt`) alone. |
 | `fonts-download [pack...] [--list] [--remove pack]` | Adds or removes optional font packs (see [Fonts](#fonts)) and runs `build-js`. Named like `opensearch-download` and `chromium-download`. |
 | `source-archive [file]` | The source release with the npm cache and the vendored crates (see [Source release](#source-release)). In the Package group. |
 
@@ -197,10 +210,10 @@ Default (built by `build-js`):
 - **Not Xiaolai.** That takes the whiteboard from 20 MB to about 7 MB.
 
 `build.mjs` already rewrites Excalidraw's font table for Arimo. The bundle keeps every face in that table, Xiaolai
-included, so its bytes are the same whatever is selected. At run time the board page gives the editor the list of
-installed packs, and `editor-entry.js` drops the faces of a pack that is not installed before the editor starts, so
-a missing pack falls back to the system font rather than a 404. How that hook reaches Excalidraw's table is
-confirmed when this is built.
+included, so its bytes are the same whatever is selected. `build.mjs` guards Xiaolai's registration and its place in
+the Excalifont fallback with `globalThis.MoquiBoardCjk`. The board page sets that flag from
+`libs/fonts-extra/installed.json` before the editor loads, and to false when the file cannot be read. A pack that is
+not installed therefore falls back to the system font, not to a 404, in drawing and in SVG export.
 
 CJK text on a board then draws in the system CJK font until the pack is added. On a shared board each viewer's
 system font measures that text differently, so it can wrap differently for each of them, and an export takes the
@@ -248,7 +261,8 @@ How packs are chosen and shipped:
   - The build image adds Node and npm.
   - The framework and app jobs run `./moq build-js` before cargo tests, with `target/js` and `~/.npm` in the job
     cache keyed by the lockfile hashes. The lint job needs neither.
-  - A job runs `verify-js` when a JS build input changed.
+  - `libs/` is never in a job cache, so the framework job's `build-js` rebuilds from the locks on every push and fails
+    on any difference from `MANIFEST.json`. That is the `verify-js` check, so no job runs `verify-js` as well.
 - **Offline and failure.**
   - A fresh clone needs the registry once, to build and so to test. After that `npm ci --prefer-offline` installs
     from `~/.npm` with no network, and a built tree needs neither Node nor the network.
@@ -288,7 +302,8 @@ A release has a source archive that builds with no network: the JavaScript libra
 from sources it carries. It holds no built output. This is the same build as a developer's, with the downloads
 done ahead of time.
 
-`./moq source-archive [file]` writes it from a clean checkout at a tag:
+`./moq source-archive [file]` writes it from a clean checkout, labelled with the tag at HEAD for a release and with the
+commit otherwise:
 
 - **The tree**, as `git archive` gives it, for mr-moqui and for each component repository the release includes.
 - **npm.** A cache directory, `vendor/npm/`, filled by `npm ci --ignore-scripts --cache vendor/npm` for each
@@ -336,6 +351,8 @@ compressed to 847 MiB. Its extracted inputs occupied 1.2 GiB for Cargo, 503 MiB 
 PostgreSQL payloads. The release commands and CI runner requirements are in [Build-Test](../docs/Build-Test.md#offline-source-release).
 
 ## Steps
+
+Steps 1 to 7 are built.
 
 1. Add the clean tasks: `clean`, `clean-dev`, and the new `clean-all` with its summary, confirmation and `--yes`
    (without `clean-js` until step 3). Switch

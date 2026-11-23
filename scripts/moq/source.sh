@@ -1,4 +1,4 @@
-# Source release and offline builds. Keep source replacement local to an extracted archive.
+# Source archives (a release one at a tag) and offline builds. Keep source replacement local to an extracted archive.
 enable_offline_build() {
     export CARGO_NET_OFFLINE=true npm_config_offline=true npm_config_update_notifier=false
     if [ -f "$ROOT/vendor/cargo-config.toml" ]; then
@@ -36,18 +36,22 @@ task_source_archive() (
     # BSD tar otherwise stores AppleDouble files for macOS extended attributes.
     export COPYFILE_DISABLE=1
     [ $# -le 1 ] || die "source-archive takes an optional output file"
-    local tag out temp tree repo target payload app
+    local label out temp tree repo target payload app
     local -a sync addons
-    tag=$(git describe --tags --exact-match HEAD 2>/dev/null) || {
+    # The label names the archive in SOURCE-RELEASE.txt: the tag at HEAD for a release, else the commit. The clean
+    # checkouts and vendor/revisions.txt are what make the archive reproducible, with or without a tag.
+    if label=$(git describe --tags --exact-match HEAD 2>/dev/null); then
+        :
+    elif [ "${MOQUI_CI_EVENT:-}" = tag ] && [ "${MOQUI_CI_COMMIT:-}" = "$(git rev-parse HEAD)" ]; then
         # The CI runner can have a shallow detached checkout of the tagged commit.
-        [ "${MOQUI_CI_EVENT:-}" = tag ] && [ "${MOQUI_CI_COMMIT:-}" = "$(git rev-parse HEAD)" ] ||
-            die "source-archive needs a checkout at a tag"
-        tag=${MOQUI_CI_REF#refs/tags/}
-    }
+        label=${MOQUI_CI_REF#refs/tags/}
+    else
+        label="commit $(git rev-parse --short=12 HEAD)" || die "source-archive needs a git checkout"
+    fi
     out=$(abs_path "${1:-mr-moqui-source.tar.gz}")
     [ ! -e "$out" ] || die "source archive exists: $out"
     [ -d "$(dirname "$out")" ] || die "output directory does not exist"
-    dry_run && { info "Archive $tag with locked npm, cargo and Postgres inputs in $out"; return; }
+    dry_run && { info "Archive $label with locked npm, cargo and Postgres inputs in $out"; return; }
     js_node
     mkdir -p "$ROOT/target"
     temp=$(mktemp -d "$ROOT/target/source-archive.XXXXXX")
@@ -83,11 +87,11 @@ task_source_archive() (
         cp "$payload" "$tree/vendor/postgres/"
         (cd "$tree/vendor/postgres" && sha256_line "${payload##*/}" >"${payload##*/}.sha256")
     done
-    printf 'Source release %s. Install the Rust toolchain in rust-toolchain.toml, its wasm32-unknown-unknown target, Node 24 LTS with npm, and the system prerequisites in docs/Build-Test.md. Build with ./moq build --offline --release. Included revision and platform records are under vendor/.\n' "$tag" >"$tree/SOURCE-RELEASE.txt"
+    printf 'Source archive of %s. Install the Rust toolchain in rust-toolchain.toml, its wasm32-unknown-unknown target, Node 22.13 or later with npm, and the system prerequisites in docs/Build-Test.md. Build with ./moq build --offline --release. Included revision and platform records are under vendor/.\n' "$label" >"$tree/SOURCE-RELEASE.txt"
     part=$(mktemp "$out.XXXXXX")
     tar --no-xattrs -C "$temp" -cf - mr-moqui | gzip -1 >"$part"
     mv -- "$part" "$out"
     du -h "$out"
 )
 
-help_source_archive() { echo 'Package sources at a clean tag, component revisions, npm and Cargo sources, and release-platform Postgres payloads for an offline build.'; }
+help_source_archive() { echo 'Package the sources of a clean checkout (labelled with its tag when HEAD has one), component revisions, npm and Cargo sources, and release-platform Postgres payloads for an offline build.'; }

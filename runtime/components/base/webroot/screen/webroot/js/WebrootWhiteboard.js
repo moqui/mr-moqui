@@ -119,7 +119,9 @@
             },
             async open() {
                 try {
-                    root.MoquiBoardCjk = (await fetchJson("/libs/fonts-extra/installed.json")).includes("excalidraw-cjk");
+                    // without the record of installed packs, draw CJK text in the system font rather than not open
+                    root.MoquiBoardCjk = await fetchJson("/libs/fonts-extra/installed.json")
+                        .then(packs => Array.isArray(packs) && packs.includes("excalidraw-cjk"), () => false);
                     root.EXCALIDRAW_ASSET_PATH = new URL(base, root.location.href).href;
                     moqui.loadStylesheet(base + "editor.css");
                     const lib = Promise.all([...defaultLibraries, ...(this.libraries || [])].map(async path =>

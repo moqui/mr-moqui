@@ -2,6 +2,7 @@
 use strict;
 use warnings;
 use Digest::SHA qw(sha256_hex);
+use File::Basename qw(dirname);
 use File::Find;
 use File::Path qw(make_path);
 use JSON::PP;
@@ -65,7 +66,7 @@ if ($action eq 'check') {
         $ENV{JS_NPM_VERSION} = $saved->{npm} if defined $saved->{npm};
     }
     # A packaged or read-only tree can be verified directly against its manifest.
-    exit 0 unless -w $cache || !-e $cache && -w "$cache/..";
+    exit 0 unless -w $cache || !-e $cache && -w dirname($cache);
 } elsif ($action ne 'stamp') {
     die "Unknown state operation $action\n";
 }

@@ -15,4 +15,4 @@ description: How to build mr-moqui without wasting the build cache or the machin
 - Rust is built only when `.rs`, `Cargo.toml` or `Cargo.lock` changed; specs and screens run on the binary already
   built (`--nobuild`). After a Rust change, build before a spec run, or it tests the old code.
 
-- Build browser libraries with `./moq build-js` using Node 24 and npm. After changing a JS lock, build source or patch, run `./moq verify-js` to reproduce the full manifest.
+- Build browser libraries with `./moq build-js` using Node 22.13 or later and npm. After changing a JS lock, build source or patch, run `./moq verify-js` to reproduce the full manifest.

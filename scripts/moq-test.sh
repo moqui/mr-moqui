@@ -648,7 +648,18 @@ rm "$R/runtime/db/embedded/data/postmaster.pid"
 check "clean-dev" 0 'Deleting runtime/types' -- "$M" clean-dev
 check "clean-dev kept build" 0 '' -- test -x "$R/target/release/moqui"
 check "clean-dev kept cargo untouched" 1 '' -- test -f "$R/cargo.log"
+mkdir -p "$webroot/build/fonts" "$webroot/screen/webroot/libs/demo"
+: >"$webroot/build/fonts/selected.txt"
+touch "$webroot/screen/webroot/libs/demo/demo.js"
+check "clean-js" 0 '' -- "$M" clean-js
+check "clean-js removed built libraries" 1 '' -- test -e "$webroot/screen/webroot/libs/demo"
+check "clean-js kept the manifest" 0 '' -- test -f "$webroot/screen/webroot/libs/MANIFEST.json"
+check "clean-js kept the font selection" 0 '' -- test -f "$webroot/build/fonts/selected.txt"
+mkdir -p "$webroot/screen/webroot/libs/demo"
+touch "$webroot/screen/webroot/libs/demo/demo.js"
 check "clean-all confirmed" 0 'Keeping downloads' -- "$M" clean-all --yes
+check "clean-all removed built libraries" 1 '' -- test -e "$webroot/screen/webroot/libs/demo"
+check "clean-all kept the font selection" 0 '' -- test -f "$webroot/build/fonts/selected.txt"
 check "clean-all ran cargo clean" 0 'cargo: clean --target-dir' -- cat "$R/cargo.log"
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"
 for kept in save/t1/moqui.dump drive-export git-export MoquiConf.xml .env worktrees cert; do

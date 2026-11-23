@@ -715,7 +715,7 @@ fn vue_compiler() -> String {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../runtime/components/base/webroot/screen/webroot/libs/vue/compiler-dom.cjs.js"),
     )
-    .unwrap()
+    .unwrap_or_else(|err| panic!("the Vue compiler: {err}; run ./moq build-js"))
 }
 
 #[test]

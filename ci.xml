@@ -31,8 +31,9 @@ along with this software (see the LICENSE.md file). If not, see
             <cache key="cargo-test-${hash:Cargo.lock}-${hash:rust-toolchain.toml}" path="target"/>
             <env name="npm_config_cache" value="/workspace/src/.npm-cache"/>
             <cache key="npm-${hash:runtime/components/base/webroot/build/libs/package-lock.json}-${hash:runtime/components/base/webroot/build/whiteboard/package-lock.json}" path=".npm-cache"/>
+            <!-- libs/ is never cached, so build-js here rebuilds from the locks and fails on any difference from
+                 MANIFEST.json: it is the verify-js check, done once -->
             <step run="./moq build-js"/>
-            <step run="./moq verify-js"/>
             <step run="./moq test-framework"/>
         </job>
     </pipeline>
