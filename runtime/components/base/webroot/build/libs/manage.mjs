@@ -1,21 +1,25 @@
-// Maintenance commands. Use the same two lockfiles that build-js installs.
+// Maintenance commands (audit-js, outdated-js, update-js) on the same lockfiles build-js installs. ./moq runs them for
+// one component at a time: JS_BUILD_DIR is its build/, JS_PROJECT_NAMES its npm projects there, JS_OUTPUT its served
+// directory and JS_SCRIPT its build script (build/js-build.json). With none set, the webroot's.
 import { npmCommand } from '../tools.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const source = dirname(fileURLToPath(import.meta.url));
-const projects = ['libs', 'whiteboard'];
-const output = resolve(source, '../../screen/webroot/libs');
+const build = resolve(process.env.JS_BUILD_DIR || dirname(source));
+const projects = (process.env.JS_PROJECT_NAMES || 'libs,whiteboard').split(',').filter(Boolean);
+const output = resolve(process.env.JS_OUTPUT || join(source, '../../screen/webroot/libs'));
+const script = resolve(process.env.JS_SCRIPT || join(source, 'refresh.mjs'));
+const webroot = build === dirname(source);
 const read = file => JSON.parse(readFileSync(file));
 const [task, ...args] = process.argv.slice(2);
 const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
-const manifest = read(join(output, 'MANIFEST.json'));
 // Dependencies inlined in a library's published dist file, which the lockfiles cannot see. pattern reads the inlined
 // version from the file; null lists one that carries no version, for review by hand. Mermaid, Tiptap, CodeMirror,
 // OpenUI and the whiteboard are bundled here from the locks, so npm audit covers what they contain.
-const BUNDLED_COPIES = [
+const BUNDLED_COPIES = !webroot ? [] : [
   { lib: 'chartjs', file: 'chartjs/chart.umd.min.js', pkg: '@kurkle/color', pattern: /@kurkle\/color v(\d+\.\d+\.\d+)/ },
   { lib: 'drauu', file: 'drauu/drauu.js', pkg: 'perfect-freehand', pattern: /perfect-freehand@(\d+\.\d+\.\d+)\// },
   { lib: 'drauu', file: 'drauu/drauu.js', pkg: 'nanoevents', pattern: /nanoevents@(\d+\.\d+\.\d+)\// },
@@ -31,7 +35,7 @@ if (task === 'audit') {
   if (args.length) throw new Error('audit-js takes no arguments');
   for (const project of projects) {
     console.log('Auditing', project);
-    const result = spawnSync(npmCommand[0], [...npmCommand.slice(1), 'audit', '--package-lock-only'], { cwd: join(source, '..', project), stdio: 'inherit' });
+    const result = spawnSync(npmCommand[0], [...npmCommand.slice(1), 'audit', '--package-lock-only'], { cwd: join(build, project), stdio: 'inherit' });
     if (result.status !== 0) process.exitCode = 1;
   }
   // The lockfiles name what the build bundles itself. A library copied as published may carry its own copy of a
@@ -64,7 +68,7 @@ if (task === 'audit') {
   const newest = list => list.reduce((best, v) => (!best || newer(v, best) ? v : best), null);
   const rows = [];
   for (const project of projects) {
-    const pins = Object.entries(read(join(source, '..', project, 'package.json')).dependencies);
+    const pins = Object.entries(read(join(build, project, 'package.json')).dependencies);
     for (let i = 0; i < pins.length; i += 8) {
       await Promise.all(pins.slice(i, i + 8).map(async ([pkg, pin]) => {
         const response = await fetch('https://registry.npmjs.org/' + pkg.replace('/', '%2F'));
@@ -96,6 +100,7 @@ if (task === 'audit') {
   const all = args.length === 1 && args[0] === '--all';
   if ((!all && (args.length !== 2 || !/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/.test(args[1]))) || (all && security))
     throw new Error('Use update-js [--security] <package> <exact-version> or update-js --all');
+  const manifest = read(join(output, 'MANIFEST.json'));
   const lib = manifest.libraries.find(lib => lib.id === args[0]);
   const name = lib?.npm?.replace(/@[^@]+$/, '') || args[0];
   const candidate = mkdtempSync(join(process.env.JS_CACHE, 'update-'));
@@ -104,7 +109,7 @@ if (task === 'audit') {
     for (const project of projects) {
       const cwd = join(candidate, project);
       mkdirSync(cwd);
-      for (const file of ['package.json', 'package-lock.json']) cpSync(join(source, '..', project, file), join(cwd, file));
+      for (const file of ['package.json', 'package-lock.json']) cpSync(join(build, project, file), join(cwd, file));
       const pins = read(join(cwd, 'package.json')).dependencies;
       if (!all && !Object.hasOwn(pins, name)) continue;
       found = true;
@@ -115,25 +120,30 @@ if (task === 'audit') {
         ...(security ? [] : ['--before=' + cutoff]), ...updates], cwd);
     }
     if (!found) throw new Error('Unknown direct dependency ' + name);
-    const catalogFile = join(source, '../fonts/fonts.json');
-    const catalog = read(catalogFile);
-    const locks = projects.map(project => read(join(candidate, project, 'package-lock.json')).packages);
-    for (const pack of Object.values(catalog)) for (const font of pack.sources) {
-      const pkg = locks.map(lock => lock['node_modules/' + font.package]).find(Boolean);
-      if (!pkg) throw new Error('Missing locked font source ' + font.package);
-      font.version = pkg.version;
-      font.integrity = pkg.integrity;
-    }
-    mkdirSync(join(candidate, 'fonts'));
+    // A component with font packs (the webroot) records each pack's locked source in its fonts.json.
+    const catalogFile = join(build, 'fonts/fonts.json');
     const newCatalog = join(candidate, 'fonts/fonts.json');
-    writeFileSync(newCatalog, JSON.stringify(catalog, null, 2) + '\n');
-    execFileSync(process.execPath, [join(source, 'refresh.mjs'), '--write'], {
-      stdio: 'inherit', env: { ...process.env, JS_PROJECTS: candidate }
+    if (existsSync(catalogFile)) {
+      const catalog = read(catalogFile);
+      const locks = projects.map(project => read(join(candidate, project, 'package-lock.json')).packages);
+      for (const pack of Object.values(catalog)) for (const font of pack.sources) {
+        const pkg = locks.map(lock => lock['node_modules/' + font.package]).find(Boolean);
+        if (!pkg) throw new Error('Missing locked font source ' + font.package);
+        font.version = pkg.version;
+        font.integrity = pkg.integrity;
+      }
+      mkdirSync(join(candidate, 'fonts'));
+      writeFileSync(newCatalog, JSON.stringify(catalog, null, 2) + '\n');
+    }
+    execFileSync(process.execPath, [script, '--write'], {
+      stdio: 'inherit', env: { ...process.env, JS_PROJECTS: candidate, JS_OUTPUT: output }
     });
-    cpSync(newCatalog, catalogFile + '.new');
-    renameSync(catalogFile + '.new', catalogFile);
+    if (existsSync(catalogFile)) {
+      cpSync(newCatalog, catalogFile + '.new');
+      renameSync(catalogFile + '.new', catalogFile);
+    }
     for (const project of projects) for (const file of ['package.json', 'package-lock.json']) {
-      const dest = join(source, '..', project, file);
+      const dest = join(build, project, file);
       cpSync(join(candidate, project, file), dest + '.new');
       renameSync(dest + '.new', dest);
     }

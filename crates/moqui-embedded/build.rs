@@ -63,31 +63,84 @@ fn main() {
     stage_programs();
 }
 
+/// The browser libraries of each component this build packs that has a `build/js-build.json` (`./moq build-js`
+/// makes them; git keeps only their `MANIFEST.json`): the base components always, the others when
+/// `MOQUI_EMBED_COMPONENTS` names them. A file its manifest lists and the build has not made fails the build.
 fn check_browser_libs(runtime: &Path) {
-    let libs = runtime.join("components/base/webroot/screen/webroot/libs");
+    let components = runtime.join("components");
+    let embedded = std::env::var("MOQUI_EMBED_COMPONENTS").unwrap_or_default();
+    let Ok(sets) = std::fs::read_dir(&components) else {
+        return;
+    };
+    let mut roots: Vec<PathBuf> = sets
+        .flatten()
+        .filter(|set| set.path().is_dir())
+        .flat_map(|set| std::fs::read_dir(set.path()).into_iter().flatten().flatten())
+        .map(|component| component.path())
+        .filter(|root| root.join("build/js-build.json").is_file())
+        .filter(|root| {
+            let relative = root
+                .strip_prefix(&components)
+                .unwrap_or(root)
+                .to_string_lossy()
+                .replace('\\', "/");
+            relative.starts_with("base/")
+                || embedded
+                    .split_whitespace()
+                    .any(|listed| listed.trim_end_matches('/') == relative)
+        })
+        .collect();
+    roots.sort();
+    for root in roots {
+        check_component_libs(&root);
+    }
+}
+
+fn check_component_libs(root: &Path) {
+    let config_path = root.join("build/js-build.json");
+    println!("cargo:rerun-if-changed={}", config_path.display());
+    let config: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&config_path).unwrap_or_else(|err| panic!("{}: {err}", config_path.display())),
+    )
+    .unwrap_or_else(|err| panic!("{}: {err}", config_path.display()));
+    let output = config["output"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{}: no output", config_path.display()));
+    let libs = root.join(output);
     let manifest = libs.join("MANIFEST.json");
     println!("cargo:rerun-if-changed={}", manifest.display());
     let json: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest).unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", manifest.display())),
     )
-    .expect("browser library manifest");
-    let selection = libs.join("fonts-extra/installed.json");
-    println!("cargo:rerun-if-changed={}", selection.display());
-    let selected: Vec<String> =
-        serde_json::from_slice(&std::fs::read(selection).expect("missing browser font selection; run ./moq build-js"))
-            .expect("installed font packs");
-    for library in json["libraries"].as_array().expect("manifest libraries") {
-        for file in library["files"].as_array().expect("manifest files") {
-            if file["pack"]
-                .as_str()
-                .is_some_and(|pack| !selected.iter().any(|name| name == pack))
-            {
-                continue;
-            }
-            let path = libs.join(file["path"].as_str().expect("asset path"));
-            println!("cargo:rerun-if-changed={}", path.display());
-            assert!(path.is_file(), "{} missing; run ./moq build-js", path.display());
+    .unwrap_or_else(|err| panic!("{}: {err}", manifest.display()));
+    let files: Vec<&serde_json::Value> = json["libraries"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|library| library["files"].as_array().into_iter().flatten())
+        .collect();
+    // Only a component with optional font packs (the webroot) records which are installed.
+    let selected: Vec<String> = if files.iter().any(|file| file["pack"].is_string()) {
+        let selection = libs.join("fonts-extra/installed.json");
+        println!("cargo:rerun-if-changed={}", selection.display());
+        serde_json::from_slice(
+            &std::fs::read(&selection)
+                .unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", selection.display())),
+        )
+        .expect("installed font packs")
+    } else {
+        Vec::new()
+    };
+    for file in files {
+        if file["pack"]
+            .as_str()
+            .is_some_and(|pack| !selected.iter().any(|name| name == pack))
+        {
+            continue;
         }
+        let path = libs.join(file["path"].as_str().expect("asset path"));
+        println!("cargo:rerun-if-changed={}", path.display());
+        assert!(path.is_file(), "{} missing; run ./moq build-js", path.display());
     }
 }
 

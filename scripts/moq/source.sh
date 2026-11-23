@@ -79,7 +79,16 @@ task_source_archive() (
     fi
     cargo vendor --locked --versioned-dirs "${sync[@]}" "$tree/vendor/cargo" >"$temp/cargo-config"
     sed 's|^directory = .*|directory = "../vendor/cargo"|' "$temp/cargo-config" >"$tree/vendor/cargo-config.toml"
-    node "$JS_SOURCE/libs/source-cache.mjs" "$tree/vendor/npm"
+    # every component's npm projects (build/js-build.json), from the exported tree
+    local line project
+    local -a projects
+    projects=()
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        for project in ${JS_C_PROJECTS//,/ }; do projects+=("$JS_C_SOURCE/$project"); done
+    done < <(js_components)
+    node "$JS_SOURCE/libs/source-cache.mjs" "$tree/vendor/npm" "${projects[@]}"
     mkdir -p "$tree/vendor/postgres"
     for target in aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc; do
         "$ROOT/scripts/pg-payload.sh" strip "$target"

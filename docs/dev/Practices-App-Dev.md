@@ -41,6 +41,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | `screen/**/*.qvue` | Vue single-file screens and widgets for the browser (§6), each beside an XML screen. |
 | `screen-extend/` | Extensions of another component's screens. |
 | `template/*.xml` | Shared screen parts: `transition-include` files (`CatalogChoiceTransitions.xml`, `FilePickerTransitions.xml`), section includes; `*.fancy` text templates. |
+| `build/js-build.json`, `build/<project>/` | Browser libraries from npm: the locked projects and the build script that `./moq build-js` runs. Its output is under `screen/`, ignored by git apart from its `MANIFEST.json` ([Build-Test, Browser libraries of a component](../Build-Test.md#browser-libraries-of-a-component)). |
 | `test/*.spec.js` | Server specs, run by `moqui test` inside the server's script engine. |
 | `test/client/*.spec.js`, `test/client/suite.js` | Client specs (HTTP, WebSocket, headless Chromium), run by `moqui test-client`; `suite.js` orders them and names the server specs that load their fixtures. |
 | `plan/`, `docs/` | In mr-boss: research, design and implementation plans per app, the style guide; reference notes for built apps. |

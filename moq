@@ -170,7 +170,7 @@ audit-js|JavaScript||Audit locks and bundled libraries
 fonts-download|JavaScript|[pack...] [--list] [--remove pack]|Select optional font packs
 clean-js|JavaScript||Remove generated webroot libraries
 clean|Database||Tidy old cargo artifacts, keeping the current build
-clean-dev|Database||Reset the local instance data and generated types
+clean-dev|Database||Reset the local instance data, keeping build output
 clean-all|Database|[--yes]|Reset instance data and remove build output after confirmation
 tidy-cargo|Database||Delete old cargo artifacts in target/, keeping the latest build
 opensearch-download|OpenSearch|[version] [-f] [--cache-only]|Download OpenSearch into runtime/opensearch and the embed cache

@@ -1,7 +1,8 @@
 # JS build: npm as a build tool, the browser libraries built rather than committed
 
 Status 2026-11-23: steps 1 to 7 are built (2026-11-22 and 23), with a follow-up the same day from a review of those
-commits. What remains is the [Dev AIDE future](#future-npm-in-dev-aide-for-components). The sections below describe
+commits. What remains is two Linux checks ([Remaining](#remaining-linux)) and the
+[Dev AIDE future](#future-npm-in-dev-aide-for-components). The sections below describe
 what was built. Where it differs from the first design: each build installs into a temporary tree and deletes it
 (no persistent `target/js/<project>`), Mermaid is bundled from the lock instead of copied, and the optional Xiaolai face
 is switched off by a guard in the whiteboard bundle (`globalThis.MoquiBoardCjk`), not by editing the editor's font
@@ -166,8 +167,8 @@ should follow what each name suggests.
 | Task | What |
 |---|---|
 | `clean` | `tidy-cargo`: the old cargo artifacts go, the current build stays. Instance data is not touched. |
-| `clean-dev` | The opposite of an artifact clean. It resets the local instance for a fresh load and run, and keeps all build output (Rust, JS, the vault module, the downloads). It runs `clean-db` (the database, txlog and OpenSearch data), `clean-log`, `runtime/tmp`, and `runtime/types` if it proves to be regenerated state when this is built. It keeps `runtime/drive-export` and `runtime/git-export`, which are exports a user named, and `runtime/cert`, `runtime/.env`, `runtime/MoquiConf.xml`, `runtime/save` and `runtime/worktrees`, which hold Dev AIDE work. It refuses while the server runs, as `clean-db` does. |
-| `clean-all [--yes]` | `clean-dev`, `clean-js` and `cargo clean`: back to a fresh checkout, apart from the program downloads (`runtime/opensearch*`, `runtime/chromium*`, the embed cache), the saves, the certificate and the local conf. It first prints what it will remove, each path with its size, and what it keeps, then asks for confirmation. `--yes` skips the question, for scripts. With no terminal and no `--yes` it removes nothing and fails. |
+| `clean-dev` | The opposite of an artifact clean. It resets the local instance for a fresh load and run, and keeps all build output (Rust, JS, the vault module, the downloads). It runs `clean-db` (the database, txlog and OpenSearch data), `clean-log` and `runtime/tmp`. It keeps `runtime/drive-export` and `runtime/git-export`, which are exports a user named, and `runtime/cert`, `runtime/.env`, `runtime/MoquiConf.xml`, `runtime/save` and `runtime/worktrees`, which hold Dev AIDE work. It refuses while the server runs, as `clean-db` does. |
+| `clean-all [--yes]` | `clean-dev`, `clean-js`, `runtime/types` and `cargo clean`: back to a fresh checkout, apart from the program downloads (`runtime/opensearch*`, `runtime/chromium*`, the embed cache), the saves, the certificate and the local conf. It first prints what it will remove, each path with its size, and what it keeps, then asks for confirmation. `--yes` skips the question, for scripts. With no terminal and no `--yes` it removes nothing and fails. |
 | `clean-db`, `clean-log`, `tidy-cargo` | Unchanged. |
 
 `load-save` uses the `clean_all` function today, which deliberately leaves `target/` alone. It will call `clean_dev`
@@ -306,11 +307,11 @@ done ahead of time.
 commit otherwise:
 
 - **The tree**, as `git archive` gives it, for mr-moqui and for each component repository the release includes.
-- **npm.** A cache directory, `vendor/npm/`, filled by `npm ci --ignore-scripts --cache vendor/npm` for each
-  project. `build-js` uses it with `--offline` when it is there. The lock's integrity hashes check every tarball,
-  so the cache needs no review of its own.
-  - The lock holds esbuild's binary for every platform as optional packages. The archive carries the ones for the
-    platforms a release is built on, which this task lists.
+- **npm.** A cache directory, `vendor/npm/`, filled by `build/libs/source-cache.mjs` (`npm cache add` of every
+  tarball the locks name). `build-js` uses it with `--offline` when it is there. The lock's integrity hashes check
+  every tarball, so the cache needs no review of its own.
+  - The lock holds esbuild's binary for every platform as optional packages, and `npm ci` would fetch only the
+    host's. The archive carries all of them: simpler than a platform list, at a few tens of megabytes.
 - **Cargo.** `cargo vendor --locked --versioned-dirs` into `vendor/cargo/`, with the source replacement it prints
   written to a config file the offline build passes (`cargo --config vendor/cargo/config.toml --offline`). It is not
   written into `.cargo/config.toml`, which a developer's build also reads.
@@ -372,14 +373,22 @@ Steps 1 to 7 are built.
 7. The source release: `build --offline`, `source-archive` with the npm cache and the vendored crates, and the
    no-network job. Add it to the pre-production skill.
 
+## Remaining (Linux)
+
+- Run the `offline-source` job on a provisioned `linux-offline` pool (rootless Podman or Docker and the
+  `localhost/moqui-build` image with Chromium). Until it passes there, "offline" is not claimed.
+- Build the libraries with Node 22 in CI. The build image has Node 24; Node 22.23.5 with npm 10.9.9 reproduced the
+  manifest on macOS.
+
 ## Future: npm in Dev AIDE for components
 
-`build-js` should find its projects, not list them. A component that has `webroot/build/<project>/package.json` (or a
-`js-build` entry in its `component.xml`) gets the same `npm ci`, bundle, manifest check and stamp. Its output goes to
-its own gitignored `webroot/libs/`, and its `MANIFEST.json` and lock are committed in the component's own repository.
-The framework's libraries are then simply the first component built this way.
+Built 2026-11-23: `build-js` finds its projects rather than listing them. A component with a `build/js-build.json`
+(its output directory under `screen/`, its npm projects under `build/`, its build script) gets the same `npm ci`,
+bundle, manifest check and stamp, through the shared `build/js-kit.mjs`. Its output is ignored in its own repository
+apart from its `MANIFEST.json`, which is committed there with its locks. The framework's webroot is simply the first
+component built this way. The contract is in [Build-Test](../docs/Build-Test.md#browser-libraries-of-a-component).
 
-On that, Dev AIDE can:
+Still to come, on that, Dev AIDE can:
 
 - add a JavaScript library to a component while building screens: search npm, pick a version past the cooldown, and
   see its license against an allow list;

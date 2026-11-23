@@ -68,6 +68,35 @@ the module is missing, the vault screens answer that it is not built and the `Va
 so. The desktop and mobile shells will carry their own copy (plans/Vault-Instances.md §3.6); a shell build that
 bundles it runs the script first.
 
+### Browser libraries of a component
+
+The JS tasks build every component that has a `build/js-build.json`; the webroot's is the framework's own, built
+first. `build-js`, `verify-js`, `audit-js` and `outdated-js` take component names to do only those. One component
+that fails is reported and the others still build, and the task fails. `update-js --component <name>` updates
+another component's pins.
+
+```json
+{ "output": "screen/MyApp/libs", "projects": ["main"], "script": "build.mjs" }
+```
+
+- `output`, under the component's `screen/`, is where the built files go and so where the screens serve them (a file
+  under a screen's directory, [Static files](security/Attack-Surface-Routes.md#static-files-under-a-screen)). Its
+  `MANIFEST.json` is committed and lists each file's sha256. The rest is build output, which the component's own
+  repository ignores: `screen/MyApp/libs/*`, `!screen/MyApp/libs/MANIFEST.json` and `screen/MyApp/.libs-*` in its
+  `.gitignore`.
+- `projects` are npm projects under `build/`, each with a committed `package.json` and `package-lock.json` (exact
+  pins).
+- `script`, under `build/`, makes the files. `./moq` runs it as `node <script> --build`, `--verify` or `--write`
+  (`update-js` regenerates the manifest with `--write`), with `JS_CACHE` (its temporary trees, under
+  `target/js/<component>`), `JS_OUTPUT` (the output directory) and `JS_PROJECTS` (where the locks are, when
+  `update-js` hands it candidate ones). It imports the framework's `runtime/components/base/webroot/build/js-kit.mjs`
+  by relative path: `installProject` installs a lock with lifecycle scripts disabled, `withWork` gives it a
+  temporary tree that is removed afterwards, and `finish` checks every output against `MANIFEST.json` and publishes
+  the tree in one rename.
+
+The checks are the same as the framework's: a build serves only the reviewed bytes, an embedded production binary
+refuses a component whose listed files are missing, and the server logs them at startup.
+
 ### Windows
 
 - **Toolchain.** The host is `x86_64-pc-windows-msvc`. Visual Studio Build Tools supplies the C compiler (the
@@ -343,6 +372,7 @@ Provision that pool with a rootless Podman or Docker engine, disk for a cold Rus
 `localhost/moqui-build:latest` image built with Chromium. The runner can reach its CI server to restore the archive.
 `scripts/test-source-archive.sh <archive>` streams it into a fresh container with `--network none` and empty caches,
 checks the expected revision when `MOQUI_CI_COMMIT` is set, builds the release and runs `./moq test-framework`.
+That job has not yet run on a provisioned pool, so an offline build is not yet proven there.
 Set `MOQUI_BUILD_IMAGE` to use another locally installed build image.
 
 ### Instance archive

@@ -42,7 +42,7 @@ clean_dev_paths() {
     local path
     CLEAN_PATHS=()
     for path in "$CLUSTER_DIR" "$RUNTIME_DIR/txlog" "$OS_DIR/data" "$OS_DIR"/logs/* "$OS_DIR"/logs/.[!.]* \
-        "$RUNTIME_DIR"/log/* "$RUNTIME_DIR"/log/.[!.]* "$RUNTIME_DIR/tmp" "$RUNTIME_DIR/types"; do
+        "$RUNTIME_DIR"/log/* "$RUNTIME_DIR"/log/.[!.]* "$RUNTIME_DIR/tmp"; do
         if [ -e "$path" ] || [ -L "$path" ]; then CLEAN_PATHS+=("$path"); fi
     done
 }
@@ -80,12 +80,14 @@ task_clean_all() {
     local entry
     local -a js_paths
     local vault=$JS_WEBROOT/screen/webroot/js/vault/moqui_vault.wasm
-    js_paths=("$vault" "$vault.json")
+    # runtime/types is build output (moqui types), which an editor's jsconfig reads: clean-all removes it, clean-dev keeps it
+    js_paths=("$RUNTIME_DIR/types" "$vault" "$vault.json")
     [ "$JS_CACHE" = "$target/js" ] || js_paths+=("$JS_CACHE")
-    for entry in "$JS_LIBS"/*; do
-        case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
-        [ ! -e "$entry" ] || js_paths+=("$entry")
-    done
+    local built
+    built=$(js_built_paths) || return 1
+    while IFS= read -r entry; do
+        [ -z "$entry" ] || js_paths+=("$entry")
+    done <<<"$built"
     info "Removing:"
     for path in "${CLEAN_PATHS[@]}" "${js_paths[@]}" "$target"; do
         if [ -e "$path" ] || [ -L "$path" ]; then du -sh "$path" || return 1; fi
@@ -990,7 +992,7 @@ help_clean_log() {
 help_clean() { help_tidy_cargo; }
 
 help_clean_dev() {
-    echo 'Reset the stopped instance: database, transaction log, OpenSearch data and logs, runtime/log, tmp and generated types.'
+    echo 'Reset the stopped instance: database, transaction log, OpenSearch data and logs, runtime/log and tmp. Build output, runtime/types among it, stays.'
 }
 
 help_clean_all() {

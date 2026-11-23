@@ -1,0 +1,5 @@
+{
+  "output": "screen/webroot/libs",
+  "projects": ["libs", "whiteboard"],
+  "script": "libs/refresh.mjs"
+}

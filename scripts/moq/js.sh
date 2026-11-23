@@ -1,7 +1,13 @@
 # shellcheck shell=bash
+# moq's build-js, verify-js, clean-js, update-js, outdated-js, audit-js and fonts-download. Each component with a
+# build/js-build.json has browser libraries built from its npm locks (docs/Build-Test.md "Browser libraries"); the
+# webroot component is the framework's. Sourced by moq, which holds the task table; bash 3.2, as moq is.
+
+# The webroot's, which the font tasks, the vault module and the source archive use.
 JS_WEBROOT=$ROOT/runtime/$BASE_SET/webroot
 JS_SOURCE=$JS_WEBROOT/build
 JS_LIBS=$JS_WEBROOT/screen/webroot/libs
+# Every component's temporary trees and stamp are under target/js/<component>; the lock is target/js.lock.
 JS_CACHE=${CARGO_TARGET_DIR:-$ROOT/target}/js
 
 js_node() {
@@ -14,8 +20,51 @@ js_node() {
     export JS_NODE_VERSION JS_NPM_VERSION
 }
 
+# The components with browser libraries, one line each (name, root, output, script, projects; tab separated), in the
+# order components.xml lists their sets.
+js_components() {
+    perl "$ROOT/scripts/js-state.pl" components "$RUNTIME_DIR/components"
+}
+
+# Select one component's line: JS_C_NAME, JS_C_SOURCE (its build/), JS_C_LIBS (the served output), JS_C_SCRIPT,
+# JS_C_PROJECTS (comma separated) and JS_C_CACHE.
+js_use() {
+    local root output script
+    IFS=$'\t' read -r JS_C_NAME root output script JS_C_PROJECTS <<<"$1"
+    JS_C_SOURCE=$root/build
+    JS_C_LIBS=$root/$output
+    JS_C_SCRIPT=$JS_C_SOURCE/$script
+    JS_C_CACHE=$JS_CACHE/$JS_C_NAME
+}
+
+js_use_webroot() {
+    local line
+    line=$(js_components | awk -F'\t' '$1 == "webroot"') || return 1
+    [ -n "$line" ] || die "the webroot component has no build/js-build.json"
+    js_use "$line"
+}
+
+# The lines of the named components, or of all of them with no names; an unknown name stops the task.
+js_selected() {
+    local all name found line
+    all=$(js_components) || return 1
+    if [ $# -eq 0 ]; then
+        [ -z "$all" ] || printf '%s\n' "$all"
+        return 0
+    fi
+    for name in "$@"; do
+        found=
+        while IFS= read -r line; do
+            [ "${line%%$'\t'*}" = "$name" ] || continue
+            printf '%s\n' "$line"
+            found=1
+        done <<<"$all"
+        [ -n "$found" ] || die "no component $name has a build/js-build.json"
+    done
+}
+
 js_state() {
-    perl "$ROOT/scripts/js-state.pl" "$1" "$JS_SOURCE" "$JS_LIBS" "$JS_CACHE"
+    perl "$ROOT/scripts/js-state.pl" "$1" "$JS_C_SOURCE" "$JS_C_LIBS" "$JS_C_CACHE"
 }
 
 # Lock mutating operations across processes. flock releases the descriptor on exit or interruption.
@@ -32,96 +81,182 @@ js_locked() {
         ' "$JS_CACHE.lock" "$MOQ" "$task" "$@"
         return $?
     fi
-    local backup=${JS_LIBS%/*}/.libs-previous stale
-    if [ -d "$backup" ]; then
-        if [ -d "$JS_LIBS" ]; then rm -rf -- "$backup"; else mv -- "$backup" "$JS_LIBS"; fi || return 1
-    fi
-    # An interrupted run leaves its staged tree and its temporary installs. None is in use while the lock is held.
-    for stale in "${JS_LIBS%/*}"/.libs-stage-* "$JS_CACHE"/build-* "$JS_CACHE"/update-*; do
-        [ ! -e "$stale" ] || rm -rf -- "$stale" || return 1
-    done
+    js_recover || return 1
     "js_${task//-/_}" "$@"
 }
 
+# Under the lock: put back an output tree a killed publish left renamed, and remove what an interrupted run left, its
+# staged tree beside the output and its temporary installs. None is in use while the lock is held.
+js_recover() {
+    local line backup stale lines
+    lines=$(js_components) || return 1
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        backup=${JS_C_LIBS%/*}/.${JS_C_LIBS##*/}-previous
+        if [ -d "$backup" ]; then
+            if [ -d "$JS_C_LIBS" ]; then rm -rf -- "$backup"; else mv -- "$backup" "$JS_C_LIBS"; fi || return 1
+        fi
+        for stale in "${JS_C_LIBS%/*}/.${JS_C_LIBS##*/}"-stage-* "$JS_C_CACHE"/build-* "$JS_C_CACHE"/update-*; do
+            [ ! -e "$stale" ] || rm -rf -- "$stale" || return 1
+        done
+    done <<<"$lines"
+    # the layout before components, with the webroot's trees directly in target/js
+    for stale in "$JS_CACHE"/build-* "$JS_CACHE"/update-*; do
+        [ ! -e "$stale" ] || rm -rf -- "$stale" || return 1
+    done
+}
+
+# Each component's output is current: its files match its manifest and its stamp its inputs.
+js_all_current() {
+    local line lines
+    lines=$(js_selected "$@") || return 1
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        [ -f "$JS_C_LIBS/MANIFEST.json" ] && js_state check 2>/dev/null || return 1
+    done <<<"$lines"
+}
+
 task_build_js() {
-    if [ $# -eq 0 ] && [ -f "$JS_LIBS/MANIFEST.json" ] && js_state check; then return 0; fi
+    if [ $# -eq 0 ] && js_all_current; then return 0; fi
     js_locked build-js "$@"
 }
 
 js_build_js() {
-    local force= arg
+    local force= arg line lines status=0
+    local -a names
+    names=()
     for arg in "$@"; do
         case $arg in
             --force) force=1 ;;
             --offline) local npm_config_offline=true; export npm_config_offline ;;
-            *) die "unknown build-js option: $arg" ;;
+            -*) die "unknown build-js option: $arg" ;;
+            *) names+=("$arg") ;;
         esac
     done
     dry_run && { show_cmd "$MOQ" build-js "$@"; return 0; }
-    if [ -z "$force" ] && js_state check; then return 0; fi
-    js_rebuild --build && js_state stamp
+    lines=$(js_selected ${names[@]+"${names[@]}"}) || return 1
+    # One component's failure is reported and the others still build (the failure-tolerance rule).
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        if [ -z "$force" ] && js_state check 2>/dev/null; then continue; fi
+        if ! { js_rebuild --build && js_state stamp; }; then
+            echo "moq: could not build the browser libraries of $JS_C_NAME" >&2
+            status=1
+        fi
+    done <<<"$lines"
+    return "$status"
 }
 
 js_rebuild() {
     js_node
-    mkdir -p "$JS_CACHE" || return 1
+    mkdir -p "$JS_C_CACHE" || return 1
     local JS_PACKS
     JS_PACKS=$(js_state selected) || return 1
     export JS_PACKS
-    JS_CACHE="$JS_CACHE" node "$JS_SOURCE/libs/refresh.mjs" "$@"
+    info "Browser libraries of $JS_C_NAME" >&2
+    JS_CACHE="$JS_C_CACHE" JS_OUTPUT="$JS_C_LIBS" node "$JS_C_SCRIPT" "$@"
 }
 
 # Locked as well: its temporary install under target/js is what a locked task removes as stale.
 task_verify_js() { js_locked verify-js "$@"; }
 
 js_verify_js() {
-    [ $# -eq 0 ] || die "verify-js takes no arguments"
-    js_rebuild --verify
+    local line lines status=0
+    lines=$(js_selected "$@") || return 1
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        js_rebuild --verify || { echo "moq: the browser libraries of $JS_C_NAME do not match their manifest" >&2; status=1; }
+    done <<<"$lines"
+    return "$status"
+}
+
+# The built output of every component: each entry of its output directory but the committed manifest, notices and
+# license texts. clean-js and clean-all remove these.
+js_built_paths() {
+    local line lines entry
+    lines=$(js_components) || return 1
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        for entry in "$JS_C_LIBS"/*; do
+            case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
+            [ ! -e "$entry" ] || printf '%s\n' "$entry"
+        done
+    done <<<"$lines"
 }
 
 task_clean_js() { js_locked clean-js "$@"; }
 
 js_clean_js() {
     [ $# -eq 0 ] || die "clean-js takes no arguments"
-    local entry
-    for entry in "$JS_LIBS"/*; do
-        case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
-        run_cmd rm -rf -- "$entry" || return 1
-    done
+    local entry paths
+    paths=$(js_built_paths) || return 1
+    while IFS= read -r entry; do
+        [ -z "$entry" ] || run_cmd rm -rf -- "$entry" || return 1
+    done <<<"$paths"
     # The font selection is the checkout's choice, not output: the next build-js rebuilds the same packs.
     run_cmd rm -rf -- "${JS_CACHE:?}"
+}
+
+# The environment manage.mjs reads for the selected component.
+js_manage() {
+    JS_BUILD_DIR="$JS_C_SOURCE" JS_OUTPUT="$JS_C_LIBS" JS_SCRIPT="$JS_C_SCRIPT" JS_PROJECT_NAMES="$JS_C_PROJECTS" \
+        JS_CACHE="$JS_C_CACHE" node "$JS_SOURCE/libs/manage.mjs" "$@"
 }
 
 task_update_js() { js_locked update-js "$@"; }
 
 js_update_js() {
+    local component=webroot
+    if [ "${1:-}" = --component ]; then
+        [ $# -ge 2 ] || die "--component needs a component name"
+        component=$2
+        shift 2
+    fi
     js_node
-    mkdir -p "$JS_CACHE" || return 1
+    local line
+    line=$(js_selected "$component") || return 1
+    js_use "$line"
+    mkdir -p "$JS_C_CACHE" || return 1
     local JS_PACKS
     JS_PACKS=$(js_state selected) || return 1
     export JS_PACKS
-    JS_CACHE="$JS_CACHE" node "$JS_SOURCE/libs/manage.mjs" update "$@" && js_state stamp
+    js_manage update "$@" && js_state stamp
 }
 
-task_outdated_js() {
+# outdated-js and audit-js for the named components, or all; each one's result is reported and the others still run.
+js_each_manage() {
+    local task=$1 line lines status=0
+    shift
     js_node
-    node "$JS_SOURCE/libs/manage.mjs" outdated "$@"
+    lines=$(js_selected "$@") || return 1
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        js_use "$line"
+        info "== $JS_C_NAME" >&2
+        js_manage "$task" || status=1
+    done <<<"$lines"
+    return "$status"
 }
 
-task_audit_js() {
-    js_node
-    node "$JS_SOURCE/libs/manage.mjs" audit "$@"
-}
+task_outdated_js() { js_each_manage outdated "$@"; }
 
-help_build_js() { echo 'Install locked packages and build the manifest-verified browser libraries. --force rebuilds. --offline uses cached packages.'; }
-help_verify_js() { echo 'Independently rebuild both locked projects and check their outputs against the reviewed manifest.'; }
-help_clean_js() { echo 'Remove generated browser libraries and target/js. The font pack selection is kept.'; }
-help_update_js() { echo 'Update one exact library version, or --all to the newest ^pin release, then regenerate the manifest and notices. --security permits a recent security fix.'; }
-help_outdated_js() { echo 'List pins with newer releases: compatible with ^pin, latest and newest, each past the two-week cooldown or not.'; }
-help_audit_js() { echo 'Audit both projects and inspect the copies embedded in distributed assets.'; }
+task_audit_js() { js_each_manage audit "$@"; }
+
+help_build_js() { echo 'Install locked packages and build the manifest-verified browser libraries of each component with a build/js-build.json, or of the named ones. --force rebuilds. --offline uses cached packages.'; }
+help_verify_js() { echo 'Independently rebuild the locked projects of each component, or of the named ones, and check their outputs against the reviewed manifests.'; }
+help_clean_js() { echo 'Remove the generated browser libraries of every component and target/js. The font pack selection is kept.'; }
+help_update_js() { echo 'Update one exact library version, or --all to the newest ^pin release, then regenerate the manifest and notices. --component name for a component other than webroot (first). --security permits a recent security fix.'; }
+help_outdated_js() { echo 'List pins with newer releases (compatible with ^pin, latest and newest, each past the two-week cooldown or not), for each component or the named ones.'; }
+help_audit_js() { echo 'Audit the locks of each component, or of the named ones, and the copies embedded in distributed assets.'; }
 
 
 task_fonts_download() {
+    js_use_webroot || return 1
     if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
         js_state packs || return 1
         echo "Installed: $(js_state selected)"
@@ -131,6 +266,7 @@ task_fonts_download() {
 }
 
 js_fonts_download() {
+    js_use_webroot || return 1
     local current selected pack action=add
     current=$(js_state selected) || return 1
     selected=" $current "
@@ -141,12 +277,13 @@ js_fonts_download() {
         if [ "$action" = remove ]; then selected=${selected// "$pack" / }; else selected="$selected$pack "; fi
     done
     selected=$(MOQUI_FONT_PACKS="$selected" js_state selected) || return 1
-    MOQUI_FONT_PACKS="$selected" js_build_js || return 1
+    MOQUI_FONT_PACKS="$selected" js_build_js webroot || return 1
     printf '%s\n' "$selected" > "$JS_SOURCE/fonts/selected.txt.new" &&
         mv "$JS_SOURCE/fonts/selected.txt.new" "$JS_SOURCE/fonts/selected.txt"
 }
 
 js_report_fonts() {
+    js_use_webroot || return 1
     local packs
     packs=$(js_state selected) || return 1
     info "Optional font packs: ${packs:-none}" >&2

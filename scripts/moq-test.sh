@@ -97,6 +97,8 @@ cp "$SRC/scripts/js-state.pl" "$R/scripts/"
 webroot="$R/runtime/components/base/webroot"
 mkdir -p "$webroot/build" "$webroot/screen/webroot/libs"
 touch "$webroot/screen/webroot/libs/NOTICES.md"
+printf '{"output": "screen/webroot/libs", "projects": [], "script": "noop.sh"}\n' >"$webroot/build/js-build.json"
+: >"$webroot/build/noop.sh"
 echo '{"notices":{"path":"NOTICES.md","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"libraries":[]}' >"$webroot/screen/webroot/libs/MANIFEST.json"
 mkdir -p "$R/crates/moqui-embedded" "$R/.cargo"
 cp "$SRC/crates/moqui-embedded/archive-excludes.txt" "$R/crates/moqui-embedded/"
@@ -634,7 +636,7 @@ check "tidy-cargo kept a deps file with no hash in the earlier layout" 0 '' -- t
 check "tidy-cargo with the build directory layout again" 0 'no old cargo artifacts' -- "$M" tidy-cargo
 
 rm -f "$R/cargo.log"
-mkdir -p "$R/runtime"/{types,drive-export,git-export,cert,worktrees}
+mkdir -p "$R/runtime"/{types,tmp,drive-export,git-export,cert,worktrees}
 touch "$R/runtime"/{MoquiConf.xml,.env}
 check "exact clean" 0 'tidy-cargo:' -- "$M" clean
 check "clean-all dry run" 0 'runtime/types' -- "$M" clean-all --dry-run
@@ -645,20 +647,60 @@ echo $$ >"$R/runtime/db/embedded/data/postmaster.pid"
 check "running instance refuses clean-dev" 1 'stop the server' -- "$M" clean-dev
 check "running instance refuses clean-all" 1 'stop the server' -- "$M" clean-all --yes
 rm "$R/runtime/db/embedded/data/postmaster.pid"
-check "clean-dev" 0 'Deleting runtime/types' -- "$M" clean-dev
+check "clean-dev" 0 'Deleting runtime/tmp' -- "$M" clean-dev
+check "clean-dev kept the generated types" 0 '' -- test -d "$R/runtime/types"
 check "clean-dev kept build" 0 '' -- test -x "$R/target/release/moqui"
 check "clean-dev kept cargo untouched" 1 '' -- test -f "$R/cargo.log"
+# Components with browser libraries: a build/js-build.json each. A stub node runs the build script with bash, so these
+# checks need neither Node nor the network.
+JSBIN=$FIX/js-bin
+mkdir -p "$JSBIN"
+printf '#!/usr/bin/env bash\ncase "$1" in -e) exit 0 ;; --version) echo v24.0.0; exit 0 ;; esac\nexec bash "$@"\n' >"$JSBIN/node"
+printf '#!/usr/bin/env bash\necho 11.0.0\n' >"$JSBIN/npm"
+chmod +x "$JSBIN/node" "$JSBIN/npm"
+js_component() { # name script-body
+    local root="$R/runtime/components/addon/$1"
+    mkdir -p "$root/build" "$root/screen/Js/libs"
+    printf '{"output": "screen/Js/libs", "projects": [], "script": "build.sh"}\n' >"$root/build/js-build.json"
+    printf '%s\n' "$2" >"$root/build/build.sh"
+    HELLO_SHA=$(printf 'hello\n' | shasum -a 256 | cut -d' ' -f1)
+    printf '{"libraries": [{"id": "hello", "files": [{"path": "hello.js", "sha256": "%s"}]}]}\n' "$HELLO_SHA" \
+        >"$root/screen/Js/libs/MANIFEST.json"
+}
+js_component js-a 'case "$1" in --build) printf "hello\n" >"$JS_OUTPUT/hello.js"; echo "a built" ;; *) echo "a verified" ;; esac'
+check "js components in load order" 0 '^webroot js-a $' -- \
+    sh -c "perl '$R/scripts/js-state.pl' components '$R/runtime/components' | cut -f1 | tr '\\n' ' '"
+check "build-js builds a component" 0 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js
+check "build-js wrote the component's output" 0 '' -- test -f "$R/runtime/components/addon/js-a/screen/Js/libs/hello.js"
+check "build-js stamps the component apart" 0 '' -- test -f "$R/target/js/js-a/stamp.json"
+lacks "build-js is current after a build" 'built' -- env PATH="$JSBIN:$PATH" "$M" build-js
+check "build-js names a component" 0 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js --force js-a
+check "build-js refuses an unknown component" 1 'no component nope' -- env PATH="$JSBIN:$PATH" "$M" build-js nope
+check "verify-js runs each component" 0 'a verified' -- env PATH="$JSBIN:$PATH" "$M" verify-js js-a
+js_component js-b 'exit 3'
+check "one component failing still builds the others" 1 'could not build the browser libraries of js-b' -- \
+    env PATH="$JSBIN:$PATH" "$M" build-js --force
+check "the other component was built" 0 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js --force js-a
+rm -rf "$R/runtime/components/addon/js-b"
+printf '{"output": "../escape", "projects": [], "script": "build.sh"}\n' >"$R/runtime/components/addon/js-a/build/js-build.json"
+check "an output outside screen/ is refused" 255 'output must be a path under screen/' -- \
+    perl "$R/scripts/js-state.pl" components "$R/runtime/components"
+printf '{"output": "screen/Js/libs", "projects": [], "script": "build.sh"}\n' >"$R/runtime/components/addon/js-a/build/js-build.json"
 mkdir -p "$webroot/build/fonts" "$webroot/screen/webroot/libs/demo"
 : >"$webroot/build/fonts/selected.txt"
 touch "$webroot/screen/webroot/libs/demo/demo.js"
 check "clean-js" 0 '' -- "$M" clean-js
 check "clean-js removed built libraries" 1 '' -- test -e "$webroot/screen/webroot/libs/demo"
+check "clean-js removed a component's output" 1 '' -- test -e "$R/runtime/components/addon/js-a/screen/Js/libs/hello.js"
+check "clean-js kept a component's manifest" 0 '' -- test -f "$R/runtime/components/addon/js-a/screen/Js/libs/MANIFEST.json"
 check "clean-js kept the manifest" 0 '' -- test -f "$webroot/screen/webroot/libs/MANIFEST.json"
 check "clean-js kept the font selection" 0 '' -- test -f "$webroot/build/fonts/selected.txt"
 mkdir -p "$webroot/screen/webroot/libs/demo"
 touch "$webroot/screen/webroot/libs/demo/demo.js"
 check "clean-all confirmed" 0 'Keeping downloads' -- "$M" clean-all --yes
 check "clean-all removed built libraries" 1 '' -- test -e "$webroot/screen/webroot/libs/demo"
+check "clean-all removed the generated types" 1 '' -- test -e "$R/runtime/types"
+rm -rf "$R/runtime/components/addon/js-a"
 check "clean-all kept the font selection" 0 '' -- test -f "$webroot/build/fonts/selected.txt"
 check "clean-all ran cargo clean" 0 'cargo: clean --target-dir' -- cat "$R/cargo.log"
 check "clean-all removed log" 1 '' -- test -e "$R/runtime/log/moqui.log"

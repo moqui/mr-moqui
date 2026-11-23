@@ -13,6 +13,40 @@ sub bytes {
     local $/;
     return <$fh>;
 }
+
+# The components with browser libraries to build: each <set>/<component>/build/js-build.json under the components
+# directory, the sets in the order components.xml lists them, then any others (base first). One line each: name, root, output,
+# script and the projects, tab separated.
+if ($action eq 'components') {
+    my $dir = $source;
+    my @sets;
+    if (-f "$dir/components.xml") { @sets = bytes("$dir/components.xml") =~ /<component-dir\s+location="([^"\/]+)"/g }
+    my %seen = map { $_ => 1 } @sets;
+    opendir my $dh, $dir or die "$dir: $!\n";
+    # sets components.xml does not list follow, the framework's base set first
+    push @sets, sort { ($b eq 'base') <=> ($a eq 'base') || $a cmp $b } grep { !$seen{$_} && !/^\./ && -d "$dir/$_" } readdir $dh;
+    closedir $dh;
+    my %names;
+    for my $set (@sets) {
+        next unless opendir my $sh, "$dir/$set";
+        for my $name (sort grep { !/^\./ } readdir $sh) {
+            my $root = "$dir/$set/$name";
+            my $config = "$root/build/js-build.json";
+            next unless -f $config;
+            my $c = eval { decode_json(bytes($config)) } or die "$config: not JSON\n";
+            my $relative = qr{^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[\w.\/-]+$};
+            die "$config: output must be a path under screen/\n" unless ($c->{output} // '') =~ $relative && $c->{output} =~ m{^screen/};
+            die "$config: script must be a path under build/\n" unless ($c->{script} // '') =~ $relative;
+            my @projects = @{ $c->{projects} // [] };
+            for (@projects) { die "$config: project $_ must be a directory name\n" unless /^[\w.-]+$/ && !/^\.\.?$/ }
+            die "$config: component $name is also in $names{$name}\n" if $names{$name};
+            $names{$name} = $set;
+            print join("\t", $name, $root, $c->{output}, $c->{script}, join(',', @projects)), "\n";
+        }
+        closedir $sh;
+    }
+    exit 0;
+}
 sub files {
     my ($dir) = @_;
     my @paths;
@@ -26,14 +60,15 @@ sub files {
 my $font_config = "$source/fonts/fonts.json";
 my $packs = -f $font_config ? decode_json(bytes($font_config)) : {};
 my $selection = "$source/fonts/selected.txt";
-my %selected = map { $_ => 1 } grep { length } split /[\s,]+/,
+# Font packs belong to the component with a fonts.json (the webroot); another component has none to select.
+my %selected = !-f $font_config ? () : map { $_ => 1 } grep { length } split /[\s,]+/,
     $ENV{MOQUI_FONT_PACKS} // (-f $selection ? bytes($selection) : '');
 for my $name (keys %selected) { die "Unknown font pack $name\n" unless exists $packs->{$name}; }
 if ($action eq 'selected') { print join(' ', sort keys %selected), "\n"; exit 0; }
 if ($action eq 'packs') { print join("\n", sort keys %$packs), "\n"; exit 0; }
 my $manifest = decode_json(bytes("$libs/MANIFEST.json"));
 my %want = ('MANIFEST.json' => undef);
-for my $f ($manifest->{notices}, map { @{$_->{files}} } @{$manifest->{libraries}}) {
+for my $f (grep { defined } $manifest->{notices}, map { @{$_->{files}} } @{$manifest->{libraries}}) {
     next if $f->{pack} && !$selected{$f->{pack}};
     $want{$f->{path}} = $f->{sha256};
 }
@@ -72,7 +107,8 @@ if ($action eq 'check') {
 }
 make_path($cache);
 my %esbuild;
-for my $project (qw(libs whiteboard)) {
+opendir my $pd, $source or die "$source: $!";
+for my $project (sort grep { -f "$source/$_/package-lock.json" } readdir $pd) {
     my $lock = "$source/$project/package-lock.json";
     $esbuild{$project} = decode_json(bytes($lock))->{packages}{'node_modules/esbuild'}{version} if -f $lock;
 }

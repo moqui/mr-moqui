@@ -244,39 +244,27 @@ fn names(dirs: &[(Set, PathBuf)]) -> String {
 }
 
 fn log_differences(dirs: &[(Set, PathBuf)]) {
-    if let Some((_, webroot)) = dirs.iter().find(|(set, _)| *set == Set::Webroot) {
-        let libs = webroot.join("screen/webroot/libs");
-        if let Ok(bytes) = moqui_lib::vfs::read(libs.join("MANIFEST.json")) {
-            if let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                let installed = moqui_lib::vfs::read(libs.join("fonts-extra/installed.json"))
-                    .ok()
-                    .and_then(|data| serde_json::from_slice::<Vec<String>>(&data).ok());
-                let mut missing = Vec::new();
-                if installed.is_none() {
-                    missing.push("fonts-extra/installed.json");
-                }
-                let installed = installed.unwrap_or_default();
-                for library in manifest["libraries"].as_array().into_iter().flatten() {
-                    if library["files"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|f| {
-                            f["pack"]
-                                .as_str()
-                                .is_none_or(|pack| installed.iter().any(|name| name == pack))
-                        })
-                        .filter_map(|f| f["path"].as_str())
-                        .any(|file| !moqui_lib::vfs::is_file(libs.join(file)))
-                    {
-                        missing.push(library["id"].as_str().unwrap_or("unknown"));
-                    }
-                }
-                if !missing.is_empty() {
-                    tracing::error!("Missing browser libraries: {}. Run ./moq build-js", missing.join(", "));
-                }
-            }
+    // The components with browser libraries (`build/js-build.json`): the webroot and any other in a component set.
+    let components = dirs
+        .iter()
+        .find(|(set, _)| *set == Set::Components)
+        .map(|(_, dir)| dir.clone())
+        .or_else(|| {
+            dirs.iter()
+                .find(|(set, _)| *set == Set::Webroot)
+                .and_then(|(_, webroot)| webroot.parent()?.parent().map(Path::to_path_buf))
+        });
+    let mut missing = Vec::new();
+    for set in components
+        .iter()
+        .flat_map(|dir| moqui_lib::vfs::read_dir(dir).into_iter().flatten())
+    {
+        for component in moqui_lib::vfs::read_dir(set.path()).into_iter().flatten() {
+            missing.extend(missing_browser_libs(&component.path()));
         }
+    }
+    if !missing.is_empty() {
+        tracing::error!("Missing browser libraries: {}. Run ./moq build-js", missing.join(", "));
     }
     let differences = match compare(dirs) {
         Ok(differences) => differences,
@@ -294,6 +282,66 @@ fn log_differences(dirs: &[(Set, PathBuf)]) {
     if !moqui_embedded::components().is_empty() {
         log_set_differences(&other_dirs, others, tracing::Level::INFO);
     }
+}
+
+/// The libraries of the component at `root` whose files its manifest lists and the runtime lacks, each as
+/// `component/library`; none when the component has no `build/js-build.json`. A file of an optional font pack counts
+/// only when `fonts-extra/installed.json` says the pack is installed.
+fn missing_browser_libs(root: &Path) -> Vec<String> {
+    let Ok(config) = moqui_lib::vfs::read(root.join("build/js-build.json")) else {
+        return Vec::new();
+    };
+    let name = root
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let Some(output) = serde_json::from_slice::<serde_json::Value>(&config)
+        .ok()
+        .and_then(|config| config["output"].as_str().map(str::to_owned))
+    else {
+        return vec![format!("{name} (unreadable build/js-build.json)")];
+    };
+    let libs = root.join(output);
+    let Some(manifest) = moqui_lib::vfs::read(libs.join("MANIFEST.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+    else {
+        return vec![format!("{name}/MANIFEST.json")];
+    };
+    let libraries: Vec<&serde_json::Value> = manifest["libraries"].as_array().into_iter().flatten().collect();
+    let mut missing = Vec::new();
+    let packs = libraries
+        .iter()
+        .flat_map(|library| library["files"].as_array().into_iter().flatten())
+        .any(|file| file["pack"].is_string());
+    let installed = if packs {
+        let installed = moqui_lib::vfs::read(libs.join("fonts-extra/installed.json"))
+            .ok()
+            .and_then(|data| serde_json::from_slice::<Vec<String>>(&data).ok());
+        if installed.is_none() {
+            missing.push(format!("{name}/fonts-extra/installed.json"));
+        }
+        installed.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for library in libraries {
+        if library["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|f| {
+                f["pack"]
+                    .as_str()
+                    .is_none_or(|pack| installed.iter().any(|name| name == pack))
+            })
+            .filter_map(|f| f["path"].as_str())
+            .any(|file| !moqui_lib::vfs::is_file(libs.join(file)))
+        {
+            missing.push(format!("{name}/{}", library["id"].as_str().unwrap_or("unknown")));
+        }
+    }
+    missing
 }
 
 /// Reconcile the two physical layers before reporting the embedded fallback.
