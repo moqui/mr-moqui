@@ -248,6 +248,7 @@ apps_suites() {
 
 task_test_framework() {
     parse_suite_opts test-framework "$@"
+    release_stale_shm
     ensure_js
     ensure_vault_wasm
     framework_suites
@@ -256,6 +257,7 @@ task_test_framework() {
 
 task_test_apps() {
     parse_suite_opts test-apps "$@"
+    release_stale_shm
     ensure_js
     ensure_vault_wasm
     apps_suites
@@ -406,6 +408,7 @@ accept_suites() {
 
 task_accept() {
     parse_accept_opts accept "$@"
+    release_stale_shm
     ensure_js
     ensure_vault_wasm
     accept_suites
@@ -414,6 +417,7 @@ task_accept() {
 
 task_accept_all() {
     parse_accept_opts accept-all "$@"
+    release_stale_shm
     ensure_js
     ensure_vault_wasm
     accept_suites
@@ -430,9 +434,28 @@ task_accept_all() {
     suite_summary accept-all
 }
 
+# macOS allows 32 SysV shared memory segments (kern.sysv.shmmni). Each Postgres takes one 56-byte interlock segment
+# and removes it when it stops, but one killed between creating and attaching it leaves the segment for good, and
+# enough of those stop every later cluster from starting ("could not create shared memory segment"). Free this user's
+# 56-byte segments that nothing has attached and whose creator is gone. A running postmaster keeps its own attached.
+release_stale_shm() {
+    [ "$(uname -s)" = Darwin ] && command -v ipcs >/dev/null 2>&1 || return 0
+    local me id owner nattch size cpid freed=0
+    me=$(id -un)
+    # m ID KEY MODE OWNER GROUP CREATOR CGROUP NATTCH SEGSZ CPID LPID ATIME DTIME CTIME
+    while read -r _ id _ _ owner _ _ _ nattch size cpid _; do
+        [ "$owner" = "$me" ] && [ "$nattch" = 0 ] && [ "$size" = 56 ] || continue
+        case $cpid in '' | *[!0-9]*) continue ;; esac
+        ! kill -0 "$cpid" 2>/dev/null || continue
+        if dry_run; then show_cmd ipcrm -m "$id"; elif ipcrm -m "$id" 2>/dev/null; then freed=$((freed + 1)); fi
+    done < <(ipcs -m -a 2>/dev/null | grep '^m ')
+    [ "$freed" -eq 0 ] || info "Freed $freed stale shared memory segments left by Postgres processes that are gone" >&2
+}
+
 # Every regression suite: the framework's, then the applications'.
 task_test_all() {
     parse_suite_opts test-all "$@"
+    release_stale_shm
     ensure_js
     ensure_vault_wasm
     framework_suites

@@ -934,15 +934,28 @@ fn conn_drop_schema(driver: &PostgresDriver) {
     conn.execute("DROP SCHEMA search CASCADE", &[]).unwrap();
 }
 
+/// Stops a postmaster a test left running, as when it panics. SIGQUIT is Postgres's immediate shutdown, which still
+/// removes its SysV interlock segment; SIGKILL would strand that segment (macOS allows 32), so it is only the fallback.
 struct KillGuard(u32);
 
 impl Drop for KillGuard {
     fn drop(&mut self) {
-        if process_live(self.0) {
+        let signal = |name: &str| {
             let _ = std::process::Command::new("kill")
-                .args(["-9", &self.0.to_string()])
+                .args([name, &self.0.to_string()])
                 .status();
+        };
+        if !process_live(self.0) {
+            return;
         }
+        signal("-QUIT");
+        for _ in 0..50 {
+            if !process_live(self.0) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        signal("-9");
     }
 }
 

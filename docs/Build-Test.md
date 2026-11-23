@@ -698,6 +698,12 @@ crate: the tree is not rustfmt-clean, and the change gets lost among unrelated r
   run one can time out or meet a port another took. Run it alone (`cargo test -p moqui-host --test it -- <module>::<name>`),
   twice. One that passes alone is flaky under load: say so in the report and go on. One that fails alone is a
   regression.
+- **`could not create shared memory segment: No space left on device`** from embedded Postgres, on macOS. It is not
+  disk space: macOS allows 32 SysV shared memory segments (`sysctl kern.sysv.shmmni`), and each Postgres takes one
+  56-byte segment. A Postgres killed while starting (an interrupted run) leaves its segment behind for good. The suite
+  tasks (`test-framework`, `test-apps`, `test-all`, `accept`, `accept-all`) free this user's 56-byte segments that
+  nothing has attached and whose creating process is gone. For a plain `cargo test`, `ipcs -m -a` lists them and
+  `ipcrm -m <id>` frees one.
 - **A spec that fails only in a full `moqui test` run,** never alone: the components' specs share one database, and an
   earlier spec left rows behind. Take the order from the full run's log, check that the whole prefix fails
   (`./moq test --nobuild --db snapshot --spec "<prefix>,<Target>"`), then bisect it. Fix it in the spec that left the
