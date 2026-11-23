@@ -326,8 +326,11 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'mermaid', name: 'Mermaid', npm: 'mermaid', license: 'MIT',
-    copy: [['dist/mermaid.min.js', 'mermaid/mermaid.min.js']],
+    id: 'mermaid', name: 'Mermaid', npm: 'mermaid', license: 'MIT AND ISC AND BSD-3-Clause AND Apache-2.0',
+    copy: [],
+    licenseNote: 'Mermaid core and its locked dependencies, bundled locally. DOMPurify is used under Apache-2.0.',
+    build: 'esbuild of mermaid.core.mjs with the locked DOMPurify and KaTeX packages',
+    produce: ctx => ctx.esbuildMermaid(),
     licenseFiles: ['LICENSE'],
   },
   {
@@ -394,7 +397,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
   {
     // The OpenUI Lang canvas of Assist (plans/LLM-A2A-Assist.md 4.10): parsed in the browser by the renderer and on the
     // server in QuickJS. The license texts are lang-core's and zod's (noticePackages).
-    id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: ' +
+    id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod ' + pins.zod + ' it uses (MIT). Patched: ' +
       OPENUI_PATCHES.join(', ') + ' (telemetry off; a failed Query is not fetched again until its arguments change).',
     copy: [],
     noticePackages: ['@openuidev/lang-core', 'zod'],
@@ -546,6 +549,28 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       return esbuild(['cd-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=VueCompilerDOM', '--platform=node',
         '--target=es2020', '--define:process.env.NODE_ENV="production"', '--alias:source-map-js=./smj-stub.js',
         '--inject:./atob-shim.js', '--legal-comments=none']);
+    },
+    esbuildMermaid() {
+      writeFileSync(join(build, 'mermaid-entry.mjs'), 'import mermaid from "mermaid"; globalThis.mermaid = mermaid;\n');
+      const bytes = esbuild(['mermaid-entry.mjs', '--bundle', '--format=iife', '--platform=browser', '--minify',
+        '--target=es2020', '--legal-comments=inline', '--metafile=mermaid-inputs.json']);
+      const inputs = JSON.parse(readFileSync(join(build, 'mermaid-inputs.json'))).inputs;
+      const packageDirs = new Set(Object.keys(inputs).filter(path => path.startsWith('node_modules/'))
+        .map(path => path.match(/^(.*node_modules\/(?:@[^/]+\/)?[^/]+)/)[1]));
+      const notes = [];
+      for (const path of [...packageDirs].sort()) {
+        const dir = join(build, path);
+        const info = JSON.parse(readFileSync(join(dir, 'package.json')));
+        const licenses = readdirSync(dir).sort().filter(name => /^(licen[sc]e|copying)([.-]|$)/i.test(name));
+        let text = licenses.map(name => readFileSync(join(dir, name), 'utf8').trim()).join('\n');
+        if (!text && info.name === 'fastdom') text = readFileSync(join(dir, 'README.md'), 'utf8').split('## License')[1]?.trim();
+        if (!text) throw new Error('Missing Mermaid dependency notice for ' + info.name);
+        notes.push(info.name + '@' + info.version + '\n' + text);
+      }
+      for (const pkg of ['dompurify', 'katex']) {
+        if (!packageDirs.has('node_modules/' + pkg)) throw new Error('Missing locked Mermaid dependency ' + pkg);
+      }
+      return [['mermaid/mermaid.min.js', bytes], ['mermaid/NOTICES.txt', Buffer.from(notes.join('\n\n') + '\n')]];
     },
     esbuildHighlight() {
       const lines = ["const hljs = require('highlight.js/lib/core');"];

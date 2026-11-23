@@ -2,7 +2,7 @@
   "generatedBy": "build/libs/refresh.mjs",
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "5293919d187d871e695d1b374877418d981ac91d9d163f5cfc74f428235b0eb3"
+    "sha256": "e3b6c5ddb9ced05344c7b0b45db2b1569bb6e64f639154b1f5ff6efcc97eac65"
   },
   "libraries": [
     {
@@ -541,16 +541,24 @@
       "id": "mermaid",
       "name": "Mermaid",
       "version": "11.17.2",
-      "license": "MIT",
+      "license": "MIT AND ISC AND BSD-3-Clause AND Apache-2.0",
+      "note": "Mermaid core and its locked dependencies, bundled locally. DOMPurify is used under Apache-2.0.",
       "source": "https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz",
       "npm": "mermaid@11.17.2",
       "tarballIntegrity": "sha512-V6K3C8EBdEsPFZXSKMJe6ppQOENxuHARr9GvHX4hh47lAbhMRD9qf4oEK7LoaRQxULMa80/qt5gHO73aCleBBg==",
+      "build": "esbuild of mermaid.core.mjs with the locked DOMPurify and KaTeX packages",
       "files": [
         {
           "path": "mermaid/mermaid.min.js",
-          "from": "dist/mermaid.min.js",
-          "size": 3572661,
-          "sha256": "581ed7d74bd9048d0e3a91363927d72ef22942d7722546b27f7cc29e35390eb8"
+          "from": "build",
+          "size": 3496315,
+          "sha256": "14abd945eeb2996a200efd43db126d12f5ec342f8a9761936861ddb0689e06ca"
+        },
+        {
+          "path": "mermaid/NOTICES.txt",
+          "from": "build",
+          "size": 91421,
+          "sha256": "54528cf0b8c9885f86474adf0fc176b720c78f871cf79bb4f5cd2f0c239ba76d"
         }
       ]
     },
@@ -663,7 +671,7 @@
       "name": "OpenUI Lang core (bundled with zod)",
       "version": "0.2.18",
       "license": "MIT",
-      "note": "Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: patches/openui-lang-core-0.2.18-telemetry-off.patch, patches/openui-lang-core-0.2.18-failed-query.patch (telemetry off; a failed Query is not fetched again until its arguments change).",
+      "note": "Bundles @openuidev/lang-core and the parts of zod 4.6.6 it uses (MIT). Patched: patches/openui-lang-core-0.2.18-telemetry-off.patch, patches/openui-lang-core-0.2.18-failed-query.patch (telemetry off; a failed Query is not fetched again until its arguments change).",
       "source": "https://registry.npmjs.org/@openuidev/lang-core/-/lang-core-0.2.18.tgz",
       "npm": "@openuidev/lang-core@0.2.18",
       "tarballIntegrity": "sha512-I8kP9gI2MDNy9C7YuG2Rr8oS0o3SVA9GjYPpQFvTi+pZXX33nrHKar7aSbwL7CDFlBnvIxFuj6KMDjmG93/mVQ==",
@@ -820,10 +828,10 @@
       "id": "excalidraw",
       "name": "Excalidraw editor and Mermaid converter",
       "npm": "@excalidraw/excalidraw",
-      "version": "0.18.0",
+      "version": "0.18.1",
       "license": "MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1",
-      "source": "https://registry.npmjs.org/@excalidraw/excalidraw/-/excalidraw-0.18.0.tgz",
-      "tarballIntegrity": "sha512-QkIiS+5qdy8lmDWTKsuy0sK/fen/LRDtbhm2lc2xcFcqhv2/zdg95bYnl+wnwwXGHo7kEmP65BSiMHE7PJ3Zpw==",
+      "source": "https://registry.npmjs.org/@excalidraw/excalidraw/-/excalidraw-0.18.1.tgz",
+      "tarballIntegrity": "sha512-6i5Gt7IDTOH//qa0Z315Ly5iVRhjWpu2whrlQFqkuwrkKUWgRsMk0P5qdE7bpyDpai7jeLeWYkyj1eVAfni1lw==",
       "build": "webroot/build/whiteboard/build.mjs, isolated npm ci from its package-lock.json",
       "files": [
         {
@@ -883,14 +891,14 @@
         {
           "path": "excalidraw/editor.js",
           "from": "build",
-          "size": 4879249,
-          "sha256": "3212834e25f378aa54ec658ec50018d99baea59a679035dc65fdd4daf4868c65"
+          "size": 4879255,
+          "sha256": "c6f4a69eac3af9a63952876623c8b5758d099c8402b32e2991756a4b3f6df93a"
         },
         {
           "path": "excalidraw/converter.js",
           "from": "build",
-          "size": 53925,
-          "sha256": "52f5b8938a4701eaffa7e1fc5cef310caada3517899f27f8b146ffa1b8de45ac"
+          "size": 53937,
+          "sha256": "b1aff62c1ba5b72ad5578d8d8f927d006b675c2bc077d2c9827972670f975ed2"
         },
         {
           "path": "excalidraw/fonts/Assistant/Assistant-Bold.woff2",
@@ -2311,8 +2319,8 @@
         {
           "path": "excalidraw/NOTICES.txt",
           "from": "build",
-          "size": 72200,
-          "sha256": "83b24958f20ef6bfb8ef86f27791e414c7bf5716b877e0c1c4ca3fc7f6e2f855"
+          "size": 73297,
+          "sha256": "6a3f2ae238124412ecbd27c41e66e01974833c53752097cd3c2526f9abbe9968"
         }
       ]
     }

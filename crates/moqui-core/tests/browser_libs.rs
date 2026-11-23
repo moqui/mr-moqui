@@ -109,6 +109,7 @@ fn the_manifest_licenses_are_the_reviewed_set() {
             "fontawesome" => "OFL-1.1 AND MIT",
             "atkinson-next" | "atkinson-mono" => "OFL-1.1",
             "tom-select" | "material-icons" | "material-symbols" | "pdfjs" => "Apache-2.0",
+            "mermaid" => "MIT AND ISC AND BSD-3-Clause AND Apache-2.0",
             "dompurify" => "MPL-2.0 OR Apache-2.0",
             "highlightjs" => "BSD-3-Clause",
             "naturalearth" => "ISC",

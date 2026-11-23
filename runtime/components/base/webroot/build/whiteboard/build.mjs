@@ -28,11 +28,10 @@ export function buildBoard(work, installed = false) {
   // It also always offers to browse/publish libraries. Remove these paths in the pinned distribution.
   function replaceOnce(file, from, to) {
     const input = readFileSync(file, 'utf8');
-    if (input.includes(to) && !input.includes(from)) return;
     if (input.split(from).length !== 2) throw new Error('Unexpected Excalidraw source for ' + from);
     writeFileSync(file, input.replace(from, to));
   }
-  replaceOnce(join(prod, 'chunk-FX7ZIABN.js'), 'return r.push(new URL(n,jn.ASSETS_FALLBACK_URL)),r', 'return r');
+  replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'return r.push(new URL(n,jn.ASSETS_FALLBACK_URL)),r', 'return r');
   replaceOnce(join(prod, 'index.js'), 'return eS("a",{className:"library-menu-browse-button"', 'return null;return eS("a",{className:"library-menu-browse-button"');
   replaceOnce(join(prod, 'index.js'), 'h&&Mt(Ce.Item,{icon:Cb,onSelect:()=>T(!0)', 'false&&Mt(Ce.Item,{icon:Cb,onSelect:()=>T(!0)');
   // Arimo is metrically compatible with the legacy sans face. Keep every script subset of the
@@ -48,14 +47,14 @@ export function buildBoard(work, installed = false) {
   const metadata = JSON.parse(readFileSync(join(arimo, 'metadata.json')));
   if (faces.length !== metadata.subsets.length) throw new Error('Incomplete Arimo font coverage');
   const references = faces.map((face, i) => i ? JSON.stringify(face) : '{uri:cc,descriptors:' + JSON.stringify(face.descriptors) + '}');
-  replaceOnce(join(prod, 'chunk-FX7ZIABN.js'), 'var cc="./fonts/Liberation/LiberationSans-Regular.woff2";var lc=[{uri:cc}];',
+  replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'var cc="./fonts/Liberation/LiberationSans-Regular.woff2";var lc=[{uri:cc}];',
     'var cc=' + JSON.stringify(faces[0].uri) + ';var lc=[' + references.join(',') + '];');
   // Modern browsers disallow unload by default. pagehide also fires when a board enters the back/forward cache.
   replaceOnce(join(prod, 'index.js'), 'Ae(window,"unload",this.onUnload,!1)', 'Ae(window,"pagehide",this.onUnload,!1)');
-  replaceOnce(join(prod, 'chunk-FX7ZIABN.js'), 'import("./subset-worker.chunk.js")',
+  replaceOnce(join(prod, 'chunk-K2UTITRG.js'), 'import("./subset-worker.chunk.js")',
     'Promise.resolve({WorkerUrl:new URL("subset-worker.js",window.EXCALIDRAW_ASSET_PATH)})');
   // The worker is separately bundled below. Its URL is a local asset even though the editor is an IIFE.
-  replaceOnce(join(prod, 'chunk-FX7ZIABN.js'), '!import.meta.url||t.toString()===import.meta.url', 't.toString()===window.location.href');
+  replaceOnce(join(prod, 'chunk-K2UTITRG.js'), '!import.meta.url||t.toString()===import.meta.url', 't.toString()===window.location.href');
   execFileSync(join(modules, '.bin/esbuild'), [join(prod, 'subset-worker.chunk.js'), '--bundle', '--minify', '--format=esm',
     '--outfile=subset-worker.js', '--log-level=error'], { cwd: work });
   outputs.set('excalidraw/subset-worker.js', readFileSync(join(work, 'subset-worker.js')));

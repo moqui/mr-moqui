@@ -1460,7 +1460,8 @@ SOFTWARE.
 
 ## Mermaid 11.17.2
 
-License: MIT. Source: npm `mermaid@11.17.2`.
+License: MIT AND ISC AND BSD-3-Clause AND Apache-2.0. Source: npm `mermaid@11.17.2`.
+Mermaid core and its locked dependencies, bundled locally. DOMPurify is used under Apache-2.0.
 
 ```text
 --- LICENSE ---
@@ -2715,7 +2716,7 @@ THE SOFTWARE.
 ## OpenUI Lang core (bundled with zod) 0.2.18
 
 License: MIT. Source: npm `@openuidev/lang-core@0.2.18`.
-Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: patches/openui-lang-core-0.2.18-telemetry-off.patch, patches/openui-lang-core-0.2.18-failed-query.patch (telemetry off; a failed Query is not fetched again until its arguments change).
+Bundles @openuidev/lang-core and the parts of zod 4.6.6 it uses (MIT). Patched: patches/openui-lang-core-0.2.18-telemetry-off.patch, patches/openui-lang-core-0.2.18-failed-query.patch (telemetry off; a failed Query is not fetched again until its arguments change).
 
 ```text
 --- @openuidev/lang-core 0.2.18: LICENSE ---
@@ -2741,7 +2742,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
---- zod 4.6.5: LICENSE ---
+--- zod 4.6.6: LICENSE ---
 MIT License
 
 Copyright (c) 2025 Colin McDonnell
@@ -3173,9 +3174,9 @@ The package is Apache-2.0. Its WebAssembly module has 240 Rust crates inside (a 
    END OF TERMS AND CONDITIONS
 ```
 
-## Excalidraw editor and Mermaid converter 0.18.0
+## Excalidraw editor and Mermaid converter 0.18.1
 
-License: MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1. Source: npm `@excalidraw/excalidraw@0.18.0`.
+License: MIT AND MIT-Modern-Variant AND Apache-2.0 AND 0BSD AND CC0-1.0 AND Zlib AND OFL-1.1. Source: npm `@excalidraw/excalidraw@0.18.1`.
 
 ```text
 Excalidraw, React, the converter and their dependencies are credited in excalidraw/NOTICES.txt. Fonts carry their own notices.

@@ -1,6 +1,17 @@
 # JS build: npm as a build tool, the browser libraries built rather than committed
 
-Proposed 2026-11-22. Nothing here is built yet.
+Implementation started 2026-11-22. The locked migration reproduced all 321 original outputs and the original manifest.
+On macOS arm64 the installed libraries occupied 394 MiB (274 packages) and the original whiteboard 285 MiB (311 packages).
+The build uses Node 24.22.3 and npm 11.19.1.
+
+### Security updates after the migration
+
+Both project audits now report zero vulnerabilities. The rebuilt Mermaid 11.17.2 includes DOMPurify 3.4.17 and
+KaTeX 0.18.2. The previous distributed file included DOMPurify 3.4.12 and KaTeX 0.16.47. OpenUI now bundles
+Zod 4.6.6. The browser editor uses Excalidraw 0.18.1 and its actual editor and converter inputs use Nano ID
+3.3.20 and 5.1.16. Updating the editor removed its old nested converter, Mermaid 10.9.3, DOMPurify 3.1.6 and
+UUID 9.0.1. The converter still uses the shell's Mermaid. Its installed parser tree resolves lodash-es 4.18.1.
+The lock changes resolved with the ordinary 14-day cooldown.
 
 ## Why
 
