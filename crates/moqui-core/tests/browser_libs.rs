@@ -38,7 +38,7 @@ fn every_file_in_the_manifest_exists_with_its_recorded_sha256() {
     let dir = libs_dir();
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("MANIFEST.json")).expect("MANIFEST.json")).unwrap();
-    let mut listed: Vec<String> = vec!["MANIFEST.json".into(), "refresh.mjs".into()];
+    let mut listed: Vec<String> = vec!["MANIFEST.json".into()];
     let mut check = |path: &str, sha: &str, size: Option<u64>| {
         let bytes = std::fs::read(dir.join(path)).unwrap_or_else(|err| panic!("{path}: {err}"));
         assert_eq!(hex(&Sha256::digest(&bytes)), sha, "sha256 of {path}");
@@ -69,17 +69,10 @@ fn every_file_in_the_manifest_exists_with_its_recorded_sha256() {
                 file["size"].as_u64(),
             );
         }
-        // the reviewed patches a library was built with (libs/refresh.mjs records them)
         for patch in lib["patches"].as_array().into_iter().flatten() {
-            check(
-                patch["path"]
-                    .as_str()
-                    .unwrap_or_else(|| panic!("{id}: a patch has no path")),
-                patch["sha256"]
-                    .as_str()
-                    .unwrap_or_else(|| panic!("{id}: a patch has no sha256")),
-                None,
-            );
+            let path = patch["path"].as_str().expect("patch path");
+            let bytes = std::fs::read(dir.join("../../../build/libs").join(path)).expect("reviewed patch");
+            assert_eq!(hex(&Sha256::digest(bytes)), patch["sha256"].as_str().unwrap(), "{path}");
         }
     }
     // Nothing else sits in the tree: no source maps, tests, or docs.

@@ -1,179 +1,52 @@
-#!/usr/bin/env node
-// Rebuilds the vendored browser libraries from their pinned versions and checks them against MANIFEST.json.
-//
-//   node refresh.mjs                  verify: download, rebuild in a scratch directory, compare sha256 with
-//                                     MANIFEST.json and with the files on disk. Exit 1 on any difference.
-//   node refresh.mjs --write          rewrite libs/, MANIFEST.json and NOTICES.md from the pinned versions
-//   node refresh.mjs --work DIR       use DIR (must be empty or absent) as the scratch directory
-//
-// A fix to a vendored package is a reviewed patch under patches/ (a unified diff with a header that says what and why),
-// applied by the build of that library and recorded with its sha256 in MANIFEST.json; minified files are never edited.
-//
-// To upgrade a library, change its `version` below, run with --write, review the diff and
-// plans/archive/License-Review.md, and commit. Nothing here runs a package script: every install is
-// `--ignore-scripts`, tarballs come from `npm pack`, and the tarball sha512 (npm `integrity`) is recorded.
-// Node 18 or later and npm are needed. This is a maintainer tool. The Rust build and the server never run it.
-
+// Build and verify the browser assets from both npm lockfiles.
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, statSync } from 'node:fs';
+import { cpSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { buildBoard } from '../../../build/whiteboard/build.mjs';
+import { buildBoard } from '../whiteboard/build.mjs';
 
-const here = dirname(fileURLToPath(import.meta.url));
+const source = dirname(fileURLToPath(import.meta.url));
+const here = resolve(source, '../../screen/webroot/libs');
+const pins = JSON.parse(readFileSync(join(source, 'package.json'))).dependencies;
 const args = process.argv.slice(2);
 const write = args.includes('--write');
 const workArg = args.includes('--work') ? args[args.indexOf('--work') + 1] : null;
-
-// Pinned toolchain for the bundles built here (compiler-dom, highlight.js and Tiptap). Direct and transitive
-// packages are pinned so the bundle is the same bytes next time. Each version was published at least two weeks
-// before it was pinned (npm install --before), so a just-released, possibly compromised version is never taken.
-const BUILD_DEPS = {
-  'perfect-freehand': '1.2.2',
-  nanoevents: '9.1.0',
-  esbuild: '0.28.2',
-  '@vue/compiler-dom': '3.5.44',
-  '@vue/compiler-core': '3.5.44',
-  '@vue/shared': '3.5.44',
-  '@babel/parser': '7.29.9',
-  '@babel/types': '7.29.8',
-  '@babel/helper-string-parser': '7.29.7',
-  '@babel/helper-validator-identifier': '7.29.7',
-  entities: '7.0.1',
-  'estree-walker': '2.0.2',
-  'source-map-js': '1.2.2',
-  'highlight.js': '11.12.0',
-  // OpenUI Lang (pinned Oct 22, 2026; 0.2.18 was published Sep 10, the version the Java prototype's guide was written
-  // against) with the zod it imports and its one dependency; the bundle is built from the npm package with the reviewed
-  // patches of patches/ applied (OPENUI_PATCHES).
-  '@openuidev/lang-core': '0.2.18',
-  zod: '4.6.5',
-  'ci-info': '4.4.0',
-  // Tiptap 3 (pinned Oct 19, 2026, published by Oct 5) and everything its bundle takes in.
-  ...TIPTAP_DEPS(),
-  // CodeMirror 6 (pinned Oct 24, 2026: what npm install --before=2026-10-10 resolves) and everything its bundle takes in.
-  ...CODEMIRROR_DEPS(),
-};
 const BUNDLED_LICENSE_PKGS = [
   '@vue/compiler-dom', '@vue/compiler-core', '@vue/shared', '@babel/parser', '@babel/types',
   '@babel/helper-string-parser', '@babel/helper-validator-identifier', 'entities', 'estree-walker',
 ];
 
-// The Tiptap packages and their dependencies, all MIT. A function so BUILD_DEPS above can spread it.
-function TIPTAP_DEPS() {
-  return {
-    '@tiptap/core': '3.31.4',
-    '@tiptap/extension-blockquote': '3.31.4',
-    '@tiptap/extension-bold': '3.31.4',
-    '@tiptap/extension-bullet-list': '3.31.4',
-    '@tiptap/extension-code': '3.31.4',
-    '@tiptap/extension-code-block': '3.31.4',
-    '@tiptap/extension-collaboration': '3.31.4',
-    '@tiptap/extension-collaboration-caret': '3.31.4',
-    '@tiptap/extension-document': '3.31.4',
-    '@tiptap/extension-dropcursor': '3.31.4',
-    '@tiptap/extension-gapcursor': '3.31.4',
-    '@tiptap/extension-hard-break': '3.31.4',
-    '@tiptap/extension-heading': '3.31.4',
-    '@tiptap/extension-horizontal-rule': '3.31.4',
-    '@tiptap/extension-image': '3.31.4',
-    '@tiptap/extension-italic': '3.31.4',
-    '@tiptap/extension-link': '3.31.4',
-    '@tiptap/extension-list': '3.31.4',
-    '@tiptap/extension-list-item': '3.31.4',
-    '@tiptap/extension-list-keymap': '3.31.4',
-    '@tiptap/extension-mention': '3.31.4',
-    '@tiptap/extension-ordered-list': '3.31.4',
-    '@tiptap/extension-paragraph': '3.31.4',
-    '@tiptap/extension-placeholder': '3.31.4',
-    '@tiptap/extension-strike': '3.31.4',
-    '@tiptap/extension-table': '3.31.4',
-    '@tiptap/extension-table-cell': '3.31.4',
-    '@tiptap/extension-table-header': '3.31.4',
-    '@tiptap/extension-table-row': '3.31.4',
-    '@tiptap/extension-text': '3.31.4',
-    '@tiptap/extension-underline': '3.31.4',
-    '@tiptap/extensions': '3.31.4',
-    '@tiptap/pm': '3.31.4',
-    '@tiptap/starter-kit': '3.31.4',
-    '@tiptap/suggestion': '3.31.4',
-    // The collaboration of m-coedit (pinned Oct 21, 2026, published by Sep 30): Yjs, Tiptap's y-prosemirror (@tiptap/y-tiptap,
-    // which the two collaboration extensions import) and the awareness protocol, in the same bundle so ProseMirror and Yjs are
-    // one instance each.
-    '@tiptap/y-tiptap': '3.0.9',
-    yjs: '13.6.33',
-    'y-protocols': '1.0.7',
-    lib0: '0.2.119',
-    'isomorphic.js': '0.2.5',
-    '@floating-ui/core': '1.8.0',
-    '@floating-ui/dom': '1.8.0',
-    '@floating-ui/utils': '0.2.12',
-    linkifyjs: '4.3.3',
-    orderedmap: '2.1.1',
-    'prosemirror-changeset': '2.4.4',
-    'prosemirror-commands': '1.7.2',
-    'prosemirror-dropcursor': '1.8.4',
-    'prosemirror-gapcursor': '1.4.1',
-    'prosemirror-history': '1.5.1',
-    'prosemirror-inputrules': '1.5.1',
-    'prosemirror-keymap': '1.2.3',
-    'prosemirror-model': '1.25.12',
-    'prosemirror-schema-list': '1.5.1',
-    'prosemirror-state': '1.4.4',
-    'prosemirror-tables': '1.8.5',
-    'prosemirror-transform': '1.12.2',
-    'prosemirror-view': '1.42.6',
-    'rope-sequence': '1.3.4',
-    'w3c-keyname': '2.2.8',
-  };
-}
-// The CodeMirror 6 packages of the code editor (plans/design-dev-aide.md 5.1) and their dependencies, all MIT. A function
-// so BUILD_DEPS above can spread it. w3c-keyname is Tiptap's pin too. @replit/codemirror-vscode-keymap is left out: its
-// package.json says MIT but neither the package nor its repository carries a license text to retain; CodeMirror's default
-// keymap has the common VS Code bindings (move and copy line, toggle comment, select next occurrence).
-function CODEMIRROR_DEPS() {
-  return {
-    '@codemirror/state': '6.7.6',
-    '@codemirror/view': '6.43.14',
-    '@codemirror/language': '6.13.1',
-    '@codemirror/commands': '6.11.1',
-    '@codemirror/search': '6.7.2',
-    '@codemirror/autocomplete': '6.20.3',
-    '@codemirror/lint': '6.9.7',
-    '@codemirror/merge': '6.12.2',
-    '@codemirror/lang-xml': '6.1.0',
-    '@codemirror/lang-javascript': '6.2.5',
-    '@codemirror/lang-markdown': '6.5.2',
-    '@codemirror/lang-json': '6.0.2',
-    '@codemirror/lang-css': '6.3.1',
-    '@codemirror/lang-html': '6.4.12',
-    '@codemirror/lang-vue': '0.1.3',
-    '@codemirror/lang-sql': '6.10.0',
-    '@codemirror/lang-yaml': '6.1.3',
-    '@codemirror/lang-rust': '6.0.2',
-    '@codemirror/streamparser': '6.0.0',
-    '@lezer/common': '1.5.3',
-    '@lezer/css': '1.3.9',
-    '@lezer/highlight': '1.2.5',
-    '@lezer/html': '1.3.13',
-    '@lezer/javascript': '1.5.6',
-    '@lezer/json': '1.0.3',
-    '@lezer/lr': '1.4.11',
-    '@lezer/markdown': '1.8.0',
-    '@lezer/rust': '1.0.3',
-    '@lezer/xml': '1.0.6',
-    '@lezer/yaml': '1.0.4',
-    '@marijn/find-cluster-break': '1.0.4',
-    '@replit/codemirror-indentation-markers': '6.5.3',
-    crelt: '1.0.7',
-    'style-mod': '4.1.4',
-    'w3c-keyname': '2.2.8',
-  };
-}
-
+const TIPTAP_PACKAGES = [
+  '@tiptap/core', '@tiptap/extension-blockquote', '@tiptap/extension-bold', '@tiptap/extension-bullet-list',
+  '@tiptap/extension-code', '@tiptap/extension-code-block', '@tiptap/extension-collaboration', '@tiptap/extension-collaboration-caret',
+  '@tiptap/extension-document', '@tiptap/extension-dropcursor', '@tiptap/extension-gapcursor', '@tiptap/extension-hard-break',
+  '@tiptap/extension-heading', '@tiptap/extension-horizontal-rule', '@tiptap/extension-image', '@tiptap/extension-italic',
+  '@tiptap/extension-link', '@tiptap/extension-list', '@tiptap/extension-list-item', '@tiptap/extension-list-keymap',
+  '@tiptap/extension-mention', '@tiptap/extension-ordered-list', '@tiptap/extension-paragraph', '@tiptap/extension-placeholder',
+  '@tiptap/extension-strike', '@tiptap/extension-table', '@tiptap/extension-table-cell', '@tiptap/extension-table-header',
+  '@tiptap/extension-table-row', '@tiptap/extension-text', '@tiptap/extension-underline', '@tiptap/extensions',
+  '@tiptap/pm', '@tiptap/starter-kit', '@tiptap/suggestion', '@tiptap/y-tiptap',
+  'yjs', 'y-protocols', 'lib0', 'isomorphic.js',
+  '@floating-ui/core', '@floating-ui/dom', '@floating-ui/utils', 'linkifyjs',
+  'orderedmap', 'prosemirror-changeset', 'prosemirror-commands', 'prosemirror-dropcursor',
+  'prosemirror-gapcursor', 'prosemirror-history', 'prosemirror-inputrules', 'prosemirror-keymap',
+  'prosemirror-model', 'prosemirror-schema-list', 'prosemirror-state', 'prosemirror-tables',
+  'prosemirror-transform', 'prosemirror-view', 'rope-sequence', 'w3c-keyname',
+];
+const CODEMIRROR_PACKAGES = [
+  '@codemirror/state', '@codemirror/view', '@codemirror/language', '@codemirror/commands',
+  '@codemirror/search', '@codemirror/autocomplete', '@codemirror/lint', '@codemirror/merge',
+  '@codemirror/lang-xml', '@codemirror/lang-javascript', '@codemirror/lang-markdown', '@codemirror/lang-json',
+  '@codemirror/lang-css', '@codemirror/lang-html', '@codemirror/lang-vue', '@codemirror/lang-sql',
+  '@codemirror/lang-yaml', '@codemirror/lang-rust', '@codemirror/streamparser', '@lezer/common',
+  '@lezer/css', '@lezer/highlight', '@lezer/html', '@lezer/javascript',
+  '@lezer/json', '@lezer/lr', '@lezer/markdown', '@lezer/rust',
+  '@lezer/xml', '@lezer/yaml', '@marijn/find-cluster-break', '@replit/codemirror-indentation-markers',
+  'crelt', 'style-mod', 'w3c-keyname',
+];
 // What the CodeMirror bundle exports as the global CodeMirror: the state and view, the commands, search, completion, lint
 // and merge view, the languages, the highlight tags for a theme, and the indentation markers
 // (js/WebrootCode.js builds m-code-editor, m-diff-view and the dev-aide's editor from these).
@@ -255,13 +128,12 @@ const UNICODE_URL = 'https://www.unicode.org/license.txt';
 // ([path in package, path under libs/]), the license files to print in NOTICES.md, and an optional build.
 const LIBS = [
   {
-    id: 'drauu', name: 'drauu', npm: '@drauu/core', version: '1.0.0', license: 'MIT',
+    id: 'drauu', name: 'drauu', npm: '@drauu/core', license: 'MIT',
     copy: [['dist/index.mjs', 'drauu/drauu.js']],
     licenseFiles: ['LICENSE'], noticePackages: ['perfect-freehand', 'nanoevents'],
   },
   {
-    id: 'fontawesome', name: 'Font Awesome', npm: 'font-awesome', version: '4.7.0',
-    license: 'OFL-1.1 AND MIT', licenseNote: 'Fonts: SIL OFL 1.1. CSS: MIT. The documentation (CC-BY-3.0) is not shipped.',
+    id: 'fontawesome', name: 'Font Awesome', npm: 'font-awesome', license: 'OFL-1.1 AND MIT', licenseNote: 'Fonts: SIL OFL 1.1. CSS: MIT. The documentation (CC-BY-3.0) is not shipped.',
     copy: [
       ['css/font-awesome.min.css', 'fontawesome/css/font-awesome.min.css'],
       ['fonts/fontawesome-webfont.woff2', 'fontawesome/fonts/fontawesome-webfont.woff2'],
@@ -296,7 +168,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt, from ${OFL_URL}.`,
   },
   {
-    id: 'tom-select', name: 'Tom Select', npm: 'tom-select', version: '2.6.2', license: 'Apache-2.0',
+    id: 'tom-select', name: 'Tom Select', npm: 'tom-select', license: 'Apache-2.0',
     copy: [
       ['dist/js/tom-select.complete.min.js', 'tom-select/tom-select.complete.min.js'],
       ['dist/css/tom-select.css', 'tom-select/tom-select.css'],
@@ -307,7 +179,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     // The data grid of Tools › Data (plans/archive/Tools-Database.md §9, §11): a plain global, Tabulator. Its optional
     // Luxon, SheetJS and jsPDF are not vendored: dates are formatted by MoquiL10n.js and files are written by the
     // server. 6.7.0 (Oct 21, 2026) is the newest at least two weeks old when pinned on Nov 5; 6.7.1 is from Oct 22.
-    id: 'tabulator', name: 'Tabulator', npm: 'tabulator-tables', version: '6.7.0', license: 'MIT',
+    id: 'tabulator', name: 'Tabulator', npm: 'tabulator-tables', license: 'MIT',
     copy: [
       ['dist/js/tabulator.min.js', 'tabulator/tabulator.min.js'],
       ['dist/css/tabulator.min.css', 'tabulator/tabulator.min.css'],
@@ -315,14 +187,14 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'sortablejs', name: 'SortableJS', npm: 'sortablejs', version: '1.15.7', license: 'MIT',
+    id: 'sortablejs', name: 'SortableJS', npm: 'sortablejs', license: 'MIT',
     copy: [['Sortable.min.js', 'sortablejs/Sortable.min.js']],
     licenseFiles: ['LICENSE'],
   },
   {
     // The browser terminal (/qapps/Terminal): the terminal client over /termws. Pinned Oct 21, 2026; 6.0.0 and 0.11.0
     // are the latest stable releases, both published in 2025.
-    id: 'xterm', name: 'xterm.js', npm: '@xterm/xterm', version: '6.0.0', license: 'MIT',
+    id: 'xterm', name: 'xterm.js', npm: '@xterm/xterm', license: 'MIT',
     copy: [
       ['lib/xterm.js', 'xterm/xterm.js'],
       ['css/xterm.css', 'xterm/xterm.css'],
@@ -330,40 +202,39 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'xterm-addon-fit', name: '@xterm/addon-fit', npm: '@xterm/addon-fit', version: '0.11.0', license: 'MIT',
+    id: 'xterm-addon-fit', name: '@xterm/addon-fit', npm: '@xterm/addon-fit', license: 'MIT',
     copy: [['lib/addon-fit.js', 'xterm/addon-fit.js']],
     licenseFiles: ['LICENSE'],
   },
   {
     // The terminal's search, plain URLs as links, and wide characters and emoji at the right width
     // (plans/Terminal-Fancy.md §9.4). Pinned Nov 11, 2026, the releases that go with xterm.js 6.0.0.
-    id: 'xterm-addon-search', name: '@xterm/addon-search', npm: '@xterm/addon-search', version: '0.16.0', license: 'MIT',
+    id: 'xterm-addon-search', name: '@xterm/addon-search', npm: '@xterm/addon-search', license: 'MIT',
     copy: [['lib/addon-search.js', 'xterm/addon-search.js']],
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'xterm-addon-web-links', name: '@xterm/addon-web-links', npm: '@xterm/addon-web-links', version: '0.12.0', license: 'MIT',
+    id: 'xterm-addon-web-links', name: '@xterm/addon-web-links', npm: '@xterm/addon-web-links', license: 'MIT',
     copy: [['lib/addon-web-links.js', 'xterm/addon-web-links.js']],
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'xterm-addon-unicode11', name: '@xterm/addon-unicode11', npm: '@xterm/addon-unicode11', version: '0.9.0', license: 'MIT',
+    id: 'xterm-addon-unicode11', name: '@xterm/addon-unicode11', npm: '@xterm/addon-unicode11', license: 'MIT',
     copy: [['lib/addon-unicode11.js', 'xterm/addon-unicode11.js']],
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'vue', name: 'Vue', npm: 'vue', version: '3.5.44', license: 'MIT',
+    id: 'vue', name: 'Vue', npm: 'vue', license: 'MIT',
     copy: [
       ['dist/vue.global.prod.js', 'vue/vue.global.prod.js'],
       ['dist/vue.runtime.global.prod.js', 'vue/vue.runtime.global.prod.js'],
     ],
     licenseFiles: ['LICENSE'],
     extra: (ctx) => [['vue/VERSION', Buffer.from(
-      `vue ${ctx.version('vue')}\n@vue/compiler-dom ${BUILD_DEPS['@vue/compiler-dom']} (compiler-dom.cjs.js, a bundle)\n`)]],
+      `vue ${ctx.version('vue')}\n@vue/compiler-dom ${pins['@vue/compiler-dom']} (compiler-dom.cjs.js, a bundle)\n`)]],
   },
   {
-    id: 'vue-compiler-dom', name: '@vue/compiler-dom (Node build, bundled for QuickJS)', npm: '@vue/compiler-dom', version: '3.5.44',
-    license: 'MIT AND BSD-2-Clause', licenseNote: 'Bundles @babel/parser (MIT), entities (BSD-2-Clause), estree-walker (MIT), @vue/* (MIT).',
+    id: 'vue-compiler-dom', name: '@vue/compiler-dom (Node build, bundled for QuickJS)', npm: '@vue/compiler-dom', license: 'MIT AND BSD-2-Clause', licenseNote: 'Bundles @babel/parser (MIT), entities (BSD-2-Clause), estree-walker (MIT), @vue/* (MIT).',
     copy: [],
     noticePackages: BUNDLED_LICENSE_PKGS,
     build: 'esbuild --bundle --minify --format=iife --global-name=VueCompilerDOM --platform=node --target=es2020 ' +
@@ -373,7 +244,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     produce: (ctx) => [['vue/compiler-dom.cjs.js', ctx.esbuildCompilerDom()]],
   },
   {
-    id: 'quasar', name: 'Quasar', npm: 'quasar', version: '2.35.1', license: 'MIT',
+    id: 'quasar', name: 'Quasar', npm: 'quasar', license: 'MIT',
     copy: [
       ['dist/quasar.umd.prod.js', 'quasar/quasar.umd.prod.js'],
       ['dist/quasar.prod.css', 'quasar/quasar.prod.css'],
@@ -383,7 +254,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'material-icons', name: 'Material Icons (Google)', npm: 'material-icons', version: '1.13.14', license: 'Apache-2.0',
+    id: 'material-icons', name: 'Material Icons (Google)', npm: 'material-icons', license: 'Apache-2.0',
     copy: [
       ['iconfont/material-icons.css', 'material-icons/material-icons.css'],
       ['iconfont/material-icons.woff2', 'material-icons/material-icons.woff2'],
@@ -394,8 +265,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
   {
     // The outlined style at weight 400 (grade 0, optical size 48) of the variable Material Symbols font, for Quasar's sym_o_* names
     // (style-guide §5.6): 0.5 MB. The outlined font of the material-symbols package has every weight, fill, grade and optical size in 4 MB.
-    id: 'material-symbols', name: 'Material Symbols Outlined (Google)', npm: '@material-symbols/font-400', version: '0.47.6',
-    license: 'Apache-2.0',
+    id: 'material-symbols', name: 'Material Symbols Outlined (Google)', npm: '@material-symbols/font-400', license: 'Apache-2.0',
     copy: [
       ['outlined.css', 'material-symbols/outlined.css'],
       ['material-symbols-outlined.woff2', 'material-symbols/material-symbols-outlined.woff2'],
@@ -407,7 +277,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
   // normal and italic); the @font-face rules are in css/WebrootVue.qvt.css. Pinned Nov 7, 2026; 5.3.0 was published Jul 19, 2026.
   {
     id: 'atkinson-next', name: 'Atkinson Hyperlegible Next (variable, latin and latin-ext)', npm: '@fontsource-variable/atkinson-hyperlegible-next',
-    version: '5.3.0', license: 'OFL-1.1',
+    license: 'OFL-1.1',
     copy: [
       ['files/atkinson-hyperlegible-next-latin-wght-normal.woff2', 'atkinson-next/atkinson-hyperlegible-next-latin-wght-normal.woff2'],
       ['files/atkinson-hyperlegible-next-latin-wght-italic.woff2', 'atkinson-next/atkinson-hyperlegible-next-latin-wght-italic.woff2'],
@@ -418,7 +288,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
   },
   {
     id: 'atkinson-mono', name: 'Atkinson Hyperlegible Mono (variable, latin and latin-ext)', npm: '@fontsource-variable/atkinson-hyperlegible-mono',
-    version: '5.3.0', license: 'OFL-1.1',
+    license: 'OFL-1.1',
     copy: [
       ['files/atkinson-hyperlegible-mono-latin-wght-normal.woff2', 'atkinson-mono/atkinson-hyperlegible-mono-latin-wght-normal.woff2'],
       ['files/atkinson-hyperlegible-mono-latin-wght-italic.woff2', 'atkinson-mono/atkinson-hyperlegible-mono-latin-wght-italic.woff2'],
@@ -428,13 +298,13 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'chartjs', name: 'Chart.js', npm: 'chart.js', version: '4.5.1', license: 'MIT',
+    id: 'chartjs', name: 'Chart.js', npm: 'chart.js', license: 'MIT',
     copy: [['dist/chart.umd.min.js', 'chartjs/chart.umd.min.js']],
     licenseFiles: ['LICENSE.md'],
   },
   {
     // The country outline of geomap panels: Natural Earth's 1:110m Admin 0 boundaries (public domain) as TopoJSON.
-    id: 'naturalearth', name: 'world-atlas (Natural Earth 110m countries)', npm: 'world-atlas', version: '2.0.2', license: 'ISC',
+    id: 'naturalearth', name: 'world-atlas (Natural Earth 110m countries)', npm: 'world-atlas', license: 'ISC',
     licenseNote: 'The map data is Natural Earth 4.1.0, in the public domain (https://www.naturalearthdata.com/about/terms-of-use/).',
     copy: [['countries-110m.json', 'naturalearth/countries-110m.json']],
     licenseFiles: ['LICENSE'],
@@ -443,7 +313,7 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     // The emoji and their names of m-emoji-picker (js/WebrootEmoji.js, plans/Comms-Messaging.md §4): Unicode's emoji by group,
     // made smaller (the emoji and its name only) and left at Emoji 15.1, which current systems draw. Pinned Nov 17, 2026;
     // 0.9.0 was published Apr 18, 2026.
-    id: 'emoji', name: 'unicode-emoji-json', npm: 'unicode-emoji-json', version: '0.9.0', license: 'MIT AND Unicode-3.0',
+    id: 'emoji', name: 'unicode-emoji-json', npm: 'unicode-emoji-json', license: 'MIT AND Unicode-3.0',
     licenseNote: 'The package is MIT; the emoji data in it is from unicode.org, under the Unicode License v3.',
     noticeText: () => `The emoji and their names are Unicode's data (emoji-test.txt), under the Unicode License v3: the full text is in
 licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
@@ -455,25 +325,25 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'mermaid', name: 'Mermaid', npm: 'mermaid', version: '11.17.2', license: 'MIT',
+    id: 'mermaid', name: 'Mermaid', npm: 'mermaid', license: 'MIT',
     copy: [['dist/mermaid.min.js', 'mermaid/mermaid.min.js']],
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'marked', name: 'Marked', npm: 'marked', version: '18.1.1', license: 'MIT',
+    id: 'marked', name: 'Marked', npm: 'marked', license: 'MIT',
     copy: [],
     build: 'esbuild --minify --legal-comments=none on lib/marked.umd.js (a transform, no bundling), banner kept as one line.',
     produce: (ctx) => [['marked/marked.umd.min.js', ctx.esbuildMarked()]],
     licenseFiles: ['LICENSE'],
   },
   {
-    id: 'dompurify', name: 'DOMPurify', npm: 'dompurify', version: '3.4.17', license: 'MPL-2.0 OR Apache-2.0',
+    id: 'dompurify', name: 'DOMPurify', npm: 'dompurify', license: 'MPL-2.0 OR Apache-2.0',
     licenseNote: 'Taken under Apache-2.0.',
     copy: [['dist/purify.min.js', 'dompurify/purify.min.js']],
     licenseFiles: ['LICENSE', 'LICENSE-MPL'],
   },
   {
-    id: 'highlightjs', name: 'highlight.js', npm: 'highlight.js', version: '11.12.0', license: 'BSD-3-Clause',
+    id: 'highlightjs', name: 'highlight.js', npm: 'highlight.js', license: 'BSD-3-Clause',
     copy: [
       ['styles/github-dark.min.css', 'highlightjs/styles/github-dark.min.css'],
       ['styles/github.min.css', 'highlightjs/styles/github.min.css'],
@@ -486,7 +356,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
   {
     // The rich-text editor of m-rich-text and m-coedit, loaded only when an editor mounts. Tiptap has no browser build of its
     // own (it ships ES modules), so this is a bundle of the packages in TIPTAP_DEPS with ProseMirror and Yjs in it.
-    id: 'tiptap', name: 'Tiptap (with ProseMirror, bundled)', npm: '@tiptap/core', version: '3.31.4', license: 'MIT',
+    id: 'tiptap', name: 'Tiptap (with ProseMirror, bundled)', npm: '@tiptap/core', license: 'MIT',
     licenseNote: 'Bundles @tiptap/core, starter-kit (and the extensions it includes), extension-link, extension-image, ' +
       'extension-mention, extension-placeholder, extension-table, extension-table-row, extension-table-cell, ' +
       'extension-table-header, extension-collaboration, extension-collaboration-caret, extensions, suggestion and pm 3.31.4, ' +
@@ -494,7 +364,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
       'orderedmap, rope-sequence and w3c-keyname: all MIT. Each license text is below once, ' +
       'with the packages it is the license of.',
     copy: [],
-    noticePackages: Object.keys(TIPTAP_DEPS()),
+    noticePackages: TIPTAP_PACKAGES,
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=Tiptap --platform=browser --target=es2020 ' +
       '--legal-comments=none of an entry that exports Editor, Extension, Node, Mark, mergeAttributes, StarterKit, Link, ' +
@@ -505,14 +375,14 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
   {
     // The code editor of m-code-editor, m-diff-view and the dev-aide (plans/design-dev-aide.md 5.1), loaded only when an
     // editor mounts. CodeMirror ships ES modules, so this is a bundle of the packages in CODEMIRROR_DEPS.
-    id: 'codemirror', name: 'CodeMirror 6 (bundled)', npm: '@codemirror/view', version: '6.43.14', license: 'MIT',
+    id: 'codemirror', name: 'CodeMirror 6 (bundled)', npm: '@codemirror/view', license: 'MIT',
     licenseNote: 'Bundles @codemirror/state, view, language, commands, search, autocomplete, lint, merge, streamparser, ' +
       'lang-xml, lang-javascript, lang-markdown, lang-json, lang-css, lang-html, lang-vue, lang-sql, lang-yaml and lang-rust, ' +
       'the @lezer/* parsers they use, @marijn/find-cluster-break, crelt, style-mod, w3c-keyname ' +
       'and @replit/codemirror-indentation-markers: all MIT. Each license text is below ' +
       'once, with the packages it is the license of.',
     copy: [],
-    noticePackages: Object.keys(CODEMIRROR_DEPS()),
+    noticePackages: CODEMIRROR_PACKAGES,
     noticeDedupe: true,
     build: 'esbuild --bundle --minify --format=iife --global-name=CodeMirror --platform=browser --target=es2020 ' +
       '--legal-comments=none of an entry (CODEMIRROR_ENTRY) that exports the state, view, commands, search, autocomplete, ' +
@@ -523,8 +393,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
   {
     // The OpenUI Lang canvas of Assist (plans/LLM-A2A-Assist.md 4.10): parsed in the browser by the renderer and on the
     // server in QuickJS. The license texts are lang-core's and zod's (noticePackages).
-    id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', version: '0.2.18',
-    license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: ' +
+    id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod 4.6.5 it uses (MIT). Patched: ' +
       OPENUI_PATCHES.join(', ') + ' (telemetry off; a failed Query is not fetched again until its arguments change).',
     copy: [],
     noticePackages: ['@openuidev/lang-core', 'zod'],
@@ -541,7 +410,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
   {
     // PDF previews in Files: the PDF engine's Chromium page imports the two modules (crates/moqui-host/src/pdf.rs).
     // Pinned Oct 21, 2026; 6.4.299 was published Oct 3 and has the CVE-2024-4367 fix (4.2.67 and later).
-    id: 'pdfjs', name: 'PDF.js', npm: 'pdfjs-dist', version: '6.4.299', license: 'Apache-2.0',
+    id: 'pdfjs', name: 'PDF.js', npm: 'pdfjs-dist', license: 'Apache-2.0',
     licenseNote: 'Only the display and worker modules. The standard_fonts (Foxit fonts under a BSD license, Liberation ' +
       'fonts under GPL-2.0 with a font exception), cmaps, iccs and wasm directories are not shipped.',
     copy: [
@@ -554,7 +423,7 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     // Browser session replay (js/WebrootRum.js records, Monitor › Replays plays back with its Replayer): loaded only for
     // a sampled, opt-in replay and on the replay screen. Pinned Oct 30, 2026: 2.1.7 (Oct 2) is the latest stable release
     // at least two weeks old; 2.2.0 is from Oct 24.
-    id: 'rrweb', name: 'rrweb', npm: 'rrweb', version: '2.1.7', license: 'MIT',
+    id: 'rrweb', name: 'rrweb', npm: 'rrweb', license: 'MIT',
     licenseNote: 'The UMD bundle includes rrweb-snapshot, rrdom, @rrweb/types, @rrweb/utils, mitt, base64-arraybuffer and @xstate/fsm, all MIT.',
     copy: [
       ['dist/rrweb.umd.min.cjs', 'rrweb/rrweb.umd.min.js'],
@@ -579,7 +448,7 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER I
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.`,
   },
   {
-    id: 'qz-tray', name: 'QZ Tray connector (qz-tray.js)', npm: 'qz-tray', version: '2.3.0', license: 'LGPL-2.1-only',
+    id: 'qz-tray', name: 'QZ Tray connector (qz-tray.js)', npm: 'qz-tray', license: 'LGPL-2.1-only',
     licenseNote: 'The file is served unmodified as its own script, and only when printing is enabled. Never concatenated or minified into another file.',
     copy: [['qz-tray.js', 'qz-tray/qz-tray.js']],
     noticeText: () => `Copyright (c) QZ Industries, LLC. The file header states "@license LGPL-2.1-only". The package carries no license file.\n\nThe full text is in licenses/LGPL-2.1.txt, from ${LGPL_URL}.\nSource: https://github.com/qzind/tray (tag v2.3.0), and the npm package qz-tray@2.3.0 contains the same file unmodified.`,
@@ -588,8 +457,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
     // End-to-end encryption in the browser (plans/archive/Comms-Framework.md §4.5, C7 core): matrix-sdk-crypto's OlmMachine (on
     // vodozemac) built to WebAssembly by its maintainers. js/WebrootCrypto.js imports index.mjs only when a device is
     // needed, never on a page load: the module is 7.8 MB. Pinned Oct 31, 2026; 18.9.0 was published Sep 21, 2026.
-    id: 'matrix-sdk-crypto', name: 'matrix-sdk-crypto-wasm', npm: '@matrix-org/matrix-sdk-crypto-wasm', version: '18.9.0',
-    license: 'Apache-2.0 AND MIT AND BSD-3-Clause AND ISC AND Zlib AND Unicode-3.0 AND BSL-1.0 AND MPL-2.0',
+    id: 'matrix-sdk-crypto', name: 'matrix-sdk-crypto-wasm', npm: '@matrix-org/matrix-sdk-crypto-wasm', license: 'Apache-2.0 AND MIT AND BSD-3-Clause AND ISC AND Zlib AND Unicode-3.0 AND BSL-1.0 AND MPL-2.0',
     licenseNote: 'The package is Apache-2.0. Its WebAssembly module has 240 Rust crates inside (a dual license taken on its ' +
       'permissive side); each, with its version, license and license text, is in ' + CRYPTO_CRATES_NOTICE + '. Seven are ' +
       'MPL-2.0 (as_variant, eyeball, eyeball-im, readlock, readlock-tokio, imbl, imbl-sized-chunks), unmodified: their ' +
@@ -614,6 +482,18 @@ const LICENSE_TEXTS = [
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
 const run = (cmd, argv, opts = {}) => execFileSync(cmd, argv, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], ...opts });
 
+// Keep the installed tree pristine. Patch and bundle a private copy, preserving relative bin links.
+function installProject(project, directory) {
+  mkdirSync(directory, { recursive: true });
+  for (const name of ['package.json', 'package-lock.json']) cpSync(join(project, name), join(directory, name));
+  run('npm', ['ci', '--ignore-scripts', '--prefer-offline', '--no-audit', '--no-fund'], { cwd: directory });
+  const work = join(directory, 'work');
+  mkdirSync(work);
+  cpSync(join(directory, 'node_modules'), join(work, 'node_modules'),
+    { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
+  return work;
+}
+
 function main() {
   const work = workArg ? resolve(workArg) : mkdtempSync(join(tmpdir(), 'moqui-libs-'));
   if (existsSync(work) && readdirSync(work).length) throw new Error(`work directory ${work} is not empty`);
@@ -623,28 +503,16 @@ function main() {
   const notices = [];
   const packages = {};
 
-  // Download and extract each package into its own fresh directory.
+  const build = installProject(source, join(work, 'libs'));
+  const lock = JSON.parse(readFileSync(join(source, 'package-lock.json')));
   for (const lib of LIBS) {
-    const dir = join(work, 'pkg', lib.id);
-    mkdirSync(join(dir, 'tgz'), { recursive: true });
-    mkdirSync(join(dir, 'x'), { recursive: true });
-    const spec = `${lib.npm}@${lib.version}`;
-    const info = JSON.parse(run('npm', ['pack', spec, '--json', '--ignore-scripts', '--pack-destination', join(dir, 'tgz')]))[0];
-    run('tar', ['-xzf', join(dir, 'tgz', info.filename), '-C', join(dir, 'x'), '--no-same-owner']);
-    packages[lib.id] = { root: join(dir, 'x', 'package'), integrity: info.integrity, shasum: info.shasum };
-    const pj = JSON.parse(readFileSync(join(packages[lib.id].root, 'package.json'), 'utf8'));
-    if (pj.version !== lib.version) throw new Error(`${spec}: tarball says ${pj.version}`);
-    if (pj.license !== undefined && typeof pj.license === 'string' && !lib.license.includes(pj.license.replace(/[()]/g, '').split(' ')[0])) {
-      console.warn(`warning: ${spec} package.json license "${pj.license}" vs recorded "${lib.license}"`);
-    }
+    lib.version = pins[lib.npm];
+    const key = 'node_modules/' + lib.npm;
+    const root = join(build, key);
+    const info = JSON.parse(readFileSync(join(root, 'package.json')));
+    if (info.version !== lib.version) throw new Error(`Unexpected ${lib.npm} version ${info.version}`);
+    packages[lib.id] = { root, integrity: lock.packages[key].integrity };
   }
-
-  // Build environment for the bundles.
-  const build = join(work, 'build');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'package.json'), '{"private":true}\n');
-  run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund', '--save-exact',
-    ...Object.entries(BUILD_DEPS).map(([n, v]) => `${n}@${v}`)], { cwd: build });
   const esbuild = (argv) => {
     const out = join(build, 'out', `o${Math.random().toString(36).slice(2)}.js`);
     run(join(build, 'node_modules', '.bin', 'esbuild'), [...argv, `--outfile=${out}`, '--log-level=error'], { cwd: build });
@@ -701,7 +569,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
     esbuildLangCore() {
       const pkg = join(build, 'node_modules', '@openuidev', 'lang-core');
       for (const patch of OPENUI_PATCHES) {
-        run('patch', ['-p1', '--forward', '--batch', '-i', join(here, patch)], { cwd: pkg });
+        run('patch', ['-p1', '--forward', '--batch', '-i', join(source, patch)], { cwd: pkg });
       }
       writeFileSync(join(build, 'openui-entry.js'), OPENUI_ENTRY);
       const out = esbuild(['openui-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=OpenUILang',
@@ -764,7 +632,7 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
       source: `https://registry.npmjs.org/${lib.npm}/-/${lib.npm.split('/').pop()}-${lib.version}.tgz`,
       npm: `${lib.npm}@${lib.version}`, tarballIntegrity: packages[lib.id].integrity,
       ...(lib.build ? { build: lib.build } : {}),
-      ...(lib.patches ? { patches: lib.patches.map((path) => ({ path, sha256: sha256(readFileSync(join(here, path))) })) } : {}),
+      ...(lib.patches ? { patches: lib.patches.map((path) => ({ path, sha256: sha256(readFileSync(join(source, path))) })) } : {}),
       files: files.map((f) => ({ path: f.path, from: f.from, size: outputs.get(f.path).length, sha256: sha256(outputs.get(f.path)) })),
     });
   }
@@ -775,12 +643,12 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   for (const { path, url } of LICENSE_TEXTS) {
     let buf;
     try {
-      if (!url) throw new Error(`${path} is kept as committed`);
+      if (!write || !url) throw new Error(`${path} is kept as committed`);
       buf = Buffer.from(run('curl', ['-fsSL', '--max-time', '20', url]), 'utf8');
     } catch (err) {
       const kept = join(here, path);
       if (!existsSync(kept)) throw err;
-      if (url) console.error(`could not download ${url}; keeping the copy at ${path}`);
+      if (write && url) console.error(`could not download ${url}; keeping the copy at ${path}`);
       buf = readFileSync(kept);
     }
     outputs.set(path, buf);
@@ -789,15 +657,14 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   libMeta.push({ id: 'license-texts', name: 'License texts', version: '-', license: 'n/a',
     source: 'see each file', files: lt });
 
-  const board = buildBoard(join(work, "whiteboard"));
+  const board = buildBoard(installProject(join(source, '../whiteboard'), join(work, 'whiteboard')), true);
   for (const [path, data] of board.outputs) outputs.set(path, data);
   libMeta.push(board.lib);
   notices.push(board);
   const noticesMd = renderNotices(notices);
   outputs.set('NOTICES.md', Buffer.from(noticesMd, 'utf8'));
   const manifest = {
-    generatedBy: 'libs/refresh.mjs',
-    buildTools: BUILD_DEPS,
+    generatedBy: 'build/libs/refresh.mjs',
     notices: { path: 'NOTICES.md', sha256: sha256(outputs.get('NOTICES.md')) },
     libraries: libMeta,
   };
@@ -821,10 +688,11 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
   for (const lib of committed.libraries) for (const f of lib.files) want.set(f.path, f.sha256);
   want.set(committed.notices.path, committed.notices.sha256);
   const problems = [];
+  if (manifestText !== readFileSync(join(here, 'MANIFEST.json'), 'utf8')) problems.push('Rebuilt manifest differs');
   // the reviewed patches a bundle was built with are the ones on disk
   for (const lib of committed.libraries) {
     for (const patch of lib.patches ?? []) {
-      const disk = join(here, patch.path);
+      const disk = join(source, patch.path);
       if (!existsSync(disk)) problems.push(`missing patch: ${patch.path}`);
       else if (sha256(readFileSync(disk)) !== patch.sha256) problems.push(`patch ${patch.path} differs from MANIFEST.json`);
     }
