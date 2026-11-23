@@ -186,7 +186,12 @@ pub fn gather(
         {
             let relative = line.trim_end_matches('/');
             let path = webroot.join(relative);
+            watch(&path);
             if !path.exists() {
+                if relative.starts_with("screen/webroot/libs/") {
+                    println!("cargo:warning={relative} is missing. Run ./moq build-js to include it in the binary");
+                    continue;
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!(
@@ -195,7 +200,6 @@ pub fn gather(
                     ),
                 ));
             }
-            watch(&path);
             collect(&path, &format!("webroot/{relative}"), &mut files)?;
         }
     }

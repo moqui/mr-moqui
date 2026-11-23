@@ -50,6 +50,9 @@ fn main() {
     );
 
     let mut watch = |path: &Path| println!("cargo:rerun-if-changed={}", path.display());
+    if level.whole_webroot() {
+        check_browser_libs(&runtime);
+    }
     let files = select::gather(&runtime, &manifest, level, &mut watch).unwrap_or_else(|err| panic!("{err}"));
     let (blob, index) = select::pack(&files).unwrap_or_else(|err| panic!("{err}"));
 
@@ -58,6 +61,23 @@ fn main() {
     write_out(&out.join("embedded.idx"), index.as_bytes());
 
     stage_programs();
+}
+
+fn check_browser_libs(runtime: &Path) {
+    let libs = runtime.join("components/base/webroot/screen/webroot/libs");
+    let manifest = libs.join("MANIFEST.json");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    let json: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest).unwrap_or_else(|err| panic!("{}: {err}; run ./moq build-js", manifest.display())),
+    )
+    .expect("browser library manifest");
+    for library in json["libraries"].as_array().expect("manifest libraries") {
+        for file in library["files"].as_array().expect("manifest files") {
+            let path = libs.join(file["path"].as_str().expect("asset path"));
+            println!("cargo:rerun-if-changed={}", path.display());
+            assert!(path.is_file(), "{} missing; run ./moq build-js", path.display());
+        }
+    }
 }
 
 /// Name the OpenSearch and Chromium archives to embed, under their features, for src/programs.rs: their paths in

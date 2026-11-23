@@ -29,6 +29,7 @@ flate2 = { workspace = true }
 similar = { workspace = true }
 
 [build-dependencies]
+serde_json = { workspace = true }
 flate2 = { workspace = true }
 
 [lints]

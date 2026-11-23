@@ -297,6 +297,7 @@ build_binary() {
     need_cargo
     [ "$package" = enterprise ] || ensure_pg_archive
     # before cargo: an --embed production or all build packs the whole webroot, the module with it
+    ensure_js
     ensure_vault_wasm
     prepare_embed
     local -a package_args
@@ -334,6 +335,13 @@ ensure_pg_archive() {
     [ ! -f "$archive" ] || return 0
     info "The embedded Postgres archive is not there yet; getting it ($(rel "$payload") strip)" >&2
     run_cmd "$payload" strip >&2 || die "could not get the embedded Postgres archive"
+}
+
+ensure_js() {
+    [ "${MOQ_JS_ENSURED:-}" != "$JS_LIBS" ] || return 0
+    task_build_js >&2 || die "could not build browser libraries. Run ./moq build-js"
+    MOQ_JS_ENSURED=$JS_LIBS
+    export MOQ_JS_ENSURED
 }
 
 # The vault's browser module (js/vault/moqui_vault.wasm in the webroot), which is not kept in git: scripts/vault-wasm.sh

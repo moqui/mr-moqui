@@ -32,14 +32,11 @@ the html render mode, comes to use another file, add the file to that list.
 | `find.xml` | not a file but the `/find/rank` transition: ranks a page's sentences against a query for `js/MoquiFind.js` ([Semantic find](../../../../../../docs/ui/Semantic-Find.md)) |
 | `ReAuth.xml` | not a file but the `/ReAuth` transitions: the recent sign-in check and the re-authentication of sensitive actions (`js/WebrootReAuth.js`, [Recent sign-in](../../../../../../docs/security/Recent-Auth.md)) |
 
-## Vendored browser libraries (`libs/`)
+## Built browser libraries (`libs/`)
 
-`libs/MANIFEST.json` lists every file with its size, sha256, source, npm tarball integrity and SPDX license. `libs/NOTICES.md`
-has each license text. `libs/refresh.mjs` rebuilds the tree from the pinned versions (`node libs/refresh.mjs` verifies against
-the manifest, `node libs/refresh.mjs --write` rewrites the tree, manifest and notices). It needs Node and npm, runs no package
-script, and is a maintainer tool: the server and the Rust build never run it. The test
-`crates/moqui-core/tests/browser_libs.rs` checks that every manifest file exists with the recorded sha256 and that nothing else
-is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--write`, and update `plans/archive/License-Review.md`.
+`./moq build-js` installs the locked npm projects and verifies the generated assets. `libs/MANIFEST.json` records file
+hashes, licenses and package integrity. `libs/NOTICES.md` contains the notices. Update dependencies with
+`./moq update-js <package> <version>`, review the manifest, notices and license review, then run `./moq verify-js`.
 
 | Library | Version | Paths under `/libs/` | Loaded by |
 |---|---|---|---|

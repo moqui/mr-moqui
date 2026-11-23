@@ -7,7 +7,7 @@ Status 2026-11-06: research and plan, nothing built. It covers what Debian's rul
 There are four large pieces of work, and three smaller ones.
 
 1. **Rust crates.** Debian builds Rust programs only from crates packaged in the archive as `librust-*-dev`, never from a vendored `cargo vendor` tree (§3). A Maximal build without the dev tools, on Linux, needs 657 crates from crates.io. Of those, 406 are in sid at the same or a newer semver-compatible version and 100 are in sid at an older version of the same series. 81 are in sid only at a different series, and 70 are not packaged at all. Each missing crate is a source package of its own that goes through NEW. This is the largest piece and is mostly upstream and Rust-team work, not packaging.
-2. **The vendored web libraries.** `runtime/components/base/webroot/screen/webroot/libs` holds 21 MB of minified JavaScript and CSS, esbuild bundles, fonts, and a prebuilt WebAssembly binary (matrix-sdk-crypto). Debian needs the preferred form for modification of every file, and wants Debian's own copy used where one exists (§4).
+2. **The vendored web libraries.** `runtime/components/base/webroot/screen/webroot/libs` holds 41 MB of minified JavaScript and CSS, esbuild bundles, fonts, and a prebuilt WebAssembly binary (matrix-sdk-crypto). Debian needs the preferred form for modification of every file, and wants Debian's own copy used where one exists (§4).
 3. **A system-Postgres build.** It would keep the embedded cluster management but run Debian's `postgresql-18` binaries in place of the theseus archive (§5). The code supports most of this already. It needs a feature split, a major-version upgrade path, and a decision about the cluster that installing `postgresql-18` creates.
 4. **An FHS layout and a real source package.** That means the binary in `/usr`, read-only components in `/usr/share`, configuration in `/etc`, state in `/var/lib`, and a `debian/` directory built with debhelper and dh-cargo. It would reuse `systemd/moqui.service`, `systemd/moqui.sysusers` and the podman entrypoint's symlink layout (§6).
 
@@ -246,3 +246,5 @@ In each Debian option, `moqui-desktop` Depends on `moqui` for the node rather th
 - [Tauri: Chromium Embedded Framework](https://v3.tauri.app/develop/cef/); [Debian bug #893448, a chromium-source package for CEF](https://bugs.debian.org/893448)
 - [mentors.debian.net](https://mentors.debian.net), the Debian Developer's Reference, and the New Maintainers' Guide for the upload process
 - The sid and forky amd64 `Packages` and sid `Sources` indexes from deb.debian.org, 2026-11-06, for every package and version in §3 to §7
+
+The browser library build and offline source inputs are described in [JS-Build](JS-Build.md).

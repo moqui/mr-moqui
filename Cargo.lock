@@ -4808,6 +4808,7 @@ name = "moqui-embedded"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "serde_json",
  "similar",
 ]
 

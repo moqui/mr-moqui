@@ -418,7 +418,7 @@ The files are in `podman/` ([README](../../podman/README.md)). `podman/build.sh 
 (`Containerfile.build`) beside the server's image, on the same Debian base: the Rust toolchain `rust-toolchain.toml`
 pins with clippy and rustfmt, a C toolchain, git, bash, curl, the libraries the embedded Postgres loads, the `moqui`
 binary (the runner), and an MR Moqui tree at `/opt/moqui` for the built-in pipeline. `--chromium` and `--java` add
-Chromium and a Java runtime. Node is not needed.
+Chromium and a Java runtime. The build image includes Node 24 LTS and npm for the browser asset build.
 
 The engine builds no image. A pool lists the images it allows (the job's and its services'), and the host of a
 trusted pool pulls one it does not have; an untrusted pool's host must have it. A job's image

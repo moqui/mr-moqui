@@ -4,6 +4,7 @@
 # ========== test and accept tasks ==========
 
 task_test() {
+    ensure_js
     parse_run_opts test "$@"
     local bin
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
@@ -13,6 +14,7 @@ task_test() {
 
 # The client reads no conf: -p N is the server at https://localhost:N, and -c and -D are not passed on.
 task_test_client() {
+    ensure_js
     parse_run_opts test "$@"
     local bin prop
     local -a server
@@ -246,6 +248,7 @@ apps_suites() {
 
 task_test_framework() {
     parse_suite_opts test-framework "$@"
+    ensure_js
     ensure_vault_wasm
     framework_suites
     suite_summary test-framework
@@ -253,6 +256,7 @@ task_test_framework() {
 
 task_test_apps() {
     parse_suite_opts test-apps "$@"
+    ensure_js
     ensure_vault_wasm
     apps_suites
     suite_summary test-apps
@@ -402,6 +406,7 @@ accept_suites() {
 
 task_accept() {
     parse_accept_opts accept "$@"
+    ensure_js
     ensure_vault_wasm
     accept_suites
     suite_summary accept
@@ -409,6 +414,7 @@ task_accept() {
 
 task_accept_all() {
     parse_accept_opts accept-all "$@"
+    ensure_js
     ensure_vault_wasm
     accept_suites
     need_cargo
@@ -427,6 +433,7 @@ task_accept_all() {
 # Every regression suite: the framework's, then the applications'.
 task_test_all() {
     parse_suite_opts test-all "$@"
+    ensure_js
     ensure_vault_wasm
     framework_suites
     apps_suites
@@ -564,6 +571,7 @@ EOF
 
 # The tests of the client crates, the clients' MASVS proofs among them (docs/security/proofs/clients/README.md).
 task_test_clients() {
+    ensure_js
     local arg line name dir known
     local -a cargo_args
     CLIENT_NAMES=()

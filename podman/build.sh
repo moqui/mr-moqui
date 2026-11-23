@@ -36,6 +36,7 @@ if [ "$nobuild" -eq 0 ]; then
 fi
 # The vault's browser module, which both images carry under components/base and git does not keep: ./moq build made it;
 # with --nobuild it is built here when it is missing or stale.
+"$root/moq" build-js || exit 1
 "$root/scripts/vault-wasm.sh" --quiet || {
     echo "could not build the vault's browser module (scripts/vault-wasm.sh)" >&2
     exit 1
@@ -97,6 +98,8 @@ if [ "$build_image" -eq 1 ]; then
     # the ones its component depends on), no databases, logs or build output.
     (cd "$root" && git archive --format=tar HEAD) | tar -C "$build/tree" -xf -
     # with the vault's browser module and its stamp, which are not tracked, so ./moq test there finds it up to date
+    libs=runtime/components/base/webroot/screen/webroot/libs
+    cp -a "$root/$libs/." "$build/tree/$libs/"
     vault=runtime/components/base/webroot/screen/webroot/js/vault
     cp -a "$root/$vault/moqui_vault.wasm" "$root/$vault/moqui_vault.wasm.json" "$build/tree/$vault/"
     rust_version=$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' "$root/rust-toolchain.toml")

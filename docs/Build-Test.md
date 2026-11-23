@@ -23,7 +23,12 @@ JavaScript test APIs are in [JS-Testkit](dev/JS-Testkit.md) (the server specs of
 Prerequisites: Rust 1.99 or newer (`rustc --version`; quickjs-oxide declares 1.99, and `rust-toolchain.toml` pins
 1.100.0) and bash, on Linux, macOS, or Windows ([Windows](#windows) has what a Windows build needs). A build with
 embedded Postgres embeds the 18.6.0 archive that `scripts/pg-payload.sh strip` downloads once and strips of psql (it
-links GPL readline); `./moq build` runs that when the archive is missing. Node is not needed to build or test.
+links GPL readline); `./moq build` runs that when the archive is missing. A fresh checkout needs Node 24 LTS and its bundled npm for `./moq build-js` (tested with Node 24.22.3 and npm 11.19.1).
+The two npm projects install from exact locks with lifecycle scripts disabled. Each build checks the installed assets against
+the reviewed manifest. `./moq verify-js` rebuilds independently. `audit-js` checks the lockfiles and embedded copies,
+`outdated-js` lists updates, and `update-js <package> <version>` refreshes assets and notices. Review the lock, manifest
+and license changes together. Updates normally observe a 14-day cooldown. A reviewed security fix may use `--security`.
+The server and the regression test runners use the built files directly.
 
 ```sh
 ./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or

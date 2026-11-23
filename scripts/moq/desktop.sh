@@ -544,6 +544,7 @@ stage_desktop_sidecar() {
 # webroot/libs/<id>. Both apps carry it: a desktop bundle in its resources (target/desktop-shell), the mobile app
 # embedded as its Tauri assets (target/mobile-shell, its frontendDist).
 stage_client_shell() {
+    ensure_js
     local stage=$1 webroot=$ROOT/runtime/$BASE_SET/webroot/screen/webroot lib
     need_tool rsync
     # the libraries of shell/libs.txt only: one dropped from the list goes from the stage too

@@ -244,6 +244,28 @@ fn names(dirs: &[(Set, PathBuf)]) -> String {
 }
 
 fn log_differences(dirs: &[(Set, PathBuf)]) {
+    if let Some((_, webroot)) = dirs.iter().find(|(set, _)| *set == Set::Webroot) {
+        let libs = webroot.join("screen/webroot/libs");
+        if let Ok(bytes) = moqui_lib::vfs::read(libs.join("MANIFEST.json")) {
+            if let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let mut missing = Vec::new();
+                for library in manifest["libraries"].as_array().into_iter().flatten() {
+                    if library["files"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| f["path"].as_str())
+                        .any(|file| !moqui_lib::vfs::is_file(libs.join(file)))
+                    {
+                        missing.push(library["id"].as_str().unwrap_or("unknown"));
+                    }
+                }
+                if !missing.is_empty() {
+                    tracing::error!("Missing browser libraries: {}. Run ./moq build-js", missing.join(", "));
+                }
+            }
+        }
+    }
     let differences = match compare(dirs) {
         Ok(differences) => differences,
         Err(err) => {

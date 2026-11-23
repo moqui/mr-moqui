@@ -879,9 +879,9 @@ record, written under the run's lease with the fence lifted for it, as an approv
 [below](#vue-sfc-canvases).
 
 **Parsed once, on the server** (`crates/moqui-llm/src/ui/openui.rs`, J28). The one parser is the vendored
-`@openuidev/lang-core` 0.2.18 (`webroot/libs/openui/lang-core.min.js`, the global `OpenUILang`), built by `libs/refresh.mjs`
-from the npm package with two reviewed patches of `libs/patches/` (telemetry off; a failed Query is not fetched again
-until its arguments change), recorded with their sha256 in `MANIFEST.json`; `node libs/refresh.mjs` verifies it. The
+`@openuidev/lang-core` 0.2.18 (`webroot/libs/openui/lang-core.min.js`, the global `OpenUILang`), built by `build/libs/refresh.mjs`
+from the npm package with two reviewed patches of `build/libs/patches/` (telemetry off; a failed Query is not fetched again
+until its arguments change), recorded with their sha256 in `MANIFEST.json`; `./moq verify-js` verifies it. The
 server runs the same bundle in a script runtime of its own (one a thread, 64 MiB, 5 s a call) with the library spec
 `webroot/js/openui-library.spec.json`. A program is parsed and checked before anything is shown. A patch is parsed alone
 first, then merged onto the canvas with lang-core's own `mergeStatements` (the same name replaces, a new one is added,
