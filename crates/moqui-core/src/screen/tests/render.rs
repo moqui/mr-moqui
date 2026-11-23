@@ -460,6 +460,7 @@ fn a_redirect_with_no_context_is_still_held_to_this_site() {
 /// of a redirect: a target that is not a path of this site goes to the root.
 #[test]
 fn a_json_redirect_holds_the_url_to_this_site_too() {
+    let _env = super::Env::new();
     let context = ExecutionContextFactory::test_context();
     let mut request = request("GET", "/goExternal");
     request.set_header("accept", "application/json");

@@ -23,7 +23,6 @@ function mount(template, data, setup = "") {
         document.addEventListener("keydown", (event) => { window.lastKey = { key: event.key, prevented: event.defaultPrevented }; });
         </script></body></html>`)
     page.waitFor(() => document.querySelector("#app input"))
-    sleep(200)
     return page
 }
 
@@ -50,7 +49,7 @@ feature("an m-drop-down takes the typed match on a quick ENTER or TAB, and TAB m
         focusAt(page, 0)
         page.keyboard.type("Alab")
         // a pause after typing: the slow ENTER takes the match the search found
-        sleep(700)
+        page.getByRole("option", {name:"Alabama", exact:true}).waitFor()
         page.keyboard.press("Enter")
         settled(() => window.vm.one === "AL")
         const slowEnter = page.evaluate(() => window.vm.one)
@@ -66,7 +65,7 @@ feature("date keys step an m-date-time input; its q-date and q-time keep their o
         const page = mount(`<div><m-date-time id="day" name="day" type="date" v-model="day"></m-date-time>
             <m-date-time id="stamp" name="stamp" type="timestamp" label="From" v-model="stamp" :minute-step="15"></m-date-time>
             <m-date-time id="at" name="at" type="time" v-model="at"></m-date-time></div>`, { day: "2026-01-31", stamp: "2026-10-25 23:50", at: "" })
-        const press = (index, key) => { focusAt(page, index); page.keyboard.press(key); sleep(50) }
+        const press = (index, key) => { focusAt(page, index); page.keyboard.press(key) }
         press(0, "m")
         const m = page.evaluate(() => window.vm.day)
         press(0, "Shift+Y")

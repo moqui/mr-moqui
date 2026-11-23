@@ -30,8 +30,13 @@ feature("a shell on the server floats through another app and a reload, and come
         page.waitFor("!!document.querySelector('.m-terminal-pane')", { timeout: 30 })
         page.locator("#TerminalNew").click()
         page.locator("#TerminalNew-host-shell").click()
-        page.waitFor("document.querySelectorAll('.m-terminal-pane').length >= 1 && (" + shown(".m-terminal-pane") + ").includes('$')", { timeout: 30 })
-        const focused = page.evaluate("document.querySelector('.q-tab--active') && document.querySelectorAll('.xterm-helper-textarea').forEach(el => el.closest('.m-terminal-pane') && el.focus()) || true")
+        // The host shell chooses its own prompt. Wait for its output and for the New menu to release focus.
+        page.waitFor(() => {
+            const pane = document.querySelector(".m-terminal-pane-focused")
+            return pane?.querySelector(".m-terminal-pane-header")?.textContent.includes("Shell")
+                && !!pane.querySelector(".xterm-rows")?.textContent.trim() && !document.querySelector(".q-menu")
+        }, { timeout: 30 })
+        page.locator(".m-terminal-pane-focused .xterm-screen").click()
         page.keyboard.type("export WALK=walk-$((20+22)); echo $WALK\r")
         page.waitFor("(" + shown(".m-terminal-pane") + ").includes('walk-42')", { timeout: 20 })
 
