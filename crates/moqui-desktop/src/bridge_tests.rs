@@ -37,7 +37,19 @@ fn the_capability_pattern_is_the_nodes_origin_alone() {
 
 #[test]
 fn the_permissions_name_the_commands_of_the_app_manifest() {
-    for command in ["notify", "set_counts", "set_presence", "open_external", "node_setup_secret", "secure_screen"] {
+    for command in [
+        "notify",
+        "set_counts",
+        "set_presence",
+        "open_external",
+        "node_setup_secret",
+        "secure_screen",
+        "capture_sources",
+        "capture_choose",
+        "capture_overlay",
+        "capture_ink",
+        "capture_overlay_close",
+    ] {
         let permission = format!("allow-{}", command.replace('_', "-"));
         assert!(PERMISSIONS.contains(&permission.as_str()), "{permission}");
     }
@@ -177,6 +189,11 @@ fn the_capability_resolves_against_the_built_acl_to_the_bridge_commands_only() {
     assert_eq!(
         commands,
         [
+            "capture_choose",
+            "capture_ink",
+            "capture_overlay",
+            "capture_overlay_close",
+            "capture_sources",
             "node_setup_secret",
             "notify",
             "notify_clear",

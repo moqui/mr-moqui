@@ -39,7 +39,7 @@ pub(crate) const SCRIPT: &str = include_str!("bridge.js");
 
 /// The permissions of the node's origin: the app commands of `build.rs` (`allow-` and the command with `-` for `_`),
 /// and the notification plugin's permission check, which its `window.Notification` stand-in asks on every page.
-const PERMISSIONS: [&str; 8] = [
+const PERMISSIONS: [&str; 13] = [
     "allow-notify",
     "allow-notify-clear",
     "allow-set-counts",
@@ -47,6 +47,11 @@ const PERMISSIONS: [&str; 8] = [
     "allow-open-external",
     "allow-node-setup-secret",
     "allow-secure-screen",
+    "allow-capture-sources",
+    "allow-capture-choose",
+    "allow-capture-overlay",
+    "allow-capture-ink",
+    "allow-capture-overlay-close",
     "notification:allow-is-permission-granted",
 ];
 
@@ -80,6 +85,7 @@ struct TrayState {
 pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
     builder
         .manage(Bridge::default())
+        .manage(crate::capture::Capture::default())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             notify,
@@ -91,6 +97,11 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             open_external,
             node_setup_secret,
             secure_screen,
+            crate::capture::capture_sources,
+            crate::capture::capture_choose,
+            crate::capture::capture_overlay,
+            crate::capture::capture_ink,
+            crate::capture::capture_overlay_close,
             crate::splash::restart_node,
             moqui_client_tauri::client_state,
             moqui_client_tauri::client_sign_in,
@@ -458,7 +469,21 @@ pub(crate) fn on_download(webview: Webview, event: DownloadEvent<'_>) -> bool {
 /// or a client's shell and app windows) for calls, where the OS still asks the user once, and refused to any other
 /// page. With no answer CEF's Alloy style (every webview on macOS) would grant them to any page. The other kinds are
 /// left to the runtime.
+///
+/// Capturing the screen (`getDisplayMedia`, and on macOS the app's own picker's request) is for the same pages only:
+/// [`crate::capture::answer`].
 pub(crate) fn on_permission(webview: Webview, kind: PermissionKind) -> PermissionResponse {
+    if matches!(kind, PermissionKind::DisplayCapture) {
+        let app = webview.app_handle();
+        let shell = crate::client::active(app).then(crate::client::shell_origin);
+        let allowed = webview
+            .url()
+            .is_ok_and(|url| media_allowed(&url, app.state::<Bridge>().node.get(), shell.as_ref()));
+        if !allowed {
+            tracing::warn!("Screen capture refused to a page off the app's origins");
+        }
+        return crate::capture::answer(app, &webview, allowed);
+    }
     if !matches!(kind, PermissionKind::Camera | PermissionKind::Microphone) {
         return PermissionResponse::Default;
     }

@@ -556,4 +556,14 @@ One participant holds the presentation stage. Hosts choose Anyone, Hosts, or Ask
 
 The browser's picker controls the tab, window or display that is captured. Tab audio, surface switching and cropping appear where the browser supports them. Viewers can pan, zoom or enter fullscreen. The media server checks stage ownership before forwarding screen video or mixing share audio into a phone leg.
 
+The stage's frames, on the notification socket (or a guest's `/callws`):
+
+| Frame | From | What |
+|---|---|---|
+| `rtc: "stage"`, `action` `ask`, `take`, `approve`, `lower`, `stop` | a page | Ask for, take or give up the stage (`kind` `screen`, `board` with `wikiPageId`, or `follow`); `take` and `stop` carry `previousLegId`, the presenter they act on, so a stop never lands on a newer presenter. `approve` is a host's, in Ask mode |
+| `rtc: "stage"`, `action` `inkMode`, `inkSurface` | the presenter | Who may draw (`off`, `hosts`, `everyone`); whether the strokes are drawn into the capture (this tab shared) |
+| `rtc: "stage"` with `stage`, `revision` | the call | The current stage to every leg: its kind, presenter leg, ink mode and epoch, the legs that asked (`requests`); what a request asked for stays with the call engine |
+| `rtc: "ink"`, `action` `stroke`, `pin`, `clear`, `snapshot` | a page, relayed | A stroke in fractions of the shared picture (at most 512 points, 128 kept), pinned or fading; `clear` is a host's or the presenter's; `snapshot` asks the presenter's page for a board and is sent only by one who may draw |
+| `rtc: "follow"`, `action` `navigate`, `locate`, `catchUp` | the presenter, relayed | The screen path and declared parameters, the section, dialog and pointer; to member pages only |
+
 **Present this screen** lets signed-in participants follow the presenter's application screens. Each follower loads the screen with their own account. If the account cannot read a record, the call shows an access message without its parameters. **Stop following** lets the viewer browse independently. **Follow again** opens the current presentation. A guest can watch only when the presenter shares this tab through the browser picker. Phone legs receive no screen-navigation messages.

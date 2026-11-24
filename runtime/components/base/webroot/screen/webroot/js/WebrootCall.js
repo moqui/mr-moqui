@@ -1675,6 +1675,8 @@
             const enabled=state.capture?.ownTab && state.stage.kind==="screen" && state.stage.callLegId===state.legId;
             const target=enabled ? (state.capture.crop ? call.captureTarget() : root.document.body) : null;
             moqui.ink?.embedded(target,state.inkStrokes,call.screenStream?.getVideoTracks()[0]);
+            // a window or screen shared from the desktop app: the strokes on its overlay, over what is shared
+            if(call.overlayShown)root.moquiDesktop?.captureInk?.(state.inkStrokes.map(({id,kind,tool,color,width,points})=>({id,kind,tool,color,width,points})));
         },
         inkFrame(frame) {
             if (state.stage.kind!=="screen" || frame.inkEpoch!==state.stage.inkEpoch) return;
@@ -1818,7 +1820,7 @@
                 const controller = root.CaptureController ? new root.CaptureController() : null;
                 const opts=call.captureOptions(surface,motion,controller);
                 if(follow){opts.audio=false;opts.surfaceSwitching="exclude";}
-                stream = await media.getDisplayMedia(opts);
+                stream = await call.displayMedia(media,opts,surface,motion);
                 if (controller && surface !== "tab" && controller.setFocusBehavior) {
                     try { controller.setFocusBehavior("no-focus-change"); } catch (_) { /* optional */ }
                 }
@@ -1860,6 +1862,9 @@
                 if (epoch !== call.captureEpoch || pc !== call.pc) return false;
                 video.onended = () => call.stopShare(!follow);
                 state.sharing = true;
+                // the desktop app's overlay over a shared window or screen, where it knows the place (capture.rs)
+                if (!follow && !state.capture.ownTab && root.moquiDesktop?.captureOverlay)
+                    root.moquiDesktop.captureOverlay(call.captureSource?.bounds || null).then(shown=>{call.overlayShown=shown && state.sharing;call.syncEmbeddedInk();});
                 if (!follow && state.capture.ownTab) {
                     await moqui.loadScript("/js/WebrootInk.js",null,()=>!!moqui.ink);
                     call.syncEmbeddedInk();call.stageCommand("inkSurface",{embedded:true});
@@ -1874,10 +1879,33 @@
                 state.picking = false;
             }
         },
+        // The capture: the browser's picker, or in the macOS app (whose webview has none) the app's list of displays and
+        // windows (moqui-desktop capture.rs), the one picked asked for by its desktop media id. Cancelled is
+        // NotAllowedError, as the browser's picker answers.
+        async displayMedia(media,opts,surface,motion) {
+            const host=root.moquiDesktop;
+            if(!host?.captureSources)return media.getDisplayMedia(opts);
+            const cancelled=()=>Object.assign(new Error(t("Sharing was cancelled")),{name:"NotAllowedError"});
+            const sources=(await host.captureSources()) || [];
+            const items=sources.filter(s=>surface!=="tab" || s.screen).map(s=>({label:(s.screen?"🖥 ":"🗔 ")+s.name,value:s.id}));
+            if(!items.length)throw new Error(t("There is no screen or window to share"));
+            const open=root.Quasar?.Dialog ? o=>root.Quasar.Dialog.create(o) : null;
+            if(!open)throw new Error(t("Sharing is not available here"));
+            const id=await new Promise(resolve=>open({title:t("Share the screen"),message:t("Choose a screen or a window"),
+                options:{type:"radio",model:items[0].value,items},cancel:true,persistent:false})
+                .onOk(resolve).onCancel(()=>resolve(null)).onDismiss(()=>resolve(null)));
+            if(!id)throw cancelled();
+            const chosen=await host.captureChoose(id);
+            call.captureSource=chosen || null;
+            return media.getUserMedia({audio:false,video:{mandatory:{chromeMediaSource:"desktop",chromeMediaSourceId:id,
+                maxFrameRate:motion?30:15}}});
+        },
         async stopShare(release = true) {
             ++call.captureEpoch;
             if (release && state.stage.callLegId === state.legId) call.stageCommand("stop");
             moqui.ink?.embedded(null,[]);
+            if (call.overlayShown) { call.overlayShown=false; root.moquiDesktop?.captureOverlayClose?.(); }
+            call.captureSource = null;
             const hadCapture = !!call.screenStream;
             if (call.screenStream) call.screenStream.getTracks().forEach(track => {track.onended=null;track.stop();});
             call.screenStream = null;

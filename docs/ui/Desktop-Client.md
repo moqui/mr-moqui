@@ -399,6 +399,32 @@ The shell owns the account's calls, so each call has one owner of its media.
   call from the phone or a browser into the shell, and back from there (plans/Comms-Messaging.md §8.3 items 2, 4 and 6;
   [WebRTC, The call's flow](../interfaces/WebRTC.md#the-calls-flow)).
 
+### Screen share
+
+A call's Share the screen works in the node's window, the shell and an app window (`src/capture.rs`); the page is
+the same as in a browser ([Comms, Boards and the stage](../tools/Comms.md)).
+
+- **Linux and Windows** are CEF's Chrome style: `getDisplayMedia` shows Chromium's own picker (screens, windows and,
+  in the node's window, the tab). The app's permission handler leaves the request to it for the app's own pages and
+  refuses it to any other (`bridge::on_permission`, `capture::answer`). On Wayland the picker is the desktop portal's
+  (PipeWire).
+- **macOS** is always Alloy style (tauri-runtime-cef gives a native parent no other), which has no picker and refuses
+  desktop capture. The page shows the app's list instead (`moquiDesktop.captureSources`: the displays, and the other
+  applications' windows on screen, by CoreGraphics), and asks for the one picked by its desktop media id
+  (`getUserMedia` with `chromeMediaSource: "desktop"`, `screen:<display>:0` or `window:<window>:0`). `captureChoose`
+  takes the pick; the patched runtime (`patches/tauri-runtime-cef`) grants the next desktop-only request of that window
+  within 15 seconds, once. The first share asks for the screen-recording permission (System Settings, Privacy &
+  Security); there is no Info.plist key or entitlement for it outside the sandbox.
+- **The overlay.** While a window or screen (not the call's own tab) is shared, a transparent, click-through window
+  above the others covers it and draws the call's ink (`capture_overlay`, `capture_ink`, `splash/overlay.html`), so the
+  strokes are in the picture the others see and in a recording. It needs the place: the macOS picker knows the source's
+  bounds; on Windows and X11, whose picker says only that a screen is shared, it covers the monitor when there is one.
+  On Wayland, which gives an app window no place and no keep-above, there is no overlay, and the strokes show on the
+  presenter's small view of the share.
+- A window kept out of screen capture (`secureScreen`, a view-once photo open) is black in a share, as the OS keeps it.
+
+The live checks for each OS are in [Testing-Needed](../../plans/Testing-Needed.md#desktop-and-mobile-apps).
+
 ## Offline in the screens
 
 From `moqui.connection`, inert on the web: offline is the host's own unreachable answer

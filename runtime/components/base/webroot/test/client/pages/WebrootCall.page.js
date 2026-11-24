@@ -435,6 +435,39 @@ test("another's snapshot asks the presenter first, and the one taken over is tol
     }
 });
 
+test("in the macOS app the share asks for the source picked in the app's list by its desktop media id", async () => {
+    const host = window.moquiDesktop, quasar = window.Quasar;
+    const chosen = [], asked = [];
+    let pick = "window:7:0";
+    try {
+        window.moquiDesktop = {
+            captureSources: async () => [{id: "screen:1:0", screen: true, name: "Screen 1"}, {id: "window:7:0", screen: false, name: "Notes: Plan"}],
+            captureChoose: async (id) => { chosen.push(id); return {id, bounds: {x: 0, y: 0, width: 800, height: 600}}; }
+        };
+        window.Quasar = Object.assign({}, quasar, {Dialog: {create(options) {
+            asked.push(options.options.items.map(i => i.value));
+            const dialog = {onOk(fn) { if (pick) fn(pick); return dialog; }, onCancel(fn) { if (!pick) fn(); return dialog; }, onDismiss() { return dialog; }};
+            return dialog;
+        }}});
+        const media = {getDisplayMedia: async () => { throw new Error("the browser picker is not used"); },
+            getUserMedia: async (constraints) => ({constraints})};
+        const got = await call.displayMedia(media, {}, "window", false);
+        assert.deepEqual(chosen, ["window:7:0"]);
+        assert.deepEqual(asked[0], ["screen:1:0", "window:7:0"]);
+        assert.equal(got.constraints.video.mandatory.chromeMediaSource, "desktop");
+        assert.equal(got.constraints.video.mandatory.chromeMediaSourceId, "window:7:0");
+        assert.equal(call.captureSource.bounds.width, 800);
+        await call.displayMedia(media, {}, "tab", true);
+        assert.deepEqual(asked[1], ["screen:1:0"], "this tab offers the screens only");
+        pick = null;
+        let refused = null;
+        try { await call.displayMedia(media, {}, "window", false); } catch (error) { refused = error.name; }
+        assert.equal(refused, "NotAllowedError", "cancelled as the browser's picker is");
+    } finally {
+        window.moquiDesktop = host; window.Quasar = quasar; call.captureSource = null;
+    }
+});
+
 test("the presenter sends navigation once and locates changes within the same screen", async()=>{
     const prior={followPath:call.followPath,followPage:call.followPage,send:call.send,guest:call.guest};
     const sent=[];

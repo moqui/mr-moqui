@@ -164,6 +164,18 @@
     if (screenProtection) {
         pageCommands.secureScreen = (reason, on) => invoke("secure_screen", { reason: String(reason || ""), on: on === true }).then((held) => held === true, () => false);
     }
+    // sharing a screen on macOS (capture.rs): the webview has no picker of its own, so the page shows the app's list of
+    // displays and windows, and asks for the one picked by its desktop media id (WebrootCall.js shareScreen)
+    // and on every desktop the annotation overlay over a shared window or screen (capture.rs capture_overlay)
+    const capture = Object.assign({
+        captureOverlay: (bounds) => invoke("capture_overlay", { bounds: bounds || {} }).then((shown) => shown === true),
+        captureInk: (strokes) => invoke("capture_ink", { strokes: Array.isArray(strokes) ? strokes : [] }),
+        captureOverlayClose: () => invoke("capture_overlay_close")
+    }, /\bMac OS X\b|\bMacintosh\b/.test(navigator.userAgent || "") ? {
+        captureSources: () => ask("capture_sources"),
+        captureChoose: (id) => ask("capture_choose", { id: String(id || "") })
+    } : {});
+    Object.assign(pageCommands, capture);
     if (node) {
         // in process the node's sockets are the host's too, which has the window's cookies (moqui.openSocket); the
         // Comms app the OS's links open is the node's conf's, which the host reads, never a page's (SEC-CLI-05)
@@ -297,8 +309,8 @@
         }
         // a server's page: its sockets, the storage scope of its account (MoquiLib scopedKey), and a comms screen of the
         // main window shown there (an encrypted room: the shell owns the chat crypto device, window.__moquiCryptoInShell)
-        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, vault, storageScope: String(window.__moquiStorageScope || ""),
-            openInShell: (path) => ask("open_in_shell", { path: String(path || "") }) });
+        window.moquiDesktop = Object.freeze(Object.assign({ socket, outbox, drafts, vault, storageScope: String(window.__moquiStorageScope || ""),
+            openInShell: (path) => ask("open_in_shell", { path: String(path || "") }) }, capture));
         return;
     }
     window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {

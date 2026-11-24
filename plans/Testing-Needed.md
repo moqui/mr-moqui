@@ -105,6 +105,18 @@ Comms-Messaging, Edge-Node2 and [ui-review-basic-comms](ui-review-basic-comms.md
 | Clients | Element against the key endpoints; the XMPP apps Monal, Dino and Gajim (Conversations through the tunnel is in Edge-Node2); the XEP-0479 compliance tester; a push reaching an app server; Firefox and Safari for encrypted chat and calls | same |
 | Media | What headless Chromium cannot drive: screen share and the active speaker, a recorded greeting (its microphone is a steady tone), QR verification (a camera) | same |
 
+### Desktop and mobile apps
+
+Screen share from the apps ([Comms-Whiteboard](Comms-Whiteboard.md) MD and MM; guides
+[Desktop-Client, Screen share](../docs/ui/Desktop-Client.md#screen-share)). Built and unit tested here; no run of the
+installed apps has shared a screen yet.
+
+| Area | Item | Source |
+|---|---|---|
+| Desktop, Linux | Share a window of another application and a whole screen into a call from `./moq desktop dev` on Wayland (the portal's picker over PipeWire) and on X11; a browser leg sees it; the annotation overlay shows over a shared screen on X11 with one monitor and is absent on Wayland | `src/capture.rs` |
+| Desktop, macOS | The first share asks for Screen & System Audio Recording; the app's list shows the displays and the other applications' windows; a picked window is shared through the patched runtime's one grant (and a second `getUserMedia` without a new pick is refused); the overlay covers the picked window or screen and its strokes are in a recording | `src/capture.rs`, `patches/tauri-runtime-cef` |
+| Desktop, Windows | Chromium's picker shares a window and a screen; the overlay with one monitor | `src/capture.rs` |
+
 ## Related documents
 
 [Remaining-Work](Remaining-Work.md) (open work for v0.1.0), [Future-Plans](Future-Plans.md) (after it),
