@@ -116,8 +116,8 @@ out under `runtime/components/addon/`. The repository, its directory and its `co
 The framework is built and the applications above run on it. Before the first release, work continues on the
 security review, on mail and agent features that have run against few live providers and models so far, on reviewing
 the newer screens in the browser, on Moqui Java functionality not yet covered, and on tests and fixes. Performance is
-the phase after that. What is open is in [plans/Remaining-Work.md](plans/Remaining-Work.md), and what follows 0.1.0 in
-[plans/Future-Plans.md](plans/Future-Plans.md).
+the phase after that. What is open is in [plans/Remaining-Work.md](plans/Remaining-Work.md), the testing still needed in
+[plans/Testing-Needed.md](plans/Testing-Needed.md), and what follows 0.1.0 in [plans/Future-Plans.md](plans/Future-Plans.md).
 
 ## Coming from Moqui Java
 

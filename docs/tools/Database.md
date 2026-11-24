@@ -632,4 +632,4 @@ services. The generic tools, entity REST, request loads, ETL targets and every e
   - a load that skips failed rows.
   - Listed in [plans/Remaining-Work.md](../../plans/Remaining-Work.md).
 - The MySQL and MariaDB job runner paths (lock timeouts, progress, `KILL QUERY` cancel) have not been run against a
-  server. Their host tests run on Postgres.
+  server ([Testing-Needed](../../plans/Testing-Needed.md#tools-git-and-the-shop)). Their host tests run on Postgres.

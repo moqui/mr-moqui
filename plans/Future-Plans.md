@@ -1,7 +1,7 @@
 # Future plans
 
 The plans for after v0.1.0, and a digest of the unbuilt proposals in [proposals/](proposals/). Work for the first
-release is in [Remaining-Work](Remaining-Work.md). Each entry links to its detail; read it before starting.
+release is in [Remaining-Work](Remaining-Work.md), and live and platform checks are in [Testing-Needed](Testing-Needed.md). Each entry links to its detail; read it before starting.
 
 ## Comms
 
@@ -49,15 +49,8 @@ is left, by stream; the designs are in the archived plan and the interface guide
   messages; reactions in the archive; offline delivery outside MAM; XEP-0184 receipts; stanzas between XMPP sessions on
   different nodes; revoking an XMPP user's TURN credential.
 
-**Not checked live.** The tests use fakes, loopback and headless Chromium; these need a deployment, a provider's
-consent or real devices, and are listed in [§7.4](archive/Comms-Framework.md#74-built) "Left for later":
-- Telnyx (calls, SMS, OPTIONS pings, forwards, simultaneous ring, `Privacy: id`), carrier delivery and 10DLC; an emergency
-  call; desk phones and soft phone apps.
-- TURN over TLS and on 443, hairpin NAT, a browser behind a UDP-blocking firewall; cascading media nodes between two hosts.
-- Element against the key endpoints, XMPP apps (Conversations, Monal, Dino, Gajim), the XEP-0479 compliance tester, a push
-  reaching an app server; Firefox and Safari for encrypted chat and calls.
-- What headless Chromium cannot drive: screen share and the active speaker, captions and a recorded greeting (its
-  microphone is a steady tone), QR verification (a camera); the Recordings player with real media.
+**Not checked live.** The checks that need a deployment, a provider's consent or real devices are in
+[Testing-Needed, Comms](Testing-Needed.md#comms).
 
 ## Edge node
 
