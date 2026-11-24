@@ -21,6 +21,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   extension mode (every edit into the site's `screen-extend`), Add column and Add field (placed by `after=` in the layout
   or the columns), inserts at a named anchor or the nearest one, the Extension points, the Outline on the block tree and
   Properties from the schema digest. "Open in screen builder" on any app page opens it on that page.
+- **Libraries** in Screens and Services lists the active edit component's exports. Use on this screen stages the
+  qvt declaration in the same buffer as other edits. For a server library, copy the module call into an action.
+  A full-tier editor of the component can search npm, choose a release and target, review the lock, notices and
+  bundle sizes, and apply them. The dev instance needs the [build prerequisites](../../../../docs/Build-Test.md#add-a-component-library).
 - **Services** is the service writer: a service's settings and parameters, its actions in the logic composer (blocks as
   sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
   rows it would write, Save as spec and Run spec (in the sim). In the terminal it is `Services/EditTui`: Try, the

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-service-definition.xsd">
+    <service verb="get" noun="Libraries" type="rust" location="dev_aide::libraries::get_libraries" allow-remote="false" read-only="true">
+        <in-parameters><parameter name="rootId" required="true"/><parameter name="path" required="true"/></in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+    </service>
+    <service verb="manage" noun="Library" type="rust" location="dev_aide::libraries::manage_library" allow-remote="false" transaction="ignore">
+        <in-parameters>
+            <parameter name="rootId" required="true"/><parameter name="path" required="true"/><parameter name="operation" required="true"/>
+            <parameter name="query"/><parameter name="package"/><parameter name="libraryId"/><parameter name="entry"/>
+            <parameter name="version"/><parameter name="target"/><parameter name="token"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Object"/></out-parameters>
+    </service>
+</services>

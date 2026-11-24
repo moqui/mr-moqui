@@ -355,6 +355,47 @@ fn script_templates(script: &str, limit: Duration) -> Result<Vec<(Vec<String>, S
     serde_json::from_str(&found?).map_err(|err| Error::new(err.to_string()))
 }
 
+/// Literal template properties of client-only code. Looking at syntax keeps package initialization
+/// in the browser even when it happens at the top level of a qvue script.
+fn literal_templates(script: &str) -> Result<std::collections::BTreeSet<String>, Error> {
+    crate::script::parse::on_parse_stack(|| {
+        let source = format!("(function(){{\n{}\n}})", script_body(script));
+        let arena = oxc_allocator::Allocator::default();
+        let parsed = oxc_parser::Parser::new(&arena, &source, oxc_span::SourceType::default()).parse();
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
+            return Err(Error::new("Invalid qvue component script"));
+        }
+        let tree: serde_json::Value = serde_json::from_str(&parsed.program.to_estree_json(false, false))
+            .map_err(|err| Error::new(err.to_string()))?;
+        let mut found = std::collections::BTreeSet::new();
+        let mut nodes = vec![&tree];
+        while let Some(node) = nodes.pop() {
+            match node {
+                serde_json::Value::Object(fields) => {
+                    nodes.extend(fields.values());
+                    if node["type"] == "Property"
+                        && (node["key"]["name"] == "template" || node["key"]["value"] == "template")
+                    {
+                        let value = &node["value"];
+                        let text = value["value"].as_str().or_else(|| {
+                            let parts = value["quasis"].as_array()?;
+                            (parts.len() == 1)
+                                .then(|| parts[0]["value"]["cooked"].as_str())
+                                .flatten()
+                        });
+                        if let Some(text) = text {
+                            found.insert(text.to_string());
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => nodes.extend(items),
+                _ => {}
+            }
+        }
+        Ok(found)
+    })?
+}
+
 /// Indent each line that has text.
 fn indented(text: &str, by: &str) -> String {
     text.lines()
@@ -420,6 +461,12 @@ pub fn precompiled_qvue(compiler_source: &str, screens: &[BundledQvue<'_>]) -> R
 /// Returns an error when the script cannot be bundled (`<script setup>`, a module, one that does not run) or the
 /// compiler rejects a template.
 pub fn qvue_make(compiler_source: &str, source: &str) -> Result<String, Error> {
+    make_qvue(compiler_source, source, false)
+}
+
+// A qvue using client libraries may touch DOM-only exports at module initialization. Compile its
+// literal templates on the server and match them to the component objects after its script runs in the browser.
+pub(super) fn make_qvue(compiler_source: &str, source: &str, client_libraries: bool) -> Result<String, Error> {
     let parts = qvue_parts(source);
     if let Some((attrs, _)) = parts.script {
         if attrs.contains("setup") || attrs.contains("module") {
@@ -428,6 +475,7 @@ pub fn qvue_make(compiler_source: &str, source: &str) -> Result<String, Error> {
     }
     let script = parts.script.map(|(_, body)| body);
     let mut templates = match script {
+        Some(_) if client_libraries => Vec::new(),
         Some(script) => script_templates(script, COMPILE_TIME_LIMIT)?,
         None => Vec::new(),
     };
@@ -446,6 +494,34 @@ pub fn qvue_make(compiler_source: &str, source: &str) -> Result<String, Error> {
          \x20       const returned = (function (exports) {{\n{body}\n        }})(module.exports);\n\
          \x20       const component = Object.assign({{}}, returned !== undefined ? returned : module.exports);\n"
     );
+    if client_libraries {
+        if let Some(body) = script {
+            let mut renderers = Vec::new();
+            for literal in literal_templates(body)? {
+                let code = bundled_render(compiler_source, &literal)?;
+                renderers.push(format!(
+                    "[{}, (function () {{\n{code}\n}})()]",
+                    serde_json::json!(literal)
+                ));
+            }
+            out.push_str(&format!(
+                "        const renders = new Map([{}]);\n",
+                renderers.join(",")
+            ));
+            out.push_str(
+                "        const visited = new Set();\n        function bind(c) {
+                if (!c || typeof c !== 'object' || visited.has(c)) return;
+                visited.add(c);
+                if (typeof c.template === 'string' && !c.render) {
+                    c.render = renders.get(c.template);
+                    if (!c.render) throw new Error('A bundled qvue client library screen needs a literal template');
+                    delete c.template;
+                }
+                Object.values(c.components || {}).forEach(bind);
+            }\n        bind(component);\n",
+            );
+        }
+    }
     for (path, template) in &templates {
         let code = bundled_render(compiler_source, template)
             .map_err(|err| Error::new(format!("component {}: {err}", path.join("/"))))?;
@@ -454,10 +530,15 @@ pub fn qvue_make(compiler_source: &str, source: &str) -> Result<String, Error> {
             let lit = serde_json::to_string(name).map_err(|err| Error::new(err.to_string()))?;
             target.push_str(&format!(".components[{lit}]"));
         }
+        let assignment = if client_libraries && path.is_empty() {
+            "target.render ||= "
+        } else {
+            "target.render = "
+        };
         out.push_str(&format!(
             "        {{\n\
              \x20           const target = {target};\n\
-             \x20           target.render = (function () {{\n{code}\n            }})();\n\
+             \x20           {assignment}(function () {{\n{code}\n            }})();\n\
              \x20           delete target.template;\n\
              \x20       }}\n"
         ));

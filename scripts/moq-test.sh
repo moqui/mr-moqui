@@ -678,7 +678,7 @@ check "build-js names a component" 0 'a built' -- env PATH="$JSBIN:$PATH" "$M" b
 check "build-js refuses an unknown component" 1 'no component nope' -- env PATH="$JSBIN:$PATH" "$M" build-js nope
 check "verify-js runs each component" 0 'a verified' -- env PATH="$JSBIN:$PATH" "$M" verify-js js-a
 js_component js-b 'exit 3'
-check "one component failing still builds the others" 1 'could not build the browser libraries of js-b' -- \
+check "one component failing still builds the others" 1 'could not build the JavaScript libraries of js-b' -- \
     env PATH="$JSBIN:$PATH" "$M" build-js --force
 check "the other component was built" 0 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js --force js-a
 rm -rf "$R/runtime/components/addon/js-b"

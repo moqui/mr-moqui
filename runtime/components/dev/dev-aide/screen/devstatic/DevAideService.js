@@ -460,6 +460,7 @@
         template: `
 <div class="m-dev-service-view q-pa-sm" id="DevServiceView">
   <div class="row items-center q-gutter-x-sm q-mb-xs">
+    <m-dev-libraries :key="ctx.rootId + tab.path" :ctx="ctx" :root-id="ctx.rootId" :path="tab.path"></m-dev-libraries>
     <q-select v-if="services.length > 1" dense outlined options-dense style="min-width: 16rem" :model-value="shortName"
         :options="services.map(s => s.name)" @update:model-value="pickService" id="DevServicePick"></q-select>
   </div>

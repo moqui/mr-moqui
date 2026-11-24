@@ -184,6 +184,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:element ref="subscreens" minOccurs="0"/>
             <xs:element ref="shell-providers" minOccurs="0"/>
             <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element ref="client-library"/>
                 <xs:element ref="ext-action"/>
                 <xs:element ref="ext-panel"/>
             </xs:choice>
@@ -191,6 +192,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:group ref="section-elements"/>
         </xs:sequence>
     </xs:extension></xs:complexContent></xs:complexType></xs:element>
+
+    <xs:element name="client-library"><xs:complexType>
+        <xs:attribute name="library" type="xs:token" use="required"/>
+        <xs:attribute name="render-mode" type="xs:token" use="required"/>
+    </xs:complexType></xs:element>
 
     <xs:element name="screen-extend"><xs:annotation>
         <xs:documentation>
@@ -220,6 +226,7 @@ along with this software (see the LICENSE.md file). If not, see
                 is added at the end. Labels never identify an entry.
             </xs:documentation></xs:annotation></xs:element>
             <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element ref="client-library"/>
                 <xs:element ref="ext-action"><xs:annotation><xs:documentation>Replaces the screen's ext-action of the
                     same name, the whole descriptor, or adds one.</xs:documentation></xs:annotation></xs:element>
                 <xs:element ref="ext-panel"><xs:annotation><xs:documentation>Replaces the screen's ext-panel of the

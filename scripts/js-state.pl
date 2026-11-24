@@ -36,7 +36,8 @@ if ($action eq 'components') {
             my $c = eval { decode_json(bytes($config)) } or die "$config: not JSON\n";
             my $relative = qr{^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[\w.\/-]+$};
             die "$config: output must be a path under screen/\n" unless ($c->{output} // '') =~ $relative && $c->{output} =~ m{^screen/};
-            die "$config: script must be a path under build/\n" unless ($c->{script} // '') =~ $relative;
+            $c->{script} = ':standard' if !defined $c->{script} && ref($c->{libraries}) eq 'ARRAY';
+            die "$config: script must be a path under build/\n" unless ($c->{script} // '') eq ':standard' || ($c->{script} // '') =~ $relative;
             my @projects = @{ $c->{projects} // [] };
             for (@projects) { die "$config: project $_ must be a directory name\n" unless /^[\w.-]+$/ && !/^\.\.?$/ }
             die "$config: component $name is also in $names{$name}\n" if $names{$name};
@@ -68,24 +69,36 @@ if ($action eq 'selected') { print join(' ', sort keys %selected), "\n"; exit 0;
 if ($action eq 'packs') { print join("\n", sort keys %$packs), "\n"; exit 0; }
 my $manifest = decode_json(bytes("$libs/MANIFEST.json"));
 my %want = ('MANIFEST.json' => undef);
+my $server = dirname($source) . '/script/libs';
+my %server_want;
 for my $f (grep { defined } $manifest->{notices}, map { @{$_->{files}} } @{$manifest->{libraries}}) {
     next if $f->{pack} && !$selected{$f->{pack}};
+    if (($f->{target} // '') eq 'server') {
+        die "Invalid server module path" unless $f->{path} =~ /^[\w-]+\.js$/;
+        $server_want{$f->{path}} = $f->{sha256};
+        next;
+    }
     $want{$f->{path}} = $f->{sha256};
 }
 if (-f $font_config) {
     $want{'fonts-extra/installed.json'} = sha256_hex(encode_json([sort keys %selected]) . "\n");
 }
+if ($action eq 'server-files') { print "$server/$_\n" for sort keys %server_want; exit 0; }
 my $stamp = "$cache/stamp.json";
 my $inputs = Digest::SHA->new(256);
 for my $path (files($source)) {
     next if $path eq "fonts/selected.txt";
     $inputs->add($path, "\0", sha256_hex(bytes("$source/$path")), "\n");
 }
+if ($ENV{JS_SHARED_BUILD} && decode_json(bytes("$source/js-build.json"))->{libraries}) {
+    for my $name (qw(component-libs.mjs js-kit.mjs tools.mjs)) { $inputs->add(bytes("$ENV{JS_SHARED_BUILD}/$name")); }
+}
 $inputs->add(join(" ", sort keys %selected));
 $inputs->add(sha256_hex(bytes("$libs/MANIFEST.json")));
 my $signature = $inputs->hexdigest;
 
 if ($action eq 'check') {
+    for my $path (keys %server_want) { exit 1 unless -f "$server/$path" && sha256_hex(bytes("$server/$path")) eq $server_want{$path}; }
     my @actual = files($libs);
     for my $path (@actual) {
         die "Unexpected JS asset $path\n" unless exists $want{$path};
@@ -117,6 +130,7 @@ open my $out, '>:raw', "$stamp.$$" or die "$stamp: $!";
 print $out JSON::PP->new->canonical->encode({
     inputs => $signature, node => $ENV{JS_NODE_VERSION}, npm => $ENV{JS_NPM_VERSION},
     esbuild => \%esbuild, packs => [sort keys %selected], outputs => \%want,
+    (%server_want ? (serverOutputs => \%server_want) : ()),
 });
 close $out or die "$stamp: $!";
 rename "$stamp.$$", $stamp or die "$stamp: $!";

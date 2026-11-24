@@ -1766,7 +1766,105 @@
 </div>`
     };
 
-    devAide.components = { "m-dev-workspace": workspace, "m-dev-artifact-doc": artifactDoc };
+    const libraryPanel = {
+        props: {ctx: Object, rootId: String, path: String, attachable: Boolean},
+        data() {
+            return {open: false, busy: false, error: "", catalog: null, query: "", packages: [], pkg: "",
+                releases: [], release: null, id: "", entry: "", target: "client", review: null};
+        },
+        methods: {
+            async action(fn) {
+                if (this.busy) return;
+                this.busy = true; this.error = "";
+                try { await fn(); } catch (err) { this.error = String(err.message || err); }
+                finally { this.busy = false; }
+            },
+            request(operation, params) {
+                return this.ctx.post("manageLibrary", Object.assign({rootId: this.rootId, path: this.path, operation}, params))
+                    .then(answer => {
+                        if (answer.result == null) throw new Error(answer.errors || answer.errorMessage || "Library operation failed");
+                        return answer.result;
+                    });
+            },
+            async list() {
+                const answer = await this.ctx.get("libraries", {rootId: this.rootId, path: this.path});
+                if (!answer.result) throw new Error(answer.errors || answer.errorMessage || "Could not read component libraries");
+                this.catalog = answer.result;
+            },
+            async show() {
+                this.open = true;
+                this.target = this.attachable ? "client" : "server";
+                await this.action(() => this.list());
+            },
+            search() {
+                return this.action(async () => {
+                    this.packages = await this.request("search", {query: this.query});
+                    this.release = null; this.releases = []; this.review = null;
+                });
+            },
+            pick(name) {
+                return this.action(async () => {
+                    this.pkg = name; this.entry = name; this.id = name.split("/").pop().replace(/[^a-zA-Z0-9_-]/g, "-");
+                    this.releases = await this.request("versions", {package: name});
+                    this.release = this.releases.find(item => item.allowed && item.cooled) || null;
+                });
+            },
+            prepare() {
+                return this.action(async () => { this.review = await this.request("prepare", {entry: this.entry, libraryId: this.id,
+                    version: this.release.version, target: this.target}); });
+            },
+            apply() {
+                return this.action(async () => {
+                    await this.request("apply", {token: this.review.token});
+                    this.review = null; this.releases = []; this.packages = [];
+                    await this.list(); this.ctx.note("Library applied");
+                });
+            },
+            moduleCall(id) { return "ec.resource.script('component://" + this.catalog.component + "/script/libs/" + id + ".js')"; }
+        },
+        template: `
+<div>
+  <q-btn dense flat no-caps icon="sym_o_library_books" label="Libraries" @click="show"></q-btn>
+  <q-dialog v-model="open"><q-card style="width: 48rem; max-width: 95vw">
+    <q-card-section class="row items-center"><strong>Libraries {{catalog ? ' · ' + catalog.component : ''}}</strong>
+      <q-space></q-space><q-btn flat round dense icon="close" v-close-popup aria-label="Close"></q-btn></q-card-section>
+    <q-linear-progress v-if="busy" indeterminate></q-linear-progress>
+    <q-card-section v-if="error" class="text-negative">{{error}}</q-card-section>
+    <q-card-section v-if="catalog">
+      <div v-if="!catalog.libraries.length">This component has no declared libraries.</div>
+      <div v-for="lib in catalog.libraries" :key="lib.id" class="q-mb-sm"><b>{{lib.id}}</b> · {{lib.entry}}
+        <div v-if="lib.targets.includes('server')"><code>{{moduleCall(lib.id)}}</code></div>
+        <div v-if="lib.targets.includes('client')"><code>moqui.libraries['{{catalog.component}}/{{lib.id}}']</code>
+          <q-btn v-if="attachable" flat dense no-caps label="Use on this screen"
+            @click="$emit('attach', catalog.component + '/' + lib.id); open=false"></q-btn></div>
+      </div>
+    </q-card-section>
+    <q-card-section v-if="catalog && catalog.canManage && !review" class="q-gutter-sm">
+      <q-input dense outlined label="Search npm" v-model="query" @keyup.enter="search"></q-input>
+      <q-btn no-caps label="Search" :disable="!query || busy" @click="search"></q-btn>
+      <q-select v-if="packages.length" label="Package" :options="packages" option-label="name" option-value="name"
+        emit-value map-options :model-value="pkg" @update:model-value="pick"></q-select>
+      <template v-if="releases.length">
+        <q-select label="Release" v-model="release" :options="releases"
+          :option-label="r => r.version + ' · ' + (r.date || '').slice(0,10) + ' · ' + r.license + (!r.allowed ? ' · license needs review' : '') + (!r.cooled ? ' · within cooldown' : '')"></q-select>
+        <q-input dense label="Library ID" v-model="id"></q-input><q-input dense label="Package entry point" v-model="entry"></q-input>
+        <q-select label="Target" v-model="target" :options="['client','server','both']"></q-select>
+        <q-btn color="primary" no-caps label="Prepare for review" :disable="busy || !release || !release.allowed || !release.cooled" @click="prepare"></q-btn>
+      </template>
+    </q-card-section>
+    <q-card-section v-if="review">
+      <div v-if="review.packages.length" class="q-mb-md"><strong>Packages in this bundle</strong>
+        <div v-for="pkg in review.packages" :key="pkg.name + pkg.version">{{pkg.name}}@{{pkg.version}} · {{pkg.license}}</div>
+      </div>
+      <div v-for="file in review.changes" :key="file.path">
+      <q-expansion-item :label="file.path" :caption="file.size + ' bytes'"><pre style="overflow:auto">{{file.diff || file.sha256}}</pre></q-expansion-item>
+      </div><q-btn flat no-caps label="Back" :disable="busy" @click="review=null"></q-btn>
+      <q-btn color="primary" no-caps label="Apply reviewed changes" :disable="busy" @click="apply"></q-btn></q-card-section>
+  </q-card></q-dialog>
+</div>`
+    };
+
+    devAide.components = { "m-dev-libraries": libraryPanel, "m-dev-workspace": workspace, "m-dev-artifact-doc": artifactDoc };
 
     // Load the code editor widgets, then register the workspace on the running application.
     devAide.start = () => moqui.loadScript("/js/WebrootCode.js", null, () => !!(moqui.codeEditor && moqui.codeEditor.components))

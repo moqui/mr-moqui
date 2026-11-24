@@ -185,6 +185,49 @@ fn the_workspace_saves_checks_commits_and_publishes() {
 
     // a save of a service file: written, reloaded, checked; the new service runs at once
     let path = "service/mysite/Things.xml";
+    let library_service = "org.moqui.devaide.LibraryServices.";
+    let library_params = [("rootId", "my-site"), ("path", path), ("operation", "prepare")];
+    let list = call(
+        &factory,
+        "john.doe",
+        &format!("{library_service}get#Libraries"),
+        &library_params,
+    )
+    .unwrap();
+    let catalog = moqui_lib::json::to_json(&list["result"]);
+    assert_eq!(catalog["component"], "my-site");
+    assert_eq!(catalog["canManage"], true);
+    let manage = format!("{library_service}manage#Library");
+    assert!(call(&factory, "ext.user", &manage, &library_params)
+        .unwrap_err()
+        .contains("full tier"));
+    assert!(call(&factory, "john.doe", &manage, &library_params)
+        .unwrap_err()
+        .contains("session"));
+    // A signed-in browser reaches prepare's argument check, without a package download in the regression suite.
+    let address = gate.server.address();
+    let cookie = crate::common::sign_in(address, "john.doe", "moqui");
+    let (_, headers, html) = crate::common::exchange(
+        address,
+        &crate::common::http_request("GET", "/qapps", &[("Cookie", &cookie)], ""),
+    );
+    let token = crate::common::session_token(&html)
+        .or_else(|| crate::common::header(&headers, "moquiSessionToken"))
+        .unwrap();
+    let (_, _, answer) = crate::common::exchange(
+        address,
+        &crate::common::http_request(
+            "POST",
+            "/apps/dev/Workspace/manageLibrary",
+            &[
+                ("Cookie", &cookie),
+                ("X-CSRF-Token", &token),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            "rootId=my-site&path=service%2Fmysite%2FThings.xml&operation=prepare",
+        ),
+    );
+    assert!(answer.contains("Invalid library argument"), "{answer}");
     let file = call(
         &factory,
         "john.doe",

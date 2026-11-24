@@ -138,11 +138,13 @@ if (task === 'audit') {
     execFileSync(process.execPath, [script, '--write'], {
       stdio: 'inherit', env: { ...process.env, JS_PROJECTS: candidate, JS_OUTPUT: output }
     });
+    // The standard builder put the reviewed pins and both output targets in the same recoverable write.
     if (existsSync(catalogFile)) {
       cpSync(newCatalog, catalogFile + '.new');
       renameSync(catalogFile + '.new', catalogFile);
     }
-    for (const project of projects) for (const file of ['package.json', 'package-lock.json']) {
+    const copyProjects = script === join(dirname(source), 'component-libs.mjs') ? [] : projects;
+    for (const project of copyProjects) for (const file of ['package.json', 'package-lock.json']) {
       const dest = join(build, project, file);
       cpSync(join(candidate, project, file), dest + '.new');
       renameSync(dest + '.new', dest);

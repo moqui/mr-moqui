@@ -138,7 +138,12 @@ fn check_component_libs(root: &Path) {
         {
             continue;
         }
-        let path = libs.join(file["path"].as_str().expect("asset path"));
+        let base = if file["target"] == "server" {
+            root.join("script/libs")
+        } else {
+            libs.clone()
+        };
+        let path = base.join(file["path"].as_str().expect("asset path"));
         println!("cargo:rerun-if-changed={}", path.display());
         assert!(path.is_file(), "{} missing; run ./moq build-js", path.display());
     }

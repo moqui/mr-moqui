@@ -24,6 +24,30 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- See WebrootThemeData.xml for CSS references -->
         <set field="html_stylesheets" from="new Set()"/>
     </always-actions>
+    <!-- Public browser assets named by a reviewed component manifest. -->
+    <transition name="clientLibrary" method="get" read-only="true" begin-transaction="false">
+        <path-parameter name="componentName"/><path-parameter name="libraryId"/>
+        <actions><script><![CDATA[
+            const valid = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(value);
+            let location;
+            if (valid(componentName) && valid(libraryId)) {
+                const root = 'component://' + componentName + '/';
+                try {
+                    const config = JSON.parse(ec.resource.getLocationText(root + 'build/js-build.json'));
+                    if (/^screen\/(?:[\w-]+\/)*[\w-]+$/.test(config.output)) {
+                        const base = root + config.output + '/';
+                        const manifest = JSON.parse(ec.resource.getLocationText(base + 'MANIFEST.json'));
+                        const library = manifest.libraries.find(lib => lib.id === libraryId);
+                        const asset = library && library.files.find(f => f.target === 'client' && f.path === libraryId + '.js');
+                        if (asset) location = base + asset.path;
+                    }
+                } catch (error) { ec.logger.debug('Unavailable client library ' + componentName + '/' + libraryId); }
+            }
+            if (location) ec.web.sendResourceResponse(location, true);
+            else ec.web.sendJsonError(404, 'Unknown client library');
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="status">
         <actions>
             <!-- 127.*.*.* is IPv4 loopback (a client spec's own address on a test server is one of them); 0:0:0:0:0:0:0:1 and ::1 are IPv6 loopback forms for querying /status -->

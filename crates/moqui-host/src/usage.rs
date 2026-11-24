@@ -39,6 +39,7 @@ Check
   lint             [file | --screens | --groovy <dir> ...]  Lint services, screens, or leftover Groovy
   convert          --groovy [--write] <dir> ...             Mechanical Groovy rewrites
   types            [--out dir]                              TypeScript declarations from the loaded definitions
+  check-js-module  <file>                                    Initialize a component library in standalone QuickJS
   check            [paths] [--extensions] [--json]          Check Moqui XML files: schema, references, expressions
   refs             <name> [--in|--out] [--kind k] [--json]  What uses an artifact, or what it uses
   autodoc          [--out dir] [--kinds k,...] [options]    Markdown docs of the artifacts, with diagrams
@@ -854,6 +855,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "convert" => Some(CONVERT),
         "types" => Some(TYPES),
         "check" => Some(CHECK),
+        "check-js-module" => Some("moqui check-js-module <file>\nInitialize a component library and read its exports with a bounded QuickJS runtime."),
         "refs" => Some(REFS),
         "autodoc" => Some(AUTODOC),
         "lsp" => Some(LSP),
@@ -925,6 +927,7 @@ fn is_known_command(name: &str) -> bool {
             | "convert"
             | "types"
             | "check"
+            | "check-js-module"
             | "refs"
             | "autodoc"
             | "lsp"

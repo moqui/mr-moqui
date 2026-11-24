@@ -172,3 +172,39 @@ test("artifact search ignores stale answers and keeps failures available for ret
     assert.equal(ws.artifactGoto.error, "");
     assert.equal(ws.artifactGoto.results[0].id, "service:Example");
 });
+
+test("the Libraries panel reviews the chosen release and refreshes the owning component after apply", async () => {
+    const panel = moqui.devAide.components["m-dev-libraries"];
+    const calls = [];
+    const added = {id:"sum", entry:"math/add", targets:["server","client"]};
+    let libraries = [];
+    const vm = Object.assign(panel.data(), panel.methods, {rootId:"site", path:"screen-extend/Page.xml", attachable:true});
+    vm.ctx = {
+        get: async (_, params) => {
+            assert.equal(params.path, "screen-extend/Page.xml");
+            return {result:{component:"site", libraries:libraries.slice(), canManage:true}};
+        },
+        post: async (_, args) => {
+            calls.push(args);
+            if (args.operation === "versions") return {result:[
+                {version:"2.0.0", cooled:false, allowed:true}, {version:"1.0.0", cooled:true, allowed:true}]};
+            if (args.operation === "prepare") return {result:{token:"review", changes:[], packages:[]}};
+            if (args.operation === "apply") libraries.push(added);
+            return {result:{applied:true}};
+        },
+        note() {}
+    };
+    await vm.show();
+    assert.deepEqual(vm.catalog.libraries, []);
+    await vm.pick("math");
+    vm.id = "sum"; vm.entry = "math/add"; vm.target = "both";
+    await vm.prepare();
+    assert.deepEqual(calls[1], {rootId:"site", path:"screen-extend/Page.xml", operation:"prepare",
+        entry:"math/add", libraryId:"sum", version:"1.0.0", target:"both"});
+    assert.equal(vm.review.token, "review");
+    assert.deepEqual(vm.catalog.libraries, []);
+    await vm.apply();
+    assert.equal(calls[2].token, "review");
+    assert.deepEqual(vm.catalog.libraries, [added]);
+    assert.equal(vm.moduleCall("sum"), "ec.resource.script('component://site/script/libs/sum.js')");
+});

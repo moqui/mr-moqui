@@ -465,3 +465,15 @@ does something other than the Groovy it came from.
   package.
 - A `.qvue` reads its query from `mScreen.parameters`, not from the page's URL: it may be loaded in a dialog or a
   tray.
+
+## Component libraries
+
+A service or screen action can use `ec.resource.script("component://my-app/script/libs/round.js").default(value)`.
+The properties of the returned object are the exports of the selected npm entry point.
+
+A screen (or its site's `screen-extend`) selects a client library with
+`<client-library library="my-app/round" render-mode="qvt"/>` alongside its extension declarations before the
+screen's actions and widgets. Qvt waits for each declared bundle before using the screen. Its client JavaScript
+can then call `moqui.libraries["my-app/round"].default(value)`. The same declaration works with server-static
+templates and qvue. For precompiled qvue, put markup in the file's template or a literal component template.
+The compiler can then generate render functions without running the library on the server. See [component build and review](../Build-Test.md#add-a-component-library).

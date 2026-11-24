@@ -1150,6 +1150,8 @@ pub struct ScreenDef {
     pub shell_providers: Option<super::shell::ShellProviders>,
     /// The declared `ext-action` and `ext-panel` items (`ext.rs`), after `screen-extend`.
     pub ext_items: super::ext::ExtItems,
+    /// Component-qualified library IDs by client render mode, in declaration order.
+    client_libraries: BTreeMap<String, Vec<String>>,
     /// The merged screen XML, after `screen-extend`.
     pub source: XmlFragment,
     pub sources: Vec<Source>,
@@ -1166,8 +1168,41 @@ pub struct ScreenDef {
     pub(super) generated: super::generate::Generated,
 }
 
-#[cfg(test)]
+fn client_libraries(node: &MNode, location: &str) -> Result<BTreeMap<String, Vec<String>>, Error> {
+    let mut by_mode = BTreeMap::<String, Vec<String>>::new();
+    let valid = |part: &str| {
+        part.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+            && part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+    };
+    for declaration in node.children_named("client-library") {
+        let mode = declaration.attribute("render-mode").unwrap_or_default();
+        let id = declaration.attribute("library").unwrap_or_default();
+        if mode.is_empty()
+            || !id
+                .split_once('/')
+                .is_some_and(|(component, name)| valid(component) && valid(name))
+        {
+            return Err(Error::new(format!(
+                "{location}: invalid client library {id} for render mode {mode}"
+            )));
+        }
+        let ids = by_mode.entry(mode).or_default();
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    Ok(by_mode)
+}
+
 impl ScreenDef {
+    /// The assets this renderer should load before using the screen.
+    pub fn client_libraries(&self, mode: &str) -> &[String] {
+        self.client_libraries.get(mode).map(Vec::as_slice).unwrap_or_default()
+    }
+
+    #[cfg(test)]
     pub(super) fn generated(&self) -> &super::generate::Generated {
         &self.generated
     }
@@ -1623,6 +1658,7 @@ impl ScreenDef {
             has_tab_menu,
             shell_providers: super::shell::ShellProviders::of(node, location),
             ext_items: super::ext::of(node, location),
+            client_libraries: client_libraries(node, location)?,
             source: XmlFragment::of(node),
             proposed: proposed_build(location, &sources, menu_sources),
             sources,
@@ -1874,6 +1910,7 @@ fn merge_extend(screen: &MNode, extend: &MNode, location: &str, extended: &mut E
             None => screen.append_node(over.deep_copy()),
         }
     }
+    screen.merge_children_by_keys(extend, "client-library", &["library", "render-mode"], None);
     for kind in ["ext-action", "ext-panel"] {
         super::ext::merge_extend(screen, extend, kind);
     }

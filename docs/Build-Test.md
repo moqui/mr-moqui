@@ -97,6 +97,35 @@ another component's pins.
 The checks are the same as the framework's: a build serves only the reviewed bytes, an embedded production binary
 refuses a component whose listed files are missing, and the server logs them at startup.
 
+#### Add a component library
+
+```sh
+./moq add-js search my-app lodash
+./moq add-js versions my-app lodash-es
+./moq add-js prepare my-app round lodash-es/round.js 4.18.1 both
+./moq add-js apply my-app <review-id>
+./moq verify-js my-app
+```
+
+Prepare prints JSON with the review token, source diffs, bundled packages and output sizes. It creates the first
+declaration, npm project and ignore rules when needed. Apply checks the candidate against the files on disk. A stale
+review needs a fresh prepare. Commit the build inputs, manifest and notices. A server-target prepare or update uses
+an already built `moqui check-js-module` to initialize the module on a bounded standalone QuickJS runtime. Set
+`JS_VALIDATOR` to the path of the current binary if it is outside the checkout's target directory.
+
+For the standard builder, omit `script`, use the project `libraries`, and declare its entries in `libraries`:
+
+```json
+{ "output": "screen/my-app/libs", "projects": ["libraries"],
+  "libraries": [{ "id": "round", "entry": "lodash-es/round.js", "targets": ["server", "client"] }] }
+```
+
+The server file lives at `component://my-app/script/libs/round.js`. A client bundle registers its exports in
+`moqui.libraries["my-app/round"]`. Each manifest file records its target and hash. Existing custom builders can import
+`buildLibraries` from the webroot's `build/component-libs.mjs` and use the returned target-qualified files in their
+own build. The managed add operation uses the standard declaration. Run
+`node --test scripts/test-component-libs.mjs` for the standard builder's target, policy, review and recovery fixtures.
+
 ### Windows
 
 - **Toolchain.** The host is `x86_64-pc-windows-msvc`. Visual Studio Build Tools supplies the C compiler (the

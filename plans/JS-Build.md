@@ -2,7 +2,7 @@
 
 Status 2026-11-23: steps 1 to 7 are built (2026-11-22 and 23), with a follow-up the same day from a review of those
 commits. What remains is two Linux checks ([Remaining](#remaining-linux)) and the
-[Dev AIDE future](#future-npm-in-dev-aide-for-components). The sections below describe
+[Dev AIDE component libraries](#component-javascript-libraries-in-dev-aide). The sections below describe
 what was built. Where it differs from the first design: each build installs into a temporary tree and deletes it
 (no persistent `target/js/<project>`), Mermaid is bundled from the lock instead of copied, and the optional Xiaolai face
 is switched off by a guard in the whiteboard bundle (`globalThis.MoquiBoardCjk`), not by editing the editor's font
@@ -380,25 +380,56 @@ Steps 1 to 7 are built.
 - Build the libraries with Node 22 in CI. The build image has Node 24; Node 22.23.5 with npm 10.9.9 reproduced the
   manifest on macOS.
 
-## Future: npm in Dev AIDE for components
+## Component JavaScript libraries in Dev AIDE
 
-Built 2026-11-23: `build-js` finds its projects rather than listing them. A component with a `build/js-build.json`
-(its output directory under `screen/`, its npm projects under `build/`, its build script) gets the same `npm ci`,
-bundle, manifest check and stamp, through the shared `build/js-kit.mjs`. Its output is ignored in its own repository
-apart from its `MANIFEST.json`, which is committed there with its locks. The framework's webroot is simply the first
-component built this way. The contract is in [Build-Test](../docs/Build-Test.md#browser-libraries-of-a-component).
+A component owns each package pin, lock and reviewed manifest. Its build declaration identifies a library by a
+component-local ID, npm entry point and targets (client, server or both). The standard builder produces a browser
+bundle under the component's screen output and a QuickJS module under `script/libs/`. A dual-target library
+shares one pin. Existing custom build scripts may use the same builder. Ordinary builds and releases reproduce
+the reviewed bytes, including server modules, and source releases carry the locked inputs.
 
-Still to come, on that, Dev AIDE can:
+### Build and review
 
-- add a JavaScript library to a component while building screens: search npm, pick a version past the cooldown, and
-  see its license against an allow list;
-- write the lock and manifest entry, run `build-js` for that component, and show the library's global or module to
-  the screen being edited;
-- do the same for server-side bundles that run in QuickJS, as the compiler-dom and OpenUI ones do.
+The first `moq add-js prepare COMPONENT ID ENTRY VERSION TARGET` creates a candidate for
+`build/js-build.json`, `build/libraries/package.json`, its lock and the component's ignore rules. Each declaration
+has an `id`, an npm `entry` (a package or subpath), and `targets` selected from `client` and `server`. The
+standard builder installs the lock with lifecycle scripts disabled, bundles each target with esbuild and records
+the packages contributing bytes, their integrity and licenses, and each output's size and SHA-256. The manifest
+and combined notices live in the declared screen output. A custom builder can call the shared bundler directly.
 
-The rules stay the same as for the framework: `--ignore-scripts`, the cooldown, exact pins, recorded integrity and a
-reviewed manifest diff. `--ignore-scripts` covers the packages, not the component's own build script, which is code
-that Node runs on the developer's machine. It is reviewed as the component's other code is, and `build-js` runs it
-only for a component the checkout already builds. Running npm from a server process is a supply-chain surface, so
-this is for dev instances only and runs as the instance's own user. A production node takes a component's libraries
-only as built output in a release.
+Prepare records the base digest of each candidate file and the author and component checkout that own the review.
+The editor and CLI display the same diff. Apply takes the JS build lock, verifies those digests, and journals the
+previous bytes before replacing files. The next mutating JS command recovers an interrupted apply. The reviewed
+manifest lets a clean checkout reproduce both targets, and the deployment archive and production embed carry
+the bundles. The source archive includes each declared npm project's locks and cached registry tarballs.
+
+### Runtime and editors
+
+The server bundle's final expression returns the package exports. Prepare and update initialize it in the project's
+QuickJS engine with a heap cap, deadline and no application bindings. A service or screen action then calls
+`ec.resource.script("component://my-app/script/libs/my-lib.js")` in its existing execution context.
+
+For qvt, the merged screen definition supplies the component-qualified IDs in `X-Moqui-Libraries`. A precompiled
+qvue also carries them in its registration since a script element cannot read response headers. The existing script
+loader requests `/clientLibrary/COMPONENT/ID`, which resolves only a client file in that component's manifest.
+After the bundle registers its exports at `moqui.libraries["COMPONENT/ID"]`, qvt can evaluate the screen script or
+mount the template. Declarations are keyed by render mode so other client renderers can consume their own list.
+
+The Libraries panel uses the component owning the active edit buffer. A full-tier browser session on a dev instance
+may prepare and apply in a writable checkout, subject to the upstream-edit setting. Authors who can edit a
+screen may attach a built library in its XML buffer or the site's extension. The normal Save writes the attachment.
+
+### Implementation sequence
+
+1. Add a standard builder and a component-scoped `moq add-js` prepare/apply operation. Prepare resolves exact
+   pins past the 14-day cutoff, installs with lifecycle scripts disabled, identifies bundled packages, checks
+   their licenses and assembles notices. The candidate stays private while the author reviews the diff and output
+   sizes. Apply checks for intervening edits under the build lock and recovers interrupted publication.
+2. Services and server-rendered screens call the module with `ec.resource.script`. Check its exports in a bounded
+   standalone QuickJS runtime. A screen or screen-extend can declare
+   `<client-library library="component-name/library-id" render-mode="qvt"/>`. Load the reviewed client asset
+   before evaluating or mounting the screen, including server-static templates and precompiled qvue.
+3. Both Dev AIDE editors show the owning component's libraries, npm search and version details, prepare, review
+   and apply. In extension mode the site component owns the edit. Build execution requires a full-tier dev
+   session and a writable loaded component. Attaching an existing library uses the normal screen edit buffer.
+   Verify reproducible builds, stale and interrupted changes, runtime consumers, packaging and editor access.

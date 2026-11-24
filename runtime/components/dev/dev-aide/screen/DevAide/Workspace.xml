@@ -36,6 +36,10 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="pageIndex"/>
     <parameter name="diff"/>
 
+    <transition name="libraries" read-only="true"><service-call name="org.moqui.devaide.LibraryServices.get#Libraries" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
+    <transition name="manageLibrary" method="post" begin-transaction="false"><service-call name="org.moqui.devaide.LibraryServices.manage#Library" in-map="true" web-send-json-response="true"/>
+        <default-response type="none"/></transition>
     <transition name="roots" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.get#Roots" in-map="true" web-send-json-response="true"/>
         <default-response type="none"/></transition>
     <transition name="list" read-only="true"><service-call name="org.moqui.devaide.WorkspaceServices.list#Directory" in-map="true" web-send-json-response="true"/>

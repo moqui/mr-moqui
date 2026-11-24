@@ -123,6 +123,7 @@ pub const RESERVED: &[Reserved] = &[
     asset("js"),
     asset("css"),
     asset("libs"),
+    asset("clientLibrary"),
     asset("images"),
     asset("static"),
     asset("assets"),

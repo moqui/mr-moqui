@@ -770,3 +770,39 @@ test("form submissions preserve Java empty, scalar, masked, and multivalued cont
         }
     } finally { globalThis.fetch = originalFetch; }
 });
+
+
+test("a screen waits for its library before evaluation, including a precompiled screen", async () => {
+    const request = moqui.request, loadScript = moqui.loadScript, notify = moqui.notifyMessages;
+    const bundled = moqui.qvtBundled, prior = moqui.libraries;
+    const calls = [], messages = [];
+    const logError = console.error;
+    const load = path => new Promise(resolve => moqui.loadComponent({path,renderModes:["qjs"]},resolve));
+    try {
+        moqui.libraries = {};
+        moqui.notifyMessages = (_, message) => messages.push(message);
+        moqui.request = () => answer("({template: moqui.libraries['fixture/note'].template})",
+            {"X-Moqui-Libraries":"fixture/note"});
+        moqui.loadScript = async (url, _, ready) => {
+            await Promise.resolve();
+            if (!ready()) {
+                calls.push(url);
+                moqui.libraries["fixture/note"] = {template:"<b>ready</b>"};
+            }
+        };
+        assert.equal((await load("/LibraryScreen")).template, "<b>ready</b>");
+        moqui.qvtBundled = {"/Compiled": {libraries:["fixture/note"],make: () => ({component:moqui.libraries["fixture/note"]})}};
+        assert.equal((await load("/Compiled")).template, "<b>ready</b>");
+        assert.deepEqual(calls, ["/clientLibrary/fixture/note"]);
+        const errors = [];
+        console.error = error => errors.push(error.message);
+        moqui.loadScript = () => Promise.reject(new Error("Library unavailable"));
+        assert.equal(await load("/Unavailable"), null);
+        assert.deepEqual(errors, ["Library unavailable"]);
+        assert.ok(messages.includes("Library unavailable"));
+    } finally {
+        console.error = logError;
+        moqui.qvtBundled = bundled; moqui.request = request; moqui.loadScript = loadScript;
+        moqui.notifyMessages = notify; moqui.libraries = prior;
+    }
+});

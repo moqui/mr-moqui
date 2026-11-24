@@ -219,6 +219,13 @@
         const next = children(outline, ["subscreens", "pre-actions", "always-actions", "actions", "widgets"])[0];
         return next ? { op: "insert", at: next.path, position: "before", xml: transitionXml } : { op: "insert", at: outline.path || [], position: "last", xml: transitionXml };
     };
+    ops.clientLibrary = (outline, id) => {
+        if (children(outline, ["client-library"]).some(item => attrOf(item, "library") === id && attrOf(item, "render-mode") === "qvt")) return [];
+        const next = (outline.children || []).find(item => !["macro-template", "web-settings", "parameter", "always-actions", "transition", "transition-include",
+            "subscreens","shell-providers","ext-action","ext-panel","client-library"].includes(item.name));
+        const body = xml("client-library", [["library", id], ["render-mode", "qvt"]]);
+        return [{op:"insert", at:next ? next.path : outline.path, position:next ? "before" : "last", xml:body}];
+    };
     // Add button as one list of operations: the transition, then its link at the place (in place the link's path moves
     // by one when the transition goes in before the element it is under).
     ops.buttonOps = (extension, outline, spec, insertAt, node) => {
@@ -509,6 +516,10 @@
                 const buffer = this.edit;
                 return this.ctx.apply(list, buffer === this.tab ? null : buffer).then(() => this.scheduleRender(), (error) => this.ctx.fail(error));
             },
+            attachLibrary(id) {
+                if (!this.canEdit || !this.editOutline) return;
+                this.apply(ops.clientLibrary(this.editOutline, id));
+            },
             // ---- intents ----
             startField() {
                 const intents = this.intents;
@@ -656,6 +667,8 @@
   <div class="row items-center q-gutter-x-sm q-px-sm q-py-xs m-dev-screen-bar">
     <q-btn-toggle dense no-caps unelevated toggle-color="primary" :model-value="mode" @update:model-value="setMode"
         :options="[{ label: 'Design', value: 'design' }, { label: 'Preview', value: 'preview' }]" id="DevScreenMode"></q-btn-toggle>
+    <m-dev-libraries v-if="edit" :key="(edit.rootId || ctx.rootId) + edit.path" :ctx="ctx" :root-id="edit.rootId || ctx.rootId"
+        :path="edit.path" :attachable="canEdit" @attach="attachLibrary"></m-dev-libraries>
     <q-btn-toggle dense no-caps flat v-model="width" :options="widths"></q-btn-toggle>
     <q-toggle dense v-model="dark" label="Dark"></q-toggle>
     <q-input dense outlined v-model="query" placeholder="Parameters: a=1&amp;b=2" class="col" @keyup.enter="render" id="DevScreenQuery"></q-input>

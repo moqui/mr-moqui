@@ -683,6 +683,12 @@
     // path the server resolved, which a site route maps from the public one. A script element loads it, as the
     // static-template handler does: a policy without unsafe-eval allows that, and nothing here evaluates text. The promise
     // is the component moqui.bundledComponent makes.
+    moqui.loadClientLibraries = async (ids) => {
+        for (const id of ids) {
+            if (!/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid client library " + id);
+            await moqui.loadScript("/clientLibrary/" + id, null, () => !!(moqui.libraries && moqui.libraries[id]));
+        }
+    };
     moqui.qvueBundleUrl = (url) => url + (url.indexOf("?") >= 0 ? "&" : "?") + "_qvt=bundle";
     moqui.loadBundledQvue = (url, path) => new Promise((resolve, reject) => {
         const script = root.document.createElement("script");
@@ -690,9 +696,12 @@
         script.src = moqui.qvueBundleUrl(url);
         script.onload = () => {
             script.remove();
-            const comp = moqui.bundledComponent(path);
-            if (comp) resolve(comp);
-            else reject(new Error("The bundled .qvue of " + path + " did not register or did not make"));
+            const entry = moqui.qvtBundled && moqui.qvtBundled[String(path).replace(/\.(qvue|qjs|qvt)$/, "")];
+            moqui.loadClientLibraries(entry && entry.libraries || []).then(() => {
+                const comp = moqui.bundledComponent(path);
+                if (comp) resolve(comp);
+                else reject(new Error("The bundled .qvue of " + path + " did not register or did not make"));
+            }, reject);
         };
         script.onerror = () => { script.remove(); reject(new Error("Could not load the bundled .qvue of " + path)); };
         root.document.head.appendChild(script);
@@ -737,6 +746,14 @@
         // A server-static template is cached as the means to make a component, since each use fetches its own data.
         const give = (comp) => callback(comp && comp.mqStatic ? comp.mqStatic(use) : comp);
         // a screen the client has bundled is not fetched
+        const failed = err => {
+            console.error(err); moqui.notifyMessages(null, err.message); callback(null);
+        };
+        const entry = moqui.qvtBundled && moqui.qvtBundled[String(path).replace(/\.(qvue|qjs|qvt)$/, "")];
+        if (entry && entry.libraries && entry.libraries.length) {
+            moqui.loadClientLibraries(entry.libraries).then(() => give(moqui.bundledComponent(path)), failed);
+            return { abort() {} };
+        }
         const bundled = moqui.bundledComponent(path);
         if (bundled) {
             give(bundled);
@@ -767,10 +784,7 @@
         const runtimeBuild = moqui.config && moqui.config.qvt && moqui.config.qvt.build === "runtime";
         const handles = (runtimeBuild && moqui.config.qvt.handles) || [];
         const loadBundled = (qvueUrl) => {
-            moqui.loadBundledQvue(qvueUrl, path).then(give, (err) => {
-                console.error(err);
-                callback(null);
-            });
+            moqui.loadBundledQvue(qvueUrl, path).then(give, failed);
         };
         if (runtimeBuild && kind === vueExt && handles.indexOf("bundled-qvue") >= 0) {
             loadBundled(url);
@@ -795,13 +809,19 @@
             if (cacheable) moqui.componentCache.put(path, comp);
             give(comp);
         };
-        moqui.request(url, options).then((result) => {
+        moqui.request(url, options).then(async (result) => {
             if (result.status === 205) {
                 rootVm().setUrl(result.headers.get("X-Redirect-To"));
                 return;
             }
             const text = result.text;
             if (!text) { callback(moqui.NotFound); return; }
+            const libraries = result.headers.get("X-Moqui-Libraries");
+            if (libraries) {
+                try { await moqui.loadClientLibraries(libraries.split(",")); }
+                catch (err) { failed(err); return; }
+                if (controller.signal.aborted) return;
+            }
             const cacheControl = result.headers.get("Cache-Control") || "";
             const cacheable = cacheControl.indexOf("max-age") >= 0;
             // the mode the server chose for a .qvt request that named the client modes

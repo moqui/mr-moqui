@@ -995,7 +995,11 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     let _active = ActiveGuard::install(Rc::clone(&state));
     // A screen marked server-static for qvt is sent as a template that holds no request data, from the cache.
     // Record history after the send: a later failure must not record a screen the user did not get.
+    let libraries = rendered.client_libraries("qvt");
     if state.render_mode == "qvt" && super::statics::serve_template(&state, job.request, job.path)? {
+        if !libraries.is_empty() {
+            web::add_header("X-Moqui-Libraries", libraries.join(","));
+        }
         record_history(job, &state);
         return Ok(());
     }
@@ -1009,6 +1013,12 @@ fn run_job_now(factory: &Arc<ExecutionContextFactory>, job: &Job<'_>) -> Result<
     in_transaction(begin, timeout, || render_screens(&state, &facade))?;
     // a response sent as it was written got these headers when its head went (arm_stream)
     if !web::stream::committed() {
+        if matches!(state.render_mode.as_str(), "qvue" | "qjs" | "qvt")
+            && !libraries.is_empty()
+            && web::output_status() == 200
+        {
+            web::add_header("X-Moqui-Libraries", libraries.join(","));
+        }
         add_client_component_headers(&state);
         if negotiated && web::output_sent() && web::output_status() == 200 {
             web::add_header("X-Moqui-Qvt", state.render_mode.clone());

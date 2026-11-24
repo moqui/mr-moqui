@@ -31,6 +31,7 @@ mod docs;
 mod entities;
 pub mod git;
 mod hosting;
+mod libraries;
 mod local_run;
 mod notify;
 mod patch;
@@ -57,6 +58,7 @@ submit_component! {
 
 fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     workspace::register(registry)?;
+    libraries::register(registry)?;
     buffers::register(registry)?;
     artifacts::register(registry)?;
     browser::register(registry)?;

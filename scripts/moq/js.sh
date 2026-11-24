@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # moq's build-js, verify-js, clean-js, update-js, outdated-js, audit-js and fonts-download. Each component with a
-# build/js-build.json has browser libraries built from its npm locks (docs/Build-Test.md "Browser libraries"); the
+# build/js-build.json has JavaScript libraries built from its npm locks (docs/Build-Test.md "Browser libraries"); the
 # webroot component is the framework's. Sourced by moq, which holds the task table; bash 3.2, as moq is.
 
 # The webroot's, which the font tasks, the vault module and the source archive use.
@@ -20,7 +20,7 @@ js_node() {
     export JS_NODE_VERSION JS_NPM_VERSION
 }
 
-# The components with browser libraries, one line each (name, root, output, script, projects; tab separated), in the
+# The components with JavaScript libraries, one line each (name, root, output, script, projects; tab separated), in the
 # order components.xml lists their sets.
 js_components() {
     perl "$ROOT/scripts/js-state.pl" components "$RUNTIME_DIR/components"
@@ -34,6 +34,7 @@ js_use() {
     JS_C_SOURCE=$root/build
     JS_C_LIBS=$root/$output
     JS_C_SCRIPT=$JS_C_SOURCE/$script
+    if [ "$script" = :standard ]; then JS_C_SCRIPT=$JS_SOURCE/component-libs.mjs; fi
     JS_C_CACHE=$JS_CACHE/$JS_C_NAME
 }
 
@@ -64,7 +65,7 @@ js_selected() {
 }
 
 js_state() {
-    perl "$ROOT/scripts/js-state.pl" "$1" "$JS_C_SOURCE" "$JS_C_LIBS" "$JS_C_CACHE"
+    JS_SHARED_BUILD="$JS_SOURCE" perl "$ROOT/scripts/js-state.pl" "$1" "$JS_C_SOURCE" "$JS_C_LIBS" "$JS_C_CACHE"
 }
 
 # Lock mutating operations across processes. flock releases the descriptor on exit or interruption.
@@ -89,6 +90,14 @@ js_locked() {
 # staged tree beside the output and its temporary installs. None is in use while the lock is held.
 js_recover() {
     local line backup stale lines
+    for stale in "$JS_CACHE"/*/rollback.json; do
+        [ -f "$stale" ] || continue
+        local dir=${stale%/*}
+        JS_COMPONENTS="$RUNTIME_DIR/components" JS_CACHE="$JS_CACHE" node "$JS_SOURCE/add-library.mjs" recover "${dir##*/}" || return 1
+    done
+    for stale in "$JS_CACHE"/*/prepare-*; do
+        [ ! -d "$stale" ] || rm -rf -- "$stale" || return 1
+    done
     lines=$(js_components) || return 1
     while IFS= read -r line; do
         [ -n "$line" ] || continue
@@ -119,6 +128,8 @@ js_all_current() {
 }
 
 task_build_js() {
+    local journal
+    for journal in "$JS_CACHE"/*/rollback.json; do [ ! -f "$journal" ] || { js_locked build-js "$@"; return $?; }; done
     if [ $# -eq 0 ] && js_all_current; then return 0; fi
     js_locked build-js "$@"
 }
@@ -143,7 +154,7 @@ js_build_js() {
         js_use "$line"
         if [ -z "$force" ] && js_state check 2>/dev/null; then continue; fi
         if ! { js_rebuild --build && js_state stamp; }; then
-            echo "moq: could not build the browser libraries of $JS_C_NAME" >&2
+            echo "moq: could not build the JavaScript libraries of $JS_C_NAME" >&2
             status=1
         fi
     done <<<"$lines"
@@ -156,8 +167,8 @@ js_rebuild() {
     local JS_PACKS
     JS_PACKS=$(js_state selected) || return 1
     export JS_PACKS
-    info "Browser libraries of $JS_C_NAME" >&2
-    JS_CACHE="$JS_C_CACHE" JS_OUTPUT="$JS_C_LIBS" node "$JS_C_SCRIPT" "$@"
+    info "JavaScript libraries of $JS_C_NAME" >&2
+    JS_BUILD_DIR="$JS_C_SOURCE" JS_CACHE="$JS_C_CACHE" JS_OUTPUT="$JS_C_LIBS" node "$JS_C_SCRIPT" "$@"
 }
 
 # Locked as well: its temporary install under target/js is what a locked task removes as stale.
@@ -169,7 +180,7 @@ js_verify_js() {
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         js_use "$line"
-        js_rebuild --verify || { echo "moq: the browser libraries of $JS_C_NAME do not match their manifest" >&2; status=1; }
+        js_rebuild --verify || { echo "moq: the JavaScript libraries of $JS_C_NAME do not match their manifest" >&2; status=1; }
     done <<<"$lines"
     return "$status"
 }
@@ -182,6 +193,7 @@ js_built_paths() {
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         js_use "$line"
+        if [ -f "$JS_C_LIBS/MANIFEST.json" ]; then js_state server-files || return 1; fi
         for entry in "$JS_C_LIBS"/*; do
             case ${entry##*/} in MANIFEST.json|NOTICES.md|licenses) continue ;; esac
             [ ! -e "$entry" ] || printf '%s\n' "$entry"
@@ -225,6 +237,7 @@ js_update_js() {
     local JS_PACKS
     JS_PACKS=$(js_state selected) || return 1
     export JS_PACKS
+    js_validator
     js_manage update "$@" && js_state stamp
 }
 
@@ -247,9 +260,9 @@ task_outdated_js() { js_each_manage outdated "$@"; }
 
 task_audit_js() { js_each_manage audit "$@"; }
 
-help_build_js() { echo 'Install locked packages and build the manifest-verified browser libraries of each component with a build/js-build.json, or of the named ones. --force rebuilds. --offline uses cached packages.'; }
+help_build_js() { echo 'Install locked packages and build the manifest-verified JavaScript libraries of each component with a build/js-build.json, or of the named ones. --force rebuilds. --offline uses cached packages.'; }
 help_verify_js() { echo 'Independently rebuild the locked projects of each component, or of the named ones, and check their outputs against the reviewed manifests.'; }
-help_clean_js() { echo 'Remove the generated browser libraries of every component and target/js. The font pack selection is kept.'; }
+help_clean_js() { echo 'Remove the generated client and server libraries of every component and target/js. The font pack selection is kept.'; }
 help_update_js() { echo 'Update one exact library version, or --all to the newest ^pin release, then regenerate the manifest and notices. --component name for a component other than webroot (first). --security permits a recent security fix.'; }
 help_outdated_js() { echo 'List pins with newer releases (compatible with ^pin, latest and newest, each past the two-week cooldown or not), for each component or the named ones.'; }
 help_audit_js() { echo 'Audit the locks of each component, or of the named ones, and the copies embedded in distributed assets.'; }
@@ -290,3 +303,25 @@ js_report_fonts() {
 }
 
 help_fonts_download() { echo 'List optional fonts with --list, add named packs, or --remove named packs. MOQUI_FONT_PACKS overrides the checkout selection.'; }
+
+# Only candidate creation requires an already built QuickJS host. A clean build verifies reviewed bytes.
+js_validator() {
+    if [ -z "${JS_VALIDATOR:-}" ]; then
+        JS_VALIDATOR=$(binary_path debug)
+        [ -x "$JS_VALIDATOR" ] || JS_VALIDATOR=$(binary_path release)
+    fi
+    export JS_VALIDATOR
+}
+task_add_js() {
+    case ${1:-} in
+        list|search|versions) js_add_js "$@" ;;
+        prepare|apply) js_locked add-js "$@" ;;
+        *) die 'add-js prepare <component> <id> <npm-entry> <version> <client|server|both> or add-js apply <component> <review-id>' ;;
+    esac
+}
+js_add_js() {
+    js_node
+    js_validator
+    JS_COMPONENTS="$RUNTIME_DIR/components" JS_CACHE="$JS_CACHE" node "$JS_SOURCE/add-library.mjs" "$@"
+}
+help_add_js() { echo 'Search, prepare and apply a reviewed component library. add-js prepare COMPONENT ID ENTRY VERSION client|server|both; add-js apply COMPONENT REVIEW-ID.'; }

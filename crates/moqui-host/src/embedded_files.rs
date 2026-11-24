@@ -335,8 +335,16 @@ fn missing_browser_libs(root: &Path) -> Vec<String> {
                     .as_str()
                     .is_none_or(|pack| installed.iter().any(|name| name == pack))
             })
-            .filter_map(|f| f["path"].as_str())
-            .any(|file| !moqui_lib::vfs::is_file(libs.join(file)))
+            .any(|f| {
+                let base = if f["target"] == "server" {
+                    root.join("script/libs")
+                } else {
+                    libs.clone()
+                };
+                f["path"]
+                    .as_str()
+                    .is_none_or(|path| !moqui_lib::vfs::is_file(base.join(path)))
+            })
         {
             missing.push(format!("{name}/{}", library["id"].as_str().unwrap_or("unknown")));
         }

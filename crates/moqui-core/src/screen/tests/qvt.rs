@@ -937,6 +937,22 @@ fn a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path() {
         "Root/Templated.xml",
         r#"<screen require-authentication="false" render-modes="qvue"><widgets><render-mode><text type="qvue"><![CDATA[<template><p>${'made'}</p></template>]]></text></render-mode></widgets></screen>"#,
     );
+    write(
+        "Library.qvue",
+        r#"<template><note/></template><script>
+        const note = moqui.libraries['fixture/note'].create();
+        module.exports = { components: { note: { data: () => ({note}), template: '<b>{{note}}</b>' } } };
+        </script>"#,
+    );
+    let library_file = dir.join("Library.qvue").to_string_lossy().into_owned();
+    write(
+        "Root/Library.xml",
+        &format!(
+            r#"<screen require-authentication="false" render-modes="qvue">
+        <client-library library="fixture/note" render-mode="qvt"/><widgets><render-mode>
+        <text type="qvue" template="false" location="{library_file}"/></render-mode></widgets></screen>"#
+        ),
+    );
     // a file under a screen with no screen of its own: an island's .qvue served as content
     write("Root/Loose.qvue", &source);
     let root = dir.join("Root.xml").to_string_lossy().into_owned();
@@ -998,6 +1014,14 @@ fn a_qvue_asked_for_as_its_bundle_is_compiled_and_named_by_its_path() {
     assert_eq!(bundle("/Island.qvue", None).body_text(), body);
     assert_eq!(plain("/Island.qvue").body_text(), source, "the plain request is the file's text");
 
+    let library = bundle("/Library.qvue", None);
+    assert_eq!(library.status, 200, "{}", library.body_text());
+    assert_eq!(library.header("X-Moqui-Libraries"), Some("fixture/note"));
+    let prelude = loaded_from("/Library.qvue", None) + "moqui.libraries = {'fixture/note': {create: () => 'ready'}};";
+    assert_eq!(
+        made_bundle_in(&library.body_text(), &["/Library"], &prelude),
+        Vec::<String>::new()
+    );
     let loose = bundle("/Loose.qvue", None);
     assert_eq!(loose.status, 200, "{}", loose.body_text());
     assert_eq!(loose.header("X-Moqui-Qvt"), Some("bundled-qvue"));

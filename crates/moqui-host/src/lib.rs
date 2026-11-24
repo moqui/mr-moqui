@@ -837,6 +837,22 @@ where
         return Ok(None);
     }
     match args.as_slice() {
+        [command, file] if command == "check-js-module" => {
+            let source =
+                std::fs::read_to_string(file).map_err(|err| moqui_lib::error::Error::new(format!("{file}: {err}")))?;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            let runtime = moqui_core::script::standalone::Standalone::start(64 * 1024 * 1024, move || {
+                std::time::Instant::now() >= deadline
+            });
+            let check = format!(
+                "const library = ({source}\n);\n\
+                 if (!library || typeof library !== 'object' || !Object.keys(library).length) \
+                 throw new Error('module has no exports');\n\
+                 for (const key of Object.keys(library)) Reflect.get(library, key);"
+            );
+            runtime.run(&check).map_err(moqui_lib::error::Error::new)?;
+            Ok(None)
+        }
         [command, dir, file, rest @ ..] if command == "save-db" => {
             let recipient = backup_key_option(command, rest)?;
             db::embedded::save_db_to(
