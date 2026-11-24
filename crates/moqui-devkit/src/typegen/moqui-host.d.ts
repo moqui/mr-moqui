@@ -874,8 +874,8 @@ interface MoquiUserFacade {
     getVisitorId(): string | null;
     /** The user of the visit, which a later login in the same visit does not change. */
     getVisitUserId(): string | null;
-    /** Whether the login key logged its user in; a key that does not adds an error message. */
-    loginUserKey(loginKey: string): boolean;
+    /** Whether the login key logged its user in; a key that does not adds an error message. With `scope` (`git`), a key made for that scope logs in too, and a key of another scope does not. */
+    loginUserKey(loginKey: string, scope?: string): boolean;
     /** The old password of a password change, behind the login gate: true when it is the current password or the reset password still in date. A null or unknown userId, a locked or terminated account and a wrong password are all false and take as long; a wrong one counts as a failed login. */
     checkOldPassword(userId: string | null, oldPassword: string | null): boolean;
     /** A second factor's code that stands in for a login (validate#UserAuthcFactorCode with countFailure), behind the login gate: the id of the factor it verified, else null. A still disabled account is counted and its code not checked, no more of a user's codes are compared at once than the failures the account has left (one past them is counted and not compared), and a wrong code counts as a failed login. */
