@@ -445,14 +445,14 @@ The desktop app gets the chat over the account's `/notws` while it runs, so its 
 pushes ([plans/Comms-Messaging.md §7.5](../../plans/Comms-Messaging.md)). A phone's are its pushes (rule 7): its page
 leaves them alone (`pushDelivers`) and only tells the host which room shows (`roomShown`).
 
-- **The same rules as the server's pushes** (WebrootChat.js `notification`): a message from someone else, by the room's
-  level (`/chatUnread` `levelMap`: all, mentions, none; a muted room is mentions), kept current by the user's settings
-  changes (`chatUser` `room` `settings`), and a room joined since at the user's default (`CHAT_NOTIFY_DEFAULT`) until
-  the counts are read again; at the mentions level a mention or a reply to the user (`replyTo`; a thread reply only when
-  the event names the thread's starter, which the server's events do not yet); a missed call to the user and a
-  voicemail unless the level is none (rule 6); not on do not disturb, not while its room shows in a window the user
-  sees (`windowSeen`); no text for an encrypted room or with previews off (`CHAT_NOTIFY_PREVIEW`). A group room's name
-  (`/chatUnread` `roomNameMap`) is the title, the sender before the text.
+- **Which messages trigger a notification.** The desktop follows the room's All, Mentions or None setting from
+  `/chatUnread` (`levelMap`) and listens for the user's room settings changes. A newly joined room uses
+  `CHAT_NOTIFY_DEFAULT` until the desktop refreshes its counts. Mentions includes a direct mention, a reply to the
+  user's message, and a reply in a thread the user started or participated in. The room socket marks a qualifying
+  reply for its recipient. A muted room follows Mentions. Missed calls and voicemail notify at either All or Mentions.
+  Do not disturb and an open room in a visible window (`windowSeen`) suppress the alert. For an encrypted room or a
+  user with previews off (`CHAT_NOTIFY_PREVIEW`), the notification omits the message text. A group notification uses
+  the room name from `roomNameMap` as its title and puts the sender before any preview.
 - **One per room of an account.** `notify` takes a `tag` (`chat-<room>`); the host makes the notification's id of it and
   the current account, so a room's next message replaces it (the earlier one is closed first where the platform can:
   Linux and the BSDs), another account's room of the same id is another, and a read of the room, here or on another

@@ -396,6 +396,17 @@ const timeText = (millis) => moqui.chat.timeText(millis);
 const fullTime = (millis) => moqui.chat.fullTime(millis);
 const dayLabel = (millis) => moqui.chat.dayLabel(millis);
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
+// For rows with a fixed ordering, keep the scrolled tail when the last row of the fresh page joins it.
+// Reactions and Threads can reorder older rows on a removal, so those lists always take the fresh cursor.
+function mergeFirstPage(current, page, keyOf) {
+    if (page.next == null || !page.list.length) return page;
+    const last = page.list[page.list.length - 1];
+    const lastKey = keyOf(last);
+    const anchor = current.list.findIndex((item) => keyOf(item) === lastKey);
+    if (anchor < 0 || anchor === current.list.length - 1) return page;
+    const fresh = new Set(page.list.map(keyOf));
+    return { list: page.list.concat(current.list.slice(anchor + 1).filter((item) => !fresh.has(keyOf(item)))), next: current.next };
+}
 const sizeText = (bytes) => {
     const n = Number(bytes || 0);
     if (n < 1024) return n + ' B';
@@ -2175,7 +2186,7 @@ const roomTemplate = `
                 <div class="row q-px-sm q-py-xs">
                     <q-chip v-for="chip in reactionChips" :key="String(chip.value)" dense clickable :outline="tabs.reactions.onlyToMe !== chip.value" :color="tabs.reactions.onlyToMe === chip.value ? 'primary' : undefined"
                             :text-color="tabs.reactions.onlyToMe === chip.value ? 'white' : undefined" class="q-ml-none q-mr-xs" :data-reactions="chip.value ? 'mine' : 'all'"
-                            @click="tabs.reactions.onlyToMe = chip.value; loadTab('reactions', false)">{{chip.label}}</q-chip>
+                            @click="setReactionFilter(chip.value)">{{chip.label}}</q-chip>
                 </div>
                 <div class="col scroll m-chat-tab" style="min-height:0" @scroll="onTabScroll">
                     <q-linear-progress v-if="tabs.reactions.loading" indeterminate color="primary"></q-linear-progress>
@@ -4590,54 +4601,45 @@ const chatRoom = {
         // ---- the details' tabs (Comms-Messaging §5.1): each a page at a time by the server's cursor, more as it scrolls ----
         // A tab's latest request wins (a token per tab): a filter changed, or the tab read again, while a page loads drops
         // that page's answer. A page of more never lists an item twice (a reaction taken back between pages).
-        loadTab(name, more) {
+        loadTab(name, more, refresh) {
             const tab = this.tabs[name];
             if (!tab || (more && (tab.loading || tab.next == null))) return;
             const roomId = this.roomId;
             const token = this.tabToken(name);
             tab.loading = true;
-            this.fetchTab(name, more ? tab.next : '').then((page) => {
+            return this.fetchTab(name, more ? tab.next : '').then((page) => {
                 if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
                 const current = this.tabs[name];
-                const known = new Set(more ? current.list.map((item) => this.tabKey(name, item)) : []);
-                const list = (more ? current.list : []).concat(page.list.filter((item) => !known.has(this.tabKey(name, item))));
-                this.tabs[name] = Object.assign({}, current, { list, next: page.next, loading: false, loaded: true });
+                const keyOf = (item) => this.tabKey(name, item);
+                if (more) {
+                    const known = new Set(current.list.map(keyOf));
+                    page.list = current.list.concat(page.list.filter((item) => !known.has(keyOf(item))));
+                } else if (refresh && name !== 'reactions') {
+                    page = mergeFirstPage(current, page, keyOf);
+                }
+                this.tabs[name] = Object.assign({}, current, page, { loading: false, loaded: true });
                 this.$nextTick(() => this.fillTab(name));
             }, () => {
                 if (roomId === this.roomId && this.tabTokens[name] === token) this.tabs[name] = Object.assign({}, this.tabs[name], { loading: false });
             });
         },
-        // a pushed change: the tab's first page read again and merged at the top, so a tab scrolled far keeps its place;
-        // what the first page no longer has, of the stretch it covers, is gone (a removed message, a reaction taken back)
-        refreshTab(name) {
-            const tab = this.tabs[name];
-            if (!tab) return;
-            if (!tab.loaded) { this.loadTab(name, false); return; }
-            const roomId = this.roomId;
-            const token = this.tabToken(name);
-            this.fetchTab(name, '').then((page) => {
-                if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
-                const current = this.tabs[name];
-                const fresh = new Set(page.list.map((item) => this.tabKey(name, item)));
-                // the first page is all there is, or what is older than its last item stays
-                const last = page.list.length ? this.tabOrder(name, page.list[page.list.length - 1]) : null;
-                const older = page.next == null ? [] : current.list.filter((item) => !fresh.has(this.tabKey(name, item))
-                    && (last == null || this.tabOrder(name, item) < last));
-                this.tabs[name] = Object.assign({}, current, { list: page.list.concat(older), next: page.next == null ? null : current.next, loading: false, loaded: true });
-            }, () => null);
+        // A push rereads the first page using the same request token as load-more.
+        refreshTab(name) { return this.loadTab(name, false, true); },
+        setReactionFilter(onlyToMe) {
+            if (this.tabs.reactions.onlyToMe !== onlyToMe) this.tabs.reactions = Object.assign(emptyTab(), { onlyToMe });
+            return this.loadTab('reactions', false);
         },
         tabToken(name) {
             this.tabTokens = this.tabTokens || {};
             this.tabTokens[name] = (this.tabTokens[name] || 0) + 1;
             return this.tabTokens[name];
         },
-        // an item of a tab: its key, and where it sorts (newest first)
+        // an item of a tab: its key across pages
         tabKey(name, item) {
             if (name === 'reactions') return String(item.eventSeq);
             if (name === 'links') return item.eventSeq + ' ' + item.url;
             return String(item.chatAttachmentId);
         },
-        tabOrder(name, item) { return Number(name === 'reactions' ? item.latestReactionSeq || 0 : item.eventSeq || 0); },
         // one page of a tab, {list, next}
         fetchTab(name, cursor) {
             const roomId = this.roomId;
@@ -5076,7 +5078,8 @@ const chatRoom = {
         },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
         // who becomes an owner when the last owner leaves, by the rule of remove#Member (ChatServices.xml): the
-        // longest-standing moderator, else member; agents and outside actors never. The service decides in the end.
+        // longest-standing moderator, else member; agents and outside actors never. For equal join times the stable sort
+        // keeps get#Room's userId order, the same tie-break the service uses when the owner confirms.
         ownerHeir() {
             if (this.isDirect || !this.isOwner) return null;
             const others = this.members.filter((person) => person.userId && !person.isAgent && person.userId !== this.me.userId)
@@ -5578,7 +5581,8 @@ module.exports = {
         // ---- Activity (find#ChatActivity, the activity transition) and Threads (find#ChatThreads, myThreads) ----
         // the rows of a page: a key each, and a thread's as its last reply (who wrote it, when, its text)
         feedItems(view, items) {
-            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
+            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: item.chatUserActivityId != null
+                ? 'activity:' + item.chatUserActivityId : [item.kind, item.chatRoomId, item.eventSeq, item.date].join(':') }));
             return items.map((item) => Object.assign(item, { key: 'thread:' + item.chatRoomId + ':' + item.threadRootEventSeq, kind: 'thread',
                 actorUserId: item.lastUserId, actorName: item.lastUserName, date: item.lastDate, snippet: item.lastSnippet || item.rootSnippet,
                 eventSeq: item.lastEventSeq, messageEventSeq: item.lastEventSeq }));
@@ -5587,7 +5591,7 @@ module.exports = {
             return view === 'threads' ? this.get('myThreads', { limit: 40, cursor }) : this.get('activity', { limit: 40, cursor });
         },
         // the first page (more false) or the next by the cursor; an encrypted room's text decrypted here
-        loadFeed(more) {
+        loadFeed(more, refresh) {
             const view = this.filter;
             if (view !== 'activity' && view !== 'threads') return;
             const feed = this.feed;
@@ -5596,28 +5600,25 @@ module.exports = {
             // another view's list is not shown under this one; the same view's stays until its first page is read again
             if (!more && feed.view !== view) { feed.view = view; feed.list = []; feed.next = null; feed.loaded = false; }
             feed.loading = true;
-            this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
+            return this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
                 if (seq !== feed.seq) return;
-                feed.list = more ? feed.list.concat(list.filter((item) => !feed.list.some((other) => other.key === item.key))) : list;
-                feed.next = json.nextCursor == null ? null : json.nextCursor;
+                let page = { list, next: json.nextCursor ?? null };
+                if (more) {
+                    const known = new Set(feed.list.map((item) => item.key));
+                    page.list = feed.list.concat(list.filter((item) => !known.has(item.key)));
+                } else if (refresh && view === 'activity') {
+                    page = mergeFirstPage(feed, page, (item) => item.key);
+                }
+                Object.assign(feed, page);
                 feed.view = view;
                 feed.loading = false;
                 feed.loaded = true;
                 this.$nextTick(() => this.fillFeed());
             })).catch(() => { if (seq === feed.seq) { feed.loading = false; feed.loaded = true; } });
         },
-        // what is new at the top: the first page read again and merged above the rows already loaded (a thread moves up with
-        // its new reply), so the pages scrolled to stay
+        // Refreshes and load-more share a sequence so a slow, older reply cannot overwrite a newer page.
         refreshFeedTop() {
-            const view = this.filter;
-            const feed = this.feed;
-            if ((view !== 'activity' && view !== 'threads') || feed.view !== view || feed.loading) return;
-            const seq = feed.seq;
-            this.feedRequest(view, null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
-                if (seq !== feed.seq || feed.view !== view) return;
-                const fresh = new Set(list.map((item) => item.key));
-                feed.list = list.concat(feed.list.filter((item) => !fresh.has(item.key)));
-            })).catch(() => null);
+            if (this.feed.view === this.filter) return this.loadFeed(false, true);
         },
         // an encrypted room's items: the message's text and a reaction's key, decrypted in this page (moqui.chat.openSealed);
         // one this device cannot read says so
@@ -5711,9 +5712,11 @@ module.exports = {
             if (!this.feedShown || !event || event.senderUserId === this.me.userId) return;
             const me = this.me.userId;
             const inThread = event.type === 'message' && event.threadRootEventSeq != null;
+            // Older servers omit the recipient hint. Check Activity again on their thread pushes (the feed itself
+            // enforces membership); a desktop notification still requires positive evidence of a mention or reply.
+            const legacyThread = inThread && event.replyForViewer == null;
             const concerns = this.filter === 'threads' ? inThread
-                : event.type === 'reaction' || inThread || ((event.type === 'message' || event.type === 'edit')
-                    && (((event.mentions || []).includes(me)) || (!!event.replyTo && event.replyTo.senderUserId === me)));
+                : event.type === 'reaction' || legacyThread || ((event.type === 'message' || event.type === 'edit') && moqui.chat.mentionsOrRepliesTo(event, me));
             if (!concerns) return;
             clearTimeout(this.feedTimer);
             this.feedTimer = setTimeout(() => this.refreshFeedTop(), 600);

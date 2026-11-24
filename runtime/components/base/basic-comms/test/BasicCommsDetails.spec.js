@@ -375,10 +375,34 @@ feature("find#ChatActivity's cursor: two rows alike but for their id are both li
         return {pages, garbage, absurd}
     },
     then({pages, garbage, absurd}) {
-        pages.items.length == 2
+        pages.items.map((item) => item.chatUserActivityId).join(",") == "CHAT_DETAILS_ACT_2,CHAT_DETAILS_ACT_1"
         pages.sizes.slice(0, 2).join(",") == "1,1"
         garbage.errors.includes("not valid")
         absurd.errors.includes("not valid")
+    }
+})
+
+feature("the last owner's Leave preview and the transfer agree when two moderators joined together", {
+    when() {
+        clock = Date.now() - 30000
+        try {
+            const room = as(A, "create#Room", {roomTypeEnumId: "private", roomName: "Details succession", memberUserIdList: [D, C, B]}).chatRoomId
+            for (const userId of [D, C]) as(A, "set#MemberRole", {chatRoomId: room, userId, roleEnumId: "moderator"})
+            const before = as(A, "get#Room", {chatRoomId: room}).memberList.filter((person) => person.roleEnumId === "CmrModerator")
+            const leave = as(A, "remove#Member", {chatRoomId: room})
+            const owner = as(C, "get#Room", {chatRoomId: room}).memberList.find((person) => person.roleEnumId === "CmrOwner")
+            return {before, leave, owner}
+        } finally {
+            clock = null
+            ec.user.setEffectiveTime(null)
+        }
+    },
+    then({before, leave, owner}) {
+        before.length == 2
+        before[0].joinedDate == before[1].joinedDate
+        before[0].userId == C
+        !leave.errors
+        owner.userId == before[0].userId
     }
 })
 

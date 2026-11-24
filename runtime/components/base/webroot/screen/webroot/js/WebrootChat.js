@@ -629,6 +629,12 @@
             if (code === "none") return "none";
             return muted ? "mentions" : (code === "mentions" ? "mentions" : "all");
         },
+        // Room pushes carry the viewer's own reply qualification. Timeline-shaped events may carry the replied-to sender.
+        mentionsOrRepliesTo(event, me) {
+            return !!me && (event.replyForViewer === true || (event.mentions || []).includes(me)
+                || (event.replyTo && event.replyTo.senderUserId === me)
+                || (event.threadRootEventSeq != null && event.threadRootSenderUserId === me));
+        },
         // What the desktop app (window.moquiDesktop.notify) shows of a socket event, by the rules of the server's pushes
         // (§7.2): a message from someone else, by the room's level (levels: chatRoomId to all, mentions or none, a muted
         // room is mentions; /chatUnread levelMap; a room not in it, joined since, at the user's default, defaultLevel),
@@ -655,10 +661,7 @@
             }
             if (event.type !== "message" || !event.senderUserId && !event.senderActorId) return null;
             if (event.senderUserId && event.senderUserId === given.me) return null;
-            const replyTo = moqui.isPlainObject(event.replyTo) ? event.replyTo : {};
-            const mention = (event.mentions || []).indexOf(given.me) >= 0 || replyTo.senderUserId === given.me
-                || (event.threadRootEventSeq != null && event.threadRootSenderUserId === given.me);
-            if (level === "mentions" && !mention) return null;
+            if (level === "mentions" && !chat.mentionsOrRepliesTo(event, given.me)) return null;
             const text = event.encrypted ? null : String(event.bodyText || "").replace(/\s+/g, " ").trim();
             const body = event.encrypted ? tr("New message") : given.preview === false ? null : (text ? text.slice(0, 140) : null);
             const sender = String(event.senderName || tr("New message"));

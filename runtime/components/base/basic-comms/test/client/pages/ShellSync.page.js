@@ -1,16 +1,22 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 "use strict";
 (function () {
+// This isolated fixture checks the controls, focus and unmount on either side of a real asynchronous
+// transition. The duration of the visual animation is not part of those checks.
+Quasar.QDialog.props.transitionDuration.default = 40;
+Quasar.QMenu.props.transitionDuration.default = 40;
 const until = async (check, what, ms) => {
     const end = Date.now() + (ms || 5000);
+    await Vue.nextTick();
     for (;;) {
         const value = check();
         if (value) return value;
         if (Date.now() > end) throw new Error("waited for " + what);
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        await new Promise((resolve) => setTimeout(resolve, 10));
     }
 };
-const settle = () => new Promise((resolve) => setTimeout(resolve, 80));
+// The mock host and HTTP answers resolve locally. Flush their promises and the render they schedule.
+const settle = async () => { await new Promise((resolve) => setTimeout(resolve, 0)); await Vue.nextTick(); };
 const text = () => document.body.textContent;
 const clone = (value) => JSON.parse(JSON.stringify(value));
 // the rows of the room's timeline that show a text
@@ -110,7 +116,7 @@ const drop = (id) => { const at = ops.findIndex((op) => op.id === id); if (at >=
 // which names its room and message
 const answered = async (op, json) => {
     tell();
-    await settle();
+    await until(() => !moqui.chat.state.changes.some((change) => change.clientRef === op.id), "the answered operation to leave the outbox");
     tell({ kind: "sent", op: op.kind, clientRef: op.id, chatRoomId: op.payload.chatRoomId, eventSeq: op.payload.eventSeq, threadRootEventSeq: null, json });
 };
 let added = 0;
@@ -717,7 +723,6 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
         await settle();
         assert.ok(!document.querySelector(".m-compose-copy"));
     }
-    await settle();
     assert.equal(kept.get("ironstone.compose.email.E123"), edited, "the offline edits kept as they were");
 });
 
@@ -1064,7 +1069,7 @@ test("poll votes: one waiting counts for the next (several choices add up); a vo
     // answered: the poll as the server counted it
     for (const op of votes()) drop(op.id);
     tell();
-    await settle();
+    await until(() => !moqui.chat.state.changes.some((change) => change.kind === "poll-vote"), "the votes to leave the outbox");
     tell({ kind: "sent", op: "poll-vote", clientRef: votes()[1].id, chatRoomId: "R1", eventSeq: 11, json: { poll: Object.assign(poll(true), { voterCount: 1 }) } });
     await settle();
     assert.equal(vm.myOptions(many).length, 0, "no vote waits; the poll's own answer counts");
@@ -1154,6 +1159,113 @@ test("Send is an icon with bubbles; an encrypted room's search says it is not se
         Object.assign(vm, { width: kept.width, access: kept.access, members: kept.members });
         vm.room.encrypted = kept.encrypted;
     }
+});
+
+test("Activity keeps distinct rows for one event, follows the refreshed cursor across a gap and ignores a late page", async () => {
+    const methods = moqui.bundledComponent("BasicComms/Chat").methods;
+    const feed = { view: null, list: [], next: null, loading: false, loaded: false, seq: 0 };
+    const cursors = [];
+    let response;
+    const vm = { feed, filter: "activity", loadFeed: methods.loadFeed, refreshFeedTop: methods.refreshFeedTop,
+        feedItems: methods.feedItems, openFeed: methods.openFeed, me: {}, $nextTick() {},
+        feedRequest(view, cursor) { cursors.push(cursor); return Promise.resolve(response); } };
+    const page = (ids, next) => ({ items: ids.map((id) => ({ chatUserActivityId: id, kind: "mention", chatRoomId: "R1", eventSeq: 7, date: 100 })), nextCursor: next });
+    const keys = () => feed.list.map((item) => item.key);
+    response = page(["D"], "after-D");
+    await vm.loadFeed(false);
+    response = page(["C", "B"], "after-B");
+    await vm.loadFeed(true);
+    assert.deepEqual(keys(), ["activity:D", "activity:C", "activity:B"]);
+    response = page(["E", "D"], "after-D");
+    await vm.refreshFeedTop();
+    assert.deepEqual(keys(), ["activity:E", "activity:D", "activity:C", "activity:B"], "an overlap keeps the scrolled tail");
+    assert.equal(feed.next, "after-B");
+    let resolveLate;
+    response = new Promise((resolve) => { resolveLate = resolve; });
+    const late = vm.loadFeed(true);
+    response = page(["I", "H"], "after-H");
+    await vm.refreshFeedTop();
+    resolveLate(page(["A"], null));
+    await late;
+    assert.deepEqual(keys(), ["activity:I", "activity:H"], "a disjoint first page uses its own boundary");
+    response = page(["G", "F"], "after-F");
+    await vm.loadFeed(true);
+    assert.deepEqual(cursors, [null, "after-D", null, "after-B", null, "after-H"]);
+    assert.deepEqual(keys(), ["activity:I", "activity:H", "activity:G", "activity:F"]);
+    const old = { kind: "reply", chatRoomId: "R1", eventSeq: 8, date: 101 };
+    const oldKey = vm.feedItems("activity", [clone(old)])[0].key;
+    assert.ok(oldKey);
+    assert.equal(vm.feedItems("activity", [clone(old)])[0].key, oldKey, "a cached response from an older server keeps a stable key");
+
+    // An old thread falls below the first page after its last reply is removed. The first page can end on the same thread.
+    const thread = (root, last) => ({ chatRoomId: "R1", threadRootEventSeq: root, lastEventSeq: last, lastDate: last });
+    vm.filter = "threads";
+    response = { items: [thread(1, 100), thread(2, 90)], nextCursor: "after-90" };
+    await vm.loadFeed(false);
+    response = { items: [thread(3, 70)], nextCursor: null };
+    await vm.loadFeed(true);
+    response = { items: [thread(4, 110), thread(2, 90)], nextCursor: "after-90" };
+    await vm.refreshFeedTop();
+    assert.equal(feed.next, "after-90");
+    response = { items: [thread(1, 80), thread(3, 70)], nextCursor: null };
+    await vm.loadFeed(true);
+    assert.deepEqual(feed.list.map((item) => item.threadRootEventSeq), [4, 2, 1, 3]);
+
+    // A room push refreshes Activity for the viewer who received reply activity; Threads follows any thread change.
+    const changes = { feedShown: true, filter: "activity", me: { userId: "ann" }, refreshFeedTop() {} };
+    const reply = { type: "message", senderUserId: "bob", threadRootEventSeq: 1 };
+    methods.feedTouched.call(changes, Object.assign({ replyForViewer: false }, reply));
+    assert.ok(!changes.feedTimer);
+    methods.feedTouched.call(changes, reply);
+    assert.ok(changes.feedTimer, "an older server's thread signal still refreshes Activity");
+    clearTimeout(changes.feedTimer);
+    changes.feedTimer = null;
+    methods.feedTouched.call(changes, Object.assign({ replyForViewer: true }, reply));
+    assert.ok(changes.feedTimer);
+    clearTimeout(changes.feedTimer);
+    changes.filter = "threads";
+    changes.feedTimer = null;
+    methods.feedTouched.call(changes, reply);
+    assert.ok(changes.feedTimer);
+    clearTimeout(changes.feedTimer);
+});
+
+test("Reactions follows a demoted message past the same page boundary and a delayed filter response cannot restore the old list", async () => {
+    const methods = moqui.bundledComponent("BasicComms/Chat").components["chat-room"].methods;
+    const tabs = { reactions: { list: [], next: null, loading: false, loaded: false } };
+    const cursors = [];
+    let page;
+    const vm = { tabs, roomId: "R1", tabToken: methods.tabToken, tabKey: methods.tabKey, setReactionFilter: methods.setReactionFilter,
+        loadTab: methods.loadTab, refreshTab: methods.refreshTab, $nextTick() {},
+        fetchTab(name, cursor) { cursors.push(cursor); return Promise.resolve(page); } };
+    const reaction = (message, latest) => ({ eventSeq: message, latestReactionSeq: latest });
+    page = { list: [reaction(6, 20), reaction(5, 18)], next: 18 };
+    await vm.loadTab("reactions", false);
+    page = { list: [reaction(4, 16)], next: null };
+    await vm.loadTab("reactions", true);
+    // Message 6 lost its newest reaction and is now below 5; the first page still ends at the same reaction.
+    page = { list: [reaction(8, 30), reaction(5, 18)], next: 18 };
+    await vm.refreshTab("reactions");
+    page = { list: [reaction(6, 17), reaction(4, 16)], next: null };
+    await vm.loadTab("reactions", true);
+    assert.deepEqual(cursors, ["", 18, "", 18]);
+    assert.deepEqual(tabs.reactions.list.map((item) => item.eventSeq), [8, 5, 6, 4]);
+
+    let resolveLate;
+    page = new Promise((resolve) => { resolveLate = resolve; });
+    const late = vm.refreshTab("reactions");
+    let resolveFilter;
+    page = new Promise((resolve) => { resolveFilter = resolve; });
+    const filtering = vm.setReactionFilter(true);
+    assert.deepEqual(tabs.reactions.list, []);
+    page = { list: [reaction(5, 18)], next: null };
+    await vm.refreshTab("reactions");
+    resolveFilter({ list: [reaction(6, 17)], next: 17 });
+    resolveLate({ list: [reaction(8, 30), reaction(5, 18)], next: 18 });
+    await Promise.all([filtering, late]);
+    assert.equal(tabs.reactions.onlyToMe, true);
+    assert.deepEqual(tabs.reactions.list.map((item) => item.eventSeq), [5]);
+    assert.equal(tabs.reactions.next, null);
 });
 
 // a touch the page makes itself (the test kit has no touch emulation): an event of the type with its touches
@@ -1462,8 +1574,7 @@ test("a number the phone's dialer handed the app is filled in, never placed by i
     try {
         await open("/qapps/BasicComms/Calls/Dialer?number=%2B15557777", "dialer");
         await until(() => field() && field().value === "+15557777", "the handed number filled in");
-        await until(() => asked("/apps/BasicComms/Calls/Dialer/dialerData").length, "the Dialer's data");
-        await settle();
+        await until(() => root.$refs.view.loaded, "the Dialer's data");
         assert.equal(placed().length, 0, "not placed by itself");
         callButton().click();
         await until(() => placed().length === 1, "placed on the user's Call");
@@ -1473,7 +1584,7 @@ test("a number the phone's dialer handed the app is filled in, never placed by i
         // *67 before the number: taken off, and Hide my number set
         await open("/qapps/BasicComms/Calls/Dialer?number=%2A67%2B15558888", "dialer");
         await until(() => field() && field().value === "+15558888", "the number without *67");
-        await settle();
+        await until(() => root.$refs.view.hideCallerId, "the hide-caller-ID code applied");
         callButton().click();
         await until(() => placed().length === 2, "the hidden call placed");
         assert.equal(placed()[1].params.phoneNumber, "+15558888");
@@ -1577,7 +1688,7 @@ test("E2EE by default (Comms-Messaging §6.5): Chat makes the device; a dm link'
         await until(() => document.querySelector(".m-chat-device-setup-done"), "the card says it is set up");
         await until(() => !sealed.$el.querySelector(".m-chat-setup-bar"), "the bar gone");
         sealed.setupOpen = false;
-        await settle();
+        await until(() => !card.isConnected, "the completed device setup to close");
         // verified with the other device, its backup key not here yet: still not set up, the card waits; after two minutes
         // it says the keys did not come, with Try again (the secrets asked again) and Use your recovery key
         const secretAsks = [];

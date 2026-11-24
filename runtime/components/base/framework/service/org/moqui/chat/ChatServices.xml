@@ -36,7 +36,8 @@ along with this software (see the LICENSE.md file). If not, see
     The pushes. Each new event goes to the room's member users as a NotificationMessage that is not persisted, on the
     topic chatRoom:<chatRoomId> (push#Signal, after the commit), so the notification socket delivers it only to them:
       {kind: 'event', chatRoomId, eventSeq, event, roomChangeSeq}   a new event, as get#Timeline lists one (without
-                                                         aggregates); roomChangeSeq when it changed a message (ChatRoomChange)
+                                                         aggregates); on a reply event.replyForViewer says whether it is to the
+                                                         recipient or in a thread they started or wrote in; roomChangeSeq when a message changed
       {kind: 'typing', chatRoomId, userId, typing}       signal#Typing, nothing stored
       {kind: 'read', chatRoomId, userId, lastReadEventSeq}   a member's read marker moved (read receipts; none for a
                                                          member whose preference CHAT_READ_RECEIPTS is N)
@@ -414,6 +415,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="editsEventSeq" type="Integer"/>
             <parameter name="relatesToEventSeq" type="Integer"/>
             <parameter name="clientRef"/>
+            <parameter name="replyUserIdList" type="List"><description>Internal: the recipients of this message's reply and threadReply activity.</description></parameter>
             <parameter name="noPush" type="Boolean" default="false"/>
             <parameter name="sourceChatBridgeId"><description>The bridge the event came from: nothing goes back to it</description></parameter>
             <parameter name="encrypted" type="Boolean" default="false"/>
@@ -521,11 +523,23 @@ along with this software (see the LICENSE.md file). If not, see
             // not to a member with the room out of sight (Spam & blocked), nor one who blocked its sender, but their own membership
             const unseen = eventTypeEnumId === 'CetMembership' ? new Set() : new Set(memberRows.filter((member) => member.filterEnumId).map((member) => member.userId)
                     .concat(senderUserId ? ec.resource.script('component://framework/service/org/moqui/chat/ChatBlocks.js').execute('blockersOf', {senderUserId: senderUserId, userIdList: memberUserIdList}).userIdList || [] : []))
-            if (!noPush && memberUserIdList.some((id) => !unseen.has(id))) {
+            if (!noPush) {
                 const pushed = {kind: 'event', chatRoomId: chatRoomId, eventSeq: eventSeq, event: event}
                 if (roomChangeSeq != null) pushed.roomChangeSeq = roomChangeSeq
-                ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
-                    userIdList: memberUserIdList.filter((id) => !unseen.has(id)), message: pushed}).call()
+                const replies = new Set(replyUserIdList || [])
+                const ordinary = [], personal = []
+                for (const id of memberUserIdList) {
+                    if (unseen.has(id)) continue
+                    if (replies.has(id)) personal.push(id)
+                    else ordinary.push(id)
+                }
+                const push = (users, message) => ec.service.sync().name('org.moqui.chat.ChatServices.push#Signal')
+                        .parameters({topic: 'chatRoom:' + chatRoomId, userIdList: users, message: message}).call()
+                if (ordinary.length) {
+                    const reply = eventTypeEnumId === 'CetMessage' && (replyToEventSeq != null || threadRootEventSeq != null)
+                    push(ordinary, reply ? Object.assign({}, pushed, {event: Object.assign({}, event, {replyForViewer: false})}) : pushed)
+                }
+                if (personal.length) push(personal, Object.assign({}, pushed, {event: Object.assign({}, event, {replyForViewer: true})}))
             }
 
             // a membership event: a room change in the members' feeds and the membership of the user it is about, as it
@@ -1470,7 +1484,8 @@ along with this software (see the LICENSE.md file). If not, see
             access = {level: out.level, isMember: out.isMember, canRead: out.canRead, canJoin: out.canJoin, canPost: out.canPost,
                 canModerate: out.canModerate, isOwner: out.isOwner, isArchived: out.isArchived}
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
-            const rows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).orderBy('joinedDate').list())
+            // Leave previews the first eligible member in this order; remove#Member uses the same tie-break.
+            const rows = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).orderBy('joinedDate').orderBy('userId').list())
                     .filter((row) => isDirect || !row.leftDate)
             const names = {}
             const localIds = rows.map((row) => row.userId).filter((id) => id)
@@ -1980,7 +1995,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (ec.message.hasError()) return
                 if (row.roleEnumId === 'CmrOwner') {
                     const remaining = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('leftDate', null)
-                            .condition('roleEnumId', 'not-equals', 'CmrAgent').orderBy('joinedDate').list()).filter((member) => member.userId)
+                            .condition('roleEnumId', 'not-equals', 'CmrAgent').orderBy('joinedDate').orderBy('userId').list()).filter((member) => member.userId)
                     if (remaining.length && !remaining.some((member) => member.roleEnumId === 'CmrOwner')) {
                         const heir = remaining.find((member) => member.roleEnumId === 'CmrModerator') || remaining[0]
                         heir.set('roleEnumId', 'CmrOwner')
@@ -2636,6 +2651,9 @@ along with this software (see the LICENSE.md file). If not, see
             }
             let rootRow = null
             if (threadRootEventSeq != null) {
+                // The writers of earlier replies and the root's latest reply must come from the same posting order.
+                // With a clientRef the duplicate check already took the room lock.
+                if (!clientRef) ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).one()
                 rootRow = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', threadRootEventSeq).one()
                 if (!rootRow || rootRow.eventTypeEnumId !== 'CetMessage') { ec.message.addError(`Message ${threadRootEventSeq} not found in the room`); return }
                 if (rootRow.threadRootEventSeq != null) rootRow = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId)
@@ -2730,10 +2748,20 @@ along with this software (see the LICENSE.md file). If not, see
             if (forwardOf) content.forwardOf = forwardOf
             // a forward is found and shown by its text too
             const storedText = [bodyText, forwardOf ? forwardOf.bodyText : null].filter((part) => part).join('\n') || bodyText
+            // The socket and the push worker agree on replies: a reply to my message or in a thread I started or wrote in.
+            // Record the same recipients below for Activity; the socket reveals only each viewer's own qualification.
+            const replyActivity = []
+            if (replyToSender && replyToSender !== sender && current(memberOf[replyToSender])) replyActivity.push({userId: replyToSender, kind: 'reply'})
+            if (rootRow) {
+                const writers = new Set(rootRow.senderUserId ? [rootRow.senderUserId] : [])
+                for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('threadRootEventSeq', threadRoot)
+                        .condition('eventTypeEnumId', 'CetMessage').selectField('senderUserId').list()) if (row.senderUserId) writers.add(row.senderUserId)
+                for (const id of writers) if (id !== sender && current(memberOf[id])) replyActivity.push({userId: id, kind: 'threadReply'})
+            }
             const appended = ec.service.sync().name('org.moqui.chat.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
                 eventTypeEnumId: 'CetMessage', senderUserId: sender, senderActorId: senderActor, content: content, bodyText: ciphertext ? null : storedText,
                 replyToEventSeq: replyTo, threadRootEventSeq: threadRoot, clientRef: clientRef, sourceChatBridgeId: sourceChatBridgeId || null,
-                encrypted: !!ciphertext, viewOnce: !!viewOnce}).call()
+                replyUserIdList: replyActivity.map((item) => item.userId), encrypted: !!ciphertext, viewOnce: !!viewOnce}).call()
             if (ec.message.hasError()) return
             eventSeq = appended.eventSeq
             event = appended.event
@@ -2777,14 +2805,7 @@ along with this software (see the LICENSE.md file). If not, see
             }
             // what the members hear about (ChatUserActivity, plans/Comms-Messaging.md §5.2): its mentions, a reply to their
             // message, a reply in a thread they started or wrote in; current members only for the replies
-            const activity = mentionIds.map((id) => ({userId: id, kind: 'mention'}))
-            if (replyToSender && current(memberOf[replyToSender])) activity.push({userId: replyToSender, kind: 'reply'})
-            if (rootRow) {
-                const writers = new Set(rootRow.senderUserId ? [rootRow.senderUserId] : [])
-                for (const row of ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('threadRootEventSeq', threadRoot)
-                        .condition('eventTypeEnumId', 'CetMessage').selectField('senderUserId').list()) if (row.senderUserId) writers.add(row.senderUserId)
-                for (const id of writers) if (current(memberOf[id])) activity.push({userId: id, kind: 'threadReply'})
-            }
+            const activity = mentionIds.map((id) => ({userId: id, kind: 'mention'})).concat(replyActivity)
             if (activity.length) ec.service.sync().name('org.moqui.chat.ChatServices.record#UserActivity').parameters({chatRoomId: chatRoomId,
                 eventSeq: eventSeq, actorUserId: sender, chatActorId: senderActor || null, activityList: activity}).call()
             // indexed once the transaction commits: the document is read through a view of rows this one may hold to
@@ -4229,7 +4250,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="find" noun="ChatActivity">
         <description>The current user's activity across rooms (ChatUserActivity, plans/Comms-Messaging.md §5.2), newest first:
-            items [{kind (mention, reply, threadReply, reaction, reminder: a reminder the user set that came), chatRoomId, roomName, roomTypeEnumId, eventSeq (the event
+            items [{chatUserActivityId, kind (mention, reply, threadReply, reaction, reminder: a reminder the user set that came), chatRoomId, roomName, roomTypeEnumId, eventSeq (the event
             that made it: the message, the edit that added the mention, the reaction), messageEventSeq (the message it is
             about), threadRootEventSeq, actorUserId, actorName, snippet (the message's current text), reactionKey (a reaction
             in a plain room), date, encrypted}]. kinds (a List, or text with commas) keeps those kinds. Only rooms the user can
@@ -4355,7 +4376,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const messageSeq = Number(row.messageEventSeq ?? row.eventSeq)
                 const summary = summaries[row.chatRoomId][String(messageSeq)] || {}
                 const reaction = row.activityKindEnumId === 'CuaReaction' ? reactions[row.chatRoomId + ' ' + Number(row.eventSeq)] || null : null
-                items.push({kind: CODES[row.activityKindEnumId] || null, chatRoomId: row.chatRoomId, roomName: room.roomName ?? null,
+                items.push({chatUserActivityId: row.chatUserActivityId, kind: CODES[row.activityKindEnumId] || null, chatRoomId: row.chatRoomId, roomName: room.roomName ?? null,
                     roomTypeEnumId: room.roomTypeEnumId ?? null, eventSeq: Number(row.eventSeq), messageEventSeq: messageSeq,
                     threadRootEventSeq: summary.threadRootEventSeq ?? null, actorUserId: row.actorUserId ?? null,
                     actorName: row.actorUserId ? names[row.actorUserId] || row.actorUserId : (actors[row.chatActorId]?.name ?? null),

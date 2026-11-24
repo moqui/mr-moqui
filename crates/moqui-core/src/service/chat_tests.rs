@@ -116,6 +116,13 @@ fn row(facade: &EntityFacade, entity: &str, fields: &[(&str, Value)]) {
     row.create(facade).unwrap();
 }
 
+/// Load the framework's own mention topic and search document, as an installation without any add-ons does.
+fn load_chat_setup(facade: &EntityFacade) {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let data = std::fs::read_to_string(crate::context::framework_dir().join("data/ChatSetupData.xml")).unwrap();
+    crate::entity::load_feed::load_entity_xml_text(facade, "ChatSetupData.xml", &data, &Default::default()).unwrap();
+}
+
 /// Users with these ids, each named by the id with a capital letter.
 fn users(facade: &EntityFacade, ids: &[&str]) {
     for id in ids {
@@ -925,18 +932,7 @@ fn a_member_starts_at_their_default_level_and_a_mention_may_leave_out_the_text()
             ],
         );
     }
-    row(
-        &facade,
-        "moqui.security.user.NotificationTopic",
-        &[
-            ("topic", text("ChatMention")),
-            ("persistOnSend", text("Y")),
-            (
-                "titleTemplate",
-                text("${authorName} mentioned you in ${roomName}: ${summary}"),
-            ),
-        ],
-    );
+    load_chat_setup(&facade);
     let level = |room: &str, user: &str| {
         let _authz = ctx.disable_authz();
         facade
@@ -1008,19 +1004,7 @@ fn unread_and_mention_counts_follow_the_read_marker_and_the_notification_level()
     let _entered = ctx.enter();
     install(&dir);
     users(&facade, &["una", "unb", "unc", "und"]);
-    row(
-        &facade,
-        "moqui.security.user.NotificationTopic",
-        &[
-            ("topic", text("ChatMention")),
-            ("persistOnSend", text("Y")),
-            ("showAlert", text("Y")),
-            (
-                "titleTemplate",
-                text("${authorName} mentioned you in ${roomName}: ${summary}"),
-            ),
-        ],
-    );
+    load_chat_setup(&facade);
     login("una");
     let chat = room("private", "Counts", &["unb", "unc"]);
     send(&chat, "<p>one</p>");
@@ -1222,6 +1206,25 @@ fn pushes_go_only_to_the_room_members_and_only_after_the_commit() {
         && message["action"] == "joined"));
     tape.clear();
 
+    // A topic subscriber outside the room must receive none of its signals. A member subscribed to the whole
+    // topic still receives only their own copy when the server splits a personal reply from the ordinary event.
+    let room_topic = format!("chatRoom:{chat}");
+    row(
+        &facade,
+        "moqui.security.user.NotificationTopic",
+        &[("topic", text(&room_topic)), ("receiveNotifications", text("Y"))],
+    );
+    for subscriber in ["psb", "psc"] {
+        row(
+            &facade,
+            "moqui.security.user.NotificationTopicUser",
+            &[
+                ("topic", text(&room_topic)),
+                ("userId", text(subscriber)),
+                ("allNotifications", text("Y")),
+            ],
+        );
+    }
     let seq = send(&chat, "<p>for members</p>");
     let pushed = tape.take("chatRoom:");
     assert_eq!(pushed.len(), 1, "{pushed:?}");
@@ -1263,6 +1266,24 @@ fn pushes_go_only_to_the_room_members_and_only_after_the_commit() {
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].1, ["psa"]);
     assert_eq!(receipts[0].2["userId"], "psb");
+
+    ok(
+        "send#Message",
+        &[
+            ("chatRoomId", text(&chat)),
+            ("body", text("<p>reply</p>")),
+            ("replyToEventSeq", int(seq)),
+        ],
+    );
+    let replies = tape.take("chatRoom:");
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    let personal_replies = replies.iter().filter(|(_, _, message)| message["event"]["replyForViewer"] == true);
+    assert_eq!(personal_replies.count(), 1);
+    for (sub_topic, routed, message) in replies {
+        assert_eq!(sub_topic, room_topic);
+        let for_viewer = message["event"]["replyForViewer"].as_bool().unwrap();
+        assert_eq!(routed, [if for_viewer { "psa" } else { "psb" }]);
+    }
 
     // a stranger gets none of it
     assert!(tape
@@ -1543,12 +1564,7 @@ fn the_search_document_and_the_search_by_membership() {
     let (ctx, facade, dir) = setup("search", crate::service::ServicePools::idle());
     let _entered = ctx.enter();
     install(&dir);
-    {
-        let _authz = ctx.disable_authz();
-        let data = std::fs::read_to_string(crate::context::framework_dir().join("data/ChatSetupData.xml")).unwrap();
-        crate::entity::load_feed::load_entity_xml_text(&facade, "ChatSetupData.xml", &data, &Default::default())
-            .unwrap();
-    }
+    load_chat_setup(&facade);
     users(&facade, &["sea", "seb", "sec", "sed"]);
     login("sea");
     let team = room("private", "Team", &["seb"]);

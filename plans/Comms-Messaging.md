@@ -1460,9 +1460,9 @@ cannot make one that shows as another account's; Rust opens `enc` and Kotlin sho
 a ring to a keyed device is sealed too. UnifiedPush is in the app (`org.unifiedpush.android:connector`, an instance per
 account, its messages opened in Rust with the account's same keys, `UnifiedPushService.kt`; Firebase stays unless
 the user switches in the check screen). Left: the battery check finds Android's own optimization
-only, not a maker's task killer; a chat push has no sender avatar; the desktop counts a thread reply at the mentions
-level only when the event names the thread's starter, which the server's events do not yet; UnifiedPush with a real
-distributor on a phone is not tried yet.
+only, not a maker's task killer; a chat push has no sender avatar; UnifiedPush with a real distributor on a phone is
+not tried yet. The desktop's reply notifications, including replies in a thread the user started or wrote in, are
+covered in [the BasicComms P1/P2 dispositions](ui-review-basic-comms.md#com-r02--p1-and-p2-dispositions).
 
 | Step | Work | Files |
 |---|---|---|

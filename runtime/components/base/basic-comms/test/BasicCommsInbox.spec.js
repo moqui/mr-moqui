@@ -163,6 +163,31 @@ feature("an action on the thread, and Home counts the account", {
     }
 })
 
+feature("applying a filtered view in message mode changes just its matching reply", {
+    when() {
+        ec.user.internalLoginUser("basic.comms.inbox")
+        const root = MESSAGE + "_ROOT", reply = MESSAGE + "_REPLY"
+        const fields = {rootEmailMessageId: root, emailAccountId: ACCOUNT, emailFolderId: FOLDER,
+            statusId: "ES_RECEIVED", messageDate: ec.user.nowTimestamp, isRead: "N"}
+        store("moqui.basic.email.EmailMessage", Object.assign({}, fields, {emailMessageId: root, subject: "Root"}))
+        store("moqui.basic.email.EmailMessage", Object.assign({}, fields, {emailMessageId: reply, subject: "Matchingreplyonly"}))
+        const old = ec.user.getPreference("MAIL_CONVERSATION")
+        try {
+            ec.user.setPreference("MAIL_CONVERSATION", "messages")
+            const action = inbox("apply#ViewAction", {emailAccountId: ACCOUNT, searchText: "subject:Matchingreplyonly", action: "read"})
+            const isRead = (id) => sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("emailMessageId", id).one().isRead)
+            return {action, rootRead: isRead(root), replyRead: isRead(reply)}
+        } finally {
+            ec.user.setPreference("MAIL_CONVERSATION", old || "threads")
+            sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("rootEmailMessageId", root).deleteAll())
+        }
+    },
+    then({action, rootRead, replyRead}) {
+        action.errors == "" && action.updatedCount == 1 && action.failedList.length == 0
+        replyRead == "Y" && rootRead == "N"
+    }
+})
+
 feature("Needs reply keeps the mail a day old or more that is not answered and has no reply sent after it, on Home and as an Inbox filter; the terminal Inbox opens the thread its link names", {
     when() {
         const daysAgo = (days) => new Date(Date.now() - days * 86400000)
@@ -259,17 +284,25 @@ feature("a refused recipient is said once, and a From the user may only read say
         // a shared account the client user may read but not send from (a right lowered while a composer is open, COM-UI-021)
         store("moqui.basic.email.EmailAccount", {emailAccountId: ACCOUNT + "_SH", ownerUserId: USER, accountKindEnumId: "EakShared",
             emailAddress: "shared.spec@example.com", accountName: "Spec shared", statusId: "EasActive"})
-        store("moqui.basic.email.EmailAccountUser", {emailAccountId: ACCOUNT + "_SH", userId: CLIENT, fromDate: ec.user.nowTimestamp, permissionEnumId: "EapRead"})
+        const membership = {emailAccountId: ACCOUNT + "_SH", userId: CLIENT, fromDate: ec.user.nowTimestamp}
+        store("moqui.basic.email.EmailAccountUser", Object.assign({}, membership, {permissionEnumId: "EapSend"}))
         ec.user.internalLoginUser("basic.comms.inbox.client")
-        const readOnly = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT + "_SH", toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
+        const fields = {fromValue: "account:" + ACCOUNT + "_SH", toJson: JSON.stringify([{value: "pat@example.org"}]), subject: "Shared draft", body: "<p>Retain this draft.</p>"}
+        const saved = compose("save#ComposeDraft", fields)
+        store("moqui.basic.email.EmailAccountUser", Object.assign({}, membership, {permissionEnumId: "EapRead"}))
+        const readOnly = compose("send#Compose", Object.assign({}, fields, {emailMessageId: saved.emailMessageId}))
+        const kept = saved.emailMessageId ? sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("emailMessageId", saved.emailMessageId).one()) : null
         const stranger = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT, toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
         ec.user.internalLoginUser("basic.comms.inbox")
         sys(() => ec.entity.find("moqui.basic.email.EmailAccountUser").condition("emailAccountId", ACCOUNT + "_SH").deleteAll())
-        return {invalid, readOnly, stranger}
+        return {invalid, saved, readOnly, kept, stranger}
     },
-    then({invalid, readOnly, stranger}) {
+    then({invalid, saved, readOnly, kept, stranger}) {
         invalid.length == 1 && String(invalid[0]).includes("Not an email address: invalid-recipient")
+        saved.errors == "" && saved.emailMessageId != null
         readOnly.errors.includes("You can no longer send from Spec shared")
+        kept.statusId == "ES_DRAFT" && kept.emailAccountId == ACCOUNT + "_SH"
+        kept.subject == "Shared draft" && kept.body == "<p>Retain this draft.</p>"
         // an account the user does not reach is not named
         stranger.errors.includes("Choose a mail account to send from")
         !stranger.errors.includes("Spec mail")
@@ -293,8 +326,8 @@ feature("Mail offers only what an account allows and asks before deleting foreve
         source.includes("rowAction(row, 'unsnooze')") && source.includes("threadAction('unsnooze')")
         /applySnooze\(at\) \{[\s\S]*?at <= Date\.now\(\)[\s\S]*?\.then\(\(json\) => \{[\s\S]*?this\.snooze\.open = false/.test(source)
         // COM-UI-027: Spam's name follows its action; Trash says Delete forever and asks first
-        source.includes(":aria-label=\"thread.folderKindEnumId === 'EfkJunk' ? t('Not spam') : t('Report spam')\"")
-        source.includes(":aria-label=\"threadInTrash ? t('Delete forever') : t('Delete')\"")
+        source.includes(":aria-label=\"threadActionFolder === 'EfkJunk' ? t('Not spam') : t('Report spam')\"")
+        source.includes(":aria-label=\"threadActionFolder === 'EfkTrash' ? t('Delete forever') : t('Delete')\"")
         /action === 'deleteForever' && !confirmed\) \{\s*return this\.confirmDeleteForever/.test(source)
         // COM-UI-028: an outgoing row names its own recipients, or none
         source.includes("row.recipientList") && source.includes("t('No recipients')")

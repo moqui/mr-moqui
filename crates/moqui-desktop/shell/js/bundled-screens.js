@@ -3249,6 +3249,17 @@ const timeText = (millis) => moqui.chat.timeText(millis);
 const fullTime = (millis) => moqui.chat.fullTime(millis);
 const dayLabel = (millis) => moqui.chat.dayLabel(millis);
 const shortWhen = (millis) => moqui.chat.shortWhen(millis);
+// For rows with a fixed ordering, keep the scrolled tail when the last row of the fresh page joins it.
+// Reactions and Threads can reorder older rows on a removal, so those lists always take the fresh cursor.
+function mergeFirstPage(current, page, keyOf) {
+    if (page.next == null || !page.list.length) return page;
+    const last = page.list[page.list.length - 1];
+    const lastKey = keyOf(last);
+    const anchor = current.list.findIndex((item) => keyOf(item) === lastKey);
+    if (anchor < 0 || anchor === current.list.length - 1) return page;
+    const fresh = new Set(page.list.map(keyOf));
+    return { list: page.list.concat(current.list.slice(anchor + 1).filter((item) => !fresh.has(keyOf(item)))), next: current.next };
+}
 const sizeText = (bytes) => {
     const n = Number(bytes || 0);
     if (n < 1024) return n + ' B';
@@ -5028,7 +5039,7 @@ const roomTemplate = `
                 <div class="row q-px-sm q-py-xs">
                     <q-chip v-for="chip in reactionChips" :key="String(chip.value)" dense clickable :outline="tabs.reactions.onlyToMe !== chip.value" :color="tabs.reactions.onlyToMe === chip.value ? 'primary' : undefined"
                             :text-color="tabs.reactions.onlyToMe === chip.value ? 'white' : undefined" class="q-ml-none q-mr-xs" :data-reactions="chip.value ? 'mine' : 'all'"
-                            @click="tabs.reactions.onlyToMe = chip.value; loadTab('reactions', false)">{{chip.label}}</q-chip>
+                            @click="setReactionFilter(chip.value)">{{chip.label}}</q-chip>
                 </div>
                 <div class="col scroll m-chat-tab" style="min-height:0" @scroll="onTabScroll">
                     <q-linear-progress v-if="tabs.reactions.loading" indeterminate color="primary"></q-linear-progress>
@@ -7443,54 +7454,45 @@ const chatRoom = {
         // ---- the details' tabs (Comms-Messaging §5.1): each a page at a time by the server's cursor, more as it scrolls ----
         // A tab's latest request wins (a token per tab): a filter changed, or the tab read again, while a page loads drops
         // that page's answer. A page of more never lists an item twice (a reaction taken back between pages).
-        loadTab(name, more) {
+        loadTab(name, more, refresh) {
             const tab = this.tabs[name];
             if (!tab || (more && (tab.loading || tab.next == null))) return;
             const roomId = this.roomId;
             const token = this.tabToken(name);
             tab.loading = true;
-            this.fetchTab(name, more ? tab.next : '').then((page) => {
+            return this.fetchTab(name, more ? tab.next : '').then((page) => {
                 if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
                 const current = this.tabs[name];
-                const known = new Set(more ? current.list.map((item) => this.tabKey(name, item)) : []);
-                const list = (more ? current.list : []).concat(page.list.filter((item) => !known.has(this.tabKey(name, item))));
-                this.tabs[name] = Object.assign({}, current, { list, next: page.next, loading: false, loaded: true });
+                const keyOf = (item) => this.tabKey(name, item);
+                if (more) {
+                    const known = new Set(current.list.map(keyOf));
+                    page.list = current.list.concat(page.list.filter((item) => !known.has(keyOf(item))));
+                } else if (refresh && name !== 'reactions') {
+                    page = mergeFirstPage(current, page, keyOf);
+                }
+                this.tabs[name] = Object.assign({}, current, page, { loading: false, loaded: true });
                 this.$nextTick(() => this.fillTab(name));
             }, () => {
                 if (roomId === this.roomId && this.tabTokens[name] === token) this.tabs[name] = Object.assign({}, this.tabs[name], { loading: false });
             });
         },
-        // a pushed change: the tab's first page read again and merged at the top, so a tab scrolled far keeps its place;
-        // what the first page no longer has, of the stretch it covers, is gone (a removed message, a reaction taken back)
-        refreshTab(name) {
-            const tab = this.tabs[name];
-            if (!tab) return;
-            if (!tab.loaded) { this.loadTab(name, false); return; }
-            const roomId = this.roomId;
-            const token = this.tabToken(name);
-            this.fetchTab(name, '').then((page) => {
-                if (roomId !== this.roomId || this.tabTokens[name] !== token) return;
-                const current = this.tabs[name];
-                const fresh = new Set(page.list.map((item) => this.tabKey(name, item)));
-                // the first page is all there is, or what is older than its last item stays
-                const last = page.list.length ? this.tabOrder(name, page.list[page.list.length - 1]) : null;
-                const older = page.next == null ? [] : current.list.filter((item) => !fresh.has(this.tabKey(name, item))
-                    && (last == null || this.tabOrder(name, item) < last));
-                this.tabs[name] = Object.assign({}, current, { list: page.list.concat(older), next: page.next == null ? null : current.next, loading: false, loaded: true });
-            }, () => null);
+        // A push rereads the first page using the same request token as load-more.
+        refreshTab(name) { return this.loadTab(name, false, true); },
+        setReactionFilter(onlyToMe) {
+            if (this.tabs.reactions.onlyToMe !== onlyToMe) this.tabs.reactions = Object.assign(emptyTab(), { onlyToMe });
+            return this.loadTab('reactions', false);
         },
         tabToken(name) {
             this.tabTokens = this.tabTokens || {};
             this.tabTokens[name] = (this.tabTokens[name] || 0) + 1;
             return this.tabTokens[name];
         },
-        // an item of a tab: its key, and where it sorts (newest first)
+        // an item of a tab: its key across pages
         tabKey(name, item) {
             if (name === 'reactions') return String(item.eventSeq);
             if (name === 'links') return item.eventSeq + ' ' + item.url;
             return String(item.chatAttachmentId);
         },
-        tabOrder(name, item) { return Number(name === 'reactions' ? item.latestReactionSeq || 0 : item.eventSeq || 0); },
         // one page of a tab, {list, next}
         fetchTab(name, cursor) {
             const roomId = this.roomId;
@@ -7929,7 +7931,8 @@ const chatRoom = {
         },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
         // who becomes an owner when the last owner leaves, by the rule of remove#Member (ChatServices.xml): the
-        // longest-standing moderator, else member; agents and outside actors never. The service decides in the end.
+        // longest-standing moderator, else member; agents and outside actors never. For equal join times the stable sort
+        // keeps get#Room's userId order, the same tie-break the service uses when the owner confirms.
         ownerHeir() {
             if (this.isDirect || !this.isOwner) return null;
             const others = this.members.filter((person) => person.userId && !person.isAgent && person.userId !== this.me.userId)
@@ -8431,7 +8434,8 @@ module.exports = {
         // ---- Activity (find#ChatActivity, the activity transition) and Threads (find#ChatThreads, myThreads) ----
         // the rows of a page: a key each, and a thread's as its last reply (who wrote it, when, its text)
         feedItems(view, items) {
-            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: [item.kind, item.chatRoomId, item.eventSeq].join(':') }));
+            if (view !== 'threads') return items.map((item) => Object.assign(item, { key: item.chatUserActivityId != null
+                ? 'activity:' + item.chatUserActivityId : [item.kind, item.chatRoomId, item.eventSeq, item.date].join(':') }));
             return items.map((item) => Object.assign(item, { key: 'thread:' + item.chatRoomId + ':' + item.threadRootEventSeq, kind: 'thread',
                 actorUserId: item.lastUserId, actorName: item.lastUserName, date: item.lastDate, snippet: item.lastSnippet || item.rootSnippet,
                 eventSeq: item.lastEventSeq, messageEventSeq: item.lastEventSeq }));
@@ -8440,7 +8444,7 @@ module.exports = {
             return view === 'threads' ? this.get('myThreads', { limit: 40, cursor }) : this.get('activity', { limit: 40, cursor });
         },
         // the first page (more false) or the next by the cursor; an encrypted room's text decrypted here
-        loadFeed(more) {
+        loadFeed(more, refresh) {
             const view = this.filter;
             if (view !== 'activity' && view !== 'threads') return;
             const feed = this.feed;
@@ -8449,28 +8453,25 @@ module.exports = {
             // another view's list is not shown under this one; the same view's stays until its first page is read again
             if (!more && feed.view !== view) { feed.view = view; feed.list = []; feed.next = null; feed.loaded = false; }
             feed.loading = true;
-            this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
+            return this.feedRequest(view, more ? feed.next : null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
                 if (seq !== feed.seq) return;
-                feed.list = more ? feed.list.concat(list.filter((item) => !feed.list.some((other) => other.key === item.key))) : list;
-                feed.next = json.nextCursor == null ? null : json.nextCursor;
+                let page = { list, next: json.nextCursor ?? null };
+                if (more) {
+                    const known = new Set(feed.list.map((item) => item.key));
+                    page.list = feed.list.concat(list.filter((item) => !known.has(item.key)));
+                } else if (refresh && view === 'activity') {
+                    page = mergeFirstPage(feed, page, (item) => item.key);
+                }
+                Object.assign(feed, page);
                 feed.view = view;
                 feed.loading = false;
                 feed.loaded = true;
                 this.$nextTick(() => this.fillFeed());
             })).catch(() => { if (seq === feed.seq) { feed.loading = false; feed.loaded = true; } });
         },
-        // what is new at the top: the first page read again and merged above the rows already loaded (a thread moves up with
-        // its new reply), so the pages scrolled to stay
+        // Refreshes and load-more share a sequence so a slow, older reply cannot overwrite a newer page.
         refreshFeedTop() {
-            const view = this.filter;
-            const feed = this.feed;
-            if ((view !== 'activity' && view !== 'threads') || feed.view !== view || feed.loading) return;
-            const seq = feed.seq;
-            this.feedRequest(view, null).then((json) => this.openFeed(this.feedItems(view, json.items || [])).then((list) => {
-                if (seq !== feed.seq || feed.view !== view) return;
-                const fresh = new Set(list.map((item) => item.key));
-                feed.list = list.concat(feed.list.filter((item) => !fresh.has(item.key)));
-            })).catch(() => null);
+            if (this.feed.view === this.filter) return this.loadFeed(false, true);
         },
         // an encrypted room's items: the message's text and a reaction's key, decrypted in this page (moqui.chat.openSealed);
         // one this device cannot read says so
@@ -8564,9 +8565,11 @@ module.exports = {
             if (!this.feedShown || !event || event.senderUserId === this.me.userId) return;
             const me = this.me.userId;
             const inThread = event.type === 'message' && event.threadRootEventSeq != null;
+            // Older servers omit the recipient hint. Check Activity again on their thread pushes (the feed itself
+            // enforces membership); a desktop notification still requires positive evidence of a mention or reply.
+            const legacyThread = inThread && event.replyForViewer == null;
             const concerns = this.filter === 'threads' ? inThread
-                : event.type === 'reaction' || inThread || ((event.type === 'message' || event.type === 'edit')
-                    && (((event.mentions || []).includes(me)) || (!!event.replyTo && event.replyTo.senderUserId === me)));
+                : event.type === 'reaction' || legacyThread || ((event.type === 'message' || event.type === 'edit') && moqui.chat.mentionsOrRepliesTo(event, me));
             if (!concerns) return;
             clearTimeout(this.feedTimer);
             this.feedTimer = setTimeout(() => this.refreshFeedTop(), 600);
@@ -12909,7 +12912,7 @@ module.exports = {
                                                   "text-color": _ctx.tabs.reactions.onlyToMe === chip.value ? 'white' : undefined,
                                                   class: "q-ml-none q-mr-xs",
                                                   "data-reactions": chip.value ? 'mine' : 'all',
-                                                  onClick: $event => {_ctx.tabs.reactions.onlyToMe = chip.value; _ctx.loadTab('reactions', false)}
+                                                  onClick: $event => (_ctx.setReactionFilter(chip.value))
                                                 }, {
                                                   default: _withCtx(() => [
                                                     _createTextVNode(_toDisplayString(chip.label), 1)
@@ -18945,10 +18948,19 @@ module.exports = {
         selectionHasEmail() { return this.allInView ? this.storeList.includes('email') : this.selectionRows.some((row) => row.store === 'email'); },
         // a read member of a mail account may mark its mail read, nothing more; the server refuses the rest (COM-UI-021)
         selectionCanChange() {
-            if (this.allInView) return !this.storeList.includes('email') || this.mailAccounts.every((account) => account.canSend !== false);
+            if (this.allInView && this.storeList.includes('email')) {
+                const p = this.params;
+                const accounts = this.mailAccounts.filter((account) => {
+                    if (p.account) return p.account === account.emailAccountId;
+                    if (!p.q && p.folder) return account.folderList.some((folder) => folder.emailFolderId === p.folder);
+                    if (!p.q && p.label) return account.labelList.some((label) => label.emailLabelId === p.label);
+                    return true;
+                });
+                return accounts.length > 0 && accounts.every((account) => account.canSend !== false);
+            }
             return this.selectionRows.every((row) => this.rowCanChange(row));
         },
-        threadCanChange() { return !this.thread || this.thread.store !== 'email' || this.thread.canSend !== false; },
+        threadCanChange() { return this.rowCanChange(this.thread); },
         selectionCanLabel() {
             const internal = this.allInView ? this.storeList.includes('internal') : this.selectionRows.some((row) => row.store === 'internal');
             return this.selectionHasEmail || internal;
@@ -18970,7 +18982,17 @@ module.exports = {
                 { value: 'off', label: t('No reading pane'), icon: 'sym_o_view_agenda' }];
         },
         lastMessage() { return this.thread && this.thread.messageList.length ? this.thread.messageList[this.thread.messageList.length - 1] : null; },
-        threadInTrash() { return this.thread && this.thread.folderKindEnumId === 'EfkTrash'; },
+        viewActionFolder() { return { junk: 'EfkJunk', trash: 'EfkTrash' }[this.view] || null; },
+        selectionActionFolder() {
+            if (this.allInView || !this.selectionRows.length) return this.viewActionFolder;
+            const folder = this.rowActionFolder(this.selectionRows[0]);
+            return this.selectionRows.every((row) => this.rowActionFolder(row) === folder) ? folder : null;
+        },
+        threadActionFolder() {
+            if (!this.thread) return null;
+            const row = this.threadRow();
+            return this.singleMessageRow(row) ? row.folderKindEnumId : this.thread.folderKindEnumId;
+        },
         threadFolderLabel() {
             if (!this.thread || this.thread.store !== 'email' || !this.thread.folderKindEnumId || this.thread.folderKindEnumId === 'EfkInbox') return null;
             return { EfkSent: t('Sent'), EfkDrafts: t('Drafts'), EfkArchive: t('Archive'), EfkJunk: t('Spam'), EfkTrash: t('Trash'), EfkOther: null }[this.thread.folderKindEnumId] || null;
@@ -19325,6 +19347,9 @@ module.exports = {
                 this.loadingList = false;
                 const json = result.json || {};
                 const rows = json.threadList || [];
+                if (json.conversationView === 'messages') {
+                    for (const row of rows) if (row.store === 'email') row.singleMessage = true;
+                }
                 if (reset) { this.threads = rows; if (this.$refs.list) this.$refs.list.scrollTop = 0; }
                 else {
                     const known = new Set(this.threads.map((row) => row.rowKey));
@@ -19449,7 +19474,8 @@ module.exports = {
             return { transform: 'translateX(' + dx + 'px)', transition: 'none' };
         },
         swipeAction(row, action) {
-            if (action === 'trash' && this.view === 'trash') return 'deleteForever';
+            if (action === 'trash' && this.rowActionFolder(row) === 'EfkTrash') return 'deleteForever';
+            if (action === 'spam' && this.rowActionFolder(row) === 'EfkJunk') return 'notSpam';
             if (action === 'read' && !row.isUnread) return 'unread';
             if (action === 'unread' && row.isUnread) return 'read';
             if (action === 'flag') return row.isFlagged ? 'unflag' : 'flag';
@@ -19492,8 +19518,10 @@ module.exports = {
         clearFilters() { this.openView({ view: this.params.view, account: this.params.account, folder: this.params.folder, label: this.params.label, mailbox: this.params.mailbox }); },
 
         // ---- actions on threads ----
+        singleMessageRow(row) { return row.store === 'email' && row.emailMessageId && (row.singleMessage || row.rowKey !== 'email:' + row.threadId); },
+        rowActionFolder(row) { return this.singleMessageRow(row) ? row.folderKindEnumId : this.viewActionFolder; },
         targetOf(row) {
-            return { store: row.store, threadId: row.threadId, lastEmailMessageId: row.lastEmailMessageId || null, lastCommEventId: row.lastCommEventId || null,
+            return { store: row.store, ...(this.singleMessageRow(row) ? { emailMessageId: row.emailMessageId } : { threadId: row.threadId }), lastEmailMessageId: row.lastEmailMessageId || null, lastCommEventId: row.lastCommEventId || null,
                 emailFolderId: row.emailFolderId || null, emailAccountId: row.emailAccountId || null, rowKey: row.rowKey };
         },
         snoozeOrMoveRows(targets) {
@@ -19505,9 +19533,15 @@ module.exports = {
             const thread = this.thread;
             const row = this.threads.find((item) => item.rowKey === this.openKey);
             if (row) return row;
+            const snoozedThruDate = thread.messageList.reduce((latest, message) => Math.max(latest, Number(message.snoozedThruDate) || 0), 0);
             const last = this.lastMessage || {};
+            const message = thread.messageList.find((item) => item.key === this.openKey);
+            if (thread.store === 'email' && message && (this.data.prefs.conversationView === 'messages' || this.openKey !== 'email:' + thread.threadId)) {
+                return Object.assign({}, message, { threadId: thread.threadId, rowKey: this.openKey, singleMessage: true });
+            }
             return { store: thread.store, threadId: thread.threadId, rowKey: this.openKey, lastEmailMessageId: last.emailMessageId || null,
-                lastCommEventId: last.communicationEventId || null, emailAccountId: thread.emailAccountId || last.emailAccountId || null, emailFolderId: null };
+                lastCommEventId: last.communicationEventId || null, emailAccountId: thread.emailAccountId || last.emailAccountId || null, emailFolderId: null,
+                folderKindEnumId: thread.folderKindEnumId, canSend: thread.canSend, snoozedThruDate };
         },
         removesFromView(action) {
             const membership = ['archive', 'unarchive', 'trash', 'deleteForever', 'spam', 'notSpam', 'move', 'snooze', 'unsnooze'];
@@ -19522,38 +19556,40 @@ module.exports = {
         applyAction(rows, action, extra, quiet, confirmed) {
             if (!rows.length) return Promise.resolve();
             // keys and swipes come here too: only read and unread on mail the user may only read
-            if (!['read', 'unread'].includes(action) && rows.some((row) => !this.rowCanChange(row))) {
-                moqui.notifyMessages(null, t('You may read this account but not change its mail'));
-                return Promise.resolve();
-            }
+            if (!['read', 'unread'].includes(action) && !this.checkCanChange(rows)) return Promise.resolve();
             // a deletion from the Trash has no Undo, so it is confirmed first, from a button, a swipe or a key (COM-UI-027)
             if (action === 'deleteForever' && !confirmed) {
                 return this.confirmDeleteForever(rows.length).then(() => this.applyAction(rows, action, extra, quiet, true));
             }
             const targets = rows.map((row) => this.targetOf(row));
             const params = Object.assign({ targetsJson: JSON.stringify(targets), action }, extra || {});
-            const openRemoved = this.openKey && rows.some((row) => row.rowKey === this.openKey) && this.removesFromView(action);
+            const view = this.viewKey;
+            const openKey = this.openKey;
+            const threadSeq = this.threadSeq;
+            const selection = this.selected;
+            const openRemoved = openKey && rows.some((row) => row.rowKey === this.openKey) && this.removesFromView(action);
             const nextKey = openRemoved ? this.neighbourKey(this.openKey, 1) : null;
             return this.post('state', params).then((json) => {
                 const failed = new Set((json.failedList || []).map((item) => item.key));
-                const done = rows.filter((row) => !failed.has(row.store + ':' + row.threadId));
-                this.applyLocal(done, action, extra);
+                const done = rows.filter((row, index) => {
+                    const target = targets[index];
+                    return !failed.has(target.store + ':' + (target.emailMessageId || target.communicationEventId || target.threadId));
+                });
+                if (this.viewKey === view) this.applyLocal(done, action, extra, selection);
                 if (json.failedList && json.failedList.length) moqui.notifyMessages(null, json.failedList.map((item) => item.message).join('\n'));
                 if (!quiet && done.length) this.offerUndo(done, action, extra);
-                if (openRemoved && !failed.has(this.openKey)) {
+                if (openRemoved && this.viewKey === view && this.openKey === openKey && this.threadSeq === threadSeq && done.some((row) => row.rowKey === openKey)) {
                     if (nextKey && this.splitMode && this.data.prefs.archiveOpensNext !== false) this.setThreadParam(nextKey); else this.setThreadParam(null);
                 } else if (this.openKey && rows.some((row) => row.rowKey === this.openKey)) this.reloadThread();
                 this.loadData();
                 return json;
             }, () => {});
         },
-        applyLocal(rows, action, extra) {
+        applyLocal(rows, action, extra, selection) {
             const keys = new Set(rows.map((row) => row.rowKey));
             if (this.removesFromView(action)) {
                 this.threads = this.threads.filter((row) => !keys.has(row.rowKey));
-                const next = Object.assign({}, this.selected);
-                keys.forEach((key) => delete next[key]);
-                this.selected = next;
+                if (this.selected === selection) keys.forEach((key) => delete selection[key]);
                 return;
             }
             this.threads.forEach((row) => {
@@ -19578,8 +19614,7 @@ module.exports = {
         offerUndo(rows, action, extra) {
             const inverse = { archive: 'unarchive', unarchive: 'archive', read: 'unread', unread: 'read', flag: 'unflag', unflag: 'flag', snooze: 'unsnooze',
                 spam: 'notSpam', notSpam: 'spam', close: 'reopen', reopen: 'close' };
-            // an unsnooze is undone by snoozing again until the time it had
-            const snoozedUntil = action === 'unsnooze' ? Math.max(0, ...rows.map((row) => Number(row.snoozedThruDate) || 0)) : 0;
+
             const words = { archive: t('Archived'), unarchive: t('Moved to the Inbox'), trash: t('Moved to the Trash'), spam: t('Reported as spam'),
                 notSpam: t('Not spam: back in the Inbox'), snooze: t('Snoozed'), unsnooze: t('Back in the Inbox'), move: t('Moved'), deleteForever: t('Deleted forever') };
             const count = rows.length;
@@ -19594,8 +19629,16 @@ module.exports = {
                     setTimeout(() => this.loadList(true), 400);
                 } else if (action === 'labels') {
                     this.applyAction(rows, 'labels', { addLabelIds: (extra && extra.removeLabelIds) || '', removeLabelIds: (extra && extra.addLabelIds) || '' }, true);
-                } else if (action === 'unsnooze' && snoozedUntil > Date.now()) {
-                    this.applyAction(rows, 'snooze', { snoozedThruDate: String(snoozedUntil) }, true).then(() => this.loadList(true));
+                } else if (action === 'unsnooze') {
+                    const byDeadline = new Map();
+                    for (const row of rows) {
+                        const deadline = Number(row.snoozedThruDate);
+                        if (!(deadline > Date.now())) continue;
+                        if (!byDeadline.has(deadline)) byDeadline.set(deadline, []);
+                        byDeadline.get(deadline).push(row);
+                    }
+                    Promise.all(Array.from(byDeadline, ([deadline, group]) => this.applyAction(group, 'snooze', { snoozedThruDate: String(deadline) }, true)))
+                        .then(() => this.loadList(true));
                 } else if (inverse[action]) {
                     this.applyAction(rows, inverse[action], null, true).then(() => this.loadList(true));
                 }
@@ -19612,7 +19655,12 @@ module.exports = {
         rowCanChange(row) {
             if (!row || row.store !== 'email') return true;
             const account = this.mailAccounts.find((item) => item.emailAccountId === row.emailAccountId);
-            return !account || account.canSend !== false;
+            return row.canSend !== false && (!account || account.canSend !== false);
+        },
+        checkCanChange(rows, bulk) {
+            if (rows.every((row) => this.rowCanChange(row)) && (!bulk || !this.allInView || this.selectionCanChange)) return true;
+            moqui.notifyMessages(null, t('You may read this account but not change its mail'));
+            return false;
         },
         isSnoozed(row) { return !!(row && row.snoozedThruDate && Number(row.snoozedThruDate) > Date.now()); },
         // count null: every conversation in this view
@@ -19622,21 +19670,41 @@ module.exports = {
         },
         toggleRowFlag(row) { this.applyAction([row], row.isFlagged ? 'unflag' : 'flag', null, true); },
         bulk(action, confirmed) {
+            if (!['read', 'unread'].includes(action) && !this.checkCanChange(this.selectionRows, true)) return;
+            const selection = this.selected;
+            const view = this.viewKey;
             if (this.allInView && action === 'deleteForever' && !confirmed) {
-                this.confirmDeleteForever(null).then(() => this.bulk(action, true));
+                this.confirmDeleteForever(null).then(() => {
+                    if (selection === this.selected && this.allInView && this.viewKey === view) this.bulk(action, true);
+                });
                 return;
             }
             if (this.allInView) {
                 const params = Object.assign(this.listParams(), { action });
                 this.post('viewAction', params).then((json) => {
-                    moqui.notifyMessages([{ type: 'success', message: (json.updatedCount || 0) + ' ' + t('conversations changed') }], (json.failedList || []).map((item) => item.message).join('\n') || null);
-                    this.clearSelection();
-                    this.loadList(true);
+                    const changed = json.updatedCount ? [{ type: 'success', message: json.updatedCount + ' ' + t('conversations changed') }] : null;
+                    moqui.notifyMessages(changed, (json.failedList || []).map((item) => item.message).join('\n') || null);
+                    if (this.viewKey === view) this.loadList(true).then(() => this.keepFailedSelection(json, selection, true));
                     this.loadData();
                 }, () => {});
                 return;
             }
-            this.applyAction(this.selectionRows, action).then(() => { if (!this.removesFromView(action)) this.clearSelection(); });
+            this.applySelectionAction(this.selectionRows, action);
+        },
+        applySelectionAction(rows, action, extra) {
+            const selection = this.selected;
+            const all = this.allInView;
+            const changeSelection = all || rows.every((row) => selection[row.rowKey]);
+            return this.applyAction(rows, action, extra).then((json) => {
+                if (changeSelection) this.keepFailedSelection(json, selection, all);
+                return json;
+            });
+        },
+        keepFailedSelection(json, selection, all) {
+            if (!json || selection !== this.selected || all !== this.allInView) return;
+            const failedKeys = new Set((json.failedList || []).map((item) => item.key));
+            this.clearSelection();
+            for (const row of this.threads) if ((all || selection[row.rowKey]) && failedKeys.has(row.rowKey)) this.selected[row.rowKey] = true;
         },
         threadAction(action) {
             if (!this.thread) return;
@@ -19871,13 +19939,23 @@ module.exports = {
         flagMessage(message) {
             const target = message.store === 'email' ? { store: 'email', emailMessageId: message.emailMessageId } : { store: 'internal', communicationEventId: message.communicationEventId };
             const action = message.isFlagged ? 'unflag' : 'flag';
-            this.post('state', { targetsJson: JSON.stringify([target]), action }).then(() => {
-                message.isFlagged = !message.isFlagged;
+            const thread = this.thread;
+            this.changeMessage(message, target, action).then((done) => {
+                if (!done || this.thread !== thread) return;
+                message.isFlagged = action === 'flag';
                 const flagged = this.thread.messageList.some((item) => item.isFlagged);
                 this.thread.isFlagged = flagged;
                 const row = this.threads.find((item) => item.rowKey === this.openKey);
                 if (row) row.isFlagged = flagged;
             }, () => {});
+        },
+        changeMessage(message, target, action) {
+            if (!this.checkCanChange([message])) return Promise.resolve(false);
+            return this.post('state', { targetsJson: JSON.stringify([target]), action }).then((json) => {
+                if (!(json.failedList || []).length) return true;
+                moqui.notifyMessages(null, json.failedList.map((item) => item.message).join('\n'));
+                return false;
+            }, () => false);
         },
         markUnreadFrom(message) {
             const list = this.thread.messageList;
@@ -19911,8 +19989,10 @@ module.exports = {
             });
         },
         reportMessageSpam(message) {
-            this.post('state', { targetsJson: JSON.stringify([{ store: 'email', emailMessageId: message.emailMessageId }]), action: 'spam' }).then(() => {
-                moqui.notifyMessages([{ type: 'success', message: t('Reported as spam') }]);
+            const action = message.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam';
+            this.changeMessage(message, { store: 'email', emailMessageId: message.emailMessageId }, action).then((done) => {
+                if (!done) return;
+                moqui.notifyMessages([{ type: 'success', message: action === 'notSpam' ? t('Not spam: back in the Inbox') : t('Reported as spam') }]);
                 this.reloadThread();
                 this.loadList(true);
             }, () => {});
@@ -19995,7 +20075,7 @@ module.exports = {
         // ---- dialogs: snooze, move, labels ----
         openSnooze(targets) {
             const rows = this.snoozeOrMoveRows(targets);
-            if (!rows.length) return;
+            if (!rows.length || !this.checkCanChange(rows, !targets)) return;
             this.snooze = { open: true, targets: rows, custom: '' };
         },
         shortWhen(millis) {
@@ -20016,21 +20096,21 @@ module.exports = {
             if (!at) return;
             if (at <= Date.now()) { moqui.notifyMessages(null, t('Snooze until a time in the future')); return; }
             const rows = this.snooze.targets;
-            this.applyAction(rows, 'snooze', { snoozedThruDate: String(at) }).then((json) => {
+            this.applySelectionAction(rows, 'snooze', { snoozedThruDate: String(at) }).then((json) => {
                 if (!json || (json.failedList || []).length >= rows.length) return;
-                this.snooze.open = false;
-                this.clearSelection();
+                if (rows === this.snooze.targets) this.snooze.open = false;
             });
         },
         openMove(targets) {
             const rows = this.snoozeOrMoveRows(targets).filter((row) => row.store === 'email');
             if (!rows.length) { moqui.notifyMessages(null, t('Internal messages have no folders')); return; }
+            if (!this.checkCanChange(rows, !targets)) return;
             this.move = { open: true, targets: rows, filter: '', newFolder: '' };
         },
         applyMove(folder) {
             const rows = this.move.targets;
             this.move.open = false;
-            this.applyAction(rows, 'move', { emailFolderId: folder.emailFolderId }).then(() => this.clearSelection());
+            this.applySelectionAction(rows, 'move', { emailFolderId: folder.emailFolderId });
         },
         createFolderAndMove() {
             const account = this.moveAccounts[0];
@@ -20043,6 +20123,7 @@ module.exports = {
             const internal = this.internalAccount;
             const rows = this.snoozeOrMoveRows(targets).filter((row) => row.store === 'email' || row.store === 'internal');
             if (!rows.length) { moqui.notifyMessages(null, t('Labels are for mail')); return; }
+            if (!this.checkCanChange(rows, !targets)) return;
             const choice = {};
             const accounts = new Set(rows.map((row) => row.store === 'internal' && internal ? internal.emailAccountId : row.emailAccountId));
             this.accountsWithLabels.filter((account) => accounts.has(account.emailAccountId)).forEach((account) => account.labelList.forEach((label) => {
@@ -20070,7 +20151,7 @@ module.exports = {
             const rows = this.labels.targets;
             this.labels.open = false;
             if (!add.length && !remove.length) return;
-            this.applyAction(rows, 'labels', { addLabelIds: add.join(','), removeLabelIds: remove.join(',') }).then(() => this.clearSelection());
+            this.applySelectionAction(rows, 'labels', { addLabelIds: add.join(','), removeLabelIds: remove.join(',') });
         },
         removeLabel(label) { this.applyAction([this.threadRow()], 'labels', { removeLabelIds: label.emailLabelId }, true); },
 
@@ -20352,7 +20433,9 @@ module.exports = {
         keyAction(action) {
             const rows = this.keyRows();
             if (!rows.length) return false;
-            if (action === 'trash' && this.params.view === 'trash') action = 'deleteForever';
+            const folder = this.selectedKeys.length ? this.selectionActionFolder : (this.openKey && this.thread ? this.threadActionFolder : this.rowActionFolder(rows[0]));
+            if (action === 'trash' && folder === 'EfkTrash') action = 'deleteForever';
+            if (action === 'spam' && folder === 'EfkJunk') action = 'notSpam';
             if (this.selectedKeys.length) this.bulk(action); else this.applyAction(rows, action);
             return true;
         },
@@ -20412,9 +20495,9 @@ module.exports = {
                 key('a', t('Reply all'), () => this.keyReply(true)),
                 key('f', t('Forward'), () => this.keyForward()),
                 key('s', t('Flag'), () => this.keyFlag()),
-                key('b', t('Snooze'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openSnooze(rows); return true; }),
-                key('l', t('Labels'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openLabels(rows); return true; }),
-                key('v', t('Move to'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openMove(rows); return true; }),
+                key('b', t('Snooze'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openSnooze(this.selectedKeys.length ? null : rows); return true; }),
+                key('l', t('Labels'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openLabels(this.selectedKeys.length ? null : rows); return true; }),
+                key('v', t('Move to'), () => { const rows = this.keyRows(); if (!rows.length) return false; this.openMove(this.selectedKeys.length ? null : rows); return true; }),
                 key('Shift+I', t('Mark read'), () => this.keyAction('read')),
                 key('Shift+U', t('Mark unread'), () => this.keyAction('unread')),
                 key('x', t('Select the conversation'), () => this.toggleSelectFocused()),
@@ -21327,14 +21410,14 @@ module.exports = {
                                             flat: "",
                                             round: "",
                                             dense: "",
-                                            icon: _ctx.view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete',
-                                            "aria-label": _ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
-                                            onClick: $event => (_ctx.bulk(_ctx.view === 'trash' ? 'deleteForever' : 'trash'))
+                                            icon: _ctx.selectionActionFolder === 'EfkTrash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                            "aria-label": _ctx.selectionActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                            onClick: $event => (_ctx.bulk(_ctx.selectionActionFolder === 'EfkTrash' ? 'deleteForever' : 'trash'))
                                           }, {
                                             default: _withCtx(() => [
                                               _createVNode(_component_q_tooltip, null, {
                                                 default: _withCtx(() => [
-                                                  _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                                  _createTextVNode(_toDisplayString(_ctx.selectionActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
                                                 ]),
                                                 _: 1
                                               })
@@ -21544,7 +21627,7 @@ module.exports = {
                                                         ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                             key: 2,
                                                             clickable: "",
-                                                            onClick: $event => (_ctx.bulk(_ctx.view === 'junk' ? 'notSpam' : 'spam'))
+                                                            onClick: $event => (_ctx.bulk(_ctx.selectionActionFolder === 'EfkJunk' ? 'notSpam' : 'spam'))
                                                           }, {
                                                             default: _withCtx(() => [
                                                               _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -21555,7 +21638,7 @@ module.exports = {
                                                               }),
                                                               _createVNode(_component_q_item_section, null, {
                                                                 default: _withCtx(() => [
-                                                                  _createTextVNode(_toDisplayString(_ctx.view === 'junk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
+                                                                  _createTextVNode(_toDisplayString(_ctx.selectionActionFolder === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
                                                                 ]),
                                                                 _: 1
                                                               })
@@ -22157,16 +22240,19 @@ module.exports = {
                                                               "onUpdate:modelValue": $event => (_ctx.checkRow(row, $event)),
                                                               "aria-label": _ctx.t('Select')
                                                             }, null, 8, ["model-value", "onClick", "onUpdate:modelValue", "aria-label"]),
-                                                            _createVNode(_component_q_btn, {
-                                                              flat: "",
-                                                              round: "",
-                                                              dense: "",
-                                                              size: "sm",
-                                                              icon: row.isFlagged ? 'star' : 'sym_o_star',
-                                                              color: row.isFlagged ? 'warning' : undefined,
-                                                              "aria-label": row.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
-                                                              onClick: _withModifiers($event => (_ctx.toggleRowFlag(row)), ["stop"])
-                                                            }, null, 8, ["icon", "color", "aria-label", "onClick"])
+                                                            (_ctx.rowCanChange(row))
+                                                              ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                  key: 0,
+                                                                  flat: "",
+                                                                  round: "",
+                                                                  dense: "",
+                                                                  size: "sm",
+                                                                  icon: row.isFlagged ? 'star' : 'sym_o_star',
+                                                                  color: row.isFlagged ? 'warning' : undefined,
+                                                                  "aria-label": row.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
+                                                                  onClick: _withModifiers($event => (_ctx.toggleRowFlag(row)), ["stop"])
+                                                                }, null, 8, ["icon", "color", "aria-label", "onClick"]))
+                                                              : _createCommentVNode("", true)
                                                           ])
                                                         ]),
                                                         _: 2
@@ -22259,20 +22345,20 @@ module.exports = {
                                                                     round: "",
                                                                     dense: "",
                                                                     size: "sm",
-                                                                    icon: _ctx.view === 'trash' ? 'sym_o_delete_forever' : 'sym_o_delete',
-                                                                    "aria-label": _ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
-                                                                    onClick: $event => (_ctx.rowAction(row, _ctx.view === 'trash' ? 'deleteForever' : 'trash'))
+                                                                    icon: _ctx.rowActionFolder(row) === 'EfkTrash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                                                    "aria-label": _ctx.rowActionFolder(row) === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                                                    onClick: $event => (_ctx.rowAction(row, _ctx.rowActionFolder(row) === 'EfkTrash' ? 'deleteForever' : 'trash'))
                                                                   }, {
                                                                     default: _withCtx(() => [
                                                                       _createVNode(_component_q_tooltip, null, {
                                                                         default: _withCtx(() => [
-                                                                          _createTextVNode(_toDisplayString(_ctx.view === 'trash' ? _ctx.t('Delete forever') : _ctx.t('Delete')), 1)
+                                                                          _createTextVNode(_toDisplayString(_ctx.rowActionFolder(row) === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete')), 1)
                                                                         ]),
-                                                                        _: 1
-                                                                      })
+                                                                        _: 2
+                                                                      }, 1024)
                                                                     ]),
-                                                                    _: 1
-                                                                  }, 8, ["icon", "aria-label", "onClick"]))
+                                                                    _: 2
+                                                                  }, 1032, ["icon", "aria-label", "onClick"]))
                                                                 : _createCommentVNode("", true),
                                                               _createVNode(_component_q_btn, {
                                                                 flat: "",
@@ -22620,14 +22706,14 @@ module.exports = {
                                                   square: "",
                                                   class: "m-tonal q-ml-none",
                                                   icon: "sym_o_label",
-                                                  removable: "",
+                                                  removable: _ctx.threadCanChange,
                                                   onRemove: $event => (_ctx.removeLabel(label))
                                                 }, {
                                                   default: _withCtx(() => [
                                                     _createTextVNode(_toDisplayString(label.labelName), 1)
                                                   ]),
                                                   _: 2
-                                                }, 1032, ["onRemove"]))
+                                                }, 1032, ["removable", "onRemove"]))
                                               }), 128)),
                                               (_ctx.threadFolderLabel)
                                                 ? (_openBlock(), _createBlock(_component_q_chip, {
@@ -22676,14 +22762,14 @@ module.exports = {
                                                 flat: "",
                                                 round: "",
                                                 dense: "",
-                                                icon: _ctx.threadInTrash ? 'sym_o_delete_forever' : 'sym_o_delete',
-                                                "aria-label": _ctx.threadInTrash ? _ctx.t('Delete forever') : _ctx.t('Delete'),
-                                                onClick: $event => (_ctx.threadAction(_ctx.threadInTrash ? 'deleteForever' : 'trash'))
+                                                icon: _ctx.threadActionFolder === 'EfkTrash' ? 'sym_o_delete_forever' : 'sym_o_delete',
+                                                "aria-label": _ctx.threadActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete'),
+                                                onClick: $event => (_ctx.threadAction(_ctx.threadActionFolder === 'EfkTrash' ? 'deleteForever' : 'trash'))
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createVNode(_component_q_tooltip, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.threadInTrash ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
+                                                      _createTextVNode(_toDisplayString(_ctx.threadActionFolder === 'EfkTrash' ? _ctx.t('Delete forever') : _ctx.t('Delete')) + " (#)", 1)
                                                     ]),
                                                     _: 1
                                                   })
@@ -22698,13 +22784,13 @@ module.exports = {
                                                 round: "",
                                                 dense: "",
                                                 icon: "sym_o_report",
-                                                "aria-label": _ctx.thread.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam'),
-                                                onClick: $event => (_ctx.threadAction(_ctx.thread.folderKindEnumId === 'EfkJunk' ? 'notSpam' : 'spam'))
+                                                "aria-label": _ctx.threadActionFolder === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam'),
+                                                onClick: $event => (_ctx.threadAction(_ctx.threadActionFolder === 'EfkJunk' ? 'notSpam' : 'spam'))
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createVNode(_component_q_tooltip, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.thread.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')) + " (!)", 1)
+                                                      _createTextVNode(_toDisplayString(_ctx.threadActionFolder === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')) + " (!)", 1)
                                                     ]),
                                                     _: 1
                                                   })
@@ -23273,19 +23359,22 @@ module.exports = {
                                                                 ]),
                                                                 _: 2
                                                               }, 1032, ["id", "aria-label", "aria-controls", "onKeydown", "onClick"]),
-                                                              _createVNode(_component_q_btn, {
-                                                                flat: "",
-                                                                round: "",
-                                                                dense: "",
-                                                                size: "sm",
-                                                                icon: item.message.isFlagged ? 'star' : 'sym_o_star',
-                                                                color: item.message.isFlagged ? 'warning' : undefined,
-                                                                "aria-label": item.message.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
-                                                                onClick: _withModifiers($event => (_ctx.flagMessage(item.message)), ["stop"])
-                                                              }, null, 8, ["icon", "color", "aria-label", "onClick"]),
-                                                              (_ctx.canReplyTo(item.message))
+                                                              (_ctx.rowCanChange(item.message))
                                                                 ? (_openBlock(), _createBlock(_component_q_btn, {
                                                                     key: 2,
+                                                                    flat: "",
+                                                                    round: "",
+                                                                    dense: "",
+                                                                    size: "sm",
+                                                                    icon: item.message.isFlagged ? 'star' : 'sym_o_star',
+                                                                    color: item.message.isFlagged ? 'warning' : undefined,
+                                                                    "aria-label": item.message.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
+                                                                    onClick: _withModifiers($event => (_ctx.flagMessage(item.message)), ["stop"])
+                                                                  }, null, 8, ["icon", "color", "aria-label", "onClick"]))
+                                                                : _createCommentVNode("", true),
+                                                              (_ctx.canReplyTo(item.message))
+                                                                ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                                    key: 3,
                                                                     flat: "",
                                                                     round: "",
                                                                     dense: "",
@@ -23591,50 +23680,56 @@ module.exports = {
                                                                                       [_directive_close_popup]
                                                                                     ])
                                                                                   : _createCommentVNode("", true),
-                                                                                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                  clickable: "",
-                                                                                  onClick: $event => (_ctx.blockSender(item.message))
-                                                                                }, {
-                                                                                  default: _withCtx(() => [
-                                                                                    _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                                (_ctx.mailAccounts.some(account => account.emailAccountId === item.message.emailAccountId && account.canManage))
+                                                                                  ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                      key: 1,
+                                                                                      clickable: "",
+                                                                                      onClick: $event => (_ctx.blockSender(item.message))
+                                                                                    }, {
                                                                                       default: _withCtx(() => [
-                                                                                        _createVNode(_component_q_icon, { name: "sym_o_block" })
+                                                                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createVNode(_component_q_icon, { name: "sym_o_block" })
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        }),
+                                                                                        _createVNode(_component_q_item_section, null, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createTextVNode(_toDisplayString(_ctx.t('Block sender')), 1)
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        })
                                                                                       ]),
                                                                                       _: 1
-                                                                                    }),
-                                                                                    _createVNode(_component_q_item_section, null, {
+                                                                                    }, 8, ["onClick"])), [
+                                                                                      [_directive_close_popup]
+                                                                                    ])
+                                                                                  : _createCommentVNode("", true),
+                                                                                (_ctx.rowCanChange(item.message))
+                                                                                  ? _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                                      key: 2,
+                                                                                      clickable: "",
+                                                                                      onClick: $event => (_ctx.reportMessageSpam(item.message))
+                                                                                    }, {
                                                                                       default: _withCtx(() => [
-                                                                                        _createTextVNode(_toDisplayString(_ctx.t('Block sender')), 1)
+                                                                                        _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createVNode(_component_q_icon, { name: "sym_o_report" })
+                                                                                          ]),
+                                                                                          _: 1
+                                                                                        }),
+                                                                                        _createVNode(_component_q_item_section, null, {
+                                                                                          default: _withCtx(() => [
+                                                                                            _createTextVNode(_toDisplayString(item.message.folderKindEnumId === 'EfkJunk' ? _ctx.t('Not spam') : _ctx.t('Report spam')), 1)
+                                                                                          ]),
+                                                                                          _: 2
+                                                                                        }, 1024)
                                                                                       ]),
-                                                                                      _: 1
-                                                                                    })
-                                                                                  ]),
-                                                                                  _: 1
-                                                                                }, 8, ["onClick"])), [
-                                                                                  [_directive_close_popup]
-                                                                                ]),
-                                                                                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                                  clickable: "",
-                                                                                  onClick: $event => (_ctx.reportMessageSpam(item.message))
-                                                                                }, {
-                                                                                  default: _withCtx(() => [
-                                                                                    _createVNode(_component_q_item_section, { avatar: "" }, {
-                                                                                      default: _withCtx(() => [
-                                                                                        _createVNode(_component_q_icon, { name: "sym_o_report" })
-                                                                                      ]),
-                                                                                      _: 1
-                                                                                    }),
-                                                                                    _createVNode(_component_q_item_section, null, {
-                                                                                      default: _withCtx(() => [
-                                                                                        _createTextVNode(_toDisplayString(_ctx.t('Report spam')), 1)
-                                                                                      ]),
-                                                                                      _: 1
-                                                                                    })
-                                                                                  ]),
-                                                                                  _: 1
-                                                                                }, 8, ["onClick"])), [
-                                                                                  [_directive_close_popup]
-                                                                                ])
+                                                                                      _: 2
+                                                                                    }, 1032, ["onClick"])), [
+                                                                                      [_directive_close_popup]
+                                                                                    ])
+                                                                                  : _createCommentVNode("", true)
                                                                               ], 64))
                                                                             : _createCommentVNode("", true)
                                                                         ]),
@@ -26026,7 +26121,7 @@ module.exports = {
             uid: composeCount, query: {}, state: 'loading', error: null, draft: this.emptyDraft(), identities: [], me: {}, undoSeconds: 10, kind: 'new',
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
             sending: false, sent: false, savedAt: null, saving: false, saveError: null, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
-            blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
+            blocksOpen: false, blocks: [], blocksState: '', blockRequest: 0, blockSearch: '', blockInserted: false, slashPending: false, slashAt: null, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
@@ -26708,26 +26803,49 @@ module.exports = {
 
         // ---- text blocks ----
         loadBlocks() {
-            if (this.blocksLoaded) return;
-            moqui.request(this.url('textBlocks')).then((result) => { this.blocks = (result.json || {}).textBlockList || []; this.blocksLoaded = true; }, () => {});
+            const request = ++this.blockRequest;
+            this.blocks = [];
+            this.blocksState = 'loading';
+            this.blockSearch = '';
+            this.blockInserted = false;
+            this.$nextTick(this.focusBlockSearch);
+            moqui.request(this.url('textBlocks')).then((result) => {
+                if (request !== this.blockRequest || !this.blocksOpen) return;
+                this.blocks = (result.json || {}).textBlockList || [];
+                this.blocksState = 'ready';
+            }, () => {
+                if (request === this.blockRequest && this.blocksOpen) this.blocksState = 'failed';
+            });
         },
-        blockText(block) { return String(block.bodyHtml || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 80); },
-        // the menu's search has the focus when it opens, by "/" or the button (COM-UI-023)
+        blockText(block) { return moqui.richText.toPlain(block.bodyHtml || '').slice(0, 80); },
         focusBlockSearch() {
             const input = this.$refs.blockPanel && this.$refs.blockPanel.querySelector('input');
-            if (input) input.focus();
+            if (this.blocksOpen && input) input.focus();
         },
-        // closed with nothing chosen (Esc, a click outside): the "/" stays as typed and the editor has the focus again
         blocksHidden() {
-            if (!this.slashPending) return;
+            if (this.blocksOpen) return;
+            this.blockRequest++;
+            this.blocks = [];
+            const field = this.$refs.editor;
+            if ((this.slashPending || this.blockInserted) && this.draft.plain && field && field.$refs.plainArea) {
+                const area = field.$refs.plainArea;
+                area.focus();
+                if (this.slashPending) area.setSelectionRange(this.slashAt, this.slashAt);
+            } else if ((this.slashPending || this.blockInserted) && field && field.editor) {
+                field.editor.commands.focus(this.slashPending ? this.slashAt : undefined);
+            } else if (!this.blockInserted && this.$refs.blockButton) {
+                this.$refs.blockButton.$el.focus();
+            }
             this.slashPending = false;
-            const editor = this.$refs.editor && this.$refs.editor.editor;
-            if (editor && editor.commands) editor.commands.focus(this.slashAt == null ? undefined : this.slashAt);
             this.slashAt = null;
         },
-        // Enter in the search inserts the first match (a row with the focus takes Enter itself)
+        cancelBlockSearch(event) {
+            if (event.isComposing) return;
+            event.preventDefault();
+            this.blocksOpen = false;
+        },
         insertFirstBlock(event) {
-            if (!event || !event.target || event.target.tagName !== 'INPUT') return;
+            if (!event || event.isComposing || !event.target || event.target.tagName !== 'INPUT') return;
             event.preventDefault();
             const block = this.shownBlocks[0];
             if (!block) return;
@@ -26735,32 +26853,50 @@ module.exports = {
             this.blocksOpen = false;
         },
         insertBlock(block) {
-            const editor = this.$refs.editor && this.$refs.editor.editor;
+            if (!this.blocks.includes(block)) return;
+            const field = this.$refs.editor;
+            const editor = field && field.editor;
             const html = block.bodyHtml || '';
-            if (editor && editor.chain && !this.draft.plain) {
-                // the search had the focus, so the place to insert is where the "/" was typed
-                const slashAt = this.slashPending && this.slashAt != null ? this.slashAt : null;
+            const slashAt = this.slashPending ? this.slashAt : null;
+            if (this.draft.plain && field && field.$refs.plainArea) {
+                const area = field.$refs.plainArea;
+                const replaceSlash = slashAt != null && area.value.charAt(slashAt - 1) === '/';
+                const from = replaceSlash ? slashAt - 1 : area.selectionStart;
+                const to = replaceSlash ? slashAt : area.selectionEnd;
+                area.focus();
+                area.setRangeText(moqui.richText.toPlain(html), from, to, 'end');
+                field.onPlainInput(area.value);
+            } else if (editor && editor.chain && !this.draft.plain) {
                 let chain = slashAt != null ? editor.chain().focus(slashAt) : editor.chain().focus();
-                if (slashAt != null && slashAt > 0) {
-                    const before = editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n');
-                    if (before === '/') chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
+                if (slashAt != null && slashAt > 0 && editor.state.doc.textBetween(slashAt - 1, slashAt, '\n', '\n') === '/') {
+                    chain = chain.deleteRange({ from: slashAt - 1, to: slashAt });
                 }
                 chain.insertContent(html).run();
             } else {
-                const text = this.blockText({ bodyHtml: html });
-                this.draft.body = this.draft.plain ? String(this.draft.body || '').replace(/\/$/, '') + text : String(this.draft.body || '') + html;
+                this.draft.body = String(this.draft.body || '') + html;
             }
+            this.blockInserted = true;
             this.slashPending = false;
             this.slashAt = null;
         },
-        // "/" at the start of a word opens the text blocks
+        // A slash at a word boundary opens the menu, leaving its insertion point in the editor.
         onEditorKeyup(event) {
-            if (event.key !== '/' || this.draft.plain) return;
-            const editor = this.$refs.editor && this.$refs.editor.editor;
-            if (!editor || !editor.state) return;
-            const at = editor.state.selection.from;
-            const before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
-            if (before === '/' || /[\s\n]\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blockSearch = ''; this.blocksOpen = true; this.loadBlocks(); }
+            if (event.key !== '/') return;
+            const field = this.$refs.editor;
+            if (!field) return;
+            let at, before;
+            if (this.draft.plain) {
+                const area = field.$refs.plainArea;
+                if (!area || event.target !== area) return;
+                at = area.selectionStart;
+                before = area.value.slice(Math.max(0, at - 2), at);
+            } else {
+                const editor = field.editor;
+                if (!editor || !editor.state) return;
+                at = editor.state.selection.from;
+                before = editor.state.doc.textBetween(Math.max(0, at - 2), at, '\n', '\n');
+            }
+            if (before === '/' || /\s\/$/.test(before)) { this.slashPending = true; this.slashAt = at; this.blocksOpen = true; }
         },
         onKeydown(event) {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); this.send(); }
@@ -26919,7 +27055,7 @@ module.exports = {
         {
             const target = component;
             target.render = (function () {
-                const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withKeys: _withKeys, withModifiers: _withModifiers } = Vue
+                const { resolveComponent: _resolveComponent, createVNode: _createVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, normalizeClass: _normalizeClass, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers, withKeys: _withKeys } = Vue
 
                 return function render(_ctx, _cache) {
                   const _component_q_skeleton = _resolveComponent("q-skeleton")
@@ -27550,6 +27686,7 @@ module.exports = {
                                         }, 8, ["aria-label", "onClick"]))
                                       : _createCommentVNode("", true),
                                     _createVNode(_component_q_btn, {
+                                      ref: "blockButton",
                                       flat: "",
                                       round: "",
                                       dense: "",
@@ -27566,6 +27703,7 @@ module.exports = {
                                         _createVNode(_component_q_menu, {
                                           modelValue: _ctx.blocksOpen,
                                           "onUpdate:modelValue": $event => ((_ctx.blocksOpen) = $event),
+                                          "no-refocus": "",
                                           onBeforeShow: _ctx.loadBlocks,
                                           onShow: _ctx.focusBlockSearch,
                                           onHide: _ctx.blocksHidden,
@@ -27577,7 +27715,12 @@ module.exports = {
                                               ref: "blockPanel",
                                               class: "q-pa-sm",
                                               style: {"width":"320px","max-width":"90vw"},
-                                              onKeydown: _withKeys(_ctx.insertFirstBlock, ["enter"])
+                                              onKeydown: [
+                                                _withModifiers(() => {}, ["stop"]),
+                                                _withKeys(_ctx.insertFirstBlock, ["enter"]),
+                                                _withKeys(_ctx.cancelBlockSearch, ["esc"])
+                                              ],
+                                              onKeyup: _withModifiers(() => {}, ["stop"])
                                             }, [
                                               _createVNode(_component_m_text_line, {
                                                 modelValue: _ctx.blockSearch,
@@ -27641,7 +27784,7 @@ module.exports = {
                                                         default: _withCtx(() => [
                                                           _createVNode(_component_q_item_section, { class: "m-muted" }, {
                                                             default: _withCtx(() => [
-                                                              _createTextVNode(_toDisplayString(_ctx.blocks.length ? _ctx.t('No text blocks match') : _ctx.t('No text blocks yet')), 1)
+                                                              _createTextVNode(_toDisplayString(_ctx.blocksState === 'loading' ? _ctx.t('Loading…') : (_ctx.blocksState === 'failed' ? _ctx.t('Text blocks could not be loaded') : (_ctx.blocks.length ? _ctx.t('No text blocks match') : _ctx.t('No text blocks yet')))), 1)
                                                             ]),
                                                             _: 1
                                                           })
@@ -27661,7 +27804,7 @@ module.exports = {
                                                 label: _ctx.t('Manage text blocks'),
                                                 onClick: $event => (_ctx.go(_ctx.appLink() + 'Settings/TextBlocks'))
                                               }, null, 8, ["label", "onClick"])
-                                            ], 40, ["onKeydown"])
+                                            ], 40, ["onKeydown", "onKeyup"])
                                           ]),
                                           _: 1
                                         }, 8, ["modelValue", "onUpdate:modelValue", "onBeforeShow", "onShow", "onHide"])

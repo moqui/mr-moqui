@@ -877,6 +877,8 @@ test("the app notifies a message by the room's level, not its own, not on do not
     // review gaps: a reply to me and a reply in my thread count as mentions, as the server's activity does
     assert.ok(chat.notification(event({ replyTo: { eventSeq: 3, senderUserId: "ann" } }), "R1", mentionsOnly), "a reply to me");
     assert.ok(chat.notification(event({ threadRootEventSeq: 3, threadRootSenderUserId: "ann" }), "R1", mentionsOnly), "in my thread");
+    assert.ok(chat.notification(event({ replyForViewer: true, threadRootEventSeq: 3 }), "R1", mentionsOnly), "in a thread I wrote in");
+    assert.equal(chat.notification(event({ threadRootEventSeq: 3 }), "R1", mentionsOnly), null, "another member's thread");
     assert.equal(chat.notification(message, "R1", Object.assign({}, base, { preview: false })).body, null, "previews off");
     assert.equal(chat.notification(event({ encrypted: true, bodyText: "x" }), "R1", base).body, "New message", "encrypted: no text");
     assert.equal(chat.notification(event({ type: "reaction" }), "R1", base), null, "only messages");
