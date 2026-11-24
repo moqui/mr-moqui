@@ -1808,6 +1808,7 @@ fn session_limit() -> Duration {
 /// Why a session did not send: the server's answer, or a session that did not end in time or stopped.
 enum SessionError {
     Smtp(lettre::transport::smtp::Error),
+    Deadline,
     Stopped(Error),
 }
 
@@ -1815,8 +1816,27 @@ impl From<SessionError> for Error {
     fn from(err: SessionError) -> Self {
         match err {
             SessionError::Smtp(err) => Error::new(err.to_string()).with_source(err),
+            SessionError::Deadline => Error::new(format!(
+                "The SMTP session did not end within {} seconds; the message may have been sent",
+                session_limit().as_secs()
+            )),
             SessionError::Stopped(err) => err,
         }
+    }
+}
+
+/// Lettre may see EOF from the relay's deadline before the caller's own wait times out.
+/// A positive or negative SMTP reply already received still decides the outcome.
+fn send_via_relay(
+    transport: &lettre::SmtpTransport,
+    relay: &crate::relay::Relay,
+    payload: &Payload,
+) -> Result<(), SessionError> {
+    match payload.send(transport) {
+        Err(err) if relay.deadline_reached() && err.status().is_none() && !not_reached(&err) => {
+            Err(SessionError::Deadline)
+        }
+        sent => sent.map_err(SessionError::Smtp),
     }
 }
 
@@ -1834,18 +1854,15 @@ fn send_within(
     std::thread::Builder::new()
         .name("smtp-session".to_string())
         .spawn(move || {
-            let _ = done.send(payload.send(&transport));
+            let _ = done.send(send_via_relay(&transport, &relay, &payload));
             // the session's end shuts the relay, which ends its thread
             drop(relay);
         })
         .map_err(|err| SessionError::Stopped(Error::new(format!("could not start the SMTP session: {err}"))))?;
     let wait = deadline.saturating_duration_since(std::time::Instant::now());
     match result.recv_timeout(wait) {
-        Ok(sent) => sent.map_err(SessionError::Smtp),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(SessionError::Stopped(Error::new(format!(
-            "The SMTP session did not end within {} seconds; the message may have been sent",
-            session_limit().as_secs()
-        )))),
+        Ok(sent) => sent,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(SessionError::Deadline),
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(SessionError::Stopped(Error::new(
             "The SMTP session stopped before its end; the message may have been sent",
         ))),

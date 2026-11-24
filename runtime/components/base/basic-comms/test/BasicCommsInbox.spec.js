@@ -72,13 +72,15 @@ spec({
     setupSpec() {
         makeUser(USER, "basic.comms.inbox", null)
         makeUser(CLIENT, "basic.comms.inbox.client", "BOSS_PROJECT_CLIENT")
-        // a mail account delivered here (no server), its Inbox and one message in it
+        // A local-only SMTP endpoint for MailCapture, its account, Inbox and one received message.
+        store("moqui.basic.email.EmailServer", {emailServerId: ACCOUNT + "_SMTP", smtpHost: "127.0.0.1", smtpPort: "1", smtpStartTls: "N"})
         store("moqui.basic.email.EmailAccount", {
             emailAccountId: ACCOUNT,
             ownerUserId: USER,
             accountKindEnumId: "EakHosted",
             emailAddress: "inbox.spec@example.com",
             accountName: "Spec mail",
+            emailServerId: ACCOUNT + "_SMTP",
             statusId: "EasActive"
         })
         store("moqui.basic.email.EmailFolder", {
@@ -203,13 +205,15 @@ feature("Needs reply keeps the mail a day old or more that is not answered and h
         message("BCI_NR_REPLY", {rootEmailMessageId: "BCI_NR_REPLIED", parentEmailMessageId: "BCI_NR_REPLIED", statusId: "ES_SENT",
             fromAddress: "inbox.spec@example.com", toAddresses: "lee@example.org", subject: "Re: Replied in thread", body: "y",
             messageDate: daysAgo(2), sentDate: daysAgo(2), emailFolderId: null})
+        message("BCI_EMPTY_DRAFT", {statusId: "ES_DRAFT", fromAddress: "inbox.spec@example.com", toAddresses: null,
+            subject: "Draft with no address", messageDate: daysAgo(0)})
         ec.user.internalLoginUser("basic.comms.inbox")
         const rows = inbox("find#InboxRows", {view: "inbox", needsReply: true, pageSize: 10})
         const home = attempt("org.moqui.comms.CommsHomeServices.get#CommsHome")
         const shown = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui").render("Home", {}, null))
         // the terminal Inbox opens the thread Home links to (thread=store:threadId), above the list, and marks its row
         const mail = sys(() => ec.screen.makeTest().rootScreen("component://basic-comms/screen/BasicComms.xml").renderMode("tui")
-            .render("Inbox/MailTui", {thread: "email:BCI_NR_REPLIED"}, null))
+            .render("Inbox/MailTui", {view: "all", thread: "email:BCI_NR_REPLIED"}, null))
         const nodes = (value, out = []) => {
             if (Array.isArray(value)) value.forEach((item) => nodes(item, out))
             else if (value && typeof value === "object") {
@@ -226,6 +230,8 @@ feature("Needs reply keeps the mail a day old or more that is not answered and h
         opened.rows.length == 2
         mailText.includes("Re: Replied in thread")
         mailText.includes("▸ ")
+        mailText.includes("No recipients")
+        mailText.includes("To: lee")
         !mailText.includes("That thread is not found")
         rows.errors == ""
         rows.threadList.map(row => row.rowKey).join() == "email:BCI_NR_WAIT"
@@ -276,11 +282,32 @@ feature("a refused recipient is said once, and a From the user may only read say
     when() {
         ec.user.internalLoginUser("basic.comms.inbox")
         const fromValue = compose("get#ComposeData", {}).compose.fromValue
-        // the check runs once and its error is not added again by the strict save (COM-UI-017): the error list itself
-        try { sys(() => call("org.moqui.comms.ComposeServices.send#Compose", {fromValue, toJson: JSON.stringify([{value: "invalid-recipient"}]), subject: "x", body: "<p>x</p>"})) }
-        catch (err) { /* the errors are read below */ }
-        const invalid = Array.from(ec.message.errors || [])
-        ec.message.clearErrors()
+        const chips = (...values) => JSON.stringify(values.map((value) => ({value})))
+        const subject = "BasicCommsInbox recipient correction " + Date.now()
+        const fieldsWithErrors = {fromValue, toJson: chips("invalid-recipient", "pat@example.org", "bad-to"),
+            ccJson: chips("bad-cc"), bccJson: chips("invalid-recipient"), subject, body: "<p>Still here</p>"}
+        const original = compose("save#ComposeDraft", fieldsWithErrors)
+        const draftFields = Object.assign({}, fieldsWithErrors, {emailMessageId: original.emailMessageId})
+        const capture = ec.factory.getTool("MailCapture")
+        const wasEnabled = capture.isEnabled()
+        if (!wasEnabled) capture.enable()
+        const matching = () => Array.from(capture.getMessages()).filter((mail) => mail.subject === subject)
+        let invalid, refusedRow, beforeCorrection, corrected, delivered
+        try {
+            try { sys(() => call("org.moqui.comms.ComposeServices.send#Compose", draftFields)) } catch (err) { /* read the facade below */ }
+            invalid = Array.from(ec.message.errors || [])
+            ec.message.clearErrors()
+            refusedRow = sys(() => ec.entity.find("moqui.basic.email.EmailMessage").condition("emailMessageId", original.emailMessageId).one())
+            beforeCorrection = matching().length
+            corrected = compose("send#Compose", Object.assign({}, draftFields, {toJson: chips("pat@example.org"), ccJson: "[]", bccJson: "[]", holdSeconds: 0}))
+            if (!ec.factory.waitWorkerPoolEmpty(30)) throw new Error("The corrected send did not finish")
+            delivered = matching()
+        } finally {
+            if (!wasEnabled) {
+                capture.reset()
+                if (capture.isEnabled()) capture.disable()
+            }
+        }
         // a shared account the client user may read but not send from (a right lowered while a composer is open, COM-UI-021)
         store("moqui.basic.email.EmailAccount", {emailAccountId: ACCOUNT + "_SH", ownerUserId: USER, accountKindEnumId: "EakShared",
             emailAddress: "shared.spec@example.com", accountName: "Spec shared", statusId: "EasActive"})
@@ -295,10 +322,14 @@ feature("a refused recipient is said once, and a From the user may only read say
         const stranger = compose("save#ComposeDraft", {fromValue: "account:" + ACCOUNT, toJson: JSON.stringify([{value: "pat@example.org"}]), body: "<p>x</p>"})
         ec.user.internalLoginUser("basic.comms.inbox")
         sys(() => ec.entity.find("moqui.basic.email.EmailAccountUser").condition("emailAccountId", ACCOUNT + "_SH").deleteAll())
-        return {invalid, saved, readOnly, kept, stranger}
+        return {invalid, subject, refusedRow, beforeCorrection, corrected, delivered, saved, readOnly, kept, stranger}
     },
-    then({invalid, saved, readOnly, kept, stranger}) {
-        invalid.length == 1 && String(invalid[0]).includes("Not an email address: invalid-recipient")
+    then({invalid, subject, refusedRow, beforeCorrection, corrected, delivered, saved, readOnly, kept, stranger}) {
+        invalid.join("|") == "Not an email address: invalid-recipient|Not an email address: bad-to|Not an email address: bad-cc"
+        beforeCorrection == 0 && refusedRow.statusId == "ES_DRAFT" && refusedRow.toAddresses == "pat@example.org"
+        refusedRow.subject == subject && refusedRow.body == "<p>Still here</p>"
+        corrected.errors == "" && corrected.emailMessageId == refusedRow.emailMessageId && delivered.length == 1
+        delivered[0].toList.join(",") == "pat@example.org"
         saved.errors == "" && saved.emailMessageId != null
         readOnly.errors.includes("You can no longer send from Spec shared")
         kept.statusId == "ES_DRAFT" && kept.emailAccountId == ACCOUNT + "_SH"

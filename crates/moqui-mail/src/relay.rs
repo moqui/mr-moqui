@@ -42,6 +42,7 @@ pub(crate) struct Relay {
     /// The connection to the server.
     upstream: TcpStream,
     closed: Arc<AtomicBool>,
+    deadline_reached: Arc<AtomicBool>,
 }
 
 impl Drop for Relay {
@@ -52,6 +53,11 @@ impl Drop for Relay {
 }
 
 impl Relay {
+    /// Whether the relay closed the connection for the session's deadline.
+    pub(crate) fn deadline_reached(&self) -> bool {
+        self.deadline_reached.load(Ordering::Acquire)
+    }
+
     /// Connect to the first of `addresses` that answers within `connect` each, and start the relay to it, which ends
     /// at `deadline` or once the server has sent more than `max_replies` bytes. `name` names the server in the log.
     ///
@@ -95,18 +101,21 @@ impl Relay {
         };
         let closed = Arc::new(AtomicBool::new(false));
         let stop = Arc::clone(&closed);
+        let deadline_reached = Arc::new(AtomicBool::new(false));
+        let expired = Arc::clone(&deadline_reached);
         let name = name.to_string();
         std::thread::Builder::new()
             .name("smtp-relay".to_string())
             .spawn(move || {
                 let session = accept_local(listener, Instant::now() + connect, &stop);
-                pass(session, from_server, to_server, deadline, max_replies, &name);
+                pass(session, from_server, to_server, deadline, max_replies, &name, &expired);
             })
             .map_err(|err| format!("the relay: {err}"))?;
         Ok(Relay {
             local,
             upstream,
             closed,
+            deadline_reached,
         })
     }
 }
@@ -140,6 +149,7 @@ fn pass(
     deadline: Instant,
     max_replies: u64,
     name: &str,
+    expired: &AtomicBool,
 ) {
     let Some((mut to_session, mut from_session)) =
         session.and_then(|session| Some((session.try_clone().ok()?, session)))
@@ -158,6 +168,7 @@ fn pass(
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
+            expired.store(true, Ordering::Release);
             tracing::warn!("SMTP {name}: the session passed its deadline and was closed");
             break;
         }

@@ -1553,11 +1553,13 @@ module.exports = {
             const nameOf = (entry) => (mine(entry) ? t('me') : (entry.name || String(entry.address || '').split('@')[0] || entry.partyId || ''));
             const toView = ['sent', 'drafts', 'outbox', 'scheduled', 'internalSent'].includes(this.params.view);
             // the account's own outgoing message names its own recipients, and none when it has none (COM-UI-028)
-            if (toView && Array.isArray(row.recipientList)) {
+            if (row.store === 'email' && Array.isArray(row.recipientList)) {
                 const named = row.recipientList.map((entry) => entry.name || String(entry.address || '').split('@')[0]).filter(Boolean);
                 return named.length ? t('To') + ': ' + named.slice(0, 3).join(', ') + (named.length > 3 ? ' +' + (named.length - 3) : '') : t('No recipients');
             }
-            if (toView) {
+            if (row.store === 'email' && (['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT'].includes(row.statusId)
+                    || (!row.statusId && (toView || ['EfkDrafts', 'EfkSent'].includes(row.folderKindEnumId))))) return t('Recipients unavailable');
+            if (toView && row.store !== 'email') {
                 const others = list.filter((entry) => !mine(entry));
                 return t('To') + ': ' + (others.slice(0, 3).map(nameOf).join(', ') || t('me')) + (others.length > 3 ? ' +' + (others.length - 3) : '');
             }

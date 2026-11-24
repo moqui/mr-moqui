@@ -274,14 +274,30 @@ module.exports = {
             if (action === 'pin' || action === 'mute' || action === 'archive') {
                 const key = action === 'pin' ? 'isPinned' : action === 'mute' ? 'isMuted' : 'archived';
                 const value = action === 'archive' ? !this.isArchived(room) : !room[key];
-                const before = { isPinned: room.isPinned, isMuted: room.isMuted, archivedEventSeq: room.archivedEventSeq };
-                if (action === 'archive') room.archivedEventSeq = value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null;
-                else room[key] = value;
-                this.post('setNotification', { chatRoomId: room.chatRoomId, [key]: value ? 'true' : 'false' }).then((json) => {
-                    if (json && json.archivedEventSeq !== undefined) room.archivedEventSeq = json.archivedEventSeq;
-                }, () => Object.assign(room, before));
-                if (action === 'archive') moqui.notifyMessages([{ type: 'info', message: value ? t('Conversation archived') : t('Conversation back in the list') }]);
-                return;
+                const field = action === 'archive' ? 'archivedEventSeq' : key;
+                const next = action === 'archive' ? (value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null) : value;
+                const roomId = room.chatRoomId;
+                const writes = this.settingWrites || (this.settingWrites = new Map());
+                const id = roomId + ':' + field;
+                const pending = writes.get(id) || { roomId, field, confirmed: room[field], done: Promise.resolve() };
+                writes.set(id, pending);
+                room[field] = pending.value = next;
+                // Commit changes to this setting in the order chosen. While a newer choice waits, keep showing it.
+                const finish = (json) => {
+                    const confirmed = json && json[field] !== undefined;
+                    if (confirmed) pending.confirmed = json[field];
+                    if (confirmed || pending.done === saving) this.settingRevision = (this.settingRevision || 0) + 1;
+                    if (pending.done !== saving) return;
+                    writes.delete(id);
+                    const current = this.rooms.find((item) => item.chatRoomId === roomId);
+                    if (current) current[field] = pending.confirmed;
+                    if (confirmed && action === 'archive') moqui.notifyMessages([{ type: 'info',
+                        message: pending.confirmed != null ? t('Conversation archived') : t('Conversation back in the list') }]);
+                };
+                const saving = pending.done.then(() => this.post('setNotification', { chatRoomId: roomId, [key]: String(value) }))
+                    .then(finish, () => finish(null));
+                pending.done = saving;
+                return saving;
             }
             if (action === 'read') {
                 this.post('markRead', { chatRoomId: room.chatRoomId }).then(() => this.onRoomRead(room.chatRoomId), () => {});
@@ -300,11 +316,34 @@ module.exports = {
         snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
         refresh() {
+            const request = this.roomsRequest = (this.roomsRequest || 0) + 1;
+            const settings = this.settingRevision;
             return moqui.request(this.url('chatData'), { params: { limit: this.home ? 200 : 40 } }).then((result) => {
+                if (this.roomsRequest !== request) return;
+                // A list read before a settings reply can still hold the previous watermark.
+                if (settings !== this.settingRevision) return this.refresh();
                 const json = result.json || {};
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
+                const previous = new Map(this.rooms.map((room) => [room.chatRoomId, room]));
                 this.rooms = memo.rooms = json.roomList || [];
+                for (const room of this.rooms) {
+                    const current = previous.get(room.chatRoomId);
+                    if (!current || Number(current.lastEventSeq || 0) <= Number(room.lastEventSeq || 0)) continue;
+                    // A socket event already moved this room past the list snapshot.
+                    room.lastEventSeq = current.lastEventSeq;
+                    if (Number(current.lastMessage?.eventSeq || 0) > Number(room.lastMessage?.eventSeq || 0)) {
+                        room.lastMessage = current.lastMessage;
+                        room.lastEventDate = current.lastEventDate;
+                    }
+                }
+                if (this.settingWrites) for (const pending of this.settingWrites.values()) {
+                    const room = this.rooms.find((item) => item.chatRoomId === pending.roomId);
+                    if (room) {
+                        if (room[pending.field] !== undefined) pending.confirmed = room[pending.field];
+                        room[pending.field] = pending.value;
+                    }
+                }
                 // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 // a person's own name across their rooms (Comms-Messaging §11.1): read once for the page, applied with the names

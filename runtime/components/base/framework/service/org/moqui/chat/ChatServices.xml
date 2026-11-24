@@ -1715,10 +1715,10 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
     <service verb="notify" noun="Mention" allow-remote="false">
-        <description>Internal: the ChatMention notification of a message to the users it mentions (send#Message, edit#Message):
+        <description>Internal: after send#Message or edit#Message commits, the ChatMention notification to the users it mentions:
             reason mention, the room as its record, the room's link, and the message's first 120 characters as summary, which a
             user whose CHAT_NOTIFY_PREVIEW is N does not get (their notification's title is who mentioned them where, without
-            the text). A message of an encrypted room (encrypted, C7) gives nobody a summary. Failure tolerant: a notification that cannot be sent is logged.</description>
+            the text). An encrypted or disappearing message gives nobody a summary. Failure tolerant: a notification that cannot be sent is logged.</description>
         <in-parameters>
             <parameter name="userIdList" type="List" required="true"/>
             <parameter name="chatRoomId" required="true"/>
@@ -1740,7 +1740,7 @@ along with this software (see the LICENSE.md file). If not, see
                     const message = {roomName: roomName || chatRoomId, chatRoomId: chatRoomId, eventSeq: eventSeq, authorUserId: authorUserId,
                         authorName: authorName || authorUserId}
                     if (withText) message.summary = summary
-                    const nm = ec.makeNotificationMessage().topic('ChatMention').userIds(users).message(message).reason('mention')
+                    const nm = ec.makeNotificationMessage().topic('ChatMention').userIds(users).directOnly().message(message).reason('mention')
                         .record('moqui.chat.ChatRoom', chatRoomId).actorUserId(authorUserId)
                     if (!withText) nm.title(ec.l10n.localize('${authorName} mentioned you in ${roomName}'))
                     if (roomUrl) nm.link(roomUrl)
@@ -1749,7 +1749,7 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.logger.error(`Could not notify the mentions of chat message ${chatRoomId}::${eventSeq}: ${err && err.message ? err.message : err}`)
                 }
             }
-            if (encrypted) { send(userIdList, false); return }
+            if (encrypted || !text) { send(userIdList, false); return }
             send(groups.previewUserIdList, true)
             send(groups.noPreviewUserIdList, false)
         ]]></script></actions>
@@ -2799,9 +2799,9 @@ along with this software (see the LICENSE.md file). If not, see
                     mention.create()
                 }
                 const notify = mentionIds.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
-                if (notify.length) ec.service.sync().name('org.moqui.chat.ChatServices.notify#Mention').parameters({userIdList: notify,
+                if (notify.length) ec.service.special().name('org.moqui.chat.ChatServices.notify#Mention').parameters({userIdList: notify,
                     chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: sender,
-                    authorName: event.senderName || sender, bodyText: ciphertext || expiring ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
+                    authorName: event.senderName || sender, bodyText: ciphertext || expiring ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).registerOnCommit()
             }
             // what the members hear about (ChatUserActivity, plans/Comms-Messaging.md §5.2): its mentions, a reply to their
             // message, a reply in a thread they started or wrote in; current members only for the replies
@@ -3013,9 +3013,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (dropped.length) ec.entity.find('moqui.chat.ChatUserActivity').condition('chatRoomId', chatRoomId).condition('messageEventSeq', eventSeq)
                     .condition('activityKindEnumId', 'CuaMention').condition('userId', 'in', dropped).deleteAll()
             const notify = added.filter((id) => !memberOf[id] || (memberOf[id].notificationLevelEnumId || 'CnlAll') !== 'CnlNone')
-            if (notify.length) ec.service.sync().name('org.moqui.chat.ChatServices.notify#Mention').parameters({userIdList: notify,
+            if (notify.length) ec.service.special().name('org.moqui.chat.ChatServices.notify#Mention').parameters({userIdList: notify,
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
-                authorName: event.senderName || me, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
+                authorName: event.senderName || me, bodyText: ciphertext || original.expireDate != null ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).registerOnCommit()
             // indexed once the transaction commits: the document is read through a view of rows this one may hold to
             // its commit (plans/archive/TX-Cache.md D5), and a message that rolls back is not indexed
             if (!ciphertext) ec.service.special().name('org.moqui.chat.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()

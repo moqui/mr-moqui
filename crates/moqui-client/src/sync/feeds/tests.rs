@@ -538,7 +538,9 @@ fn mail_store(store: &Store) {
         folder_id: folder.to_string(),
         thread_id: "email:T1".to_string(),
         sort_ms: 10,
-        row: json!({ "threadId": "T1", "isUnread": true, "unreadCount": 2 }).to_string(),
+        row: json!({ "threadId": "T1", "emailMessageId": "T1", "recipientList": [{"address": "old@example.org"}],
+            "isUnread": true, "unreadCount": 2 })
+        .to_string(),
     };
     store
         .put_mail_threads(&[
@@ -612,6 +614,8 @@ fn the_mail_feed_makes_a_thread_match_the_server() {
     assert_eq!(row["unreadCount"], 1);
     assert_eq!(row["isFlagged"], true);
     assert_eq!(row["lastEmailMessageId"], "M4");
+    assert_eq!(row["emailMessageId"], "M4");
+    assert!(row["recipientList"].is_null(), "M4 never inherits T1's recipients");
     assert_eq!(row["snippet"], "newest");
     assert!(kept.mail_threads_of("email:T9").is_empty());
     assert_eq!(kept.sync_seq(MAIL_CURSOR), Some(7));
@@ -871,8 +875,31 @@ fn a_new_thread_gets_a_row_in_the_lists_kept_and_a_message_view_row_its_own_stat
             row: json!({ "rowKey": id, "isUnread": true }).to_string(),
         };
         // the inbox lists threads; the folder F1 lists messages
-        kept.put_mail_threads(&[row("view=inbox", "email:OLD"), row("account=A&folder=F1", "email:M7")])
-            .unwrap();
+        let mut draft = row("account=A&folder=F1", "email:M7");
+        draft.row = json!({ "rowKey": "email:M7", "emailMessageId": "M7", "statusId": "ES_DRAFT",
+            "recipientList": [{ "address": "before-edit@example.org" }] })
+        .to_string();
+        kept.put_mail_threads(&[
+            row("view=inbox", "email:OLD"),
+            draft,
+            row("account=A&folder=F1", "email:ARCH"),
+            row("account=A&folder=F1", "email:SNOOZE"),
+            row("account=A&folder=DF", "email:T5"),
+            row("account=A&view=drafts", "email:T5"),
+            row("account=A&folder=SF", "email:T5"),
+            row("view=sent", "email:T5"),
+        ])
+        .unwrap();
+        let folder = |id: &str, kind: &str| crate::store::MailFolder {
+            folder_id: format!("account=A&folder={id}"),
+            row: json!({ "folderKindEnumId": kind }).to_string(),
+        };
+        kept.replace_mail_folders(&[
+            folder("F1", "EfkInbox"),
+            folder("DF", "EfkDrafts"),
+            folder("SF", "EfkSent"),
+        ])
+        .unwrap();
         crate::offline::put_object(
             &kept,
             crate::offline::FOLDER_META,
@@ -894,7 +921,19 @@ fn a_new_thread_gets_a_row_in_the_lists_kept_and_a_message_view_row_its_own_stat
             { "emailMessageId": "T5", "emailAccountId": "A", "emailFolderId": "F1", "isRead": false, "archived": false,
               "messageDate": 50, "subject": "New", "snippet": "hello" },
             { "emailMessageId": "M7", "emailAccountId": "A", "emailFolderId": "F1", "isRead": true, "isFlagged": true,
-              "archived": false, "messageDate": 60 }] }],
+              "statusId": "ES_SENT", "archived": false, "messageDate": 60 },
+            { "emailMessageId": "D1", "emailAccountId": "A", "emailFolderId": "DF", "statusId": "ES_DRAFT", "isRead": true,
+              "messageDate": 61, "recipientList": [] },
+            { "emailMessageId": "S1", "emailAccountId": "A", "emailFolderId": "SF", "statusId": "ES_SENT", "isRead": true,
+              "messageDate": 62, "recipientList": [{ "address": "sent@example.org" }] },
+            { "emailMessageId": "UNFILED", "emailAccountId": "A", "emailFolderId": null, "statusId": "ES_SENT", "isRead": true,
+              "messageDate": 63, "recipientList": [{ "address": "unfiled@example.org" }] },
+            { "emailMessageId": "ARCH", "emailAccountId": "A", "emailFolderId": "F1", "archived": true, "isRead": true,
+              "messageDate": 64 },
+            { "emailMessageId": "SNOOZE", "emailAccountId": "A", "emailFolderId": "F1", "snoozedThruDate": crate::store::now_ms() + 3600000,
+              "messageDate": 65, "isRead": true },
+            { "emailMessageId": "R1", "emailAccountId": "A", "emailFolderId": "F1", "statusId": "ES_RECEIVED", "isRead": true,
+              "messageDate": 66, "fromName": "Latest sender", "snippet": "New reply", "recipientList": null }] }],
             "lastSeq": 2, "more": false, "reset": false }),
     );
     feeds(&server, &store, sync4());
@@ -906,11 +945,52 @@ fn a_new_thread_gets_a_row_in_the_lists_kept_and_a_message_view_row_its_own_stat
         (fields["subject"].as_str(), fields["unreadCount"].as_i64()),
         (Some("New"), Some(1))
     );
-    assert_eq!(new_row.sort_ms, 60);
+    assert_eq!(new_row.sort_ms, 66);
+    for (folder, id, status, date, recipients) in [
+        ("account=A&folder=DF", "D1", "ES_DRAFT", 61, json!([])),
+        ("account=A&view=drafts", "D1", "ES_DRAFT", 61, json!([])),
+        (
+            "account=A&folder=SF",
+            "S1",
+            "ES_SENT",
+            62,
+            json!([{ "address": "sent@example.org" }]),
+        ),
+        (
+            "view=sent",
+            "S1",
+            "ES_SENT",
+            62,
+            json!([{ "address": "sent@example.org" }]),
+        ),
+    ] {
+        let rows = kept.mail_threads(folder, None, 10);
+        let fields: Value = serde_json::from_str(&rows[0].row).unwrap();
+        assert_eq!(
+            (&fields["emailMessageId"], &fields["statusId"]),
+            (&json!(id), &json!(status)),
+            "{folder}"
+        );
+        assert_eq!(fields["recipientList"], recipients);
+        assert_eq!(rows[0].sort_ms, date);
+        assert_eq!(fields["lastEmailMessageId"], "R1");
+        assert_eq!(fields["fromName"], "Latest sender");
+        assert_eq!(fields["snippet"], "New reply");
+    }
     // the message view keeps its own rows: M7's takes M7's state, and no thread row is added there
     let listed = kept.mail_threads("account=A&folder=F1", None, 10);
-    assert_eq!(listed.len(), 1);
+    assert_eq!(
+        listed.len(),
+        1,
+        "the account Inbox omits its archived and snoozed messages"
+    );
     let message_row: Value = serde_json::from_str(&listed[0].row).unwrap();
+    assert_eq!(message_row["emailMessageId"], "M7");
+    assert_eq!(message_row["statusId"], "ES_SENT");
+    assert!(
+        message_row["recipientList"].is_null(),
+        "M7 was edited and sent between feed reads"
+    );
     assert_eq!(
         (message_row["isUnread"].as_bool(), message_row["isFlagged"].as_bool()),
         (Some(false), Some(true))

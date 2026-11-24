@@ -161,7 +161,12 @@ fn an_smtp_server_that_never_ends_a_reply_is_closed_at_the_deadline_or_the_byte_
     let (slow, slow_closed) = serve(b"2", b"2".to_vec(), Duration::from_millis(50));
     let started = Instant::now();
     let deadline = started + Duration::from_secs(1);
-    assert!(super::send_within(&plain_session(slow, Duration::from_secs(30)), &payload, deadline).is_err());
+    // Wait for lettre itself so only the relay can end this read, even if the calling thread is descheduled.
+    let (transport, relay) = plain_session(slow, Duration::from_secs(30)).open(deadline).unwrap();
+    assert!(matches!(
+        super::send_via_relay(&transport, &relay, &payload),
+        Err(super::SessionError::Deadline)
+    ));
     slow_closed
         .recv_timeout(Duration::from_secs(5))
         .expect("the server's connection is closed at the deadline, not held");

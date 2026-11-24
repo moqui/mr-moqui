@@ -112,14 +112,30 @@ module.exports = {
             if (action === 'pin' || action === 'mute' || action === 'archive') {
                 const key = action === 'pin' ? 'isPinned' : action === 'mute' ? 'isMuted' : 'archived';
                 const value = action === 'archive' ? !this.isArchived(room) : !room[key];
-                const before = { isPinned: room.isPinned, isMuted: room.isMuted, archivedEventSeq: room.archivedEventSeq };
-                if (action === 'archive') room.archivedEventSeq = value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null;
-                else room[key] = value;
-                this.post('setNotification', { chatRoomId: room.chatRoomId, [key]: value ? 'true' : 'false' }).then((json) => {
-                    if (json && json.archivedEventSeq !== undefined) room.archivedEventSeq = json.archivedEventSeq;
-                }, () => Object.assign(room, before));
-                if (action === 'archive') moqui.notifyMessages([{ type: 'info', message: value ? t('Conversation archived') : t('Conversation back in the list') }]);
-                return;
+                const field = action === 'archive' ? 'archivedEventSeq' : key;
+                const next = action === 'archive' ? (value ? Number(room.lastEventSeq || (room.lastMessage && room.lastMessage.eventSeq) || 0) : null) : value;
+                const roomId = room.chatRoomId;
+                const writes = this.settingWrites || (this.settingWrites = new Map());
+                const id = roomId + ':' + field;
+                const pending = writes.get(id) || { roomId, field, confirmed: room[field], done: Promise.resolve() };
+                writes.set(id, pending);
+                room[field] = pending.value = next;
+                // Commit changes to this setting in the order chosen. While a newer choice waits, keep showing it.
+                const finish = (json) => {
+                    const confirmed = json && json[field] !== undefined;
+                    if (confirmed) pending.confirmed = json[field];
+                    if (confirmed || pending.done === saving) this.settingRevision = (this.settingRevision || 0) + 1;
+                    if (pending.done !== saving) return;
+                    writes.delete(id);
+                    const current = this.rooms.find((item) => item.chatRoomId === roomId);
+                    if (current) current[field] = pending.confirmed;
+                    if (confirmed && action === 'archive') moqui.notifyMessages([{ type: 'info',
+                        message: pending.confirmed != null ? t('Conversation archived') : t('Conversation back in the list') }]);
+                };
+                const saving = pending.done.then(() => this.post('setNotification', { chatRoomId: roomId, [key]: String(value) }))
+                    .then(finish, () => finish(null));
+                pending.done = saving;
+                return saving;
             }
             if (action === 'read') {
                 this.post('markRead', { chatRoomId: room.chatRoomId }).then(() => this.onRoomRead(room.chatRoomId), () => {});
@@ -138,11 +154,34 @@ module.exports = {
         snippetOf(room) { return moqui.chat.roomSnippet(room, this.me.userId); },
         // the rooms, few and light: the panel is a glance (Open in Comms has them all)
         refresh() {
+            const request = this.roomsRequest = (this.roomsRequest || 0) + 1;
+            const settings = this.settingRevision;
             return moqui.request(this.url('chatData'), { params: { limit: this.home ? 200 : 40 } }).then((result) => {
+                if (this.roomsRequest !== request) return;
+                // A list read before a settings reply can still hold the previous watermark.
+                if (settings !== this.settingRevision) return this.refresh();
                 const json = result.json || {};
                 this.me = memo.me = json.me || {};
                 this.prefs = memo.prefs = json.prefs || {};
+                const previous = new Map(this.rooms.map((room) => [room.chatRoomId, room]));
                 this.rooms = memo.rooms = json.roomList || [];
+                for (const room of this.rooms) {
+                    const current = previous.get(room.chatRoomId);
+                    if (!current || Number(current.lastEventSeq || 0) <= Number(room.lastEventSeq || 0)) continue;
+                    // A socket event already moved this room past the list snapshot.
+                    room.lastEventSeq = current.lastEventSeq;
+                    if (Number(current.lastMessage?.eventSeq || 0) > Number(room.lastMessage?.eventSeq || 0)) {
+                        room.lastMessage = current.lastMessage;
+                        room.lastEventDate = current.lastEventDate;
+                    }
+                }
+                if (this.settingWrites) for (const pending of this.settingWrites.values()) {
+                    const room = this.rooms.find((item) => item.chatRoomId === pending.roomId);
+                    if (room) {
+                        if (room[pending.field] !== undefined) pending.confirmed = room[pending.field];
+                        room[pending.field] = pending.value;
+                    }
+                }
                 // a phone room's numbers by their names (plans/Comms-Messaging.md §9)
                 if (moqui.chat && moqui.chat.nameRooms) moqui.chat.nameRooms(this.rooms);
                 // a person's own name across their rooms (Comms-Messaging §11.1): read once for the page, applied with the names
@@ -3447,9 +3486,9 @@ const messageTemplate = `
                     <span style="overflow-wrap:anywhere">{{item.poll.question}}</span></div>
                 <!-- a tap votes; a long press, its own context menu (Android's long press, the menu key) or Shift+Enter shows who
                      voted (a hover on the count, with a pointer) -->
-                <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs" :disable="!room.canVote(item)"
-                        :data-option="option.id" :aria-keyshortcuts="option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
-                        @click.stop="room.pressed() || room.vote(item, option)"
+                <q-item v-for="option in item.poll.options" :key="option.id" dense clickable class="rounded-borders q-px-xs"
+                        :data-option="option.id" :aria-keyshortcuts="!item.poll.anonymous && option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined"
+                        @click.stop="room.pressed() || (room.canVote(item) ? room.vote(item, option) : room.showPeople({ kind: 'voters', item, option }))"
                         @touchstart.passive="room.pressStart({ kind: 'voters', item, option }, $event)" @touchmove.passive="room.pressCancel()"
                         @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
                         @contextmenu.prevent.stop="room.pressMenu({ kind: 'voters', item, option })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'voters', item, option })">
@@ -3458,7 +3497,7 @@ const messageTemplate = `
                         <q-item-label style="overflow-wrap:anywhere">{{option.text}}</q-item-label>
                         <q-linear-progress :value="room.optionShare(item, option)" rounded size="6px" :color="option.mine ? 'primary' : 'grey-5'" class="q-mt-xs"></q-linear-progress>
                     </q-item-section>
-                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
+                    <q-item-section side class="text-caption">{{option.voteCount}}<q-tooltip v-if="!room.mobile && !item.poll.anonymous && option.voterIds && option.voterIds.length">{{room.votersText(option)}}</q-tooltip></q-item-section>
                 </q-item>
                 <div class="row items-center no-wrap text-caption m-muted q-mt-xs">
                     <span class="ellipsis">{{room.pollFooter(item.poll)}}</span><q-space></q-space>
@@ -3509,7 +3548,7 @@ const messageTemplate = `
                 <q-chip v-for="reaction in item.reactions" :key="reaction.key" dense clickable :outline="!reaction.mine" :color="reaction.mine ? 'primary' : undefined"
                         :text-color="reaction.mine ? 'white' : undefined" class="q-ml-none q-mr-xs m-chat-reaction" :data-reaction="reaction.key"
                         :aria-label="room.reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
-                        :disable="!room.canPost || !room.bridgeCaps.reaction" @click.stop="room.pressed() || room.react(item, reaction.key)"
+                        @click.stop="room.pressed() || (room.canPost && room.bridgeCaps.reaction ? room.react(item, reaction.key) : room.showPeople({ kind: 'reactors', reaction }))"
                         @touchstart.passive="room.pressStart({ kind: 'reactors', item, reaction }, $event)" @touchmove.passive="room.pressCancel()"
                         @touchend="room.pressEnd($event)" @touchcancel="room.pressEnd($event)"
                         @contextmenu.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })" @keydown.enter.shift.prevent.stop="room.pressMenu({ kind: 'reactors', item, reaction })">
@@ -4694,8 +4733,8 @@ const roomTemplate = `
             <q-btn v-if="access.canJoin" dense unelevated no-caps color="primary" :label="t('Join')" class="q-mx-xs" @click="join"></q-btn>
             <!-- a voice call and a video call (Comms-Messaging §8.3 item 1); in the tray's narrow Chat tab they are in the room's menu -->
             <template v-if="canCall && !compact">
-                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" @click="startCall(false)"><q-tooltip>{{callTip(false)}}</q-tooltip></q-btn>
-                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" @click="startCall(true)"><q-tooltip>{{callTip(true)}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_call" class="m-chat-voice-call" :aria-label="t('Voice call')" :aria-description="callAudience" @click="startCall(false)"><q-tooltip>{{t('Voice call')}} · {{callAudience}}</q-tooltip></q-btn>
+                <q-btn flat round dense icon="sym_o_videocam" class="m-chat-video-call" :aria-label="t('Video call')" :aria-description="callAudience" @click="startCall(true)"><q-tooltip>{{t('Video call')}} · {{callAudience}}</q-tooltip></q-btn>
             </template>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_search" :aria-label="t('Search in the room')" @click="openSide('search')"><q-tooltip>{{t('Search in the room')}}</q-tooltip></q-btn>
             <q-btn v-if="!narrow" flat round dense icon="sym_o_keep" :aria-label="t('Pinned messages')" @click="openSide('pinned')"><q-tooltip>{{t('Pinned messages')}}</q-tooltip></q-btn>
@@ -4729,10 +4768,10 @@ const roomTemplate = `
                         <q-separator></q-separator>
                     </template>
                     <template v-if="canCall && compact">
-                        <q-item clickable v-close-popup @click="startCall(false)">
-                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section>{{t('Voice call')}}</q-item-section></q-item>
-                        <q-item clickable v-close-popup @click="startCall(true)">
-                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section>{{t('Video call')}}</q-item-section></q-item>
+                        <q-item clickable v-close-popup class="m-chat-voice-call" @click="startCall(false)">
+                            <q-item-section avatar><q-icon name="sym_o_call"></q-icon></q-item-section><q-item-section><q-item-label>{{t('Voice call')}}</q-item-label><q-item-label caption>{{callAudience}}</q-item-label></q-item-section></q-item>
+                        <q-item clickable v-close-popup class="m-chat-video-call" @click="startCall(true)">
+                            <q-item-section avatar><q-icon name="sym_o_videocam"></q-icon></q-item-section><q-item-section><q-item-label>{{t('Video call')}}</q-item-label><q-item-label caption>{{callAudience}}</q-item-label></q-item-section></q-item>
                     </template>
                     <q-item v-if="!isDirect" clickable v-close-popup @click="openSide('members')">
                         <q-item-section avatar><q-icon name="sym_o_group"></q-icon></q-item-section><q-item-section>{{t('Members')}}</q-item-section></q-item>
@@ -5050,7 +5089,12 @@ const roomTemplate = `
                                 <q-item-label class="text-weight-medium">{{nameOf(message.senderUserId, message.senderName)}}<span class="text-caption m-muted"> · {{shortWhen(message.sentDate)}}</span></q-item-label>
                                 <q-item-label caption class="ellipsis-2-lines">{{message.undecryptable ? t('Encrypted message') : (message.snippet || filesText(message))}}</q-item-label>
                                 <div class="row q-gutter-xs q-mt-xs">
-                                    <q-chip v-for="reaction in message.reactions" :key="reaction.key" dense square :outline="!reaction.mine" class="q-ma-none" :data-key="reaction.key">
+                                    <q-chip v-for="reaction in message.reactions" :key="reaction.key" dense square clickable :outline="!reaction.mine" class="q-ma-none" :data-key="reaction.key"
+                                            :aria-label="reactionLabel(reaction)" aria-keyshortcuts="Shift+Enter"
+                                            @click.stop="pressed() || showPeople({ kind: 'reactors', reaction })"
+                                            @touchstart.passive="pressStart({ kind: 'reactors', reaction }, $event)" @touchmove.passive="pressCancel()"
+                                            @touchend="pressEnd($event)" @touchcancel="pressEnd($event)"
+                                            @contextmenu.prevent.stop="pressMenu({ kind: 'reactors', reaction })" @keydown.enter.shift.prevent.stop="pressMenu({ kind: 'reactors', reaction })">
                                         {{reaction.key}} {{reaction.count}}<q-tooltip v-if="!mobile">{{reactorsText(reaction)}}</q-tooltip></q-chip>
                                 </div>
                             </q-item-section>
@@ -5603,7 +5647,8 @@ const chatRoom = {
         archivedByMe() {
             const seq = this.member && this.member.archivedEventSeq;
             if (seq == null) return false;
-            const last = this.events.reduce((max, event) => (event.type === 'message' ? Math.max(max, Number(event.eventSeq) || 0) : max), 0);
+            const last = this.events.reduce((max, event) => event.type === 'message' && event.threadRootEventSeq == null
+                ? Math.max(max, Number(event.eventSeq) || 0) : max, Number(this.room && this.room.lastMessageSeq || 0));
             return last <= Number(seq);
         },
         isDirect() { return !!this.room && this.room.roomTypeEnumId === 'CrtDirect'; },
@@ -5631,6 +5676,11 @@ const chatRoom = {
         // a call from the room, where the server holds calls and the user may post, with someone on this server to ring (a
         // bridged or texting room's other side is on another network: no empty call)
         canCall() { return !!(moqui.call && moqui.config && moqui.config.calls && this.access && this.access.canPost && this.room && !this.room.archivedDate) && this.callees.length > 0; },
+        callAudience() {
+            if (this.isDirect) return fill(t('Calls {name}'), { name: this.displayName });
+            return this.room && this.room.bridged ? t('Invites eligible room members on this server only. Their call settings determine which devices ring.')
+                : t('Invites eligible members of this room. Their call settings determine which devices ring.');
+        },
         callees() { return this.members.filter((person) => person.userId && !person.isAgent && person.userId !== (this.me && this.me.userId)); },
         isMember() { return !!this.access.isMember; },
         canPost() { return !!this.access.canPost; },
@@ -6111,14 +6161,9 @@ const chatRoom = {
         // the room's call, voice or video: a direct room calls the person, a group room starts a group call its members join
         // from the chat (one going on is opened to join); an encrypted room's call is end-to-end encrypted (§6.1 rule 4)
         startCall(video) {
-            if (needsConnection()) return;
+            if (!this.canCall || needsConnection()) return;
             // asked so, a browser that cannot is refused before anyone rings
             if (moqui.call) moqui.call.startCall(Object.assign({ chatRoomId: this.roomId, video: video !== false }, this.sealed ? { requireE2ee: true } : {}));
-        },
-        callTip(video) {
-            if (this.isDirect) return fill(video ? t('Video call {name}') : t('Voice call {name}'), { name: this.displayName });
-            if (this.room && this.room.bridged) return video ? t('Video call: the people on this server in the room ring, not those on the bridged network') : t('Voice call: the people on this server in the room ring, not those on the bridged network');
-            return video ? t('Video call: everyone in the room rings, and members can join') : t('Voice call: everyone in the room rings, and members can join');
         },
         go(target) { if (target) this.$root.setUrl(target); },
         domId(seq, inThread) { return 'chat-' + this.uid + (inThread ? '-t-' : '-m-') + seq; },
@@ -6207,10 +6252,12 @@ const chatRoom = {
         // ---- loading and paging ----
         load() {
             this.state = 'loading';
+            const roomId = this.roomId, settings = this.settingVersions;
             const aroundSeq = this.seq ? Number(this.seq) : null;
-            this.get('roomView', { chatRoomId: this.roomId, aroundSeq: aroundSeq || '', limit: 50 }).then((json) => {
+            return this.get('roomView', { chatRoomId: roomId, aroundSeq: aroundSeq || '', limit: 50 }).then((json) => {
+                if (this.roomId !== roomId || (json.room && json.room.chatRoomId !== roomId)) return;
                 if (!json.room) { this.state = 'missing'; return; }
-                this.applyMeta(json);
+                this.applyMeta(json, settings);
                 const page = json.timeline || {};
                 this.mergeNames(page.userNames);
                 this.events = page.eventList || [];
@@ -6233,11 +6280,18 @@ const chatRoom = {
                     if (this.thread) this.openThread(Number(this.thread), true);
                     else if (!this.compact) this.focusComposer();
                 });
-            }, (err) => { this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
+            }, (err) => { if (this.roomId === roomId) this.state = moqui.unreachable && moqui.unreachable(err) ? 'unreachable' : 'missing'; });
         },
-        applyMeta(json) {
+        applyMeta(json, settings) {
+            const member = json.member ? { ...json.member } : null;
+            // Keep only settings confirmed since this read began. The other membership and room data are fresh to the view.
+            if (member && this.member && this.room && this.room.chatRoomId === json.room.chatRoomId && settings !== this.settingVersions) {
+                for (const [field, version] of Object.entries(this.settingVersions || {})) {
+                    if (version !== (settings || {})[field]) member[field] = this.member[field];
+                }
+            }
             this.room = json.room;
-            this.member = json.member || null;
+            this.member = member;
             this.access = json.access || {};
             this.members = json.memberList || [];
             this.members.forEach((person) => { if (person.name) this.names[person.userId] = person.name; });
@@ -6291,7 +6345,10 @@ const chatRoom = {
                 t('Block'), true).then(() => this.post('blockUser', { userId: person.userId }).then(() => { this.reloadMeta(); this.$emit('changed', this.roomId); }, () => {}));
         },
         reloadMeta() {
-            return this.get('room', { chatRoomId: this.roomId }).then((json) => { if (json.room) this.applyMeta(json); }, () => {});
+            const roomId = this.roomId, settings = this.settingVersions;
+            return this.get('room', { chatRoomId: roomId }).then((json) => {
+                if (this.roomId === roomId && json.room && json.room.chatRoomId === roomId) this.applyMeta(json, settings);
+            }, () => {});
         },
         loadOlder() {
             if (!this.hasMoreBefore || this.loadingOlder || !this.events.length) return;
@@ -6956,7 +7013,7 @@ const chatRoom = {
                 people: order.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id), detail: byUser[id].join(' ') })) };
         },
         showPeople(what) {
-            const ids = what.kind === 'voters' ? (what.option.voterIds || []) : (what.reaction.userIds || []);
+            const ids = what.kind === 'voters' ? (what.item.poll.anonymous ? [] : what.option.voterIds || []) : (what.reaction.userIds || []);
             const people = ids.map((id) => ({ userId: id, name: id === this.me.userId ? t('You') : this.nameOf(id) }));
             const title = what.kind === 'voters' ? fill(t('Voted for {option}'), { option: what.option.text || '' })
                 : fill(t('Reacted with {emoji}'), { emoji: what.reaction.key });
@@ -7071,7 +7128,7 @@ const chatRoom = {
             });
         },
         react(item, key) {
-            if (!this.canPost || (!this.queues('chat-react') && needsConnection())) return;
+            if (!this.canPost || !this.bridgeCaps.reaction || (!this.queues('chat-react') && needsConnection())) return;
             this.tapKey = null;
             const me = this.me.userId;
             const reactions = item.event.reactions = item.event.reactions || [];
@@ -7901,34 +7958,29 @@ const chatRoom = {
         },
 
         // ---- my settings in the room, the room's settings ----
-        setLevel(level) {
-            this.post('setNotification', { chatRoomId: this.roomId, notificationLevelEnumId: level }).then(() => {
-                if (this.member) this.member.notificationLevelEnumId = level;
+        // A reply belongs to the room that made the request. Its archive watermark is the server's, even if
+        // a newer message arrived in the meantime or the user opened another room.
+        setMemberSetting(key, value) {
+            const roomId = this.roomId;
+            const field = key === 'archived' ? 'archivedEventSeq' : key;
+            const writes = this.settingWrites || (this.settingWrites = new Map());
+            const id = roomId + ':' + key;
+            const previous = writes.get(id) || Promise.resolve();
+            const saved = previous.then(() => this.post('setNotification', { chatRoomId: roomId, [key]: String(value) })).then((json) => {
+                if (this.room && this.room.chatRoomId === roomId && this.roomId === roomId && this.member && json[field] !== undefined) {
+                    this.member[field] = json[field];
+                    const versions = this.settingVersions || {};
+                    this.settingVersions = { ...versions, [field]: (versions[field] || 0) + 1 };
+                }
                 this.$emit('changed');
             }, () => {});
+            writes.set(id, saved);
+            return saved.finally(() => { if (writes.get(id) === saved) writes.delete(id); });
         },
-        toggleMute() {
-            const muted = !(this.member && this.member.isMuted);
-            this.post('setNotification', { chatRoomId: this.roomId, isMuted: muted ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.isMuted = muted;
-                this.$emit('changed');
-            }, () => {});
-        },
-        // my own archive: the room leaves my list until a newer message (ChatRoomMember.archivedEventSeq)
-        toggleArchive() {
-            const archived = !this.archivedByMe;
-            this.post('setNotification', { chatRoomId: this.roomId, archived: archived ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.archivedEventSeq = archived ? this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq) || 0), Number((this.room && this.room.lastEventSeq) || 0)) : null;
-                this.$emit('changed');
-            }, () => {});
-        },
-        togglePin() {
-            const pinned = !(this.member && this.member.isPinned);
-            this.post('setNotification', { chatRoomId: this.roomId, isPinned: pinned ? 'true' : 'false' }).then(() => {
-                if (this.member) this.member.isPinned = pinned;
-                this.$emit('changed');
-            }, () => {});
-        },
+        setLevel(level) { return this.setMemberSetting('notificationLevelEnumId', level); },
+        toggleMute() { return this.setMemberSetting('isMuted', !(this.member && this.member.isMuted)); },
+        toggleArchive() { return this.setMemberSetting('archived', !this.archivedByMe); },
+        togglePin() { return this.setMemberSetting('isPinned', !(this.member && this.member.isPinned)); },
         join() { this.post('join', { chatRoomId: this.roomId }).then(() => { this.$emit('changed'); this.load(); }, () => {}); },
         // who becomes an owner when the last owner leaves, by the rule of remove#Member (ChatServices.xml): the
         // longest-standing moderator, else member; agents and outside actors never. For equal join times the stable sort
@@ -10749,18 +10801,19 @@ module.exports = {
                                     icon: "sym_o_call",
                                     class: "m-chat-voice-call",
                                     "aria-label": _ctx.t('Voice call'),
+                                    "aria-description": _ctx.callAudience,
                                     onClick: $event => (_ctx.startCall(false))
                                   }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_tooltip, null, {
                                         default: _withCtx(() => [
-                                          _createTextVNode(_toDisplayString(_ctx.callTip(false)), 1)
+                                          _createTextVNode(_toDisplayString(_ctx.t('Voice call')) + " · " + _toDisplayString(_ctx.callAudience), 1)
                                         ]),
                                         _: 1
                                       })
                                     ]),
                                     _: 1
-                                  }, 8, ["aria-label", "onClick"]),
+                                  }, 8, ["aria-label", "aria-description", "onClick"]),
                                   _createVNode(_component_q_btn, {
                                     flat: "",
                                     round: "",
@@ -10768,18 +10821,19 @@ module.exports = {
                                     icon: "sym_o_videocam",
                                     class: "m-chat-video-call",
                                     "aria-label": _ctx.t('Video call'),
+                                    "aria-description": _ctx.callAudience,
                                     onClick: $event => (_ctx.startCall(true))
                                   }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_tooltip, null, {
                                         default: _withCtx(() => [
-                                          _createTextVNode(_toDisplayString(_ctx.callTip(true)), 1)
+                                          _createTextVNode(_toDisplayString(_ctx.t('Video call')) + " · " + _toDisplayString(_ctx.callAudience), 1)
                                         ]),
                                         _: 1
                                       })
                                     ]),
                                     _: 1
-                                  }, 8, ["aria-label", "onClick"])
+                                  }, 8, ["aria-label", "aria-description", "onClick"])
                                 ], 64))
                               : _createCommentVNode("", true),
                             (!_ctx.narrow)
@@ -11103,6 +11157,7 @@ module.exports = {
                                           ? (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
+                                                class: "m-chat-voice-call",
                                                 onClick: $event => (_ctx.startCall(false))
                                               }, {
                                                 default: _withCtx(() => [
@@ -11114,7 +11169,18 @@ module.exports = {
                                                   }),
                                                   _createVNode(_component_q_item_section, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Voice call')), 1)
+                                                      _createVNode(_component_q_item_label, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Voice call')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.callAudience), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
                                                     ]),
                                                     _: 1
                                                   })
@@ -11125,6 +11191,7 @@ module.exports = {
                                               ]),
                                               _withDirectives((_openBlock(), _createBlock(_component_q_item, {
                                                 clickable: "",
+                                                class: "m-chat-video-call",
                                                 onClick: $event => (_ctx.startCall(true))
                                               }, {
                                                 default: _withCtx(() => [
@@ -11136,7 +11203,18 @@ module.exports = {
                                                   }),
                                                   _createVNode(_component_q_item_section, null, {
                                                     default: _withCtx(() => [
-                                                      _createTextVNode(_toDisplayString(_ctx.t('Video call')), 1)
+                                                      _createVNode(_component_q_item_label, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Video call')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      }),
+                                                      _createVNode(_component_q_item_label, { caption: "" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.callAudience), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
                                                     ]),
                                                     _: 1
                                                   })
@@ -12984,9 +13062,19 @@ module.exports = {
                                                                   key: reaction.key,
                                                                   dense: "",
                                                                   square: "",
+                                                                  clickable: "",
                                                                   outline: !reaction.mine,
                                                                   class: "q-ma-none",
-                                                                  "data-key": reaction.key
+                                                                  "data-key": reaction.key,
+                                                                  "aria-label": _ctx.reactionLabel(reaction),
+                                                                  "aria-keyshortcuts": "Shift+Enter",
+                                                                  onClick: _withModifiers($event => (_ctx.pressed() || _ctx.showPeople({ kind: 'reactors', reaction })), ["stop"]),
+                                                                  onTouchstartPassive: $event => (_ctx.pressStart({ kind: 'reactors', reaction }, $event)),
+                                                                  onTouchmovePassive: $event => (_ctx.pressCancel()),
+                                                                  onTouchend: $event => (_ctx.pressEnd($event)),
+                                                                  onTouchcancel: $event => (_ctx.pressEnd($event)),
+                                                                  onContextmenu: _withModifiers($event => (_ctx.pressMenu({ kind: 'reactors', reaction })), ["prevent","stop"]),
+                                                                  onKeydown: _withKeys(_withModifiers($event => (_ctx.pressMenu({ kind: 'reactors', reaction })), ["shift","prevent","stop"]), ["enter"])
                                                                 }, {
                                                                   default: _withCtx(() => [
                                                                     _createTextVNode(_toDisplayString(reaction.key) + " " + _toDisplayString(reaction.count), 1),
@@ -13000,7 +13088,7 @@ module.exports = {
                                                                       : _createCommentVNode("", true)
                                                                   ]),
                                                                   _: 2
-                                                                }, 1032, ["outline", "data-key"]))
+                                                                }, 1032, ["outline", "data-key", "aria-label", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                                               }), 128))
                                                             ])
                                                           ]),
@@ -16760,10 +16848,9 @@ module.exports = {
                                           dense: "",
                                           clickable: "",
                                           class: "rounded-borders q-px-xs",
-                                          disable: !_ctx.room.canVote(_ctx.item),
                                           "data-option": option.id,
-                                          "aria-keyshortcuts": option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined,
-                                          onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.vote(_ctx.item, option)), ["stop"]),
+                                          "aria-keyshortcuts": !_ctx.item.poll.anonymous && option.voterIds && option.voterIds.length ? 'Shift+Enter' : undefined,
+                                          onClick: _withModifiers($event => (_ctx.room.pressed() || (_ctx.room.canVote(_ctx.item) ? _ctx.room.vote(_ctx.item, option) : _ctx.room.showPeople({ kind: 'voters', item: _ctx.item, option }))), ["stop"]),
                                           onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'voters', item: _ctx.item, option }, $event)),
                                           onTouchmovePassive: $event => (_ctx.room.pressCancel()),
                                           onTouchend: $event => (_ctx.room.pressEnd($event)),
@@ -16809,7 +16896,7 @@ module.exports = {
                                             }, {
                                               default: _withCtx(() => [
                                                 _createTextVNode(_toDisplayString(option.voteCount), 1),
-                                                (!_ctx.room.mobile && option.voterIds && option.voterIds.length)
+                                                (!_ctx.room.mobile && !_ctx.item.poll.anonymous && option.voterIds && option.voterIds.length)
                                                   ? (_openBlock(), _createBlock(_component_q_tooltip, { key: 0 }, {
                                                       default: _withCtx(() => [
                                                         _createTextVNode(_toDisplayString(_ctx.room.votersText(option)), 1)
@@ -16822,7 +16909,7 @@ module.exports = {
                                             }, 1024)
                                           ]),
                                           _: 2
-                                        }, 1032, ["disable", "data-option", "aria-keyshortcuts", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
+                                        }, 1032, ["data-option", "aria-keyshortcuts", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                       }), 128)),
                                       _createElementVNode("div", { class: "row items-center no-wrap text-caption m-muted q-mt-xs" }, [
                                         _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.pollFooter(_ctx.item.poll)), 1),
@@ -17052,8 +17139,7 @@ module.exports = {
                                         "data-reaction": reaction.key,
                                         "aria-label": _ctx.room.reactionLabel(reaction),
                                         "aria-keyshortcuts": "Shift+Enter",
-                                        disable: !_ctx.room.canPost || !_ctx.room.bridgeCaps.reaction,
-                                        onClick: _withModifiers($event => (_ctx.room.pressed() || _ctx.room.react(_ctx.item, reaction.key)), ["stop"]),
+                                        onClick: _withModifiers($event => (_ctx.room.pressed() || (_ctx.room.canPost && _ctx.room.bridgeCaps.reaction ? _ctx.room.react(_ctx.item, reaction.key) : _ctx.room.showPeople({ kind: 'reactors', reaction }))), ["stop"]),
                                         onTouchstartPassive: $event => (_ctx.room.pressStart({ kind: 'reactors', item: _ctx.item, reaction }, $event)),
                                         onTouchmovePassive: $event => (_ctx.room.pressCancel()),
                                         onTouchend: $event => (_ctx.room.pressEnd($event)),
@@ -17073,7 +17159,7 @@ module.exports = {
                                             : _createCommentVNode("", true)
                                         ]),
                                         _: 2
-                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "aria-label", "disable", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
+                                      }, 1032, ["outline", "color", "text-color", "data-reaction", "aria-label", "onClick", "onTouchstartPassive", "onTouchmovePassive", "onTouchend", "onTouchcancel", "onContextmenu", "onKeydown"]))
                                     }), 128))
                                   ]))
                                 : _createCommentVNode("", true),
@@ -19407,11 +19493,13 @@ module.exports = {
             const nameOf = (entry) => (mine(entry) ? t('me') : (entry.name || String(entry.address || '').split('@')[0] || entry.partyId || ''));
             const toView = ['sent', 'drafts', 'outbox', 'scheduled', 'internalSent'].includes(this.params.view);
             // the account's own outgoing message names its own recipients, and none when it has none (COM-UI-028)
-            if (toView && Array.isArray(row.recipientList)) {
+            if (row.store === 'email' && Array.isArray(row.recipientList)) {
                 const named = row.recipientList.map((entry) => entry.name || String(entry.address || '').split('@')[0]).filter(Boolean);
                 return named.length ? t('To') + ': ' + named.slice(0, 3).join(', ') + (named.length > 3 ? ' +' + (named.length - 3) : '') : t('No recipients');
             }
-            if (toView) {
+            if (row.store === 'email' && (['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT'].includes(row.statusId)
+                    || (!row.statusId && (toView || ['EfkDrafts', 'EfkSent'].includes(row.folderKindEnumId))))) return t('Recipients unavailable');
+            if (toView && row.store !== 'email') {
                 const others = list.filter((entry) => !mine(entry));
                 return t('To') + ': ' + (others.slice(0, 3).map(nameOf).join(', ') || t('me')) + (others.length > 3 ? ' +' + (others.length - 3) : '');
             }

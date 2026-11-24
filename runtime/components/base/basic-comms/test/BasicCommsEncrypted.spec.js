@@ -126,6 +126,7 @@ feature("an encrypted message is kept as ciphertext only, with its mentions in t
             const searchedRoom = as(B, "search#ChatEvents", {searchText: "AwgAEnm1", chatRoomId: secret})
             const mentions = sys(() => ec.entity.find("moqui.chat.ChatEventMention").condition({chatRoomId: secret, eventSeq: sent.eventSeq}).list())
                     .map((m) => m.userId)
+            ec.factory.waitWorkerPoolEmpty(50)
             const notices = capture.getMessages("ChatMention").map((m) => typeof m.message === "string" ? m.message : JSON.stringify(m.message))
             return {sent, stored, room, list, page, searched, searchedRoom, mentions, notices}
         } finally {
@@ -152,6 +153,7 @@ feature("an encrypted message is kept as ciphertext only, with its mentions in t
         mentions.join(",") == B
         searched.eventList.length == 0
         searchedRoom.reasonCode == "encryptedRoom"
+        notices.length === 1
         notices.every((text) => text.indexOf("summary") < 0 && text.indexOf("AwgAEn") < 0)
     }
 })

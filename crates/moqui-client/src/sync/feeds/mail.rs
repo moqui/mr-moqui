@@ -357,16 +357,16 @@ fn fold_rows(
         } else {
             messages.iter().collect()
         };
-        if !belongs(&row.folder_id, folders, &shown) {
+        let Some(displayed) = displayed_message(&row.folder_id, folders, &shown) else {
             store
                 .remove_mail_thread(&row.folder_id, &row.thread_id)
                 .map_err(|err| err.to_string())?;
             continue;
-        }
+        };
         let Ok(fields) = serde_json::from_str::<Value>(&row.row) else {
             continue;
         };
-        let (fields, sort_ms) = row_fields(fields, row.sort_ms, &shown);
+        let (fields, sort_ms) = row_fields(fields, row.sort_ms, &shown, displayed, folders);
         changed.push(MailThread {
             row: fields.to_string(),
             sort_ms,
@@ -385,16 +385,19 @@ fn fold_rows(
     let shown: Vec<&Message<'_>> = messages.iter().collect();
     for folder in candidates.iter().filter(|folder| !kept.contains(*folder)) {
         let listed = !store.mail_threads(folder, None, 1).is_empty();
-        if !listed || lists_messages(store, folder) || !belongs(folder, folders, &shown) {
+        if !listed || lists_messages(store, folder) {
             continue;
         }
+        let Some(displayed) = displayed_message(folder, folders, &shown) else {
+            continue;
+        };
         let Some(first) = messages.iter().min_by_key(|message| message.date()) else {
             continue;
         };
         let base = json!({ "store": "email", "threadId": thread_id, "rootEmailMessageId": thread_id, "rowKey": key,
             "emailAccountId": first.account(), "subject": first.json["subject"], "firstDate": first.date(),
             "participantList": [], "labelList": [], "isClosed": false });
-        let (fields, sort_ms) = row_fields(base, 0, &shown);
+        let (fields, sort_ms) = row_fields(base, 0, &shown, displayed, folders);
         changed.push(MailThread {
             folder_id: folder.clone(),
             thread_id: key.to_string(),
@@ -409,59 +412,109 @@ fn fold_rows(
 }
 
 /// A row's fields as the messages `shown` give them, and its sort date.
-fn row_fields(mut fields: Value, sort_ms: i64, shown: &[&Message<'_>]) -> (Value, i64) {
+fn row_fields(
+    mut fields: Value,
+    sort_ms: i64,
+    shown: &[&Message<'_>],
+    displayed: &Message<'_>,
+    folders: &HashMap<String, String>,
+) -> (Value, i64) {
     let unread = shown.iter().filter(|message| !message.flag("isRead")).count();
     fields["unreadCount"] = json!(unread);
     fields["isUnread"] = json!(unread > 0);
     fields["isFlagged"] = json!(shown.iter().any(|message| message.flag("isFlagged")));
     fields["isArchived"] = json!(shown.iter().all(|message| message.flag("archived")));
     fields["messageCount"] = json!(shown.len());
-    let mut sort_ms = sort_ms;
-    if let Some(newest) = shown.iter().max_by_key(|message| message.date()) {
-        let id = newest.id.strip_prefix("email:").unwrap_or(&newest.id);
-        fields["lastEmailMessageId"] = json!(id);
-        fields["emailMessageId"] = json!(id);
-        fields["emailFolderId"] = newest.json["emailFolderId"].clone();
+    let id = displayed.id.strip_prefix("email:").unwrap_or(&displayed.id);
+    if let Some(recipients) = displayed.json.get("recipientList") {
+        fields["recipientList"] = recipients.clone();
+    } else if fields["emailMessageId"].as_str() != Some(id)
+        || fields["statusId"] != "ES_SENT"
+        || displayed.json["statusId"] != "ES_SENT"
+    {
+        // Older servers omit headers. Only an already sent message's own recipients are immutable.
+        fields["recipientList"] = Value::Null;
+    }
+    fields["emailMessageId"] = json!(id);
+    if let Some(kind) = displayed
+        .folder()
+        .and_then(|folder| folders.get(&offline::account_folder_key(displayed.account(), folder)))
+    {
+        fields["folderKindEnumId"] = json!(kind);
+    } else if fields["emailFolderId"] != displayed.json["emailFolderId"] {
+        fields["folderKindEnumId"] = Value::Null;
+    }
+    fields["emailFolderId"] = displayed.json["emailFolderId"].clone();
+    fields["statusId"] = displayed.json["statusId"].clone();
+    let sort_ms = number(&displayed.json["messageDate"]).unwrap_or(sort_ms);
+    fields["sortDate"] = json!(sort_ms);
+    if let Some(newest) = shown.iter().max_by_key(|message| (message.date(), &message.id)) {
+        fields["lastEmailMessageId"] = newest.json["emailMessageId"].clone();
         fields["lastDate"] = json!(newest.date());
-        for name in ["snippet", "fromName", "fromAddress", "statusId", "hasAttachment"] {
+        for name in ["snippet", "fromName", "fromAddress"] {
             if let Some(value) = newest.json.get(name) {
                 fields[name] = value.clone();
             }
         }
-        sort_ms = sort_ms.max(newest.date());
-        fields["sortDate"] = json!(sort_ms);
+    }
+    if shown.iter().any(|message| message.json.get("hasAttachment").is_some()) {
+        fields["hasAttachment"] = json!(shown.iter().any(|message| message.flag("hasAttachment")));
     }
     (fields, sort_ms)
 }
 
-/// Whether a thread whose messages are `shown` stays in the store's folder `folder` (a folder key, as
-/// `offline::account_folder_key` and the `threads` queries make them).
-fn belongs(folder: &str, folders: &HashMap<String, String>, shown: &[&Message<'_>]) -> bool {
-    if shown.is_empty() {
-        return false;
-    }
-    let in_folder = |id: &str| shown.iter().any(|message| message.folder() == Some(id));
+/// The newest message that matches the view, as find#Messages chooses its viewMessageId. The
+/// thread's last message (and sender/snippet) can be a newer reply outside this folder.
+fn displayed_message<'a>(
+    folder: &str,
+    folders: &HashMap<String, String>,
+    shown: &[&'a Message<'a>],
+) -> Option<&'a Message<'a>> {
     let parts: HashMap<&str, &str> = folder.split('&').filter_map(|part| part.split_once('=')).collect();
-    if let Some(id) = parts.get("folder") {
-        return in_folder(id);
-    }
-    if let Some(label) = parts.get("label") {
-        return shown.iter().any(|message| {
-            message.json["labelIds"]
-                .as_array()
-                .is_some_and(|ids| ids.iter().any(|kept| kept.as_str() == Some(label)))
-        });
-    }
-    match parts.get("view").copied() {
-        Some("inbox") => shown.iter().any(|message| {
-            !message.flag("archived")
-                && message.folder().is_none_or(|id| {
-                    folders
-                        .get(&offline::account_folder_key(message.account(), id))
-                        .is_none_or(|kind| kind == "EfkInbox")
-                })
-        }),
-        Some("flagged") => shown.iter().any(|message| message.flag("isFlagged")),
-        _ => true,
-    }
+    let now = crate::store::now_ms();
+    shown
+        .iter()
+        .copied()
+        .filter(|message| {
+            if parts
+                .get("account")
+                .is_some_and(|account| *account != message.account())
+            {
+                return false;
+            }
+            let kind = message
+                .folder()
+                .and_then(|id| folders.get(&offline::account_folder_key(message.account(), id)))
+                .map(String::as_str);
+            let snoozed = number(&message.json["snoozedThruDate"]).is_some_and(|date| date > now);
+            let active_inbox = !message.flag("archived") && !snoozed;
+            if let Some(id) = parts.get("folder") {
+                return message.folder() == Some(id) && (kind != Some("EfkInbox") || active_inbox);
+            }
+            let trash_junk = matches!(kind, Some("EfkTrash" | "EfkJunk"));
+            if let Some(label) = parts.get("label") {
+                return !trash_junk
+                    && message.json["labelIds"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(label)));
+            }
+            let status = message.json["statusId"].as_str();
+            match parts.get("view").copied() {
+                Some("inbox") => {
+                    active_inbox && message.folder().is_some() && kind.is_none_or(|kind| kind == "EfkInbox")
+                }
+                Some("flagged") => message.flag("isFlagged") && !trash_junk,
+                Some("drafts") => status == Some("ES_DRAFT") && !trash_junk,
+                Some("outbox") => matches!(status, Some("ES_SCHEDULED" | "ES_READY")),
+                Some("scheduled") => status == Some("ES_SCHEDULED"),
+                Some("sent") => kind == Some("EfkSent"),
+                Some("snoozed") => snoozed && !trash_junk,
+                Some("archive") => (message.flag("archived") || kind == Some("EfkArchive")) && !trash_junk,
+                Some("junk") => kind == Some("EfkJunk"),
+                Some("trash") => kind == Some("EfkTrash"),
+                Some("all") => !trash_junk,
+                _ => true,
+            }
+        })
+        .max_by_key(|message| (message.date(), &message.id))
 }

@@ -731,6 +731,23 @@ fn find_messages_views_threads_and_cursor() {
         "reading the thread marks nothing"
     );
     refused("get#Thread", &[("emailMessageId", text("NOPE"))], "not found");
+    // In a folder or an aggregate view, an empty reply draft has no recipients of its own.
+    set_message(
+        &facade,
+        "M8",
+        &[("bccAddresses", Value::Null), ("rootEmailMessageId", text("M1"))],
+    );
+    let folder_rows = ok(
+        "find#Messages",
+        &[("emailFolderId", text(&folder(&facade, &account, "EfkDrafts")))],
+    );
+    let draft_rows = ok("find#Messages", &[("view", text("drafts"))]);
+    for rows in [&folder_rows, &draft_rows] {
+        let row = &maps(rows, "threadList")[0];
+        assert_eq!(field(row, "emailMessageId"), "M8");
+        assert!(matches!(row.get("recipientList"), Some(Value::List(list)) if list.is_empty()));
+        assert!(matches!(row.get("participantList"), Some(Value::List(list)) if !list.is_empty()));
+    }
 }
 
 /// Filing: flags, folders, labels, snooze (and its return by the job), archive and trash, and the unread count.
@@ -1522,7 +1539,12 @@ fn a_due_send_is_claimed_before_its_session_and_goes_once() {
         assert_eq!(out_number(&ran, "failedCount"), 1, "{ran:?}");
     }
     assert_eq!(message_field(&facade, &uncertain, "statusId"), "ES_READY");
-    assert!(message_field(&facade, &uncertain, "sendError").contains("may have been sent"));
+    let error = message_field(&facade, &uncertain, "sendError");
+    assert!(
+        error.contains("may have been sent"),
+        "send error: {error}; SMTP accepted {} messages",
+        lock(&smtp.state).messages.len()
+    );
     assert_eq!(message_field(&facade, &held, "statusId"), "ES_SCHEDULED");
     assert_eq!(arrived(2), 2, "the server got it");
     lock(&smtp.state).data_reply_delay = Duration::ZERO;

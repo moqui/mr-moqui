@@ -9249,9 +9249,9 @@
     // move, Enter opens the selected row (the first by default) and Ctrl+Enter or Cmd+Enter opens it in a new tab.
     component("m-shell-palette", {
         name: "mShellPalette",
-        data() { return { text: "", remote: [], searching: false, selected: 0, seq: 0, timer: null, remoteKey: "" }; },
+        data() { return { text: "", remote: [], searching: false, selected: 0, seq: 0, timer: null, pendingEnter: null }; },
         template:
-            '<q-dialog :model-value="$root.paletteOpen" @update:model-value="$root.paletteOpen = $event" position="top" @show="onShow" @hide="onHide">' +
+            '<q-dialog :model-value="$root.paletteOpen" @update:model-value="$root.paletteOpen = $event" position="top" @show="onShow">' +
                 '<q-card id="m-palette" flat bordered class="m-palette column no-wrap">' +
                     '<div class="q-pa-sm"><m-text-line v-model="text" id="m-palette-input" name="paletteText" :placeholder="$root.labels.paletteHint" @keydown="onKey">' +
                         '<template v-slot:append><q-spinner v-if="searching" size="xs" color="grey-6"></q-spinner><q-icon v-else name="sym_o_search" size="xs"></q-icon></template>' +
@@ -9296,47 +9296,36 @@
             }
         },
         watch: {
-            query(next) { this.selected = 0; this.schedule(next); },
+            query: { flush: "sync", handler(next) { this.schedule(next); } },
             rows(list) { if (this.selected >= list.length) this.selected = 0; },
-            // each opening starts empty, also when the last one's hide was cut short (a row that changed the screen at once)
-            "$root.paletteOpen"(open) { if (open) this.onHide(); }
+            // Invalidate the search on dismissal, before the dialog finishes its transition.
+            "$root.paletteOpen": { flush: "sync", handler() { this.resetSearch(); this.text = ""; this.offlineSaid = false; } }
         },
+        beforeUnmount() { this.resetSearch(); },
         methods: {
             onShow() {
                 const input = root.document.getElementById("m-palette-input");
                 if (input && input.focus) input.focus();
             },
-            onHide() {
+            resetSearch() {
                 clearTimeout(this.timer);
+                this.timer = null;
                 this.seq += 1;
                 this.pendingEnter = null;
-                this.offlineSaid = false;
-                this.text = "";
                 this.remote = [];
-                this.remoteKey = "";
                 this.searching = false;
                 this.selected = 0;
             },
             // the provider groups of the text, 250 ms after it stops changing; an answer to an older text is dropped
             schedule(query) {
-                clearTimeout(this.timer);
-                this.timer = null;
-                this.pendingEnter = null;
+                this.resetSearch();
                 const wanted = query.text && (query.mode === "all" || query.mode === "sources") && (this.$root.paletteSources || []).length;
-                if (!wanted) {
-                    this.seq += 1;
-                    this.remote = [];
-                    this.remoteKey = "";
-                    this.searching = false;
-                    return;
-                }
-                const key = query.mode + "|" + query.groups.join(",") + "|" + query.text;
-                if (key === this.remoteKey) return;
+                if (!wanted || !this.$root.paletteOpen) return;
                 this.searching = true;
-                this.timer = setTimeout(() => { this.timer = null; this.search(query, key); }, 250);
+                this.timer = setTimeout(() => this.search(query), 250);
             },
-            search(query, key) {
-                this.seq += 1;
+            search(query) {
+                this.timer = null;
                 const seq = this.seq;
                 const params = { text: query.text, limit: String(palette.LIMIT) };
                 if (query.groups.length) params.groups = query.groups.join(",");
@@ -9344,12 +9333,13 @@
                     // an Enter that waited for this answer opens the first row now
                     const enter = this.pendingEnter;
                     this.pendingEnter = null;
-                    if (enter) this.$nextTick(() => this.open(this.rows[0], enter));
+                    if (enter) this.$nextTick(() => {
+                        if (seq === this.seq && this.$root.paletteOpen) this.open(this.rows[0], enter);
+                    });
                 };
                 moqui.request(this.$root.appRootPath + "/shellSearch", { params }).then((result) => {
                     if (seq !== this.seq) return;
                     this.searching = false;
-                    this.remoteKey = key;
                     this.remote = result.json && Array.isArray(result.json.groups) ? result.json.groups : [];
                     settled();
                 }, (err) => {
@@ -9368,6 +9358,12 @@
                 });
             },
             onKey(event) {
+                if (event.isComposing) {
+                    // Quasar dismisses dialogs on Escape keyup following a window keydown.
+                    if (event.key === "Escape") event.stopPropagation();
+                    return;
+                }
+                if (event.defaultPrevented) return;
                 const key = event.key;
                 if (key === "ArrowDown" || key === "ArrowUp") {
                     event.preventDefault();
@@ -9390,9 +9386,7 @@
                         this.pendingEnter = { ctrlKey: !!event.ctrlKey, metaKey: !!event.metaKey };
                         if (this.timer) {
                             clearTimeout(this.timer);
-                            this.timer = null;
-                            const query = this.query;
-                            this.search(query, query.mode + "|" + query.groups.join(",") + "|" + query.text);
+                            this.search(this.query);
                         }
                         return;
                     }

@@ -1390,25 +1390,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const number = Number(value)
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
-            const splitAddresses = (text) => {
-                const out = []
-                if (!text) return out
-                let current = '', quote = false, angle = 0
-                for (const ch of String(text)) {
-                    if (ch === '"') quote = !quote
-                    else if (ch === '<' && !quote) angle++
-                    else if (ch === '>' && !quote && angle > 0) angle--
-                    else if (ch === ',' && !quote && angle === 0) { if (current.trim()) out.push(current.trim()); current = ''; continue }
-                    current += ch
-                }
-                if (current.trim()) out.push(current.trim())
-                return out.map((entry) => {
-                    const match = /^(.*)<([^>]+)>\s*$/.exec(entry)
-                    if (!match) return {address: entry, name: null}
-                    const name = match[1].trim().replace(/^"(.*)"$/, '$1').trim()
-                    return {address: match[2].trim(), name: name || null}
-                })
-            }
+            const {splitAddresses, recipientsOf} = ec.resource.script('component://framework/service/org/moqui/mail/MessageAddresses.js')
             threadList = []
             hasMore = false
             nextBeforeDate = null
@@ -1751,9 +1733,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const snoozes = messages.map((message) => toMillis(message.snoozedThruDate)).filter((millis) => millis != null && millis > nowMillis)
                 // a message the account sends (a draft, one waiting, one sent) lists whom it goes to, its own To, Cc and Bcc,
                 // not the thread's people (COM-UI-028)
-                const outgoing = ['ES_DRAFT', 'ES_READY', 'ES_SCHEDULED', 'ES_SENT'].includes(shown.statusId)
-                const recipientList = outgoing ? [].concat(splitAddresses(shown.toAddresses), splitAddresses(shown.ccAddresses),
-                        splitAddresses(shown.bccAddresses)).filter((entry) => entry.address) : null
+                const recipientList = recipientsOf(shown)
                 const unreadCount = messages.filter((message) => message.isRead !== 'Y').length
                 return {store: 'email', threadId: threadId, rootEmailMessageId: threadId, lastEmailMessageId: last.emailMessageId,
                     emailMessageId: shown.emailMessageId, emailAccountId: shown.emailAccountId, emailFolderId: shown.emailFolderId ?? null,
@@ -3023,7 +3003,7 @@ along with this software (see the LICENSE.md file). If not, see
             in another thread), deleted (true when nothing of the thread is left that the user reaches), messages (the
             thread's messages now, each {emailMessageId, threadId, emailAccountId, emailFolderId, statusId, isRead,
             isFlagged, isAnswered, archived, archivedDate, snoozedThruDate, messageDate, subject, fromName, fromAddress,
-            snippet, hasAttachment, labelIds})}. The messages are the thread as it is when read, so the client replaces
+            snippet, hasAttachment, labelIds, recipientList (as in find#Messages, null for incoming mail)})}. The messages are the thread as it is when read, so the client replaces
             what it holds of the thread with them; a change read twice does no harm. A page holds about 20000 messages at
             most: it ends before a thread that would pass that, with more true, so no thread is cut.
 
@@ -3075,13 +3055,14 @@ along with this software (see the LICENSE.md file). If not, see
             const access = ec.service.sync().name('org.moqui.mail.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
             const readable = access.accountList.filter((account) => !account.isInternal).map((account) => account.emailAccountId)
+            const {recipientsOf} = ec.resource.script('component://framework/service/org/moqui/mail/MessageAddresses.js')
             const byThread = {}
             const toMessage = (row, thread) => ({emailMessageId: row.emailMessageId, threadId: thread, emailAccountId: row.emailAccountId,
                 emailFolderId: row.emailFolderId ?? null, statusId: row.statusId ?? null, isRead: row.isRead === 'Y', isFlagged: row.isFlagged === 'Y',
                 isAnswered: row.isAnswered === 'Y', archived: row.archivedDate != null, archivedDate: millis(row.archivedDate),
                 snoozedThruDate: millis(row.snoozedThruDate), messageDate: millis(row.messageDate), subject: row.subject ?? null,
                 fromName: row.fromName ?? null, fromAddress: row.fromAddress ?? null, snippet: row.snippet ?? null,
-                hasAttachment: row.hasAttachment === 'Y', labelIds: []})
+                hasAttachment: row.hasAttachment === 'Y', labelIds: [], recipientList: recipientsOf(row)})
             const readThreads = (threads) => {
                 // whole threads only: no limit, a chunk of threads at a time
                 const found = Array.from(ec.entity.find(MESSAGE).condition('emailAccountId', 'in', readable).condition(cf.makeCondition([
@@ -3089,6 +3070,7 @@ along with this software (see the LICENSE.md file). If not, see
                         .selectField('emailMessageId').selectField('rootEmailMessageId').selectField('emailAccountId').selectField('emailFolderId')
                         .selectField('statusId').selectField('isRead').selectField('isFlagged').selectField('isAnswered').selectField('archivedDate')
                         .selectField('snoozedThruDate').selectField('messageDate').selectField('subject').selectField('fromName').selectField('fromAddress')
+                        .selectField('toAddresses').selectField('ccAddresses').selectField('bccAddresses')
                         .selectField('snippet').selectField('hasAttachment').orderBy('messageDate').orderBy('emailMessageId').disableAuthz().list())
                 const messages = found.map((row) => toMessage(row, row.rootEmailMessageId || row.emailMessageId))
                 const labelsOf = {}

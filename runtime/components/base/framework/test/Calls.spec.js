@@ -479,12 +479,26 @@ feature("a call whose media server stopped ends with that reason", {
 
 feature("a room's group call: members join, a non-member cannot, the host's leaving keeps it, the last leg ends it", {
     when() {
+        const agent = "CALLS_SPEC_AGENT", blocker = "CALLS_SPEC_BLOCKER"
+        makeUser(agent)
+        makeUser(blocker)
         ec.user.internalLoginUser("calls.spec.a")
         room = sys(() => ec.service.sync().name("org.moqui.chat.ChatServices.create#Room")
-            .parameters({roomTypeEnumId: "CrtPrivate", roomName: "Calls spec", memberUserIdList: [B, C]}).call()).chatRoomId
+            .parameters({roomTypeEnumId: "CrtPrivate", roomName: "Calls spec", memberUserIdList: [B, C, D, agent, blocker]}).call()).chatRoomId
         ec.message.clearErrors()
+        sys(() => {
+            ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId: room, userId: D}).updateAll({leftDate: ec.user.nowTimestamp})
+            ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId: room, userId: agent}).updateAll({roleEnumId: "CmrAgent"})
+            const actor = ec.entity.makeValue("moqui.chat.ChatActor")
+            actor.setSequencedIdPrimary()
+            actor.set("kindEnumId", "CakExternal").create()
+            ec.entity.makeValue("moqui.chat.ChatRoomMember").setAll({chatRoomId: room, chatActorId: actor.chatActorId, roleEnumId: "CmrMember"}).create()
+        })
+        const block = as(blocker, "org.moqui.chat.ChatBlockServices.block#ChatUser", {blockedUserId: A})
         const started = as(A, "start#Call", {chatRoomId: room})
         const id = started.callSessionId
+        const offered = started.call.participants.filter(p => p.ringing).map(p => p.userId).sort()
+        as(blocker, "org.moqui.chat.ChatBlockServices.unblock#ChatUser", {blockedUserId: A})
         const again = as(B, "start#Call", {chatRoomId: room})
         const outsider = as(D, "join#Call", {callSessionId: id})
         const outsiderStart = as(D, "start#Call", {chatRoomId: room})
@@ -494,9 +508,11 @@ feature("a room's group call: members join, a non-member cannot, the host's leav
         const hostLeft = as(A, "leave#Call", {callSessionId: id})
         const bLeft = as(B, "leave#Call", {callSessionId: id})
         const cLeft = as(C, "leave#Call", {callSessionId: id})
-        return {started, again, outsider, outsiderStart, b, c, notHost, hostLeft, bLeft, cLeft, row: session(id)}
+        return {started, offered, block, again, outsider, outsiderStart, b, c, notHost, hostLeft, bLeft, cLeft, row: session(id)}
     },
-    then({started, again, outsider, outsiderStart, b, c, notHost, hostLeft, bLeft, cLeft, row}) {
+    then({started, offered, block, again, outsider, outsiderStart, b, c, notHost, hostLeft, bLeft, cLeft, row}) {
+        block.errors == ""
+        offered == [B, C]
         started.call.kind == "group"
         started.call.status == "active"
         again.reasonCode == "callActive"

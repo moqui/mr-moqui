@@ -1439,12 +1439,247 @@ test("one action list (COM-UI-035): the sheet, the More menu and a right click o
         assert.ok(!eventOf(vm, 5).reactions.some((reaction) => reaction.mine), "no reaction from the click after it");
         chip.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
         await closed(await until(() => document.querySelector(".m-chat-people"), "who reacted by the keyboard"), "who reacted");
+        chip.click(); // the key's click is consumed
         eventOf(vm, 5).reactions = [];
     } finally {
         moqui.ext.items = priorItems;
         answers["/apps/BasicComms/Chat/timeline"] = priorTimeline;
         vm.prefs.recordLink = priorPrefs.recordLink;
         vm.prefs.readReceipts = priorPrefs.readReceipts;
+    }
+});
+
+test("a reader can inspect reactions and named votes without changing them, including in a closed poll and the Reactions pane", async () => {
+    const vm = await openRoom();
+    const event = eventOf(vm, 5);
+    const access = vm.access.canPost, caps = vm.room.bridgeCapabilities;
+    const poll = event.poll, reactions = event.reactions, notify = moqui.notifyMessages;
+    const messages = [], changed = () => host.added.filter(op => op.kind === "poll-vote" || op.kind === "chat-react").length;
+    const before = changed();
+    const show = async (el) => {
+        el.click();
+        const dialog = await until(() => document.querySelector(".m-chat-people [data-person='bob']")?.closest(".m-chat-people"), "Bob in the names");
+        assert.ok(moqui.back.pop());
+        await until(() => !dialog.isConnected, "the names to close");
+    };
+    const option = () => vm.$el.querySelector('.m-chat-msg[data-seq="5"] [data-option="1"]');
+    const chip = () => vm.$el.querySelector('.m-chat-msg[data-seq="5"] .m-chat-reaction');
+    try {
+        moqui.notifyMessages = (infos) => messages.push(...infos);
+        event.poll = { question: "Lunch?", closed: true, options: [{ id: 1, text: "Soup", voteCount: 1, voterIds: ["bob"] }] };
+        event.reactions = [{ key: "👍", mine: false, count: 1, userIds: ["bob"] }];
+        await Vue.nextTick();
+        await show(option()); // closed even for a writer
+        vm.access.canPost = false;
+        event.poll.closed = false;
+        await Vue.nextTick();
+        await show(option());
+        await show(chip());
+        event.poll.anonymous = true;
+        await Vue.nextTick();
+        option().click();
+        assert.ok(messages.some(info => info.message === "This poll is anonymous"));
+        assert.ok(!vm.peopleBox.open);
+        vm.access.canPost = true;
+        vm.room.bridgeCapabilities = { reaction: false };
+        await Vue.nextTick();
+        await show(chip());
+        assert.equal(changed(), before);
+        assert.ok(!event.reactions[0].mine && !event.poll.options[0].mine);
+        vm.room.bridgeCapabilities = { reaction: true };
+        event.poll.anonymous = false;
+        await Vue.nextTick();
+        const start = host.added.length;
+        option().click(); chip().click();
+        await until(() => changed() === before + 2, "a writer's taps queue one vote and one reaction");
+        assert.deepEqual(host.added.slice(start).map(op => op.kind).sort(), ["chat-react", "poll-vote"]);
+        for (const op of host.added.slice(start)) drop(op.id);
+        tell();
+        vm.side = "reactions";
+        vm.tabs.reactions.list = [{ eventSeq: 5, senderUserId: "bob", snippet: "a reaction", reactions: event.reactions }];
+        await Vue.nextTick();
+        await show(vm.$el.querySelector(".m-chat-reacted [data-key]"));
+        assert.equal(vm.side, "reactions", "a chip keeps the list open");
+        vm.$el.querySelector(".m-chat-reacted .q-item__label").click();
+        await until(() => vm.highlightSeq === 5, "the rest of the row opens the message");
+    } finally {
+        event.poll = poll; event.reactions = reactions;
+        vm.access.canPost = access; vm.room.bridgeCapabilities = caps;
+        moqui.notifyMessages = notify; vm.side = null;
+    }
+});
+
+test("Voice and Video disclose whom they invite, and room settings reconcile per room and choice", async () => {
+    await open("/qapps/BasicComms/Inbox/Mail", "mail");
+    const oldCall = moqui.call, oldRequest = moqui.request, oldNotify = moqui.notifyMessages, oldError = moqui.handleAjaxError;
+    const calls = [], writes = [], messages = [], refusals = [];
+    const refusedSetting = { status: 409 };
+    const phone = { chatRoomId: "R-phone", roomTypeEnumId: "CrtExternal", displayName: "+15550101000", isMember: true,
+        lastEventSeq: 6, lastMessage: { eventSeq: 6 }, archivedEventSeq: null, isMuted: false, isPinned: false };
+    const chatData = "/apps/BasicComms/Chat/chatData", roomView = "/apps/BasicComms/Chat/roomView";
+    const oldRooms = answers[chatData], oldView = answers[roomView];
+    const panelOptions = root.chatPanel, refresh = panelOptions.methods.refresh;
+    let panel;
+    const heldReads = new Map();
+    const holdRead = path => {
+        let reply;
+        const response = new Promise(resolve => { reply = json => resolve({ json }); });
+        heldReads.set(path, response);
+        return reply;
+    };
+    try {
+        moqui.call = Object.assign({}, oldCall, { startCall: (params) => calls.push(params) });
+        moqui.notifyMessages = (infos) => messages.push(...infos);
+        moqui.handleAjaxError = error => error === refusedSetting ? refusals.push(error) : oldError(error);
+        moqui.request = (url, options) => {
+            if (String(url).endsWith("/setNotification"))
+                return new Promise((resolve, reject) => writes.push({ params: options.params, reply: json => resolve({ json }), refuse: () => reject(refusedSetting) }));
+            const path = String(url).split("/").pop();
+            if (!heldReads.has(path)) return oldRequest(url, options);
+            const response = heldReads.get(path);
+            heldReads.delete(path);
+            return response;
+        };
+        const vm = await openRoom();
+        const oldAccess = vm.access.canPost, oldRoom = vm.room;
+        vm.room = Object.assign({}, oldRoom, { roomTypeEnumId: "CrtDirect", displayName: "Bob" });
+        await Vue.nextTick();
+        const voice = vm.$el.querySelector(".m-chat-voice-call");
+        assert.ok(voice, JSON.stringify({ canCall: vm.canCall, compact: vm.compact, callees: vm.callees, calls: moqui.config.calls, access: vm.access }));
+        assert.ok(voice.getAttribute("aria-description").includes("Bob"), voice.outerHTML);
+        voice.click();
+        vm.room.encrypted = true;
+        await Vue.nextTick();
+        vm.$el.querySelector(".m-chat-video-call").click();
+        assert.deepEqual(calls, [{ chatRoomId: "R1", video: false }, { chatRoomId: "R1", video: true, requireE2ee: true }]);
+        vm.room = oldRoom;
+        await Vue.nextTick();
+        assert.ok(vm.$el.querySelector(".m-chat-video-call").getAttribute("aria-description").includes("eligible members"), vm.callAudience);
+        vm.access.canPost = false;
+        await Vue.nextTick();
+        assert.equal(vm.$el.querySelector(".m-chat-voice-call"), null);
+        vm.access.canPost = oldAccess;
+        const members = vm.members;
+        vm.members = [{ userId: "ann" }, { userId: "agent", isAgent: true }, { chatActorId: "remote", external: true }];
+        await Vue.nextTick();
+        assert.equal(vm.$el.querySelector(".m-chat-video-call"), null, "a room with no other local person has no call button");
+        vm.members = members;
+        const metaReply = holdRead("room"), viewReply = holdRead("roomView");
+        const metadata = vm.reloadMeta(), fullView = vm.load();
+        const fullArchive = vm.toggleArchive();
+        (await until(() => writes[0], "the full room archive")).reply({ archivedEventSeq: 5 });
+        await fullArchive;
+        assert.equal(vm.member.archivedEventSeq, 5);
+        assert.equal(vm.archivedByMe, false, "message 6 is beyond the server watermark");
+        const older = oldView({ chatRoomId: "R1" });
+        older.room = { ...older.room, topic: "A changed topic" };
+        older.member = { ...older.member, archivedEventSeq: null, isMuted: true };
+        older.memberList.push({ userId: "cy", name: "Cy" });
+        metaReply(older);
+        await metadata;
+        assert.equal(vm.member.archivedEventSeq, 5, "the older room read keeps the confirmed archive");
+        assert.ok(vm.member.isMuted && vm.room.topic === "A changed topic" && vm.members.some(person => person.userId === "cy"));
+        viewReply({ ...older, member: { ...older.member, isPinned: true } });
+        await fullView;
+        assert.equal(vm.member.archivedEventSeq, 5, "the older full view also keeps the confirmed archive");
+        assert.ok(vm.member.isPinned);
+        const freshReply = holdRead("room"), freshMetadata = vm.reloadMeta();
+        freshReply(older);
+        await freshMetadata;
+        assert.equal(vm.member.archivedEventSeq, null, "a read started after confirmation can change the archive");
+        vm.room = Object.assign({}, vm.room, { lastMessageSeq: 10 });
+        vm.member.archivedEventSeq = 9;
+        assert.equal(vm.archivedByMe, false, "a newer message outside the loaded page also brings the room back");
+        const delayed = vm.toggleArchive();
+        const pending = await until(() => writes[1], "the delayed room archive");
+        const nextChat = await open("/qapps/BasicComms/Chat?chatRoomId=R3", "chat");
+        const next = await until(() => nextChat.$refs.room?.roomId === "R3" && nextChat.$refs.room.state === "ready" && nextChat.$refs.room, "another open room");
+        const nextWatermark = next.member.archivedEventSeq;
+        pending.reply({ archivedEventSeq: 9 });
+        await delayed;
+        assert.equal(next.member.archivedEventSeq, nextWatermark, "an old room response cannot change the next room");
+        writes.length = 0;
+        answers[chatData] = params => Object.assign({}, oldRooms(params), { roomList: [clone(phone), clone(room)] });
+        answers[roomView] = params => {
+            const view = oldView(params);
+            return Object.assign({}, view, { room: Object.assign({}, view.room, { bridged: true, encrypted: false }) });
+        };
+        panelOptions.methods.refresh = function () { panel = this; return refresh.call(this); };
+        root.goHome();
+        const phoneRow = await until(() => document.querySelector(".m-chat-home [data-room='R-phone']"), "the phone room on the home list");
+        assert.equal(phoneRow.querySelector(".q-avatar .q-icon").textContent.trim(), "sms", "the home row uses the phone room icon");
+        const row = () => panel.rooms.find(item => item.chatRoomId === phone.chatRoomId);
+        const pin = panel.roomAction(row(), "pin"), archive = panel.roomAction(row(), "archive");
+        await until(() => writes.length === 2, "independent room settings");
+        assert.ok(panel.isArchived(row()) && row().isPinned, JSON.stringify(row()));
+        assert.equal(messages.filter(info => info.message === "Conversation archived").length, 0);
+        await panel.refresh();
+        assert.ok(row().isPinned && panel.isArchived(row()), "the optimistic choices survive a replacement room row");
+        const listReply = holdRead("chatData");
+        const oldList = panel.refresh();
+        const staleRooms = oldRooms({});
+        phone.archivedEventSeq = 7;
+        writes[1].reply({ archivedEventSeq: 7, isPinned: false });
+        await archive;
+        writes[0].refuse();
+        await pin;
+        listReply(staleRooms);
+        await oldList;
+        assert.equal(row().archivedEventSeq, 7, "an older refresh cannot replace the confirmed watermark");
+        assert.equal(row().isPinned, false);
+        assert.equal(messages.filter(info => info.message === "Conversation archived").length, 1);
+        const beforeMessage = holdRead("chatData"), delayedList = panel.refresh();
+        const oldRows = answers[chatData]({});
+        panel.onEvent({ chatRoomId: phone.chatRoomId, event: message(8, "Later") });
+        beforeMessage(oldRows);
+        await delayedList;
+        assert.ok(!panel.isArchived(row()), "a later message brings the room back");
+        assert.equal(row().lastMessage.snippet, "Later", "an earlier list snapshot keeps the socket message");
+        const mute = panel.roomAction(row(), "mute");
+        const refused = panel.roomAction(row(), "archive");
+        await until(() => writes.length === 4, "mute and another archive");
+        writes[2].reply({ isMuted: true, archivedEventSeq: null });
+        writes[3].refuse();
+        await Promise.all([mute, refused]);
+        assert.equal(row().archivedEventSeq, 7);
+        assert.equal(row().isMuted, true);
+        assert.equal(messages.filter(info => info.message === "Conversation archived").length, 1, "refusal has no success notice");
+        const first = panel.roomAction(row(), "pin"), later = panel.roomAction(row(), "pin");
+        const beforePin = holdRead("chatData"), pinRead = panel.refresh(), stalePin = answers[chatData]({});
+        phone.isPinned = true;
+        (await until(() => writes[4], "the first pin")).reply({ isPinned: true });
+        await first;
+        beforePin(stalePin);
+        await pinRead;
+        assert.equal(row().isPinned, false, "the later choice is still shown");
+        (await until(() => writes[5], "the later unpin")).refuse();
+        await later;
+        assert.equal(row().isPinned, true, "refusal restores the last confirmed value");
+        const pendingArchive = panel.roomAction(row(), "archive");
+        const write = await until(() => writes[6], "another archive request");
+        phone.archivedEventSeq = 12;
+        await panel.refresh();
+        assert.equal(row().archivedEventSeq, 8, "the pending archive stays visible during refresh");
+        write.refuse();
+        await pendingArchive;
+        assert.equal(row().archivedEventSeq, 12, "a refusal restores the watermark refreshed from another device");
+        assert.equal(refusals.length, 4, "each settings refusal reached the error handler");
+
+        panel.openRoom("R1");
+        const more = await until(() => document.querySelector(".m-chat-panel [aria-label='Room']"), "the compact room menu");
+        for (const kind of ["voice", "video"]) {
+            more.click();
+            const item = await until(() => document.querySelector(".q-menu .m-chat-" + kind + "-call"), "the compact " + kind + " action");
+            assert.ok(item.textContent.includes("members on this server only"), item.textContent);
+            item.click();
+            await until(() => !item.isConnected, "the compact menu to close");
+        }
+        assert.deepEqual(calls.slice(2), [{ chatRoomId: "R1", video: false }, { chatRoomId: "R1", video: true }]);
+        panel.closeRoom();
+    } finally {
+        panelOptions.methods.refresh = refresh;
+        answers[chatData] = oldRooms; answers[roomView] = oldView;
+        moqui.call = oldCall; moqui.request = oldRequest; moqui.notifyMessages = oldNotify; moqui.handleAjaxError = oldError;
     }
 });
 

@@ -222,6 +222,57 @@ feature("revoking the device key deletes its registration, and renewing the key 
     }
 })
 
+feature("a call rings its callee’s registered phone and socket only after its transaction commits", {
+    when() {
+        const calls = "org.moqui.call.CallServices."
+        const node = "pushdevice-spec-call-node"
+        const token = TOKEN_PREFIX + "transaction"
+        setConf("push/fcm@service-account", ACCOUNT)
+        setConf("push/fcm@base-url", FCM_BASE)
+        const registration = register(token, deviceKey("Transaction phone").key)
+        sys(() => call(calls + "register#MediaNode", {instanceId: node, mediaAddress: "127.0.0.1:10000"}))
+        ec.user.internalLoginUser("pushdevice.spec.other")
+        http.enable()
+        http.add(tokenAnswer)
+        http.add(fcmAnswer(200, {name: "projects/demo-project/messages/transaction"}))
+        const capture = ec.factory.getTool("NotificationCapture")
+        capture.enable()
+        capture.clear()
+        const phones = () => http.requests().filter(request => request.url === SEND_URL)
+            .map(request => JSON.parse(request.body).message).filter(message => message.token === token && message.data.kind === "ring")
+        const sockets = () => capture.getMessages("chatUser:" + JOHN).map(row => typeof row.message === "string" ? JSON.parse(row.message) : row.message)
+            .filter(message => message.action === "ring")
+        const start = () => sys(() => call(calls + "start#Call", {calleeUserIdList: [JOHN], video: false})).callSessionId
+        let rolledBack, committed
+        try {
+            const began = ec.transaction.begin(null)
+            try { rolledBack = start() }
+            finally { ec.transaction.rollback(began, "Roll back the call start", null) }
+            const drainedRollback = ec.factory.waitWorkerPoolEmpty(50)
+            const rollbackRings = {phones: phones().length, sockets: sockets().length}
+            const session = sys(() => ec.entity.find("moqui.call.CallSession").condition("callSessionId", rolledBack).one())
+            committed = start()
+            const drainedCommit = ec.factory.waitWorkerPoolEmpty(50)
+            return {registered: registration.json.registered, rolledBack, session, drainedRollback, rollbackRings,
+                committed, drainedCommit, phones: phones(), sockets: sockets()}
+        } finally {
+            capture.disable()
+            capture.clear()
+            if (committed) sys(() => call(calls + "end#Call", {callSessionId: committed}))
+            ec.factory.waitWorkerPoolEmpty(50)
+            sys(() => ec.entity.find("moqui.call.CallMediaNode").condition("instanceId", node).deleteAll())
+        }
+    },
+    then({registered, rolledBack, session, drainedRollback, rollbackRings, committed, drainedCommit, phones, sockets}) {
+        registered === true
+        rolledBack != null && session == null && drainedRollback
+        rollbackRings.phones === 0 && rollbackRings.sockets === 0
+        committed != null && drainedCommit
+        phones.length === 1 && phones[0].data.callSessionId === committed
+        sockets.length === 1 && sockets[0].callSessionId === committed
+    }
+})
+
 feature("a ring goes to FCM as a high-priority data message, and a token FCM answers UNREGISTERED is disabled", {
     when() {
         setConf("push/fcm@service-account", ACCOUNT)

@@ -191,6 +191,23 @@ test("mail actions follow mailbox rights, the message's folder, server refusals 
         await settle();
         assert.deepEqual(mail.selectedKeys, ["email:two"]);
         assert.equal(navigation.length, moves, "the archive of the previous message did not move the open pane");
+
+        // The displayed draft has different recipients from the thread it replies to or forwards.
+        const draft = (id, fields) => Object.assign(row(id, null), { statusId: "ES_DRAFT", folderKindEnumId: "EfkDrafts",
+            messageCount: 2, participantList: [{ name: "Prior correspondent" }] }, fields);
+        rows.splice(0, rows.length, draft("empty", { recipientList: [] }), draft("bcc", { recipientList: [{ address: "blind@example.org" }] }),
+            draft("old-cache", {}), draft("received", { statusId: "ES_RECEIVED", recipientList: null, fromName: "Latest sender" }));
+        for (const params of [{ view: "drafts" }, { account: "A", folder: "DF" }]) {
+            mail.$root.currentParameters = params;
+            await settle();
+            await mail.loadList(true);
+            await Vue.nextTick();
+            const summary = (id) => el.querySelector('[aria-label^="' + id + '. "]').getAttribute("aria-label");
+            assert.equal(summary("empty"), "empty. No recipients. 2 messages");
+            assert.equal(summary("bcc"), "bcc. To: blind. 2 messages");
+            assert.equal(summary("old-cache"), "old-cache. Recipients unavailable. 2 messages");
+            assert.equal(summary("received"), "received. Prior correspondent, Latest sender. 2 messages");
+        }
     } finally {
         moqui.notifyMessages = notices;
         app.unmount();

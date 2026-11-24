@@ -11409,7 +11409,7 @@
               }, 8, ["model-value", "onUpdate:modelValue", "title"]))
             }
         } },
-        "m-shell-palette": { hash: "e4f4e679", make: function (Vue) {
+        "m-shell-palette": { hash: "da0939d1", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, withCtx: _withCtx, createVNode: _createVNode, createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -11429,8 +11429,7 @@
                 "model-value": _ctx.$root.paletteOpen,
                 "onUpdate:modelValue": $event => (_ctx.$root.paletteOpen = $event),
                 position: "top",
-                onShow: _ctx.onShow,
-                onHide: _ctx.onHide
+                onShow: _ctx.onShow
               }, {
                 default: _withCtx(() => [
                   _createVNode(_component_q_card, {
@@ -11582,7 +11581,7 @@
                   })
                 ]),
                 _: 1
-              }, 8, ["model-value", "onUpdate:modelValue", "onShow", "onHide"]))
+              }, 8, ["model-value", "onUpdate:modelValue", "onShow"]))
             }
         } },
         "m-shell-quick-create": { hash: "dca2cdd9", make: function (Vue) {
