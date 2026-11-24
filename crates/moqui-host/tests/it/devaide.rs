@@ -39,6 +39,11 @@ const SITE_SERVICES: &str = r#"<services>
     </service>
 </services>
 "#;
+const SITE_LIBRARIES: &str = r#"{"output": "screen/my-site/libs", "projects": ["libraries"], "libraries": [
+    {"id": "note", "entry": "note", "targets": ["client", "server"]}, {"id": "secret", "entry": "secret", "targets": ["server"]}]}"#;
+const SITE_LIBRARY_MANIFEST: &str = r#"{"libraries": [
+    {"id": "note", "files": [{"target": "client", "path": "note.js"}, {"target": "server", "path": "note.js"}]},
+    {"id": "secret", "files": [{"target": "server", "path": "secret.js"}]}]}"#;
 const UPSTREAM_COMPONENT: &str = r#"<component name="upstream-app"/>"#;
 const UPSTREAM_SERVICES: &str = "<services>\n    <service verb=\"run\" noun=\"Up\"/>\n</services>\n";
 
@@ -145,6 +150,24 @@ fn the_workspace_saves_checks_commits_and_publishes() {
     let files = [
         ("components/addon/my-site/component.xml", SITE_COMPONENT),
         ("components/addon/my-site/service/mysite/Things.xml", SITE_SERVICES),
+        // a component library, built: a client and a server file of `note`, and a server-only `secret`
+        ("components/addon/my-site/build/js-build.json", SITE_LIBRARIES),
+        (
+            "components/addon/my-site/screen/my-site/libs/MANIFEST.json",
+            SITE_LIBRARY_MANIFEST,
+        ),
+        (
+            "components/addon/my-site/screen/my-site/libs/note.js",
+            "/* the note client bundle */",
+        ),
+        (
+            "components/addon/my-site/screen/my-site/libs/secret.js",
+            "/* not a client file */",
+        ),
+        (
+            "components/addon/my-site/script/libs/note.js",
+            "/* the note server module */",
+        ),
         ("components/addon/upstream-app/component.xml", UPSTREAM_COMPONENT),
         ("components/addon/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
     ];
@@ -228,6 +251,27 @@ fn the_workspace_saves_checks_commits_and_publishes() {
         ),
     );
     assert!(answer.contains("Invalid library argument"), "{answer}");
+    // /clientLibrary serves only a client file the component's manifest lists, to anyone
+    let client_library =
+        |path: &str| crate::common::exchange(address, &crate::common::http_request("GET", path, &[], ""));
+    let (status, _, body) = client_library("/clientLibrary/my-site/note");
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("the note client bundle"), "{body}");
+    for refused in [
+        "/clientLibrary/my-site/secret",
+        "/clientLibrary/my-site/nope",
+        "/clientLibrary/upstream-app/note",
+        "/clientLibrary/no-such/note",
+        "/clientLibrary/my-site/note.js",
+        "/clientLibrary/..%2Fmy-site/note",
+    ] {
+        let (status, _, body) = client_library(refused);
+        assert_eq!(status, 404, "{refused}: {body}");
+        assert!(
+            !body.contains("client bundle") && !body.contains("client file"),
+            "{refused}: {body}"
+        );
+    }
     let file = call(
         &factory,
         "john.doe",

@@ -32,31 +32,60 @@ export function outputDir(fallback) {
   return resolve(process.env.JS_OUTPUT || fallback);
 }
 
-// Node skips finally blocks when a signal ends it. Remove the temporary trees here too, or each interrupted run would
-// leave its installed trees in target/js and a staged tree beside the served directory.
+// Node skips finally blocks when a signal ends it, and the build is synchronous, so a handler runs only once it
+// returns. Remove the temporary trees in both cases, or each interrupted run would leave its installed trees in
+// target/js and a staged tree beside the served directory. Then end by that signal, as its default action would: a
+// calling shell stops its loop over the components only for a child the signal ended (bash's SIGINT rule).
 const temporary = new Set();
-for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
-  process.on(signal, () => {
-    for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
-    process.exit(code);
-  });
+const signals = [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]];
+function endBy(signal, code) {
+  for (const dir of temporary) rmSync(dir, { recursive: true, force: true });
+  temporary.clear();
+  for (const [name] of signals) process.removeAllListeners(name);
+  process.kill(process.pid, signal);
+  process.exit(code);
+}
+for (const [signal, code] of signals) process.on(signal, () => endBy(signal, code));
+
+// The signal that ended the child process an error (or one of its causes) came from: npm or esbuild got the Ctrl-C
+// too, and execFileSync turned its end into an exception.
+function childSignal(error) {
+  for (let item = error, depth = 0; item && depth < 8; item = item.cause, depth++) {
+    const found = signals.find(([name, code]) => item.signal === name || item.status === code);
+    if (found) return found;
+  }
+  return null;
 }
 
 /// Run build(work) in a fresh work directory under JS_CACHE, removed afterwards (also on a signal) unless --work
-/// named it.
+/// named it. build may return a promise; the tree is removed when it settles.
 export function withWork(workArg, build) {
   const work = workArg ? resolve(workArg) : mkdtempSync(join(process.env.JS_CACHE || tmpdir(), 'build-'));
   if (!workArg) temporary.add(work);
+  const clean = () => {
+    if (workArg) return;
+    rmSync(work, { recursive: true, force: true });
+    temporary.delete(work);
+  };
+  const failed = (error) => {
+    clean();
+    const signal = childSignal(error);
+    if (signal) endBy(...signal);
+    throw error;
+  };
+  let result;
   try {
     if (workArg && existsSync(work) && readdirSync(work).length) throw new Error(`work directory ${work} is not empty`);
     mkdirSync(work, { recursive: true });
-    return build(work);
-  } finally {
-    if (!workArg) {
-      rmSync(work, { recursive: true, force: true });
-      temporary.delete(work);
-    }
+    result = build(work);
+  } catch (error) {
+    failed(error);
   }
+  if (result && typeof result.then === 'function') {
+    return result.then((value) => { clean(); return value; }, failed);
+  }
+  clean();
+  return result;
 }
 
 /// Install one npm project into its own directory of the run's work tree, from its committed lock with lifecycle

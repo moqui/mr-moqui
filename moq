@@ -162,14 +162,14 @@ save-db|Database|[name]|Save the embedded database and OpenSearch data to runtim
 reload-save|Database|[name]|clean-db, then restore a save-db copy
 clean-db|Database||Delete the embedded database, txlog, and OpenSearch data
 clean-log|Database||Delete the files in runtime/log
-build-js|JavaScript|[--force] [--offline]|Build verified component JavaScript libraries
-verify-js|JavaScript||Rebuild from the locks and compare to the manifest
-add-js|JavaScript|prepare or apply|Review and install a component library
-update-js|JavaScript|<lib> <version> or --all|Update reviewed npm dependencies
-outdated-js|JavaScript||Check available package updates
-audit-js|JavaScript||Audit locks and bundled libraries
+build-js|JavaScript|[--force] [--offline] [component...]|Build verified component JavaScript libraries
+verify-js|JavaScript|[component...]|Rebuild from the locks and compare to the manifest
+add-js|JavaScript|list, search, versions, prepare or apply|Review and install a component library
+update-js|JavaScript|[--component name] <lib> <version> or --all|Update reviewed npm dependencies
+outdated-js|JavaScript|[component...]|Check available package updates
+audit-js|JavaScript|[component...]|Audit locks and bundled libraries
 fonts-download|JavaScript|[pack...] [--list] [--remove pack]|Select optional font packs
-clean-js|JavaScript||Remove generated webroot libraries
+clean-js|JavaScript||Remove the generated JavaScript libraries of every component
 clean|Database||Tidy old cargo artifacts, keeping the current build
 clean-dev|Database||Reset the local instance data, keeping build output
 clean-all|Database|[--yes]|Reset instance data and remove build output after confirmation

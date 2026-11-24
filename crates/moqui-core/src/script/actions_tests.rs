@@ -196,7 +196,10 @@ fn the_ignore_attribute_is_an_expression() {
     .unwrap();
     assert!(script.contains("!!(!statusId && !strictAll)"), "{script}");
     assert!(script.contains("!!(skipDates)"), "{script}");
-    assert!(script.contains(r#".condition("partyId", "equals", partyId)"#), "{script}");
+    assert!(
+        script.contains(r#".condition("partyId", "equals", partyId)"#),
+        "{script}"
+    );
 }
 
 #[test]
@@ -609,8 +612,14 @@ fn a_generic_finds_search_form_takes_no_condition_on_an_encrypted_field() -> Res
         r#"<actions><entity-find entity-name="${aen}" list="generic"><search-form-inputs paginate="false"/></entity-find>
             <entity-find entity-name="moqui.entity.sync.EntitySync" list="own"><search-form-inputs paginate="false"/></entity-find></actions>"#,
     )?;
-    assert!(eval_condition("generic.length === 1")?, "a generic find ignores the condition");
-    assert!(eval_condition("own.length === 0")?, "a screen's own find takes the equals");
+    assert!(
+        eval_condition("generic.length === 1")?,
+        "a generic find ignores the condition"
+    );
+    assert!(
+        eval_condition("own.length === 0")?,
+        "a screen's own find takes the equals"
+    );
     clear_context_stack();
     Ok(())
 }
@@ -744,7 +753,9 @@ fn open_facade() -> EntityFacade {
 }
 
 /// An inert module (`parse::module_is_inert`) loaded twice in one run is the same value, its functions made once; a
-/// module with a memo at its top level is made again at each load.
+/// module with a memo at its top level is made again at each load. A component library's server module (the builder's
+/// marker line, in a `script/libs` directory) is kept too, though its top level is a call; the same text elsewhere, or
+/// without the marker, is not.
 #[test]
 fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
     let ctx = ExecutionContextFactory::test_context();
@@ -752,6 +763,7 @@ fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
     clear_context_stack();
     let dir = std::env::temp_dir().join(format!("moqui-script-modules-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    let library = "/* moqui component library fixture/twice */\n(() => {\nvar libraryExports = (() => ({twice: n => n * 2}))();\nreturn libraryExports;\n})()\n";
     for (name, text, kept) in [
         ("Inert.js", "function twice(n) { return n * 2 }\n({twice})\n", true),
         (
@@ -759,8 +771,12 @@ fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
             "let memo = null\nfunction twice(n) { return n * 2 }\n({twice})\n",
             false,
         ),
+        ("script/libs/twice.js", library, true),
+        ("Library.js", library, false),
+        ("script/libs/unmarked.js", library.split_once('\n').unwrap().1, false),
     ] {
         let file = dir.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, text).unwrap();
         set_context_name("where", Value::string(file.to_string_lossy())).unwrap();
         run_actions(
@@ -821,7 +837,9 @@ fn actions_generated_apart_are_generated_by_the_walker() {
 /// either engine.
 #[test]
 fn actions_generated_apart_keep_the_callers_deadline() {
-    let sets: String = (0..2000).map(|index| format!("<set field=\"f{index}\" value=\"{index}\"/>")).collect();
+    let sets: String = (0..2000)
+        .map(|index| format!("<set field=\"f{index}\" value=\"{index}\"/>"))
+        .collect();
     let xml = format!("<actions>{sets}</actions>");
     let late = {
         let _deadline = crate::script::DeadlineGuard::new(Some(std::time::Duration::ZERO));

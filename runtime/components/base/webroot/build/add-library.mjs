@@ -52,6 +52,7 @@ async function prepare() {
       !['client','server','both'].includes(target)) throw new Error('Expected <id> <npm-entry> <exact-version> <client|server|both>');
   const pkg = packageOf(entry);
   const info = await registry('/' + encodeURIComponent(pkg));
+  if (!info.versions?.[version]) throw new Error('No release ' + version + ' of ' + pkg);
   if (!pastCooldown(info.time?.[version], cutoff)) throw new Error('Release is missing or within the 14-day cooldown');
   if (!licenseAllowed(info.versions[version].license)) throw new Error('Package license needs review: ' + info.versions[version].license);
   const baseline = new Map([configPath,pkgPath,lockPath,'.gitignore'].map(name => [name,digest(name)]));
@@ -76,7 +77,9 @@ async function prepare() {
   }
   config.libraries.push({id,entry,targets});
   mkdirSync(cache,{mode:0o700,recursive:true});
-  if (targets.includes('server') && !process.env.JS_VALIDATOR) throw new Error('A server target needs the moqui QuickJS validator');
+  if (targets.includes('server') && !process.env.JS_VALIDATOR) {
+    throw new Error('A server target is checked by a built moqui binary (moqui check-js-module): run ./moq build, or set JS_VALIDATOR');
+  }
   const scratch = mkdtempSync(join(cache,'prepare-'));
   try {
     const project = join(scratch,'libraries');
@@ -142,8 +145,11 @@ else if (action === 'search') {
 } else if (action === 'versions') {
   if (!entryName.test(args[0] || '') || packageOf(args[0]) !== args[0]) throw new Error('Invalid npm package');
   const info = await registry('/'+encodeURIComponent(args[0]));
-  result = Object.entries(info.versions).map(([version,data])=>({version,license:data.license,date:info.time[version],
-    allowed:licenseAllowed(data.license),cooled:pastCooldown(info.time[version], cutoff)})).reverse();
+  // newest first by publish time; a prerelease or a deprecated release is flagged, and Dev AIDE does not offer it first
+  result = Object.entries(info.versions).map(([version,data])=>({version,license:data.license,date:info.time?.[version],
+    allowed:licenseAllowed(data.license),cooled:pastCooldown(info.time?.[version], cutoff),
+    prerelease:version.includes('-'),deprecated:Boolean(data.deprecated)}))
+    .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
 } else if (action === 'prepare') result = await prepare();
 else if (action === 'apply') result = apply();
 else throw new Error('Unknown library operation: '+action);

@@ -211,13 +211,19 @@ fn factory_dirs(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<(
 /// `background`, so the server's startup does not wait for it.
 pub(crate) fn check(factory: &moqui_core::context::ExecutionContextFactory, background: bool) {
     let dirs = factory_dirs(factory);
+    // The JavaScript libraries are checked in the components the factory loaded, wherever each was loaded from.
+    let loaded: Vec<PathBuf> = factory
+        .components()
+        .iter()
+        .map(|component| component.location.clone())
+        .collect();
     if !background {
-        log_differences(&dirs);
+        log_differences(&dirs, &loaded);
         return;
     }
     let spawned = std::thread::Builder::new()
         .name("embedded-check".into())
-        .spawn(move || log_differences(&dirs));
+        .spawn(move || log_differences(&dirs, &loaded));
     if let Err(err) = spawned {
         tracing::warn!("Could not start the comparison of the framework files with the built-in ones: {err}");
     }
@@ -243,28 +249,14 @@ fn names(dirs: &[(Set, PathBuf)]) -> String {
     }
 }
 
-fn log_differences(dirs: &[(Set, PathBuf)]) {
-    // The components with browser libraries (`build/js-build.json`): the webroot and any other in a component set.
-    let components = dirs
-        .iter()
-        .find(|(set, _)| *set == Set::Components)
-        .map(|(_, dir)| dir.clone())
-        .or_else(|| {
-            dirs.iter()
-                .find(|(set, _)| *set == Set::Webroot)
-                .and_then(|(_, webroot)| webroot.parent()?.parent().map(Path::to_path_buf))
-        });
-    let mut missing = Vec::new();
-    for set in components
-        .iter()
-        .flat_map(|dir| moqui_lib::vfs::read_dir(dir).into_iter().flatten())
-    {
-        for component in moqui_lib::vfs::read_dir(set.path()).into_iter().flatten() {
-            missing.extend(missing_browser_libs(&component.path()));
-        }
-    }
+fn log_differences(dirs: &[(Set, PathBuf)], loaded: &[PathBuf]) {
+    // The loaded components with JavaScript libraries (`build/js-build.json`): the webroot and any other.
+    let missing: Vec<String> = loaded.iter().flat_map(|root| missing_browser_libs(root)).collect();
     if !missing.is_empty() {
-        tracing::error!("Missing browser libraries: {}. Run ./moq build-js", missing.join(", "));
+        tracing::error!(
+            "Missing JavaScript libraries: {}. Run ./moq build-js",
+            missing.join(", ")
+        );
     }
     let differences = match compare(dirs) {
         Ok(differences) => differences,

@@ -475,5 +475,7 @@ A screen (or its site's `screen-extend`) selects a client library with
 `<client-library library="my-app/round" render-mode="qvt"/>` alongside its extension declarations before the
 screen's actions and widgets. Qvt waits for each declared bundle before using the screen. Its client JavaScript
 can then call `moqui.libraries["my-app/round"].default(value)`. The same declaration works with server-static
-templates and qvue. For precompiled qvue, put markup in the file's template or a literal component template.
-The compiler can then generate render functions without running the library on the server. See [component build and review](../Build-Test.md#add-a-component-library).
+templates and a qvue served as its bundle (`?_qvt=bundle`), whose registration names the libraries. For such a qvue,
+put markup in the file's template or a literal component template: the compiler can then generate render functions
+without running the library on the server. The desktop shell's bundled screens (`precompiled_qvue`) do not load client
+libraries. See [component build and review](../Build-Test.md#add-a-component-library).

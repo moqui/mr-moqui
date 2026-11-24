@@ -72,7 +72,7 @@ bundles it runs the script first.
 
 The JS tasks build every component that has a `build/js-build.json`; the webroot's is the framework's own, built
 first. `build-js`, `verify-js`, `audit-js` and `outdated-js` take component names to do only those. One component
-that fails is reported and the others still build, and the task fails. `update-js --component <name>` updates
+that fails, or whose `js-build.json` is invalid, is reported and the others still build, and the task fails. `update-js --component <name>` updates
 another component's pins.
 
 ```json
@@ -81,9 +81,12 @@ another component's pins.
 
 - `output`, under the component's `screen/`, is where the built files go and so where the screens serve them (a file
   under a screen's directory, [Static files](security/Attack-Surface-Routes.md#static-files-under-a-screen)). Its
-  `MANIFEST.json` is committed and lists each file's sha256. The rest is build output, which the component's own
-  repository ignores: `screen/MyApp/libs/*`, `!screen/MyApp/libs/MANIFEST.json` and `screen/MyApp/.libs-*` in its
-  `.gitignore`.
+  `MANIFEST.json` is committed and lists each file's sha256, as are `NOTICES.md` and `licenses/` when the script
+  writes them (clean-js keeps those three). The rest is build output, which the component's own repository ignores:
+  `screen/MyApp/libs/*`, `!screen/MyApp/libs/MANIFEST.json`, `!screen/MyApp/libs/NOTICES.md`,
+  `!screen/MyApp/libs/licenses/` and `screen/MyApp/.libs-*` in its `.gitignore`. A new component starts with the
+  output directory holding a `MANIFEST.json` of `{"libraries": []}`; `./moq update-js --component <name> --all` then
+  writes the real one for review.
 - `projects` are npm projects under `build/`, each with a committed `package.json` and `package-lock.json` (exact
   pins).
 - `script`, under `build/`, makes the files. `./moq` runs it as `node <script> --build`, `--verify` or `--write`
@@ -91,8 +94,9 @@ another component's pins.
   `target/js/<component>`), `JS_OUTPUT` (the output directory) and `JS_PROJECTS` (where the locks are, when
   `update-js` hands it candidate ones). It imports the framework's `runtime/components/base/webroot/build/js-kit.mjs`
   by relative path: `installProject` installs a lock with lifecycle scripts disabled, `withWork` gives it a
-  temporary tree that is removed afterwards, and `finish` checks every output against `MANIFEST.json` and publishes
-  the tree in one rename.
+  temporary tree that is removed afterwards (a build ended by a signal ends the script by that signal too, so moq
+  stops), and `finish` checks every output against `MANIFEST.json` and publishes the tree by two renames: the old tree
+  aside, the staged one in its place. A tree a killed publish left aside is put back by the next locked JS task.
 
 The checks are the same as the framework's: a build serves only the reviewed bytes, an embedded production binary
 refuses a component whose listed files are missing, and the server logs them at startup.
@@ -110,8 +114,9 @@ refuses a component whose listed files are missing, and the server logs them at 
 Prepare prints JSON with the review token, source diffs, bundled packages and output sizes. It creates the first
 declaration, npm project and ignore rules when needed. Apply checks the candidate against the files on disk. A stale
 review needs a fresh prepare. Commit the build inputs, manifest and notices. A server-target prepare or update uses
-an already built `moqui check-js-module` to initialize the module on a bounded standalone QuickJS runtime. Set
-`JS_VALIDATOR` to the path of the current binary if it is outside the checkout's target directory.
+an already built `moqui check-js-module` to initialize the module on a bounded standalone QuickJS runtime (the debug
+binary, else the release one; `./moq build` first when there is neither). Set `JS_VALIDATOR` to the path of the current
+binary if it is outside the checkout's target directory. A review not applied within a day is dropped.
 
 For the standard builder, omit `script`, use the project `libraries`, and declare its entries in `libraries`:
 
@@ -123,8 +128,9 @@ For the standard builder, omit `script`, use the project `libraries`, and declar
 The server file lives at `component://my-app/script/libs/round.js`. A client bundle registers its exports in
 `moqui.libraries["my-app/round"]`. Each manifest file records its target and hash. Existing custom builders can import
 `buildLibraries` from the webroot's `build/component-libs.mjs` and use the returned target-qualified files in their
-own build. The managed add operation uses the standard declaration. Run
-`node --test scripts/test-component-libs.mjs` for the standard builder's target, policy, review and recovery fixtures.
+own build. The managed add operation uses the standard declaration. `./moq verify-js` runs
+`node --test scripts/test-component-libs.mjs`, the standard builder's target, policy, review and recovery fixtures, with
+its checks of the builds (test-all needs no Node).
 
 ### Windows
 

@@ -120,7 +120,10 @@ export function buildLibraries({component, config, project, work, validator}) {
       }
       const expression = '(() => {\n' + text + '\nreturn libraryExports;\n})()';
       const path = id + '.js';
-      const bytes = Buffer.from(target === 'server' ? expression + '\n' :
+      // The server module's first line marks it for the script runtime, which keeps its value for the run
+      // (COMPONENT_LIBRARY_MARKER in moqui-core's script/runtime/facades.rs).
+      const marker = '/* moqui component library ' + component + '/' + id + ' */\n';
+      const bytes = Buffer.from(target === 'server' ? marker + expression + '\n' :
         '(moqui.libraries ||= Object.create(null))[' + JSON.stringify(component + '/' + id) + '] = ' + expression + ';\n');
       if (target === 'server' && validator) {
         const check = join(work, path);
@@ -161,7 +164,7 @@ if (resolve(process.argv[1] || '') === fileURLToPath(import.meta.url)) {
   const project = join(process.env.JS_PROJECTS || build, 'libraries');
   const writing = process.argv.includes('--write');
   if (writing && config.libraries.some(lib => lib.targets.includes('server')) && !process.env.JS_VALIDATOR)
-    throw new Error('A server target needs JS_VALIDATOR pointing to the moqui binary');
+    throw new Error('A server target is checked by a built moqui binary (moqui check-js-module): run ./moq build, or set JS_VALIDATOR');
   const files = componentFiles(basename(root), config, project, writing ? process.env.JS_VALIDATOR : null);
   if (writing && process.env.JS_PROJECTS) {
     for (const file of ['package.json','package-lock.json']) {

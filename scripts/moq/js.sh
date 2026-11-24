@@ -26,6 +26,11 @@ js_components() {
     perl "$ROOT/scripts/js-state.pl" components "$RUNTIME_DIR/components"
 }
 
+# Name each component whose build/js-build.json is invalid (js_components leaves it out); fails when there is one.
+js_configs() {
+    perl "$ROOT/scripts/js-state.pl" configs "$RUNTIME_DIR/components"
+}
+
 # Select one component's line: JS_C_NAME, JS_C_SOURCE (its build/), JS_C_LIBS (the served output), JS_C_SCRIPT,
 # JS_C_PROJECTS (comma separated) and JS_C_CACHE.
 js_use() {
@@ -90,14 +95,24 @@ js_locked() {
 # staged tree beside the output and its temporary installs. None is in use while the lock is held.
 js_recover() {
     local line backup stale lines
+    local dir name
     for stale in "$JS_CACHE"/*/rollback.json; do
         [ -f "$stale" ] || continue
-        local dir=${stale%/*}
-        JS_COMPONENTS="$RUNTIME_DIR/components" JS_CACHE="$JS_CACHE" node "$JS_SOURCE/add-library.mjs" recover "${dir##*/}" || return 1
+        dir=${stale%/*}
+        name=${dir##*/}
+        # The journal of a component this checkout no longer has: nothing here to put back, and the other components
+        # are not held up by it. A journal whose files were edited since still stops the task (add-library.mjs).
+        if ! ls "$RUNTIME_DIR"/components/*/"$name"/component.xml >/dev/null 2>&1; then
+            echo "moq: $stale is an interrupted library change of $name, which is not checked out here; left in place" >&2
+            continue
+        fi
+        JS_COMPONENTS="$RUNTIME_DIR/components" JS_CACHE="$JS_CACHE" node "$JS_SOURCE/add-library.mjs" recover "$name" || return 1
     done
     for stale in "$JS_CACHE"/*/prepare-*; do
         [ ! -d "$stale" ] || rm -rf -- "$stale" || return 1
     done
+    # An add-js review is applied soon after it is prepared, and each holds whole bundles: a day old, it is dropped.
+    [ ! -d "$JS_CACHE" ] || find "$JS_CACHE" -mindepth 2 -maxdepth 2 -name 'review-*.json' -mtime +0 -exec rm -f {} + || return 1
     lines=$(js_components) || return 1
     while IFS= read -r line; do
         [ -n "$line" ] || continue
@@ -110,15 +125,12 @@ js_recover() {
             [ ! -e "$stale" ] || rm -rf -- "$stale" || return 1
         done
     done <<<"$lines"
-    # the layout before components, with the webroot's trees directly in target/js
-    for stale in "$JS_CACHE"/build-* "$JS_CACHE"/update-*; do
-        [ ! -e "$stale" ] || rm -rf -- "$stale" || return 1
-    done
 }
 
 # Each component's output is current: its files match its manifest and its stamp its inputs.
 js_all_current() {
     local line lines
+    js_configs 2>/dev/null || return 1
     lines=$(js_selected "$@") || return 1
     while IFS= read -r line; do
         [ -n "$line" ] || continue
@@ -135,7 +147,7 @@ task_build_js() {
 }
 
 js_build_js() {
-    local force= arg line lines status=0
+    local force= arg line lines status=0 built
     local -a names
     names=()
     for arg in "$@"; do
@@ -147,13 +159,18 @@ js_build_js() {
         esac
     done
     dry_run && { show_cmd "$MOQ" build-js "$@"; return 0; }
+    # One component's failure, or its invalid js-build.json, is reported and the others still build (the
+    # failure-tolerance rule). A build ended by a signal (Ctrl-C) ends the task.
+    js_configs || status=1
     lines=$(js_selected ${names[@]+"${names[@]}"}) || return 1
-    # One component's failure is reported and the others still build (the failure-tolerance rule).
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         js_use "$line"
         if [ -z "$force" ] && js_state check 2>/dev/null; then continue; fi
-        if ! { js_rebuild --build && js_state stamp; }; then
+        js_rebuild --build
+        built=$?
+        [ "$built" -le 128 ] || return "$built"
+        if [ "$built" -ne 0 ] || ! js_state stamp; then
             echo "moq: could not build the JavaScript libraries of $JS_C_NAME" >&2
             status=1
         fi
@@ -175,12 +192,23 @@ js_rebuild() {
 task_verify_js() { js_locked verify-js "$@"; }
 
 js_verify_js() {
-    local line lines status=0
+    local line lines status=0 verified
+    js_configs || status=1
+    # The standard component library builder's own tests (targets, license and cooldown policy, review, recovery), with
+    # the checks of the builds: verify-js is the check for a change to the JS build inputs, and test-all needs no Node.
+    js_node
+    if [ -f "$ROOT/scripts/test-component-libs.mjs" ]; then
+        info "Component library builder tests" >&2
+        node --test "$ROOT/scripts/test-component-libs.mjs" || status=1
+    fi
     lines=$(js_selected "$@") || return 1
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         js_use "$line"
-        js_rebuild --verify || { echo "moq: the JavaScript libraries of $JS_C_NAME do not match their manifest" >&2; status=1; }
+        js_rebuild --verify
+        verified=$?
+        [ "$verified" -le 128 ] || return "$verified"
+        [ "$verified" -eq 0 ] || { echo "moq: the JavaScript libraries of $JS_C_NAME do not match their manifest" >&2; status=1; }
     done <<<"$lines"
     return "$status"
 }
@@ -243,15 +271,19 @@ js_update_js() {
 
 # outdated-js and audit-js for the named components, or all; each one's result is reported and the others still run.
 js_each_manage() {
-    local task=$1 line lines status=0
+    local task=$1 line lines status=0 managed
     shift
     js_node
+    js_configs || status=1
     lines=$(js_selected "$@") || return 1
     while IFS= read -r line; do
         [ -n "$line" ] || continue
         js_use "$line"
         info "== $JS_C_NAME" >&2
-        js_manage "$task" || status=1
+        js_manage "$task"
+        managed=$?
+        [ "$managed" -le 128 ] || return "$managed"
+        [ "$managed" -eq 0 ] || status=1
     done <<<"$lines"
     return "$status"
 }
@@ -304,13 +336,16 @@ js_report_fonts() {
 
 help_fonts_download() { echo 'List optional fonts with --list, add named packs, or --remove named packs. MOQUI_FONT_PACKS overrides the checkout selection.'; }
 
-# Only candidate creation requires an already built QuickJS host. A clean build verifies reviewed bytes.
+# Only candidate creation requires an already built QuickJS host (moqui check-js-module, for a server target); a clean
+# build verifies reviewed bytes. Left unset when no binary is built, so the task that needs it names ./moq build.
 js_validator() {
     if [ -z "${JS_VALIDATOR:-}" ]; then
-        JS_VALIDATOR=$(binary_path debug)
-        [ -x "$JS_VALIDATOR" ] || JS_VALIDATOR=$(binary_path release)
+        local candidate
+        for candidate in "$(binary_path debug)" "$(binary_path release)"; do
+            if [ -x "$candidate" ]; then JS_VALIDATOR=$candidate; break; fi
+        done
     fi
-    export JS_VALIDATOR
+    [ -z "${JS_VALIDATOR:-}" ] || export JS_VALIDATOR
 }
 task_add_js() {
     case ${1:-} in

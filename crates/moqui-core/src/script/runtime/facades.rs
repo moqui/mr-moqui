@@ -43,6 +43,17 @@ struct ScriptText {
 /// How long a script file's text is used before its modified time is looked at again.
 const SCRIPT_CHECK: Duration = Duration::from_secs(2);
 
+/// The first line the standard component library builder (`webroot/build/component-libs.mjs`) writes on a server
+/// module, `component://<component>/script/libs/<id>.js`. The module is a bundle of reviewed npm packages whose top level
+/// is one call that makes their exports, so [`crate::script::parse::module_is_inert`] refuses it; its value is kept for
+/// the run as an inert module's is, so a service that uses a library does not run the whole bundle at each call.
+const COMPONENT_LIBRARY_MARKER: &str = "/* moqui component library ";
+
+/// A server module of the standard library builder: its marker line, in a component's `script/libs`.
+fn component_library(path: &std::path::Path, text: &str) -> bool {
+    text.starts_with(COMPONENT_LIBRARY_MARKER) && path.parent().is_some_and(|dir| dir.ends_with("script/libs"))
+}
+
 fn script_texts() -> &'static Mutex<HashMap<String, ScriptText>> {
     static TEXTS: std::sync::OnceLock<Mutex<HashMap<String, ScriptText>>> = std::sync::OnceLock::new();
     TEXTS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -87,7 +98,7 @@ pub(crate) fn read_module(location: &str) -> Result<(super::ScriptText, bool), E
     let modified = modified_of(&path);
     let text = moqui_lib::vfs::read_to_string(&path)
         .map_err(|err| Error::new(format!("could not read script {location}")).with_source(err))?;
-    let inert = crate::script::parse::module_is_inert(&text);
+    let inert = component_library(&path, &text) || crate::script::parse::module_is_inert(&text);
     let text: Arc<str> = crate::script::parse::file_function(&text).into();
     let script = super::ScriptText::named(text, location);
     lock(script_texts()).insert(

@@ -50,6 +50,8 @@ test('one lock reproduces the shipped packages and only the selected targets', t
   assert.equal(files.has('server/add.js'), false);
   assert.equal(files.has('client/subtract.js'), false);
   assert.equal(runInNewContext(files.get('server/subtract.js').toString()).default(9, 6), 3);
+  // the line the script runtime keeps a server module's value for the run by
+  assert.match(files.get('server/subtract.js').toString(), /^\/\* moqui component library fixture\/subtract \*\/\n/);
   const globals = {moqui:{}};
   runInNewContext(files.get('client/add.js').toString(), globals);
   assert.equal(globals.moqui.libraries['fixture/add'].default(2, 3), 5);

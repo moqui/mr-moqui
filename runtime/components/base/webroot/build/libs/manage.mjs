@@ -42,6 +42,7 @@ if (task === 'audit') {
   // dependency at a version the lock does not show, so read that version from the distributed file.
   const embedded = {};
   for (const { lib, file, pkg, pattern } of BUNDLED_COPIES) {
+    if (!existsSync(join(output, file))) throw new Error(file + ' is not built: run ./moq build-js first');
     const text = readFileSync(join(output, file), 'utf8');
     if (!pattern) { console.log(lib, 'bundles', pkg, 'with no version in', file + ': review by hand'); continue; }
     const version = text.match(pattern)?.[1];

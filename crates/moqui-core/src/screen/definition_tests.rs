@@ -14,7 +14,7 @@
 
 use moqui_lib::node::MNode;
 
-use super::{merge_extend, Extended, ScreenDef, SectionKind};
+use super::{client_libraries, merge_extend, Extended, ScreenDef, SectionKind};
 use crate::context::ExecutionContextFactory;
 
 fn names_in(node: &MNode) -> Vec<String> {
@@ -27,6 +27,38 @@ fn names_in(node: &MNode) -> Vec<String> {
                 .unwrap_or_else(|| child.name())
         })
         .collect()
+}
+
+/// A screen-extend adds a client library to the screen's, by library and render mode, once; the merged screen lists
+/// them by render mode in declaration order, and an id that is not `component/library` is refused.
+#[test]
+fn a_screen_extend_adds_client_libraries_by_library_and_mode() {
+    let screen = MNode::parse_text(
+        "s",
+        r#"<screen><client-library library="app/charts" render-mode="qvt"/><widgets/></screen>"#,
+    )
+    .unwrap();
+    let extend = MNode::parse_text(
+        "e",
+        r#"<screen-extend>
+                <client-library library="app/charts" render-mode="qvt"/>
+                <client-library library="site/maps" render-mode="qvt"/>
+                <client-library library="site/maps" render-mode="other"/>
+            </screen-extend>"#,
+    )
+    .unwrap();
+    merge_extend(&screen, &extend, "test", &mut Extended::default());
+    let by_mode = client_libraries(&screen, "test").unwrap();
+    assert_eq!(by_mode["qvt"], ["app/charts", "site/maps"]);
+    assert_eq!(by_mode["other"], ["site/maps"]);
+    for bad in ["charts", "app/", "../x/y", "app/a.js"] {
+        let screen = MNode::parse_text(
+            "s",
+            &format!(r#"<screen><client-library library="{bad}" render-mode="qvt"/></screen>"#),
+        )
+        .unwrap();
+        assert!(client_libraries(&screen, "test").is_err(), "{bad}");
+    }
 }
 
 /// `widgets-extend where="prepend|append"` puts its widgets first or last inside the named element: a section's

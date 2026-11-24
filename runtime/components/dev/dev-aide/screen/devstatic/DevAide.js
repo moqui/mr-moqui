@@ -1806,7 +1806,8 @@
                 return this.action(async () => {
                     this.pkg = name; this.entry = name; this.id = name.split("/").pop().replace(/[^a-zA-Z0-9_-]/g, "-");
                     this.releases = await this.request("versions", {package: name});
-                    this.release = this.releases.find(item => item.allowed && item.cooled) || null;
+                    // the newest stable release that passes: not a prerelease, not deprecated, licensed and cooled
+                    this.release = this.releases.find(item => item.allowed && item.cooled && !item.prerelease && !item.deprecated) || null;
                 });
             },
             prepare() {
@@ -1846,7 +1847,7 @@
         emit-value map-options :model-value="pkg" @update:model-value="pick"></q-select>
       <template v-if="releases.length">
         <q-select label="Release" v-model="release" :options="releases"
-          :option-label="r => r.version + ' · ' + (r.date || '').slice(0,10) + ' · ' + r.license + (!r.allowed ? ' · license needs review' : '') + (!r.cooled ? ' · within cooldown' : '')"></q-select>
+          :option-label="r => r.version + ' · ' + (r.date || '').slice(0,10) + ' · ' + r.license + (!r.allowed ? ' · license needs review' : '') + (!r.cooled ? ' · within cooldown' : '') + (r.prerelease ? ' · prerelease' : '') + (r.deprecated ? ' · deprecated' : '')"></q-select>
         <q-input dense label="Library ID" v-model="id"></q-input><q-input dense label="Package entry point" v-model="entry"></q-input>
         <q-select label="Target" v-model="target" :options="['client','server','both']"></q-select>
         <q-btn color="primary" no-caps label="Prepare for review" :disable="busy || !release || !release.allowed || !release.cooled" @click="prepare"></q-btn>

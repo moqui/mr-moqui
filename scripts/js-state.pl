@@ -14,10 +14,11 @@ sub bytes {
     return <$fh>;
 }
 
-# The components with browser libraries to build: each <set>/<component>/build/js-build.json under the components
-# directory, the sets in the order components.xml lists them, then any others (base first). One line each: name, root, output,
-# script and the projects, tab separated.
-if ($action eq 'components') {
+# The components with JavaScript libraries to build: each <set>/<component>/build/js-build.json under the components
+# directory, the sets in the order components.xml lists them, then any others (base first). `components` prints one
+# line each (name, root, output, script and the projects, tab separated) and leaves out a component whose
+# js-build.json is invalid, so the others still build; `configs` names each invalid one and fails when there is one.
+if ($action eq 'components' || $action eq 'configs') {
     my $dir = $source;
     my @sets;
     if (-f "$dir/components.xml") { @sets = bytes("$dir/components.xml") =~ /<component-dir\s+location="([^"\/]+)"/g }
@@ -26,26 +27,32 @@ if ($action eq 'components') {
     # sets components.xml does not list follow, the framework's base set first
     push @sets, sort { ($b eq 'base') <=> ($a eq 'base') || $a cmp $b } grep { !$seen{$_} && !/^\./ && -d "$dir/$_" } readdir $dh;
     closedir $dh;
-    my %names;
+    my (%names, @lines, @invalid);
     for my $set (@sets) {
         next unless opendir my $sh, "$dir/$set";
         for my $name (sort grep { !/^\./ } readdir $sh) {
             my $root = "$dir/$set/$name";
             my $config = "$root/build/js-build.json";
             next unless -f $config;
-            my $c = eval { decode_json(bytes($config)) } or die "$config: not JSON\n";
-            my $relative = qr{^(?!/)(?!.*(?:^|/)\.\.(?:/|$))[\w.\/-]+$};
-            die "$config: output must be a path under screen/\n" unless ($c->{output} // '') =~ $relative && $c->{output} =~ m{^screen/};
-            $c->{script} = ':standard' if !defined $c->{script} && ref($c->{libraries}) eq 'ARRAY';
-            die "$config: script must be a path under build/\n" unless ($c->{script} // '') eq ':standard' || ($c->{script} // '') =~ $relative;
-            my @projects = @{ $c->{projects} // [] };
-            for (@projects) { die "$config: project $_ must be a directory name\n" unless /^[\w.-]+$/ && !/^\.\.?$/ }
-            die "$config: component $name is also in $names{$name}\n" if $names{$name};
-            $names{$name} = $set;
-            print join("\t", $name, $root, $c->{output}, $c->{script}, join(',', @projects)), "\n";
+            my $line = eval {
+                my $c = eval { decode_json(bytes($config)) } or die "$config: not JSON\n";
+                # the same rule as component-libs.mjs outputPaths: no empty, `.` or `..` segment and no trailing slash
+                die "$config: output must be a directory under screen/\n"
+                    unless ($c->{output} // '') =~ m{^screen/(?:[\w-]+/)*[\w-]+$};
+                my $relative = qr{^(?!/)(?!.*(?:^|/)\.\.?(?:/|$))[\w.\/-]+$};
+                $c->{script} = ':standard' if !defined $c->{script} && ref($c->{libraries}) eq 'ARRAY';
+                die "$config: script must be a path under build/\n" unless ($c->{script} // '') eq ':standard' || ($c->{script} // '') =~ $relative;
+                my @projects = @{ $c->{projects} // [] };
+                for (@projects) { die "$config: project $_ must be a directory name\n" unless /^[\w.-]+$/ && !/^\.\.?$/ }
+                die "$config: component $name is also in $names{$name}\n" if $names{$name};
+                join("\t", $name, $root, $c->{output}, $c->{script}, join(',', @projects)) . "\n";
+            };
+            if (defined $line) { $names{$name} = $set; push @lines, $line; } else { push @invalid, $@; }
         }
         closedir $sh;
     }
+    if ($action eq 'configs') { print STDERR "Invalid JavaScript build: $_" for @invalid; exit(@invalid ? 1 : 0); }
+    print @lines;
     exit 0;
 }
 sub files {
@@ -113,8 +120,11 @@ if ($action eq 'check') {
         $ENV{JS_NODE_VERSION} = $saved->{node} if defined $saved->{node};
         $ENV{JS_NPM_VERSION} = $saved->{npm} if defined $saved->{npm};
     }
-    # A packaged or read-only tree can be verified directly against its manifest.
-    exit 0 unless -w $cache || !-e $cache && -w dirname($cache);
+    # A packaged or read-only tree can be verified directly against its manifest. The cache is made below, so it
+    # is writable when its nearest existing ancestor is (target/js itself is missing after a cargo clean).
+    my $probe = $cache;
+    $probe = dirname($probe) while !-e $probe && dirname($probe) ne $probe;
+    exit 0 unless -w $probe;
 } elsif ($action ne 'stamp') {
     die "Unknown state operation $action\n";
 }

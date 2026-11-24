@@ -682,10 +682,47 @@ check "one component failing still builds the others" 1 'could not build the Jav
     env PATH="$JSBIN:$PATH" "$M" build-js --force
 check "the other component was built" 0 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js --force js-a
 rm -rf "$R/runtime/components/addon/js-b"
-printf '{"output": "../escape", "projects": [], "script": "build.sh"}\n' >"$R/runtime/components/addon/js-a/build/js-build.json"
-check "an output outside screen/ is refused" 255 'output must be a path under screen/' -- \
-    perl "$R/scripts/js-state.pl" components "$R/runtime/components"
-printf '{"output": "screen/Js/libs", "projects": [], "script": "build.sh"}\n' >"$R/runtime/components/addon/js-a/build/js-build.json"
+# A component whose build ends by a signal (Ctrl-C) ends the task: js-0 comes before js-a.
+js_component js-0 'kill -INT $$'
+check "a build ended by SIGINT stops build-js" 130 '' -- env PATH="$JSBIN:$PATH" "$M" build-js --force
+lacks "the next component was not built" 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js --force js-0
+rm -rf "$R/runtime/components/addon/js-0"
+# An invalid js-build.json is named and left out; the others still build and the task fails.
+for output in ../escape screen/ screen/Js/libs/ screen/./libs; do
+    js_component js-b 'echo "b built"'
+    printf '{"output": "%s", "projects": [], "script": "build.sh"}\n' "$output" >"$R/runtime/components/addon/js-b/build/js-build.json"
+    check "the output $output is refused" 1 'js-b/build/js-build.json: output must be a directory under screen/' -- \
+        perl "$R/scripts/js-state.pl" configs "$R/runtime/components"
+    lacks "the output $output leaves the component out" 'js-b' -- \
+        perl "$R/scripts/js-state.pl" components "$R/runtime/components"
+done
+check "an invalid component fails build-js" 1 'Invalid JavaScript build: .*js-b' -- env PATH="$JSBIN:$PATH" "$M" build-js --force
+check "and the others still build" 1 'a built' -- env PATH="$JSBIN:$PATH" "$M" build-js --force
+rm -rf "$R/runtime/components/addon/js-b"
+# The stamp is written when target/js is gone (cargo clean) and the outputs match their manifest.
+rm -rf "$R/target/js"
+check "build-js with target/js gone" 0 '' -- env PATH="$JSBIN:$PATH" "$M" build-js
+check "the stamp was written again" 0 '' -- test -f "$R/target/js/js-a/stamp.json"
+# A locked task puts back a tree a killed publish left aside, and removes its staged tree and temporary installs.
+js_out=$R/runtime/components/addon/js-a/screen/Js
+mv "$js_out/libs" "$js_out/.libs-previous"
+mkdir -p "$js_out/.libs-stage-x" "$R/target/js/js-a/build-x"
+check "build-js recovers an interrupted publish" 0 '' -- env PATH="$JSBIN:$PATH" "$M" build-js js-a
+check "the output tree is back" 0 '' -- test -f "$js_out/libs/hello.js"
+check "the staged tree is gone" 1 '' -- test -e "$js_out/.libs-stage-x"
+check "the temporary install is gone" 1 '' -- test -e "$R/target/js/js-a/build-x"
+# The journal of a component that is not checked out is named and left; a day-old add-js review is dropped.
+mkdir -p "$R/target/js/gone"
+echo '{}' >"$R/target/js/gone/rollback.json"
+: >"$R/target/js/js-a/review-old.json"
+touch -t 202001010000 "$R/target/js/js-a/review-old.json"
+: >"$R/target/js/js-a/review-new.json"
+check "a journal of a component not checked out is left in place" 0 'gone, which is not checked out here' -- \
+    env PATH="$JSBIN:$PATH" "$M" build-js js-a
+check "the journal is kept" 0 '' -- test -f "$R/target/js/gone/rollback.json"
+check "an old review is dropped" 1 '' -- test -e "$R/target/js/js-a/review-old.json"
+check "a new review is kept" 0 '' -- test -f "$R/target/js/js-a/review-new.json"
+rm -rf "$R/target/js/gone" "$R/target/js/js-a/review-new.json"
 mkdir -p "$webroot/build/fonts" "$webroot/screen/webroot/libs/demo"
 : >"$webroot/build/fonts/selected.txt"
 touch "$webroot/screen/webroot/libs/demo/demo.js"

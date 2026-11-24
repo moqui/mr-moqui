@@ -51,7 +51,7 @@ fn main() {
 
     let mut watch = |path: &Path| println!("cargo:rerun-if-changed={}", path.display());
     if level.whole_webroot() {
-        check_browser_libs(&runtime);
+        check_browser_libs(&runtime, level);
     }
     let files = select::gather(&runtime, &manifest, level, &mut watch).unwrap_or_else(|err| panic!("{err}"));
     let (blob, index) = select::pack(&files).unwrap_or_else(|err| panic!("{err}"));
@@ -63,32 +63,18 @@ fn main() {
     stage_programs();
 }
 
-/// The browser libraries of each component this build packs that has a `build/js-build.json` (`./moq build-js`
-/// makes them; git keeps only their `MANIFEST.json`): the base components always, the others when
-/// `MOQUI_EMBED_COMPONENTS` names them. A file its manifest lists and the build has not made fails the build.
-fn check_browser_libs(runtime: &Path) {
+/// The JavaScript libraries of each component this build packs that has a `build/js-build.json` (`./moq build-js`
+/// makes them; git keeps only their `MANIFEST.json`): the components of the sets the level packs (`production` base
+/// and addon, `all` every set), as `select::gather` takes them. A file its manifest lists and the build has not made
+/// fails the build; a component the level does not pack (a dev or test one in a production build) is not checked.
+fn check_browser_libs(runtime: &Path, level: select::Level) {
     let components = runtime.join("components");
-    let embedded = std::env::var("MOQUI_EMBED_COMPONENTS").unwrap_or_default();
-    let Ok(sets) = std::fs::read_dir(&components) else {
-        return;
-    };
-    let mut roots: Vec<PathBuf> = sets
-        .flatten()
-        .filter(|set| set.path().is_dir())
-        .flat_map(|set| std::fs::read_dir(set.path()).into_iter().flatten().flatten())
+    let mut roots: Vec<PathBuf> = level
+        .component_sets()
+        .iter()
+        .flat_map(|set| std::fs::read_dir(components.join(set)).into_iter().flatten().flatten())
         .map(|component| component.path())
         .filter(|root| root.join("build/js-build.json").is_file())
-        .filter(|root| {
-            let relative = root
-                .strip_prefix(&components)
-                .unwrap_or(root)
-                .to_string_lossy()
-                .replace('\\', "/");
-            relative.starts_with("base/")
-                || embedded
-                    .split_whitespace()
-                    .any(|listed| listed.trim_end_matches('/') == relative)
-        })
         .collect();
     roots.sort();
     for root in roots {

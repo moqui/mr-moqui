@@ -84,6 +84,28 @@ impl Standalone {
     }
 }
 
+/// The heap a component library's server module may use while [`check_library_module`] initializes it.
+pub const LIBRARY_CHECK_HEAP: usize = 64 * 1024 * 1024;
+
+/// Initialize a component library's server module (the standard builder's output, whose value is its exports) on a
+/// runtime of its own with no `ec`, a heap of [`LIBRARY_CHECK_HEAP`] and `limit` to run, and read each export once: a
+/// package that needs the browser or Node, or that never finishes, fails here rather than in a service
+/// (`moqui check-js-module`, which `./moq add-js prepare` and `update-js` run).
+///
+/// # Errors
+///
+/// The thrown error, the heap or time limit, or a module with no exports.
+pub fn check_library_module(source: &str, limit: std::time::Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + limit;
+    let runtime = Standalone::start(LIBRARY_CHECK_HEAP, move || std::time::Instant::now() >= deadline);
+    runtime.run(&format!(
+        "const library = ({source}\n);\n\
+         if (!library || typeof library !== 'object' || !Object.keys(library).length) \
+         throw new Error('module has no exports');\n\
+         for (const key of Object.keys(library)) Reflect.get(library, key);"
+    ))
+}
+
 /// A thrown error as `Error: <message>` and its stack; a thrown value that is not an error as it prints.
 fn error_text(js: &mut impl Js, err: RuntimeError) -> String {
     let RuntimeError::Exception(thrown) = err else {
@@ -117,7 +139,26 @@ fn error_text(js: &mut impl Js, err: RuntimeError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::Standalone;
+    use super::{check_library_module, Standalone};
+    use std::time::Duration;
+
+    #[test]
+    fn a_library_module_is_initialized_and_needs_exports_and_to_finish() {
+        let limit = Duration::from_secs(3);
+        let module = |body: &str| format!("/* moqui component library fixture/lib */\n(() => {{ {body} }})()\n");
+        assert_eq!(
+            check_library_module(&module("return {twice: n => n * 2};"), limit),
+            Ok(())
+        );
+        let empty = check_library_module(&module("return {};"), limit).expect_err("no exports");
+        assert!(empty.contains("module has no exports"), "{empty}");
+        let browser =
+            check_library_module(&module("return {width: window.innerWidth};"), limit).expect_err("no window");
+        assert!(browser.contains("window"), "{browser}");
+        let getter = check_library_module(&module("return {get bad() { throw new Error('lazy') }};"), limit);
+        assert!(getter.expect_err("reads each export").contains("lazy"));
+        assert!(check_library_module(&module("for (;;) {}"), Duration::from_millis(50)).is_err());
+    }
 
     #[test]
     fn a_runtime_runs_text_shows_errors_and_stops_at_its_interrupt() {

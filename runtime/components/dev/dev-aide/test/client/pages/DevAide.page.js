@@ -186,8 +186,11 @@ test("the Libraries panel reviews the chosen release and refreshes the owning co
         },
         post: async (_, args) => {
             calls.push(args);
+            // newest first: a cooled prerelease and a deprecated release are passed over, as is one within the cooldown
             if (args.operation === "versions") return {result:[
-                {version:"2.0.0", cooled:false, allowed:true}, {version:"1.0.0", cooled:true, allowed:true}]};
+                {version:"2.1.0-beta.1", cooled:true, allowed:true, prerelease:true},
+                {version:"2.0.0", cooled:false, allowed:true}, {version:"1.1.0", cooled:true, allowed:true, deprecated:true},
+                {version:"1.0.0", cooled:true, allowed:true}]};
             if (args.operation === "prepare") return {result:{token:"review", changes:[], packages:[]}};
             if (args.operation === "apply") libraries.push(added);
             return {result:{applied:true}};
