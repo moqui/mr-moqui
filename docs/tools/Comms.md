@@ -557,9 +557,40 @@ link to boards shown during the meeting. For a recurring meeting, choose a board
 
 **Who can present** offers **Anyone can present** (the default), **Hosts can present**, and **Ask a host to present**. Only a host can take over from a host. **Present this screen** lets signed-in members follow the presenter through the application, using their own accounts. Guests can watch when the presenter shares the tab with them. Following pauses when a member has changed a form, opened a dialog of their own, or navigated elsewhere. **Follow again** catches up. Reloading a page that was sharing a screen releases its stage. Choose the screen again to resume.
 
-While sharing, **Annotation permissions** controls who may draw. Unpinned marks fade after five seconds. Use the laser for
+While sharing, **Annotation permissions** controls who may draw; the presenter always may. Unpinned marks fade after five seconds. Use the laser for
 pointing or pin a stroke to keep it visible. **Snapshot to board** creates a board with the captured frame locked and
-each stroke available to edit. In chat, open an image and choose **Mark up** to save a new PNG as a reply to the original.
+each stroke available to edit. Only someone who may draw on the share can ask for one, and the presenter is asked first
+when someone else does, since the board then takes the share's place on the stage. The one taken over is told who took
+the stage. In chat, open an image and choose **Mark up** to save a new PNG as a reply to the original.
+
+The readers of a room open to all users, or of a record's room, see its boards as its members do; only members draw on
+them. In IronStone, Knowledge and Notes show a board's preview with **Open the board**, and Knowledge's **New page** can
+make a whiteboard. The desktop app shares screens and windows on every OS ([Desktop-Client, Screen
+share](../ui/Desktop-Client.md#screen-share)).
+
+#### How boards are built
+
+The design record is [Comms-Whiteboard](../../plans/archive/Comms-Whiteboard.md); what stays true of it:
+
+- **Libraries.** Boards are [Excalidraw](https://github.com/excalidraw/excalidraw) (MIT), bundled with React and loaded
+  only on a board (`webroot/build/whiteboard`, `libs/excalidraw`); its Mermaid import is mermaid-to-excalidraw, on the
+  shell's Mermaid. Annotation over a share or an image is [drauu](https://github.com/antfu/drauu) (MIT). tldraw was
+  refused (a production license key, a watermark without one) and draw.io (an iframe app, not a framework). Excalidraw's
+  embeddables, AI, public library site, own collaboration UI and anything fetched from outside the server are off; an
+  element that runs a page (`iframe`, `embeddable`, a magic frame, generated HTML) is refused by the server and the page.
+- **A board is a wiki page** of type `excalidraw` (`<Page>.excalidraw`, Excalidraw's scene JSON with images named by
+  attachment), co-edited through `moqui-collab`'s board codec
+  ([Revision-Management, Whiteboard revisions](../data/Revision-Management.md#whiteboard-revisions)). Only the background
+  and grid settings are shared between editors.
+- **A room's space.** `ChatRoom.wikiSpaceId`, made on first use (`org.moqui.chat.RoomBoardServices.ensure#ChatRoomSpace`):
+  `get#WikiPageAccess` answers for it by the room (members edit, readers view, an archived room is read only), with no
+  `WikiSpaceUser` rows, so membership has one source. Leaving the room or archiving it asks its open editors again at
+  the next co-editing tick (`collab-recheck`). A call with no room uses the starter's notes space.
+- **A call's boards.** `moqui.call.CallBoard` {callSessionId, wikiPageId, opened and closed} is what a call has shown,
+  for its history and its guests' grant; `CallLink.wikiPageId` is a recurring meeting's board.
+- **The stage.** `CallSession.shareModeEnumId` (`CsmAnyone`, `CsmHosts`, `CsmAsk`; a call link's own copied when a
+  meeting opens) and one stage per call: a screen, a board or a followed screen. The frames are in
+  [WebRTC, Presenting in a call](../interfaces/WebRTC.md#presenting-in-a-call).
 
 ## For app authors
 

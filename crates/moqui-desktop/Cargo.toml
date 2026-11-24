@@ -101,13 +101,16 @@ close_fds = "0.3"
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }
 
-# Its own workspace: not a member of the repository's.
+# Its own workspace: not a member of the repository's. The patched crates are not members.
 [workspace]
+exclude = ["patches"]
 
 # The repository's crate patches (its Cargo.toml's [patch.crates-io]), which cargo takes only from the root manifest of
 # the workspace it builds, so this one names them again: without them the node in the app builds the crates.io releases
 # they replace (plans/Security-Review.md SEC-CLI-126). crates/moqui-client/tests/app_workspaces.rs keeps the two equal.
 [patch.crates-io]
+# tauri-runtime-cef with a grant of the one desktop capture the app's own picker chose, for macOS (patches/README.md)
+tauri-runtime-cef = { path = "patches/tauri-runtime-cef" }
 stun-proto = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 stun-types = { git = "https://github.com/moqui/stun-proto", rev = "051ca03ff92d04998cfec70a735d23369117b9c9" }
 # yrs 0.28.2 at moqui's fork, its decode depth and reservations bounded (docs/Build-Test.md Forks; SEC-TLS-95, -117)

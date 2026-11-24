@@ -53,6 +53,25 @@ feature("a mounted board merges local and remote edits and reconciles compacted 
         page.waitFor(() => synced().length === 1)
         page.evaluate(() => {remoteEdit(); return true})
         page.waitFor(() => vm.$refs.board.api.getSceneElements()[0].x === 130)
+        // what another editor may not put on a board: a page in an iframe, generated HTML, an editor setting
+        page.evaluate(() => {
+            const sv = Y.encodeStateVector(server)
+            server.transact(() => {
+                const map = server.getMap("elements")
+                map.set('["page",1,1]', {id:"page",type:"iframe",x:0,y:0,width:50,height:50,version:1,versionNonce:1,index:"b0"})
+                map.set('["html",1,1]', {id:"html",type:"rectangle",x:0,y:0,width:50,height:50,version:1,versionNonce:1,index:"b1",
+                    customData:{generationData:{status:"done",html:"<script>parent.hacked=1<\/script>"}}})
+                server.getMap("app").set("errorMessage", "Sign in again")
+            })
+            deliver({type:'update',client:'other',update:c.toBase64(Y.encodeStateAsUpdate(server,sv))})
+            return true
+        })
+        page.waitFor(() => vm.$refs.board.api.getSceneElements()[0].x === 130 && !window.hacked)
+        assert.deepEqual(page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done({
+            ids: vm.$refs.board.api.getSceneElements().map(e => e.id).filter(id => id === "page" || id === "html"),
+            iframes: document.querySelectorAll(".excalidraw iframe").length,
+            error: vm.$refs.board.api.getAppState().errorMessage || null, hacked: !!window.hacked
+        }))))), {ids: [], iframes: 0, error: null, hacked: false})
         const deleted = page.evaluate(() => {
             const known = synced()[0]
             const tombstone = {id: known.id, isDeleted: true, version: known.version + 1, versionNonce: 19}

@@ -294,7 +294,9 @@ feature("an Excalidraw page versions its previews and enforces its image limits"
         ])
         return {page, files, type:upload("art.html", "text/html", "x"),
             size:withConf("board@max-image-bytes", "10", () => upload("art.svg", "image/svg+xml", svg)),
-            total:withConf("board@max-total-image-bytes", "60", () => upload("art.svg", "image/svg+xml", svg)),
+            // the board's previews (_board.svg, one per version) do not count: art.svg alone is under 60 bytes, a second is not
+            previewsLeftOut:withConf("board@max-total-image-bytes", "60", () => upload("art.svg", "image/svg+xml", svg)).error,
+            total:withConf("board@max-total-image-bytes", "60", () => upload("second.svg", "image/svg+xml", svg)),
             info:asWriter("get#WikiPageInfoById", {wikiPageId:page.wikiPageId}),
             malformed:asWriter("update#WikiPage", {wikiSpaceId:"SPWTYP", pageName:"Design", pageText:"{}"}).error}
     },
@@ -302,7 +304,7 @@ feature("an Excalidraw page versions its previews and enforces its image limits"
         r.page.error === "" && r.page.wikiPageId
         r.files[0].error === "" && r.files[2].error === ""
         r.files[1].error.includes("image limit") && r.type.error.includes("attachment must") && r.size.error.includes("size limit")
-        r.total.error.includes("total size limit")
+        r.previewsLeftOut === "" && r.total.error.includes("total size limit")
         r.info.attachmentList.some(a => a.filename === "_board.svg")
         r.info.attachmentList.some(a => a.filename === "_board-" + encodeURIComponent(r.page.versionName) + ".svg")
         r.malformed.includes("Excalidraw scene")

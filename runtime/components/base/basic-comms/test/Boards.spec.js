@@ -39,19 +39,33 @@ feature("room boards follow current membership and survive room archival", {
         const list = boardCall(service+"find#RoomBoards",{chatRoomId})
         const grants = ec.entity.find("moqui.resource.wiki.WikiSpaceUser").condition({wikiSpaceId}).disableAuthz().count()
         const timeline = ec.entity.find("moqui.chat.ChatEvent").condition({chatRoomId,eventTypeEnumId:"CetBoard"}).disableAuthz().count()
-        boardCall("update#moqui.chat.ChatRoom",{chatRoomId,archivedDate:ec.user.nowTimestamp})
         const wiki="org.moqui.resource.WikiServices."
         const access=()=>boardCall(wiki+"get#WikiPageAccess",{wikiPageId:board.wikiPageId})
+        // a room open to every user: its readers see its boards, and only its members change them
+        boardCall("update#moqui.chat.ChatRoom",{chatRoomId,visibilityEnumId:"CrvUsers"})
+        ec.artifactExecution.disableAuthz()
+        if (ec.entity.find("moqui.security.UserAccount").condition("userId", "BOARD_READER").count() == 0) {
+            const account = ec.entity.makeValue("moqui.security.UserAccount")
+            account.setFields({userId:"BOARD_READER", username:"basic.comms.board.reader", userFullName:"Board reader", disabled:"N"}, true, null, null)
+            account.create()
+        }
+        ec.artifactExecution.enableAuthz()
+        ec.user.internalLoginUser("basic.comms.board.reader")
+        const reader=access()
+        const readerList=boardCall(service+"find#RoomBoards",{chatRoomId})
+        ec.user.internalLoginUser("john.doe")
+        boardCall("update#moqui.chat.ChatRoom",{chatRoomId,visibilityEnumId:"CrvMembers",archivedDate:ec.user.nowTimestamp})
         const archived=access()
         const member=ec.entity.find("moqui.chat.ChatRoomMember").condition({chatRoomId,userId:ec.user.userId}).disableAuthz().one()
         boardCall("update#moqui.chat.ChatRoomMember",{chatRoomId,chatActorId:member.chatActorId,leftDate:ec.user.nowTimestamp})
         const departed=access()
         const scope=boardCall(wiki+"get#WikiViewScope",{})
-        return {list, archived, departed, scope, wikiSpaceId, grants, timeline}
+        return {list, archived, departed, scope, wikiSpaceId, grants, timeline, reader, readerList}
     },
     then(r) {
         r.list.boards[0].title === "Room sketch"
         r.grants === 0 && r.timeline === 1
+        r.reader.canView && !r.reader.canUpdate && r.readerList.boards.length === 1 && !r.readerList.canCreate
         r.archived.canView && !r.archived.canUpdate
         !r.departed.canView && !r.scope.viewSpaceIdList.includes(r.wikiSpaceId)
     }
@@ -129,15 +143,18 @@ feature("a saved board version takes its preview, links from markdown and leaves
         const removed = ec.resource.script("component://framework/service/org/moqui/resource/WikiBoard.js")
             .pruneFiles(wikiPageId, saved.versionName || page.versionName, 0)
         const after = boardCall(wiki + "get#WikiPageInfo", {wikiPageId}).attachmentList.map(file => file.filename)
+        // the previews saved with each version are not images: they leave the total for images
+        const fresh = withConf("board@max-total-image-bytes", "20", () => upload("fresh.png").error)
         const notes = boardCall(wiki + "update#WikiPage", {wikiSpaceId:info.wikiSpaceId, pageName:"Sketch notes",
             pageText:"See [[" + info.pagePath + "]]"})
         const html = withConf("comms@app-root", "/apps/Comms", () =>
             boardCall(wiki + "render#WikiPage", {wikiPageId:notes.wikiPageId}).pageHtml)
         ec.artifactExecution.enableAuthz()
-        return {uploads, page, saved, shown, removed:Array.from(removed), after, html, wikiPageId}
+        return {uploads, page, saved, shown, removed:Array.from(removed), after, html, wikiPageId, fresh}
     },
     then(r) {
         JSON.stringify(r.uploads) === "[\"\",\"\"]" && r.page.error === "" && r.saved.error === ""
+        r.fresh === ""
         r.shown.includes("Client preview")
         JSON.stringify(r.removed) === '["stale.png"]'
         r.after.includes("used.png") && !r.after.includes("stale.png") && r.after.includes("_board.svg")

@@ -1444,6 +1444,6 @@ take the index refresh interval to appear.
 
 ## Not built
 
-The open items are in [Remaining-Work](../../plans/Remaining-Work.md#monitoring), among them overhead at production scale.
+The open items are in [Remaining-Work](../../plans/Remaining-Work.md#monitoring); overhead at production scale and a live collector are in [Testing-Needed](../../plans/Testing-Needed.md#monitoring).
 Server-JS profiling, tenant isolation of the evidence and public links are in
 [Future-Plans](../../plans/Future-Plans.md#monitoring).

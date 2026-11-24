@@ -342,6 +342,77 @@ fn media_is_taken_out_and_put_in() {
     }
 }
 
+/// The stage decides whose screen goes out: after B takes over from A, A's screen video and screen audio reach no
+/// tap (the recorder and the phone mixer read the taps) and B's do; after a host's Stop, nobody's does.
+#[test]
+fn the_stage_forwards_only_its_presenters_screen_and_screen_audio() {
+    let mut net = Net::new();
+    net.join("A", false);
+    net.join("B", false);
+    net.join("C", false);
+    net.run(secs(1));
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    net.sfu.add_tap(ROOM, Box::new(Collect(seen.clone()))).expect("tapped");
+    let screens = |seen: &Seen| -> Vec<(String, Source)> {
+        let mut found: Vec<(String, Source)> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, _, _, source)| source.is_screen())
+            .map(|(leg, _, _, source)| (leg.clone(), *source))
+            .collect();
+        found.sort_by(|a, b| a.0.cmp(&b.0).then(format!("{:?}", a.1).cmp(&format!("{:?}", b.1))));
+        found.dedup();
+        found
+    };
+    // a leg's microphone declared as its share's audio stands in for a tab's sound
+    let share_audio = |net: &mut Net, leg: &str| {
+        let mid = net.client(leg).audio_mid.expect("an audio mid").to_string();
+        net.sfu
+            .set_source(&LegKey::new(ROOM, leg), 1, &mid, Source::ScreenAudio)
+    };
+
+    net.sfu.set_screen_stage(ROOM, Some("A"));
+    net.share_screen("A");
+    share_audio(&mut net, "A").expect("A's share audio on the stage");
+    net.run(secs(1));
+    assert_eq!(
+        screens(&seen),
+        vec![
+            ("A".to_string(), Source::Screen),
+            ("A".to_string(), Source::ScreenAudio)
+        ]
+    );
+    let before = net.client("C").last_video_len.get("A").copied();
+    assert!(before.is_some(), "C sees A's share");
+
+    // B takes over: A's tracks stay open but go nowhere
+    net.sfu.set_screen_stage(ROOM, Some("B"));
+    assert!(matches!(share_audio(&mut net, "A"), Err(SfuError::StageRequired)));
+    net.share_screen("B");
+    share_audio(&mut net, "B").expect("B's share audio on the stage");
+    seen.lock().unwrap().clear();
+    net.run(secs(1));
+    assert_eq!(
+        screens(&seen),
+        vec![
+            ("B".to_string(), Source::Screen),
+            ("B".to_string(), Source::ScreenAudio)
+        ]
+    );
+
+    // a host's Stop: no screen at all, cameras and microphones go on
+    net.sfu.set_screen_stage(ROOM, None);
+    seen.lock().unwrap().clear();
+    net.run(secs(1));
+    assert!(screens(&seen).is_empty(), "a stopped stage forwards no screen");
+    assert!(seen
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(leg, kind, _, _)| leg == "C" && *kind == Kind::Audio));
+}
+
 #[test]
 fn the_loudest_leg_becomes_the_active_speaker() {
     let mut net = Net::new();

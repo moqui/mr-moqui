@@ -41,7 +41,7 @@ use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
 /// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, and the notification
 /// plugin's check its `window.Notification` makes.
-const SHELL_PERMISSIONS: [&str; 35] = [
+const SHELL_PERMISSIONS: [&str; 40] = [
     "allow-client-state",
     "allow-client-sign-in",
     "allow-client-send-code",
@@ -71,6 +71,11 @@ const SHELL_PERMISSIONS: [&str; 35] = [
     "allow-notify",
     "allow-notify-clear",
     "allow-secure-screen",
+    "allow-capture-sources",
+    "allow-capture-choose",
+    "allow-capture-overlay",
+    "allow-capture-ink",
+    "allow-capture-overlay-close",
     "allow-push-check",
     "allow-push-test",
     "allow-set-counts",
@@ -79,10 +84,10 @@ const SHELL_PERMISSIONS: [&str; 35] = [
     "notification:allow-is-permission-granted",
 ];
 
-/// An app window's: the sockets of its page, the outbox and drafts of its account (which reach nothing its requests do
+/// An app window's: the sockets of its page, the screen share picker of a call in it (capture.rs), the outbox and drafts of its account (which reach nothing its requests do
 /// not), the vault module the app runs for its account (V5), and the notification plugin's check its
 /// `window.Notification` makes.
-const APP_PERMISSIONS: [&str; 17] = [
+const APP_PERMISSIONS: [&str; 22] = [
     "allow-socket-open",
     "allow-socket-send",
     "allow-socket-close",
@@ -99,6 +104,11 @@ const APP_PERMISSIONS: [&str; 17] = [
     "allow-open-in-shell",
     "allow-vault-call",
     "allow-vault-memory",
+    "allow-capture-sources",
+    "allow-capture-choose",
+    "allow-capture-overlay",
+    "allow-capture-ink",
+    "allow-capture-overlay-close",
     "notification:allow-is-permission-granted",
 ];
 

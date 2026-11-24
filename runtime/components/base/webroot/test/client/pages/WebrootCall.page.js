@@ -392,6 +392,82 @@ test("the stage owner alone can capture, and takeover ends both share tracks", a
     }
 });
 
+test("another's snapshot asks the presenter first, and the one taken over is told who took the stage", async () => {
+    reset();
+    const prior = {confirm: moqui.confirmAction, notify: moqui.notifyMessages, snapshot: call.snapshotBoard, nameOf: call.nameOf};
+    const asked = [], told = [];
+    let snapped = 0;
+    const preview = document.createElement("div");
+    preview.className = "m-present-preview";
+    preview.append(document.createElement("video"));
+    document.body.append(preview);
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+    try {
+        Object.assign(state, {current: "SN", legId: "ME", stageRevision: -1, shareMode: "CsmAnyone", sharing: false});
+        call.nameOf = leg => leg === "BOB" ? "Bob" : leg;
+        moqui.notifyMessages = list => told.push(...list.map(m => m.message));
+        call.snapshotBoard = async () => { snapped++; };
+        call.stageFrame({rtc: "stage", callSessionId: "SN", revision: 1, shareModeEnumId: "CsmAnyone",
+            stage: {kind: "screen", callLegId: "ME", inkEpoch: 5, requests: []}});
+        moqui.confirmAction = async text => { asked.push(text); return false; };
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "BOB", inkEpoch: 5});
+        await settle();
+        assert.equal(asked.length, 1);
+        assert.ok(asked[0].includes("Bob"), asked[0]);
+        assert.equal(snapped, 0, "declined: no board replaces the share");
+        moqui.confirmAction = async text => { asked.push(text); return true; };
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "BOB", inkEpoch: 5});
+        await settle();
+        assert.equal(snapped, 1);
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "ME", inkEpoch: 5});
+        await settle();
+        assert.equal(asked.length, 2, "the presenter's own snapshot asks nothing");
+        assert.equal(snapped, 2);
+        call.stageFrame({rtc: "stage", callSessionId: "SN", revision: 2, shareModeEnumId: "CsmAnyone",
+            stage: {kind: "screen", callLegId: "BOB", inkEpoch: 6, requests: []}});
+        assert.deepEqual(told, ["Bob took over the stage"]);
+    } finally {
+        moqui.confirmAction = prior.confirm; moqui.notifyMessages = prior.notify;
+        call.snapshotBoard = prior.snapshot; call.nameOf = prior.nameOf;
+        preview.remove();
+        Object.assign(state, {stage: {kind: null, callLegId: null, requests: []}, stageRevision: -1});
+        reset();
+    }
+});
+
+test("in the macOS app the share asks for the source picked in the app's list by its desktop media id", async () => {
+    const host = window.moquiDesktop, quasar = window.Quasar;
+    const chosen = [], asked = [];
+    let pick = "window:7:0";
+    try {
+        window.moquiDesktop = {
+            captureSources: async () => [{id: "screen:1:0", screen: true, name: "Screen 1"}, {id: "window:7:0", screen: false, name: "Notes: Plan"}],
+            captureChoose: async (id) => { chosen.push(id); return {id, bounds: {x: 0, y: 0, width: 800, height: 600}}; }
+        };
+        window.Quasar = Object.assign({}, quasar, {Dialog: {create(options) {
+            asked.push(options.options.items.map(i => i.value));
+            const dialog = {onOk(fn) { if (pick) fn(pick); return dialog; }, onCancel(fn) { if (!pick) fn(); return dialog; }, onDismiss() { return dialog; }};
+            return dialog;
+        }}});
+        const media = {getDisplayMedia: async () => { throw new Error("the browser picker is not used"); },
+            getUserMedia: async (constraints) => ({constraints})};
+        const got = await call.displayMedia(media, {}, "window", false);
+        assert.deepEqual(chosen, ["window:7:0"]);
+        assert.deepEqual(asked[0], ["screen:1:0", "window:7:0"]);
+        assert.equal(got.constraints.video.mandatory.chromeMediaSource, "desktop");
+        assert.equal(got.constraints.video.mandatory.chromeMediaSourceId, "window:7:0");
+        assert.equal(call.captureSource.bounds.width, 800);
+        await call.displayMedia(media, {}, "tab", true);
+        assert.deepEqual(asked[1], ["screen:1:0"], "this tab offers the screens only");
+        pick = null;
+        let refused = null;
+        try { await call.displayMedia(media, {}, "window", false); } catch (error) { refused = error.name; }
+        assert.equal(refused, "NotAllowedError", "cancelled as the browser's picker is");
+    } finally {
+        window.moquiDesktop = host; window.Quasar = quasar; call.captureSource = null;
+    }
+});
+
 test("the presenter sends navigation once and locates changes within the same screen", async()=>{
     const prior={followPath:call.followPath,followPage:call.followPage,send:call.send,guest:call.guest};
     const sent=[];

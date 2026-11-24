@@ -20,6 +20,13 @@ fn id(value: &Json) -> Option<&str> {
     })
 }
 
+/// Whether `leg` may draw on the stage's share, or ask for its snapshot: the presenter always, and the others as the
+/// stage's ink mode lets them (hosts, or everyone).
+pub(super) fn may_draw(stage: &Json, host: bool, leg: &str) -> bool {
+    let mode = stage["inkMode"].as_str().unwrap_or("off");
+    stage["callLegId"] == leg || mode == "everyone" || (mode == "hosts" && host)
+}
+
 impl Ink {
     fn prune(&mut self, now: Instant) {
         self.strokes.retain(|(at, frame)| {
@@ -53,7 +60,6 @@ impl Ink {
     ) -> Result<Json, &'static str> {
         self.prune(now);
         let owner = stage["callLegId"] == leg;
-        let mode = stage["inkMode"].as_str().unwrap_or("off");
         let action = frame["action"].as_str().unwrap_or("");
         if stage["kind"] != "screen" {
             return Err("stageRequired");
@@ -65,7 +71,7 @@ impl Ink {
             self.strokes.clear();
             return Ok(json!({"rtc":"ink","action":"clear","from":leg}));
         }
-        if !(mode == "everyone" || (mode == "hosts" && host)) {
+        if !may_draw(stage, host, leg) {
             return Err("notAllowed");
         }
         if action == "pin" {
@@ -140,6 +146,12 @@ fn geometry_permissions_and_lifetime_apply_before_broadcast() {
     let stage = json!({"kind":"screen","callLegId":"owner","inkMode":"hosts"});
     let mut request = json!({"action":"stroke","from":"owner","stroke":{"id":"one","kind":"path","color":"#112233","width":0.006,"points":[[0.2,0.3]],"tool":"draw"}});
     assert_eq!(ink.apply(now, &stage, false, "viewer", &request), Err("notAllowed"));
+    // the presenter draws on their own share whatever the mode
+    let off = json!({"kind":"screen","callLegId":"owner","inkMode":"off"});
+    let mut own = request.clone();
+    own["stroke"]["id"] = json!("own");
+    assert_eq!(ink.apply(now, &off, false, "owner", &own).unwrap()["from"], "owner");
+    assert!(!may_draw(&off, true, "host") && may_draw(&stage, true, "host") && !may_draw(&stage, false, "viewer"));
     request["stroke"]["points"] = json!([[3, 0]]);
     assert_eq!(ink.apply(now, &stage, true, "host", &request), Err("badRequest"));
     request["stroke"]["points"] = json!([[0.5, 0.2]]);

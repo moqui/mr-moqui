@@ -248,7 +248,10 @@ const stageRules = ec.resource.script('component://framework/service/org/moqui/c
 const shareModes = ['CsmAnyone', 'CsmHosts', 'CsmAsk']
 
 function stageInfo(session) {
-  return { stage: stageRules.read(session), stageRevision: Number(session.revision || 1),
+  // what each presentation request asked for (a board's id) stays with the call engine: legs, guests among them, see
+  // only who asked (requests)
+  const { requested, ...stage } = stageRules.read(session)
+  return { stage, stageRevision: Number(session.revision || 1),
     shareModeEnumId: session.shareModeEnumId || 'CsmAnyone' }
 }
 

@@ -2,7 +2,8 @@
 
 > Archived 2026-11-24: built, steps 1 to 7 and the Dev AIDE component libraries, then reviewed twice and the
 > findings fixed (47a466411, 7e48e1a69). Both Linux checks ran ([Linux checks](#linux-checks)); what is left is
-> provisioning the CI `linux-offline` pool, in [Remaining-Work](../Remaining-Work.md#tests), and two later items in
+> provisioning the CI `linux-offline` pool, in [Testing-Needed](../Testing-Needed.md#build-and-release), the Assist
+> canvas frame in Chromium 156, in [Remaining-Work](../Remaining-Work.md#tests), and two later items in
 > [Future-Plans](../Future-Plans.md#component-javascript-libraries). The guide is
 > [Build-Test](../../docs/Build-Test.md#browser-libraries-of-a-component) (the tasks, a component's libraries,
 > `add-js`, the offline source release), with [JS-Service-Scripts](../../docs/dev/JS-Service-Scripts.md#component-libraries)

@@ -23,6 +23,7 @@
 mod backup;
 mod backup_key;
 mod bridge;
+mod capture;
 mod client;
 mod download;
 mod node;
