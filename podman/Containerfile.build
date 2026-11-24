@@ -39,6 +39,8 @@ RUN apt-get update \
         pkg-config \
         procps \
         tar \
+        tzdata \
+        tzdata-legacy \
         unzip \
         xz-utils \
         zip \

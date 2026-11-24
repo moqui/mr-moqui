@@ -1,9 +1,17 @@
 # JS build: npm as a build tool, the browser libraries built rather than committed
 
-Status 2026-11-23: steps 1 to 7 are built (2026-11-22 and 23), with a follow-up the same day from a review of those
-commits. What remains is two Linux checks ([Remaining](#remaining-linux)) and the
-[Dev AIDE component libraries](#component-javascript-libraries-in-dev-aide). The sections below describe
-what was built. Where it differs from the first design: each build installs into a temporary tree and deletes it
+> Archived 2026-11-24: built, steps 1 to 7 and the Dev AIDE component libraries, then reviewed twice and the
+> findings fixed (47a466411, 7e48e1a69). Both Linux checks ran ([Linux checks](#linux-checks)); what is left is
+> provisioning the CI `linux-offline` pool, in [Remaining-Work](../Remaining-Work.md#tests), and two later items in
+> [Future-Plans](../Future-Plans.md#component-javascript-libraries). The guide is
+> [Build-Test](../../docs/Build-Test.md#browser-libraries-of-a-component) (the tasks, a component's libraries,
+> `add-js`, the offline source release), with [JS-Service-Scripts](../../docs/dev/JS-Service-Scripts.md#component-libraries)
+> and [JS-Screen-Scripts](../../docs/dev/JS-Screen-Scripts.md#component-libraries) for the libraries' use.
+
+Status 2026-11-24: steps 1 to 7 built 2026-11-22 and 23, and the
+[Dev AIDE component libraries](#component-javascript-libraries-in-dev-aide-built-2026-11-23) on 2026-11-23. A review of
+steps 1 to 7 was fixed in 47a466411, and a review of the rest (47a466411, dee848c09, 17a8608d4) in 7e48e1a69. The
+sections below describe what was built. Where it differs from the first design: each build installs into a temporary tree and deletes it
 (no persistent `target/js/<project>`), Mermaid is bundled from the lock instead of copied, and the optional Xiaolai face
 is switched off by a guard in the whiteboard bundle (`globalThis.MoquiBoardCjk`), not by editing the editor's font
 table at run time.
@@ -349,7 +357,7 @@ How far this goes:
 
 The release ships one source archive. The arm64 Linux verification fixture, including seven application repositories,
 compressed to 847 MiB. Its extracted inputs occupied 1.2 GiB for Cargo, 503 MiB for npm and 100 MiB for the five
-PostgreSQL payloads. The release commands and CI runner requirements are in [Build-Test](../docs/Build-Test.md#offline-source-release).
+PostgreSQL payloads. The release commands and CI runner requirements are in [Build-Test](../../docs/Build-Test.md#offline-source-release).
 
 ## Steps
 
@@ -373,14 +381,26 @@ Steps 1 to 7 are built.
 7. The source release: `build --offline`, `source-archive` with the npm cache and the vendored crates, and the
    no-network job. Add it to the pre-production skill.
 
-## Remaining (Linux)
+## Linux checks
 
-- Run the `offline-source` job on a provisioned `linux-offline` pool (rootless Podman or Docker and the
-  `localhost/moqui-build` image with Chromium). Until it passes there, "offline" is not claimed.
-- Build the libraries with Node 22 in CI. The build image has Node 24; Node 22.23.5 with npm 10.9.9 reproduced the
-  manifest on macOS.
+Run 2026-11-24 on Linux x86-64 (this checkout's machine), at 7e48e1a69:
 
-## Component JavaScript libraries in Dev AIDE
+- **Node 22.** `./moq verify-js` with Node 22.22.1 and npm 11.21.0 reproduced the manifest: 773 files, and the
+  builder's own tests. Node 22.23.5 with npm 10.9.9 had reproduced it on macOS. CI's image keeps Node 24.22.3.
+- **Offline source.** `scripts/test-source-archive.sh` on the 848 MB archive of 7e48e1a69 (`./moq source-archive`,
+  seven application repositories), in the `localhost/moqui-build` image with Chromium, `--network none`, rootless
+  Podman: `./moq build --offline --release` built the JavaScript libraries from the archive's npm cache (the manifest
+  checked), the vault module and the release binary in 8 min 15 s; then `./moq test-framework`, one cargo job, in
+  84 min in all. `cargo test --workspace` and moq's own tests passed. Four spec features failed, none of them about
+  the build:
+  - CalcGrid's `US/Central`: Debian 13 moved the legacy zone names to `tzdata-legacy`, which both images now install;
+    the spec passes in the rebuilt image.
+  - Two ShellSync features, which pass when their component's client specs run alone in the same image (load).
+  - The postMessage proof (V3WebFrontend 3.5.5): in the image's Chromium 156 the Assist canvas frame
+    (`/assist/sandbox` in `sandbox="allow-scripts"`) never answers its parent, where Chrome 158 does; it is in
+    Remaining-Work.
+
+## Component JavaScript libraries in Dev AIDE (built 2026-11-23)
 
 A component owns each package pin, lock and reviewed manifest. Its build declaration identifies a library by a
 component-local ID, npm entry point and targets (client, server or both). The standard builder produces a browser
@@ -420,6 +440,10 @@ may prepare and apply in a writable checkout, subject to the upstream-edit setti
 screen may attach a built library in its XML buffer or the site's extension. The normal Save writes the attachment.
 
 ### Implementation sequence
+
+All three built in 17a8608d4. From the review (7e48e1a69): a server module's value is kept for the outermost run (the
+builder's first-line mark, which `read_module` honors in `script/libs`), Dev AIDE offers the newest stable release
+first, and the builder's tests run in `verify-js`.
 
 1. Add a standard builder and a component-scoped `moq add-js` prepare/apply operation. Prepare resolves exact
    pins past the 14-day cutoff, installs with lifecycle scripts disabled, identifies bundled packages, checks

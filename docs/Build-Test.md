@@ -398,7 +398,8 @@ tag, or else the commit, labels the archive in its `SOURCE-RELEASE.txt`. It incl
 at its recorded revision, all locked npm tarballs and vendored Cargo sources. The Postgres payloads cover Linux and
 macOS on arm64 and x86-64, and Windows on x86-64. The archive includes the stripped payloads and checksums.
 Install the pinned Rust toolchain with the wasm32-unknown-unknown target, Node 22.13 or later with npm, and the platform build
-prerequisites before disconnecting. On Debian the embedded Postgres standby also needs `libpq5` for WAL replay.
+prerequisites before disconnecting. On Debian the embedded Postgres standby also needs `libpq5` for WAL replay, and the
+specs' legacy time zone names (`US/Central`) need `tzdata-legacy`.
 Unpack the archive and run `./moq build --offline --release` in its root.
 An ordinary checkout can also use `--offline` once the package and Postgres caches are populated.
 
@@ -407,7 +408,10 @@ Provision that pool with a rootless Podman or Docker engine, disk for a cold Rus
 `localhost/moqui-build:latest` image built with Chromium. The runner can reach its CI server to restore the archive.
 `scripts/test-source-archive.sh <archive>` streams it into a fresh container with `--network none` and empty caches,
 checks the expected revision when `MOQUI_CI_COMMIT` is set, builds the release and runs `./moq test-framework`.
-That job has not yet run on a provisioned pool, so an offline build is not yet proven there.
+That job has not yet run on a provisioned pool. The same check passed by hand on 2026-11-24 (Linux x86-64, rootless
+Podman, the archive of 7e48e1a69): the offline release build in about 8 minutes, then `./moq test-framework` with one
+cargo job, 84 minutes in all; its browser proofs need the Chromium named in
+[Remaining-Work](../plans/Remaining-Work.md#tests).
 Set `MOQUI_BUILD_IMAGE` to use another locally installed build image.
 
 ### Instance archive
