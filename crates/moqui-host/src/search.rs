@@ -254,6 +254,7 @@ fn embedded_tx(runtime_dir: &Path, store: &mut SearchStore) -> Result<Transactio
         pg_stat_statements: false,
         settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
         password: password.map(crate::db::embedded::SuperuserPassword),
+        tcp_port: None,
     };
     let (cluster, driver) = EmbeddedCluster::start_with(&dir, &options)?;
     store.cluster = Some(cluster);

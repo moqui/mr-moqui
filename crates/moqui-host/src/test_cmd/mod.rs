@@ -353,8 +353,9 @@ pub(crate) fn component_name(dir: &Path) -> String {
 /// `test/client`.
 fn reserved_subdirs(sub: &str) -> &'static [&'static str] {
     match sub {
-        // test/load holds load scripts, another command's (moqui test-load)
-        "test" => &["client", "agent", "acceptance", "load", "proofs"],
+        // test/load holds load scripts, another command's (moqui test-load); test/regression holds the specs of
+        // moqui test-regression, which run against two engines and compare them
+        "test" => &["client", "agent", "acceptance", "load", "proofs", "regression"],
         "test/acceptance" => &["client", "agent"],
         "test/client" | "test/acceptance/client" => &["process"],
         _ => &[],
@@ -364,6 +365,10 @@ fn reserved_subdirs(sub: &str) -> &'static [&'static str] {
 /// The tree of the security proofs (docs/security/proofs/README.md): client specs filed by requirement, which
 /// `moqui test-client --proofs` runs, a suite of their own beside `test/client` and `test/acceptance/client`.
 pub(crate) const PROOFS_TREE: &str = "test/proofs";
+
+/// The tree of `moqui test-regression` (plans/Regression-Test.md): client specs run on a baseline engine and a
+/// candidate engine, whose service outputs and row changes are compared.
+pub(crate) const REGRESSION_TREE: &str = "test/regression";
 
 /// The tree of a suite: `test` for the regression suite, `test/acceptance` for the acceptance suite; with `client`, its
 /// `client` subdirectory.

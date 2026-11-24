@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# moq's ./moq test, test-client, test-load, test-framework, test-apps, test-all, test-clients, accept, accept-all and autodoc. Sourced by moq, which holds the task table; bash 3.2, as moq is.
+# moq's ./moq test, test-client, test-load, test-regression, test-framework, test-apps, test-all, test-clients, accept, accept-all and autodoc. Sourced by moq, which holds the task table; bash 3.2, as moq is.
 
 # ========== test and accept tasks ==========
 
@@ -79,6 +79,40 @@ task_test_load() {
     done
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     exec_moqui "$bin" test-load "${server[@]}" "${args[@]}"
+}
+
+# moqui test-regression (plans/Regression-Test.md): it starts both engines itself, so -p, -c and -D do not apply. moq
+# runs from the repo root: --out, --java-repo and a spec file are the caller's, made absolute.
+task_test_regression() {
+    parse_run_opts test "$@"
+    local -a args
+    local arg
+    args=()
+    while [ ${#OPT_REST[@]} -gt 0 ]; do
+        arg=${OPT_REST[0]}
+        OPT_REST=("${OPT_REST[@]:1}")
+        case $arg in
+            --out | --java-repo)
+                args+=("$arg")
+                if [ ${#OPT_REST[@]} -gt 0 ]; then
+                    args+=("$(abs_path "${OPT_REST[0]}")")
+                    OPT_REST=("${OPT_REST[@]:1}")
+                fi
+                ;;
+            --spec | --feature | --start-timeout | --log-level)
+                args+=("$arg")
+                if [ ${#OPT_REST[@]} -gt 0 ]; then
+                    args+=("${OPT_REST[0]}")
+                    OPT_REST=("${OPT_REST[@]:1}")
+                fi
+                ;;
+            *.spec.js) args+=("$(abs_path "$arg")") ;;
+            *) args+=("$arg") ;;
+        esac
+    done
+    local bin
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
+    exec_moqui "$bin" test-regression "${args[@]}"
 }
 
 # moqui autodoc with the caller's directory as the base: --out defaults to ./autodoc there, and the path options are
@@ -720,6 +754,24 @@ moq options below are read first and any other option is passed on:
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
   -p, --port N  The server at https://localhost:N (--server); the default is https://localhost:8443
   --            End of moq options; everything after it goes to moqui test-load
+EOF
+}
+
+help_test_regression() {
+    cat <<EOF
+Runs moqui test-regression: the regression specs of each component's test/regression/ directory on
+two engines, one after the other, each on a new database of one embedded PostgreSQL, with the data
+clock at 2026-01-01. It compares the rows after boot, then each case's answers and row changes, and
+exits 1 on a difference. A target is rust:. (this build), rust:<git ref> (built once, cached in
+target/test-regression/), or java:. / java:<git ref> (Moqui Java from --java-repo or MOQUI_JAVA_REPO).
+Java against Rust leaves out the approved differences of test/regression/approved-differences.json.
+The plan is plans/Regression-Test.md; moqui help test-regression has every option:
+  ./moq test-regression rust:master rust:. framework
+  ./moq test-regression rust:. rust:. framework --spec Uom
+  ./moq test-regression java:. rust:. framework --java-repo ../moqui-framework
+
+Options: --lite, --debug, --release, --enterprise, --nobuild, and
+  --  End of moq options; everything after it goes to moqui test-regression
 EOF
 }
 

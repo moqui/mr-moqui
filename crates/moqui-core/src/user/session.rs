@@ -2408,7 +2408,8 @@ fn without_secret_parameters(url: &str) -> String {
 pub(crate) fn create_visit(facade: &EntityFacade, visitor_id: &str) -> Result<String, Error> {
     let mut visit = facade.make_value(VISIT).map_err(Error::from)?;
     visit.set("visitorId", Value::string(visitor_id));
-    visit.set("fromDate", super::login::now_value());
+    // A Visit is persisted data; session expiry still uses the real clock.
+    visit.set("fromDate", super::login::stamp_value(moqui_lib::data_clock::now_millis()));
     if let Some(user_id) = current_user_id()? {
         visit.set("userId", Value::string(user_id));
     }
@@ -2755,7 +2756,8 @@ fn update_assignments(
     names.push("sessionRevision");
     params.push(Value::I64(merged.revision));
     names.push("lastUpdatedStamp");
-    params.push(super::login::now_value());
+    // Direct SQL audit stamps use data time, not session deadline time.
+    params.push(super::login::stamp_value(moqui_lib::data_clock::now_millis()));
     (names, params)
 }
 
@@ -2783,7 +2785,8 @@ fn insert_params(id: &str, merged: &Merged) -> Vec<Value> {
         column_value(&merged.columns, Column::SessionToken),
         Value::string(encode_attributes(&merged.attributes)),
         Value::I64(merged.revision),
-        super::login::now_value(),
+        // Direct SQL audit stamp; expiry fields keep their own clocks.
+        super::login::stamp_value(moqui_lib::data_clock::now_millis()),
     ]
 }
 

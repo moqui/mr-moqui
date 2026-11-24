@@ -89,6 +89,10 @@ mod cluster {
         /// written or read, and initdb gets it from a file of its own that is removed once it ran. `None` keeps the
         /// password in `pgpass` beside the data, for a test or a tool that opens a cluster with no seal.
         pub password: Option<SuperuserPassword>,
+        /// Also listen on TCP at `127.0.0.1:<port>`, for a client in another process that cannot use the Unix socket,
+        /// such as the Java engine of `moqui test-regression`. `None` keeps the socket only (Unix). On Windows the
+        /// cluster is on TCP already; a port given here takes the place of the ephemeral one.
+        pub tcp_port: Option<u16>,
     }
 
     /// The embedded cluster's superuser password. Its `Debug` shows nothing of it.
@@ -111,6 +115,7 @@ mod cluster {
                 pg_stat_statements: false,
                 settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
                 password: None,
+                tcp_port: None,
             }
         }
     }
@@ -765,6 +770,26 @@ mod cluster {
         }
     }
 
+    /// The `host` lines of the cluster's pg_hba.conf with `scram-sha-256` in place of `password`.
+    fn scram_tcp_host_lines(data_dir: &Path) -> Result<(), Error> {
+        let path = data_dir.join("pg_hba.conf");
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| Error::new(format!("read {}", path.display())).with_source(err))?;
+        let changed: Vec<String> = text
+            .lines()
+            .map(|line| {
+                let words: Vec<&str> = line.split_whitespace().collect();
+                if words.first() == Some(&"host") && words.last() == Some(&"password") {
+                    format!("{} scram-sha-256", words[..words.len() - 1].join(" "))
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect();
+        std::fs::write(&path, changed.join("\n") + "\n")
+            .map_err(|err| Error::new(format!("write {}", path.display())).with_source(err))
+    }
+
     fn launch(
         dir: &Path,
         data_dir: &Path,
@@ -827,6 +852,11 @@ mod cluster {
         let set_up = server.setup();
         drop(initdb_guard);
         set_up.map_err(|err| embedded("setup embedded postgres", data_dir, err))?;
+        if options.tcp_port.is_some() {
+            // initdb's password method sends the password in clear text, which a client on TCP refuses; the password
+            // is stored as a SCRAM verifier, so SCRAM asks for the same one
+            scram_tcp_host_lines(data_dir)?;
+        }
         if adopt_port.is_none() {
             // The postmaster outlives a host that is killed, and keeps what it inherited: a program that hosts the node
             // opens descriptors without close-on-exec (the desktop app's CEF, its DevTools listening socket among them),
@@ -995,6 +1025,7 @@ mod cluster {
             pg_stat_statements,
             settings: ref conf_settings,
             ref password,
+            tcp_port,
         } = *options;
         let mut settings = Settings::new();
         // The unpacked install of this build's version (`install`), trusted as it is: nothing is looked up or
@@ -1064,18 +1095,19 @@ mod cluster {
         #[cfg(unix)]
         {
             settings.socket_dir = Some(socket_dir_for(data_dir, &std::env::temp_dir()));
-            settings.port = adopt_port.unwrap_or(PORT);
-            // Empty listen_addresses disables TCP.
+            settings.port = adopt_port.or(tcp_port).unwrap_or(PORT);
+            // Empty listen_addresses disables TCP; a tcp_port opens loopback only.
+            let listen = if tcp_port.is_some() { "127.0.0.1" } else { "" };
             settings
                 .configuration
-                .insert("listen_addresses".to_string(), String::new());
+                .insert("listen_addresses".to_string(), listen.to_string());
         }
         #[cfg(not(unix))]
         {
             settings.socket_dir = None;
             settings.host = "127.0.0.1".to_string();
             // Port 0 asks postgresql_embedded to bind an ephemeral port.
-            settings.port = adopt_port.unwrap_or(0);
+            settings.port = adopt_port.or(tcp_port).unwrap_or(0);
             settings
                 .configuration
                 .insert("listen_addresses".to_string(), "127.0.0.1".to_string());

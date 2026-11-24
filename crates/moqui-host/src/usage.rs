@@ -52,6 +52,7 @@ Test
   test             [component ...] [options]                Run component JavaScript specs
   test-client      [component | path ...] [options]         Run component client specs against a running server
   test-load        [component | path] [--script Name]       Run a component's load script against a running server
+  test-regression  <baseline> <candidate> [component ...]   Run the regression specs on two engines and compare them
   ci-run           [register | poll] [options]              Run a pipeline job as its runner (in a job's container)
 
 Help
@@ -564,6 +565,48 @@ Options:
                                   warn; log.info in a spec shows at info.
 ";
 
+const TEST_REGRESSION: &str = "\
+moqui test-regression <baseline> <candidate> [component | spec ...] [options]
+    Run the regression specs of test/regression on two engines, one after the other, and compare
+    what they did. Exit 0 when the two match, 1 when they differ or a spec failed.
+
+A target is an engine:
+  rust:.                          This binary, with this runtime.
+  rust:<git ref>                  mr-moqui at that commit, built once into
+                                  target/test-regression/rust-<commit>/.
+  java:.  java:<git ref>          Moqui Java from --java-repo (or MOQUI_JAVA_REPO): its moqui.war
+                                  as it is (java:.), or built at that commit.
+
+Each target boots on a new database of one embedded Postgres cluster, with the data clock
+(MOQUI_TEST_DATA_CLOCK_FILE) at 2026-01-01T00:00:00Z. The clock moves on 1 second after each case.
+The runner takes the database after boot, then after each case, and keeps the rows that changed.
+A spec has the format of moqui test-client, plus app.service(name, parameters), which runs a
+service through Tools > Service > Run as john.doe, and app.record(name, value). A spec holds no
+expected values: the baseline's run is the expectation.
+
+The comparison is by table and primary key. It leaves out the columns and tables of
+test/regression/volatile.json. With a Java target it also leaves out the approved differences of
+test/regression/approved-differences.json: the tables, columns and seed rows of one engine only.
+Screens are compared by function (the answers and the rows), not by pixels.
+
+  moqui test-regression rust:master rust:. framework
+  moqui test-regression java:. rust:. framework --java-repo ../moqui-framework
+  moqui test-regression rust:. rust:. framework --spec Uom --keep
+
+Options:
+  --spec Name[,Name]              Only these specs.
+  --feature text                  Only the cases whose names contain this text.
+  --java-repo DIR                 The Moqui Java checkout (moqui-framework with runtime/), or
+                                  MOQUI_JAVA_REPO. MOQUI_TEST_JDBC_JAR names the Postgres driver jar
+                                  when its runtime/lib has none. JAVA_HOME names the JDK (21 or
+                                  newer); else java on the PATH.
+  --out DIR                       The output: report.json, and each target's recording.json and
+                                  engine log. Default runtime/tmp/test-regression/<time>-<pid>.
+  --keep                          Keep the database cluster and the engines' runtimes in --out.
+  --start-timeout seconds         How long an engine may take to boot, 900 by default.
+  --log-level level               trace, debug, info (the default), warn or error.
+";
+
 const TEST_LOAD: &str = "\
 moqui test-load [component | path] [--script Name] [options]
 moqui test-load --compare <result.json> <result.json> [...]
@@ -866,6 +909,7 @@ pub fn command_help(name: &str) -> Option<&'static str> {
         "test" => Some(TEST),
         "test-client" => Some(TEST_CLIENT),
         "test-load" => Some(TEST_LOAD),
+        "test-regression" => Some(TEST_REGRESSION),
         "ci-run" => Some(CI_RUN),
         "help" => Some(HELP),
         "version" => Some(VERSION),
@@ -935,6 +979,7 @@ fn is_known_command(name: &str) -> bool {
             | "test"
             | "test-client"
             | "test-load"
+            | "test-regression"
             | "ci-run"
             | "serve"
             | "tui"
@@ -1139,6 +1184,7 @@ pub fn command_usage(command: &str) -> Error {
         "test" => "moqui test [component ...] [options]",
         "test-client" => "moqui test-client [component | path ...] [options]",
         "test-load" => "moqui test-load [component | path] [--script Name] [options]",
+        "test-regression" => "moqui test-regression <baseline> <candidate> [component | spec ...] [options]",
         "ci-run" => "moqui ci-run [register | poll] [options]",
         "tui" => {
             "moqui tui [--path PATH] [--user NAME] [--serve] [--ascii] [--no-color] [--keys SCHEME] [--snapshot PATH [--size WxH]] [--agent] [--server URL [--forget]]"

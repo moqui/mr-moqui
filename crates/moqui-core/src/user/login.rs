@@ -1947,9 +1947,10 @@ pub fn now_effective_value() -> Value {
 
 /// [`now_effective_value`] as epoch millis.
 pub fn now_effective_millis() -> i64 {
+    // Explicit user time wins; elapsed deadlines do not use this clock.
     ExecutionContext::with_current(ExecutionContext::effective_time)
         .flatten()
-        .unwrap_or_else(now_millis)
+        .unwrap_or_else(moqui_lib::data_clock::now_millis)
 }
 
 /// Whether a login key whose `thruDate` is `thru` has ended at `now` (both milliseconds): in date while its thruDate is

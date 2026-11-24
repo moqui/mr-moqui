@@ -105,6 +105,7 @@ mod overlay {
                 settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
                 // a throwaway cluster of this process, removed by the next: its own pgpass goes with it
                 password: None,
+                tcp_port: None,
             };
             let (cluster, driver) = EmbeddedCluster::start_with(&dir, &options)?;
             let pool = PoolConfig {
