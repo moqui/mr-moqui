@@ -378,6 +378,7 @@ fn specs_in_subdirectories() {
         "client/process",
         "agent",
         "proofs",
+        "regression",
     ] {
         std::fs::create_dir_all(test_dir.join(sub)).unwrap();
     }
@@ -388,8 +389,9 @@ fn specs_in_subdirectories() {
     std::fs::write(test_dir.join("client/process/Flow.spec.js"), "spec({})").unwrap();
     std::fs::write(test_dir.join("agent/Tasks.spec.js"), "spec({})").unwrap();
     std::fs::write(test_dir.join("proofs/V6Auth.spec.js"), "spec({})").unwrap();
+    std::fs::write(test_dir.join("regression/Enumeration.spec.js"), "spec({})").unwrap();
     std::fs::write(test_dir.join("suite.js"), "suite(['C'])").unwrap();
-    // test: the subdirectories, not client, agent or proofs; suite order, then by name wherever the file is
+    // test: the subdirectories, not client, agent, proofs or regression; suite order, then by name wherever the file is
     let specs = component_specs("c", &test_dir, "test").unwrap();
     let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
     assert_eq!(names, vec!["C", "A", "B"]);

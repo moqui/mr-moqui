@@ -148,6 +148,7 @@ load-production|Run|[types] [name=value] [opts]|Load data with the production co
 test|Run|[component...] [test opts]|Run component tests (moqui test) with the dev conf
 test-client|Run|[component...] [-p N] [opts]|Run component client tests (moqui test-client) against a running server
 test-load|Run|[component] [--script Name] [-p N] [opts]|Run a component load script (moqui test-load) against a running server
+test-regression|Run|<baseline> <candidate> [component...] [opts]|Run the regression specs on two engines (rust:<ref>, java:<ref>) and compare them
 test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/components/addon
 test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of components/base and components/dev
 test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps

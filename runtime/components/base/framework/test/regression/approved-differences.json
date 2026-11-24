@@ -1,0 +1,1270 @@
+{
+  "description": "The differences between Moqui Java and mr-moqui that are approved, each with its reason (moqui test-regression, plans/Regression-Test.md). They apply only when one target is Java. Sections: the tables and columns of one engine, the seed rows of one engine, reviewed seed rows, template fields that differ on purpose, and theme resources.",
+  "rust_only_tables": [
+    "public.auth_flow",
+    "public.auth_flow_field_map",
+    "public.auth_flow_role_map",
+    "public.cluster_member",
+    "public.cluster_message",
+    "public.data_feed_pending",
+    "public.http_session",
+    "public.oauth_flow",
+    "public.oidc_flow",
+    "public.saml_flow",
+    "public.user_ssh_key",
+    "search.document_index",
+    "search.moqui_http_log",
+    "search.moqui_logs"
+  ],
+  "java_only_tables": [
+    "public.artifact_hit",
+    "public.artifact_hit_bin"
+  ],
+  "rust_only_columns": [
+    {
+      "table": "public.data_document_field",
+      "name": "search_role",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.data_document_field",
+      "name": "search_weight",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.system_message_remote",
+      "name": "ssh_host_key_fingerprint",
+      "type": "text"
+    },
+    {
+      "table": "public.db_form",
+      "name": "is_dated",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.db_form_field",
+      "name": "from_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.db_form_field",
+      "name": "replaces_field_name",
+      "type": "text"
+    },
+    {
+      "table": "public.db_form_field",
+      "name": "thru_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.db_form_field_option",
+      "name": "from_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.db_form_field_option",
+      "name": "thru_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.db_resource_file",
+      "name": "blob_id",
+      "type": "character varying(255)"
+    },
+    {
+      "table": "public.db_resource_file",
+      "name": "file_size",
+      "type": "numeric(20,0)"
+    },
+    {
+      "table": "public.db_resource_file",
+      "name": "version_note",
+      "type": "text"
+    },
+    {
+      "table": "public.db_resource_file_history",
+      "name": "blob_id",
+      "type": "character varying(255)"
+    },
+    {
+      "table": "public.db_resource_file_history",
+      "name": "version_note",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "archived_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.email_message",
+      "name": "client_ref",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "email_account_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "email_folder_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "email_identity_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "has_attachment",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "in_reply_to",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "is_answered",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "is_flagged",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "is_read",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "last_save_ref",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "message_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.email_message",
+      "name": "message_size",
+      "type": "numeric(20,0)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "references_header",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "remote_folder_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "remote_uid",
+      "type": "numeric(20,0)"
+    },
+    {
+      "table": "public.email_message",
+      "name": "remote_uidl",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "scheduled_send_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.email_message",
+      "name": "send_claim_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.email_message",
+      "name": "send_error",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "snippet",
+      "type": "text"
+    },
+    {
+      "table": "public.email_message",
+      "name": "snoozed_thru_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.email_server",
+      "name": "auth_type_enum_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.email_server",
+      "name": "edge_prior_smtp_host",
+      "type": "text"
+    },
+    {
+      "table": "public.email_server",
+      "name": "oauth_provider_enum_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.email_server",
+      "name": "oauth_refresh_token",
+      "type": "text"
+    },
+    {
+      "table": "public.email_server",
+      "name": "oauth_sign_in_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.email_server",
+      "name": "smtp_password",
+      "type": "text"
+    },
+    {
+      "table": "public.email_server",
+      "name": "smtp_username",
+      "type": "text"
+    },
+    {
+      "table": "public.email_server",
+      "name": "store_allow_plain",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.email_server",
+      "name": "web_base_url",
+      "type": "text"
+    },
+    {
+      "table": "public.notification_message",
+      "name": "actor_user_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.notification_message",
+      "name": "app_name",
+      "type": "text"
+    },
+    {
+      "table": "public.notification_message",
+      "name": "reason_enum_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.notification_message",
+      "name": "record_entity_name",
+      "type": "text"
+    },
+    {
+      "table": "public.notification_message",
+      "name": "record_id",
+      "type": "text"
+    },
+    {
+      "table": "public.notification_message_user",
+      "name": "digest_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.notification_topic",
+      "name": "approve_service_name",
+      "type": "text"
+    },
+    {
+      "table": "public.notification_topic",
+      "name": "digest_default",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.notification_topic",
+      "name": "inbox_enum_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.notification_topic",
+      "name": "push_notifications",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.notification_topic",
+      "name": "refuse_reason_required",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.notification_topic",
+      "name": "refuse_service_name",
+      "type": "text"
+    },
+    {
+      "table": "public.notification_topic_user",
+      "name": "digest",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.notification_topic_user",
+      "name": "push_notifications",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.print_job",
+      "name": "color_mode",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.print_job",
+      "name": "orientation",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.screen_scheduled",
+      "name": "paused",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.screen_scheduled",
+      "name": "report_definition_id",
+      "type": "character varying(255)"
+    },
+    {
+      "table": "public.screen_scheduled",
+      "name": "report_owner_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.screen_scheduled_lock",
+      "name": "report_run_id",
+      "type": "character varying(255)"
+    },
+    {
+      "table": "public.screen_scheduled_lock",
+      "name": "report_running_until",
+      "type": "numeric(20,0)"
+    },
+    {
+      "table": "public.service_job",
+      "name": "error_history_only",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.service_job",
+      "name": "no_time_limit",
+      "type": "character(1)"
+    },
+    {
+      "table": "public.service_job",
+      "name": "queued_call",
+      "type": "text"
+    },
+    {
+      "table": "public.service_job_run",
+      "name": "instance_id",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.service_job_run",
+      "name": "trace_id",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.service_job_run_lock",
+      "name": "instance_id",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.service_job_run_lock",
+      "name": "run_count",
+      "type": "numeric(20,0)"
+    },
+    {
+      "table": "public.status_item",
+      "name": "status_color",
+      "type": "character varying(63)"
+    },
+    {
+      "table": "public.user_login_key",
+      "name": "device_name",
+      "type": "text"
+    },
+    {
+      "table": "public.user_login_key",
+      "name": "last_used_date",
+      "type": "timestamp without time zone"
+    },
+    {
+      "table": "public.wiki_page_history",
+      "name": "old_wiki_space_id",
+      "type": "character varying(40)"
+    },
+    {
+      "table": "public.wiki_page_history",
+      "name": "version_note",
+      "type": "text"
+    }
+  ],
+  "rust_seed_additions": [
+    {
+      "reason": "Rust SSO: authentication flow and client type enumerations for the Rust-only auth_flow/oauth_flow/oidc_flow/saml_flow tables",
+      "table": "public.enumeration",
+      "entity": "moqui.basic.Enumeration",
+      "key": [
+        "enum_id"
+      ],
+      "values": [
+        [
+          "AftOauth"
+        ],
+        [
+          "AftOidc"
+        ],
+        [
+          "AftSaml"
+        ],
+        [
+          "OctBitBucket"
+        ],
+        [
+          "OctDropBox"
+        ],
+        [
+          "OctFacebook"
+        ],
+        [
+          "OctFoursquare"
+        ],
+        [
+          "OctGitHub"
+        ],
+        [
+          "OctLinkedIn"
+        ],
+        [
+          "OctOauth10"
+        ],
+        [
+          "OctOauth20"
+        ],
+        [
+          "OctPaypal"
+        ],
+        [
+          "OctTwitter"
+        ],
+        [
+          "OctWordPress"
+        ],
+        [
+          "OctYahoo"
+        ],
+        [
+          "OctApple"
+        ],
+        [
+          "OctAzureAd"
+        ],
+        [
+          "OctGoogle"
+        ],
+        [
+          "OctKeycloak"
+        ],
+        [
+          "OctOther"
+        ],
+        [
+          "OjaEdDSA"
+        ],
+        [
+          "OjaES256"
+        ],
+        [
+          "OjaES384"
+        ],
+        [
+          "OjaES512"
+        ],
+        [
+          "OjaHS256"
+        ],
+        [
+          "OjaHS384"
+        ],
+        [
+          "OjaHS512"
+        ],
+        [
+          "OjaPS256"
+        ],
+        [
+          "OjaPS384"
+        ],
+        [
+          "OjaPS512"
+        ],
+        [
+          "OjaRS256"
+        ],
+        [
+          "OjaRS384"
+        ],
+        [
+          "OjaRS512"
+        ]
+      ]
+    },
+    {
+      "reason": "Rust SSO enumeration types",
+      "table": "public.enumeration_type",
+      "entity": "moqui.basic.EnumerationType",
+      "key": [
+        "enum_type_id"
+      ],
+      "values": [
+        [
+          "AuthFlowType"
+        ],
+        [
+          "OauthClientType"
+        ],
+        [
+          "OidcClientType"
+        ],
+        [
+          "OidcJwsAlgorithm"
+        ]
+      ]
+    },
+    {
+      "reason": "Rust built-in SSH server permissions",
+      "table": "public.user_permission",
+      "entity": "moqui.security.UserPermission",
+      "key": [
+        "user_permission_id"
+      ],
+      "values": [
+        [
+          "SSH_SFTP"
+        ],
+        [
+          "SSH_SHELL"
+        ]
+      ]
+    },
+    {
+      "reason": "Rust built-in SSH server permission grants",
+      "table": "public.user_group_permission",
+      "entity": "moqui.security.UserGroupPermission",
+      "key": [
+        "user_group_id",
+        "user_permission_id"
+      ],
+      "values": [
+        [
+          "ADMIN",
+          "SSH_SFTP"
+        ],
+        [
+          "ADMIN_ADV",
+          "SSH_SHELL"
+        ]
+      ]
+    },
+    {
+      "reason": "Rust DataFeedPending delivery job (MoquiSetupData.xml)",
+      "table": "public.service_job",
+      "entity": "moqui.service.job.ServiceJob",
+      "key": [
+        "job_name"
+      ],
+      "values": [
+        [
+          "process_DataFeedPending_frequent"
+        ]
+      ]
+    },
+    {
+      "reason": "moqui-sftp example job bundled in the Rust framework (SftpDemoData.xml)",
+      "table": "public.service_job",
+      "entity": "moqui.service.job.ServiceJob",
+      "key": [
+        "job_name"
+      ],
+      "values": [
+        [
+          "ExampleSftpLocal_poll"
+        ]
+      ]
+    },
+    {
+      "reason": "moqui-sftp example job parameters bundled in the Rust framework",
+      "table": "public.service_job_parameter",
+      "entity": "moqui.service.job.ServiceJobParameter",
+      "key": [
+        "job_name",
+        "parameter_name"
+      ],
+      "values": [
+        [
+          "ExampleSftpLocal_poll",
+          "systemMessageRemoteId"
+        ],
+        [
+          "ExampleSftpLocal_poll",
+          "systemMessageTypeId"
+        ]
+      ]
+    },
+    {
+      "reason": "moqui-sftp example message type bundled in the Rust framework",
+      "table": "public.system_message_type",
+      "entity": "moqui.service.message.SystemMessageType",
+      "key": [
+        "system_message_type_id"
+      ],
+      "values": [
+        [
+          "ExampleSftp"
+        ]
+      ]
+    },
+    {
+      "reason": "moqui-sftp example remote bundled in the Rust framework",
+      "table": "public.system_message_remote",
+      "entity": "moqui.service.message.SystemMessageRemote",
+      "key": [
+        "system_message_remote_id"
+      ],
+      "values": [
+        [
+          "ExampleSftpLocal"
+        ]
+      ]
+    }
+  ],
+  "java_seed_additions": [],
+  "reviewed_seed_rows": [
+    {
+      "engine": "rust",
+      "table": "public.user_group_permission",
+      "key": {
+        "user_group_id": "ADMIN",
+        "user_permission_id": "ADMIN_ACCESS_MANAGE"
+      },
+      "expected": {
+        "user_group_id": "ADMIN",
+        "user_permission_id": "ADMIN_ACCESS_MANAGE",
+        "from_date": "1970-01-01T00:00:00",
+        "thru_date": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.user_group_permission",
+      "key": {
+        "user_group_id": "ADMIN",
+        "user_permission_id": "ADMIN_CONSTITUTION_GLOBAL"
+      },
+      "expected": {
+        "user_group_id": "ADMIN",
+        "user_permission_id": "ADMIN_CONSTITUTION_GLOBAL",
+        "from_date": "1970-01-01T00:00:00",
+        "thru_date": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.user_group_permission",
+      "key": {
+        "user_group_id": "ADMIN",
+        "user_permission_id": "DRIVE_OWNER_CHANGE"
+      },
+      "expected": {
+        "user_group_id": "ADMIN",
+        "user_permission_id": "DRIVE_OWNER_CHANGE",
+        "from_date": "1970-01-01T00:00:00",
+        "thru_date": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.user_group_permission",
+      "key": {
+        "user_group_id": "ADMIN_ADV",
+        "user_permission_id": "DATABASE_ADMIN"
+      },
+      "expected": {
+        "user_group_id": "ADMIN_ADV",
+        "user_permission_id": "DATABASE_ADMIN",
+        "from_date": "1970-01-01T00:00:00",
+        "thru_date": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.user_group_permission",
+      "key": {
+        "user_group_id": "ADMIN_ADV",
+        "user_permission_id": "COMPONENT_DEPLOY"
+      },
+      "expected": {
+        "user_group_id": "ADMIN_ADV",
+        "user_permission_id": "COMPONENT_DEPLOY",
+        "from_date": "1970-01-01T00:00:00",
+        "thru_date": null
+      }
+    },
+    {
+      "engine": "java",
+      "table": "public.user_group_permission",
+      "key": {
+        "user_group_id": "ADMIN_ADV",
+        "user_permission_id": "GROOVY_SHELL_WEB"
+      },
+      "expected": {
+        "user_group_id": "ADMIN_ADV",
+        "user_permission_id": "GROOVY_SHELL_WEB",
+        "from_date": "1970-01-01T00:00:00",
+        "thru_date": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.service_job",
+      "key": {
+        "job_name": "backup_EmbeddedDatabase_daily"
+      },
+      "expected": {
+        "job_name": "backup_EmbeddedDatabase_daily",
+        "description": "Back up the embedded database and rotate the archives",
+        "service_name": "org.moqui.impl.ServerServices.backup#EmbeddedDatabase",
+        "transaction_timeout": 7200,
+        "no_time_limit": null,
+        "topic": null,
+        "local_only": null,
+        "cron_expression": "0 0 2 * * ?",
+        "from_date": null,
+        "thru_date": null,
+        "repeat_count": null,
+        "paused": "Y",
+        "expire_lock_time": null,
+        "min_retry_time": null,
+        "error_history_only": null,
+        "priority": null,
+        "queued_call": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.service_job",
+      "key": {
+        "job_name": "send_DueDrafts_frequent"
+      },
+      "expected": {
+        "job_name": "send_DueDrafts_frequent",
+        "description": "Send scheduled and held email drafts that are due",
+        "service_name": "org.moqui.impl.EmailClientServices.send#DueDrafts",
+        "transaction_timeout": null,
+        "no_time_limit": null,
+        "topic": null,
+        "local_only": null,
+        "cron_expression": "0 * * * * ?",
+        "from_date": null,
+        "thru_date": null,
+        "repeat_count": null,
+        "paused": "N",
+        "expire_lock_time": null,
+        "min_retry_time": null,
+        "error_history_only": "Y",
+        "priority": null,
+        "queued_call": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.service_job",
+      "key": {
+        "job_name": "sync_EmailAccounts_frequent"
+      },
+      "expected": {
+        "job_name": "sync_EmailAccounts_frequent",
+        "description": "Sync the mail accounts that are due",
+        "service_name": "org.moqui.impl.EmailClientServices.sync#DueEmailAccounts",
+        "transaction_timeout": null,
+        "no_time_limit": null,
+        "topic": null,
+        "local_only": null,
+        "cron_expression": "0 * * * * ?",
+        "from_date": null,
+        "thru_date": null,
+        "repeat_count": null,
+        "paused": "N",
+        "expire_lock_time": null,
+        "min_retry_time": null,
+        "error_history_only": "Y",
+        "priority": null,
+        "queued_call": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.service_job",
+      "key": {
+        "job_name": "clean_ChatRetention_daily"
+      },
+      "expected": {
+        "job_name": "clean_ChatRetention_daily",
+        "description": "Delete chat events past their room's retention",
+        "service_name": "org.moqui.impl.ChatServices.clean#ChatRetention",
+        "transaction_timeout": null,
+        "no_time_limit": null,
+        "topic": null,
+        "local_only": null,
+        "cron_expression": "0 45 3 * * ?",
+        "from_date": null,
+        "thru_date": null,
+        "repeat_count": null,
+        "paused": "N",
+        "expire_lock_time": null,
+        "min_retry_time": null,
+        "error_history_only": null,
+        "priority": null,
+        "queued_call": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.data_document",
+      "key": {
+        "data_document_id": "MoquiChatEvent"
+      },
+      "expected": {
+        "data_document_id": "MoquiChatEvent",
+        "document_name": "Chat Message",
+        "document_title": "${bodyText}",
+        "index_name": "moqui",
+        "primary_entity_name": "moqui.chat.ChatEvent",
+        "manual_data_service_name": null,
+        "manual_mapping_service_name": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.data_document",
+      "key": {
+        "data_document_id": "MoquiDriveFile"
+      },
+      "expected": {
+        "data_document_id": "MoquiDriveFile",
+        "document_name": "Drive File",
+        "document_title": "${name}",
+        "index_name": "moqui_drive",
+        "primary_entity_name": "moqui.resource.ResourceDrive",
+        "manual_data_service_name": null,
+        "manual_mapping_service_name": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.data_document",
+      "key": {
+        "data_document_id": "MoquiEmailMessage"
+      },
+      "expected": {
+        "data_document_id": "MoquiEmailMessage",
+        "document_name": "Email Message",
+        "document_title": "${subject}",
+        "index_name": "moqui_mail",
+        "primary_entity_name": "moqui.basic.email.EmailMessage",
+        "manual_data_service_name": null,
+        "manual_mapping_service_name": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "AgentInbox"
+      },
+      "expected": {
+        "topic": "AgentInbox",
+        "description": "Agent Inbox",
+        "title_template": "${title || 'Agent'}",
+        "error_title_template": null,
+        "link_template": null,
+        "type_string": "info",
+        "show_alert": "Y",
+        "alert_no_auto_hide": null,
+        "persist_on_send": "Y",
+        "is_private": null,
+        "receive_notifications": "Y",
+        "email_notifications": null,
+        "email_template_id": null,
+        "push_notifications": null,
+        "email_message_save": null,
+        "approve_service_name": null,
+        "refuse_service_name": null,
+        "refuse_reason_required": null,
+        "digest_default": null,
+        "inbox_enum_id": "NinNotifications"
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "AgentRun"
+      },
+      "expected": {
+        "topic": "AgentRun",
+        "description": "Agent Run",
+        "title_template": null,
+        "error_title_template": null,
+        "link_template": null,
+        "type_string": "info",
+        "show_alert": "N",
+        "alert_no_auto_hide": null,
+        "persist_on_send": "N",
+        "is_private": null,
+        "receive_notifications": "Y",
+        "email_notifications": null,
+        "email_template_id": null,
+        "push_notifications": null,
+        "email_message_save": null,
+        "approve_service_name": null,
+        "refuse_service_name": null,
+        "refuse_reason_required": null,
+        "digest_default": null,
+        "inbox_enum_id": null
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "ReportAlert"
+      },
+      "expected": {
+        "topic": "ReportAlert",
+        "description": "Report alert",
+        "title_template": null,
+        "error_title_template": null,
+        "link_template": null,
+        "type_string": "warning",
+        "show_alert": "Y",
+        "alert_no_auto_hide": null,
+        "persist_on_send": "Y",
+        "is_private": "Y",
+        "receive_notifications": "Y",
+        "email_notifications": null,
+        "email_template_id": null,
+        "push_notifications": null,
+        "email_message_save": null,
+        "approve_service_name": null,
+        "refuse_service_name": null,
+        "refuse_reason_required": null,
+        "digest_default": null,
+        "inbox_enum_id": "NinUpdates"
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "Voicemail"
+      },
+      "expected": {
+        "topic": "Voicemail",
+        "description": "New voicemail",
+        "title_template": null,
+        "error_title_template": null,
+        "link_template": null,
+        "type_string": "info",
+        "show_alert": "Y",
+        "alert_no_auto_hide": null,
+        "persist_on_send": "Y",
+        "is_private": null,
+        "receive_notifications": null,
+        "email_notifications": null,
+        "email_template_id": null,
+        "push_notifications": null,
+        "email_message_save": null,
+        "approve_service_name": null,
+        "refuse_service_name": null,
+        "refuse_reason_required": null,
+        "digest_default": null,
+        "inbox_enum_id": "NinUpdates"
+      }
+    },
+    {
+      "engine": "rust",
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "WikiPageReview"
+      },
+      "expected": {
+        "topic": "WikiPageReview",
+        "description": "Page to Review",
+        "title_template": "${authorName} asked you to review ${pageName}",
+        "error_title_template": null,
+        "link_template": null,
+        "type_string": "info",
+        "show_alert": "Y",
+        "alert_no_auto_hide": null,
+        "persist_on_send": "Y",
+        "is_private": "Y",
+        "receive_notifications": "Y",
+        "email_notifications": null,
+        "email_template_id": null,
+        "push_notifications": null,
+        "email_message_save": null,
+        "approve_service_name": "org.moqui.impl.WikiServices.approve#WikiPageReview",
+        "refuse_service_name": "org.moqui.impl.WikiServices.refuse#WikiPageReview",
+        "refuse_reason_required": "Y",
+        "digest_default": null,
+        "inbox_enum_id": null
+      }
+    }
+  ],
+  "template_differences": [
+    {
+      "table": "public.localized_message",
+      "key": {
+        "original": "StatusFlowTransitionNotFoundTemplate",
+        "locale": "default"
+      },
+      "field": "localized",
+      "validator": "elvis_or",
+      "java": "Status change not allowed from ${lookedUpStatusName?:lookedUpStatusId} to ${parameterStatusName?:parameterStatusId}"
+    },
+    {
+      "table": "public.localized_message",
+      "key": {
+        "original": "UomNameTemplate",
+        "locale": "default"
+      },
+      "field": "localized",
+      "validator": "elvis_or",
+      "java": "${description?:''} (${abbreviation?:uomId})"
+    },
+    {
+      "table": "public.localized_message",
+      "key": {
+        "original": "UsernameTemplate",
+        "locale": "default"
+      },
+      "field": "localized",
+      "validator": "elvis_or",
+      "java": "${userFullName ?: (lastName ? (firstName ? firstName + ' ' : '') + lastName : '')} [${username?:userId?:''}]"
+    },
+    {
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "ServiceJobError"
+      },
+      "field": "title_template",
+      "validator": "elvis_or",
+      "java": "Job Error ${serviceCallRun.jobName?:''} [${serviceCallRun.jobRunId?:''}] ${serviceCallRun.errors?:'N/A'}"
+    },
+    {
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "WebServletError"
+      },
+      "field": "title_template",
+      "validator": "elvis_or",
+      "java": "Web Error ${errorCode?:''} (${username?:'no user'}) ${path?:''} ${message?:'N/A'}"
+    },
+    {
+      "table": "public.notification_topic",
+      "key": {
+        "topic": "ServiceJobError"
+      },
+      "field": "link_template",
+      "java": "/vapps/system/ServiceJob/JobRuns/JobRunDetail?jobRunId=${serviceCallRun.jobRunId}",
+      "rust": "/qapps/System/ServiceJob/JobRuns/JobRunDetail?jobRunId=${serviceCallRun.jobRunId}"
+    }
+  ],
+  "theme_resources": [
+    {
+      "theme": "DEFAULT",
+      "sequence": 1,
+      "java": [
+        "STRT_STYLESHEET",
+        null
+      ],
+      "rust": [
+        "STRT_STYLESHEET",
+        "/libs/fontawesome/css/font-awesome.min.css"
+      ]
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 2,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/font-awesome/css/font-awesome.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 3,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/twitter-bootstrap/css/bootstrap.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 4,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/bootstrap-datetimepicker/css/bootstrap-datetimepicker.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 5,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/select2/select2.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 6,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/select2-bootstrap-theme/select2-bootstrap.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 7,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/Selectivity.js/selectivity-full.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 8,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/jstree/themes/default/style.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 20,
+      "java": [
+        "STRT_STYLESHEET",
+        "/css/webroot-layout.css"
+      ],
+      "rust": [
+        "STRT_STYLESHEET",
+        "/css/moqui-html.css"
+      ]
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 21,
+      "java": [
+        "STRT_STYLESHEET",
+        "/css/webroot-theme.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 30,
+      "java": null,
+      "rust": [
+        "STRT_SCRIPT",
+        "/js/moqui-html.js"
+      ]
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 102,
+      "java": [
+        "STRT_BODY_CLASS",
+        "bg-light"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT",
+      "sequence": 201,
+      "java": [
+        "STRT_FOOTER_ITEM",
+        "<p><a href=\"/vapps/ScreenTree\">${ec.l10n.localize('Site Map')}</a></p>"
+      ],
+      "rust": [
+        "STRT_FOOTER_ITEM",
+        "<p><a href=\"/apps/ScreenTree\">${ec.l10n.localize('Site Map')}</a></p>"
+      ]
+    },
+    {
+      "theme": "DEFAULT_QUASAR",
+      "sequence": 1,
+      "java": [
+        "STRT_STYLESHEET",
+        null
+      ],
+      "rust": [
+        "STRT_STYLESHEET",
+        "/libs/fontawesome/css/font-awesome.min.css"
+      ]
+    },
+    {
+      "theme": "DEFAULT_QUASAR",
+      "sequence": 2,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/font-awesome/css/font-awesome.min.css"
+      ],
+      "rust": null
+    },
+    {
+      "theme": "DEFAULT_QUASAR",
+      "sequence": 3,
+      "java": [
+        "STRT_STYLESHEET",
+        "https://fonts.googleapis.com/css?family=Roboto:100,300,400,500,700,900|Material+Icons"
+      ],
+      "rust": [
+        "STRT_STYLESHEET",
+        "/libs/material-icons/material-icons.css"
+      ]
+    },
+    {
+      "theme": "DEFAULT_QUASAR",
+      "sequence": 4,
+      "java": [
+        "STRT_STYLESHEET",
+        "/libs/quasar/quasar.min.css"
+      ],
+      "rust": [
+        "STRT_STYLESHEET",
+        "/libs/quasar/quasar.prod.css"
+      ]
+    }
+  ]
+}

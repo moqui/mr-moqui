@@ -297,6 +297,21 @@ complete_task() {
                     ;;
             esac
             ;;
+        test-regression)
+            case $prev in
+                --spec | --feature | --start-timeout | --log-level) return ;;
+                --out | --java-repo) echo @files; return ;;
+            esac
+            local out
+            out=$(complete_run_like "$cur" "$prev" @binary)
+            case $out in
+                @binary) filter_prefix "$cur" rust:. rust:master java:. java:master $(test_components) ;;
+                ?*) printf '%s\n' "$out" ;;
+            esac
+            case $cur in
+                -*) filter_prefix "$cur" --spec --feature --java-repo --out --keep --start-timeout --log-level ;;
+            esac
+            ;;
         test-load)
             case $prev in
                 --server | --ssh | --script | --param | --users | --ramp-up | --duration | --iterations | --scenario | --label | \

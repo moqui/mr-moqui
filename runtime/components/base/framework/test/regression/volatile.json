@@ -1,0 +1,42 @@
+{
+    "description": "What differs from one run of an engine to the next (moqui test-regression, plans/Regression-Test.md). The comparison leaves these out. columns: in every table; tables: whole; tableColumns: by table. reasons: why each entry is here.",
+    "columns": ["last_updated_tx_stamp", "created_tx_stamp"],
+    "tables": [
+        "search.otel_logs",
+        "search.otel_metrics",
+        "search.otel_spans",
+        "search.otel_errors",
+        "search.monitor_annotations",
+        "cluster_member",
+        "visitor",
+        "dev_artifact",
+        "dev_artifact_binding",
+        "dev_artifact_call",
+        "dev_artifact_file",
+        "dev_artifact_project",
+        "dev_artifact_ref"
+    ],
+    "tableColumns": {
+        "agent_skill": ["last_updated_date"],
+        "email_server": ["mail_password"],
+        "notification_message": ["message_json", "sent_date"],
+        "search.document_index": ["created_at"],
+        "secret_value": ["sealed_value"],
+        "service_job_run": ["start_time", "end_time", "instance_id", "messages", "trace_id", "run_thread"],
+        "user_account": ["current_password"],
+        "visit": ["initial_request", "session_id", "visitor_id"]
+    },
+    "reasons": {
+        "search.otel_*, search.monitor_annotations": "the engine's own telemetry: random trace and span ids, and real times; a case's errors still show in its answer",
+        "cluster_member": "one row for each engine process, keyed by its random instance id",
+        "visitor": "keyed by a random UUID; the visit rows still count",
+        "dev_artifact*": "the index of artifacts the engine fills in the background after boot, at no fixed time, with the paths of the runtime copy",
+        "agent_skill.last_updated_date": "the time the boot loaded the skill files",
+        "email_server.mail_password, secret_value.sealed_value": "encrypted with a random nonce",
+        "notification_message.message_json, sent_date": "the boot notice holds the real start time",
+        "search.document_index.created_at": "the time the boot made the index",
+        "service_job_run": "the real run times, the process id, the trace id, the thread the pool gave, and the times in its messages",
+        "user_account.current_password": "the first login hashes the password again with a random salt",
+        "visit.initial_request, session_id, visitor_id": "the engine's port, and a random session and visitor"
+    }
+}

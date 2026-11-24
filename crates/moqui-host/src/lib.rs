@@ -141,6 +141,8 @@ mod term;
 #[cfg(feature = "test-client")]
 pub mod test_client;
 pub mod test_cmd;
+#[cfg(feature = "test-client")]
+pub mod test_regression;
 #[cfg(feature = "tui")]
 pub mod tui;
 #[cfg(feature = "tui")]
@@ -1028,6 +1030,23 @@ where
                 let _ = rest;
                 Err(moqui_lib::error::Error::new(
                     "moqui test-client: this build has no client test runner (the test-client feature, which every package has)",
+                ))
+            }
+        }
+        [command, rest @ ..] if command == "test-regression" => {
+            #[cfg(feature = "test-client")]
+            {
+                // 0: the two targets match; 1: they differ, or a spec failed
+                match test_regression::dispatch(rest)? {
+                    0 => Ok(None),
+                    code => std::process::exit(code),
+                }
+            }
+            #[cfg(not(feature = "test-client"))]
+            {
+                let _ = rest;
+                Err(moqui_lib::error::Error::new(
+                    "moqui test-regression: this build has no regression runner (the test-client feature, which every package has)",
                 ))
             }
         }

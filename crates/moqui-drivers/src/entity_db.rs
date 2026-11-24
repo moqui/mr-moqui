@@ -375,6 +375,7 @@ fn open_embedded(
         settings: conf.embedded_settings.clone(),
         // the superuser's password from seal.json ([`embedded_password`]); with none, the cluster's own `pgpass`
         password: (!conf.password.is_empty()).then(|| super::embedded::SuperuserPassword(conf.password.clone())),
+        tcp_port: None,
     };
     let (cluster, driver) = EmbeddedCluster::start_with(cluster_dir, &options)?;
     create_pg_stat_statements(&conf, &driver);

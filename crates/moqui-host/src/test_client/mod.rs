@@ -383,6 +383,45 @@ fn http_client(insecure: bool) -> Result<reqwest::blocking::Client, Error> {
         .map_err(|err| Error::new(format!("HTTP client: {err}")))
 }
 
+/// The client host of `moqui test-regression` (plans/Regression-Test.md) against a loopback engine at `url`: the
+/// deployment profile (no fixtures), a 30 s wait. [`RegressionClient::begin_spec`] names each spec before it runs.
+pub(crate) fn regression_client(url: &str, out_dir: &Path) -> Result<RegressionClient, Error> {
+    let args = ClientArgs {
+        timeout: 30.0,
+        profile: Some(Profile::Deployment),
+        ..ClientArgs::default()
+    };
+    let server = Server::parse(url, false)?;
+    let local = http::is_loopback(&server.host);
+    Ok(RegressionClient {
+        host: new_host(&args, server, http_client(false)?, out_dir),
+        local,
+        index: AtomicU64::new(0),
+    })
+}
+
+/// The client host of one regression target.
+pub(crate) struct RegressionClient {
+    host: Arc<ClientHost>,
+    local: bool,
+    index: AtomicU64,
+}
+
+impl RegressionClient {
+    pub(crate) fn host(&self) -> Arc<dyn SpecHost> {
+        self.host.clone()
+    }
+
+    /// Before a spec runs: its component and name, as a run of `moqui test-client` sets them.
+    pub(crate) fn begin_spec(&self, component: &TestComponent, spec: &moqui_devkit::testkit::SpecFile) {
+        let index = self.index.fetch_add(1, Ordering::SeqCst) as usize;
+        *lock(&self.host.component_dir) = component.dir.clone();
+        *lock(&self.host.current) = (component.name.clone(), spec.name.clone());
+        *lock(&self.host.peer) = self.local.then(|| spec_peer(index));
+        *lock(&self.host.offline) = spec_offline(&spec.source);
+    }
+}
+
 /// The client host of a run of `args` against `server`, writing under `out_dir`.
 fn new_host(args: &ClientArgs, server: Server, client: reqwest::blocking::Client, out_dir: &Path) -> Arc<ClientHost> {
     let local = server.secure && moqui_lib::dev_ca::loopback(&server.host);
