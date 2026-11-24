@@ -73,6 +73,8 @@
         current: null,
         legId: null,
         phase: "idle", // idle, joining, connected, reconnecting
+        // a phone turned on its side: the stage takes the screen's height
+        phoneLandscape: false,
         error: "",
         muted: false,
         cameraOff: false,
@@ -126,6 +128,11 @@
         hostAudio: null,
         hostPip: false
     });
+    const landscapeQuery = root.matchMedia ? root.matchMedia("(orientation: landscape) and (max-height: 32rem)") : null;
+    if (landscapeQuery) {
+        state.phoneLandscape = landscapeQuery.matches;
+        landscapeQuery.addEventListener?.("change", (event) => { state.phoneLandscape = event.matches; });
+    }
 
     const call = {
         state,
@@ -1674,7 +1681,13 @@
             if (frame.action==="snapshot") {
                 if (state.stage.callLegId===state.legId && !call.guest && !call.snapshotPending) {
                     const video=root.document.querySelector(".m-present-preview video");
-                    if(video)call.snapshotBoard(video).catch(error=>{state.error=String(error.message || error);});
+                    // a snapshot puts a board on the stage in place of the share: the presenter decides when another asks
+                    const asked=frame.from && frame.from!==state.legId;
+                    const text=t("{name} asks to put a snapshot of your share on a board, in place of the share. Allow it?")
+                        .replace("{name}",call.nameOf(frame.from));
+                    const allowed=!asked ? Promise.resolve(true) : moqui.confirmAction ? moqui.confirmAction(text) : Promise.resolve(root.confirm(text));
+                    if(video)allowed.then(ok=>ok && state.stage.callLegId===state.legId ? call.snapshotBoard(video) : null)
+                        .catch(error=>{state.error=String(error.message || error);});
                 }
                 return;
             }
@@ -1718,6 +1731,9 @@
             state.stageRevision = frame.revision;
             const old=state.stage;
             state.stage = frame.stage;
+            // the one taken over is told who took the stage (a host's Stop is no take over: the stage is then empty)
+            if (old.callLegId===state.legId && frame.stage.callLegId && frame.stage.callLegId!==state.legId)
+                moqui.notifyMessages?.([{type:"info",message:t("{name} took over the stage").replace("{name}",call.nameOf(frame.stage.callLegId))}]);
             if(old.kind!==frame.stage.kind || old.callLegId!==frame.stage.callLegId || old.followEpoch!==frame.stage.followEpoch){
                 call.followStart(frame.stage);
                 if(old.kind==="follow" || frame.stage.kind==="follow"){
@@ -2495,7 +2511,7 @@
             pending() { return this.call.stage.requests || []; },
             host() { return !!this.view?.participants?.some(p => p.userId && p.userId === call.me && p.role === "host"); },
             sharing() { return this.call.stage.kind === "screen"; },
-            inkAllowed() {return this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
+            inkAllowed() {return this.mine || this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
             boardId() { return this.call.stage.kind === "board" ? this.call.stage.wikiPageId : null; },
             guest() { return call.guest; },
             followStage(){return this.call.stage.kind==="follow";},
@@ -2504,7 +2520,9 @@
             supported() { return !!root.navigator?.mediaDevices?.getDisplayMedia; },
             tabControls() { return this.mine && this.call.capture?.surface === "tab" && !!call.captureController?.forwardWheel; },
             modes() { return [{value:"CsmAnyone",label:t("Anyone")},{value:"CsmHosts",label:t("Hosts only")},{value:"CsmAsk",label:t("Ask a host")}]; },
-            presenter() { return this.mine ? t("You are presenting") : t("{name} is presenting").replace("{name}",call.nameOf(this.owner)); }
+            presenter() { return this.mine ? t("You are presenting") : t("{name} is presenting").replace("{name}",call.nameOf(this.owner)); },
+            boardPresenter() { return this.mine ? t("You are presenting a board") : t("{name} is presenting a board").replace("{name}",call.nameOf(this.owner)); },
+            landscape() { return this.call.phoneLandscape && !this.mine; }
         },
         watch:{owner() { this.fit(); this.forward=false; this.notice=""; this.followBoard=true; }, boardId(){this.followBoard=true;}},
         methods:{
@@ -2600,7 +2618,7 @@
         template:`<section class="m-call-presentation q-mb-xs">
             <div class="row items-center q-gutter-xs">
                 <span v-if="sharing && (!mine || call.sharing)" role="status" class="text-subtitle2">{{presenter}}</span>
-                <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop')"/>
+                <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop',{previousLegId:owner})"/>
                 <q-btn v-if="eligible && !(mine && followStage)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Present this screen')" @click="ask('follow')"/>
                 <q-btn v-if="!guest" flat dense icon="sym_o_draw" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Whiteboard')" @click="boardPicker"/>
                 <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !pending.includes(call.legId)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode === 'CsmHosts'" :label="t('Share the screen')" @click="ask()"/>
@@ -2611,7 +2629,7 @@
             </div>
             <div v-if="followStage" class="m-screen-follow row items-center q-gutter-xs">
                 <span role="status">{{call.followDenied ? t('{name} is on a screen you cannot open').replace('{name}',name(owner)) : presenter}}</span>
-                <q-btn v-if="host || mine" dense flat :label="t('End screen presentation')" @click="command('stop')"/>
+                <q-btn v-if="host || mine" dense flat :label="t('End screen presentation')" @click="command('stop',{previousLegId:owner})"/>
                 <q-btn v-if="!guest && !mine" dense flat :label="call.following?t('Stop following'):t('Follow again')" @click="setFollowing(!call.following)"/>
                 <q-btn v-if="mine && supported && !call.sharing" dense flat :disable="call.picking" :label="t('Share this tab with guests')" @click="capture('tab',false)"/>
                 <q-btn v-if="mine && call.sharing" dense flat :label="t('Stop guest video')" @click="stop(false)"/>
@@ -2620,10 +2638,10 @@
             </div>
             <div v-if="boardId" class="m-meeting-board">
                 <div class="row items-center q-gutter-xs">
-                    <span class="text-subtitle2">{{t('Whiteboard')}}</span>
+                    <span role="status" class="text-subtitle2">{{boardPresenter}}</span>
                     <q-btn v-if="!mine" dense flat :label="followBoard?t('Stop following'):t('Follow again')" @click="followBoard=!followBoard"/>
                     <q-btn v-if="mine && call.sharing" dense flat :label="t('Switch to screen')" @click="ask('screen')"/>
-                    <q-btn v-if="mine || host" dense flat :label="t('Close board')" @click="command('stop')"/>
+                    <q-btn v-if="mine || host" dense flat :label="t('Close board')" @click="command('stop',{previousLegId:owner})"/>
                     <q-btn-dropdown v-if="host" dense flat :label="t('Who can draw')"><q-list dense>
                         <q-item><q-toggle :label="t('Members')" :model-value="call.stage.memberCanEdit!==false" @update:model-value="v=>drawing('memberCanEdit',v)"/></q-item>
                         <q-item><q-toggle :label="t('Guests')" :model-value="call.stage.guestCanEdit!==false" @update:model-value="v=>drawing('guestCanEdit',v)"/></q-item>
@@ -2672,7 +2690,7 @@
                 <q-btn v-if="!guest" dense flat icon="sym_o_camera_alt" :label="t('Snapshot to board')" @click="snapshot"/>
             </div>
             <div v-if="sharing && stream" ref="viewport" class="m-present-viewport relative-position" :class="{'m-present-preview':mine}"
-                :style="{height:mine?'8rem':'min(58dvh,48rem)',maxWidth:mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}"
+                :style="{height:mine?'8rem':landscape?'calc(100dvh - 3rem)':'min(58dvh,48rem)',maxWidth:mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}"
                 @wheel="wheel" @pointerdown="pointer($event,'start')" @pointermove="pointer($event,'move')" @pointerup="pointer($event,'end')" @pointercancel="pointer($event,'end')">
                 <div class="relative-position" :style="{width:'100%',height:'100%',transform:'translate('+x+'px,'+y+'px) scale('+scale+')'}">
                     <m-call-video :stream="stream" muted style="width:100%;height:100%;object-fit:contain"/>

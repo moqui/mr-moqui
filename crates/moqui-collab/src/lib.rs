@@ -192,6 +192,11 @@ struct Room {
     meeting_names: BTreeSet<String>,
     last_editor: Option<String>,
     members: usize,
+    /// Taken out of [`rooms`]: a join that found it before then loads the room again.
+    closed: bool,
+    /// When a save of the room last failed for every editor it could be saved as; the idle save waits [`IDLE_SAVE`]
+    /// after it, rather than trying again every second.
+    save_failed_at: Option<Instant>,
     /// Each member's access, by user, as last asked.
     can_edit: HashMap<String, Grant>,
     /// The size of the document's state as last written, and of the updates applied since: what [`apply`] holds to
@@ -584,6 +589,8 @@ fn load(key: &str, page_id: &str, on_database: bool) -> Result<Arc<Mutex<Room>>,
         meeting_names,
         last_editor: None,
         members: 0,
+        closed: false,
+        save_failed_at: None,
         can_edit: HashMap::new(),
         state_bytes,
         stamp,
@@ -787,7 +794,13 @@ pub fn join_scoped(
         StateVector::decode_v1(client_state_vector)
             .map_err(|err| Refusal::new(400, format!("not a Yjs state vector: {err}")))?
     };
-    let room = load(key, page_id, on_database)?;
+    // a room the tick closed between the load and the lock is loaded again, or the member would be in no room
+    let room = loop {
+        let room = load(key, page_id, on_database)?;
+        if !lock(&room).closed {
+            break room;
+        }
+    };
     let mut room = lock(&room);
     if meeting.is_some() && !matches!(room.target.codec, Codec::Board) {
         return Err(Refusal::new(404, "board not found"));
@@ -1091,6 +1104,24 @@ pub fn recheck_meeting(call_id: &str) {
     }
 }
 
+/// The space `wiki_space_id`'s access changed (a member left the chat room whose boards it holds, the room was
+/// archived): the grants of the editors of its pages open on this server are asked again at the next [`tick`], so one
+/// who lost the page stops changing it within about a second rather than at the next [`ACCESS_RECHECK`].
+pub fn recheck_space(wiki_space_id: &str) {
+    let open: Vec<Arc<Mutex<Room>>> = lock(rooms()).values().cloned().collect();
+    let now = Instant::now();
+    for room in open {
+        let mut room = lock(&room);
+        if room.target.wiki_space_id != wiki_space_id {
+            continue;
+        }
+        for grant in room.can_edit.values_mut().filter(|grant| grant.meeting.is_none()) {
+            grant.nudged = true;
+            grant.retry_at = now;
+        }
+    }
+}
+
 /// Age every member's access answer of `key` by `by`, as if it were asked that long ago.
 #[cfg(test)]
 fn age_grants(key: &str, by: Duration) {
@@ -1103,7 +1134,7 @@ fn age_grants(key: &str, by: Duration) {
 }
 
 fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
-    let (dirty, quiet, members, unsaved, on_database, last_editor) = {
+    let (dirty, quiet, members, unsaved, on_database, failed_lately) = {
         let room = lock(room);
         (
             room.dirty,
@@ -1111,39 +1142,82 @@ fn tick_room(key: &str, room: &Mutex<Room>) -> Result<(), Error> {
             room.members,
             !room.unsaved.is_empty(),
             room.target.on_database,
-            room.last_editor.clone(),
+            room.save_failed_at.is_some_and(|at| at.elapsed() < IDLE_SAVE),
         )
     };
     if dirty && quiet >= FLUSH_AFTER {
         flush(key, room)?;
     }
-    let idle_save = unsaved && on_database && quiet >= IDLE_SAVE;
+    let idle_save = unsaved && on_database && quiet >= IDLE_SAVE && !failed_lately;
     if members == 0 || idle_save {
         if unsaved {
-            let editor = last_editor
-                .or_else(|| lock(room).unsaved.iter().next().cloned())
-                .unwrap_or_default();
-            save_room(key, room, &editor, None)?;
+            if !save_as_an_editor(key, room) && lock(room).dirty {
+                // the state, with its editors, is in the row: the next join or Save versions it
+                flush(key, room)?;
+            }
         } else if dirty {
             flush(key, room)?;
         }
         if members == 0 {
-            let (still_empty, compact, stamp) = {
-                let room = lock(room);
+            // taken out under both locks, so a join between finds the room closed and loads it again
+            let (closed, compact, stamp) = {
+                let mut all = lock(rooms());
+                let mut room = lock(room);
                 let compact = matches!(room.target.codec, Codec::Board) && room.unsaved.is_empty() && !room.dirty;
-                (room.members == 0, compact, room.stamp)
+                if room.members == 0 {
+                    room.closed = true;
+                    all.remove(key);
+                }
+                (room.closed, compact, room.stamp)
             };
-            if still_empty {
-                lock(rooms()).remove(key);
-                if compact {
-                    if let Err(err) = compact_row(key, stamp) {
-                        tracing::warn!("co-edited {key}: its stored state was not compacted: {}", err.message());
-                    }
+            if closed && compact {
+                if let Err(err) = compact_row(key, stamp) {
+                    tracing::warn!("co-edited {key}: its stored state was not compacted: {}", err.message());
                 }
             }
         }
     }
     Ok(())
+}
+
+/// Save the room as a version, as the first of its editors who may still change the page: the last editor, the others
+/// whose changes are unsaved, then the members who may edit now. An editor who lost access (left the room's chat,
+/// was removed from the space) is passed over. Out: whether a version was saved; when none could be, the failure is
+/// logged once and the idle save waits a while before it tries again.
+fn save_as_an_editor(key: &str, room: &Mutex<Room>) -> bool {
+    let candidates: Vec<String> = {
+        let room = lock(room);
+        let mut ordered: Vec<String> = room.last_editor.iter().cloned().collect();
+        ordered.extend(room.unsaved.iter().cloned());
+        ordered.extend(
+            room.can_edit
+                .iter()
+                .filter(|(_, grant)| grant.can_edit && grant.meeting.is_none())
+                .map(|(user, _)| user.clone()),
+        );
+        let mut seen = BTreeSet::new();
+        ordered.retain(|user| !user.is_empty() && seen.insert(user.clone()));
+        ordered
+    };
+    let mut failures = Vec::new();
+    for editor in &candidates {
+        match save_room(key, room, editor, None) {
+            Ok(_) => {
+                lock(room).save_failed_at = None;
+                return true;
+            }
+            Err(err) => failures.push(format!("{editor}: {}", err.message())),
+        }
+    }
+    let mut room = lock(room);
+    if room.save_failed_at.is_none() {
+        tracing::error!(
+            "co-edited {key}: no editor could save it as a version ({}); its state is kept for the next save",
+            failures.join("; ")
+        );
+    }
+    room.save_failed_at = Some(Instant::now());
+    false
 }
 
 /// A board's room closed with every change in a version: its row's state is cleared, so the next join seeds the
@@ -1344,8 +1418,13 @@ pub fn save(key: &str, note: Option<&str>) -> Result<Option<String>, Refusal> {
     // the saver's own changes count even when they came through another server
     lock(&room).unsaved.insert(user_id.clone());
     let saved = save_room(key, &room, &user_id, note)?;
-    if lock(&room).members == 0 {
-        lock(rooms()).remove(key);
+    {
+        let mut all = lock(rooms());
+        let mut room = lock(&room);
+        if room.members == 0 {
+            room.closed = true;
+            all.remove(key);
+        }
     }
     Ok(saved)
 }

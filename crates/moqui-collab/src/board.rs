@@ -26,6 +26,35 @@ fn board_setting(key: &str) -> bool {
     matches!(key, "viewBackgroundColor" | "gridSize" | "gridStep" | "gridModeEnabled")
 }
 
+/// How long a deleted element's tombstone is kept: long enough that an editor offline that long cannot bring it back.
+const TOMBSTONE_MILLIS: f64 = 30.0 * 24.0 * 3600.0 * 1000.0;
+
+/// Whether an element may be on a board. A deleted one is only a tombstone. A shown one is one of the drawing types:
+/// never an embeddable, an iframe or a magic frame, which run a page of their own, and never one carrying generated
+/// HTML (`customData.generationData`), which Excalidraw puts in an iframe's `srcdoc`.
+pub(crate) fn allowed_element(el: &Value) -> bool {
+    if !el.is_object() || !el["id"].as_str().is_some_and(|id| !id.is_empty()) {
+        return false;
+    }
+    if el["customData"].get("generationData").is_some() {
+        return false;
+    }
+    el["isDeleted"] == true
+        || matches!(
+            el["type"].as_str(),
+            Some("rectangle" | "diamond" | "ellipse" | "arrow" | "line" | "freedraw" | "text" | "image" | "frame")
+        )
+}
+
+/// The file ids that the board's shown image elements use.
+fn used_files(tx: &impl ReadTxn) -> std::collections::BTreeSet<String> {
+    elements(tx)
+        .iter()
+        .filter(|e| e["type"] == "image")
+        .filter_map(|e| e["fileId"].as_str().map(str::to_string))
+        .collect()
+}
+
 /// Seed `doc` from a saved scene. A scene that is not one (no JSON, no elements, past the size limit) is refused; within
 /// one, an element with no id, an image entry that is not a page attachment, and the images past the limit are
 /// logged and left out, so one bad piece does not close the whole board. A deleted element's tombstone (the scene's
@@ -49,13 +78,17 @@ pub(crate) fn seed(doc: &Doc, text: &str) -> Result<(), String> {
     let mut tx = doc.transact_mut();
     let tombstones = scene["deleted"].as_array().into_iter().flatten().map(|el| {
         json!({"id": el["id"], "type": el["type"], "version": el["version"], "versionNonce": el["versionNonce"],
-            "isDeleted": true})
+            "updated": el["updated"], "isDeleted": true})
     });
     for el in elements.iter().cloned().chain(tombstones) {
         let Some(id) = el["id"].as_str().filter(|s| !s.is_empty()) else {
             tracing::warn!("board: an element with no id was left out of the board");
             continue;
         };
+        if !allowed_element(&el) {
+            tracing::warn!("board: element {id} of type {} was left out of the board", el["type"]);
+            continue;
+        }
         let (v, Reverse(nonce)) = rank(&el);
         let key = json!([id, v, nonce]).to_string();
         element_map.insert(&mut tx, key, any(&el));
@@ -133,8 +166,35 @@ pub(crate) fn validate_update(doc: &Doc, shadow: &mut Option<Doc>, bytes: &[u8])
             .apply_update(update)
             .map_err(|e| super::Refusal::new(400, e.to_string()))?;
         let tx = candidate.transact();
+        // the revisions this update adds: each revision has a key of its own, so they are the keys the board lacks
+        let known = doc.transact();
+        if let Some(after) = tx.get_map("elements") {
+            let before = known.get_map("elements");
+            for (key, value) in after.iter(&tx) {
+                if before.as_ref().is_some_and(|before| before.contains_key(&known, key)) {
+                    continue;
+                }
+                let element = match value {
+                    Out::Any(ref value) => serde_json::to_value(value).unwrap_or_default(),
+                    _ => Value::Null,
+                };
+                if !allowed_element(&element) || !element["version"].is_number() {
+                    return Err(super::Refusal::new(422, "board elements must be drawing elements"));
+                }
+            }
+        }
+        if let Some(app) = tx.get_map("app") {
+            if app.keys(&tx).any(|key| !board_setting(key)) {
+                return Err(super::Refusal::new(
+                    422,
+                    "a board shares only its background and grid settings",
+                ));
+            }
+        }
         if let Some(files) = tx.get_map("files") {
-            if files.len(&tx) as usize > limit("board@max-images", 200) {
+            // the images in use count; an image whose element is gone stays in the map but not against the limit
+            let most = limit("board@max-images", 200);
+            if files.len(&tx) as usize > most && used_files(&tx).len() > most {
                 return Err(super::Refusal::new(413, "board exceeds its image limit"));
             }
             for (_, file) in files.iter(&tx) {
@@ -186,9 +246,20 @@ fn elements(tx: &impl ReadTxn) -> Vec<Value> {
     elements
 }
 
-/// The scene a version saves: its elements, settings and image entries, and a tombstone of each deleted element
-/// (`deleted`: its id, type and revision), which [`seed`] reads back as deleted.
+/// The scene a version saves: its elements, settings and the image entries its elements use, and a tombstone of each
+/// element deleted in the last 30 days (`deleted`: its id, type, revision and time), which [`seed`] reads back as
+/// deleted. A tombstone with no time (from before times were kept) stays.
 pub(crate) fn render(doc: &Doc) -> String {
+    render_at(doc, now_millis())
+}
+
+fn now_millis() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_millis() as f64)
+}
+
+fn render_at(doc: &Doc, now: f64) -> String {
     let tx = doc.transact();
     let elements = elements(&tx)
         .into_iter()
@@ -198,13 +269,26 @@ pub(crate) fn render(doc: &Doc) -> String {
     let deleted: Vec<Value> = winners(&tx)
         .into_values()
         .filter(|e| e["isDeleted"] == true)
-        .map(|e| json!({"id": e["id"], "type": e["type"], "version": e["version"], "versionNonce": e["versionNonce"]}))
+        .filter(|e| e["updated"].as_f64().is_none_or(|at| now - at < TOMBSTONE_MILLIS))
+        .map(|e| {
+            let mut stone =
+                json!({"id": e["id"], "type": e["type"], "version": e["version"], "versionNonce": e["versionNonce"]});
+            if e["updated"].is_number() {
+                stone["updated"] = e["updated"].clone();
+            }
+            stone
+        })
+        .collect();
+    let used = used_files(&tx);
+    let files: BTreeMap<String, Value> = entries(&tx, "files")
+        .into_iter()
+        .filter(|(id, _)| used.contains(id))
         .collect();
     let app = entries(&tx, "app")
         .into_iter()
         .filter(|(key, _)| board_setting(key))
         .collect::<BTreeMap<_, _>>();
-    format!("{{\"type\":\"excalidraw\",\"version\":2,\n\"elements\":[\n{elements}\n],\n\"appState\":{},\n\"files\":{},\n\"deleted\":{}\n}}\n", json!(app), json!(entries(&tx, "files")), json!(deleted))
+    format!("{{\"type\":\"excalidraw\",\"version\":2,\n\"elements\":[\n{elements}\n],\n\"appState\":{},\n\"files\":{},\n\"deleted\":{}\n}}\n", json!(app), json!(files), json!(deleted))
 }
 
 pub(crate) fn search_text(doc: &Doc) -> String {
@@ -238,7 +322,7 @@ mod tests {
         };
         let a = update(json!([
             {"id":"same","type":"text","text":"Old","index":"a3","version":1,"versionNonce":2},
-            {"id":"gone","index":"a4","version":5,"versionNonce":100,"isDeleted":false},
+            {"id":"gone","type":"rectangle","index":"a4","version":5,"versionNonce":100,"isDeleted":false},
             {"id":"first","type":"text","text":"Heading","index":"a0","version":1,"y":5}
         ]));
         let b = update(json!([
@@ -282,7 +366,8 @@ mod tests {
         let doc = Doc::new();
         let scene = json!({"type":"excalidraw","elements":[
             {"type":"text","text":"No id"},
-            {"id":"kept","type":"text","text":"Kept","index":"a0","version":1}
+            {"id":"kept","type":"text","text":"Kept","index":"a0","version":1},
+            {"id":"picture","type":"image","fileId":"photo","index":"a1","version":1}
         ],"files":{
             "inline":{"dataURL":"data:image/png;base64,AA=="},
             "photo":{"attachmentName":"photo.png","mimeType":"image/png"}
@@ -296,5 +381,89 @@ mod tests {
         );
         assert!(seed(&Doc::new(), "{not json").is_err());
         assert!(seed(&Doc::new(), r#"{"type":"other","elements":[]}"#).is_err());
+    }
+
+    /// An element that runs a page of its own, or carries generated HTML, never reaches a board: a seed leaves it out
+    /// and an update that adds it is refused, as is an update that sets an editor setting other than the board's.
+    #[test]
+    fn a_board_refuses_embedded_pages_generated_html_and_editor_settings() {
+        let doc = Doc::new();
+        let scene = json!({"type":"excalidraw","elements":[
+            {"id":"kept","type":"text","text":"Kept","index":"a0","version":1},
+            {"id":"page","type":"iframe","index":"a1","version":1},
+            {"id":"embed","type":"embeddable","link":"https://example.com","index":"a2","version":1},
+            {"id":"magic","type":"rectangle","customData":{"generationData":{"status":"done","html":"<script>x()</script>"}},"index":"a3","version":1}
+        ]});
+        seed(&doc, &scene.to_string()).unwrap();
+        let saved = render(&doc);
+        assert!(saved.contains("Kept"));
+        assert!(!saved.contains("iframe") && !saved.contains("embeddable") && !saved.contains("generationData"));
+
+        let edit = |change: &dyn Fn(&Doc)| {
+            let other = Doc::new();
+            let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            other
+                .transact_mut()
+                .apply_update(Update::decode_v1(&state).unwrap())
+                .unwrap();
+            let before = other.transact().state_vector();
+            change(&other);
+            let update = other.transact().encode_state_as_update_v1(&before);
+            validate_update(&doc, &mut None, &update)
+        };
+        let add = |el: Value| {
+            move |d: &Doc| {
+                let map = d.get_or_insert_map("elements");
+                map.insert(&mut d.transact_mut(), json!([el["id"], 1, 0]).to_string(), any(&el));
+            }
+        };
+        let page = add(json!({"id":"late","type":"iframe","version":1}));
+        assert_eq!(edit(&page).unwrap_err().code, 422);
+        let html =
+            add(json!({"id":"late","type":"rectangle","version":1,"customData":{"generationData":{"html":"<b>"}}}));
+        assert_eq!(edit(&html).unwrap_err().code, 422);
+        let shape = add(json!({"id":"late","type":"rectangle","version":1}));
+        assert!(edit(&shape).is_ok());
+        let toast = |d: &Doc| {
+            d.get_or_insert_map("app")
+                .insert(&mut d.transact_mut(), "errorMessage", "Sign in again");
+        };
+        assert_eq!(edit(&toast).unwrap_err().code, 422);
+        let grid = |d: &Doc| {
+            d.get_or_insert_map("app")
+                .insert(&mut d.transact_mut(), "gridModeEnabled", true);
+        };
+        assert!(edit(&grid).is_ok());
+    }
+
+    /// A saved scene keeps only the images its elements show, and tombstones for 30 days; an image entry left in the
+    /// map by a deleted element does not count against the image limit.
+    #[test]
+    fn a_version_keeps_the_images_in_use_and_recent_tombstones() {
+        let day = 24.0 * 3600.0 * 1000.0;
+        let now = 100.0 * day;
+        let doc = Doc::new();
+        let scene = json!({"type":"excalidraw","elements":[
+            {"id":"shown","type":"image","fileId":"a","index":"a0","version":1},
+            {"id":"gone","type":"image","fileId":"b","index":"a1","version":2,"isDeleted":true,"updated":now - day},
+            {"id":"old","type":"text","index":"a2","version":2,"isDeleted":true,"updated":now - 40.0 * day}
+        ],"files":{
+            "a":{"attachmentName":"a.png","mimeType":"image/png"},
+            "b":{"attachmentName":"b.png","mimeType":"image/png"}
+        }});
+        seed(&doc, &scene.to_string()).unwrap();
+        let saved: Value = serde_json::from_str(&render_at(&doc, now)).unwrap();
+        assert_eq!(
+            saved["files"],
+            json!({"a":{"attachmentName":"a.png","mimeType":"image/png"}})
+        );
+        let stones: Vec<_> = saved["deleted"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].clone())
+            .collect();
+        assert_eq!(stones, vec![json!("gone")]);
+        assert_eq!(used_files(&doc.transact()).len(), 1);
     }
 }

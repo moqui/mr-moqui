@@ -3105,7 +3105,7 @@
               ]))
             }
         } },
-        "m-call-presentation": { hash: "81e07857", make: function (Vue) {
+        "m-call-presentation": { hash: "5beef6b4", make: function (Vue) {
             const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, vModelSelect: _vModelSelect, vModelText: _vModelText, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -3142,7 +3142,7 @@
                         dense: "",
                         color: "negative",
                         label: _ctx.mine && !_ctx.call.sharing ? _ctx.t('Cancel') : _ctx.t('Stop sharing'),
-                        onClick: $event => (_ctx.mine ? _ctx.stop() : _ctx.command('stop'))
+                        onClick: $event => (_ctx.mine ? _ctx.stop() : _ctx.command('stop',{previousLegId:_ctx.owner}))
                       }, null, 8, ["label", "onClick"]))
                     : _createCommentVNode("", true),
                   (_ctx.eligible && !(_ctx.mine && _ctx.followStage))
@@ -3237,7 +3237,7 @@
                             dense: "",
                             flat: "",
                             label: _ctx.t('End screen presentation'),
-                            onClick: $event => (_ctx.command('stop'))
+                            onClick: $event => (_ctx.command('stop',{previousLegId:_ctx.owner}))
                           }, null, 8, ["label", "onClick"]))
                         : _createCommentVNode("", true),
                       (!_ctx.guest && !_ctx.mine)
@@ -3287,7 +3287,10 @@
                       class: "m-meeting-board"
                     }, [
                       _createElementVNode("div", { class: "row items-center q-gutter-xs" }, [
-                        _createElementVNode("span", { class: "text-subtitle2" }, _toDisplayString(_ctx.t('Whiteboard')), 1),
+                        _createElementVNode("span", {
+                          role: "status",
+                          class: "text-subtitle2"
+                        }, _toDisplayString(_ctx.boardPresenter), 1),
                         (!_ctx.mine)
                           ? (_openBlock(), _createBlock(_component_q_btn, {
                               key: 0,
@@ -3312,7 +3315,7 @@
                               dense: "",
                               flat: "",
                               label: _ctx.t('Close board'),
-                              onClick: $event => (_ctx.command('stop'))
+                              onClick: $event => (_ctx.command('stop',{previousLegId:_ctx.owner}))
                             }, null, 8, ["label", "onClick"]))
                           : _createCommentVNode("", true),
                         (_ctx.host)
@@ -3646,7 +3649,7 @@
                       key: 5,
                       ref: "viewport",
                       class: _normalizeClass(["m-present-viewport relative-position", {'m-present-preview':_ctx.mine}]),
-                      style: _normalizeStyle({height:_ctx.mine?'8rem':'min(58dvh,48rem)',maxWidth:_ctx.mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}),
+                      style: _normalizeStyle({height:_ctx.mine?'8rem':_ctx.landscape?'calc(100dvh - 3rem)':'min(58dvh,48rem)',maxWidth:_ctx.mine?'15rem':'100%',background:'#121212',borderRadius:'8px',overflow:'hidden',touchAction:'none'}),
                       onWheel: _ctx.wheel,
                       onPointerdown: $event => (_ctx.pointer($event,'start')),
                       onPointermove: $event => (_ctx.pointer($event,'move')),

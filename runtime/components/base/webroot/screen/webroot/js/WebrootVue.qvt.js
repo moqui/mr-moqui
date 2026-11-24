@@ -5090,7 +5090,8 @@
         }
     }
     const peerOf = (message) => ({ client: message.client, userId: message.userId || "", name: message.name || message.userId || "",
-        awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness) });
+        awareness: message.awareness === undefined || message.awareness === null ? null : Number(message.awareness),
+        legId: message.legId || null });
     moqui.coedit.Provider = CoeditProvider;
 
     if (root.Vue && root.Vue.defineAsyncComponent) {

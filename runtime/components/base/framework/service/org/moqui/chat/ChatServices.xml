@@ -1800,6 +1800,9 @@ along with this software (see the LICENSE.md file). If not, see
                 if (given(archived) && archived !== !!room.archivedDate) {
                     room.set('archivedDate', archived ? ec.user.nowTimestamp : null)
                     changes.push({action: archived ? 'archived' : 'unarchived'})
+                    // an archived room's boards are read only: their open editors are asked again after the commit
+                    if (ec.factory.hasFeature('collab')) ec.service.sync().name('org.moqui.resource.CollabServices.recheck#MeetingBoards')
+                        .parameter('chatRoomId', chatRoomId).disableAuthz().call()
                 }
             }
             room.update()

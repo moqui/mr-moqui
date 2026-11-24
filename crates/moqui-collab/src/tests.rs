@@ -1038,3 +1038,61 @@ fn a_closed_board_is_seeded_again_from_its_saved_scene() {
     super::tick();
     let _ = super::take_events();
 }
+
+/// A room's space changed (a member left its chat room, the room was archived): the editors of its boards open here are
+/// asked again at the next tick, not a minute later (`recheck_space`). A board whose last editor can no longer save it
+/// still closes when its last member leaves, its state kept in the row for the next save.
+#[test]
+fn a_space_recheck_asks_its_editors_again_and_a_board_closes_when_no_editor_can_save_it() {
+    use serde_json::json;
+    let _serial = serial();
+    let (context, facade) = setup_with_conf(BOARD_CONF);
+    let _entered = context.enter();
+    user(&facade, "roomowner");
+    login("roomowner");
+    let scene = json!({"type":"excalidraw","elements":[{"id":"a","type":"text","text":"Start","index":"a0","version":1}],"files":{}});
+    let key = board_page("ROOMBRD", &scene);
+    struct Answer;
+    impl Drop for Answer {
+        fn drop(&mut self) {
+            *super::lock(&super::ACCESS_FOR_TEST) = None;
+        }
+    }
+    let _answer = Answer;
+    let set = |answer: Option<Result<(bool, bool), u16>>| *super::lock(&super::ACCESS_FOR_TEST) = answer;
+    set(Some(Ok((true, true))));
+    // an editor with no account here: no version can be saved as them
+    let joined = super::join(&key, "departed", &[]).unwrap();
+    let doc = client(&joined);
+    let mut edit = scene.clone();
+    edit["elements"][0]["version"] = json!(2);
+    edit["elements"][0]["text"] = json!("Changed");
+    super::apply(&key, "departed", &board_edit(&doc, &edit)).unwrap();
+    super::tick();
+    let _ = super::take_events();
+
+    // another space's change asks nothing; this one's tells the lost edit right at once
+    set(Some(Ok((true, false))));
+    super::recheck_space("OTHERBRD");
+    super::tick();
+    assert!(!super::take_events()
+        .iter()
+        .any(|event| matches!(event, super::Event::CanEdit { .. })));
+    super::recheck_space("ROOMBRD");
+    super::tick();
+    assert!(super::take_events().iter().any(|event| matches!(event,
+        super::Event::CanEdit { user_id, can_edit: false, .. } if user_id == "departed")));
+
+    // the last member leaves: the save as them fails, the room closes anyway, and the change waits in the row
+    super::leave_as(&key, Some("departed"));
+    super::tick();
+    assert!(super::room_of(&key).is_none(), "a room no editor can save still closes");
+    let row = super::stored(&key).unwrap().expect("the state is kept");
+    assert!(to_plain_string(row.get("editorUserIds").unwrap()).contains("departed"));
+    set(None);
+    super::join(&key, "roomowner", &[]).unwrap();
+    assert!(room_render(&key).contains("Changed"), "the next join has the change");
+    super::leave(&key);
+    super::tick();
+    let _ = super::take_events();
+}

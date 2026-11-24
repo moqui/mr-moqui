@@ -392,6 +392,49 @@ test("the stage owner alone can capture, and takeover ends both share tracks", a
     }
 });
 
+test("another's snapshot asks the presenter first, and the one taken over is told who took the stage", async () => {
+    reset();
+    const prior = {confirm: moqui.confirmAction, notify: moqui.notifyMessages, snapshot: call.snapshotBoard, nameOf: call.nameOf};
+    const asked = [], told = [];
+    let snapped = 0;
+    const preview = document.createElement("div");
+    preview.className = "m-present-preview";
+    preview.append(document.createElement("video"));
+    document.body.append(preview);
+    const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+    try {
+        Object.assign(state, {current: "SN", legId: "ME", stageRevision: -1, shareMode: "CsmAnyone", sharing: false});
+        call.nameOf = leg => leg === "BOB" ? "Bob" : leg;
+        moqui.notifyMessages = list => told.push(...list.map(m => m.message));
+        call.snapshotBoard = async () => { snapped++; };
+        call.stageFrame({rtc: "stage", callSessionId: "SN", revision: 1, shareModeEnumId: "CsmAnyone",
+            stage: {kind: "screen", callLegId: "ME", inkEpoch: 5, requests: []}});
+        moqui.confirmAction = async text => { asked.push(text); return false; };
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "BOB", inkEpoch: 5});
+        await settle();
+        assert.equal(asked.length, 1);
+        assert.ok(asked[0].includes("Bob"), asked[0]);
+        assert.equal(snapped, 0, "declined: no board replaces the share");
+        moqui.confirmAction = async text => { asked.push(text); return true; };
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "BOB", inkEpoch: 5});
+        await settle();
+        assert.equal(snapped, 1);
+        call.inkFrame({rtc: "ink", action: "snapshot", from: "ME", inkEpoch: 5});
+        await settle();
+        assert.equal(asked.length, 2, "the presenter's own snapshot asks nothing");
+        assert.equal(snapped, 2);
+        call.stageFrame({rtc: "stage", callSessionId: "SN", revision: 2, shareModeEnumId: "CsmAnyone",
+            stage: {kind: "screen", callLegId: "BOB", inkEpoch: 6, requests: []}});
+        assert.deepEqual(told, ["Bob took over the stage"]);
+    } finally {
+        moqui.confirmAction = prior.confirm; moqui.notifyMessages = prior.notify;
+        call.snapshotBoard = prior.snapshot; call.nameOf = prior.nameOf;
+        preview.remove();
+        Object.assign(state, {stage: {kind: null, callLegId: null, requests: []}, stageRevision: -1});
+        reset();
+    }
+});
+
 test("the presenter sends navigation once and locates changes within the same screen", async()=>{
     const prior={followPath:call.followPath,followPage:call.followPage,send:call.send,guest:call.guest};
     const sent=[];

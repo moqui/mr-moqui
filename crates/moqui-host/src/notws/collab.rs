@@ -48,6 +48,20 @@ struct Member {
 }
 
 impl Member {
+    /// A meeting guest, who is told no user ids: other editors are named, not identified.
+    fn guest(&self) -> bool {
+        self.meeting
+            .as_ref()
+            .is_some_and(|meeting| meeting.credential.is_some())
+    }
+
+    /// What the others are told of this editor: its client, user, name, presence id and, in a meeting, the leg the
+    /// grant checked, which a board follows (a presence's own `legId` is the page's word only).
+    fn peer(&self) -> Json {
+        json!({"client": self.client, "userId": self.user_id, "name": self.name, "awareness": self.awareness,
+            "legId": self.meeting.as_ref().map(|meeting| meeting.leg_id.clone())})
+    }
+
     fn actor_key(&self) -> String {
         self.meeting
             .as_ref()
@@ -83,15 +97,34 @@ fn error(slot: &Slot, doc: &str, client: &str, code: u16, message: &str) {
     );
 }
 
+/// `frame` as a meeting guest gets it: without the user ids of the editors it names.
+fn for_guest(frame: &Json) -> Json {
+    let mut frame = frame.clone();
+    if let Some(object) = frame.as_object_mut() {
+        object.remove("userId");
+        if let Some(Json::Array(peers)) = object.get_mut("peers") {
+            for peer in peers.iter_mut().filter_map(Json::as_object_mut) {
+                peer.remove("userId");
+            }
+        }
+    }
+    frame
+}
+
 /// Send `message` to the document's editors on this server, but the client `except`.
 fn broadcast(doc: &str, except: Option<&str>, message: &Json) {
     let targets: Vec<Member> = lock(members()).get(doc).cloned().unwrap_or_default();
+    let mut guest_copy = None;
     for member in targets {
         if except == Some(member.client.as_str()) {
             continue;
         }
         if let Some(slot) = member.slot.upgrade() {
-            send(&slot, message);
+            if member.guest() && message.get("userId").is_some() {
+                send(&slot, guest_copy.get_or_insert_with(|| for_guest(message)));
+            } else {
+                send(&slot, message);
+            }
         }
     }
 }
@@ -248,16 +281,17 @@ fn join(
             awareness: awareness.clone(),
             meeting,
         };
+        let guest = member.guest();
+        let mut peer = member.peer();
         let Some(peers) = admit(&factory, &slot, &doc, member) else {
             return;
         };
-        send(
-            &slot,
-            &json!({"topic": topic(&doc), "type": "joined", "client": client, "canEdit": joined.can_edit,
-                "update": b64().encode(&joined.update), "sv": b64().encode(&joined.state_vector), "peers": peers}),
-        );
-        let peer = json!({"topic": topic(&doc), "type": "peer", "client": client, "userId": slot.user_id, "name": joined.user_name,
-            "awareness": awareness, "joined": true});
+        let answer = json!({"topic": topic(&doc), "type": "joined", "client": client, "canEdit": joined.can_edit,
+            "update": b64().encode(&joined.update), "sv": b64().encode(&joined.state_vector), "peers": peers});
+        send(&slot, &if guest { for_guest(&answer) } else { answer });
+        peer["topic"] = json!(topic(&doc));
+        peer["type"] = json!("peer");
+        peer["joined"] = json!(true);
         broadcast(&doc, Some(&client), &peer);
         publish_remote(&factory, json!({"doc": doc, "frame": peer}));
     });
@@ -279,10 +313,7 @@ fn admit(factory: &ExecutionContextFactory, slot: &Slot, doc: &str, member: Memb
             let replaced = list.remove(index);
             moqui_collab::leave_as(doc, Some(&replaced.actor_key()));
         }
-        let peers = list
-            .iter()
-            .map(|peer| json!({"client": peer.client, "userId": peer.user_id, "name": peer.name, "awareness": peer.awareness}))
-            .collect();
+        let peers = list.iter().map(Member::peer).collect();
         list.push(member);
         peers
     };
@@ -582,10 +613,13 @@ pub(crate) fn install(factory: &Arc<ExecutionContextFactory>, mut shutdown: toki
         }
     }
     if RECHECK.get().is_none() {
-        // a call changed on some server: its meeting grants here are asked again at the next tick
+        // a call or a room's space changed on some server: its grants here are asked again at the next tick
         let recheck = |message: &TopicMessage| {
             if let Some(call) = message.body.get("callSessionId").and_then(Json::as_str) {
                 moqui_collab::recheck_meeting(call);
+            }
+            if let Some(space) = message.body.get("wikiSpaceId").and_then(Json::as_str) {
+                moqui_collab::recheck_space(space);
             }
         };
         match moqui_core::notify::subscribe(COLLAB_RECHECK, Arc::new(recheck)) {
