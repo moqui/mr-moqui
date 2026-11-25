@@ -170,16 +170,6 @@ const PARITY_ENTITIES: &str = r#"<entities>
     </view-entity>
 </entities>"#;
 
-/// A file link. On Unix a symlink. On Windows a hard link, which needs no extra privilege (a file symlink does).
-fn link_file(from: impl AsRef<std::path::Path>, to: impl AsRef<std::path::Path>) {
-    let from = from.as_ref();
-    let to = to.as_ref();
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(from, to).unwrap();
-    #[cfg(windows)]
-    std::fs::hard_link(from, to).unwrap();
-}
-
 /// The framework entities plus [`PARITY_ENTITIES`], in a directory removed on drop.
 struct ParityFixture(PathBuf);
 
@@ -195,14 +185,15 @@ impl ParityFixture {
             std::fs::create_dir_all(dir.join(name)).unwrap();
         }
         let real = framework_dir();
-        link_file(
-            real.join("conf/MoquiDefaultConf.xml"),
-            dir.join("conf/MoquiDefaultConf.xml"),
-        );
+        moqui_lib::fs_link::link(
+            &real.join("conf/MoquiDefaultConf.xml"),
+            &dir.join("conf/MoquiDefaultConf.xml"),
+        )
+        .unwrap();
         for entry in std::fs::read_dir(real.join("entity")).unwrap() {
             let entry = entry.unwrap();
             if entry.file_type().unwrap().is_file() {
-                link_file(entry.path(), dir.join("entity").join(entry.file_name()));
+                moqui_lib::fs_link::link(&entry.path(), &dir.join("entity").join(entry.file_name())).unwrap();
             }
         }
         std::fs::write(dir.join("entity/ParityEntities.xml"), PARITY_ENTITIES).unwrap();

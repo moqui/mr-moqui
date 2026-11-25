@@ -175,43 +175,6 @@ pub fn warn_old_dirs(runtime: &Path, listed: &[String]) {
     }
 }
 
-/// A directory link. On Unix a symlink. On Windows a junction, which needs no extra privilege (a symlink does).
-///
-/// # Errors
-///
-/// Returns the error of creating the link.
-pub fn link_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(from, to)
-    }
-    #[cfg(windows)]
-    {
-        junction::create(plain_link(from), plain_link(to))
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (from, to);
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "a directory link needs a symlink or a junction",
-        ))
-    }
-}
-
-/// `canonicalize` prefixes `\\?\`. A junction stores an NT path, and a second prefix is a link that does not open.
-#[cfg(windows)]
-fn plain_link(path: &Path) -> PathBuf {
-    let text = path.to_string_lossy();
-    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{rest}"))
-    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
-        PathBuf::from(rest.to_string())
-    } else {
-        path.to_path_buf()
-    }
-}
-
 /// Link the base set `base` (another runtime's `components/base`) into `runtime` as its base set, with a copy of the
 /// sets' manifest beside it, so a scratch runtime loads the framework's components as the real one does. For tests
 /// and tools that build a runtime from another. The link is a symlink on Unix and a junction on Windows.
@@ -222,7 +185,7 @@ fn plain_link(path: &Path) -> PathBuf {
 pub fn link_base_set(base: &Path, runtime: &Path) -> std::io::Result<()> {
     let sets = runtime.join(COMPONENTS_DIR);
     std::fs::create_dir_all(&sets)?;
-    link_dir(base, &set_dir(runtime, Set::Base))?;
+    moqui_lib::fs_link::link(base, &set_dir(runtime, Set::Base))?;
     if let Some(manifest) = base
         .parent()
         .map(|parent| parent.join("components.xml"))
