@@ -18,7 +18,7 @@ const [task, ...args] = process.argv.slice(2);
 const cutoff = new Date(Date.now() - 14 * 86400000).toISOString();
 // Dependencies inlined in a library's published dist file, which the lockfiles cannot see. pattern reads the inlined
 // version from the file; null lists one that carries no version, for review by hand. Mermaid, Tiptap, CodeMirror,
-// OpenUI and the whiteboard are bundled here from the locks, so npm audit covers what they contain.
+// OpenUI, OpenLayers and the whiteboard are bundled here from the locks, so npm audit covers what they contain.
 const BUNDLED_COPIES = !webroot ? [] : [
   { lib: 'chartjs', file: 'chartjs/chart.umd.min.js', pkg: '@kurkle/color', pattern: /@kurkle\/color v(\d+\.\d+\.\d+)/ },
   { lib: 'drauu', file: 'drauu/drauu.js', pkg: 'perfect-freehand', pattern: /perfect-freehand@(\d+\.\d+\.\d+)\// },

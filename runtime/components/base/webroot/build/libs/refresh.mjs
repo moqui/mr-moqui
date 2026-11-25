@@ -111,6 +111,130 @@ const OPENUI_PATCHES = [
   'patches/openui-lang-core-0.2.18-failed-query.patch',
 ];
 
+// The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2): OpenLayers with ol-mapbox-style, ol-pmtiles and pmtiles, bundled
+// as the global MoquiOl. OPENLAYERS_PACKAGES are the packages the bundle holds whose license file is in the package;
+// pmtiles and ol-pmtiles carry none, so their license is PMTILES_LICENSE. The build fails when the bundle holds a package
+// that is in neither list, or a second copy of one under another's node_modules.
+// @maplibre/maplibre-gl-style-spec's dist holds its own copies of STYLE_SPEC_INLINED (under dist/node_modules); their license
+// texts are those of the same packages installed beside it. Their pins in package.json (@mapbox/unitbezier, tinyqueue)
+// exist only for that license text and move only with the style spec's; quickselect is also bundled through rbush.
+const STYLE_SPEC_INLINED = ['@mapbox/unitbezier', 'tinyqueue', 'quickselect'];
+const OPENLAYERS_PACKAGES = [
+  'ol', 'ol-mapbox-style', 'mapbox-to-css-font', '@maplibre/maplibre-gl-style-spec', '@mapbox/unitbezier', 'tinyqueue',
+  'pbf', 'rbush', 'quickselect', 'fflate',
+];
+const PMTILES_PACKAGES = ['pmtiles', 'ol-pmtiles'];
+// What m-map uses: the map and view, the projection and extent helpers, the layers and sources, the formats of overlays
+// and of the Natural Earth outline (TopoJSON), the controls, the default interactions with Select, Modify and Draw to
+// pick a point, the style classes, an Overlay for a popup, Geolocation, ol-mapbox-style's apply, applyStyle and
+// applyBackground for a MapLibre style, and the PMTiles sources, with pmtiles' FetchSource and FileSource for a source
+// m-map makes itself.
+const OPENLAYERS_ENTRY = `export { default as Map } from 'ol/Map.js';
+export { default as View } from 'ol/View.js';
+export { default as Overlay } from 'ol/Overlay.js';
+export { default as Geolocation } from 'ol/Geolocation.js';
+export { default as Feature } from 'ol/Feature.js';
+export { default as Collection } from 'ol/Collection.js';
+export { unByKey } from 'ol/Observable.js';
+export { fromLonLat, toLonLat, transformExtent, get as getProjection } from 'ol/proj.js';
+export { boundingExtent, buffer as bufferExtent, containsCoordinate, getCenter, isEmpty as isEmptyExtent } from 'ol/extent.js';
+export { default as TileLayer } from 'ol/layer/Tile.js';
+export { default as VectorLayer } from 'ol/layer/Vector.js';
+export { default as VectorTileLayer } from 'ol/layer/VectorTile.js';
+export { default as LayerGroup } from 'ol/layer/Group.js';
+export { default as XYZ } from 'ol/source/XYZ.js';
+export { default as VectorSource } from 'ol/source/Vector.js';
+export { default as VectorTileSource } from 'ol/source/VectorTile.js';
+export { default as GeoJSON } from 'ol/format/GeoJSON.js';
+export { default as GPX } from 'ol/format/GPX.js';
+export { default as KML } from 'ol/format/KML.js';
+export { default as TopoJSON } from 'ol/format/TopoJSON.js';
+export { default as MVT } from 'ol/format/MVT.js';
+export { default as Point } from 'ol/geom/Point.js';
+export { fromExtent as polygonFromExtent } from 'ol/geom/Polygon.js';
+export { defaults as defaultControls } from 'ol/control/defaults.js';
+export { default as Attribution } from 'ol/control/Attribution.js';
+export { default as ScaleLine } from 'ol/control/ScaleLine.js';
+export { default as Zoom } from 'ol/control/Zoom.js';
+export { default as FullScreen } from 'ol/control/FullScreen.js';
+export { defaults as defaultInteractions } from 'ol/interaction/defaults.js';
+export { default as Select } from 'ol/interaction/Select.js';
+export { default as Modify } from 'ol/interaction/Modify.js';
+export { default as Draw } from 'ol/interaction/Draw.js';
+export { default as Style } from 'ol/style/Style.js';
+export { default as Fill } from 'ol/style/Fill.js';
+export { default as Stroke } from 'ol/style/Stroke.js';
+export { default as CircleStyle } from 'ol/style/Circle.js';
+export { default as Icon } from 'ol/style/Icon.js';
+export { default as Text } from 'ol/style/Text.js';
+export { apply, applyStyle, applyBackground } from 'ol-mapbox-style';
+export { PMTilesVectorSource, PMTilesRasterSource } from 'ol-pmtiles';
+export { PMTiles, FetchSource, FileSource } from 'pmtiles';
+`;
+// The map loads what its layers name, so it fetches (styles, TileJSON, sprites, tiles: fetch and XMLHttpRequest), and the
+// raster source behind a hillshade layer runs its operation in a Worker made from a Blob. It must not evaluate code or
+// keep state of its own, and every URL it names (absolute, ws, or a protocol-relative //host in a string) is one of these,
+// reviewed. A host built at run time (a template literal's ${...} in it) is listed with ${…} for each placeholder, and
+// only an exact listing passes; a new host stops the build for review.
+// - http://www.opengis.net, www.topografix.com, www.w3.org, earth.google.com, www.google.com, developers.google.com:
+//   the XML namespaces and schema locations of KML, GPX and GML, never fetched.
+// - https://api.mapbox.com and https://${…}.tiles.mapbox.com: ol-mapbox-style's normalizeSourceUrl and
+//   normalizeStyleUrl rewrite a mapbox:// URL to these (the tiles hosts with or without an access token). m-map passes
+//   only styles and sources its profiles name, so a mapbox:// URL is refused before it reaches the library.
+// - https://cdn.jsdelivr.net: ol-mapbox-style's default webfonts template (Fontsource CSS). A style's own
+//   metadata['ol:webfonts'] wins over the webfonts option, so m-map loads the style JSON itself, replaces any
+//   metadata['ol:webfonts'] with the local template (libs/mapfonts) and passes the same template as webfonts.
+// - https://maps.google.com: KML's default pushpin icon. A KML IconStyle without an Icon gets it, and an Icon href is
+//   loaded as the file is parsed; defaultStyle does not stop either. m-map reads KML with extractStyles: false and styles
+//   the layer itself (to keep a file's styles it would need an iconUrlFunction mapping every URL, the pushpin's too, to
+//   a local icon, and a defaultStyle, since the built-in default style uses the pushpin directly).
+// - https://github.com: a link in an error message.
+const OPENLAYERS_HOSTS = [
+  'http://earth.google.com', 'http://www.google.com', 'http://www.opengis.net', 'http://www.topografix.com',
+  'http://www.w3.org', 'https://api.mapbox.com', 'https://${…}.tiles.mapbox.com', 'https://cdn.jsdelivr.net',
+  'https://developers.google.com', 'https://github.com', 'https://maps.google.com',
+];
+// The license of pmtiles and ol-pmtiles, whose npm packages carry no license file: the LICENSE of their repository at the
+// commit each release names (gitHead 3b10e67e for pmtiles 4.5.0, 3f8279aa for ol-pmtiles 2.0.2; the same text at both).
+const PMTILES_LICENSE = `From https://github.com/protomaps/PMTiles/blob/3b10e67edb65c6b04549f74c0279cef8328d859c/LICENSE (pmtiles and
+ol-pmtiles are both published from that repository; their npm packages carry no license file):
+
+The below license (BSD-3) applies to the reference implementations in this repository.
+
+The PMTiles specification itself is public domain, or CC0 where applicable.
+
+Sample tilesets available in this repository are subject to their own license terms.
+
+---
+
+Copyright 2021 Protomaps LLC
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the
+following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following
+disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following
+disclaimer in the documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products
+derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
+// The faces of Noto Sans the packaged map styles name: OpenFreeMap's liberty (Noto Sans Regular, Italic and Bold) and the
+// Protomaps basemap (Regular, Italic and Medium). ol-mapbox-style asks for a face the page lacks at the style's
+// metadata['ol:webfonts'], else its webfonts option; m-map sets both to /libs/mapfonts/{font-family}/{fontweight}{-fontstyle}.css
+// (OPENLAYERS_HOSTS). That is the Fontsource layout, so each face is that package's own CSS (every subset, each by
+// unicode-range), with only the woff2 sources.
+const MAP_FONT_FACES = ['400', '400-italic', '500', '700'];
+
 const HLJS_LANGS = ['bash', 'css', 'diff', 'groovy', 'java', 'javascript', 'json', 'kotlin', 'markdown', 'plaintext',
   'python', 'rust', 'sql', 'typescript', 'xml', 'yaml'];
 const QUASAR_LANGS = ['en-US', 'de', 'es', 'fr', 'it', 'pt-BR', 'ja', 'zh-CN', 'ru', 'nl'];
@@ -395,6 +519,43 @@ licenses/Unicode-3.0.txt, from ${UNICODE_URL}.
     produce: (ctx) => [['codemirror/codemirror.min.js', ctx.esbuildCodeMirror()]],
   },
   {
+    // The map of m-map (js/WebrootMap.js, plans/Maps.md §3.2), loaded with moqui.loadScript when the first map mounts.
+    // OpenLayers, ol-mapbox-style, ol-pmtiles and pmtiles ship ES modules, so this is a bundle of what OPENLAYERS_ENTRY
+    // exports. Pinned Nov 25, 2026: each is the newest release of its line at least two weeks old (ol 10.11.0 of Oct 4,
+    // ol-mapbox-style 13.9.0 of Nov 1, ol-pmtiles 2.0.2, which needs ol 9 or later, and pmtiles 4.5.0 of Aug 10).
+    id: 'openlayers', name: 'OpenLayers with ol-mapbox-style and PMTiles (bundled)', npm: 'ol',
+    license: 'BSD-2-Clause AND BSD-3-Clause AND ISC AND MIT',
+    licenseNote: 'Bundles ol, ol-mapbox-style, mapbox-to-css-font and @mapbox/unitbezier (BSD-2-Clause), ol-pmtiles, ' +
+      'pmtiles, pbf and @maplibre/maplibre-gl-style-spec (BSD-3-Clause: the style spec\'s package.json says ISC, its ' +
+      'LICENSE.txt is the BSD-3-Clause text of MapLibre and of the Mapbox code it contains), quickselect and tinyqueue ' +
+      '(ISC), rbush and fflate (MIT). ' +
+      'ol.css is OpenLayers\'. Each license text is below once, with the packages it is the license of.',
+    copy: [['ol.css', 'openlayers/ol.css']],
+    noticeText: () => `--- ${PMTILES_PACKAGES.map((p) => p + ' ' + pins[p]).join(', ')}: LICENSE of the repository ---\n${PMTILES_LICENSE}\n`,
+    noticePackages: OPENLAYERS_PACKAGES,
+    noticeDedupe: true,
+    build: 'esbuild --bundle --minify --format=iife --global-name=MoquiOl --platform=browser --target=es2020 ' +
+      '--legal-comments=none of an entry (OPENLAYERS_ENTRY) that exports Map, View, Overlay, Geolocation, Feature, ' +
+      'Collection, unByKey, the projection and extent helpers, the Tile, Vector, VectorTile and Group layers, the XYZ, ' +
+      'Vector and VectorTile sources, the GeoJSON, GPX, KML, TopoJSON and MVT formats, Point and polygonFromExtent, the ' +
+      'controls, the interactions, the style classes, ol-mapbox-style\'s apply, applyStyle and applyBackground, ' +
+      'PMTilesVectorSource and PMTilesRasterSource, and PMTiles, FetchSource and FileSource. Exposes the global MoquiOl. ' +
+      'The build fails when the bundle holds an unreviewed package, evaluates code, or names an unreviewed host.',
+    produce: (ctx) => [['openlayers/ol-map.min.js', ctx.esbuildOpenLayers()]],
+    licenseFiles: [],
+  },
+  {
+    // The label fonts of the map styles m-map packages (MAP_FONT_FACES), so a map does not fetch them from jsDelivr (m-map
+    // sets a style's metadata['ol:webfonts'] and the webfonts option to them; OPENLAYERS_HOSTS).
+    id: 'mapfonts', name: 'Noto Sans (map label fonts)', npm: '@fontsource/noto-sans', license: 'OFL-1.1',
+    licenseNote: `The faces ${MAP_FONT_FACES.join(', ')}, every subset, woff2 only.`,
+    copy: [],
+    build: `For each face of ${MAP_FONT_FACES.join(', ')}: its Fontsource CSS with only the woff2 source of each ` +
+      '@font-face, at mapfonts/noto-sans/<face>.css, and those woff2 files under mapfonts/noto-sans/files/.',
+    produce: (ctx) => ctx.mapFonts(),
+    licenseFiles: ['LICENSE'],
+  },
+  {
     // The OpenUI Lang canvas of Assist (plans/LLM-A2A-Assist.md 4.10): parsed in the browser by the renderer and on the
     // server in QuickJS. The license texts are lang-core's and zod's (noticePackages).
     id: 'openui-lang-core', name: 'OpenUI Lang core (bundled with zod)', npm: '@openuidev/lang-core', license: 'MIT', licenseNote: 'Bundles @openuidev/lang-core and the parts of zod ' + pins.zod + ' it uses (MIT). Patched: ' +
@@ -580,6 +741,56 @@ export const atob = typeof globalThis.atob === 'function' ? globalThis.atob.bind
         if (text.includes(banned)) throw new Error(`the CodeMirror bundle names ${banned}`);
       }
       return out;
+    },
+    esbuildOpenLayers() {
+      writeFileSync(join(build, 'ol-entry.js'), OPENLAYERS_ENTRY);
+      const out = esbuild(['ol-entry.js', '--bundle', '--minify', '--format=iife', '--global-name=MoquiOl',
+        '--platform=browser', '--target=es2020', '--legal-comments=none', '--metafile=ol-inputs.json']);
+      // the packages in the bundle are the reviewed ones, each the single top-level copy whose license is printed
+      const output = Object.values(JSON.parse(readFileSync(join(build, 'ol-inputs.json'))).outputs)[0];
+      const reviewed = [...OPENLAYERS_PACKAGES, ...PMTILES_PACKAGES];
+      for (const [path, input] of Object.entries(output.inputs)) {
+        if (!input.bytesInOutput || path === 'ol-entry.js') continue;
+        // the style spec's dist carries its own copies of a few small dependencies (STYLE_SPEC_INLINED)
+        const inlined = path.match(/^node_modules\/@maplibre\/maplibre-gl-style-spec\/dist\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
+        if (inlined && STYLE_SPEC_INLINED.includes(inlined[1])) continue;
+        const pkg = path.match(/^node_modules\/((?:@[^/]+\/)?[^/]+)\/(.*)$/);
+        if (!pkg || pkg[2].includes('node_modules/')) throw new Error(`the OpenLayers bundle holds ${path}, not a top-level package`);
+        if (!reviewed.includes(pkg[1])) throw new Error(`the OpenLayers bundle holds ${pkg[1]}: review its license and add it`);
+      }
+      const text = out.toString('utf8');
+      for (const banned of ['eval(', 'new function(', 'importscripts', 'websocket', 'sendbeacon', 'document.cookie',
+        'localstorage', 'sessionstorage', 'indexeddb']) {
+        if (text.toLowerCase().includes(banned)) throw new Error(`the OpenLayers bundle names ${banned}`);
+      }
+      // every scheme://host and string-literal //host, a template placeholder in it written ${…}
+      const host = (name) => name.replace(/\$\{[^}]*\}/g, '${…}').toLowerCase();
+      const hosts = new Set([
+        ...[...text.matchAll(/\b((?:https?|wss?):)\/\/([^\s"'`/\\)<>,;?#]+)/gi)].map((m) => m[1].toLowerCase() + '//' + host(m[2])),
+        ...[...text.matchAll(/["'`]\/\/([^\s"'`/\\)<>,;?#]+\.[^\s"'`/\\)<>,;?#]+)/g)].map((m) => '//' + host(m[1])),
+      ]);
+      for (const name of hosts) {
+        if (OPENLAYERS_HOSTS.includes(name)) continue;
+        throw new Error(name.includes('${') ? `the OpenLayers bundle builds a URL host at run time, ${name}: review it and add it`
+          : `the OpenLayers bundle names ${name}: review it and add it`);
+      }
+      return out;
+    },
+    mapFonts() {
+      const root = packages.mapfonts.root;
+      const files = [];
+      for (const face of MAP_FONT_FACES) {
+        const css = readFileSync(join(root, `${face}.css`), 'utf8');
+        const rules = [...css.matchAll(/(?:\/\*[^*]*\*\/\s*)?@font-face\s*\{[^}]+\}/g)].map(([rule]) => {
+          const src = rule.match(/src: url\(\.\/files\/([\w-]+\.woff2)\) format\('woff2'\), url\(\.\/files\/[\w-]+\.woff\) format\('woff'\);/);
+          if (!src) throw new Error(`Unknown Fontsource CSS in ${face}.css of @fontsource/noto-sans`);
+          files.push([`mapfonts/noto-sans/files/${src[1]}`, readFileSync(join(root, 'files', src[1]))]);
+          return rule.replace(src[0], `src: url(./files/${src[1]}) format('woff2');`);
+        });
+        if (!rules.length) throw new Error(`No @font-face in ${face}.css of @fontsource/noto-sans`);
+        files.push([`mapfonts/noto-sans/${face}.css`, Buffer.from(rules.join('\n\n') + '\n')]);
+      }
+      return files;
     },
     esbuildLangCore() {
       const pkg = join(build, 'node_modules', '@openuidev', 'lang-core');
