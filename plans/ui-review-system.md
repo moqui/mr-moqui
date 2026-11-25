@@ -103,7 +103,7 @@ remove the disposable component until its dependent output/reload checks finish.
 
 ## 3. Screen and surface inventory
 
-This inventory accounts for **71 XML definitions** assigned to this file; screen containers and helper
+This inventory accounts for **78 XML definitions** assigned to this file; screen containers and helper
 definitions are included. Routes below are Material paths unless labelled otherwise; app routes have Standard
 `/apps` counterparts. A file's physical presence does not prove access or a supported interaction in every mode.
 Each row maps to §4; helper inspection does not replace its parent workflow. Counts describe definitions, not user
@@ -180,8 +180,15 @@ activities. Dialogs, templates and non-XML surfaces follow the route tables.
 
 | Route / surface | XML source | Default / variants / boundary | Activities |
 | --- | --- | --- | --- |
+| `/qapps/system/Instances/DatabaseHosts` | [DatabaseHosts.xml](../runtime/components/base/tools/screen/System/Instances/DatabaseHosts.xml) | New database host dialog (`store#DatabaseHost`); its admin login is a vault item, named by its binding. | SYS-08 |
+| `/qapps/system/Instances/Environments` | [Environments.xml](../runtime/components/base/tools/screen/System/Instances/Environments.xml) | New environment dialog (`store#InstanceEnvironment`); Deploy posts `request#InstanceDeploy`, which runs now or opens Vaults › Lease. | SYS-08 |
+| `/qapps/system/Instances/Fleet` | [Fleet.xml](../runtime/components/base/tools/screen/System/Instances/Fleet.xml) | Read only, rows from `get#InstanceFleet`; without INSTANCE_ADMIN a notice and no rows. Links to InstanceDetail and Monitor Services and Releases. | SYS-08 |
+| `/qapps/system/Instances/Hosts` | [Hosts.xml](../runtime/components/base/tools/screen/System/Instances/Hosts.xml) | New host dialog (`store#InstanceHost`): unix socket, https with a client certificate, or http to this machine only; the client key stays a vault item. | SYS-08 |
+| `/qapps/system/Instances/Images` | [Images.xml](../runtime/components/base/tools/screen/System/Instances/Images.xml) | New image dialog (`store#InstanceImage`); a registry login is a vault item, leased by the provision that pulls it. | SYS-08 |
 | `/qapps/system/Instances/InstanceDetail` | [InstanceDetail.xml](../runtime/components/base/tools/screen/System/Instances/InstanceDetail.xml) | Context: `appInstanceId`. | SYS-08 |
 | `/qapps/system/Instances/InstanceList` | [InstanceList.xml](../runtime/components/base/tools/screen/System/Instances/InstanceList.xml) | Hidden/helper entry; enter through its parent action and inspect direct access. | SYS-08 |
+| `/qapps/system/Instances/Kinds` | [Kinds.xml](../runtime/components/base/tools/screen/System/Instances/Kinds.xml) | Read only: the seed kinds with their secrets and dependencies. | SYS-08 |
+| `/qapps/system/Instances/Rotation` | [Rotation.xml](../runtime/components/base/tools/screen/System/Instances/Rotation.xml) | Context: `environmentId`. Rotate due and Rotate all post `request#InstanceRotation`, which runs now under machine access or opens Vaults › Lease. | SYS-08 |
 
 ### tools: `System/Operations`
 
@@ -405,7 +412,8 @@ alone does not complete the activity. Names beginning `review.` are fixture prop
   stay protected; defined, provisioned and running are distinct.
 - **Recovery:** Unsupported backend, conflicting port, failed phase, invalid environment, canceled removal and
   stale state identify the failed operation without damaging other definitions.
-- **Screens/modes:** Instances/InstanceList and Instances/InstanceDetail; local backend required for successful lifecycle, with
+- **Screens/modes:** Instances/InstanceList and Instances/InstanceDetail, with Fleet, Environments, Hosts, Images,
+  DatabaseHosts, Kinds and Rotation for its setup and follow-up; local backend required for successful lifecycle, with
   TUI/Standard administrative forms.
 
 ### SYS-09 — Inspect cache and thread pressure
