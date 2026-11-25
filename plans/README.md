@@ -41,7 +41,7 @@ audits and historical tests do not complete a walk. The
 - [MantleUSL-Execution-Benchmark-Plan.md](MantleUSL-Execution-Benchmark-Plan.md): Stages A–E, the correctness gate, and the execution-method comparison. The audit and this plan cite `../experiments/mantle-execution/README.md`, which lives on a separate experiment branch, not in this repository.
 
 **Dev tools**
-- [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent. §21 (Nov 11, 2026, not built) is the Dev AIDE as a client of a group server: a connection, merge requests and reviews in the Workspace, checks, issues, the contributor agreement and a `hosting` tool for agents.
+- [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent. §21 (Nov 11, 2026) is the Dev AIDE as a client of a group server: a connection, merge requests and reviews in the Workspace, checks, issues, the contributor agreement and a `hosting` tool for agents. Built: P1a to P9 (Oct 24 to 28, 2026), the component template (Oct 29) and §21's P11 to P13 (Nov 14); corrected to what is built Nov 25, with what is left, P10 included, in the Remaining list at the end of §18.
 
 - [Dev-HEMP.md](Dev-HEMP.md): Dev AIDE structured by HEMP (design, Nov 18, 2026, not built): the book's terms, the
   menu by its process (Requirements, Existing System, User Interface Design, Technical Design, Implementation,

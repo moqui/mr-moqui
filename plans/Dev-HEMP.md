@@ -405,6 +405,8 @@ artifact's name and Open, and Link to on an element picks an artifact by the ind
 - **In a meeting.** A session over a Comms call shares the board's area of the tab ([Comms-Whiteboard
   §3.2](archive/Comms-Whiteboard.md#32-browser-upgrades), Element Capture). The Expert User drawing on it too needs the
   board co-edited, which on a dev instance waits for the group server ([design-dev-aide](design-dev-aide.md) §21).
+  §21 is built (Nov 14, 2026), but its connection carries the repositories, merge requests, tasks and the model gateway,
+  not boards: a board co-edited with the Expert User is still one on an instance both reach.
 - **The terminal.** A board has no drawing there: the terminal shows its name, its text elements and its links, with
   the board's browser link. Everything a board links to is reachable from the terminal's own screens.
 - **Checks** (§8): a `hemp:` link to an artifact that is gone, as any other link.

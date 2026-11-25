@@ -24,7 +24,7 @@ fn main() {
 }
 ```
 
-The framework's dev components, `runtime/components/dev/example` and `runtime/components/dev/dev-aide`, are workspace members that `crates/moqui` links the same way, under its `devtools` feature (the Dev and Debug packages).
+The framework's dev components, `runtime/components/dev/example` and `runtime/components/dev/dev-aide`, are workspace members that `crates/moqui` links the same way, under its `devtools` feature (the Maximal package, the default, and Debug).
 
 A `component.xml` with `disabled="true"`, which can be a property (`disabled="${my_component_disabled ?: 'true'}"`), is skipped when a component directory is scanned, unless a conf `component-list` names it. A linked crate whose component is not loaded contributes nothing.
 

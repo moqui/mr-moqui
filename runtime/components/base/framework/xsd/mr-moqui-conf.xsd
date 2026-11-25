@@ -3352,10 +3352,12 @@ along with this software (see the LICENSE.md file). If not, see
 
     <xs:element name="dev-reload">
         <xs:annotation><xs:documentation>The dev file watcher (plans/design-dev-aide.md 6.3): on a dev instance
-            (instance@purpose dev) of a build with the devtools feature (the Dev and Debug packages), every component
-            directory is watched, and a changed file reloads what it defines: its services, its screen, the ECA rule
-            set of its kind, its REST API or skill; an entity, conf or Rust change logs that it needs a restart or a
-            rebuild. On unless enabled is false. Not on any other purpose.</xs:documentation></xs:annotation>
+            (instance@purpose dev) of a build with the devtools feature (the Maximal package, the default, and Debug,
+            or another package built with the feature), every component directory is watched, and a changed file
+            reloads what it defines: its services, its screen, the ECA rule set of its kind, its REST API or skill; an
+            entity file relinks the model, a conf file goes to the conf reload, and a component.xml or Rust change logs
+            that it needs a restart or a rebuild. On unless enabled is false. Not on any other
+            purpose.</xs:documentation></xs:annotation>
         <xs:complexType>
             <xs:attribute name="projects" type="xs:string" default="3"><xs:annotation><xs:documentation>How many projects
                 the dev tools' project cache keeps.</xs:documentation></xs:annotation></xs:attribute>
