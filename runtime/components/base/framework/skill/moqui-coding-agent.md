@@ -100,11 +100,26 @@ services and checks the rows they wrote with `checkData`.
 checks of `moqui check`), go to definition and references of the entities, services, screens and forms a file names
 (the artifact index, kept current with the open files), hover with an artifact's summary or an element's or
 attribute's documentation from the XSDs, completion of elements, attributes, enumerated values and entity and service
-names, and document and workspace symbols. Point an editor's generic LSP client at it for `*.xml` files in a Moqui
-runtime, for example in Neovim:
+names, and document and workspace symbols.
+
+Rename (with prepare) takes an entity field, a service, a form field or a parameter and answers one edit across the
+files: each definition, each reference the index resolves to it, and what takes the name from it (an
+`auto-parameters` parameter, an `alias-all` alias, an `auto-fields` form field, a transition's or REST method's
+parameter from its service, a form field that posts to the parameter, a declared one of that name that merges with
+it). A service keeps its file's prefix: give the new `verb#Noun`. It is refused, with the reason, when a reference
+of the name does not resolve, when something reads the name by another name (a view alias's `field`, a prefixed
+`alias-all`, a REST path parameter, a form field posting to a parameter outside the rename), when a reference is not
+the name as an attribute value or a string literal, and when an edit would land in an upstream component while
+`dev-aide@allow-upstream-edits` is off: the site components are those of `dev-aide@site-component` in the conf, and
+with none there a rename that edits more than one component is refused. Names inside expressions (a `from`, a
+`${}`) are not references and are not edited: check them after a rename. Code actions offer the nearest known names
+for an unknown entity, service, field or in-parameter (`reference.entity`, `reference.service`, `reference.field`,
+`reference.parameter`). With `--server` rename is refused and the quick fixes find entities and services there.
+
+Point an editor's generic LSP client at it for `*.xml` files in a Moqui runtime, for example in Neovim:
 
 ```lua
-vim.lsp.start({ name = "moqui", cmd = { "target/develop/moqui", "lsp" }, root_dir = vim.fn.getcwd() })
+vim.lsp.start({ name = "moqui", cmd = { "target/release/moqui", "lsp" }, root_dir = vim.fn.getcwd() })
 ```
 
 or in VS Code with any generic LSP client extension, its command `moqui lsp` and its document selector `xml`. Logs go to

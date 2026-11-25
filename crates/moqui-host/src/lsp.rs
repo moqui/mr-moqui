@@ -17,9 +17,11 @@
 //! `moqui_devkit::check`, on each open file's text as it changes), go to definition and references (the artifact
 //! index, read into memory on a model-only boot and kept current with the open buffers), hover (an artifact's summary,
 //! or an element's or attribute's documentation from the XSD digest), completion (the elements and attributes the
-//! digest gives, and entity and service names from the index in their attributes), and document and workspace symbols.
+//! digest gives, and entity and service names from the index in their attributes), document and workspace symbols, and
+//! on the local index rename (with `prepareRename`) and the check rules' quick fixes (`lsp_edit.rs`).
 //! With `--server URL` the checks and the index are a running dev instance's, over its MCP tools `check` and
-//! `artifact`, with the login key `moqui tui --server` keeps (or `MOQUI_LOGIN_KEY`).
+//! `artifact`, with the login key `moqui tui --server` keeps (or `MOQUI_LOGIN_KEY`); rename is refused there, and the
+//! quick fixes find names with the instance's `artifact` tool.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,6 +36,9 @@ use moqui_lib::error::Error;
 use serde_json::{json, Value as Json};
 
 use crate::devtools_remote::{Remote, Target};
+
+#[path = "lsp_edit.rs"]
+mod edit;
 
 /// What answers the server: this checkout's model and index, or a running instance's.
 pub enum Backend {
@@ -90,6 +95,71 @@ impl Backend {
                 .map(|artifact| target_of(index, artifact))
                 .collect(),
             Self::Remote(remote) => remote.find(text, kinds, limit),
+        }
+    }
+
+    /// What a rename at `line` of `path` would rename, or why none: the local index's artifact there.
+    fn rename_target(&self, path: &Path, line: u32, word: &str) -> Result<edit::RenameTarget, String> {
+        let Self::Local { index, .. } = self else {
+            return Err("moqui lsp renames on the local index only, not with --server".to_string());
+        };
+        match index.at(&path.display().to_string(), line, word) {
+            Some((_, Some(artifact))) => {
+                // the name under the cursor is the target's (a service's verb or noun at its definition)
+                let target = edit::rename_target(&artifact)?;
+                if !word.is_empty() && !target.name.contains(word) && !word.ends_with(&target.name) {
+                    return Err(format!("{word} is not the name of {}", target.id));
+                }
+                Ok(target)
+            }
+            Some((Some(reference), None)) => Err(format!(
+                "{} {} does not resolve: there is nothing known to rename",
+                reference.to_kind, reference.to_name
+            )),
+            _ => Err("nothing the index knows is here to rename".to_string()),
+        }
+    }
+
+    /// The edits of renaming `target` to `new_name`, or why the rename is refused.
+    fn rename(
+        &self,
+        target: &edit::RenameTarget,
+        new_name: &str,
+        text_of: &dyn Fn(&Path) -> Option<String>,
+    ) -> Result<std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>, String> {
+        match self {
+            Self::Local { factory, index } => edit::rename_edits(factory, index, target, new_name, text_of),
+            Self::Remote(_) => Err("moqui lsp renames on the local index only, not with --server".to_string()),
+        }
+    }
+
+    /// The known names nearest a name a check says is unknown (at most three).
+    fn nearest(&self, unknown: &edit::UnknownName) -> Vec<String> {
+        match self {
+            Self::Local { index, .. } => edit::nearest(unknown, index),
+            Self::Remote(remote) => {
+                // the server's find by the name's last segment, ranked here
+                let (kinds, name): (&[&str], &str) = match unknown {
+                    edit::UnknownName::Entity(name) => (&["entity", "view-entity"], name),
+                    edit::UnknownName::Service(name) => (&["service"], name),
+                    _ => return Vec::new(),
+                };
+                let kinds: Vec<String> = kinds.iter().map(|kind| (*kind).to_string()).collect();
+                let segment = name.rsplit(['.', '#']).next().unwrap_or(name);
+                let short = !name.contains('.');
+                let found = remote
+                    .find(segment, &kinds, 50)
+                    .into_iter()
+                    .map(|target| {
+                        if short && target.kind != "service" {
+                            target.name.rsplit('.').next().unwrap_or(&target.name).to_string()
+                        } else {
+                            target.name
+                        }
+                    })
+                    .collect();
+                edit::rank_nearest(name, found)
+            }
         }
     }
 
@@ -192,8 +262,13 @@ fn uri(text: &str) -> lsp::Uri {
 
 /// The word under a position (0-based line and UTF-16 character): an attribute value's or a name's characters.
 pub(crate) fn word_at(text: &str, line: u32, character: u32) -> String {
+    word_span(text, line, character).2
+}
+
+/// [`word_at`] with where the word is on its line: its start and end UTF-16 characters.
+pub(crate) fn word_span(text: &str, line: u32, character: u32) -> (u32, u32, String) {
     let Some(line) = text.lines().nth(line as usize) else {
-        return String::new();
+        return (character, character, String::new());
     };
     let chars: Vec<char> = line.chars().collect();
     let mut at = 0usize;
@@ -211,7 +286,16 @@ pub(crate) fn word_at(text: &str, line: u32, character: u32) -> String {
     while end < chars.len() && part(chars[end]) {
         end += 1;
     }
-    chars[start..end].iter().collect()
+    let units_of = |part: &[char]| {
+        part.iter()
+            .map(|ch| u32::try_from(ch.len_utf16()).unwrap_or(1))
+            .sum::<u32>()
+    };
+    (
+        units_of(&chars[..start]),
+        units_of(&chars[..end]),
+        chars[start..end].iter().collect(),
+    )
 }
 
 /// The tag the cursor is in: its element's name, and where in the tag the cursor is.
@@ -369,6 +453,14 @@ impl Server {
             references_provider: Some(lsp::OneOf::Left(true)),
             document_symbol_provider: Some(lsp::OneOf::Left(true)),
             workspace_symbol_provider: Some(lsp::OneOf::Left(true)),
+            rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
+            })),
+            code_action_provider: Some(lsp::CodeActionProviderCapability::Options(lsp::CodeActionOptions {
+                code_action_kinds: Some(vec![lsp::CodeActionKind::QUICKFIX]),
+                ..Default::default()
+            })),
             ..Default::default()
         }
     }
@@ -483,6 +575,13 @@ impl Server {
                 }
                 None => json!([]),
             },
+            "textDocument/prepareRename" | "textDocument/rename" => match self.rename(request) {
+                Ok(result) => result,
+                Err(message) => {
+                    return Response::new_err(request.id.clone(), lsp_server::ErrorCode::RequestFailed as i32, message)
+                }
+            },
+            "textDocument/codeAction" => self.code_actions(params),
             "textDocument/hover" => self.hover(params),
             "textDocument/completion" => self.completion(params),
             "textDocument/documentSymbol" => self.symbols(params),
@@ -509,6 +608,79 @@ impl Server {
             }
         };
         Response::new_ok(request.id.clone(), result)
+    }
+
+    /// `prepareRename` (the name's range and text) or `rename` (a `WorkspaceEdit` across the files), or why not.
+    fn rename(&self, request: &Request) -> Result<Json, String> {
+        let params = &request.params;
+        let TextPosition {
+            uri: uri_text,
+            line,
+            character,
+        } = Self::position(params);
+        let path = path_of(&uri_text).ok_or_else(|| format!("{uri_text} is no file"))?;
+        let text = self.text_of(&uri_text);
+        let (start, end, word) = word_span(&text, line, character);
+        let target = self.backend.rename_target(&path, line + 1, &word)?;
+        if request.method == "textDocument/prepareRename" {
+            // the part of the word that is the name: a service's whole name, else the last segment of a dotted word
+            let (start, placeholder) = if target.kind == "service" || word == target.name {
+                (start, word.clone())
+            } else if let Some(at) = word
+                .rfind(&target.name)
+                .filter(|at| at + target.name.len() == word.len())
+            {
+                let skipped = u32::try_from(word[..at].encode_utf16().count()).unwrap_or(0);
+                (start + skipped, target.name.clone())
+            } else {
+                (start, word.clone())
+            };
+            let range = lsp::Range::new(lsp::Position::new(line, start), lsp::Position::new(line, end));
+            return Ok(json!({ "range": range, "placeholder": placeholder }));
+        }
+        let new_name = params["newName"].as_str().unwrap_or_default();
+        let documents: HashMap<PathBuf, &String> = self
+            .documents
+            .iter()
+            .filter_map(|(uri_text, text)| Some((path_of(uri_text)?, text)))
+            .collect();
+        let text_of = |path: &Path| {
+            documents
+                .get(path)
+                .map(|text| (*text).clone())
+                .or_else(|| std::fs::read_to_string(path).ok())
+        };
+        let edits = self.backend.rename(&target, new_name, &text_of)?;
+        Ok(json!({ "changes": workspace_changes(&edits) }))
+    }
+
+    /// The quick fixes of the diagnostics the client sends: for an unknown entity, service, field or in-parameter, the
+    /// nearest known names, each an edit of the name's value.
+    fn code_actions(&self, params: &Json) -> Json {
+        let uri_text = params["textDocument"]["uri"].as_str().unwrap_or_default();
+        let text = self.text_of(uri_text);
+        let mut actions = Vec::new();
+        for diagnostic in params["context"]["diagnostics"].as_array().into_iter().flatten() {
+            let rule = diagnostic["code"].as_str().unwrap_or_default();
+            let Some(unknown) = edit::unknown_name(rule, diagnostic["message"].as_str().unwrap_or_default()) else {
+                continue;
+            };
+            let line = u32::try_from(diagnostic["range"]["start"]["line"].as_u64().unwrap_or(0)).unwrap_or(0);
+            let character = u32::try_from(diagnostic["range"]["start"]["character"].as_u64().unwrap_or(0)).unwrap_or(0);
+            for (at, fix) in self.backend.nearest(&unknown).into_iter().enumerate() {
+                let Some(found) = edit::value_edit(&text, line, character, unknown.name(), &fix) else {
+                    continue;
+                };
+                actions.push(json!({
+                    "title": format!("Change to {fix}"),
+                    "kind": lsp::CodeActionKind::QUICKFIX,
+                    "diagnostics": [diagnostic],
+                    "isPreferred": at == 0,
+                    "edit": { "changes": { uri_text: [text_edit(&found)] } },
+                }));
+            }
+        }
+        json!(actions)
     }
 
     fn hover(&self, params: &Json) -> Json {
@@ -677,6 +849,23 @@ impl Server {
         }
         json!([symbol(&outline, 0)])
     }
+}
+
+/// An edit as the protocol's `TextEdit`.
+fn text_edit(edit: &edit::Edit) -> Json {
+    let range = lsp::Range::new(
+        lsp::Position::new(edit.line, edit.start),
+        lsp::Position::new(edit.line, edit.end),
+    );
+    json!({ "range": range, "newText": edit.text })
+}
+
+/// A `WorkspaceEdit`'s `changes`: each file's URI with its edits.
+fn workspace_changes(edits: &std::collections::BTreeMap<PathBuf, Vec<edit::Edit>>) -> serde_json::Map<String, Json> {
+    edits
+        .iter()
+        .map(|(path, list)| (uri_of(path), Json::Array(list.iter().map(text_edit).collect())))
+        .collect()
 }
 
 fn first_line(text: &str) -> String {
