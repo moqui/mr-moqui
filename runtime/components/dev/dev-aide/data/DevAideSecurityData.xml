@@ -63,6 +63,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DAA_TRY" enumTypeId="DevAideAction" description="Service run for real"/>
     <moqui.basic.Enumeration enumId="DAA_EXPORT" enumTypeId="DevAideAction" description="Docs exported"/>
 
+    <!-- The preference an admin sets for a user on System › User (src/vcs.rs PUBLISH_BRANCH): the branch Publish pushes
+        to when the root has none in Settings, `{user}` the username, as `review/{user}`. -->
+    <moqui.basic.Enumeration enumId="DEV_AIDE_PUBLISH_BRANCH" enumTypeId="UserPreferenceKey"
+            description="Dev AIDE publish branch ({user} is the username)"/>
+
     <moqui.security.user.NotificationTopic topic="DevReload" description="Dev AIDE reload" typeString="info" showAlert="N"
             persistOnSend="N"/>
 </entity-facade-xml>

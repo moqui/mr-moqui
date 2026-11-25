@@ -7,7 +7,7 @@
  * bar), Changes (staged, changes, untracked; stage, unstage, discard, diff; the commit form with the task trailer) and
  * Commits. It talks to the transitions of DevAide/Workspace.xml. A save that finds the file changed on disk opens
  * Compare; a reload report (the DevReload notification) refreshes the tree and the status and the clean tabs, and marks
- * a tab with edits "Changed on disk". Unsaved text is kept in the browser by root and path until saved.
+ * a tab with edits "Changed on disk". Unsaved text is kept in the browser (IndexedDB) by root and path until saved.
  *
  * The pure parts are moqui.devAide.pure, which test/client/pages/DevAide.page.js runs in the page.
  */
@@ -290,6 +290,82 @@
     // for the views: what they keep in the browser, by the same rules
     devAide.store = store;
 
+    // The keys of the unsaved drafts an earlier version kept in localStorage (`storageKey(rootId, "draft:" + path)`),
+    // which move to IndexedDB once; not Assist's hand-off of a proposal (`moqui.devAide.draft:component://...`, which
+    // WebrootAssistCanvas.js writes there for the builder to take).
+    pure.isDraftKey = (key) => typeof key === "string" && key.startsWith("moqui.devAide.draft:") && !key.startsWith("moqui.devAide.draft:component://");
+    pure.draftKeysToMove = (keys) => (keys || []).filter(pure.isDraftKey);
+    // The remote of an upstream branch name (fork/due-date -> fork).
+    pure.upstreamRemote = (upstream) => { const text = String(upstream || ""); const at = text.indexOf("/"); return at > 0 ? text.slice(0, at) : ""; };
+    // The trailer line a commit gets for a task's key, as the server writes it (git.rs trailer_line): Fixes #12 for an
+    // issue by its number, a closing keyword as it is, else Task: KEY.
+    pure.trailerOf = (key) => {
+        const text = String(key || "").trim();
+        if (/^#\d+$/.test(text)) return "Fixes " + text;
+        if (/^(Fixes|Closes|Resolves) \S/.test(text)) return text;
+        return "Task: " + text;
+    };
+
+    // The unsaved drafts (a whole file each, by root and path) in IndexedDB, where a few large files do not fill the
+    // origin's few MB of localStorage: store's API, each call a promise. With no IndexedDB (a private window, blocked
+    // site data) they stay in localStorage as before; an IndexedDB opened takes over the drafts localStorage has, once,
+    // and removes them there. A write in pagehide may not finish before the page goes: the drafts are written half a
+    // second after the typing stops, so only that half second can be lost.
+    devAide.makeDrafts = (name) => {
+        let opened = null;
+        const each = (db, mode, work) => new Promise((resolve, reject) => {
+            const tx = db.transaction("drafts", mode);
+            const request = work(tx.objectStore("drafts"));
+            tx.oncomplete = () => resolve(request ? request.result : undefined);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+        // the drafts localStorage has, put in one transaction, then removed from localStorage
+        const migrate = (db) => {
+            let keys = [];
+            try {
+                const local = root.localStorage;
+                if (local) for (let index = 0; index < local.length; index++) keys.push(local.key(index));
+            } catch (err) { return Promise.resolve(0); }
+            keys = pure.draftKeysToMove(keys);
+            if (!keys.length) return Promise.resolve(0);
+            const moving = keys.map((key) => [key, store.get(key)]).filter(([, value]) => value && typeof value.text === "string");
+            return each(db, "readwrite", (drafts) => { moving.forEach(([key, value]) => drafts.put(value, key)); return null; })
+                .then(() => { keys.forEach((key) => store.drop(key)); return moving.length; });
+        };
+        const open = () => opened || (opened = new Promise((resolve) => {
+            let factory = null;
+            try { factory = root.indexedDB || null; } catch (err) { factory = null; }
+            if (!factory) { resolve(null); return; }
+            let request;
+            try { request = factory.open(name, 1); } catch (err) { resolve(null); return; }
+            request.onupgradeneeded = () => request.result.createObjectStore("drafts");
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => resolve(null);
+            request.onblocked = () => resolve(null);
+        }).then((db) => db ? migrate(db).then(() => db, (err) => { console.warn("Dev AIDE: the drafts in localStorage were not moved", err); return db; }) : null));
+        return {
+            ready: () => open().then((db) => !!db),
+            get(key) {
+                return open().then((db) => db ? each(db, "readonly", (drafts) => drafts.get(key)).then((value) => value === undefined ? null : value) : store.get(key))
+                    .catch(() => null);
+            },
+            set(key, value) { return open().then((db) => db ? each(db, "readwrite", (drafts) => drafts.put(value, key)) : store.set(key, value)).catch(() => {}); },
+            drop(key) { return open().then((db) => db ? each(db, "readwrite", (drafts) => drafts.delete(key)) : store.drop(key)).catch(() => {}); },
+            close() { return (opened || Promise.resolve(null)).then((db) => { if (db) db.close(); opened = null; }); }
+        };
+    };
+    const drafts = devAide.drafts = devAide.makeDrafts("moqui.devAide");
+
+    // The Workspace starts with the shell's app drawer closed, for the editor's width; leaving puts it back as it was,
+    // unless the user opened it again meanwhile. The closing is this page's: the QUASAR_LEFT_OPEN preference stays.
+    // Answers the function that puts it back.
+    devAide.closeAppDrawer = (shell) => {
+        if (!shell || !("leftOpen" in shell) || !shell.leftOpen) return () => {};
+        shell.leftOpen = false;
+        return () => { if (!shell.leftOpen) shell.leftOpen = true; };
+    };
+
     const workspace = {
         name: "mDevWorkspace",
         // mode "guided" (D18): one artifact in its view, with no tree, tabs or repository bar
@@ -308,8 +384,10 @@
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
                 // shared mode (D19): the other users with files of this root open
                 editors: [],
-                // the task panel (14): the user's open tasks from their source
-                taskList: { tasks: [], loading: false, error: "", sourceLabel: "" },
+                // the task panel (14): the user's open tasks from their source, and the open issues of the root's
+                // hosted repository (21.6)
+                taskList: { tasks: [], loading: false, error: "", sourceLabel: "", issues: [], issueProjects: [], numbered: false,
+                    repositoryPath: "", issuesError: "" },
                 // git depth (P8): Branches, Tags and Stashes under Advanced; a running network command's last line; the
                 // diff's hunks; the conflicted file open in the conflict view; the Commits tab's paging and path
                 advanced: !!store.get("advanced"), progress: null, hunks: null, conflictPath: null, gitLoaded: false,
@@ -355,6 +433,10 @@
             }
         },
         mounted() {
+            // the drafts as last written (key: text, or null when dropped), and those being offered back: a draft is
+            // not dropped while it is offered back
+            this.draftsWritten = new Map();
+            this.draftsOffered = new Set();
             const client = this.$root && this.$root.notificationClient;
             if (client && client.registerListener) {
                 this.offReload = client.registerListener("DevReload", (message) => this.onReload(message));
@@ -393,6 +475,7 @@
             root.addEventListener("pagehide", this.rememberNow);
             // each view's hook after its Save all, by its tab; a view takes its own off when it unmounts
             this.saveHooks = new Map();
+            if (!this.guided) this.restoreDrawer = devAide.closeAppDrawer(moqui.webrootVue);
         },
         beforeUnmount() {
             if (this.offReload) this.offReload();
@@ -405,6 +488,7 @@
             root.removeEventListener("pagehide", this.rememberNow);
             if (this.shared && this.rootId) this.post("presence", { rootId: this.rootId, paths: [] }).catch(() => {});
             root.removeEventListener("resize", this.onResize);
+            if (this.restoreDrawer) this.restoreDrawer();
             const assist = moqui.assist;
             if (assist) {
                 if (assist.editorState) assist.editorState = null;
@@ -453,6 +537,7 @@
                 this.rootId = id;
                 this.tabs = []; this.active = null; this.status = null; this.diff = null; this.log = []; this.commitDetail = null;
                 this.treeKey++;
+                if (this.rail === "tasks") this.loadTasks();
                 const kept = store.get(pure.storageKey(id, "tabs"));
                 if (kept && Array.isArray(kept.paths)) {
                     if (!this.guided) kept.paths.forEach((path) => this.openFile(path, 0, true));
@@ -463,10 +548,15 @@
             remember() {
                 if (!this.rootId) return;
                 if (!this.guided) store.set(pure.storageKey(this.rootId, "tabs"), { paths: this.tabs.map((tab) => tab.path), active: this.active });
+                const written = this.draftsWritten || new Map();
                 const keep = (rootId, buffer) => {
                     const key = pure.storageKey(rootId, "draft:" + buffer.path);
-                    if (buffer.text !== buffer.saved) store.set(key, { base: buffer.base, text: buffer.text });
-                    else store.drop(key);
+                    if (this.draftsOffered && this.draftsOffered.has(key)) return;
+                    const text = buffer.text !== buffer.saved ? buffer.text : null;
+                    if (written.has(key) && written.get(key) === text) return;
+                    written.set(key, text);
+                    if (text !== null) drafts.set(key, { base: buffer.base, text });
+                    else drafts.drop(key);
                 };
                 for (const tab of this.tabs) {
                     if (tab.loading) continue;
@@ -478,13 +568,17 @@
             // The unsaved text an earlier visit left of `buffer`, offered back.
             offerDraft(buffer, rootId) {
                 const key = pure.storageKey(rootId, "draft:" + buffer.path);
-                const draft = store.get(key);
-                if (!draft || typeof draft.text !== "string" || draft.text === buffer.text || buffer.readOnly) return;
-                this.$q.dialog({
-                    title: moqui.l10n.localize("Unsaved changes"), message: buffer.path + " has changes from an earlier visit that were not saved." +
-                        (draft.base !== buffer.base ? " The file changed since." : "") + " Restore them?", cancel: { label: "Discard them" },
-                    ok: { label: "Restore" }
-                }).onOk(() => { buffer.text = draft.text; }).onCancel(() => store.drop(key));
+                this.draftsOffered.add(key);
+                return drafts.get(key).then((draft) => {
+                    if (!draft || typeof draft.text !== "string" || draft.text === buffer.text || buffer.readOnly) { this.draftsOffered.delete(key); return; }
+                    // kept until the user answers (a remember meanwhile would drop it, the buffer being clean)
+                    this.$q.dialog({
+                        title: moqui.l10n.localize("Unsaved changes"), message: buffer.path + " has changes from an earlier visit that were not saved." +
+                            (draft.base !== buffer.base ? " The file changed since." : "") + " Restore them?", cancel: { label: "Discard them" },
+                        ok: { label: "Restore" }
+                    }).onOk(() => { this.draftsOffered.delete(key); buffer.text = draft.text; })
+                        .onCancel(() => { this.draftsOffered.delete(key); this.draftsWritten.set(key, null); drafts.drop(key); });
+                }, () => { this.draftsOffered.delete(key); });
             },
             refreshStatus() {
                 if (!this.isGit) { this.status = null; return Promise.resolve(); }
@@ -1066,17 +1160,36 @@
             // ---- the task panel (14) ----
             loadTasks() {
                 this.taskList.loading = true;
-                return this.get("tasks", {}).then((answer) => {
-                    this.taskList = { tasks: answer.tasks || [], loading: false, error: answer.error || "", sourceLabel: answer.sourceLabel || "" };
+                return this.get("tasks", { rootId: this.rootId || "" }).then((answer) => {
+                    this.taskList = { tasks: answer.tasks || [], loading: false, error: answer.error || "", sourceLabel: answer.sourceLabel || "",
+                        issues: answer.issues || [], issueProjects: answer.issueProjects || [], numbered: !!answer.numbered,
+                        repositoryPath: answer.repositoryPath || "", issuesError: answer.issuesError || "" };
                 }, (error) => { this.taskList.loading = false; this.taskList.error = pure.errorText(error); });
             },
+            // Quick create (21.6): an issue filed in the tracker of the root's hosted repository, in its first linked project
+            // unless another is picked
+            createIssue() {
+                const projects = this.taskList.issueProjects || [];
+                this.$q.dialog({ title: "New issue in " + (this.taskList.repositoryPath || (this.hosted && this.hosted.repositoryPath) || "the repository"),
+                    message: "Filed on the server as you" + (projects.length ? ", in " + (projects[0].projectName || projects[0].projectId) : "") + ". Its title:",
+                    prompt: { model: "", type: "text" }, cancel: true, ok: { label: "Create" } }).onOk((title) => {
+                    if (!String(title || "").trim()) return;
+                    this.post("createIssue", { rootId: this.rootId, title, projectId: (projects[0] || {}).projectId || "" }).then((answer) => {
+                        const issue = answer.issue || {};
+                        this.note("Filed " + (issue.key || answer.taskId));
+                        this.loadTasks();
+                    }, this.fail);
+                });
+            },
             copyText(text) { if (root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(text).then(() => this.note("Copied " + text)); },
+            // an issue's key is #12 where the repository's issues have numbers (its commit gets Fixes #12), else the id
             useTask(task, current) {
                 this.commitForm.task = task.key;
-                if (current) this.setCurrentTask(); else { this.tab = "changes"; this.note("The next commit gets " + task.key + "'s trailer"); }
+                if (current) this.setCurrentTask(); else { this.tab = "changes"; this.note("The next commit gets " + pure.trailerOf(task.key)); }
             },
+            // a branch named for the task or issue by its id (the server links it), its commits getting its key
             taskBranch(task) {
-                this.post("taskBranch", { rootId: this.rootId, taskId: task.key, title: task.title }).then((answer) => {
+                this.post("taskBranch", { rootId: this.rootId, taskId: task.taskId || task.key, title: task.title, trailer: task.key }).then((answer) => {
                     this.commitForm.task = task.key;
                     this.note("On " + answer.branch); this.refreshStatus(); this.reloadTabs();
                 }, this.fail);
@@ -1099,7 +1212,7 @@
                     if (!info || this.commitForm.summary) return;
                     const lines = String(info.message || "").split("\n");
                     this.commitForm.summary = lines[0] || "";
-                    this.commitForm.body = lines.slice(1).join("\n").replace(/^\n+/, "").replace(/\n*(Task|Fixes): .*$/, "");
+                    this.commitForm.body = lines.slice(1).join("\n").replace(/^\n+/, "").replace(/\n*(?:(?:Task|Fixes): .*|(?:Fixes|Closes|Resolves) \S+)$/, "");
                 }, this.fail);
             },
             commit(andPush) {
@@ -1167,12 +1280,20 @@
                     return answer;
                 }, () => null);
             },
-            openMergeRequest(branch) {
-                return this.ask("Title of the merge request of " + branch, "").then((title) => {
+            // a branch pushed to a fork's remote (Fork adds it as fork) comes from the fork: the server resolves the
+            // remote's repository (sourceRepositoryId)
+            openMergeRequest(branch, remote) {
+                const upstream = this.status && this.status.branch === branch ? pure.upstreamRemote(this.status.upstream) : "";
+                const sourceRemote = remote || upstream;
+                const hostedRemote = this.root && this.root.hosted && this.root.hosted.remote;
+                const fromFork = !!sourceRemote && !!hostedRemote && sourceRemote !== hostedRemote;
+                return this.ask("Title of the merge request of " + (fromFork ? sourceRemote + "/" : "") + branch, "").then((title) => {
                     if (title === null || title === undefined) return null;
-                    return this.post("openMergeRequest", { rootId: this.rootId, sourceBranch: branch, title }).then((answer) => {
+                    const params = { rootId: this.rootId, sourceBranch: branch, title };
+                    if (fromFork) params.sourceRemote = sourceRemote;
+                    return this.post("openMergeRequest", params).then((answer) => {
                         const made = answer.mergeRequest || {};
-                        this.note("Opened merge request !" + made.mergeRequestNum + " into " + made.target);
+                        this.note("Opened merge request !" + made.mergeRequestNum + (made.sourceRepositoryId ? " from " + made.sourceRepositoryId : "") + " into " + made.target);
                         return made;
                     }, this.fail);
                 });
@@ -1333,6 +1454,7 @@
                     .onOk(() => this.post("restart").then(() => { this.note(moqui.l10n.localize("Restarting…"), "warning"); this.restartNeeded = false; }, this.fail));
             },
             isDirtyAll(tab) { return pure.isDirtyAll(tab); },
+            trailerOf(key) { return pure.trailerOf(key); },
             // Mod+Z, Mod+Shift+Z and Mod+S in a visual view: the buffer's undo and redo, and Save
             onViewKey(event, tab) {
                 const mod = event.ctrlKey || event.metaKey;
@@ -1472,6 +1594,27 @@
         </q-list>
       </div>
       <div v-show="rail === 'tasks'" class="col column no-wrap q-pa-xs" id="DevTasks">
+        <template v-if="taskList.repositoryPath || taskList.issuesError">
+        <div class="row items-center no-wrap text-caption" id="DevIssuesHeader"><span class="ellipsis">{{taskList.issuesError ? 'Issues: ' + taskList.issuesError : 'Open issues · ' + taskList.repositoryPath}}</span>
+          <q-space></q-space><q-btn v-if="taskList.repositoryPath" dense flat round size="xs" icon="add" aria-label="New issue" :disable="!isGit" @click="createIssue" id="DevNewIssue">
+            <q-tooltip>New issue in {{taskList.repositoryPath}}</q-tooltip></q-btn></div>
+        <q-list dense class="scroll" style="max-height: 40%" id="DevIssues">
+          <q-item v-for="issue in taskList.issues" :key="'issue-' + issue.taskId" :data-issue="issue.key">
+            <q-item-section><q-item-label class="ellipsis">{{issue.title}}</q-item-label>
+              <q-item-label caption>{{issue.key}}{{issue.number ? ' · ' + issue.taskId : ''}} · {{issue.statusId}}{{issue.projectName ? ' · ' + issue.projectName : ''}}
+                <q-icon v-if="status && status.currentTask === issue.key" name="sym_o_star" size="xs"></q-icon></q-item-label></q-item-section>
+            <q-item-section side><q-btn dense flat round size="xs" icon="more_vert" :aria-label="'Actions for ' + issue.key"><q-menu><q-list dense style="min-width: 10rem">
+              <q-item v-if="issue.url" clickable v-close-popup :href="issue.url" target="_blank" tag="a"><q-item-section>Open</q-item-section></q-item>
+              <q-item clickable v-close-popup @click="copyText(issue.key)"><q-item-section>Copy key</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit" @click="useTask(issue)"><q-item-section>Use in commit ({{trailerOf(issue.key)}})</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit" @click="useTask(issue, true)"><q-item-section>{{ t('Set current') }}</q-item-section></q-item>
+              <q-item clickable v-close-popup :disable="!isGit || !canWrite" @click="taskBranch(issue)"><q-item-section>Branch</q-item-section></q-item>
+            </q-list></q-menu></q-btn></q-item-section>
+          </q-item>
+          <q-item v-if="!taskList.loading && !taskList.issues.length && !taskList.issuesError"><q-item-section class="text-caption m-muted">No open issues.</q-item-section></q-item>
+        </q-list>
+        <q-separator class="q-my-xs"></q-separator>
+        </template>
         <div class="row items-center no-wrap text-caption"><span class="ellipsis">{{taskList.error ? taskList.sourceLabel + ': ' + taskList.error : 'My tasks · ' + (taskList.sourceLabel || '')}}</span>
           <q-space></q-space><q-btn dense flat round size="xs" icon="refresh" aria-label="Refresh tasks" @click="loadTasks"><q-tooltip>Refresh tasks</q-tooltip></q-btn>
           <q-btn dense flat round size="xs" icon="sym_o_settings" href="/qapps/dev/Tasks" type="a" aria-label="Task source and app"><q-tooltip>Task source and app</q-tooltip></q-btn></div>

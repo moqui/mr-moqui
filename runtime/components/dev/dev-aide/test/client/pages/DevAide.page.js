@@ -220,3 +220,59 @@ test("the Libraries panel reviews the chosen release and refreshes the owning co
     assert.deepEqual(vm.catalog.libraries, [added]);
     assert.equal(vm.moduleCall("sum"), "ec.resource.script('component://site/script/libs/sum.js')");
 });
+
+test("an earlier version's drafts in localStorage move to IndexedDB once, and Assist's hand-off stays", async () => {
+    assert.deepEqual(pure.draftKeysToMove(["moqui.devAide.draft:service/A.xml.site", "moqui.devAide.draft:component://site/A.xml",
+        "moqui.devAide.tabs.site", null]), ["moqui.devAide.draft:service/A.xml.site"]);
+    const name = "moqui.devAide.test." + Date.now();
+    const draftKey = pure.storageKey("site", "draft:service/A.xml");
+    const handOff = "moqui.devAide.draft:component://site/service/A.xml";
+    localStorage.setItem(draftKey, JSON.stringify({ base: "h1", text: "<services/>\n" }));
+    localStorage.setItem(handOff, JSON.stringify({ text: "proposed" }));
+    localStorage.setItem("moqui.devAide.tabs.site", JSON.stringify({ paths: ["service/A.xml"] }));
+    try {
+        const drafts = moqui.devAide.makeDrafts(name);
+        assert.equal(await drafts.ready(), true);
+        assert.deepEqual(await drafts.get(draftKey), { base: "h1", text: "<services/>\n" });
+        assert.equal(localStorage.getItem(draftKey), null, "moved, not copied");
+        assert.notEqual(localStorage.getItem(handOff), null, "Assist's hand-off is the builder's to take");
+        assert.notEqual(localStorage.getItem("moqui.devAide.tabs.site"), null, "the open tabs stay in localStorage");
+        // the same API: set, get and drop, and a draft that is not there is null
+        await drafts.set("moqui.devAide.draft:B.xml.site", { base: "h2", text: "b" });
+        assert.equal((await drafts.get("moqui.devAide.draft:B.xml.site")).text, "b");
+        await drafts.drop("moqui.devAide.draft:B.xml.site");
+        assert.equal(await drafts.get("moqui.devAide.draft:B.xml.site"), null);
+        // once: a second opening finds nothing to move and keeps what IndexedDB has
+        await drafts.close();
+        const again = moqui.devAide.makeDrafts(name);
+        assert.equal((await again.get(draftKey)).text, "<services/>\n");
+        await again.close();
+    } finally {
+        [draftKey, handOff, "moqui.devAide.tabs.site"].forEach((key) => localStorage.removeItem(key));
+        await new Promise((resolve) => { const request = indexedDB.deleteDatabase(name); request.onsuccess = request.onerror = request.onblocked = resolve; });
+    }
+});
+
+test("the Workspace closes the app drawer for its stay, and puts it back unless reopened", () => {
+    const shell = { leftOpen: true };
+    const restore = moqui.devAide.closeAppDrawer(shell);
+    assert.equal(shell.leftOpen, false);
+    restore();
+    assert.equal(shell.leftOpen, true);
+    // closed already: left closed
+    const closed = { leftOpen: false };
+    moqui.devAide.closeAppDrawer(closed)();
+    assert.equal(closed.leftOpen, false);
+    // no shell (a page test, the terminal): nothing
+    moqui.devAide.closeAppDrawer(null)();
+});
+
+test("a commit names an issue by its number, else its key; a fork's branch by its remote", () => {
+    assert.equal(pure.trailerOf("#12"), "Fixes #12");
+    assert.equal(pure.trailerOf("PROJ-12"), "Task: PROJ-12");
+    assert.equal(pure.trailerOf("Closes PROJ-3"), "Closes PROJ-3");
+    assert.equal(pure.trailerOf("#12a"), "Task: #12a");
+    assert.equal(pure.upstreamRemote("fork/due-date"), "fork");
+    assert.equal(pure.upstreamRemote("origin/feature/x"), "origin");
+    assert.equal(pure.upstreamRemote(""), "");
+});

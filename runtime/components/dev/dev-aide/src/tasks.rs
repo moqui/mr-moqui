@@ -281,8 +281,72 @@ fn rest_tasks(row: &moqui_core::entity::EntityValue) -> Result<Vec<Json>, LibErr
     Ok(tasks)
 }
 
+/// The name of the app a group server offers for its tasks (`tasks.app` of its offer), as the user's preference names it.
+#[must_use]
+pub fn offered_app_name(server_id: &str) -> String {
+    format!("server-{server_id}")
+}
+
+/// A path of an offered app: on the server, with `{taskId}` or `{projectId}` in it, never another origin.
+fn offered_path(app: &Json, key: &str) -> String {
+    app[key]
+        .as_str()
+        .map(str::trim)
+        .filter(|path| path.starts_with('/') && !path.starts_with("//") && !path.contains('\\'))
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The app a connected server offers for its tasks (`tasks.app`: a title and the paths of a project, a task and a new
+/// task), at the server's own address. `None` when it offers none, or no path of one.
+pub(crate) fn offered_app(server: &crate::hosting::client::Server) -> Option<Json> {
+    let app = &server.offer["tasks"]["app"];
+    let (project, task, new_task) = (
+        offered_path(app, "projectPath"),
+        offered_path(app, "taskPath"),
+        offered_path(app, "newTaskPath"),
+    );
+    if project.is_empty() && task.is_empty() {
+        return None;
+    }
+    let title = app["title"]
+        .as_str()
+        .filter(|title| !title.trim().is_empty())
+        .map_or_else(|| server.label.clone(), |title| title.chars().take(100).collect());
+    Some(json!({
+        "name": offered_app_name(&server.id), "title": format!("{title} ({})", server.label), "projectPath": project,
+        "taskPath": task, "newTaskPath": new_task, "baseUrl": server.base, "offeredBy": server.id,
+    }))
+}
+
+/// A task's link in an app: the app's `path` (`taskPath`, `projectPath`) with the task's ids, at the app's base URL,
+/// else at `base` (the task source's).
+fn app_link(app: &Json, base: &str, path: &str, task: &Json) -> Option<String> {
+    let template = app[path].as_str().filter(|template| !template.is_empty())?;
+    let app_base = app["baseUrl"].as_str().filter(|base| !base.is_empty()).unwrap_or(base);
+    Some(format!(
+        "{}{}",
+        app_base.trim_end_matches('/'),
+        template
+            .replace("{taskId}", &query(task["taskId"].as_str().unwrap_or("")))
+            .replace("{projectId}", &query(task["projectId"].as_str().unwrap_or("")))
+    ))
+}
+
+/// The tasks of the projects linked to the repository first, each group in its order.
+#[must_use]
+pub fn linked_first(tasks: Vec<Json>, project_ids: &[String]) -> Vec<Json> {
+    let (mut linked, other): (Vec<Json>, Vec<Json>) = tasks.into_iter().partition(|task| {
+        task["projectId"]
+            .as_str()
+            .is_some_and(|project| project_ids.iter().any(|id| id == project))
+    });
+    linked.extend(other);
+    linked
+}
+
 /// The apps a task opens in: the conf's `task-app` elements, then the `DevAideTaskApp` rows (a row of the same name
-/// replaces the conf's).
+/// replaces the conf's), then the apps the user's group servers offer.
 fn apps(context: &Context) -> Vec<Json> {
     let mut apps: Vec<Json> = Vec::new();
     if let Ok(conf) = MNode::parse_shared("moqui-conf", &context.factory.conf_text()) {
@@ -306,14 +370,23 @@ fn apps(context: &Context) -> Vec<Json> {
             }));
         }
     }
+    let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    let _authz = ExecutionContext::with_current(|ec| ec.disable_authz());
+    for server in crate::hosting::client::Server::all(&context.facade, &user) {
+        if let Some(app) = offered_app(&server) {
+            apps.push(app);
+        }
+    }
     apps
 }
 
 /// `get#Tasks`: the user's open tasks from their source, the apps (the chosen one first) and each task's link in it.
+/// With `rootId` of a working tree whose hosted repository's server offers its issues (plans/design-dev-aide.md 21.6):
+/// the repository's open issues too, and the tasks of the projects linked to it first.
 fn get_tasks(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
-    _parameters: &Parameters,
+    parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
     let user = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
@@ -346,24 +419,55 @@ fn get_tasks(
         apps.insert(0, app);
     }
     let app = apps.first().cloned();
-    let link = |path: &str, task: &Json| -> Option<String> {
-        let app = app.as_ref()?;
-        let template = app[path].as_str().filter(|template| !template.is_empty())?;
-        let app_base = app["baseUrl"]
-            .as_str()
-            .filter(|base| !base.is_empty())
-            .map_or(base.as_str(), |base| base);
-        Some(format!(
-            "{}{}",
-            app_base.trim_end_matches('/'),
-            template
-                .replace("{taskId}", &query(task["taskId"].as_str().unwrap_or("")))
-                .replace("{projectId}", &query(task["projectId"].as_str().unwrap_or("")))
-        ))
-    };
+    let link = |path: &str, task: &Json| -> Option<String> { app_link(app.as_ref()?, &base, path, task) };
     let mut out = Parameters::new();
+    // the issues of the working tree's hosted repository, and its projects (21.6); a server that fails them leaves
+    // the tasks
+    let mut linked: Vec<String> = Vec::new();
+    let root_id = text(parameters, "rootId");
+    if let Some(root) = Some(root_id.as_str())
+        .filter(|id| !id.is_empty())
+        .and_then(|id| context.root(id).ok())
+    {
+        let _authz = ec.disable_authz();
+        match crate::hosting::issues::root_issues(&context, root) {
+            Ok(Some((hosted, found))) => {
+                let server_app = offered_app(&hosted.server);
+                let issues: Vec<Json> = found
+                    .issues
+                    .into_iter()
+                    .map(|mut issue| {
+                        let page = issue["pageUrl"].take();
+                        issue["url"] = server_app
+                            .as_ref()
+                            .and_then(|app| app_link(app, &hosted.server.base, "taskPath", &issue))
+                            .map_or(page, Json::String);
+                        issue
+                    })
+                    .collect();
+                linked = found
+                    .projects
+                    .iter()
+                    .filter_map(|project| project["projectId"].as_str().map(str::to_string))
+                    .collect();
+                out.insert("issues".into(), json_value(&issues));
+                out.insert("issueProjects".into(), json_value(&found.projects));
+                out.insert("numbered".into(), Value::Bool(found.numbered));
+                out.insert(
+                    "repositoryPath".into(),
+                    json_value(&hosted.repository["repositoryPath"]),
+                );
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!("Dev AIDE: the issues of {} failed: {err}", root.label);
+                out.insert("issuesError".into(), Value::string(err.to_string()));
+            }
+        }
+    }
     match found {
-        Ok(mut tasks) => {
+        Ok(tasks) => {
+            let mut tasks = linked_first(tasks, &linked);
             for task in &mut tasks {
                 task["url"] = json!(link("taskPath", task));
                 task["projectUrl"] = json!(link("projectPath", task));
@@ -615,7 +719,15 @@ fn create_task_branch(
         .run(&root.path, Mode::Write, &["switch", "-c", &name], &[], None)?
         .checked("switch -c")?;
     crate::vcs::audit_git(&context, root, "branch", json!({ "branch": name, "task": key }));
-    moqui_core::user::set_preference(&format!("{}.{}", crate::vcs::CURRENT_TASK, root.id), Some(key.as_str()))?;
+    // the trailer its commits get: the task's key, or what names an issue in its repository (`#12`)
+    let trailer = Some(text(parameters, "trailer"))
+        .map(|trailer| trailer.trim().to_string())
+        .filter(|trailer| !trailer.is_empty() && trailer.len() <= 100 && !trailer.chars().any(char::is_control))
+        .unwrap_or_else(|| key.clone());
+    moqui_core::user::set_preference(
+        &format!("{}.{}", crate::vcs::CURRENT_TASK, root.id),
+        Some(trailer.as_str()),
+    )?;
     let mut out = Parameters::new();
     out.insert("branch".into(), Value::string(name));
     out.insert(
@@ -627,6 +739,18 @@ fn create_task_branch(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tasks_of_linked_projects_come_first() {
+        let task = |id: &str, project: &str| serde_json::json!({ "taskId": id, "projectId": project });
+        let sorted = super::linked_first(
+            vec![task("1", "A"), task("2", "B"), task("3", ""), task("4", "B")],
+            &["B".to_string()],
+        );
+        let ids: Vec<&str> = sorted.iter().map(|task| task["taskId"].as_str().unwrap()).collect();
+        assert_eq!(ids, ["2", "4", "1", "3"]);
+        assert_eq!(super::linked_first(vec![task("1", "A")], &[]).len(), 1);
+    }
+
     #[test]
     fn a_task_branch_is_its_key_and_first_words() {
         assert_eq!(

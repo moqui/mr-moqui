@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
     upstream), "Allow editing upstream components" for a full-tier user (D17), the roots with their labels, read only
     flags and publish branches (question 15), roots of other directories, git init of a plain root, network git on a
     shared dev server (an admin's), and the group servers (21.2): Connect signs in at the server as an installed app
-    (its page comes back to serverSignedIn here) or takes a pasted token, then sets what the user confirms. The services
+    (its page comes back to serverSignedIn here), through the identity provider the user picks of those the server
+    offers or its own login, or takes a pasted token, then sets what the user confirms. The services
     check the tier; the page shows what the user may change. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/mr-xml-screen.xsd"
         default-menu-title="Settings" default-menu-index="11" menu-image="sym_o_settings" menu-image-type="icon">
@@ -24,7 +25,10 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="serverId"/>
 
     <!-- group servers (21.2) -->
+    <!-- a server with identity providers answers them first: the page lists them (and the server's own login) to choose -->
     <transition name="startConnect"><service-call name="org.moqui.devaide.HostingServices.start#Connect" out-map="started"/>
+        <conditional-response url="."><condition><expression>!started.authorizeUrl</expression></condition>
+            <parameter name="serverId" from="started.serverId"/></conditional-response>
         <default-response url="${started.authorizeUrl}" url-type="plain"/>
         <error-response url="."/></transition>
     <transition name="serverSignedIn" require-session-token="false">
@@ -83,6 +87,9 @@ along with this software (see the LICENSE.md file). If not, see
             offered: [server.offer &amp;&amp; server.offer.git ? 'git' : null, server.offer &amp;&amp; server.offer.gateway &amp;&amp; server.offer.gateway.enabled ? 'LLM gateway' : null,
                 server.offer &amp;&amp; server.offer.application ? server.offer.application.name : null].filter((part) => part).join(', ')}))"/>
         <set field="planServer" from="serverId ? servers.find((server) => server.serverId == serverId &amp;&amp; server.mine) : null"/>
+        <!-- the identity providers the server's app sign-in offers (signIn.providers, from its get#AppProviders) -->
+        <set field="signInProviders" from="planServer &amp;&amp; planServer.offer &amp;&amp; planServer.offer.signIn &amp;&amp; planServer.offer.signIn.providers
+            ? planServer.offer.signIn.providers.map((provider) => Object.assign({baseUrl: planServer.baseUrl, label: planServer.label}, provider)) : []"/>
         <set field="plan" from="planServer ? planServer.plan : null"/>
         <if condition="info.shared &amp;&amp; admin &amp;&amp; full">
             <service-call name="org.moqui.devaide.WorkspaceServices.get#Credentials" out-map="stored"/>
@@ -121,6 +128,20 @@ along with this software (see the LICENSE.md file). If not, see
             </container-dialog>
         </box-body></container-box>
 
+        <section name="ServerSignInSection" condition="signInProviders.length"><widgets>
+            <container-box id="DevAideServerSignInBox"><box-header title="Sign in to ${planServer.label}"/><box-body>
+                <label type="p" text="${planServer.label} signs you in with one of these, or with its own login."/>
+                <form-list name="SignInProviderList" list="signInProviders" skip-form="true">
+                    <field name="description"><default-field title="Sign in with"><display/></default-field></field>
+                    <field name="signIn"><default-field title="">
+                        <link url="startConnect" text="Sign in with ${description}" parameter-map="{baseUrl: baseUrl, label: label, authFlowId: authFlowId}"
+                                link-type="hidden-form"/></default-field></field>
+                </form-list>
+                <link url="startConnect" text="Sign in with ${planServer.label}'s own login" link-type="hidden-form"
+                        parameter-map="{baseUrl: planServer.baseUrl, label: planServer.label, ownLogin: 'true'}"/>
+            </box-body></container-box>
+        </widgets></section>
+
         <section name="ServerPlanSection" condition="plan"><widgets>
             <container-box id="DevAideServerPlanBox"><box-header title="Set up from ${planServer.label}"/><box-body>
                 <label type="p" text="Each is set only when checked."/>
@@ -131,7 +152,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="repositoryName"><default-field title="Repository name"><text-line size="16" default-value="${plan.addons.repositoryName}"/></default-field></field>
                     <field name="defaultRepository"><default-field title="Default repository"><check><option key="true" text="Every component from this server"/></check></default-field></field>
                     <field name="taskSource"><default-field title="Task source" tooltip="Your work items from ${plan.taskSource.path}">
-                        <check><option key="true" text="${plan.taskSource.present ? 'Keep' : 'Add'} the server's tasks as your task source"/></check></default-field></field>
+                        <check><option key="true" text="${plan.taskSource.present ? 'Keep' : 'Add'} the server's tasks as your task source${plan.taskSource.app ? ', opening in ' + plan.taskSource.app.title : ''}"/></check></default-field></field>
                     <field name="gateway"><default-field title="LLM gateway" tooltip="${(plan.gateway.lines || []).join('  ')}">
                         <check><option key="true" text="${plan.gateway.available ? 'Write the gateway lines to runtime/.env (a restart applies them)' : 'The server offers no gateway'}"/></check></default-field></field>
                     <field name="gatewayAlias"><default-field title="Model alias"><text-line size="16" default-value="default"/></default-field></field>
