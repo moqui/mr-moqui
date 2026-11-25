@@ -33,8 +33,8 @@ sha2 = { workspace = true }
 tracing = { workspace = true }
 
 [features]
-# The file watcher that reloads changed artifacts on a dev instance; the host's devtools feature (the Dev and Debug
-# packages) turns it on.
+# The file watcher that reloads changed artifacts on a dev instance; the host's devtools feature (in the default
+# Maximal build and the Debug package, docs/Build-Test.md) turns it on.
 watch = ["dep:notify"]
 # Deploying a component from a git URL (plans/archive/Component-Deploy.md, Phase 3), with the host's git feature.
 git = ["dep:moqui-git", "dep:base64", "dep:url"]

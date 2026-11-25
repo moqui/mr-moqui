@@ -698,3 +698,227 @@ fn a_same_screen_form_binds_by_the_transition_it_posts_to_and_a_link_through_a_w
     // call would take it
     assert!(index.bindings_of(&format!("form:{app}#Save"), "").is_empty());
 }
+
+/// The fields of the entity `id` with each one's origin (empty: declared) and summary, in name order.
+fn entity_fields(index: &MemoryIndex, id: &str) -> Vec<(String, String, String)> {
+    let mut found: Vec<(String, String, String)> = index
+        .children(id)
+        .into_iter()
+        .filter(|artifact| artifact.kind == "field")
+        .map(|artifact| (artifact.short_name, artifact.origin, artifact.summary))
+        .collect();
+    found.sort();
+    found
+}
+
+const VIEW_ENTITIES: &str = r#"<entities>
+    <entity entity-name="Status" package="c">
+        <field name="statusId" type="id" is-pk="true"/><field name="description" type="text-medium"/>
+    </entity>
+    <view-entity entity-name="ExampleAndStatus" package="c">
+        <member-entity entity-alias="EX" entity-name="c.Example"/>
+        <member-entity entity-alias="ST" entity-name="Status" join-from-alias="EX"><key-map field-name="statusId"/></member-entity>
+        <alias-all entity-alias="EX"><exclude field="comments"/></alias-all>
+        <alias-all entity-alias="ST" prefix="status"/>
+        <alias entity-alias="ST" name="statusLabel" field="description"/>
+        <alias entity-alias="EX" name="name" type="text-long"/>
+        <alias name="total" type="number-decimal"><complex-alias operator="+"><complex-alias-field entity-alias="EX" field="exampleId"/></complex-alias></alias>
+    </view-entity>
+</entities>"#;
+
+/// A view entity's `alias-all` gives it a field for each member field, its prefix before the field's name and the names
+/// its aliases have left out, as Moqui completes the view; each alias has the key and type of the member field it reads,
+/// its own type winning; and a service's `auto-parameters` of the view takes them all. A member entity's new field
+/// reaches the view, and through it the service.
+#[test]
+fn a_view_entity_has_its_alias_all_fields_and_the_key_and_type_of_each_alias() {
+    let services = r#"<services>
+    <service verb="find" noun="ExampleAndStatus">
+        <in-parameters><auto-parameters entity-name="c.ExampleAndStatus" include="pk"/></in-parameters>
+    </service>
+</services>"#;
+    let mut files = base_files();
+    files.push((
+        ArtifactKind::Entity,
+        "component://c/entity/ViewEntities.xml",
+        VIEW_ENTITIES,
+    ));
+    files.push((
+        ArtifactKind::Service,
+        "component://c/service/c/ViewServices.xml",
+        services,
+    ));
+    let mut index = index_of(&files);
+    let view = "entity:c.ExampleAndStatus";
+    let field = |name: &str, origin: &str, summary: &str| (name.to_string(), origin.to_string(), summary.to_string());
+    assert_eq!(
+        entity_fields(&index, view),
+        [
+            // the excluded field and the one an alias names are not aliased again
+            field("exampleId", "alias-all", "id, pk"),
+            field("name", "", "text-long"),
+            field("statusDescription", "alias-all", "text-medium"),
+            field("statusId", "alias-all", "id"),
+            field("statusLabel", "", "text-medium"),
+            field("statusStatusId", "alias-all", "id, pk"),
+            field("total", "", "number-decimal"),
+        ]
+    );
+    // an alias-all's field is in the view's file
+    let example_id = index.describe("field:c.ExampleAndStatus.exampleId").unwrap();
+    assert_eq!(example_id.path, path_of("component://c/entity/ViewEntities.xml"));
+    let pk_params = |index: &MemoryIndex| -> Vec<String> {
+        let mut names: Vec<String> = index
+            .children("service:c.ViewServices.find#ExampleAndStatus")
+            .into_iter()
+            .filter(|artifact| artifact.kind == "parameter")
+            .map(|artifact| artifact.short_name)
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(pk_params(&index), ["exampleId", "statusStatusId"]);
+
+    // a key field added to a member: an alias of the view, and a parameter of the service that reads the view
+    read_into(
+        &mut index,
+        ArtifactKind::Entity,
+        "component://c/entity/Entities.xml",
+        &ENTITIES.replace(
+            r#"<field name="name""#,
+            r#"<field name="seqId" type="id" is-pk="true"/><field name="name""#,
+        ),
+    );
+    index.resolve_all(&|_| false);
+    assert!(index.describe("field:c.ExampleAndStatus.seqId").is_some());
+    assert_eq!(pk_params(&index), ["exampleId", "seqId", "statusStatusId"]);
+}
+
+/// A parameter written before an `auto-parameters` of its name takes the field's type and `required`, as Moqui merges
+/// the fields into what is written before; one written after sets what it gives over the field.
+#[test]
+fn a_parameter_before_its_auto_parameters_takes_the_fields_type_and_required() {
+    let services = r#"<services>
+    <service verb="update" noun="Example">
+        <in-parameters><parameter name="statusId" type="Long" required="true"/>
+            <auto-parameters entity-name="c.Example" include="nonpk"/><parameter name="name" required="true"/></in-parameters>
+    </service>
+</services>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/OrderServices.xml",
+            services,
+        ),
+    ]);
+    let summary = |name: &str| {
+        index
+            .describe(&format!("parameter:service:c.OrderServices.update#Example@in.{name}"))
+            .map(|row| (row.origin, row.summary))
+    };
+    assert_eq!(
+        summary("statusId"),
+        Some((String::new(), "in id, required=false".to_string()))
+    );
+    assert_eq!(
+        summary("name"),
+        Some((String::new(), "in text-medium, required=true".to_string()))
+    );
+    assert_eq!(
+        summary("comments"),
+        Some((
+            "auto-parameters".to_string(),
+            "in text-very-long, required=false".to_string()
+        ))
+    );
+}
+
+/// A REST method's service gives the method its parameters, as a transition's own `service-call` does (the path
+/// parameters its own), and each path parameter the service takes is bound into it.
+#[test]
+fn a_rest_method_takes_its_services_parameters_and_binds_its_path_into_them() {
+    let services = r#"<services>
+    <service verb="store" noun="Example">
+        <in-parameters><auto-parameters entity-name="c.Example"/></in-parameters>
+        <out-parameters><parameter name="done" type="Boolean"/></out-parameters>
+    </service>
+</services>"#;
+    let rest = r#"<resource name="things">
+    <id name="exampleId"><method type="put"><service name="c.StoreServices.store#Example"/></method></id>
+</resource>"#;
+    let index = index_of(&[
+        (ArtifactKind::Entity, "component://c/entity/Entities.xml", ENTITIES),
+        (
+            ArtifactKind::Service,
+            "component://c/service/c/StoreServices.xml",
+            services,
+        ),
+        (ArtifactKind::Rest, "component://c/service/c.rest.xml", rest),
+    ]);
+    let method = "rest:/things/{exampleId}:put";
+    let mut params: Vec<(String, String)> = index
+        .children(method)
+        .into_iter()
+        .filter(|artifact| artifact.kind == "parameter")
+        .map(|artifact| (artifact.id.rsplit_once('@').unwrap().1.to_string(), artifact.origin))
+        .collect();
+    params.sort();
+    let param = |name: &str, origin: &str| (name.to_string(), origin.to_string());
+    assert_eq!(
+        params,
+        [
+            param("in.comments", "service-call"),
+            param("in.name", "service-call"),
+            param("in.statusId", "service-call"),
+            param("out.done", "service-call"),
+            param("path.exampleId", ""),
+        ]
+    );
+    let bound: Vec<(String, Option<String>)> = index
+        .bindings_of(method, "")
+        .into_iter()
+        .map(|entry| (entry.binding.to_id, entry.binding.source_id))
+        .collect();
+    assert_eq!(
+        bound,
+        [(
+            "parameter:service:c.StoreServices.store#Example@in.exampleId".to_string(),
+            Some(format!("parameter:{method}@path.exampleId"))
+        )]
+    );
+}
+
+/// What takes an entity field's name from it, for a rename: the parameters of the `auto-parameters` that read its
+/// entity, the fields of the forms that read the entity or those services, a declared field of that name merging with
+/// one, and an alias-all's alias; and what reads it by another name stops it (a view alias's `field`, a prefixed
+/// alias-all).
+#[test]
+fn an_entity_fields_name_family_follows_what_takes_its_name() {
+    let mut files = base_files();
+    files.push((ArtifactKind::Entity, "component://c/entity/ViewEntities.xml", VIEW_ENTITIES));
+    let index = index_of(&files);
+    let family = index.name_family("field:c.Example.statusId");
+    let screen = SCREEN_LOCATION;
+    for id in [
+        "field:c.Example.statusId".to_string(),
+        "parameter:service:c.ThingServices.create#Thing@in.statusId".to_string(),
+        format!("form-field:{screen}#ByService@statusId"),
+        format!("form-field:{screen}#Listed@statusId"),
+        "field:c.ExampleAndStatus.statusId".to_string(),
+    ] {
+        assert!(family.ids.contains(&id), "{id} in {:?}", family.ids);
+    }
+    // the excluded field of a form is none of it
+    assert!(!family.ids.contains(&format!("form-field:{screen}#ByEntity@statusId")));
+    assert_eq!(family.blocking, Vec::<String>::new());
+    // a field a view alias names in its field, and a prefixed alias-all aliases
+    let status = index.name_family("field:c.Status.description");
+    assert_eq!(
+        status.blocking,
+        [
+            "c.ExampleAndStatus aliases it as statusDescription by a prefixed alias-all",
+            "the alias statusLabel of c.ExampleAndStatus names it in its field",
+        ]
+    );
+}

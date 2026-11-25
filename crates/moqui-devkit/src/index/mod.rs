@@ -217,7 +217,9 @@ pub fn hash_of(text: &str) -> String {
     // 7 the marks of what a service, form or transition declares to be filled in (auto-parameters, implements,
     // auto-fields, extends, a transition's calls and field-maps), and the references of auto-parameters and extends.
     // 8 a screen's allow-extra-path mark, and a form's bindings by the path it posts to, its own screen's transition too.
-    let digest = Sha256::digest(format!("8\n{text}").as_bytes());
+    // 9 a view entity's members, alias-alls and aliases, the parameters written before an auto-parameters, and a REST
+    // method's service.
+    let digest = Sha256::digest(format!("9\n{text}").as_bytes());
     digest.iter().take(12).map(|byte| format!("{byte:02x}")).collect()
 }
 
@@ -764,6 +766,54 @@ impl MemoryIndex {
         true
     }
 
+    /// The artifacts that share the name of the entity field, parameter or form field `id` and go with it in a rename:
+    /// `id`, what takes its name from it, in turn ([`Resolver::same_name_dependents`]), and the form fields bound by
+    /// their name into a parameter of them. What a rename cannot follow is `blocking`: one of them read by another name,
+    /// or a form field of them that posts to a parameter that is not of them.
+    #[must_use]
+    pub fn name_family(&self, id: &str) -> resolve::NameDependents {
+        let mut family = resolve::NameDependents {
+            ids: vec![id.to_string()],
+            blocking: Vec::new(),
+        };
+        let mut at = 0;
+        while at < family.ids.len() {
+            let current = family.ids[at].clone();
+            at += 1;
+            let mut next = self.resolver.same_name_dependents(&current);
+            family.blocking.append(&mut next.blocking);
+            if current.starts_with("parameter:") {
+                // the form fields that post to it by their name
+                next.ids.extend(
+                    self.bindings
+                        .iter()
+                        .filter(|(_, binding)| binding.to_id == current && binding.source_kind == "form-field")
+                        .filter_map(|(_, binding)| binding.source_id.clone()),
+                );
+            }
+            for found in next.ids {
+                if !family.ids.contains(&found) {
+                    family.ids.push(found);
+                }
+            }
+        }
+        for (_, binding) in &self.bindings {
+            let from_family = binding
+                .source_id
+                .as_ref()
+                .is_some_and(|source| binding.source_kind == "form-field" && family.ids.contains(source));
+            if from_family && !family.ids.contains(&binding.to_id) {
+                family.blocking.push(format!(
+                    "the form field {} posts to {}",
+                    binding.source_text, binding.to_id
+                ));
+            }
+        }
+        family.blocking.sort();
+        family.blocking.dedup();
+        family
+    }
+
     /// The extensions of `components` (every component when empty), broken ones first.
     #[must_use]
     pub fn extensions(&self, components: &[String]) -> Vec<Extension> {
@@ -1262,6 +1312,8 @@ pub fn build_files(
         sources.push(mounts);
     }
     for source in sources {
+        // the artifact groups' patterns as they match now: the same rows matching other artifacts are written again
+        let source = expand_source(&state, source);
         if hashes.get(&source.path).is_some_and(|hash| *hash == source.hash) {
             report.unchanged += 1;
             continue;
@@ -1615,6 +1667,13 @@ fn apply(
     let shared: HashSet<String>;
     // the files that have rows: only theirs are read and removed first
     let mut known: HashSet<String> = HashSet::new();
+    // an artifact new to the index that an artifact group's pattern matches: the members are read again after
+    let groups_path = format!("db:{}", rows::ARTIFACT_GROUP_MEMBER);
+    let reads_groups = changes.iter().any(|change| match change {
+        Change::Read { file, .. } | Change::Stale { file, .. } => file.location == groups_path,
+        Change::Removed(path) => *path == groups_path,
+    });
+    let mut pattern_added = false;
     {
         let paths: Vec<Value> = changes
             .iter()
@@ -1682,7 +1741,10 @@ fn apply(
                     if artifact.kind == "field" {
                         changed_entities.extend(artifact.parent.clone());
                     }
-                    gone.remove(&artifact.id);
+                    let known_before = gone.remove(&artifact.id);
+                    if !known_before && !reads_groups && resolver.pattern_matches(&artifact.id) {
+                        pattern_added = true;
+                    }
                     added.push(artifact.clone());
                 }
             }
@@ -1731,6 +1793,7 @@ fn apply(
         let exists = |location: &str| location_exists(factory, location);
         for change in &mut changes {
             if let Change::Read { index, .. } = change {
+                index.refs = resolver.expand_patterns(std::mem::take(&mut index.refs));
                 for row in &mut index.refs {
                     resolver.resolve(row, &exists);
                 }
@@ -1840,7 +1903,34 @@ fn apply(
         walk_again(factory, facade, state, &tx, &changed_paths, &walk_names)?;
     }
     report.write_millis = writing.elapsed().as_millis();
+    if pattern_added {
+        // the artifact groups' members again, their patterns matched against the artifacts now; one that is not read
+        // is logged, and the next build reads them
+        match rows::read_entity(facade, rows::ARTIFACT_GROUP_MEMBER) {
+            Ok(source) => {
+                let source = expand_source(state, source);
+                apply(factory, facade, state, vec![source_change(source)], report)?;
+            }
+            Err(err) => tracing::error!("Artifact index: the artifact group members were not read again: {err}"),
+        }
+    }
     Ok(())
+}
+
+/// `source` with its artifact groups' patterns matched against the artifacts the index knows, hashed by what they
+/// matched ([`Resolver::expand_patterns`]): a source of other rows as it is.
+fn expand_source(state: &IndexState, mut source: rows::RowSource) -> rows::RowSource {
+    if !source
+        .index
+        .refs
+        .iter()
+        .any(|row| row.to_scope == extract::PATTERN_SCOPE)
+    {
+        return source;
+    }
+    let refs = std::mem::take(&mut source.index.refs);
+    source.index.refs = lock(&state.resolver).expand_patterns(refs);
+    rows::rehash(source)
 }
 
 /// The id an artifact's declaration counts toward for the expansions that read it ([`Resolver::dependents`]): an
@@ -1966,9 +2056,22 @@ fn expand_in(
     rewrites
 }
 
+/// A test's failure point in the index writer (plans/design-dev-aide.md 19): the owners whose next expansion write
+/// ([`write_expanded`]) fails, each once.
+#[cfg(test)]
+pub(crate) static FAIL_EXPANSION_WRITE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
 /// Replace the expanded rows of a service or form of a file not read now ([`expand_in`]): its artifacts and bindings of
 /// an expanded origin.
 fn write_expanded(facade: &EntityFacade, rewrite: &Rewrite) -> Result<(), Error> {
+    #[cfg(test)]
+    {
+        let mut failing = lock(&FAIL_EXPANSION_WRITE);
+        if let Some(at) = failing.iter().position(|owner| *owner == rewrite.owner) {
+            failing.remove(at);
+            return Err(Error::new(format!("the failure point of {}", rewrite.owner)));
+        }
+    }
     let origins: Vec<Value> = extract::EXPANDED_ORIGINS
         .iter()
         .map(|origin| Value::string(*origin))
