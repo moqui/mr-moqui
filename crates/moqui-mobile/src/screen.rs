@@ -1,6 +1,6 @@
 // This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
 
-//! The native screen share's leg (plans/Comms-Whiteboard.md §3.6, plans/MM-Spike.md): a WebRTC client of the media
+//! The native screen share's leg (plans/archive/Comms-Whiteboard.md §3.6, plans/archive/MM-Spike.md): a WebRTC client of the media
 //! server on str0m, sending the VP8 frames MediaCodec encodes from the MediaProjection (`ScreenShare.kt`) as the
 //! participant's screen leg. The page signals for it: it makes the leg (`add#ScreenLeg`) and relays the leg's rtc frames
 //! on its own socket, so no credential of the account is here; this side only makes the offer, takes the answer and

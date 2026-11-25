@@ -232,7 +232,7 @@ pub(super) struct Peer {
     pub(super) guest_video_recipient: bool,
     pub(super) guest_screen_only: bool,
     pub(super) screen_leg: Option<Arc<str>>,
-    /// A native screen share's leg (`CltScreen`, plans/Comms-Whiteboard.md §3.6), with the page leg it shares for: it
+    /// A native screen share's leg (`CltScreen`, plans/archive/Comms-Whiteboard.md §3.6), with the page leg it shares for: it
     /// only publishes, so it is offered no other leg's tracks, and what it sends is the screen from its first packet.
     pub(super) screen_of: Option<Arc<str>>,
     sources: HashMap<Mid, Source>,

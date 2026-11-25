@@ -1295,7 +1295,7 @@ function move(p) {
 }
 
 /**
- * The native screen share's leg (plans/Comms-Whiteboard.md §3.6, plans/MM-Spike.md): a second answered leg of the
+ * The native screen share's leg (plans/archive/Comms-Whiteboard.md §3.6, plans/archive/MM-Spike.md): a second answered leg of the
  * caller's own participant (CltScreen) that publishes only the screen. The caller's page relays its rtc frames on its own
  * socket (bind#Connection checks the leg is the socket user's), and asks for the stage with it. One at a time: an older
  * one closes. Not in an end-to-end encrypted call until the app has SFrame (bindLeg refuses it there too).

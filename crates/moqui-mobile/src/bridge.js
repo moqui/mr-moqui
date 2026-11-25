@@ -382,7 +382,7 @@
         // phase 16): whether it is on now
         // the phone's calendar app on a new event (plans/Comms-Messaging.md §18.3 phase 19): whether one opened
         calendarInsert: (entry) => shellAsk("calendar_insert", { entry: entry || {} }).then((opened) => opened === true, () => false),
-        // the native screen share (plans/MM-Spike.md): the system's consent and the capture (start), the screen leg's
+        // the native screen share (plans/archive/MM-Spike.md): the system's consent and the capture (start), the screen leg's
         // offer, the media server's answer and later offers relayed by the page on its own socket, its state, and its end
         screenStart: () => shellAsk("screen_start"),
         screenOffer: (encrypted) => shellAsk("screen_offer", { encrypted: encrypted === true }),

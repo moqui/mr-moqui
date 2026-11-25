@@ -1,5 +1,8 @@
 # MM spike: Android native screen share
 
+> Archived 2026-11-25 with [Comms-Whiteboard](Comms-Whiteboard.md): the record of phase MM's spike and build; the
+> Android screen share is described in [Mobile-Client](../../docs/ui/Mobile-Client.md).
+
 Stage 1 of phase MM of [Comms-Whiteboard](Comms-Whiteboard.md) (§3.6, §11.1): the spike of option A, MediaProjection
 and MediaCodec VP8 into `str0m` in the app's Rust, connected to the SFU as the participant's screen leg. Findings with
 the commands that produced them; folded into the docs when MM is built.

@@ -1,8 +1,20 @@
 # Comms Whiteboard: boards, diagrams, and screen share in meetings
 
+> Archived 2026-11-25: every phase of this plan is built (MW1, MS1, MW2, MA, MS2 on Nov 21; the second review's fixes,
+> BOSS's board screens, MD and MM on Nov 24–25). The design that stays true is in the guides:
+> [Comms, How boards are built](../../docs/tools/Comms.md#how-boards-are-built),
+> [Revision-Management, Whiteboard revisions](../../docs/data/Revision-Management.md#whiteboard-revisions),
+> [WebRTC, Presenting in a call](../../docs/interfaces/WebRTC.md#presenting-in-a-call),
+> [Desktop-Client, Screen share](../../docs/ui/Desktop-Client.md#screen-share) and
+> [Mobile-Client](../../docs/ui/Mobile-Client.md); the MM spike and build record is [MM-Spike](MM-Spike.md). What is
+> left: the live checks of each OS and a real phone in [Testing-Needed](../Testing-Needed.md#desktop-and-mobile-apps);
+> §9's later items, several shares at once and process editing (§7) in [Future-Plans](../Future-Plans.md#comms); a
+> project's and Maintenance's boards in mr-boss `plan/impl-drawers-commons.md` §6; Dev-HEMP's boards in
+> [Dev-HEMP](../Dev-HEMP.md). Below is the plan as it was built, with the differences noted where they matter.
+
 Implementation, 2026-11-21. MW1, MS1, MW2, MA and MS2 are built. The whiteboard is a tool of its own: a board to draw and diagram on, used
 in Comms meetings, in wiki spaces, and in Dev AIDE's HEMP design work. It is built first (MW1, §11), with its drawing
-and diagram support, and [Dev-HEMP](Dev-HEMP.md) depends on it. The plan covers:
+and diagram support, and [Dev-HEMP](../Dev-HEMP.md) depends on it. The plan covers:
 
 1. **The whiteboard**: a new wiki page type drawn with Excalidraw and co-edited over the existing `yrs` rooms, also
    usable on a plain file with no co-editing (Dev AIDE's `hemp/` boards), with Mermaid frames that keep their source,
@@ -14,9 +26,9 @@ and diagram support, and [Dev-HEMP](Dev-HEMP.md) depends on it. The plan covers:
    link's meeting): tab audio, the choice of surface, rules for who presents, host controls, annotation, presenting a
    Moqui screen by following it instead of by pixels, the desktop app and Android.
 
-It follows [Comms-Messaging](Comms-Messaging.md) (§8 calls) and the archived
-[Comms-Framework](archive/Comms-Framework.md) (W2 built screen share), and reuses the co-editing of
-[Revision-Management, Co-editing](../docs/data/Revision-Management.md#co-editing). In the tables, **Built** means it
+It follows [Comms-Messaging](../Comms-Messaging.md) (§8 calls) and the archived
+[Comms-Framework](Comms-Framework.md) (W2 built screen share), and reuses the co-editing of
+[Revision-Management, Co-editing](../../docs/data/Revision-Management.md#co-editing). In the tables, **Built** means it
 is in the source today, **Partial** names what is missing, and **Planned** means this plan adds it. *Unverified*
 marks a claim from outside sources that a spike must check before the work depends on it.
 
@@ -30,14 +42,14 @@ marks a claim from outside sources that a spike must check before the work depen
 | See a share | Built: a leg's tracks split into its camera stream and its screen stream by the SFU's track sources; the speaker view shows the share large, the grid as a tile, the floating window the share first | `WebrootCall.js` (`isScreen`, the layout's `sharing`) |
 | Layers by tile size | Built for every publisher (high, mid, low, none) | `crates/moqui-rtc/src/sfu/` |
 | Share audio | Partial: the SFU knows `Source::ScreenAudio` and `AudioRoom` decodes a leg's screen audio as its own stream (Comms-Framework M0); the browser never asks for audio | `crates/moqui-rtc/src/sfu/mod.rs` |
-| Recording a share | Built: the screen track as VP8 in WebM, its audio as Opus in Ogg | [Call-Recording](../docs/interfaces/Call-Recording.md) |
+| Recording a share | Built: the screen track as VP8 in WebM, its audio as Opus in Ogg | [Call-Recording](../../docs/interfaces/Call-Recording.md) |
 | E2EE share | Built: the screen sender gets SFrame like the camera | `moqui.callKeys.attachSender` |
 | Who may share | None: any participant, any number at once. Roles are `CprHost`, `CprMember`, `CprGuest`, `CprForward` (`CallSetupData.xml`); no presenter state | |
 | Host stop, banner, presenter's own view | None | |
 | Surface choice, content hint, region or element capture, scrolling the captured tab | None | |
 | Desktop app | Partial: Tauri 3 on CEF; whether CEF shows a source picker for `getDisplayMedia` in our build is *unverified* (reports differ by CEF version and runtime style) | `crates/moqui-desktop` |
 | Android app | None: Android's WebView has no `getDisplayMedia` (*unverified* for the current WebView; Chrome on Android has none). The patched wry has a `DisplayCapture` permission kind with no backend | `crates/moqui-mobile/patches/wry/src/permissions.rs` |
-| Tests | The `moqui-rtc` speaker and share cases; Future-Plans lists share as something headless Chromium cannot drive | [Future-Plans](Future-Plans.md) |
+| Tests | The `moqui-rtc` speaker and share cases; Future-Plans lists share as something headless Chromium cannot drive | [Future-Plans](../Future-Plans.md) |
 
 ### 1.2 Whiteboard and co-editing
 
@@ -49,11 +61,11 @@ marks a claim from outside sources that a spike must check before the work depen
 | Wiki page types | `md`, `html`, `txt`, and the `.fancy` script types for `DATABASE_ADMIN` (`get#WikiPageTypes`) | `framework/service/org/moqui/resource/WikiServices.xml` |
 | Yjs in the browser | Built inside the Tiptap bundle (`yjs` 13.6.33, `y-protocols`, exported as `Tiptap.Y`) | `webroot/screen/webroot/libs/refresh.mjs` |
 | Mermaid | Built: Mermaid 11, `m-mermaid` and mermaid fences in markdown, drawn on first use | `WebrootVue.qvt.js` `moqui.mermaid` |
-| Whiteboard | None, and no plan: mr-three says "a shared whiteboard is intended later, as another kind of wiki document" ([concept](../runtime/components/addon/mr-three/plan/concept.md)); its [technical design](../runtime/components/addon/mr-three/plan/design-technical.md) says none is planned in the tree | |
+| Whiteboard | None, and no plan: mr-three says "a shared whiteboard is intended later, as another kind of wiki document" ([concept](../../runtime/components/addon/mr-three/plan/concept.md)); its [technical design](../../runtime/components/addon/mr-three/plan/design-technical.md) says none is planned in the tree | |
 | Wiki screens | BOSS only: IronStone Commons Knowledge and Notes with `m-coedit` (mr-boss `screen/Commons/Knowledge.qvue`, `Notes.qvue`). BasicComms has no wiki screen | |
 | Rooms and wiki | A chat room has members, files from its messages and a record it may belong to; no wiki space | `ChatEntities.xml` `ChatRoom` |
 
-The research for BOSS ([research-drawers-commons §13](../runtime/components/addon/mr-boss/plan/research-drawers-commons.md#13-notes-wiki-knowledge--discussions-commons))
+The research for BOSS ([research-drawers-commons §13](../../runtime/components/addon/mr-boss/plan/research-drawers-commons.md#13-notes-wiki-knowledge--discussions-commons))
 already notes that Nextcloud's whiteboard is Excalidraw over a sync server with follow, presentation, timer and
 voting.
 
@@ -67,7 +79,7 @@ voting.
 | Screen share scope | All four: the browser upgrades, presenting a Moqui screen (follow), the desktop app, Android |
 
 Guests and encryption never meet: an encrypted call already refuses guests (`encryptedNoGuests`,
-[WebRTC](../docs/interfaces/WebRTC.md)).
+[WebRTC](../../docs/interfaces/WebRTC.md)).
 
 ### 2.1 Libraries considered
 
@@ -97,7 +109,7 @@ the call engine and sent to the call's legs; it is not a role.
   `CsmAsk` (a member asks; a host lets them). A call link has the same field for its meetings
   (`CallLink.shareModeEnumId`, default `CsmAnyone`), copied when a meeting opens. A host changes it in the call.
 - **One share at a time.** A member who shares while another shares is asked "Take over from Ana?"; a host takes
-  over at once. The one taken over is told and their share stops. A second simultaneous share is an open question
+  over at once. A non-host never takes the stage from a host (decided in the first review). The one taken over is told and their share stops. A second simultaneous share is an open question
   (§10).
 - **Enforced at the media server.** The SFU forwards a `screen` and `screenAudio` track only from the leg the stage
   names. A share that starts without the stage (an old page, a modified one) is not forwarded, and the leg is told.
@@ -155,7 +167,7 @@ viewer's own permissions and data. Text is sharp at any size, and nobody sees a 
   a marker over the element it is on, and an open dialog by its name. Field values are not sent.
 - **Guests.** A guest has no screens, so for them a follow is a pixel share: the presenter's page shares this tab
   with Element Capture at the same time, forwarded only to guest legs.
-- **mr-three.** This is the same act as its Follow me ([design-world](../runtime/components/addon/mr-three/plan/design-world.md));
+- **mr-three.** This is the same act as its Follow me ([design-world](../../runtime/components/addon/mr-three/plan/design-world.md));
   the plan's frames are the ones it would use.
 
 ### 3.5 The desktop app
@@ -216,7 +228,7 @@ A Vue component in webroot over Excalidraw (React mounted in the component's ele
 - **File mode.** With no page, the screen gives the scene (`scene`, the `.excalidraw` JSON, and `files-url`, where
   its images are) and a save transition (`save-url`); the board is edited by one person with no co-editing and saved
   as a whole on Save. Dev AIDE uses it for the boards in a component's `hemp/` directory, saved through its own save
-  pipeline ([Dev-HEMP](Dev-HEMP.md) H23). The file and its images are laid out as a page's are (§4.1), so the same
+  pipeline ([Dev-HEMP](../Dev-HEMP.md) H23). The file and its images are laid out as a page's are (§4.1), so the same
   board can move between a component and a wiki space.
 - **A skeleton.** A screen may give `skeleton`: Excalidraw's element skeletons (a frame, a labelled rectangle, an
   arrow between two ids, text), which the component turns into full elements with `convertToExcalidrawElements`
@@ -245,7 +257,7 @@ A Vue component in webroot over Excalidraw (React mounted in the component's ele
 | Codec | Document | Snapshot (the page text) |
 |---|---|---|
 | `markdown` (today's) | the Tiptap XML fragment `default` | the markdown |
-| `excalidraw` (new) | a `Y.Map` `elements`: element id to the element as a JSON value; a `Y.Map` `files`: file id to its attachment; a `Y.Map` `app`: the board's settings | the `.excalidraw` JSON, elements sorted by `index`; deleted elements dropped on a version |
+| `excalidraw` (new) | a `Y.Map` `elements`: element id to the element as a JSON value; a `Y.Map` `files`: file id to its attachment; a `Y.Map` `app`: the board's settings | the `.excalidraw` JSON, elements sorted by `index`; deleted elements kept as compact tombstones for 30 days (as built) |
 
 - **Merge.** An element is replaced whole when it changes, the later `version` (then `versionNonce`) wins, as
   Excalidraw reconciles its own collaboration; the fractional `index` keeps the order under concurrent moves. The
@@ -339,8 +351,8 @@ A Vue component in webroot over Excalidraw (React mounted in the component's ele
 | Mail | Insert a drawing as an image in Compose | BasicComms, later |
 | Projects (BOSS) | A project's boards (its record room's space): planning, retrospectives, a story map | mr-boss |
 | Maintenance (BOSS) | Mark up a photo of an asset or a work order's image (§3.3's Markup) | mr-boss |
-| Dev AIDE, Dev-HEMP | Boards as files in a component's `hemp/` (file mode, §4.2), an optional tool: layout sketches for prototyping and talking about a screen's layout beside its Screen Outline (the Functional Wireframe, a prototype screen, is recommended once the general idea is known), interview and design boards whose elements link to activities and other artifacts, a story or the Screen Flow Diagram opened on a board as a Mermaid frame, the book's figures; later, stories edited on a bound board (§7) | [Dev-HEMP](Dev-HEMP.md) H23 to H26, §7.6; needs MW1 |
-| Assist | Assist writes Mermaid for a board from a description (§9); a board's text as context | [LLM-A2A-Assist](LLM-A2A-Assist.md) |
+| Dev AIDE, Dev-HEMP | Boards as files in a component's `hemp/` (file mode, §4.2), an optional tool: layout sketches for prototyping and talking about a screen's layout beside its Screen Outline (the Functional Wireframe, a prototype screen, is recommended once the general idea is known), interview and design boards whose elements link to activities and other artifacts, a story or the Screen Flow Diagram opened on a board as a Mermaid frame, the book's figures; later, stories edited on a bound board (§7) | [Dev-HEMP](../Dev-HEMP.md) H23 to H26, §7.6; needs MW1 |
+| Assist | Assist writes Mermaid for a board from a description (§9); a board's text as context | [LLM-A2A-Assist](../LLM-A2A-Assist.md) |
 | mr-three venues | The venue's big screen shows the meeting's stage, a board included | mr-three |
 | PASS | Not planned: a board is internal; a portal customer sees a board only as a guest in a meeting | |
 
@@ -399,8 +411,8 @@ graph editor's case is ports, edge routing and layout built in.
 | Editor | Today | With a bound board |
 |---|---|---|
 | Dev-HEMP stories (`Requirements/Stories`, Edit) | Planned: sentence rows, Move up and down, forms (H7) | Lanes by actor, activities in order, alternate flows as branches, a high-level activity's detailed story as a frame that opens it; Make step from an interview note |
-| BOSS Insights FlowMapEditor ([design-insights §9](../runtime/components/addon/mr-boss/plan/design-insights.md#9-business-flow-maps)) | Built (P9): ordered lane and step lists; "no new freeform diagram-authoring engine is required"; FlowMap drawn with XML widgets; the framework node-graph panel rejected as it is (F26) | The map's lanes and steps on a bound board: drag a step between lanes, reorder, a step's target and count on its shape; FlowMap gains a board view with the lists kept; a HEMP story imported as a flow map (Dev-HEMP H19) brings its layout |
-| BOSS Manufacturing RoutingDetail ([design-manufacturing §5](../runtime/components/addon/mr-boss/plan/design-manufacturing.md#5-boms-and-routings)) | Built (P2): the operation sequence as rows | Operations as a flow with work centers as lanes and dependencies as arrows; drafts and release unchanged |
+| BOSS Insights FlowMapEditor ([design-insights §9](../../runtime/components/addon/mr-boss/plan/design-insights.md#9-business-flow-maps)) | Built (P9): ordered lane and step lists; "no new freeform diagram-authoring engine is required"; FlowMap drawn with XML widgets; the framework node-graph panel rejected as it is (F26) | The map's lanes and steps on a bound board: drag a step between lanes, reorder, a step's target and count on its shape; FlowMap gains a board view with the lists kept; a HEMP story imported as a flow map (Dev-HEMP H19) brings its layout |
+| BOSS Manufacturing RoutingDetail ([design-manufacturing §5](../../runtime/components/addon/mr-boss/plan/design-manufacturing.md#5-boms-and-routings)) | Built (P2): the operation sequence as rows | Operations as a flow with work centers as lanes and dependencies as arrows; drafts and release unchanged |
 | Tools StatusFlows (`runtime/components/base/tools/screen/Tools/StatusFlows.xml`) | Transitions as a list | Statuses as shapes and transitions as arrows; an arrow drawn adds a `StatusFlowTransition` |
 | BOSS Marketing journeys | Not in the first release ("no new visual journey canvas", design-marketing) | A branching journey, if Marketing plans one |
 | BOSS Customer Service assignment rules, approval rules in Purchasing and Marketing | Rule lists | Not a process canvas: they stay lists |
@@ -459,10 +471,10 @@ meeting and screen share phases follow in the order below.
 | **MW2** | Room spaces and their access, the Boards tab, board messages, `CallBoard`, a board on the stage with follow, guests over `/callws`, the encrypted room label, `CallLink.wikiPageId` (§5) | MS1 (the stage), MW1 |
 | **MA** | drauu: annotation over a share, the laser, Snapshot to board, Markup of an image (§3.3) | MS1, MW2 for Snapshot |
 | **MS2** | Present a Moqui screen (§3.4) | MS1 |
-| **MD** | The desktop spike and then the picker, the permissions, the overlay window (§3.5) | MS1, MA for the overlay |
-| **MM** | The Android spike (str0m and MediaCodec, or libwebrtc), the screen leg, MediaProjection, then SFrame for encrypted calls (§3.6) | MS1 |
+| **MD** | The desktop spike and then the picker, the permissions, the overlay window (§3.5). Built Nov 24: Chromium's picker on Linux and Windows, the app's own list on macOS through a patched tauri-runtime-cef | MS1, MA for the overlay |
+| **MM** | The Android spike (str0m and MediaCodec, or libwebrtc), the screen leg, MediaProjection, then SFrame for encrypted calls (§3.6). Built Nov 24–25: option A, str0m with aws-lc-rs and the platform's VP8 encoder ([MM-Spike](MM-Spike.md)) | MS1 |
 | **BOSS** | Knowledge and Notes open boards; Projects' and Maintenance's uses (§6), in mr-boss's own plans | MW1, MA |
-| **Dev-HEMP** | Boards in `hemp/` and their index, Draw sketch, Open as board, the book's figures ([Dev-HEMP](Dev-HEMP.md) §11) | MW1 |
+| **Dev-HEMP** | Boards in `hemp/` and their index, Draw sketch, Open as board, the book's figures ([Dev-HEMP](../Dev-HEMP.md) §11) | MW1 |
 | **MP** | Process editing (§7): its own plan first, with the comparison of §7.3; then the binding mode of `m-whiteboard`, Dev-HEMP's stories, and the BOSS editors in mr-boss's plans | MW1; Dev-HEMP P2 for the stories |
 
 ### 11.1 Done when
@@ -501,7 +513,7 @@ meeting and screen share phases follow in the order below.
 - **Acceptance:** one browser walk of a meeting with a share, a board on the stage and a guest drawing
   (`test/acceptance/client/`), added in MW2.
 - **Real devices:** the desktop app on each OS (MD) and an Android phone (MM), listed with the other live checks in
-  [Future-Plans](Future-Plans.md).
+  [Future-Plans](../Future-Plans.md).
 
 ## Sources
 

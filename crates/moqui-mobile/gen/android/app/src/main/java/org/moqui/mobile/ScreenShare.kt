@@ -33,7 +33,7 @@ import androidx.core.content.ContextCompat
 import org.json.JSONObject
 
 /**
- * The native screen share (plans/Comms-Whiteboard.md §3.6, plans/MM-Spike.md): the system's consent each time
+ * The native screen share (plans/archive/Comms-Whiteboard.md §3.6, plans/archive/MM-Spike.md): the system's consent each time
  * ([ScreenConsentActivity]), a foreground service of type mediaProjection ([ScreenShareService], which Android 14 needs
  * before the projection is taken), the projection into a VirtualDisplay drawn on a MediaCodec VP8 encoder's input
  * surface, and each encoded frame to Rust (`Native.screenFrame`), whose str0m leg sends it to the media server. Rust asks

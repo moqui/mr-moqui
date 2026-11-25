@@ -327,7 +327,7 @@ The call's media stays the WebView's; the native code gives it what a phone's ow
 Android's WebView has no `getDisplayMedia`, so in the app **Share the screen** shares the phone's screen natively, as a
 **screen leg**: a second leg of the participant (`CltScreen`, `add#ScreenLeg`) whose only track is the screen, sent by
 the app's Rust rather than the WebView ([WebRTC, Presenting in a call](../interfaces/WebRTC.md#presenting-in-a-call);
-plans/Comms-Whiteboard.md §3.6, the spike's numbers in plans/MM-Spike.md).
+plans/archive/Comms-Whiteboard.md §3.6, the spike's numbers in plans/archive/MM-Spike.md).
 
 - **Capture.** The system's consent each time (`ScreenConsentActivity`, Android 14 refuses a projection kept from an
   earlier one), then a foreground service of type `mediaProjection` (`ScreenShareService`, before the projection is

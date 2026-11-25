@@ -49,6 +49,19 @@ is left, by stream; the designs are in the archived plan and the interface guide
   messages; reactions in the archive; offline delivery outside MAM; XEP-0184 receipts; stanzas between XMPP sessions on
   different nodes; revoking an XMPP user's TURN credential.
 
+**Whiteboards and screen share** (from [Comms-Whiteboard](archive/Comms-Whiteboard.md), archived 2026-11-25; its §9):
+- **Process editing on a board** (its §7): a bound board over a structured model (a HEMP story, a BOSS flow map, a
+  routing, a status flow), starting with the comparison of a bound Excalidraw board against Vue Flow, maxGraph and
+  diagram-js on two models; it needs a plan of its own (a proposal first). Dev-HEMP's stories on a board wait for it.
+- End-to-end encrypted boards: Yjs updates sealed with a room key, the server keeping only ciphertext and no preview.
+- Board templates (a retrospective, a flow, a week's plan) in a templates space; Assist writing Mermaid for a board as a
+  kept-source frame; a presenter's timer and voting; export to PDF with the page's print layout; share and annotation
+  on iOS.
+- Several shares on the stage at once (one at a time with take over is built).
+- A board drawn in place in IronStone Knowledge (it opens Comms' board editor now).
+- The Android screen share keeps its crypto device for the share: a page that registers its device again mid-call
+  must stop and share again.
+
 **Not checked live.** The checks that need a deployment, a provider's consent or real devices are in
 [Testing-Needed, Comms](Testing-Needed.md#comms).
 

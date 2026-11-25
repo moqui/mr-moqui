@@ -88,6 +88,7 @@ Guide [Monitoring](../docs/tools/Monitoring.md).
 | Shell | The 390 px header check (`gate3_browser` tray test) runs without theme plugins: mr-marble's `ActiveOrgNav.qvue` adds a button and its organization's pseudoId as a label, which a long id can still push past a phone's width | framework gaps 2026-10-19 |
 | Co-editing | Co-editing across servers has no test: `cluster::publish` giving a message its `message_id` (without one a peer refuses `collab-update` posts) is checked only by a unit test of the post. A two-server test of a co-edited document should edit on one and see it on the other | `notws/collab.rs`, `cluster/mod.rs` |
 | BOSS walks | Projects and Commons have no golden-path client walk in the regression suite (one per app) | [Test-Reduction, Order of work](archive/Test-Reduction.md#order-of-work) |
+| Android screen share | A committed acceptance walk of the native share on the emulator (consent through `appops`, a browser leg seeing the screen, Stop, leave, rotation; and an encrypted call once the app's crypto device is set up in the walk) | [MM-Spike](archive/MM-Spike.md) §6, §7 |
 
 ## Checks to run, after v0.1.0
 
@@ -107,7 +108,7 @@ Comms-Messaging, Edge-Node2 and [ui-review-basic-comms](ui-review-basic-comms.md
 
 ### Desktop and mobile apps
 
-Screen share from the apps ([Comms-Whiteboard](Comms-Whiteboard.md) MD and MM; guides
+Screen share from the apps ([Comms-Whiteboard](archive/Comms-Whiteboard.md) MD and MM; guides
 [Desktop-Client, Screen share](../docs/ui/Desktop-Client.md#screen-share),
 [Mobile-Client, Sharing the screen](../docs/ui/Mobile-Client.md#sharing-the-screen-in-a-call)). Built and unit tested here; no run of the
 installed apps has shared a screen yet.

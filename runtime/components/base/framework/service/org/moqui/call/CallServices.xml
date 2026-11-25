@@ -194,7 +194,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="add" noun="ScreenLeg">
-        <description>The mobile app's native screen share (plans/Comms-Whiteboard.md §3.6): a screen leg (CltScreen) of the
+        <description>The mobile app's native screen share (plans/archive/Comms-Whiteboard.md §3.6): a screen leg (CltScreen) of the
             user's own participant, which publishes only the screen. The user's page relays its rtc frames on its own socket
             and asks for the stage with it; the leg ends with the page's leg (leave, hold, its socket gone, the call's end) or
             by leave#Call naming it, and never keeps its participant in the call. notInCall for a user with no answered

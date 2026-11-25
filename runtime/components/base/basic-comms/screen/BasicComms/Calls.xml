@@ -111,7 +111,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- the mobile app's native screen share (plans/Comms-Whiteboard.md §3.6): a screen leg of the user's own -->
+    <!-- the mobile app's native screen share (plans/archive/Comms-Whiteboard.md §3.6): a screen leg of the user's own -->
     <transition name="addScreenLeg">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.call.CallServices.add#ScreenLeg').parameters({callSessionId: callSessionId || '', callLegId: (typeof callLegId !== 'undefined' && callLegId) || null, sframe: typeof sframe !== 'undefined' && String(sframe) === 'true'}).requireNewTransaction(true).disableAuthz().call() || {}

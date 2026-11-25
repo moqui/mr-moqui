@@ -759,7 +759,7 @@ fn require_shell(app: &AppHandle, webview: &tauri::Webview, nonce: Option<&str>)
     Ok(())
 }
 
-/// The native screen share (plans/MM-Spike.md): ask the system's consent to capture the screen; once given the
+/// The native screen share (plans/archive/MM-Spike.md): ask the system's consent to capture the screen; once given the
 /// capture starts and its frames go to the leg the page connects (`screen_offer`). Whether the consent was asked.
 #[tauri::command(async)]
 pub(crate) fn screen_start(app: AppHandle, webview: tauri::Webview, nonce: Option<String>) -> Result<bool, String> {

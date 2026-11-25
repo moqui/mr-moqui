@@ -1916,7 +1916,7 @@
             return media.getUserMedia({audio:false,video:{mandatory:{chromeMediaSource:"desktop",chromeMediaSourceId:id,
                 maxFrameRate:motion?30:15}}});
         },
-        // ---- the mobile app's native screen share (plans/Comms-Whiteboard.md §3.6): Android's WebView cannot capture the
+        // ---- the mobile app's native screen share (plans/archive/Comms-Whiteboard.md §3.6): Android's WebView cannot capture the
         // screen, so the app does (MediaProjection, a VP8 encoder) and sends it from its Rust (str0m) as a screen leg of
         // this participant (add#ScreenLeg), which this page signals for on its own socket: the leg's join, the media
         // server's answer and offers, the stage asked with the leg, its publish, and its leave. The app holds no
