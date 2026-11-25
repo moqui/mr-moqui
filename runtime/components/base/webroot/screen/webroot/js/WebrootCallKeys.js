@@ -23,11 +23,16 @@
  *   user's other tabs ask that tab (moqui.crypto's leader, C7), so a call is encrypted in any of them. reasonCode busy:
  *   the leader did not answer; prepare() says so.
  * - **No downgrade.** Nothing is sent before the first key, and a frame that does not decrypt is dropped, never played.
+ * - **Other senders of this page.** The mobile app's screen leg (a leg of this participant on the page's device, with a
+ *   key index of its own) is a sender whose frames the app's Rust seals: addSender(legId, deliver) gives it keys of its
+ *   own, made and sent to the others with this page's (each rotation, its KID its leg's key index and its own epoch), and
+ *   hands each to deliver({kid, key, useAfterMs}) after the others have it (the first at once, a later one to use a
+ *   second on). dropSender(legId) ends it. This page's own device is never sent a key of its own legs.
  *
  * The API: supported(), elsewhere() (an app window of the desktop client, whose shell holds the device and so takes the
  * encrypted calls), prepare() (Promise<{cryptoDeviceId, scriptTransform: true}>, or a rejection with reasonCode and
  * message: elsewhere, unsupportedClient, busy, noCryptoDevice), begin(callSessionId, legId), onView(view), attachSender(sender, kind), attachReceiver(receiver, kind, legId),
- * end(), and state (reactive): {active, callSessionId, legId, epoch, kid, rotations, error, keys: {legId: {kid, epoch,
+ * end(), addSender(legId, deliver), dropSender(legId), and state (reactive): {active, callSessionId, legId, epoch, kid, rotations, error, keys: {legId: {kid, epoch,
  * verified, at}}, frames: {legId: {received, failed}}, sent, dropped, lastSend: {kid, devices}, unverified: [{userId, deviceId}]
  * (the roster's devices this browser has not verified, which the call page warns of)}.
  */
@@ -52,6 +57,7 @@
     let rotating = Promise.resolve();
     let again = false;
     let settle = null;
+    let senders = new Map(); // legId -> {deliver, epoch, kid}: this page's other senders (the app's screen leg)
 
     function supported() {
         return typeof root.RTCRtpScriptTransform === "function" && typeof root.Worker === "function" &&
@@ -108,6 +114,7 @@
     }
 
     function end() {
+        senders = new Map();
         if (off) off();
         off = null;
         if (settle) clearTimeout(settle);
@@ -190,14 +197,7 @@
             const first = state.kid == null;
             const legId = state.legId;
             worker.postMessage({ type: "setOwnKey", kid, baseKey: base.buffer.slice(0), use: first });
-            const others = new Map();
-            for (const r of roster.values()) {
-                if (r.legId === legId) continue;
-                const list = others.get(r.userId) || [];
-                if (!list.includes(r.deviceId)) list.push(r.deviceId);
-                others.set(r.userId, list);
-            }
-            const targets = Array.from(others.entries()).map(([userId, deviceIds]) => ({ userId, deviceIds }));
+            const targets = targetsBut(me);
             const content = { callSessionId: state.callSessionId, callLegId: legId, kid, epoch, suite: 4, key: toBase64(base) };
             let sent = { sent: 0, devices: [], skipped: [] };
             if (targets.length) {
@@ -215,6 +215,7 @@
             // the roster's devices this browser has not verified (by emoji or QR, or through their user's cross-signing):
             // the page warns, since a device the server added to a participant would get the keys too
             unverifiedOf(targets).then((list) => { if (state.active && state.legId === legId) state.unverified = list; }, () => null);
+            for (const [senderLeg, s] of senders) await rotateSender(senderLeg, s, me);
             if (first) {
                 state.kid = kid;
                 return;
@@ -227,6 +228,57 @@
             }, SWITCH_MS);
         }).catch((err) => { state.error = String((err && err.message) || err); });
         return rotating;
+    }
+
+    /** The devices of the roster's legs to send a key to: every other device, never this page's own (`me`'s). */
+    function targetsBut(me) {
+        const others = new Map();
+        for (const r of roster.values()) {
+            if (r.legId === me.legId || (r.userId === me.userId && r.deviceId === me.deviceId)) continue;
+            const list = others.get(r.userId) || [];
+            if (!list.includes(r.deviceId)) list.push(r.deviceId);
+            others.set(r.userId, list);
+        }
+        return Array.from(others.entries()).map(([userId, deviceIds]) => ({ userId, deviceIds }));
+    }
+
+    /** A new key of another sender of this page (on the roster, under this page's device), sent to the others first. */
+    async function rotateSender(legId, s, me) {
+        const r = roster.get(legId);
+        if (!r || r.deviceId !== me.deviceId || senders.get(legId) !== s) return;
+        const epoch = (s.epoch % (KID_SPAN - 1)) + 1;
+        const kid = r.keyIndex * KID_SPAN + epoch;
+        const base = root.crypto.getRandomValues(new Uint8Array(16));
+        const key = toBase64(base);
+        base.fill(0);
+        const targets = targetsBut(me);
+        if (targets.length) {
+            try {
+                await moqui.crypto.sendToDevices(targets, EVENT, { callSessionId: state.callSessionId, callLegId: legId, kid, epoch, suite: 4, key });
+            } catch (err) {
+                state.error = t("The call's keys could not be sent") + ": " + ((err && (err.errors || err.message)) || err);
+                return;
+            }
+        }
+        if (!state.active || senders.get(legId) !== s) return;
+        const first = s.kid == null;
+        s.epoch = epoch;
+        s.kid = kid;
+        try {
+            await s.deliver({ kid, key, useAfterMs: first ? 0 : SWITCH_MS });
+        } catch (err) {
+            state.error = String((err && err.message) || err);
+        }
+    }
+
+    /** Another sender of this page (the app's screen leg): keys of its own from the next rotation on, which comes now. */
+    function addSender(legId, deliver) {
+        if (!state.active || !legId || typeof deliver !== "function") return Promise.resolve();
+        senders.set(legId, { deliver, epoch: 0, kid: null });
+        return rotate();
+    }
+    function dropSender(legId) {
+        senders.delete(legId);
     }
 
     /** The devices of targets ({userId, deviceIds}) this browser's store does not hold as verified: [{userId, deviceId}]. */
@@ -294,5 +346,6 @@
         return "keys";
     }
 
-    moqui.callKeys = { state, supported, elsewhere, prepare, begin, end, onView, attachSender, attachReceiver, legState, rotate };
+    moqui.callKeys = { state, supported, elsewhere, prepare, begin, end, onView, attachSender, attachReceiver, legState, rotate,
+        addSender, dropSender };
 })(globalThis);

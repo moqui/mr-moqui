@@ -1922,6 +1922,8 @@
         // server's answer and offers, the stage asked with the leg, its publish, and its leave. The app holds no
         // credential of its own for it; the server checks the leg is this socket user's.
         nativeShareSupported() { return !!root.moquiDesktop?.screenStart && !root.navigator?.mediaDevices?.getDisplayMedia; },
+        // an encrypted call's native share: the app seals its frames (SFrame) with keys this page's call keys make
+        nativeSealSupported() { return !!root.moquiDesktop?.screenKey && !!moqui.callKeys?.addSender; },
         isScreenLeg(legId) {
             const view = state.calls[state.current];
             return !!legId && !!view && (view.participants || []).some((p) => (p.legs || []).some((leg) => leg.callLegId === legId && leg.type === "screen"));
@@ -1929,9 +1931,11 @@
         async shareNative() {
             const host = root.moquiDesktop, id = state.current, view = state.calls[id];
             if (!host?.screenStart || !id || !call.pc || call.native || state.picking) return false;
-            // until the app has SFrame, an encrypted call's media cannot come from its Rust (the server refuses it too)
-            if (view && view.e2ee) {
-                state.error = t("Sharing the phone screen is not available in an end-to-end encrypted call yet");
+            // an encrypted call's screen comes sealed with the leg's own keys, which this page's call keys make and send;
+            // an app without SFrame cannot (the server refuses it too)
+            const sealed = !!(view && view.e2ee);
+            if (sealed && (!call.nativeSealSupported() || !call.keysOn(id))) {
+                state.error = t("Sharing the phone screen in an end-to-end encrypted call needs a newer app");
                 return false;
             }
             const prev = state.stage.callLegId;
@@ -1942,7 +1946,7 @@
                 await call.toRelay("share");
                 return false;
             }
-            const share = call.native = {callSessionId:id, legId:null, mid:null, prev, asked:false, published:false};
+            const share = call.native = {callSessionId:id, legId:null, mid:null, prev, asked:false, published:false, sealed};
             state.picking = true;
             try {
                 if (!(await host.screenStart())) throw new Error(t("The screen could not be shared"));
@@ -1953,13 +1957,15 @@
                     call.endNative(false);
                     return false;
                 }
-                const made = await call.request("addScreenLeg", {callSessionId:id, callLegId:state.legId});
+                const made = await call.request("addScreenLeg", {callSessionId:id, callLegId:state.legId, sframe:sealed});
                 if (call.native !== share) return false;
                 if (!made.callLegId) throw new Error(made.errors || t(made.reasonCode || "The screen could not be shared"));
                 share.legId = state.screenLegId = made.callLegId;
                 call.screenLegIds = (call.screenLegIds || []).concat([made.callLegId]);
-                const offer = await host.screenOffer();
+                const offer = await host.screenOffer(sealed);
                 if (call.native !== share) return false;
+                // its keys: the app sends nothing until the first comes (the roster with the leg makes it)
+                if (sealed) moqui.callKeys.addSender(share.legId, (k) => call.native === share ? host.screenKey(k) : null);
                 share.mid = (offer.match(/a=mid:(\S+)/) || [])[1] || null;
                 call.send({rtc:"join", callSessionId:id, callLegId:share.legId, sdp:offer, id:call.nextId++});
                 state.sharing = true;
@@ -2047,6 +2053,7 @@
             state.screenLegId = null;
             state.sharing = false;
             state.capture = null;
+            if (share.sealed && share.legId) moqui.callKeys?.dropSender?.(share.legId);
             if (release && share.legId) call.send({rtc:"leave", callSessionId:share.callSessionId, callLegId:share.legId, id:call.nextId++});
             return Promise.resolve(root.moquiDesktop?.screenStop?.()).catch(() => null).then(() => true);
         },
@@ -2712,6 +2719,7 @@
             pending() { return this.call.stage.requests || []; },
             asking() { return this.pending.includes(this.call.legId) || (!!this.call.screenLegId && this.pending.includes(this.call.screenLegId)); },
             native() { return call.nativeShareSupported(); },
+            sealable() { return call.nativeSealSupported(); },
             host() { return !!this.view?.participants?.some(p => p.userId && p.userId === call.me && p.role === "host"); },
             sharing() { return this.call.stage.kind === "screen"; },
             inkAllowed() {return this.mine || this.call.stage.inkMode==="everyone" || (this.call.stage.inkMode==="hosts" && this.host);},
@@ -2825,7 +2833,7 @@
                 <q-btn v-if="sharing && (host || mine)" flat dense color="negative" :label="mine && !call.sharing ? t('Cancel') : t('Stop sharing')" @click="mine ? stop() : command('stop',{previousLegId:owner})"/>
                 <q-btn v-if="eligible && !(mine && followStage)" flat dense icon="sym_o_present_to_all" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Present this screen')" @click="ask('follow')"/>
                 <q-btn v-if="!guest" flat dense icon="sym_o_draw" :disable="!host && call.shareMode==='CsmHosts'" :label="t('Whiteboard')" @click="boardPicker"/>
-                <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !asking" flat dense icon="sym_o_present_to_all" :disable="(!host && call.shareMode === 'CsmHosts') || (native && !!view?.e2ee) || call.picking" :title="native && view?.e2ee ? t('Sharing the phone screen is not available in an end-to-end encrypted call yet') : undefined" :label="t('Share the screen')" @click="native ? shareNative() : ask()"/>
+                <q-btn v-if="supported && (!mine || (boardId && !call.sharing)) && !asking" flat dense icon="sym_o_present_to_all" :disable="(!host && call.shareMode === 'CsmHosts') || (native && !!view?.e2ee && !sealable) || call.picking" :title="native && view?.e2ee && !sealable ? t('Sharing the phone screen in an end-to-end encrypted call needs a newer app') : undefined" :label="t('Share the screen')" @click="native ? shareNative() : ask()"/>
                 <q-btn v-if="asking" flat dense :label="t('Cancel presentation request')" @click="call.screenLegId ? stop() : command('lower')"/>
                 <q-btn-dropdown v-if="host" flat dense :label="t('Who can present')"><q-list dense>
                     <q-item v-for="mode in modes" :key="mode.value" clickable v-close-popup :active="call.shareMode===mode.value" @click="setMode(mode.value)">

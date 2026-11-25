@@ -682,3 +682,94 @@ test("the mobile app's native share: its screen leg's frames go to the app, the 
         reset();
     }
 });
+
+
+test("an encrypted call's native share: the app gets the screen leg's own keys after the others, never this page's device", async () => {
+    const keys = moqui.callKeys;
+    const prior = {crypto: moqui.crypto, host: window.moquiDesktop};
+    const sends = [], delivered = [];
+    moqui.crypto = {onToDevice: () => () => {}, devicesOf: async () => [],
+        sendToDevices: async (targets, type, content) => { sends.push({targets, type, content}); return {sent: 1, devices: targets}; }};
+    const roster = (bobGeneration) => ({callSessionId:"EK", status:"active", participants:[
+        {userId:"ann", legs:[{callLegId:"ME", status:"answered", deviceId:"DA", keyIndex:1, keyGeneration:1},
+            {callLegId:"SCR", status:"answered", type:"screen", deviceId:"DA", keyIndex:3, keyGeneration:1}]},
+        {userId:"bob", legs:[{callLegId:"BOB", status:"answered", deviceId:"DB", keyIndex:2, keyGeneration:bobGeneration}]}]});
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    try {
+        keys.begin("EK", "ME");
+        keys.onView(roster(1));
+        await keys.addSender("SCR", async (k) => { delivered.push({...k, at: sends.length}); });
+        await wait(300);
+        await keys.rotate();
+        const own = sends.filter((s) => s.content.callLegId === "ME"), screen = sends.filter((s) => s.content.callLegId === "SCR");
+        assert.ok(own.length >= 1 && screen.length >= 1, "a key of each of the page's senders");
+        for (const s of sends) assert.deepEqual(s.targets, [{userId:"bob", deviceIds:["DB"]}], "only the others' devices");
+        assert.equal(Math.floor(screen[0].content.kid / 65536), 3, "the screen leg's key index");
+        assert.equal(delivered[0].kid, screen[0].content.kid);
+        assert.equal(delivered[0].key, screen[0].content.key);
+        assert.equal(delivered[0].useAfterMs, 0, "the first key at once");
+        assert.ok(delivered[0].at >= sends.indexOf(screen[0]) + 1, "the app gets it after the others were sent it");
+        // the roster changes: a new key of the screen leg, the next epoch, used a second on
+        const before = delivered.length;
+        keys.onView(roster(2));
+        await wait(300);
+        await keys.rotate();
+        const next = delivered[before];
+        assert.ok(next && next.kid > delivered[0].kid && next.useAfterMs === 1000, JSON.stringify(next));
+        assert.notEqual(next.key, delivered[0].key);
+        // the share ends: no more keys for it
+        keys.dropSender("SCR");
+        const after = delivered.length;
+        await keys.rotate();
+        assert.equal(delivered.length, after);
+    } finally {
+        keys.end();
+        moqui.crypto = prior.crypto;
+        window.moquiDesktop = prior.host;
+    }
+});
+
+test("an encrypted call's native share asks for a sealed screen leg and gives the app its keys; an app without SFrame is refused", async () => {
+    reset();
+    const frames = [], calls = [];
+    const prior = {send:call.send, pc:call.pc, request:call.request, host:window.moquiDesktop, capture:navigator.mediaDevices.getDisplayMedia,
+        keys:moqui.callKeys, direct:call.direct};
+    const host = {screenStart: async () => true, screenStatus: async () => ({leg:{}, capture:{state:"sharing"}}),
+        screenOffer: async (sealed) => { calls.push(["offer", sealed]); return "v=0\r\na=mid:sv\r\n"; },
+        screenStop: async () => { calls.push(["stop"]); }};
+    try {
+        navigator.mediaDevices.getDisplayMedia = undefined;
+        Object.assign(state, {current:"EN", legId:"ME", phase:"connected", stageRevision:-1, sharing:false,
+            calls:{EN:{callSessionId:"EN", status:"active", e2ee:true, participants:[]}}});
+        call.pc = {};
+        call.direct = null;
+        call.send = (frame) => frames.push(frame);
+        call.request = async (name, params) => { calls.push([name, params.sframe]); return {callLegId:"SCR", screenOfLegId:"ME"}; };
+        let added = null;
+        moqui.callKeys = {state:{active:true, callSessionId:"EN"}, addSender: (legId, deliver) => { added = {legId, deliver}; },
+            dropSender: (legId) => calls.push(["drop", legId])};
+        window.moquiDesktop = host;
+        assert.equal(await call.shareNative(), false, "no screenKey: an app without SFrame");
+        assert.ok(/end-to-end encrypted/.test(state.error));
+        state.error = null;
+        host.screenKey = async (k) => calls.push(["key", k.kid, k.useAfterMs]);
+        assert.equal(await call.shareNative(), true);
+        assert.deepEqual(calls.slice(0, 2), [["addScreenLeg", true], ["offer", true]]);
+        assert.equal(added.legId, "SCR");
+        await added.deliver({kid:196609, key:"AAAAAAAAAAAAAAAAAAAAAA==", useAfterMs:0});
+        assert.deepEqual(calls.find((c) => c[0] === "key"), ["key", 196609, 0]);
+        await call.endNative(true);
+        assert.ok(calls.some((c) => c[0] === "drop" && c[1] === "SCR"), "its keys stop with the share");
+        // a key the share's end overtook goes nowhere
+        const n = calls.length;
+        await added.deliver({kid:196610, key:"AAAAAAAAAAAAAAAAAAAAAA==", useAfterMs:1000});
+        assert.equal(calls.length, n);
+    } finally {
+        Object.assign(call, {send:prior.send, pc:prior.pc, request:prior.request, direct:prior.direct, native:null, screenLegIds:[]});
+        window.moquiDesktop = prior.host;
+        moqui.callKeys = prior.keys;
+        navigator.mediaDevices.getDisplayMedia = prior.capture;
+        Object.assign(state, {screenLegId:null, sharing:false, error:null});
+        reset();
+    }
+});

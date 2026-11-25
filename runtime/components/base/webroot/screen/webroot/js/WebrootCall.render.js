@@ -3105,7 +3105,7 @@
               ]))
             }
         } },
-        "m-call-presentation": { hash: "10ff9897", make: function (Vue) {
+        "m-call-presentation": { hash: "9f65979f", make: function (Vue) {
             const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveComponent: _resolveComponent, createBlock: _createBlock, renderList: _renderList, Fragment: _Fragment, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, createElementVNode: _createElementVNode, withModifiers: _withModifiers, vModelSelect: _vModelSelect, vModelText: _vModelText, normalizeStyle: _normalizeStyle, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
@@ -3173,8 +3173,8 @@
                         flat: "",
                         dense: "",
                         icon: "sym_o_present_to_all",
-                        disable: (!_ctx.host && _ctx.call.shareMode === 'CsmHosts') || (_ctx.native && !!_ctx.view?.e2ee) || _ctx.call.picking,
-                        title: _ctx.native && _ctx.view?.e2ee ? _ctx.t('Sharing the phone screen is not available in an end-to-end encrypted call yet') : undefined,
+                        disable: (!_ctx.host && _ctx.call.shareMode === 'CsmHosts') || (_ctx.native && !!_ctx.view?.e2ee && !_ctx.sealable) || _ctx.call.picking,
+                        title: _ctx.native && _ctx.view?.e2ee && !_ctx.sealable ? _ctx.t('Sharing the phone screen in an end-to-end encrypted call needs a newer app') : undefined,
                         label: _ctx.t('Share the screen'),
                         onClick: $event => (_ctx.native ? _ctx.shareNative() : _ctx.ask())
                       }, null, 8, ["disable", "title", "label", "onClick"]))
