@@ -121,6 +121,7 @@ installed apps has shared a screen yet.
 | Android, encoders | On a phone with a hardware VP8 encoder it is the one picked, and its keyframe and bitrate requests take effect; on one without, the platform's software encoder keeps 15 fps at 1280 px | `ScreenShare.kt` |
 | Android, network | The share over a phone's mobile network to a public media server (UDP), and with UDP blocked over ICE-TCP; the bitrate follows a constrained uplink down | `src/screen.rs` |
 | Android, screen security | A room with Block screenshots shown during a share is black to the others (FLAG_SECURE in the projection) | `ScreenSecurity.kt` |
+| Android, encrypted call | In an end-to-end encrypted call (two browsers and the phone), the phone's share decrypts in both browsers within 2 s of consent; a third joining (a rotation) keeps decrypting it; the media server's recording and captions stay refused; an older app build is refused with its message | `src/screen.rs`, `WebrootCallKeys.js` |
 
 ## Related documents
 

@@ -276,3 +276,36 @@ The same set-up as §3 (the debug server built from this branch, Chrome by CDP),
 
 The walk found one bug, fixed: the share's notification had the call's notification id, so sharing during a call
 replaced the call's ongoing notification and stopping left the call's service holding the share's.
+
+## 7. End-to-end encryption (stage 3)
+
+As planned in §6, "The E2EE stage, as found", with these details:
+
+- **Server.** `add#ScreenLeg` takes `sframe`: an encrypted call refuses a leg without it (`e2eeScreen`, "needs a newer
+  app") and a page leg with no crypto device (`noCryptoDevice`); with it the screen leg gets the page leg's
+  `cryptoDeviceId` and a key index of its own (`setLegDevice`), so the view's roster lists it. `bindLeg` admits a
+  `CltScreen` leg with a device. Spec: CallEncryption "an encrypted call takes the app's screen leg only sealed with
+  SFrame: the page's device, a key index of its own".
+- **Keys** (`WebrootCallKeys.js`). `addSender(legId, deliver)` / `dropSender`: each rotation (a roster change, a
+  rekey) makes a key of the screen leg too (KID = its key index * 65536 + its own epoch), sends it over Olm to every
+  other device of the roster with `callLegId` the screen leg (the others' `take` checks the sender's device against the
+  roster's for that leg, which is the page's own), and then calls `deliver({kid, key, useAfterMs})`: 0 for the first,
+  1000 for a later one, as the page's own sender switches. No key of the page's legs goes to its own device
+  (`targetsBut`), which the page's own key rotation now also leaves out.
+- **Page.** `shareNative` in an encrypted call needs `moquiDesktop.screenKey` and the call's keys active; it asks for a
+  sealed leg (`sframe`), offers an encrypted one (`screenOffer(true)`), and adds it as a sender whose keys go to
+  `screenKey`; `endNative` drops it. The button is disabled with the reason for an older app.
+- **Rust.** `screen_offer {encrypted}` makes a leg that drops every frame before its key (`unkeyed` in its status);
+  `screen_key {kid, key, useAfterMs}` sets it (16 bytes, the wait at most 10 s); a new key is a keyframe at once so a
+  subscriber waiting for it decodes. `seal` keeps the VP8 frame's first 10 or 3 bytes in the clear as the SFrame
+  metadata and appends header, ciphertext and tag (`sframe` 2.1, `rust-crypto`, AES_128_GCM_SHA256_128); one
+  `MonotonicCounter` for the leg across keys.
+- **Tests.** `the_leg_seals_a_frame_as_the_pages_worker_does` (the video frames of
+  `crates/moqui-rtc/testdata/sframe-call-frames.json`, which the webroot spec WebrootSFrame checks the pages' worker
+  against, seal to the same bytes); `an_encrypted_legs_frames_wait_for_its_key_and_go_as_the_pages_sframe` (against
+  moqui-rtc's media server: nothing forwarded before the key, then the screen with its keyframe bit read by the server,
+  decrypting with the page's key to the encoder's frame and not with another, and a rotated key in use after its wait);
+  WebrootCall client cases for the key handover (after the others, never to the own device, the next epoch on a roster
+  change, nothing after `dropSender`) and for the sealed share and the older app's refusal.
+- **Not checked here.** An encrypted call with the phone on the emulator and two browsers (the app's shell needs its
+  crypto device set up, which the stage-2 walk's scripts did not do); listed in Testing-Needed with a real phone.

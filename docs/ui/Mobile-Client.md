@@ -355,9 +355,16 @@ plans/Comms-Whiteboard.md §3.6, the spike's numbers in plans/MM-Spike.md).
   ends a screen leg with its page leg in any case (the WebView is paused while the app is in the background, so the
   page cannot be relied on then). The app's leg ends by itself when its connection is lost for 10 s, and tells the page
   (`moqui.call.nativeScreen`).
-- **Not yet.** An end-to-end encrypted call refuses the native share and says why, until the app has SFrame. A direct
-  call moves to the media server before the share starts, as a browser's share does. There is no annotation over
-  another app (Android would need a draw-over permission).
+- **An encrypted call.** In an end-to-end encrypted call the screen leg is the page device's, with a key index of its
+  own (`add#ScreenLeg` with `sframe`), and its frames are SFrame-sealed in Rust exactly as the pages' worker seals
+  theirs: the VP8 frame's first 10 bytes (a keyframe) or 3 in the clear as authenticated metadata, then the SFrame
+  header, ciphertext and tag (AES_128_GCM_SHA256_128, the `sframe` crate). Its keys are the page's to make
+  (`moqui.callKeys.addSender`): each rotation makes one for the screen leg too, sends it to the others' devices over Olm
+  as its own, and then hands it to the app (`screen_key`, the first at once, a later one a second on). The leg sends
+  nothing before its first key, and the page's own device is never sent a key of its own legs. An app without the
+  command (an older build) is refused and the page says so.
+- **Not yet.** There is no annotation over another app (Android would need a draw-over permission). A direct call
+  moves to the media server before the share starts, as a browser's share does.
 - **Tests.** The leg against the repository's media server on loopback, over UDP and ICE-TCP (`screen_tests.rs`, with
   `moqui-rtc` as a dev-dependency); the size and bitrate rules (`ScreenRulesTest`); on the emulator, consent for
   automation is `adb shell appops set org.moqui.mobile PROJECT_MEDIA allow` (and `appops reset` after).
