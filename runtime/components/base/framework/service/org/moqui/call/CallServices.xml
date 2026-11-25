@@ -196,13 +196,19 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="add" noun="ScreenLeg">
         <description>The mobile app's native screen share (plans/Comms-Whiteboard.md §3.6): a screen leg (CltScreen) of the
             user's own participant, which publishes only the screen. The user's page relays its rtc frames on its own socket
-            and asks for the stage with it. notInCall for a user with no answered browser leg in the call; e2eeScreen in an
-            end-to-end encrypted call (the app has no SFrame yet).</description>
+            and asks for the stage with it; the leg ends with the page's leg (leave, hold, its socket gone, the call's end) or
+            by leave#Call naming it, and never keeps its participant in the call. notInCall for a user with no answered
+            browser leg in the call, notConnected before that leg's media connects, notRelayed while the call is on the
+            direct path (the page moves it to the media server first), e2eeScreen in an end-to-end encrypted call (the app has
+            no SFrame yet).</description>
         <in-parameters>
             <parameter name="callSessionId" required="true"/>
+            <parameter name="callLegId"><description>The page's own leg, whose share this is (default: the user's newest
+                answered browser leg); the screen leg ends with it</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="callLegId"/>
+            <parameter name="screenOfLegId"/>
             <parameter name="call" type="Map"/>
             <parameter name="reasonCode"/>
         </out-parameters>
@@ -581,7 +587,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="direct" type="Boolean"/>
         </in-parameters>
         <out-parameters>
-            <parameter name="memberScreen" type="Boolean"/><parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
+            <parameter name="memberScreen" type="Boolean"/><parameter name="screenLeg" type="Boolean"/><parameter name="screenOfLegId"/><parameter name="isHost" type="Boolean"/><parameter name="stage" type="Map"/><parameter name="stageRevision" type="Long"/><parameter name="shareModeEnumId"/>
             <parameter name="callConnectionId"/>
             <parameter name="callLegId"/>
             <parameter name="generation" type="Integer"/>

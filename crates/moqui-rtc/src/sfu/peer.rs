@@ -60,6 +60,8 @@ pub(super) struct TrackIn {
     pub injected: bool,
     /// Sent in simulcast layers (rids `l`, `m`, `h`).
     pub simulcast: bool,
+    /// A screen leg's track: the page leg it shares for, which is not sent its own screen back.
+    pub screen_of: Option<Arc<str>>,
 }
 
 impl TrackIn {
@@ -72,6 +74,7 @@ impl TrackIn {
             source: AtomicU8::new(source_code(source)),
             injected: false,
             simulcast,
+            screen_of: None,
         }
     }
 
@@ -85,6 +88,7 @@ impl TrackIn {
             source: AtomicU8::new(source_code(Source::Phone)),
             injected: true,
             simulcast: false,
+            screen_of: None,
         }
     }
 
@@ -228,6 +232,9 @@ pub(super) struct Peer {
     pub(super) guest_video_recipient: bool,
     pub(super) guest_screen_only: bool,
     pub(super) screen_leg: Option<Arc<str>>,
+    /// A native screen share's leg (`CltScreen`, plans/Comms-Whiteboard.md §3.6), with the page leg it shares for: it
+    /// only publishes, so it is offered no other leg's tracks, and what it sends is the screen from its first packet.
+    pub(super) screen_of: Option<Arc<str>>,
     sources: HashMap<Mid, Source>,
     wanted: HashMap<Arc<str>, Option<Layer>>,
     estimate_kbps: Option<u64>,
@@ -255,6 +262,7 @@ impl Peer {
             guest_video_recipient: false,
             guest_screen_only: false,
             screen_leg: None,
+            screen_of: None,
             sources: HashMap::new(),
             wanted: HashMap::new(),
             estimate_kbps: None,
@@ -334,6 +342,12 @@ impl Peer {
             None => (
                 self.key.leg.clone(),
                 self.sources.get(&mid).copied().unwrap_or_else(|| {
+                    if self.screen_of.is_some() {
+                        return match kind {
+                            MediaKind::Video => Source::Screen,
+                            MediaKind::Audio => Source::ScreenAudio,
+                        };
+                    }
                     // A second track of a kind is a presentation even while the
                     // publisher's explicit MID declaration is still in flight. A
                     // follow presenter's first tracks are its camera and microphone
@@ -349,7 +363,9 @@ impl Peer {
                 }),
             ),
         };
-        let track = Arc::new(TrackIn::new(self.id, leg, mid, kind, source, simulcast));
+        let mut track = TrackIn::new(self.id, leg, mid, kind, source, simulcast);
+        track.screen_of.clone_from(&self.screen_of);
+        let track = Arc::new(track);
         propagated.push(Propagated::TrackOpen(self.id, Arc::downgrade(&track)));
         out.push_back(SfuOutput::Event(self.track_event(&track, true)));
         self.tracks_in.push(TrackInEntry {
@@ -664,6 +680,14 @@ impl Peer {
     }
 
     pub fn handle_track_open(&mut self, track_in: Weak<TrackIn>) {
+        // a screen leg takes nothing, and its page leg is not sent its own screen
+        if self.screen_of.is_some()
+            || track_in
+                .upgrade()
+                .is_some_and(|t| t.screen_of.as_deref() == Some(&*self.key.leg))
+        {
+            return;
+        }
         self.tracks_out.push(TrackOut {
             track_in,
             state: OutState::ToOpen,

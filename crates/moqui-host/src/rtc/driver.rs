@@ -548,7 +548,7 @@ impl Driver<'_> {
             "peer" => self.peer(&route, room, leg, generation, frame, now).map(|()| None),
             "join" => self
                 .sfu
-                .join(now, &key, generation, sdp())
+                .join_as(now, &key, generation, sdp(), frame["boundScreenOf"].as_str())
                 .and_then(|answer| {
                     // a leg here of a call whose media is on another node: this node is a leg node, linked to that one
                     if !origin.is_empty() && origin != self.own {

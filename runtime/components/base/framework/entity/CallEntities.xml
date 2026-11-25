@@ -192,6 +192,8 @@ along with this software (see the LICENSE.md file). If not, see
             node.</description></field>
         <field name="mediaNodePinned" type="text-indicator"><description>Y when the leg's media stays on the call's node:
             the call's node refused its leg node's relay link (W7).</description></field>
+        <field name="screenOfLegId" type="id"><description>A native screen share's leg (CltScreen, add#ScreenLeg): the
+            page leg it shares for, which relays its signalling; it ends with that leg.</description></field>
         <field name="movedFromLegId" type="id"><description>"Move to this device" (move#Call, plans/Comms-Messaging.md §8.3
             item 6): the user's leg this one takes the call from; that leg leaves once this one's media is
             connected.</description></field>

@@ -249,6 +249,8 @@ pub struct Net {
     pub held: Vec<SfuEvent>,
     /// Whether the clients that join offer RED for their audio, as current browsers do.
     pub client_red: bool,
+    /// The next clients join as a native screen share's leg for this page leg ([`Sfu::join_as`]).
+    pub screen_of_join: Option<&'static str>,
     pub start: Instant,
     /// Time spent in the origin SFU's `handle_receive`, by the wall clock of this thread, and the peers its drives
     /// polled there; and the time spent in its `handle_timeout`.
@@ -287,6 +289,7 @@ impl Net {
             hold_offers: None,
             held: Vec::new(),
             client_red: false,
+            screen_of_join: None,
             start: now,
             receive_time: Duration::ZERO,
             receive_polls: 0,
@@ -437,9 +440,10 @@ impl Net {
         let video_mid = change.add_media(MediaKind::Video, Direction::SendOnly, Some(leg.into()), None, sim);
         let (offer, pending) = change.apply().expect("an offer");
         let now = self.now;
+        let screen_of = self.screen_of_join;
         let answer = self
             .node_sfu(node)
-            .join(now, key, generation, &offer.to_sdp_string())
+            .join_as(now, key, generation, &offer.to_sdp_string(), screen_of)
             .expect("join");
         if node == 1 {
             self.leg_node_sfu().link(now, &key.room, ORIGIN).expect("linked");

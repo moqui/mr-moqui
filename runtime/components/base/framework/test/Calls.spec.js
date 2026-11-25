@@ -608,6 +608,64 @@ feature("a non-host cannot take the stage from a host; a leg that rebinds, relea
     }
 })
 
+feature("the app's screen leg shares for its page leg, ends with its Stop or that leg, and keeps nobody in the call", {
+    when() {
+        endAll()
+        const id = as(A, "start#Call", {calleeUserIdList: [B]}).callSessionId
+        const bLeg = as(B, "answer#Call", {callSessionId: id}).callLegId
+        const aLeg = as(A, "get#Call", {callSessionId: id}).call.myLegId
+        const unbound = as(A, "add#ScreenLeg", {callSessionId: id})
+        as(A, "bind#Connection", {callSessionId: id, callLegId: aLeg, direct: true})
+        const onDirect = as(A, "add#ScreenLeg", {callSessionId: id})
+        // the page moves the call to the media server first, as the browser's share does
+        as(A, "bind#Connection", {callSessionId: id, callLegId: aLeg})
+        as(B, "bind#Connection", {callSessionId: id, callLegId: bLeg})
+        const stranger = as(C, "add#ScreenLeg", {callSessionId: id})
+        const othersLeg = as(A, "add#ScreenLeg", {callSessionId: id, callLegId: bLeg})
+        const first = as(A, "add#ScreenLeg", {callSessionId: id})
+        const second = as(A, "add#ScreenLeg", {callSessionId: id, callLegId: aLeg})
+        const bound = as(A, "bind#Connection", {callSessionId: id, callLegId: second.callLegId})
+        const notHers = as(B, "bind#Connection", {callSessionId: id, callLegId: second.callLegId})
+        const stage = as(A, "org.moqui.call.StageServices.change#CallStage",
+            {callSessionId: id, callLegId: second.callLegId, generation: bound.generation, action: "ask"})
+        const seen = as(B, "get#Call", {callSessionId: id}).call
+        // Stop: the page's leave of the screen leg ends the share only, and its stage
+        const stopped = as(A, "leave#Call", {callSessionId: id, callLegId: second.callLegId})
+        const afterStop = session(id)
+        // again, then the page leaves: the share goes with it, and the call of two ends
+        const third = as(A, "add#ScreenLeg", {callSessionId: id})
+        const thirdBound = as(A, "bind#Connection", {callSessionId: id, callLegId: third.callLegId})
+        as(A, "org.moqui.call.StageServices.change#CallStage",
+            {callSessionId: id, callLegId: third.callLegId, generation: thirdBound.generation, action: "ask"})
+        const left = as(A, "leave#Call", {callSessionId: id})
+        const all = legs(id)
+        return {unbound, onDirect, stranger, othersLeg, first, second, bound, notHers, stage, seen, stopped, afterStop, third, left,
+            all, aLeg, row: session(id)}
+    },
+    then({unbound, onDirect, stranger, othersLeg, first, second, bound, notHers, stage, seen, stopped, afterStop, third, left, all, aLeg,
+            row}) {
+        unbound.reasonCode == "notConnected"
+        onDirect.reasonCode == "notRelayed"
+        stranger.reasonCode == "notFound"
+        othersLeg.reasonCode == "notInCall"
+        first.screenOfLegId == aLeg
+        second.screenOfLegId == aLeg
+        all.find(l => l.callLegId == first.callLegId).statusId == "ClsLeft"
+        bound.generation == 1
+        bound.screenLeg == true
+        bound.screenOfLegId == aLeg
+        notHers.reasonCode == "notFound"
+        stage.stage.callLegId == second.callLegId
+        seen.participants.find(p => p.userId == A).legs.some(l => l.callLegId == second.callLegId && l.type == "screen" && l.screenOfLegId == aLeg)
+        stopped.call.status == "active"
+        all.find(l => l.callLegId == second.callLegId).statusId == "ClsLeft"
+        afterStop.stageState == null
+        left.call.status == "ended"
+        all.find(l => l.callLegId == third.callLegId).statusId == "ClsLeft"
+        row.stageState == null
+    }
+})
+
 feature("each user's history has their outcome of each call, and missed calls count until seen", {
     when() {
         const missedBefore = as(C, "count#MissedCalls")

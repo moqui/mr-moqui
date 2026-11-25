@@ -998,3 +998,56 @@ fn a_follow_screen_a_member_does_not_receive_leaves_the_cameras_their_bandwidth(
         "and never the screen"
     );
 }
+
+/// A native screen share's leg (`CltScreen`, joined for its page leg A): its video is the screen from its first packet,
+/// so it reaches the others only while the stage names it; it is offered none of their tracks, and A not its own.
+#[test]
+fn a_screen_leg_only_publishes_and_its_video_is_the_screen() {
+    let mut net = Net::new();
+    net.join("A", false);
+    net.join("B", false);
+    net.screen_of_join = Some("A");
+    net.join("S", false);
+    net.screen_of_join = None;
+    net.run(secs(2));
+    assert!(net.events.iter().any(
+        |e| matches!(e, SfuEvent::Track { key, kind: Kind::Video, source: Source::Screen, open: true, .. }
+        if &*key.leg == "S")
+    ));
+    assert!(
+        !net.events.iter().any(
+            |e| matches!(e, SfuEvent::Track { key, kind: Kind::Video, source: Source::Camera, .. } if &*key.leg == "S")
+        ),
+        "the screen leg's video is never a camera"
+    );
+    assert_eq!(
+        net.received("B", "S", MediaKind::Video),
+        0,
+        "no screen before the stage"
+    );
+    assert!(
+        !net.events
+            .iter()
+            .any(|e| matches!(e, SfuEvent::Offer { key, .. } if &*key.leg == "S")),
+        "the screen leg is offered no tracks"
+    );
+    net.sfu.set_screen_stage(ROOM, Some("S"));
+    net.run(secs(2));
+    assert!(net.received("B", "S", MediaKind::Video) > 0);
+    assert_eq!(
+        net.received("A", "S", MediaKind::Video),
+        0,
+        "its page leg is not sent its own screen"
+    );
+    assert_eq!(net.received("S", "A", MediaKind::Audio), 0);
+    assert_eq!(net.received("S", "B", MediaKind::Video), 0);
+    net.sfu.set_screen_stage(ROOM, None);
+    net.run(secs(1));
+    let video = net.received("B", "S", MediaKind::Video);
+    net.run(secs(1));
+    assert_eq!(
+        net.received("B", "S", MediaKind::Video),
+        video,
+        "off the stage, the screen stops"
+    );
+}
